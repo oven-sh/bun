@@ -1,6 +1,10 @@
 // An order of declared keys that was seen before is laid on the new object by the compiled parser itself: the engine is not called.
-// IR+ ^ .*JSONKeyOrderAppend
-// IR+ ^ .*JSONKeyOrderApply
+// Each declared key adds itself to the order as it is met, and the order is laid on the object where the object ends. Of the 81 texts that are parsed, the nine that hold an undeclared key call the engine there, and none is given up and read again.
+// IR+ ^ .*: keyorder = JSONObjectKey v[0-9]+ layout=L[0-9]+
+// IR+ ^ .* = JSONObjectFinish v[0-9]+, v[0-9]+, v[0-9]+ layout=L[0-9]+
+// COUNTER: operationAOTJSONSourceOpen = 81
+// COUNTER: operationAOTJSONObjectFinish = 9
+// COUNTER: operationAOTJSONSourceAbandon = 0
 declare const aotOperationCount: undefined | ((name: string) => number);
 interface Point { x: number; y: number; label?: string }
 interface Segment { id: number; from: Point; to: Point; tags: string[] }

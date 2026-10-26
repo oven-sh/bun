@@ -1884,17 +1884,29 @@ for (const [kind, create, inherited] of kinds) {
   run(kind, create, inherited, true);
 }
 //// push-in-a-counted-loop-makes-room-once.ts
-// `for (let i = 0; i < n; i++) out.push(..)`: when the vector is full, the slow path makes room for all the turns that are left, whatever kind of number n is. A push that is not made in every turn, or a loop with a second way out, grows step by step.
-declare const aotOperationCount: undefined | ((name: string) => number);
-const slowPushes = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTArrayPush") + aotOperationCount("operationAOTArrayPushNumber") : 0;
+// `for (let i = 0; i < n; i++) out.push(..)`: one call into the run time makes room for all the turns, whatever kind of number n is. A push that is not made in every turn, or a loop with a second way out, grows step by step.
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// The allocator has no cell at hand for a record now and then, and a text of the program is made where it is first used.
+const owed = ["operationAOTAllocateSlow", "operationAOTStringConstant", "operationAOTNewStringConstant"];
 function measured(what: string, atMost: number, atLeast: number, run: () => unknown[]): void {
-  const before = slowPushes();
+  const before = countsSoFar();
   const made = run();
-  const calls = slowPushes() - before;
-  const isCompiled = typeof aotOperationCount === "function";
+  const calls = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
+  const isCompiled = typeof aotRuntimeCounters === "function";
   let sum = 0;
   for (let i = 0; i < made.length; i += 997) sum += typeof made[i] === "number" ? (made[i] as number) : (made[i] as { at: number }).at;
-  console.log(what, made.length, sum, !isCompiled || (calls <= atMost && calls >= atLeast) ? "as expected" : "slow pushes: " + calls);
+  console.log(what, made.length, sum, !isCompiled || (calls <= atMost && calls >= atLeast) ? "as expected" : "calls: " + calls);
 }
 function wholeNumbers(n: number): number[] {
   const out: number[] = [];

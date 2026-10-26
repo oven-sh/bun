@@ -384,6 +384,21 @@ export const shapes: Shape[] = [
         `console.log(new C${size}().m${size}());\n`,
     }),
   },
+  // Each constructor is small enough to go into the one below it, which goes into the one below that: every level is one more round over all that a constructor has taken in.
+  {
+    name: "classes that extend one another in a row, each constructed",
+    counted: "classes",
+    size: 125,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `class C0 {\n  constructor() {\n    this.f0 = 0;\n  }\n}\n` +
+        lines(size, index => `class C${index + 1} extends C${index} {\n  constructor() {\n    super();\n    this.f${index + 1} = ${index + 1};\n  }\n}`) +
+        `let sum = 0;\n` +
+        lines(size + 1, index => `sum += new C${index}().f${index};`) +
+        `console.log(sum);\n`,
+    }),
+  },
   {
     name: "functions on one line after non-ASCII text",
     counted: "functions",

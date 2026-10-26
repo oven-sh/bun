@@ -57,7 +57,7 @@ export function generate(
       : kind === "module"
         ? random.pick([".mjs", ".mjs", ".js"])
         : random.pick([".cjs", ".cjs", ".js"]);
-  // TypeScript finds a file without its extension only if that is `.ts` or `.js`.
+  // TypeScript finds a file without its extension only if that is `.ts` or `.js`, also in a JavaScript file through which a TypeScript file imports a name.
   const specifier = (from: string, to: string) => {
     const inPackage = /^node_modules\/(\w+)\//.exec(to);
     if (inPackage) return JSON.stringify(inPackage[1]);
@@ -67,7 +67,8 @@ export function generate(
         ? "../../" + to
         : "./" + to;
     const mayBeShort = !/ts$/.test(from) || /\.[jt]s$/.test(to);
-    return JSON.stringify(mayBeShort && random.chance(0.25) ? path.replace(/\.\w+$/, "") : path);
+    const isShort = mayBeShort && random.chance(0.25) && (!hasTyped || /\.[jt]s$/.test(to));
+    return JSON.stringify(isShort ? path.replace(/\.\w+$/, "") : path);
   };
 
   const helpers: File = {

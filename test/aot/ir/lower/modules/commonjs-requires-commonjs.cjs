@@ -5,7 +5,7 @@
 // RECORDS: module {{*}}/imports/chain/m1.js"{{*}}kind=CommonJs flags=[KeepsError]{{*}}requests=[{target=m{{*}}kind=Require completes=true}]
 
 // RUN(BODY): link
-// BODY: EvaluateModule module=m{{*}} [isBare]
+// BODY: EvaluateModule module=m{{*}} [isBare, isCallOfRequire]
 // BODY: [[read]] = GetModuleVariable
 // BODY-NEXT: [[c]] = Convert [[read]]
 // BODY: = Add [[c]]

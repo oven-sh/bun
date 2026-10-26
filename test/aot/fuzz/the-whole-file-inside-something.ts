@@ -47,7 +47,14 @@ export function withTheWholeFileInside(text: string, loader: "ts" | "js", place:
   const directive = /^\s*["']use strict["'];?\n/.exec(rest)?.[0] ?? "";
   // An await at the top makes a file a module, and what `this`, `require` and `module` are hangs on that.
   const staysWhatItIs = /^import\b/m.test(text) || !/\b(this|require|module)\b/.test(text);
-  for (const [open, close, holdsAnAwait] of around[place]) {
+  // A variable of the words in front hides no name that the file imports.
+  const imported = front.join("");
+  const free = (name: string) => {
+    while (imported.includes(name)) name += "_";
+    return name;
+  };
+  for (const [words, close, holdsAnAwait] of around[place]) {
+    const open = words.replace(/\b(?:step|turn)\b/g, free);
     if (/^(for )?await /.test(open) && !staysWhatItIs) continue;
     if (!holdsAnAwait && /\bawait\b/.test(text)) continue;
     const changed = front.join("") + directive + open + rest.slice(directive.length) + close;

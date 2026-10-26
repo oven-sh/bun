@@ -85,17 +85,8 @@ impl SyntheticExportKeys {
         }
     }
 
-    // A name of a CommonJS module, which may stand for a name of another one.
-    fn add_name(
-        &mut self,
-        modules: &ModuleSet,
-        tables: &ExportTables,
-        module: ModuleRef,
-        name: Atom,
-    ) {
-        if let Resolution::Synthetic { module, name } =
-            tables.resolve_in(modules, module, name).resolution
-        {
+    fn add_resolution(&mut self, resolution: Resolution) {
+        if let Resolution::Synthetic { module, name } = resolution {
             self.add((module, name), false);
         }
     }
@@ -148,14 +139,14 @@ fn collect_synthetic_export_keys(
     }
     // A name of a CommonJS module has a variable where somebody reads it. A store asks for none.
     for (module, name) in commonjs.names_read_by_own_text() {
-        keys.add_name(modules, tables, module, name);
+        keys.add_resolution(tables.resolve_required(modules, module, name).resolution);
     }
     // A namespace object shows every name.
     for file in collect_seen_namespaces(modules, tables, imports) {
         let module = ModuleRef::File(file);
         let names = tables.commonjs.names_of(module);
         for name in names.into_iter().flatten() {
-            keys.add_name(modules, tables, module, name);
+            keys.add_resolution(tables.resolve_in(modules, module, name).resolution);
         }
     }
     if let Some(application) = input.application {
@@ -165,6 +156,13 @@ fn collect_synthetic_export_keys(
             {
                 keys.add((module, export.name), false);
             }
+        }
+    }
+    // The copy of a name that a getter answers for is taken of what the getter returns.
+    for position in 0..keys.keys.len() {
+        let (module, name) = keys.keys[position];
+        if tables.commonjs.is_copied(module, name) {
+            keys.add_resolution(tables.resolve_required(modules, module, name).resolution);
         }
     }
     keys

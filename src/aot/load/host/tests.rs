@@ -821,7 +821,7 @@ fn evaluated_text_is_served_as_javascript() {
             },
             texts: [fixture.atoms.intern(b"return this")].into_iter().collect(),
         };
-        let path = host.evaluated_texts.add(MAIN, &text, &fixture.atoms);
+        let path = host.evaluated_texts.add(MAIN, 3, &text, &fixture.atoms);
         let path = path.expect("the text is a function body");
         assert!(host.is_file(&path));
         assert_eq!(host.realpath(&path), path);

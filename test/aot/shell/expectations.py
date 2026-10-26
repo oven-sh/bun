@@ -41,7 +41,7 @@ Checked against the size of the data that describes the program to the run time 
     // MESSAGE-DATA< <n>               fewer than n layouts carry what only the text of a type error reads
     // TYPES< <n>                      fewer than n types are described to the run time
 Checked against the run-time counters (`aotRuntimeCounters()`) when the program has run in the shell, on every platform:
-    // COUNTER: <RuntimeCounter | LimitID> (= | >= | <=) <n>    the counter's value, or how often the limit was met at run time. A counter that the shell does not print fails the line
+    // COUNTER: <RuntimeCounter | LimitID | operationAOT..> (= | >= | <=) <n>    the counter's value, how often the limit was met at run time, or how often compiled code called the operation of the run time (<program>.json sets JSC_aotCountsPath). A counter that the shell does not print fails the line
 Checked by compiling the program once more with the word `validate`, which tests every value against the type the engine trusts, on every platform:
     // VALIDATED compiles              the compiler finishes and writes an image
 Not read here: // CODE (a disassembly) and // JSCALLS (CALLS for the same program without type annotations).
@@ -231,13 +231,15 @@ def entry_module(ir):
     return found.group(1) if found else None
 
 
-def runtime_counters(name, path, image, entry):
-    """(the program's exit code in the shell, counter -> its value once the program has run). The second is None if the program did not reach its end."""
-    exit_code, output = toolchain.run_image(image, entry, toolchain.run_environment(program_options(name)), after=['print("@counters\\n" + aotRuntimeCounters())'], cwd=os.path.dirname(path))
+def runtime_counters(name, path, image, entry, operations):
+    """(the program's exit code in the shell, counter -> its value once the program has run). The second is None if the program did not reach its end.
+    The shell lists the operations that were called. It is asked for each of `operations` by name, so that one that was not called counts 0; a name that it does not know ends the script, and what is behind it has no counter."""
+    asked = ['print(aotOperationCount("%s") + "\\toperation:%s")' % (operation, operation) for operation in operations]
+    exit_code, output = toolchain.run_image(image, entry, toolchain.run_environment(program_options(name)), after=['print("@counters\\n" + aotRuntimeCounters())', *asked], cwd=os.path.dirname(path))
     printed = output.split('\n')
     if '@counters' not in printed: return exit_code, None
     fields = [line.split('\t') for line in printed[printed.index('@counters') + 1:]]
-    return exit_code, {f[1].split(':', 1)[1]: int(f[0]) for f in fields if len(f) == 2 and f[0].isdigit() and f[1].startswith(('counter:', 'exit:', 'limit:'))}
+    return exit_code, {f[1].split(':', 1)[1]: int(f[0]) for f in fields if len(f) == 2 and f[0].isdigit() and (f[1].startswith(('counter:', 'exit:', 'limit:')) or f[1].startswith('operation:') and f[1].split(':', 1)[1] in operations)}
 
 
 def counter_failure(rest, counters, exit_code):
@@ -325,7 +327,7 @@ def check_program(name):
             # The map writes a backslash twice.
             expressions = {line.rstrip('\n').split('\t')[5].replace('\\\\', '\\') for line in open(work + '.map', errors='replace') if line.startswith('X') and line.count('\t') >= 5}
             thunks = sum(1 for line in open(work + '.map', errors='replace') if re.match(r'T\t\d+\t.*(#\d+| to \w+)$', line))
-    exit_code, counters = runtime_counters(name, path, work + '.img', entries[0]) if entries and 'COUNTER:' in kinds else (None, None)
+    exit_code, counters = runtime_counters(name, path, work + '.img', entries[0], [rest.split()[0] for kind, rest in lines if kind == 'COUNTER:' and rest.startswith('operationAOT')]) if entries and 'COUNTER:' in kinds else (None, None)
     for kind, rest in lines:
         bad = Failures(failures, '// %s %s' % (kind, rest))
         if kind == 'IR-UNTIL': continue

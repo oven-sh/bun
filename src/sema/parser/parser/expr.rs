@@ -1836,7 +1836,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let Some(name) = self.name_in_brackets(index) else {
             return self.finish_expr(ExprKind::Index { obj, index, chain }, start);
         };
-        let dot = self.finish_dot((obj, chain), name, start);
+        let kind = self.f.dot_in_brackets((obj, chain), name);
+        let dot = self.finish_expr(kind, start);
         self.f.add_flags(dot, ExprFlags::BRACKET_ACCESS);
         dot
     }

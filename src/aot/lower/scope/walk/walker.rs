@@ -63,7 +63,8 @@ pub(in crate::lower::scope) fn walk_file(
 
 pub(super) fn entries_of<K: Copy + Ord, V>(list: &[(K, V)], key: K) -> &[(K, V)] {
     let start = list.partition_point(|entry| entry.0 < key);
-    let length = list[start..].partition_point(|entry| entry.0 == key);
+    let entries = list[start..].iter();
+    let length = entries.take_while(|entry| entry.0 == key).count();
     &list[start..start + length]
 }
 
@@ -240,6 +241,7 @@ impl<'x, 's> Walker<'x, 's> {
         WalkedFunctionId(self.walk.functions.len() as u32 - 1)
     }
 
+    #[inline]
     pub(super) fn push_task(&mut self, task: Task, context: Context) {
         self.stack.push((task, context));
     }

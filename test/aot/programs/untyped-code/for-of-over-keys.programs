@@ -1509,7 +1509,18 @@ for (let i = 0; i < 3000; i++) total += +short(things[i & 1], names[i % 4]) + +s
 console.log(total, counted ? entered() - before > 0 && entered() - before < 100 : true);
 //// has-own-property-method-any-key.ts
 // `o.hasOwnProperty(k)` where nothing is known of `k`. Held to what `Object.prototype.hasOwnProperty.call(o, k)` says on every kind of receiver and key, also where the object has a method of its own by the name, and where the key is an object that is converted by code of the program.
-declare const aotOperationCount: undefined | ((name: string) => number);
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 function method(o: any, k: any) { return o.hasOwnProperty(k); }
 function called(o: any, k: any) { return Object.prototype.hasOwnProperty.call(o, k); }
 const log: string[] = [];
@@ -1531,13 +1542,12 @@ const nothing = Object.create(null);
 const shadowed = Object.create({ hasOwnProperty: () => "inherited" });
 console.log(say(() => method(own, "a")), say(() => method(nothing, "a")), say(() => method(shadowed, "a")), say(() => method(null, "a")), say(() => method(undefined, { toString() { log.push("never"); return "a"; } })), log.includes("never"));
 console.log(say(() => (typed as any).hasOwnProperty()), say(() => (typed as any).hasOwnProperty("a", "b")), say(() => (typed as any).hasOwnProperty(...["b"])));
-const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? (counted("operationAOTHasOwnByIdAndCache") + counted("operationAOTHasOwnByValAndCache")) : 0;
 const things: any[] = [{ q1: 1 } as { q1: number; q2?: number }, JSON.parse('{"q1":1,"q9":2}')], names: unknown[] = ["q1", "q2", "q3", "q9"];
-const before = entered();
+const before = countsSoFar();
 let total = 0;
 for (let i = 0; i < 3000; i++) total += (method(things[i & 1], names[i % 4]) ? 1 : 0) + (method(things[(i >> 1) & 1], names[i % 3]) ? 1 : 0);
-console.log(total, counted ? entered() - before > 0 && entered() - before < 100 : true);
+const calls = callsIn(countsSoFar()) - callsIn(before);
+console.log(total, typeof aotRuntimeCounters === "function" ? calls > 0 && calls < 100 : true);
 //// has-own-property-typed-objects.ts
 interface T { a?: number; b: number; c?: string; d?: unknown }
 class Base { constructor(public v: number) {} method() { return 1; } get twice() { return this.v * 2; } }

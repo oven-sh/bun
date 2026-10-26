@@ -1255,8 +1255,9 @@ for (const { literal, compareAny, compareString } of cases) {
 
   const problems: string[] = [];
   if (literal.length <= 255 && calls > 0) problems.push(`${calls} calls for flat strings and substrings`);
-  // A string of one Latin-1 character is always the shared 8-bit one.
-  if (canCount && literal.length > 1 && wideCalls === 0) problems.push("no call for a 16-bit string");
+  // One Latin-1 character is always the shared 8-bit string, and two ASCII characters cut out of a 16-bit string make an 8-bit string.
+  if (literal.length <= 2 && wideCalls > 0) problems.push(`${wideCalls} calls for a piece of a 16-bit string that is an 8-bit string`);
+  if (canCount && literal.length > 2 && wideCalls === 0) problems.push("no call for a 16-bit string");
   console.log(literal.length, sum, wideAnswers, problems.length ? problems.join("; ") : "calls as expected");
 }
 //// literals-of-every-length-compared.ts

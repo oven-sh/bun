@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 
+use bun_core::strings::contains_char;
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{Binding, BindingInitializer, BindingKind, Decl, FnOwner, Parent};
 use bun_sema::check::spans::skip_trivia;
@@ -491,7 +492,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let hir = self.hir;
         let has_line_break = |start: u32, end: u32| {
             let gap = hir.text.get(start as usize..end as usize);
-            gap.is_some_and(|gap| gap.contains(&b'\n'))
+            gap.is_some_and(|gap| contains_char(gap, b'\n'))
         };
         let mut gap = hir[list].pos;
         for element in hir.ids(elements) {
@@ -790,9 +791,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 },
                 ExprKind::Dot { obj, .. } => (obj, Around::Access { is_callee: false }),
                 ExprKind::Call(site) => (hir[site].callee, Around::Access { is_callee: true }),
-                ExprKind::TaggedTemplate(site) => {
-                    (hir[site].callee, Around::Access { is_callee: false })
-                }
+                // Its source map knows where a tagged template begins, whatever the tag begins with.
+                ExprKind::TaggedTemplate(_) => return false,
                 ExprKind::Ident(_) => match self.find_printed_in_place(first) {
                     Some(Printed::Initializer(initializer)) => (initializer, around),
                     Some(Printed::Function(_)) | None => return false,

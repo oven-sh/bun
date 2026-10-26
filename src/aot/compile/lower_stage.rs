@@ -24,6 +24,7 @@ use bun_sema::check::aot::{
 use bun_sema::config;
 use bun_sema::hir::DiagnosticKind;
 use bun_sema::program::{FileId, FileRole, Files};
+use bun_sema::resolve::Options as CompilerOptions;
 use bun_sema::session::Session;
 use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, EntryPoints,
@@ -70,15 +71,77 @@ struct DecidedProject {
     left_out_bodies: LeftOutBodies,
 }
 
+#[derive(Copy, Clone)]
+enum WorldConfiguration<'a> {
+    // The `package.json` that has the `compilerOptions`, if one has.
+    OfTypedPackages(Option<&'a [u8]>),
+    // The `tsconfig.json` nearest to the first file. All the files are the program's, or all are of dependencies.
+    OfProject(FileOrigin, ProgramWideOptions<'a>),
+}
+
 struct WorldToLower<'a, 's> {
     session: &'s Session,
     index: usize,
-    config_path: Option<&'a [u8]>,
+    configuration: WorldConfiguration<'a>,
     // Of the application.
     files: &'a [FileId],
 }
 
-/// What the programs of the typed packages have done. The files are the application's.
+// In whatever order.
+#[derive(Copy, Clone)]
+struct Libraries<'a>(&'a [Vec<u8>]);
+
+impl PartialEq for Libraries<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        let names_all_of =
+            |a: &[Vec<u8>], b: &[Vec<u8>]| b.iter().all(|library| a.contains(library));
+        names_all_of(self.0, other.0) && names_all_of(other.0, self.0)
+    }
+}
+
+/// The compiler options that one program has one answer to: how it makes its types, which globals it has and which files it reads.
+/// Every other option is asked of the `tsconfig.json` nearest to the file at hand.
+#[derive(Copy, Clone, PartialEq)]
+struct ProgramWideOptions<'a> {
+    strict_null_checks: bool,
+    strict_function_types: bool,
+    strict_bind_call_apply: bool,
+    strict_builtin_iterator_return: bool,
+    exact_optional_property_types: bool,
+    libs: Libraries<'a>,
+    allow_js: bool,
+    max_node_module_js_depth: u32,
+    resolve_json_module: bool,
+    allow_arbitrary_extensions: bool,
+}
+
+impl<'a> ProgramWideOptions<'a> {
+    fn of(options: &'a CompilerOptions) -> ProgramWideOptions<'a> {
+        ProgramWideOptions {
+            strict_null_checks: options.strict_null_checks,
+            strict_function_types: options.strict_function_types,
+            strict_bind_call_apply: options.strict_bind_call_apply,
+            strict_builtin_iterator_return: options.strict_builtin_iterator_return,
+            exact_optional_property_types: options.exact_optional_property_types,
+            libs: Libraries(&options.libs),
+            allow_js: options.allow_js,
+            max_node_module_js_depth: options.max_node_module_js_depth,
+            resolve_json_module: options.resolve_json_module,
+            allow_arbitrary_extensions: options.allow_arbitrary_extensions,
+        }
+    }
+
+    /// Those of the `tsconfig.json` nearest to `file`, if they are not the program's.
+    fn of_other_project(files: &Files<'a>, file: FileId) -> Option<ProgramWideOptions<'a>> {
+        let (program, project) = (files.options, files.module_options(file));
+        if std::ptr::eq(program, project) || !project.has_config_file {
+            return None;
+        }
+        Some(ProgramWideOptions::of(project)).filter(|it| *it != ProgramWideOptions::of(program))
+    }
+}
+
+/// What the programs beside the application's have done. The files are the application's.
 #[derive(Default)]
 struct Worlds {
     // In order.
@@ -202,6 +265,9 @@ impl Build<'_> {
                     roles.demoted.push(demotion);
                 }
                 roles.demoted.sort_by_key(|demotion| demotion.file);
+                roles.checked.extend_from_slice(&worlds.lowered);
+                roles.checked.sort_unstable();
+                roles.checked.dedup();
             }
             let mut files_to_lower = find_files_to_lower(all_compiled_files, &roles);
             files_to_lower.retain(|file| {
@@ -278,21 +344,39 @@ impl Build<'_> {
 
     /// A typed package is checked and lowered by a program of its own, under the `compilerOptions` of its `package.json`.
     /// Nothing of the application's configuration reaches it. Packages that say the same share one.
+    /// So are the files whose `tsconfig.json` answers a program-wide option otherwise than the application's. Those that answer alike share one.
     fn lower_worlds(&mut self, loaded: &LoadedBuild<'_, '_>, bound: &BoundProject<'_>) -> Worlds {
         let left_out = &bound.left_out;
         let application = loaded.project(ProjectId::Application);
         let (files, host) = (application.loaded.files(), application.host);
         let mut groups: BTreeMap<Vec<u8>, (Option<Vec<u8>>, Vec<FileId>)> = BTreeMap::new();
         let mut by_directory: FxHashMap<Vec<u8>, (Vec<u8>, Option<Vec<u8>>)> = FxHashMap::default();
+        let mut of_other_projects: Vec<(FileOrigin, ProgramWideOptions<'_>, Vec<FileId>)> =
+            Vec::new();
         for &file in files.compiled_files() {
-            if !files.compiled(file).is_some_and(|it| it.is_aot_source)
-                || application.loaded.origin(file) != FileOrigin::DependencySource
+            let is_aot_source = files.compiled(file).is_some_and(|it| it.is_aot_source);
+            let origin = application.loaded.origin(file);
+            let is_source =
+                origin == FileOrigin::ProgramSource || origin == FileOrigin::DependencySource;
+            let other_project = (is_source && !is_aot_source)
+                .then(|| ProgramWideOptions::of_other_project(files, file))
+                .flatten();
+            let is_of_typed_package = is_aot_source && origin == FileOrigin::DependencySource;
+            if !(is_of_typed_package || other_project.is_some())
                 || files.role(file) != FileRole::Checked
                 || bound.graph.shape(ModuleRef::File(file)) == Shape::AsToday
                 || files.entry_points().contains(&file)
                 || files.hir(file).check_directive == Some(false)
                 || left_out.files.binary_search(&file).is_ok()
             {
+                continue;
+            }
+            if let Some(options) = other_project {
+                let mut groups = of_other_projects.iter_mut();
+                match groups.find(|group| group.0 == origin && group.1 == options) {
+                    Some(group) => group.2.push(file),
+                    None => of_other_projects.push((origin, options, vec![file])),
+                }
                 continue;
             }
             let directory = host
@@ -310,15 +394,26 @@ impl Build<'_> {
             group.1.push(file);
         }
         let mut worlds = Worlds::default();
-        for (index, (config_path, group)) in groups.into_values().enumerate() {
+        let groups: Vec<(Option<Vec<u8>>, Vec<FileId>)> = groups.into_values().collect();
+        let of_typed_packages = groups.iter().map(|(config_path, group)| {
+            let configuration = WorldConfiguration::OfTypedPackages(config_path.as_deref());
+            (configuration, &group[..])
+        });
+        let of_projects = [FileOrigin::ProgramSource, FileOrigin::DependencySource]
+            .into_iter()
+            .flat_map(|origin| (of_other_projects.iter()).filter(move |group| group.0 == origin))
+            .map(|(origin, options, group)| {
+                (WorldConfiguration::OfProject(*origin, *options), &group[..])
+            });
+        for (index, (configuration, group)) in of_projects.chain(of_typed_packages).enumerate() {
             let Some(session) = loaded.world_sessions.get(index) else {
                 break;
             };
             let world = WorldToLower {
                 session,
                 index,
-                config_path: config_path.as_deref(),
-                files: &group,
+                configuration,
+                files: group,
             };
             self.lower_world(loaded, bound, &world, &mut worlds);
         }
@@ -339,9 +434,16 @@ impl Build<'_> {
         let paths: Vec<Vec<u8>> = (world.files.iter())
             .map(|&file| files.module(file).file_name().to_vec())
             .collect();
+        let (entry_points, project_origin) = match world.configuration {
+            WorldConfiguration::OfTypedPackages(config_path) => (
+                EntryPoints::Configured(&paths, config_path),
+                FileOrigin::DependencySource,
+            ),
+            WorldConfiguration::OfProject(origin, _) => (EntryPoints::Imported(&paths), origin),
+        };
         let request = CompileRequest {
-            entry_points: EntryPoints::Configured(&paths, world.config_path),
-            project_origin: FileOrigin::DependencySource,
+            entry_points,
+            project_origin,
             left_out_bodies: None,
             ..*application.request
         };
@@ -350,6 +452,12 @@ impl Build<'_> {
             return;
         };
         let world_files = program.files();
+        let is_of_project = matches!(world.configuration, WorldConfiguration::OfProject(..));
+        if let WorldConfiguration::OfProject(_, options) = world.configuration
+            && ProgramWideOptions::of(world_files.options) != options
+        {
+            return;
+        }
         let to_application: Vec<Option<FileId>> = (0..world_files.modules.len())
             .map(|index| {
                 files
@@ -403,13 +511,19 @@ impl Build<'_> {
         let left_out = &bound.projects.application.left_out;
         let left_out_bodies = LeftOutBodies::new(left_out.functions.iter().copied())
             .with_files(left_out.files.iter().copied());
-        let roles = {
+        let mut roles = {
             let request = &CompileRequest {
                 left_out_bodies: Some(&left_out_bodies),
                 ..request
             };
             decide_roles(&program, application.host, request, &own)
         };
+        let is_own: FxHashSet<FileId> = own.iter().copied().collect();
+        let others = world_files.compiled_files().iter().copied();
+        roles
+            .checked
+            .extend(others.filter(|file| !is_own.contains(file)));
+        roles.checked.sort_unstable();
         let files_to_lower: Vec<FileId> = (own.iter().copied())
             .filter(|&file| roles.role(file) == FileRole::Checked && !roles.has_early_error(file))
             .collect();
@@ -428,7 +542,7 @@ impl Build<'_> {
         let is_typed =
             |file: &FileId| (world_files.compiled(*file)).is_some_and(|it| it.is_aot_source);
         self.checked_elsewhere = (world_files.compiled_files().iter().copied())
-            .filter(|file| is_typed(file) && !own.contains(file))
+            .filter(|file| (is_typed(file) || is_of_project) && !is_own.contains(file))
             .collect();
         self.checked_elsewhere.sort_unstable();
         let threads = self.threads_to_lower(world_files, &files_to_lower);
@@ -468,6 +582,10 @@ impl Build<'_> {
             },
         );
         let view = world_build.project(id).view();
+        let mut diagnostics = checked.diagnostics;
+        diagnostics.retain(|reported| reported.diagnostic.file.is_some());
+        let roles = &decided.application.roles;
+        self.report_check_diagnostics(view, roles, diagnostics, &checked.incomplete);
         for (file, lowered) in checked.lowered {
             let (Some(lowered), Some(file)) = (lowered, to_application[file.idx()]) else {
                 if !self.diagnostics.has_errors() {

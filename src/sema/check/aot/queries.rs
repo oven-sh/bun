@@ -209,9 +209,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         None
     }
 
-    fn take_cut_state(&mut self) -> CutState {
+    #[inline]
+    fn forget_what_a_question_leaves(&mut self) {
         self.c.rejected_expressions.clear();
         self.c.work_trap = WORK_TRAP_DISARMED;
+    }
+
+    fn take_cut_state(&mut self) -> CutState {
+        self.forget_what_a_question_leaves();
         CutState {
             ran_out_of_stack: self.c.ran_out_of_stack.replace(false),
             flow_analysis_disabled: std::mem::take(&mut self.c.flow_analysis_disabled),
@@ -304,11 +309,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn answer_as_known<T>(&mut self, stored: Result<T, GaveUp>) -> Result<T, GaveUp> {
-        if self.depth == 0 && stored.is_ok() {
-            self.statistics.asked += 1;
-            return stored;
+        if stored.is_err() {
+            return self.ask(|_| stored);
         }
-        self.ask(|_| stored)
+        match self.depth {
+            0 => self.statistics.asked += 1,
+            _ => self.forget_what_a_question_leaves(),
+        }
+        stored
     }
 
     pub(super) fn note_inferred_member(&mut self) {

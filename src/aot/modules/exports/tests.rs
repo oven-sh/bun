@@ -85,7 +85,7 @@ fn with_export_tables(
             is_prefix_root: &|_| true,
         });
         let entries = collect_export_entries(input, &scans, &modules);
-        let tables = resolve_exports(&scans, &modules, entries, &texts);
+        let tables = resolve_exports(input.files, &scans, &modules, entries, &texts);
         check(&tables, &modules, input);
     });
 }

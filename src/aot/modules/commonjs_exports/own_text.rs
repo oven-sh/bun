@@ -91,6 +91,8 @@ pub(super) struct OwnText {
     pub erased: Vec<StmtId>,
     /// What `__esModule` reads. `false`: the text never gives the module one. `true`: once, in order, a true constant. `None`: only the run knows, as wherever one variable holds the value.
     pub marker: Option<bool>,
+    /// The package of the file says `"type": "module"`: to an ES importer the `default` of the file is its value, whatever `__esModule` reads.
+    pub is_marker_ignored_by_imports: bool,
     pub needs_wrapped_body: bool,
     pub uses_module_object: bool,
 }
@@ -113,6 +115,14 @@ impl OwnText {
     pub(super) fn always_creates(&self, name: Atom) -> bool {
         self.creations_of(name).any(|creation| creation.is_in_order)
             || self.alias_of(name).is_some()
+    }
+
+    /// Whoever lists the names of the object once the body has run to its end finds the name: a getter that is not enumerable is passed over.
+    pub(super) fn always_lists(&self, name: Atom) -> bool {
+        match self.alias_of(name) {
+            Some(alias) => alias.is_enumerable,
+            None => self.always_creates(name),
+        }
     }
 
     /// The text says which names the module has once its body has run to its end.
@@ -1026,6 +1036,7 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
             marker_nodes: Vec::new(),
             erased: Vec::new(),
             marker: Some(false),
+            is_marker_ignored_by_imports: false,
             needs_wrapped_body: false,
             uses_module_object: false,
         },

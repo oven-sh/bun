@@ -148,6 +148,11 @@ export default b.declarations(
   Object.entries(constructorsBelow).flatMap(([parent, paths]) =>
     paths.flatMap(path => constructorOnly(path, { extends: parent })),
   ),
+  // JSPerformanceObserver.cpp makes the list at each read.
+  b.static(
+    "PerformanceObserver.supportedEntryTypes",
+    b.property(b.any, { createdOnFirstRead: { capability: "heap" } }),
+  ),
   // Called without `new` on another object, it puts a decoder on that object under a private name, where the methods find it, defines `encoding` and answers the object.
   b.class("node:string_decoder.StringDecoder", {
     instanceCppClass: b.cppClass("WebCore::JSStringDecoder", "JSStringDecoder.h"),

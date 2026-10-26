@@ -544,6 +544,10 @@ impl Scan<'_, '_> {
                 (ExprKind::Index { index, .. }, Held::Text) if index == expression => {
                     return Way::Nowhere;
                 }
+                // The name of a member, written as a text.
+                (ExprKind::Dot { obj, .. }, Held::Text) if obj != expression => {
+                    return Way::Nowhere;
+                }
                 (
                     ExprKind::Binary {
                         op: BinOp::EqEqEq | BinOp::NotEqEq | BinOp::Instanceof,

@@ -32,6 +32,44 @@ export function keepOneScene(text: string) {
   return lines.filter((_, index) => !isDropped(index)).join("\n") + otherFiles.join("");
 }
 
+/** Expressions that end a function with an error that no `throw` statement raises. */
+const expressionsThatThrow = [
+  "nameThatNothingDeclares",
+  "{ next: nameThatNothingDeclares }",
+  "(void 0)()",
+  "null.member",
+  "1n + 1",
+  "new (void 0)()",
+  "Symbol() + 1",
+  "[].reduce(() => 0)",
+  "new Array(-1)",
+  "BigInt(1.5)",
+  'JSON.parse("{")',
+  "({}) instanceof 1",
+  '"member" in 1',
+  "structuredClone(() => 0)",
+];
+
+/**
+ * `text` with some of its functions that count their calls ending in an error of the engine: `++v1;` is their first statement, and what they return is replaced.
+ * Such a function is one that a built-in calls, so the error passes through the built-in to the `try` around it.
+ */
+export function endHooksInErrors(text: string, isTypeScript: boolean) {
+  const random = randomFrom("hooks" + text);
+  const lines = text.split("\n");
+  for (let index = 0; index < lines.length; index++) {
+    const indent = /^( +)\+\+\(?v\d+(?: as any\))?;$/.exec(lines[index])?.[1];
+    if (indent === undefined || !/\bfunction\b.*\{$/.test(lines[index - 1] ?? "") || random() > 0.4) continue;
+    const returns = lines.findIndex(
+      (line, other) => other > index && (line.startsWith(indent + "return ") || line.search(/\S/) < indent.length),
+    );
+    if (returns < 0 || !lines[returns].startsWith(indent + "return ") || !lines[returns].endsWith(";")) continue;
+    const expression = expressionsThatThrow[Math.floor(random() * expressionsThatThrow.length)];
+    lines[returns] = `${isTypeScript ? indent + "// @ts-ignore\n" : ""}${indent}return ${expression};`;
+  }
+  return lines.join("\n");
+}
+
 const printsAVariable = /^printValue\("([\w$]+)", \1\);$/;
 // What these hold differs between an executable and `bun run`, and the driver sets a program aside that names one.
 const namesNeverRead = new Set(["stack", "message", "raw", "caller", "argv", "callee", "arguments"]);
@@ -84,6 +122,7 @@ export function printMembersOfObjects(text: string, isTypeScript: boolean) {
   const variables = [...new Set(lines.map(line => printsAVariable.exec(line)?.[1]).filter(name => name !== undefined))];
   const theOne = variables[below(variables.length)];
   const castsToAny = isTypeScript && random() < 0.5;
+  const wrapsWhatScenesPrint = random() < 0.7;
   const membersOf = new Map<string, string[]>();
   for (const variable of variables) {
     if (style === 0 || (style === 1 && variable !== theOne)) continue;
@@ -109,6 +148,21 @@ export function printMembersOfObjects(text: string, isTypeScript: boolean) {
           : `function ${helper}(value) { return (typeof value === "object" && value !== null) || typeof value === "function" ? typeof value : value; }`,
       ];
     const variable = printsAVariable.exec(line)?.[1];
+    // A scene prints under a label of its own: `printValue("before and after", v1, v2.b);`.
+    const [, start, values] = /^(\s+printValue\("[^"]*"), ([^"'`]+)\);$/.exec(line) ?? [];
+    if (values !== undefined && wrapsWhatScenesPrint) {
+      const pieces: string[] = [];
+      let depth = 0;
+      for (const piece of values.split(", ")) {
+        if (depth > 0) pieces[pieces.length - 1] += ", " + piece;
+        else pieces.push(piece);
+        for (const character of piece) depth += "([{".includes(character) ? 1 : ")]}".includes(character) ? -1 : 0;
+      }
+      if (depth === 0)
+        return [
+          `${start}, ${pieces.map(piece => (piece.startsWith("typeof ") ? piece : `${helper}(${piece})`)).join(", ")});`,
+        ];
+    }
     if (variable === undefined)
       return style % 2
         ? [line.replace(/^(\s+if \(notes\+\+ < 80\) console\.log\("noted", .* : )value\);$/, `$1${helper}(value));`)]

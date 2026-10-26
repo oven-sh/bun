@@ -2,12 +2,12 @@
 // ./respell-property-names.ts writes a program in each spelling, ./same-code-in-every-spelling.ts builds them and compares the code function by function.
 import { expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
-import { join } from "path";
 import { describe, test } from "../supported";
 import { respell, type Spelling } from "./respell-property-names";
-import { compareSpellings, functionsByOrder } from "./same-code-in-every-spelling";
+import { compareSpellings, functionsByOrder, storedProgram } from "./same-code-in-every-spelling";
 
 const programs = [
+  "classes-and-closures/own-accessor-hides-a-getter-and-a-setter.ts",
   "commonjs/a-function-is-given-members-by-object-define-property.cjs",
   "commonjs/members-are-named-as-packages-name-them.cjs",
   "language/members-are-named-in-every-place-a-name-can-stand.ts",
@@ -19,9 +19,7 @@ describe("a program compiles to the same code in every spelling", () => {
     "%s",
     async program => {
       using folder = tempDir("aot-every-spelling", {});
-      expect(
-        await compareSpellings(bunExe(), join(import.meta.dir, "..", "programs", program), String(folder)),
-      ).toEqual([]);
+      expect(await compareSpellings(bunExe(), storedProgram(program, String(folder)), String(folder))).toEqual([]);
     },
     300_000,
   );

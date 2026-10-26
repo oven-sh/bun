@@ -163,7 +163,9 @@ function declarationsOf(lines: string[]) {
 
 type Item = {
   name: string;
-  kind: "function" | "class";
+  kind: "function" | "class" | "constant" | "variable";
+  /** Variables of main that it assigns to. It can only move together with them. */
+  assigns: string[];
   first: number;
   last: number;
   indent: number;
@@ -246,6 +248,22 @@ export function splitIntoFiles(text: string, extension: string) {
     )
     .replace(/\n+$/, "")
     .split("\n");
+  // What a block without indentation declares becomes a declaration of the file, which can be exported. Not where a name would be declared twice.
+  if (chance(50)) {
+    const count = new Map<string, number>();
+    const declares = new RegExp(`^(?: {4})?(?:const|let|var|class|(?:async )?function\\*?) ?(${identifier})`);
+    for (const line of lines) {
+      const name = declares.exec(line)?.[1];
+      if (name !== undefined) count.set(name, (count.get(name) ?? 0) + 1);
+    }
+    for (let first = lines.indexOf("{"); first >= 0; first = lines.indexOf("{", first + 1)) {
+      const last = lines.indexOf("}", first);
+      if (last < 0) break;
+      const inside = lines.slice(first + 1, last);
+      if (inside.some(line => (count.get(declares.exec(line)?.[1] ?? "") ?? 1) > 1)) continue;
+      lines.splice(first, last - first + 1, ...inside.map(line => line.replace(/^ {4}/, "")));
+    }
+  }
   const { declared, times } = declarationsOf(lines);
 
   // What can move: functions and classes without indentation, and functions directly in a block without indentation.
@@ -264,6 +282,36 @@ export function splitIntoFiles(text: string, extension: string) {
       continue;
     }
     if (line === "}") block = undefined;
+    // A constant whose initializer names no variable of main and prints nothing is the same wherever it is made.
+    const [, keywordOfValue, constant] = new RegExp(`^(const|let) (${identifier})(?:: .*)? = `).exec(line) ?? [];
+    if (constant !== undefined && times.get(constant) === 1) {
+      const last = line.endsWith(";")
+        ? first
+        : lines.findIndex((other, index) => index > first && /^[\]})]/.test(other));
+      const body = last < 0 ? [] : lines.slice(first, last + 1);
+      const mentioned = namesIn(body.join("\n"));
+      mentioned.delete(constant);
+      const mentions = [...mentioned].filter(other => declared.has(other));
+      if (
+        body.at(-1)?.endsWith(";") &&
+        mentions.every(other => declared.get(other) === "type") &&
+        !["console", "await", "yield", "this", "import", "require"].some(word => mentioned.has(word))
+      ) {
+        items.push({
+          name: constant,
+          kind: keywordOfValue === "let" ? "variable" : "constant",
+          assigns: [],
+          first,
+          last,
+          indent: 0,
+          text: body,
+          mentions,
+          throughAFunction: false,
+        });
+        first = last;
+      }
+      continue;
+    }
     const [, spaces, keyword, name] =
       new RegExp(`^( {0,4})((?:async )?function\\*?|class) ?(${identifier})\\b`).exec(line) ?? [];
     if (name === undefined || (spaces.length !== 0 && !(spaces.length === 4 && block))) continue;
@@ -284,11 +332,12 @@ export function splitIntoFiles(text: string, extension: string) {
     if (spaces.length === 0 && times.get(name) !== 1) continue;
     const assigned = namesAssignedIn(code);
     const mentions = [...mentioned].filter(other => declared.has(other));
-    if (mentions.some(other => declared.get(other) !== "type" && assigned.has(other))) continue;
+    const assigns = mentions.filter(other => declared.get(other) !== "type" && assigned.has(other));
     // `await` and `yield` of the code around it, `super` and private names of a class around it don't occur at these depths. `arguments` and `this` are the function's own.
     items.push({
       name,
       kind,
+      assigns,
       first,
       last,
       indent: spaces.length,
@@ -298,17 +347,48 @@ export function splitIntoFiles(text: string, extension: string) {
     });
     first = last;
   }
-  const outside = (moved: Item[]) =>
-    lines.filter((_, index) => !moved.some(item => index >= item.first && index <= item.last)).join("\n");
   // Names of functions in different blocks can be the same.
   const seen = new Set<string>();
-  let moved = items.filter(item => !seen.has(item.name) && seen.add(item.name) && chance(65));
-  if (moved.length === 0 && items.length) moved = [pick(items)];
   // Main cannot assign to what it imports, and neither can another part.
   const assignedAnywhere = namesAssignedIn(lines.join("\n"));
-  moved = moved.filter(item => !assignedAnywhere.has(item.name));
-  // A generic class is a type with arguments, which a constant isn't.
-  moved = moved.filter(item => !(item.throughAFunction && isTypeScript && /^class [\w$]+</.test(item.text[0])));
+  const isValue = (item: Item) => item.kind === "constant" || item.kind === "variable";
+  const able = new Set(
+    items
+      .filter(item => !seen.has(item.name) && seen.add(item.name))
+      .filter(item => isValue(item) || !assignedAnywhere.has(item.name))
+      // A generic class is a type with arguments, which a constant isn't.
+      .filter(item => !(item.throughAFunction && isTypeScript && /^class [\w$]+</.test(item.text[0]))),
+  );
+  // A variable moves together with everything that assigns to it, into one file. So all of that must be able to move.
+  const assignedOutside = namesAssignedIn(
+    lines.filter((_, index) => !items.some(item => index >= item.first && index <= item.last)).join("\n"),
+  );
+  const byName = new Map([...able].map(item => [item.name, item]));
+  for (let shrank = true; shrank; ) {
+    shrank = false;
+    for (const item of able) {
+      const stays =
+        item.assigns.some(name => byName.get(name)?.kind !== "variable" || !able.has(byName.get(name)!)) ||
+        (item.kind === "variable" &&
+          (assignedOutside.has(item.name) ||
+            items.some(other => other.assigns.includes(item.name) && !able.has(other))));
+      if (stays) shrank = able.delete(item);
+    }
+  }
+  /** The first of the items that must share a file with `item`. */
+  const leader = new Map<Item, Item>([...able].map(item => [item, item]));
+  const leaderOf = (item: Item): Item => (leader.get(item) === item ? item : leaderOf(leader.get(item)!));
+  for (const item of able) for (const name of item.assigns) leader.set(leaderOf(byName.get(name)!), leaderOf(item));
+  const drawn = new Map<Item, boolean>();
+  let moved = [...able].filter(item => {
+    const first = leaderOf(item);
+    if (!drawn.has(first)) drawn.set(first, chance(65));
+    return drawn.get(first)!;
+  });
+  if (moved.length === 0 && able.size) {
+    const first = leaderOf(pick([...able]));
+    moved = [...able].filter(item => leaderOf(item) === first);
+  }
   if (moved.length === 0) return text;
 
   const hash = Bun.hash.crc32(text).toString(36);
@@ -328,7 +408,31 @@ export function splitIntoFiles(text: string, extension: string) {
     types: "none",
     specifier: "",
   }));
-  moved.forEach((item, index) => (index < parts.length ? parts[index] : pick(parts)).items.push(item));
+  // What names nothing of main but each other can be a package. Such items often get a part to themselves.
+  let free = moved;
+  for (;;) {
+    const names = new Set(free.map(item => item.name));
+    const still = free.filter(item => item.mentions.every(other => names.has(other)));
+    if (still.length === free.length) break;
+    free = still;
+  }
+  if (free.length && free.length < moved.length && chance(60)) {
+    if (parts.length === 1) parts.push({ items: [], form: "js", types: "none", specifier: "" });
+    parts[0].items.push(...free);
+    const others = moved.filter(item => !free.includes(item));
+    others.forEach((item, index) =>
+      (index + 1 < parts.length ? parts[index + 1] : pick(parts.slice(1))).items.push(item),
+    );
+    while (parts.at(-1)!.items.length === 0) parts.pop();
+  } else moved.forEach((item, index) => (index < parts.length ? parts[index] : pick(parts)).items.push(item));
+  for (const part of parts)
+    for (const item of [...part.items]) {
+      const home = parts.find(other => other.items.includes(leaderOf(item)))!;
+      if (home === part) continue;
+      part.items.splice(part.items.indexOf(item), 1);
+      home.items.push(item);
+    }
+  for (let index = parts.length - 1; index >= 0; index--) if (parts[index].items.length === 0) parts.splice(index, 1);
   const files: [string, string][] = [];
   const importsOfMain: string[] = [];
   const exportedValues = new Set<string>();
@@ -338,6 +442,9 @@ export function splitIntoFiles(text: string, extension: string) {
   const doubtful = new Set<string>();
   const functionsOfMain = items.filter(item => item.kind === "function" && item.indent === 0);
 
+  const typesOfMain = [...declared].filter(([, kind]) => kind === "type" || kind === "class").map(([name]) => name);
+  const anotherType = () =>
+    chance(50) ? pick(primitives) : typesOfMain.length && chance(50) ? pick(typesOfMain) : pick(otherTypes);
   const typeWhenNone = (isWrong: boolean) => () => (isWrong && chance(60) ? pick(primitives.slice(0, 4)) : "any");
   /** A declaration with one thing changed: a type, the number of parameters, or the name of a member. */
   const changed = (declaration: string) => {
@@ -356,12 +463,11 @@ export function splitIntoFiles(text: string, extension: string) {
     switch (below(members.length ? 5 : 4)) {
       case 0:
       case 1:
-        if (types.length) return replaceAt(pick(types), chance(70) ? pick(primitives) : pick(otherTypes));
+        if (types.length) return replaceAt(pick(types), anotherType());
       // fallthrough
       case 2:
         // The result.
-        if (/\): [^;]+;$/m.test(declaration))
-          return declaration.replace(/\): [^;\n]+;$/m, `): ${chance(50) ? pick(primitives) : pick(otherTypes)};`);
+        if (/\): [^;]+;$/m.test(declaration)) return declaration.replace(/\): [^;\n]+;$/m, `): ${anotherType()};`);
       // fallthrough
       case 3:
         return chance(50)
@@ -373,8 +479,10 @@ export function splitIntoFiles(text: string, extension: string) {
               /\(([^()]*)\)(?=: )/,
               (_, inside) => `(${splitOutsideBrackets(inside, ", ").slice(0, -1).join(", ")})`,
             );
-      default:
-        return replaceAt(pick(members), pick(members)[0] + "Renamed");
+      default: {
+        const member = pick(members);
+        return replaceAt(member, member[0] + "Renamed");
+      }
     }
   };
 
@@ -455,6 +563,9 @@ export function splitIntoFiles(text: string, extension: string) {
         : (["js", "js", "mjs", "cjs", "ts", "ts", "package"] as const),
     );
     if (!isClosed && (part.form === "cjs" || part.form === "package")) part.form = "js";
+    // `bun run` copies what a file in CommonJS exports when it is imported, and an executable reads it each time. So a variable is exported by a module.
+    const hasAVariable = part.items.some(item => item.kind === "variable");
+    if (hasAVariable && part.form === "cjs") part.form = "js";
     if (!usesNoName && part.form.startsWith("package ")) part.form = isClosed ? "package" : "ts";
     part.types =
       part.form === "package of TypeScript" || part.form === "package with typed source"
@@ -473,7 +584,9 @@ export function splitIntoFiles(text: string, extension: string) {
             "}",
           ]
         : item.text.map(line =>
-            new RegExp(`^(?:(?:async )?function\\*? ?|class )${item.name}\\b`).test(line) ? "export " + line : line,
+            new RegExp(`^(?:(?:async )?function\\*? ?|class |const |let )${item.name}\\b`).test(line)
+              ? "export " + line
+              : line,
           ),
     );
     const isPackage = part.form.startsWith("package");
@@ -495,13 +608,45 @@ export function splitIntoFiles(text: string, extension: string) {
       const shown = `(value => ((typeof value === "object" && value !== null) || typeof value === "function" ? typeof value : String(value)))`;
       const loop = (call: string) =>
         `    const ends = [];\n    for (const given of [${Array.from({ length: 2 + below(4) }, () => pick(argumentLists)).join(", ")}]) {\n        try { ends.push(${shown}(${call})); } catch (error) { ends.push("threw " + error?.constructor?.name); }\n    }\n    return ends.join();`;
+      const waysToCall = (callee: string) => [
+        `${callee}(...given)`,
+        `${callee}(...given)`,
+        `${callee}.call(given[0], ...given)`,
+        `${callee}.apply(undefined, given)`,
+        `Reflect.apply(${callee}, given.at(-1), given)`,
+        `${callee}.bind(null, ...given)()`,
+        `new ${callee}(...given)`,
+      ];
+      const waysToChange = [
+        "for (const key of Object.keys(made)) made[key] = given[0];",
+        "delete made[Object.keys(made)[0]];",
+        'Object.defineProperty(made, Object.keys(made)[0] ?? "added", { get() { return given[0]; }, configurable: true });',
+        "made.added = given;",
+        "Object.freeze(made);",
+        "Object.setPrototypeOf(made, Object.create(Object.getPrototypeOf(made)));",
+        "Object.assign(made, given[0]);",
+        "for (const key of Object.keys(made).reverse()) { const held = made[key]; delete made[key]; made[key] = held; }",
+      ];
+      for (const made of items
+        .filter(item => item.kind === "class" && !inPart.has(item.name) && chance(40))
+        .slice(0, 2)) {
+        const name = `callChanged${made.name}In${number}`;
+        calls.push(
+          `export function ${name}(Class) {\n    const ends = [];\n    for (const given of [${Array.from({ length: 1 + below(3) }, () => pick(argumentLists)).join(", ")}]) {\n        try {\n            const made = new Class(...given);\n            ${pick(waysToChange)}\n            for (const name of Object.getOwnPropertyNames(Class.prototype)) {\n                if (name === "constructor") continue;\n                try { ends.push(name + " " + ${shown}(typeof made[name] === "function" ? made[name](...given) : made[name])); } catch (error) { ends.push(name + " threw " + error?.constructor?.name); }\n            }\n            ends.push(Object.keys(made).join("+"));\n        } catch (error) { ends.push("threw " + error?.constructor?.name); }\n    }\n    return ends.join();\n}`,
+        );
+        declarationsOfCalls.push(`export function ${name}(Class: typeof ${made.name}): string;`);
+        callees.push(made.name);
+        exportedValues.add(made.name);
+        endOfMain.push(`printValue("${made.name} changed in part ${number}", ${name}(${made.name}));`);
+        inPart.add(name);
+      }
       for (const callee of functionsOfMain.filter(item => !inPart.has(item.name) && chance(35)).slice(0, 3)) {
         const isConstructor = /^[A-Z]/.test(callee.name);
         if (isJavaScript && chance(50)) {
           callees.push(callee.name);
           exportedValues.add(callee.name);
           calls.push(
-            `export function call${callee.name}Otherwise${number}() {\n${loop(`${isConstructor ? "new " : ""}${callee.name}(...given)`)}\n}`,
+            `export function call${callee.name}Otherwise${number}() {\n${loop(isConstructor ? `new ${callee.name}(...given)` : pick(waysToCall(callee.name)))}\n}`,
           );
           declarationsOfCalls.push(`export function call${callee.name}Otherwise${number}(): string;`);
           endOfMain.push(
@@ -511,7 +656,7 @@ export function splitIntoFiles(text: string, extension: string) {
         } else {
           const name = `callBack${callee.name}In${number}`;
           calls.push(
-            `export function ${name}(callback) {\n${loop(`${isConstructor ? "new " : ""}callback(...given)`)}\n}`,
+            `export function ${name}(callback) {\n${loop(isConstructor ? "new callback(...given)" : pick(waysToCall("callback")))}\n}`,
           );
           declarationsOfCalls.push(`export function ${name}(callback: typeof ${callee.name}): string;`);
           callees.push(callee.name);
@@ -523,7 +668,7 @@ export function splitIntoFiles(text: string, extension: string) {
     }
     const exportsOfPart = [
       ...part.items.map(item => (item.throughAFunction ? `make${item.name}` : item.name)),
-      ...[...inPart].filter(name => /^call(?:Back)?[\w$]+(?:Otherwise|In)\d+$/.test(name)),
+      ...[...inPart].filter(name => /^call(?:Back|Changed)?[\w$]+(?:Otherwise|In)\d+$/.test(name)),
     ];
 
     const declarations = () => {
@@ -532,7 +677,9 @@ export function splitIntoFiles(text: string, extension: string) {
           ? `export function make${item.name}(): ${isWrong && chance(40) ? pick([...primitives, ...otherTypes]) : "any"};`
           : item.kind === "class"
             ? declarationOfClass(item, isWrong)
-            : declarationOfFunction(item, isWrong),
+            : isValue(item)
+              ? `export ${item.kind === "variable" ? "let" : "const"} ${item.name}: ${/^(?:const|let) [\w$]+: (.*)$/.exec(splitOutsideBrackets(item.text[0], " = ")[0])?.[1] ?? typeWhenNone(isWrong)()};`
+              : declarationOfFunction(item, isWrong),
       );
       if (isWrong) {
         const at = below(texts.length);
@@ -560,20 +707,64 @@ export function splitIntoFiles(text: string, extension: string) {
     const erased = (typed: string) =>
       isTypeScript ? new Bun.Transpiler({ loader: "ts" }).transformSync(typed) : typed;
     const asCommonJs = (code: string) =>
-      code.replace(/^export (?=(?:async )?function|class )/gm, "") +
-      exportsOfPart.map(name => `exports.${name} = ${name};\n`).join("");
+      code.replace(/^export (?=(?:async )?function|class |const |let )/gm, "") +
+      exportsOfPart
+        .map(name =>
+          isMoved.get(name)?.kind === "variable"
+            ? `Object.defineProperty(exports, "${name}", { get: () => ${name}, enumerable: true });\n`
+            : `exports.${name} = ${name};\n`,
+        )
+        .join("");
     const typedText = [...importOf(needed), ...body, ""].join("\n");
     // The names that only the calls use are imported behind the erasure, which drops an import that nothing uses.
     const calledByName = callees.filter(
-      name => !needed.includes(name) && calls.some(call => call.includes(`${name}(...given)`)),
+      name =>
+        !needed.includes(name) &&
+        calls.some(call => new RegExp(`(?<![\\w$])${name.replaceAll("$", "\\$")}[(.,]`).test(call)),
     );
+    /** Comments that say the types of a function to the checker, which reads them in JavaScript. A type that names something of main is left out. */
+    const withComments = (code: string) => {
+      if (part.types !== "none" || !chance(45)) return code;
+      const areWrong = chance(60);
+      const known = (type: string) =>
+        [...namesIn(type)].some(other => declared.has(other) || /^[A-Z]\w*$/.test(other)) ? "any" : type;
+      for (const item of part.items) {
+        if (item.kind !== "function") continue;
+        const start = new RegExp(`^(?:async )?function\\*? ?${identifier}`).exec(
+          item.text.at(-1)!.endsWith("}") && item.text.length > 1
+            ? (item.text.find(line => line.endsWith("{")) ?? "")
+            : item.text[0],
+        );
+        const header = item.text.find(line => line.endsWith("{")) ?? item.text[0];
+        const signature = start && signatureAt(header, start[0].length);
+        if (!signature || signature.generics) continue;
+        const tags = signature.parameters
+          .map((parameter, index) =>
+            /^(\.\.\.)?([\w$]+)(\?)?: (.*)$/.exec(declaredParameter(parameter, index, () => "any")),
+          )
+          .filter(found => found !== null && found[2] !== "this")
+          .map(
+            found =>
+              `@param {${found![1] ?? ""}${areWrong && chance(50) ? pick(primitives.slice(0, 4)) : known(found![4]).replace(/\[\]$/, found![1] ? "" : "[]")}} ${found![3] ? `[${found![2]}]` : found![2]}`,
+          );
+        const returns =
+          areWrong && chance(60) ? pick([...primitives, ...otherTypes]) : known(signature.returns ?? "any");
+        code = code.replace(
+          new RegExp(`^(?=export (?:async )?function\\*? ?${item.name.replaceAll("$", "\\$")}\\()`, "m"),
+          `/** ${[...tags, `@returns {${returns}}`].join(" ")} */\n`,
+        );
+        doubtful.add(item.name);
+      }
+      return code;
+    };
     const javaScript = () =>
       [
         ...(calledByName.length ? [`import { ${calledByName.join(", ")} } from "${toMain}";`] : []),
-        erased(typedText) + calls.join("\n"),
+        withComments(erased(typedText)) + calls.join("\n"),
         "",
       ].join("\n");
     const name = `part${number}-${hash}`;
+    let hasGetters = false;
     const lay = (path: string, content: string) => files.push([`${folder}/${path}`, content]);
     switch (part.form) {
       case "ts": {
@@ -599,7 +790,40 @@ export function splitIntoFiles(text: string, extension: string) {
             return `${found[0]}${signature.generics}(${parameters.join(", ")})${/^export (?:async|function\*)/.test(line) ? (signature.returns ? `: ${signature.returns}` : "") : returns} {`;
           });
           lay(`${name}.ts`, ["// @ts-nocheck", ...importOf(needed), ...wrong, ""].join("\n"));
-        } else lay(`${name}.ts`, typedText);
+          break;
+        }
+        // The part can have a declaration of its own for a type of main, under the same name, and that one can say something else.
+        const copies: string[] = [];
+        const copied = new Set<string>();
+        let isChanged = false;
+        for (const type of needed.filter(other => declared.get(other) === "type" && chance(35))) {
+          const first = lines.findIndex(line => new RegExp(`^(?:interface|type) ${type}\\b`).test(line));
+          const last =
+            first < 0 || !lines[first].endsWith("{")
+              ? first
+              : lines.findIndex((line, index) => index > first && /^\}/.test(line));
+          if (last < 0) continue;
+          const declaration = lines.slice(first, last + 1).join("\n");
+          const isThisChanged = chance(60);
+          isChanged ||= isThisChanged;
+          copies.push(isThisChanged ? changed(declaration) : declaration);
+          copied.add(type);
+        }
+        const mentionedInCopies = namesIn(copies.join("\n"));
+        const imported = [
+          ...new Set([
+            ...needed,
+            ...[...declared.keys()].filter(
+              other =>
+                declared.get(other) !== "value" && declared.get(other) !== "function" && mentionedInCopies.has(other),
+            ),
+          ]),
+        ].filter(other => !copied.has(other) && !inPart.has(other));
+        for (const other of imported) (declared.get(other) === "type" ? exportedTypes : exportedValues).add(other);
+        lay(
+          `${name}.ts`,
+          [...(isChanged ? ["// @ts-nocheck"] : []), ...importOf(imported), ...copies, ...body, ""].join("\n"),
+        );
         break;
       }
       case "js":
@@ -608,12 +832,32 @@ export function splitIntoFiles(text: string, extension: string) {
         part.specifier = `./${name}.${part.form}`;
         lay(`${name}.${part.form}`, part.form === "cjs" ? asCommonJs(javaScript()) : javaScript());
         if (part.types !== "none") lay(`${name}.d.${part.form.replace("js", "ts")}`, declarations());
+        // What a compiler to CommonJS makes of `export { x } from`: a file whose names are getters onto the names of another file. Up to three in a row.
+        if (part.form === "cjs" && chance(50))
+          for (let level = 1 + below(3); level > 0; level--) {
+            const outer = `getters${level}of${number}-${hash}`;
+            lay(
+              `${outer}.cjs`,
+              [
+                ...(chance(50) ? ['Object.defineProperty(exports, "__esModule", { value: true });'] : []),
+                `var inner_1 = require("${part.specifier}");`,
+                ...exportsOfPart.map(
+                  other =>
+                    `Object.defineProperty(exports, "${other}", { enumerable: true, get: function () { return inner_1.${other}; } });`,
+                ),
+                "",
+              ].join("\n"),
+            );
+            if (part.types !== "none") lay(`${outer}.d.cts`, `export * from "${part.specifier}";\n`);
+            part.specifier = `./${outer}.cjs`;
+            hasGetters = true;
+          }
         break;
       }
       default: {
         part.specifier = `package${number}-${hash}`;
         const root = `node_modules/${part.specifier}`;
-        const isModule = chance(50);
+        const isModule = hasAVariable || chance(50);
         const manifest: Record<string, unknown> = {
           name: part.specifier,
           version: "1.0.0",
@@ -643,20 +887,74 @@ export function splitIntoFiles(text: string, extension: string) {
         lay(`${root}/package.json`, JSON.stringify(manifest, null, 2) + "\n");
       }
     }
-    // Between main and the part can stand a file in TypeScript that hands the names on.
+    // Between main and the part can stand a file that hands the names on.
     let from = part.specifier;
-    if (isTypeScript && chance(25)) {
-      const between = `between${number}-${hash}.ts`;
+    if (!isTypeScript && chance(hasGetters ? 70 : 20)) {
+      const between = `between${number}-${hash}.mjs`;
       lay(
         between,
-        (chance(50)
-          ? `export * from "${from}";`
-          : `${isWrong || part.types === "none" ? "// @ts-ignore\n" : ""}export { ${exportsOfPart.join(", ")} } from "${from}";`) +
-          "\n",
+        (chance(70) ? `export * from "${from}";` : `export { ${exportsOfPart.join(", ")} } from "${from}";`) + "\n",
       );
       from = `./${between}`;
     }
-    importsOfMain.push(`import { ${exportsOfPart.join(", ")} } from "${from}";`);
+    if (isTypeScript && chance(hasGetters ? 70 : 25)) {
+      const between = `between${number}-${hash}.ts`;
+      const ignore = isWrong || part.types === "none" ? ["// @ts-ignore"] : [];
+      // A function of its own around each function of the part, with the types that the part is said to have.
+      const wrapped = chance(40)
+        ? part.items
+            .filter(
+              item =>
+                item.kind === "function" &&
+                /^function [a-z]/.test(
+                  item.text.at(-1)!.endsWith(";") ? "" : (item.text.find(line => !line.endsWith(";")) ?? ""),
+                ),
+            )
+            .map(item => item.name)
+        : [];
+      const handedOn = exportsOfPart.filter(other => !wrapped.includes(other));
+      lay(
+        between,
+        (wrapped.length
+          ? [
+              ...ignore,
+              `import { ${wrapped.map(other => `${other} as ${other}OfThePart`).join(", ")} } from "${from}";`,
+              ...wrapped.map(
+                other =>
+                  `export function ${other}(this: unknown, ...given: Parameters<typeof ${other}OfThePart>): ReturnType<typeof ${other}OfThePart> { return ${other}OfThePart.apply(this, given); }`,
+              ),
+              ...(handedOn.length ? [...ignore, `export { ${handedOn.join(", ")} } from "${from}";`] : []),
+            ]
+          : chance(50)
+            ? [`export * from "${from}";`]
+            : [...ignore, `export { ${exportsOfPart.join(", ")} } from "${from}";`]
+        ).join("\n") + "\n",
+      );
+      from = `./${between}`;
+      for (const other of wrapped) doubtful.add(other);
+    }
+    // A part that imports nothing of main can be loaded while main runs. A class is also a type, which a constant isn't.
+    const canBeConstants =
+      isClosed &&
+      calledByName.length === 0 &&
+      part.items.every(item => item.kind !== "variable") &&
+      (!isTypeScript || part.items.every(item => item.kind !== "class" || item.throughAFunction));
+    const names = `{ ${exportsOfPart.join(", ")} }`;
+    const isCommonJs = part.form === "cjs";
+    importsOfMain.push(
+      canBeConstants && chance(35)
+        ? pick([
+            `import * as part${number} from "${from}";\nconst ${names} = part${number};`,
+            `const ${names} = await import("${from}");`,
+            ...(isCommonJs && from === part.specifier
+              ? [
+                  `const ${names} = require("${from}")${isTypeScript ? ` as typeof import("${from}")` : ""};`,
+                  `const ${names} = require("${from}");`,
+                ]
+              : []),
+          ])
+        : `import ${names} from "${from}";`,
+    );
     if (part.types !== "right" || part.form === "ts") for (const name of exportsOfPart) doubtful.add(name);
     for (const item of part.items) if (item.throughAFunction) doubtful.add(item.name);
   });

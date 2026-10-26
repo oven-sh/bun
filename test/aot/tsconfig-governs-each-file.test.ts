@@ -301,17 +301,21 @@ test("rootDir has no say about the test files of other tsconfig.json files", asy
   expect(exitCode).toBe(0);
 });
 
-test("strictNullChecks is the program's: a file of a project without it that needs the leniency stops the build of a strict program", async () => {
+test("strictNullChecks is that of the nearest tsconfig.json, whichever the entry point's is", async () => {
   using dir = tempDir("tsconfig-governs-each-file", {
     "strict/tsconfig.json": config(),
     "strict/main.ts": `import { nothing } from "../lax/lax";\nconsole.log(nothing);\n`,
+    "strict/none.ts": `export const none: number = null;\n`,
     "lax/tsconfig.json": config({ strict: false }),
+    "lax/main.ts": `import { none } from "../strict/none";\nconsole.log(none);\n`,
     "lax/lax.ts": `export const nothing: number = null;\n`,
   });
-  const together = await run(String(dir), "check", "--aot", "strict/main.ts");
-  expect(errors(together.said)).toEqual(["lax/lax.ts TS2322"]);
-  expect(together.said).not.toContain("TS100010");
-  expect(together.exitCode).toBe(1);
+  const belowStrict = await run(String(dir), "check", "--aot", "strict/main.ts");
+  expect({ errors: errors(belowStrict.said), exitCode: belowStrict.exitCode }).toEqual({ errors: [], exitCode: 0 });
+  const belowLax = await run(String(dir), "check", "--aot", "lax/main.ts");
+  expect(errors(belowLax.said)).toEqual(["strict/none.ts TS2322"]);
+  expect(belowLax.said).not.toContain("TS100010");
+  expect(belowLax.exitCode).toBe(1);
   const alone = await run(String(dir), "check", "--aot", "lax/lax.ts");
   expect({ errors: errors(alone.said), exitCode: alone.exitCode }).toEqual({ errors: [], exitCode: 0 });
 });

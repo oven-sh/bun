@@ -42,7 +42,9 @@ pub fn load_program_with_parsed_files<'s>(
         EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
             resolve_entry_points(host, request.code, specifiers)?
         }
-        EntryPoints::Resolved(paths) | EntryPoints::Configured(paths, _) => paths.to_vec(),
+        EntryPoints::Resolved(paths)
+        | EntryPoints::Imported(paths)
+        | EntryPoints::Configured(paths, _) => paths.to_vec(),
     };
     debug_assert!(!entry_paths.is_empty());
     let mut project = find_project(host, request, &entry_paths)?;
@@ -113,7 +115,7 @@ pub fn load_program_with_parsed_files<'s>(
         &CompileInputs {
             entry_points: &entry_paths,
             main_module: match request.entry_points {
-                EntryPoints::Configured(..) => MainModule::Elsewhere,
+                EntryPoints::Configured(..) | EntryPoints::Imported(_) => MainModule::Elsewhere,
                 EntryPoints::WrittenFor(_, main_module) => main_module,
                 EntryPoints::Written(_) | EntryPoints::Resolved(_) => MainModule::EntryPoint,
             },
@@ -279,7 +281,9 @@ pub fn find_configuration_of_each_entry_point(
         EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
             resolve_entry_points(host, request.code, specifiers).ok()?
         }
-        EntryPoints::Resolved(paths) | EntryPoints::Configured(paths, _) => paths.to_vec(),
+        EntryPoints::Resolved(paths)
+        | EntryPoints::Imported(paths)
+        | EntryPoints::Configured(paths, _) => paths.to_vec(),
     };
     let mut of_folder: FxHashMap<Vec<u8>, Option<Vec<u8>>> = FxHashMap::default();
     let mut found = Vec::with_capacity(entry_paths.len());

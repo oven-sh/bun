@@ -2,7 +2,7 @@
 mod tests;
 
 use super::bindings::{AccessedModule, Holder, ImportBinding, RequiredName};
-use super::exports::{ExportTables, Resolution};
+use super::exports::{ExportTables, Resolution, ResolvedName};
 use super::failures::{ModuleFailureKind, PendingFailure, SitePart, WrittenPart};
 use super::interop::{ImportPhase, ModuleKind, SyntheticExportRule};
 use super::module_set::ModuleSet;
@@ -343,14 +343,42 @@ impl<'a, 's> FileBinder<'a, 's> {
         names.any(|(_, resolved)| resolved.resolution == variable)
     }
 
+    /// What an import of the name is bound to.
     pub(super) fn resolve_name(
         &self,
         exporter: ModuleRef,
         name: Atom,
     ) -> Result<(PendingBinding, Option<RequiredName>), ModuleFailureKind> {
         let context = self.context;
-        let not_found = ModuleFailureKind::ExportNotFound { exporter, name };
         let resolved = context.tables.resolve_in(context.modules, exporter, name);
+        self.bind_resolved_name(exporter, name, resolved)
+    }
+
+    /// The namespace object of the module lacks the name, whatever an import statement is bound to.
+    pub(super) fn is_hidden_from_namespace(&self, module: ModuleRef, name: Atom) -> bool {
+        let context = self.context;
+        (context.tables).is_hidden_from_namespace(context.modules, module, name)
+    }
+
+    /// What `require(K).name` reads.
+    pub(super) fn resolve_required_name(
+        &self,
+        exporter: ModuleRef,
+        name: Atom,
+    ) -> Result<(PendingBinding, Option<RequiredName>), ModuleFailureKind> {
+        let context = self.context;
+        let resolved = (context.tables).resolve_required(context.modules, exporter, name);
+        self.bind_resolved_name(exporter, name, resolved)
+    }
+
+    fn bind_resolved_name(
+        &self,
+        exporter: ModuleRef,
+        name: Atom,
+        resolved: ResolvedName,
+    ) -> Result<(PendingBinding, Option<RequiredName>), ModuleFailureKind> {
+        let context = self.context;
+        let not_found = ModuleFailureKind::ExportNotFound { exporter, name };
         let binding = match resolved.resolution {
             Resolution::Variable(symbol) => PendingBinding::Bound(ImportBinding::Variable(symbol)),
             Resolution::Namespace { module, phase } => {

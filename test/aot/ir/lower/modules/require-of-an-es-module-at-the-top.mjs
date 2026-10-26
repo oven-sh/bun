@@ -1,6 +1,6 @@
 // RUN: lower
 // CHECK: function {{*}}kind=Module
-// CHECK: EvaluateModule module=[[below]] referrer=[[entry]] [isBare]
+// CHECK: EvaluateModule module=[[below]] referrer=[[entry]] [isBare, isCallOfRequire]
 // CHECK: [[c]] = GetModuleVariable
 // CHECK: = Add
 // CHECK: PutModuleVariable

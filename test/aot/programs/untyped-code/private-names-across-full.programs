@@ -182,14 +182,15 @@ console.log(turns.join(" "));
 
 var calls = 0;
 var busy = new Proxy({}, { get(t, key) { calls++; return key; } });
-function straight() { return count("operationAOTPrepareProxyGet"); }
+function straight() { return count("operationAOTGetById") + count("operationAOTGetByIdAndCache") + count("operationAOTGetGeneric") + count("operationAOTGetWithProxyTrap") + count("operationAOTValidateAnswerOfProxyTrap"); }
 var before = straight();
 for (var i = 0; i < 500; i++) { byName(busy); byOtherName(busy); }
-console.log(calls, !counted() || straight() - before === 1000);
+console.log(calls, !counted() || straight() - before <= 10);
 var plain = { wanted: 1, other: 2 };
-before = straight();
+function forProxies() { return count("operationAOTGetWithProxyTrap") + count("operationAOTValidateAnswerOfProxyTrap"); }
+before = forProxies();
 for (var i = 0; i < 500; i++) { byName(plain); byOtherName(plain); }
-console.log(straight() - before);
+console.log(forProxies() - before);
 
 function place(error) {
   var lines = String(error.stack).split("\n").filter(function (line) { return /properties-through-proxies/.test(line); });
@@ -860,14 +861,14 @@ console.log("get trap again:", read(proxy), operandsAreRight.every(Boolean));
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const counts = typeof aotOperationCount === "function" && aotOperationCount("operationAOTGetByIdAndCache") !== null;
 const count = counts ? aotOperationCount : () => 0;
-function trapLookups() { return count("operationAOTPrepareProxyGet"); }
-function genericReads() { return count("operationAOTGetByIdAndCache"); }
+function trapLookups() { return count("operationAOTGetWithProxyTrap") + count("operationAOTValidateAnswerOfProxyTrap"); }
+function genericReads() { return count("operationAOTGetByIdAndCache") + count("operationAOTGetById") + count("operationAOTGetByVal") + count("operationAOTGetGeneric"); }
 function countsNow() { return { trapLookups: trapLookups(), genericReads: genericReads() }; }
-// The stub looks up the trap at each of the 100 reads. It calls the trap it finds, and passes the read on to the generic operation if it finds none. A few reads of other objects enter that operation too.
+// The stub reads the trap off the handler at each of the 100 reads and calls the function it finds. It asks the run time once a read where it finds none, where the proxy is revoked, or where the target may bind the answer. A few reads of other objects enter the generic operations too.
 function countsAreAsExpected(before, expected) {
   if (!counts) return true;
-  var passedOn = genericReads() - before.genericReads;
-  return trapLookups() - before.trapLookups === 100 && (expected === 100 ? passedOn <= 10 : passedOn >= 100);
+  var entered = trapLookups() - before.trapLookups + genericReads() - before.genericReads;
+  return entered <= 110;
 }
 function read(o) { return o.wanted; }
 function call(o) { return o.wanted(); }
@@ -957,8 +958,8 @@ console.log(lines.join("\n"));
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const counts = typeof aotOperationCount === "function" && aotOperationCount("operationAOTGetByIdAndCache") !== null;
 const count = counts ? aotOperationCount : () => 0;
-function trapLookups() { return count("operationAOTPrepareProxyGet"); }
-function genericReads() { return count("operationAOTGetByIdAndCache"); }
+function trapLookups() { return count("operationAOTGetWithProxyTrap") + count("operationAOTValidateAnswerOfProxyTrap"); }
+function genericReads() { return count("operationAOTGetByIdAndCache") + count("operationAOTGetById") + count("operationAOTGetGeneric"); }
 var seen = [];
 var atTop = new Proxy({ held: 1 }, { get(t, key, receiver) { seen.push(key + (receiver === atTop ? "" : " with another receiver") + (this.get ? "" : " with another this")); return "top " + key; } });
 var tops = [atTop.first, atTop.second, atTop.third, atTop.held, atTop.constructor];
@@ -973,9 +974,9 @@ var trapped = new Proxy(plain, { get(t, key) { return "<" + t[key] + ">"; } });
 var lookupsBefore = trapLookups(), genericReadsBefore = genericReads();
 var answers = [];
 for (var i = 0; i < 50; i++) answers = [several(trapped), destructured(trapped), inLoop([trapped, plain, trapped])];
-// The stub looks up the trap at each read of the proxy and calls it. It would pass a read on to the generic operation, which a few reads of other objects enter too.
+// The stub reads the trap off the handler at each read of the proxy and calls it. A few reads of other objects enter the generic operations.
 var lookups = trapLookups() - lookupsBefore, passedOn = genericReads() - genericReadsBefore;
-console.log(answers.join(" | "), "|", !counts || (lookups === 50 * (5 + 3 + 6) && passedOn <= 10));
+console.log(answers.join(" | "), "|", !counts || (lookups === 0 && passedOn <= 10));
 
 function attempt(label, work) { var answer; try { answer = String(work()); } catch (error) { answer = "threw " + error.constructor.name + ": " + error.message; } console.log(label + ": " + answer); }
 var fixed = Object.freeze({ alpha: 1, beta: 2, gamma: 3, delta: 4, epsilon: 5 });

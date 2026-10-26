@@ -80,6 +80,8 @@ attempt("a private method and a private field", () => WithBoth.call(new WithBoth
 class Untouched extends Base { #m() { return 8; } static call(made) { return made.#m(); } }
 attempt("the parent as it was written", () => Untouched.call(new Untouched()));
 for (let turn = 0; turn < 3; turn++) attempt("again", () => WithMethod.call(new WithMethod(at)));
+// The address is good for as long as the bytes are held.
+console.log("the bytes", bytes.join());
 //// a-digest-is-written-into-the-array-that-is-given-validated.ts
 // `digest(bytes)` and `hash(input, bytes)` write into the array they are given and answer it. An element that was read in front of the call is read again behind it.
 function ofAnInstance(): string {
@@ -341,6 +343,8 @@ told("out of an object", () => make({ Class: Bun.FFI.CString }.Class, at));
 told("a subclass", () => new (class extends Bun.FFI.CString {})(at));
 told("new.target is another", () => Reflect.construct(Bun.FFI.CString, [at], Kept));
 told("bound", () => make(Bun.FFI.CString.bind(null), at));
+// The address is good for as long as the bytes are held.
+console.log("the bytes", bytes.join());
 //// a-host-constructor-that-answers-with-a-string-is-constructed-through-a-parameter.js
 const { CString, ptr } = require("bun:ffi");
 function make(Class, argument) {
@@ -422,6 +426,8 @@ for (const [name, items] of [["a list", [1, 2]], ["what has a length", { length:
     console.log("Array.fromAsync", name, "throws", error.name);
   }
 }
+// The address is good for as long as the bytes are held.
+console.log("the bytes", bytes.join());
 //// a-listener-is-removed-from-the-global-scope-before-any-was-added.ts
 // The global scope is an EventTarget. Taking a listener off it before anything was ever added to it does nothing. An executable once died here.
 const listener = () => console.log("never called");

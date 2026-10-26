@@ -32,9 +32,11 @@ impl EvaluatedTexts {
         }
     }
 
+    /// `index` counts the texts of the importer in the order in which they are written.
     pub(crate) fn add(
         &self,
         importer: &[u8],
+        index: usize,
         text: &EvaluatedText,
         atoms: &Interner<'_>,
     ) -> Option<Vec<u8>> {
@@ -43,7 +45,7 @@ impl EvaluatedTexts {
             EvaluatedTextForm::FunctionBody => try_create_function_text(&texts)?,
             EvaluatedTextForm::Script => try_create_script_text(texts.first()?)?,
         };
-        let path = create_virtual_path(importer, text.call);
+        let path = create_virtual_path(importer, index);
         let stored = self
             .files
             .insert_ref(path.clone(), source.clone().into_boxed_slice());
@@ -113,11 +115,11 @@ fn has_replaced_expression(hir: &File<'_>, decisions: &Decisions<'_>) -> bool {
     })
 }
 
-fn create_virtual_path(importer: &[u8], call: ExprId) -> Vec<u8> {
+fn create_virtual_path(importer: &[u8], index: usize) -> Vec<u8> {
     let mut path = [HOST_ROOT, VIRTUAL_DIRECTORY].concat();
     append_encoded_segment(&mut path, importer);
     path.push(b'/');
-    path.extend_from_slice(call.0.to_string().as_bytes());
+    path.extend_from_slice(index.to_string().as_bytes());
     path.extend_from_slice(VIRTUAL_EXTENSION);
     path
 }
@@ -592,11 +594,11 @@ mod tests {
     }
 
     #[test]
-    fn paths_differ_by_importer_and_call() {
-        let path = create_virtual_path(IMPORTER, ExprId(7));
+    fn paths_differ_by_importer_and_index() {
+        let path = create_virtual_path(IMPORTER, 7);
         assert_eq!(path, b"/$bun/text/%2fproject%2fa.js/7.cjs");
-        assert_ne!(path, create_virtual_path(b"/project/b.js", ExprId(7)));
-        assert_ne!(path, create_virtual_path(IMPORTER, ExprId(8)));
+        assert_ne!(path, create_virtual_path(b"/project/b.js", 7));
+        assert_ne!(path, create_virtual_path(IMPORTER, 8));
     }
 
     #[test]
@@ -606,9 +608,9 @@ mod tests {
         let texts = EvaluatedTexts::new();
         let text = create_function_call(&atoms, ExprId(3), b"return this");
 
-        let path = texts.add(IMPORTER, &text, &atoms).unwrap();
+        let path = texts.add(IMPORTER, 0, &text, &atoms).unwrap();
 
-        assert_eq!(texts.add(IMPORTER, &text, &atoms).as_ref(), Some(&path));
+        assert_eq!(texts.add(IMPORTER, 0, &text, &atoms).as_ref(), Some(&path));
         assert_eq!(texts.files.entries(), 1);
         assert!(texts.contains(&path));
         let expected = b"(function anonymous(\n) {\nreturn this\n})";
@@ -623,8 +625,8 @@ mod tests {
         let first = create_function_call(&atoms, ExprId(3), b"return 1");
         let second = create_function_call(&atoms, ExprId(3), b"return 2");
 
-        assert!(texts.add(IMPORTER, &first, &atoms).is_some());
-        assert_eq!(texts.add(IMPORTER, &second, &atoms), None);
+        assert!(texts.add(IMPORTER, 0, &first, &atoms).is_some());
+        assert_eq!(texts.add(IMPORTER, 0, &second, &atoms), None);
     }
 
     #[test]
@@ -634,9 +636,9 @@ mod tests {
         let texts = EvaluatedTexts::new();
         let text = create_function_call(&atoms, ExprId(3), b"return (");
 
-        assert_eq!(texts.add(IMPORTER, &text, &atoms), None);
+        assert_eq!(texts.add(IMPORTER, 0, &text, &atoms), None);
 
-        let path = create_virtual_path(IMPORTER, ExprId(3));
+        let path = create_virtual_path(IMPORTER, 0);
         assert!(!texts.contains(&path));
         assert_eq!(texts.read(&path), None);
     }

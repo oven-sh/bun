@@ -584,6 +584,7 @@ export function write(
               "await Promise.resolve",
               list("(", [number(next)], ")"),
               ".then",
+              typed("<number>"),
               list("(", [arrow(next, [fresh("value")], [": number"])], ")"),
             ]),
         ],

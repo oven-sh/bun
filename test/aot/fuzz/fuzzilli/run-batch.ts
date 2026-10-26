@@ -9,6 +9,7 @@
 // `--hides-function-text` is for a Bun built with --fuzzilli=on: neither run shows the text of a function, which the two spell differently.
 // `--prints-members 60` rewrites 60 programs of 100 so that they print members of their objects in place of the objects (print-members-of-objects.ts).
 // `--one-scene 40` leaves 40 programs of 100 one of their scenes.
+// `--hooks-fail 30` lets functions that built-ins call end in an error of the engine, in 30 programs of 100.
 // `--splits 80` cuts functions and classes of 80 programs of 100 out into other files, with declarations that can be wrong (split-into-files.ts).
 import {
   appendFileSync,
@@ -24,7 +25,7 @@ import {
 import { dirname, extname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { opensTheWorld } from "../the-world-is-open.ts";
-import { keepOneScene, printMembersOfObjects, randomFrom } from "./print-members-of-objects.ts";
+import { endHooksInErrors, keepOneScene, printMembersOfObjects, randomFrom } from "./print-members-of-objects.ts";
 import { splitIntoFiles } from "./split-into-files.ts";
 
 const { values: options } = parseArgs({
@@ -42,6 +43,7 @@ const { values: options } = parseArgs({
     "prints-members": { type: "string", default: "0" },
     splits: { type: "string", default: "0" },
     "one-scene": { type: "string", default: "0" },
+    "hooks-fail": { type: "string", default: "0" },
     "hides-function-text": { type: "boolean", default: false },
     // Kinds of outcomes that are only counted otherwise, separated by commas.
     "also-keep": { type: "string", default: "" },
@@ -183,6 +185,8 @@ type Built = {
   refused: Set<number>;
   /** The first error of each refused program: its code, or its first words. */
   reasonsOfRefusals?: string[];
+  /** What the build wrote when it refused programs. */
+  errors?: string;
   writesToBuiltins: Set<number>;
   areOneProgram?: boolean;
   openedBy?: number;
@@ -240,7 +244,8 @@ async function build(
     ([stop]) => stop,
   );
   const reason = stops.find(stop => programsNamedBy(stop, folder).length) ?? stops[0];
-  if (!ran.signal && reason === undefined && refused.size) return { refused, reasonsOfRefusals, writesToBuiltins };
+  if (!ran.signal && reason === undefined && refused.size)
+    return { refused, reasonsOfRefusals, errors: ran.stderr.slice(0, 32 << 10), writesToBuiltins };
   const culprit = programsNamedBy(reason ?? "", folder)[0];
   return {
     refused,
@@ -728,6 +733,7 @@ function rewritten(text: string, extension: string) {
   const random = randomFrom("rewritten" + text);
   const isTypeScript = extension.endsWith("ts");
   if (random() * 100 < Number(options["one-scene"])) text = keepOneScene(text);
+  if (random() * 100 < Number(options["hooks-fail"])) text = endHooksInErrors(text, isTypeScript);
   if (random() * 100 < Number(options["prints-members"])) text = printMembersOfObjects(text, isTypeScript);
   if (random() * 100 < Number(options.splits)) text = splitIntoFiles(text, extension);
   return text;
@@ -783,6 +789,46 @@ for (let batch = 0; batches === 0 || batch < batches || waitingWithTheWorldOpen.
     if (refused.size) {
       add("refused", refused.size - (stopped ? 1 : 0));
       for (const reason of built.reasonsOfRefusals ?? []) add(`refused: ${reason}`);
+      // A build reports the errors of the type checker. A program in a folder with a tsconfig.json is a project, which `bun check` checks as a whole.
+      for (const index of refused) {
+        const project = /^\/\/ @filename: \.\/(\S+)\/tsconfig\.json$/m.exec(texts[index])?.[1];
+        if (project === undefined || index === stopped?.culprit) continue;
+        // What a second entry point reaches is checked with the first entry point's answer to whether `undefined` and `null` belong to every type, and a group is a second entry point.
+        if (/^ +"strict(?:NullChecks)?": false,?$/m.test(texts[index])) continue;
+        // How far the checker reads the JavaScript of packages is the entry point's answer too.
+        if (/^ +"maxNodeModuleJsDepth": [1-9]/m.test(texts[index])) continue;
+        // An error with six digits is the compiler's own, about what cannot run, such as a regular expression that isn't valid.
+        if (
+          (built.errors ?? "")
+            .split(/^(?=error)/m)
+            .some(error => /^error: TS\d{6}\b/.test(error) && error.includes(project))
+        )
+          continue;
+        const checked = await spawn("check", [bun, "check", "--no-pretty"], join(folder, "programs", project), {}, 60);
+        // Below `// @ts-nocheck` the checker is silent about what no Bun can run, such as an assignment to a constant. A build without --aot refuses that too.
+        let isRefusedWithoutAot = false;
+        if (checked.exitCode === 0) {
+          const alone = join(work, `alone-${process.pid}`);
+          layOut(alone, [texts[index]], extension, 1);
+          await build(alone, 1, extension, 1, []);
+          isRefusedWithoutAot = !existsSync(join(alone, "batch"));
+          rmSync(alone, { recursive: true, force: true });
+        }
+        add(
+          checked.exitCode !== 0
+            ? "refused by bun check too"
+            : isRefusedWithoutAot
+              ? "refused by a build without --aot too"
+              : "refused though bun check accepts the project",
+        );
+        if (checked.exitCode === 0 && !isRefusedWithoutAot)
+          keepFind("refused-though-checked", (built.reasonsOfRefusals ?? []).join(" "), {
+            ["program" + extension]: texts[index],
+            "report.txt": `the build refuses a program that bun check accepts, one of ${texts.length} programs in groups of ${groupSize}, number ${index}\n${bun} build --compile --aot ${buildFlags.join(" ")}\n`,
+            "compiler.stderr": built.errors ?? "",
+            "check.stdout": checked.stdout,
+          });
+      }
       texts = texts.filter((_, index) => !refused.has(index));
       continue;
     }

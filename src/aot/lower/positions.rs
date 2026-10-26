@@ -32,10 +32,17 @@ pub(crate) struct FunctionPositions {
     pub(crate) yielded: DeclaredType,
 }
 
+#[derive(Copy, Clone)]
+struct NamedVariable {
+    position: DeclaredType,
+    is_constant_zero: bool,
+}
+
 #[derive(Default)]
 pub(in crate::lower) struct PositionState {
     annotations: FxHashMap<(TypeNodeId, TypeSiteKind), DeclaredType>,
-    named_variables: FxHashMap<SymbolId, Sym>,
+    /// By `SymbolId`.
+    named_variables: Vec<Option<NamedVariable>>,
     variables: FxHashMap<Sym, DeclaredType>,
     /// Each `const zero = 0` whose position is in `variables`.
     constant_zeros: FxHashSet<Sym>,
@@ -284,25 +291,42 @@ impl FileLowering<'_, '_, '_, '_> {
         position
     }
 
-    pub(crate) fn binding_position(&mut self, symbol: SymbolId) -> DeclaredType {
-        if let Some(&variable) = self.types.positions.named_variables.get(&symbol) {
-            return self.variable_position(variable);
+    #[inline]
+    fn named_variable(&mut self, symbol: SymbolId) -> NamedVariable {
+        match self.types.positions.named_variables.get(symbol.idx()) {
+            Some(&Some(named)) => named,
+            _ => self.find_named_variable(symbol),
         }
+    }
+
+    fn find_named_variable(&mut self, symbol: SymbolId) -> NamedVariable {
         let variable = match self.inputs.modules.import_binding(self.file, symbol) {
             ImportBinding::Variable(exported) => exported,
             _ => self.queries.canonical_symbol(self.file, symbol),
         };
-        let memo = &mut self.types.positions.named_variables;
-        memo.insert(symbol, variable);
-        self.variable_position(variable)
+        let position = self.variable_position(variable);
+        let positions = &mut self.types.positions;
+        let named = NamedVariable {
+            position,
+            is_constant_zero: positions.constant_zeros.contains(&variable),
+        };
+        let memo = &mut positions.named_variables;
+        if memo.is_empty() {
+            memo.resize(self.bound.symbols.len(), None);
+        }
+        if let Some(stored) = memo.get_mut(symbol.idx()) {
+            *stored = Some(named);
+        }
+        named
+    }
+
+    pub(crate) fn binding_position(&mut self, symbol: SymbolId) -> DeclaredType {
+        self.named_variable(symbol).position
     }
 
     /// Whether the name stands for a `const zero = 0`, of this file or imported.
     pub(in crate::lower) fn is_constant_zero(&mut self, symbol: SymbolId) -> bool {
-        self.binding_position(symbol);
-        let positions = &self.types.positions;
-        let variable = positions.named_variables.get(&symbol);
-        variable.is_some_and(|variable| positions.constant_zeros.contains(variable))
+        self.named_variable(symbol).is_constant_zero
     }
 
     pub(crate) fn variable_position(&mut self, symbol: Sym) -> DeclaredType {

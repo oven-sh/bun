@@ -605,6 +605,7 @@ fn find_absent_name(
 }
 
 pub(super) fn resolve_exports(
+    files: &Files<'_>,
     scans: &Scans,
     modules: &ModuleSet,
     entries: CollectedEntries,
@@ -615,11 +616,11 @@ pub(super) fn resolve_exports(
         commonjs_imports,
         mut commonjs_namespace_loads,
     } = entries;
-    let files: Vec<FileId> = entries.iter().map(|module| module.file).collect();
+    let table_files: Vec<FileId> = entries.iter().map(|module| module.file).collect();
     let has_table = |file: &&FileId| modules.table_file(ModuleRef::File(**file)).is_some();
-    let table_files = modules.record_files.iter().filter(has_table);
-    debug_assert!(files.iter().eq(table_files));
-    let (component_of, star_exports) = compute_star_exports(scans, &entries, &files);
+    let files_with_table = modules.record_files.iter().filter(has_table);
+    debug_assert!(table_files.iter().eq(files_with_table));
+    let (component_of, star_exports) = compute_star_exports(scans, &entries, &table_files);
     let mut nodes = NameNodes::default();
     for (module, &component) in entries.iter().zip(&component_of) {
         nodes.add_file(module, &star_exports[component as usize]);
@@ -627,7 +628,7 @@ pub(super) fn resolve_exports(
     let mut graph = ResolutionGraph {
         scans,
         modules,
-        files: &files,
+        files: &table_files,
         nodes: &nodes,
         starts: vec![Summary::EMPTY; nodes.keys.len()],
         edges: vec![Vec::new(); nodes.keys.len()],
@@ -652,14 +653,14 @@ pub(super) fn resolve_exports(
         }
     }
     let mut tables = ExportTables {
-        files,
+        files: table_files,
         tables: nodes.tables,
         results,
         index: nodes.index,
         failures,
         ..ExportTables::default()
     };
-    tables.commonjs = resolve_commonjs_names(modules, &tables, commonjs.entries());
+    tables.commonjs = resolve_commonjs_names(files, modules, &tables, commonjs.entries());
     for position in 0..tables.results.len() {
         let resolved = tables.follow(tables.results[position].1);
         tables.results[position].1 = resolved;
@@ -684,11 +685,15 @@ pub(super) fn resolve_exports(
     absent_names.shared_sort_by_key(|&(imported, order)| (imported.importer, order));
     tables.absent_commonjs_names = absent_names;
     let imported = commonjs_imports.iter().map(|written| written.imported);
-    let names_file = |imported: &CommonJsImport| {
-        let exporter = ModuleRef::File(imported.exporter);
-        modules.find_commonjs_file(exporter).is_some()
-    };
-    tables.commonjs_imports = imported.filter(names_file).collect();
+    let imported = imported.filter_map(|imported| {
+        let named = ModuleRef::File(imported.exporter);
+        let exporter = tables.find_commonjs_exporter(modules, named, imported.name)?;
+        Some(CommonJsImport {
+            exporter,
+            ..imported
+        })
+    });
+    tables.commonjs_imports = imported.collect();
     commonjs_namespace_loads.sort_unstable();
     commonjs_namespace_loads.dedup();
     tables.commonjs_namespace_loads = commonjs_namespace_loads;
@@ -713,7 +718,7 @@ pub(super) struct ExportTables {
 
 impl ExportTables {
     // A name of a CommonJS module may stand for a name of another module, or for a binding.
-    fn follow(&self, resolved: ResolvedName) -> ResolvedName {
+    fn follow_getter(&self, resolved: ResolvedName) -> ResolvedName {
         let Resolution::Synthetic { module, name } = resolved.resolution else {
             return resolved;
         };
@@ -726,6 +731,17 @@ impl ExportTables {
         }
     }
 
+    // An ES module is bound to what the name stands for where nobody can tell that from a copy.
+    fn follow(&self, resolved: ResolvedName) -> ResolvedName {
+        match resolved.resolution {
+            Resolution::Synthetic { module, name } if self.commonjs.is_copied(module, name) => {
+                resolved
+            }
+            _ => self.follow_getter(resolved),
+        }
+    }
+
+    /// What an ES module that imports the name is bound to.
     pub(super) fn resolve(&self, modules: &ModuleSet, module: FileId, name: Atom) -> ResolvedName {
         if let Some(&node) = self.index.get(&(module, name)) {
             return self.results[node as usize].1;
@@ -738,6 +754,7 @@ impl ExportTables {
         self.follow(resolved)
     }
 
+    /// What an ES module that imports the name is bound to.
     pub(super) fn resolve_in(
         &self,
         modules: &ModuleSet,
@@ -750,6 +767,50 @@ impl ExportTables {
                 modules, target, name,
             ))),
         }
+    }
+
+    /// What `require(target).name` reads: a getter of a CommonJS module answers anew each time.
+    pub(super) fn resolve_required(
+        &self,
+        modules: &ModuleSet,
+        target: ModuleRef,
+        name: Atom,
+    ) -> ResolvedName {
+        let resolved = self.resolve_in(modules, target, name);
+        match modules.table_file(target) {
+            Some(_) => resolved,
+            None => self.follow_getter(resolved),
+        }
+    }
+
+    /// The CommonJS file that shows `name` to whoever imports it of `named`: that file, or the one whose names the ES module hands on with `export *`.
+    pub(super) fn find_commonjs_exporter(
+        &self,
+        modules: &ModuleSet,
+        named: ModuleRef,
+        name: Atom,
+    ) -> Option<FileId> {
+        let Some(file) = modules.table_file(named) else {
+            return modules.find_commonjs_file(named);
+        };
+        if name == known::default || self.index.contains_key(&(file, name)) {
+            return None;
+        }
+        match self.table_of(file)?.dynamic_targets {
+            DynamicStarTargets::One(target) => modules.find_commonjs_file(target),
+            DynamicStarTargets::Empty | DynamicStarTargets::Many => None,
+        }
+    }
+
+    /// `ns.name` finds nothing, where `ns` is the namespace of `named`: the CommonJS file that would show the name defines a getter for it that is not enumerable.
+    pub(super) fn is_hidden_from_namespace(
+        &self,
+        modules: &ModuleSet,
+        named: ModuleRef,
+        name: Atom,
+    ) -> bool {
+        let exporter = self.find_commonjs_exporter(modules, named, name);
+        exporter.is_some_and(|exporter| self.commonjs.is_hidden(ModuleRef::File(exporter), name))
     }
 
     /// The modules whose captured `default` an ES module exports, under whatever name and through however many files.

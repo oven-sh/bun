@@ -1,6 +1,6 @@
 import { readTrimTable } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isGlibc, isLinux, isWindows } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawned, unsupported } from "../aot/run-programs";
@@ -48,6 +48,9 @@ const findToolStrings = (file: Buffer) =>
 
 const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, segment) => sum + segment.length, 0);
 
+// What an executable maps whatever its program is, on Linux x64 with glibc. These bounds only go down.
+const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 27_800_000 };
+
 const importsItsArguments = `
   import { join } from "node:path";
   for (const name of process.argv.slice(2)) {
@@ -92,6 +95,17 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
       expect(findToolStrings(executable)).toEqual([]);
       if (isLinux) expect(countMappedBytes(executable) / countMappedBytes(bun)).toBeLessThan(0.53);
     }, 600_000);
+
+    test.skipIf(!isGlibc || process.arch !== "x64")(
+      "hello world maps no more bytes than it did",
+      async () => {
+        using dir = tempDirForAotBuilds("compile-aot-size", { "hello.ts": `console.log("hello world");` });
+        const mappedBytes = countMappedBytes(readFileSync(await build(String(dir), "hello")));
+        console.log(["hello world", ...flags, "maps", mappedBytes, "bytes"].join(" "));
+        expect(mappedBytes).toBeLessThanOrEqual(mostMappedBytes[flags.join(" ")]!);
+      },
+      600_000,
+    );
 
     test("loads a TypeScript file imported at run time", async () => {
       using dir = tempDirForAotBuilds("compile-aot-size", { "program.ts": importsItsArguments, "cwd/empty": "" });

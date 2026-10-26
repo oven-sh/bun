@@ -1,7 +1,7 @@
 // src/sema/program/code_barrels/object_reads.rs answers, on the tree of the ahead-of-time compiler, what the bundler's parser answers on its
 // own: which names does a file read from the object of a module that `import()` or `require()` evaluates to? Three tests of
 // src/aot/compile/barrel_tests.rs list entry points by what is loaded behind a barrel. This test holds the same lines against the bundler:
-// a file behind the barrel is in the output or it is not.
+// a file behind the barrel is in the output or it is not. Where the two answer differently, `inTheBundler` holds the bundler's answer.
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -23,6 +23,16 @@ const kept: [string, string][] = [
   ["object_of_a_call_that_goes_out_of_sight_loads_everything", "abc"],
 ];
 
+// A constant name in brackets is a member name to the ahead-of-time compiler and a computed key to the bundler.
+const inTheBundler: Record<string, string> = {
+  "const lib = await import('lib'); console.log(lib?.['b']);": "abc",
+};
+
+test("each line of inTheBundler is a line of the three tests", () => {
+  const lines = kept.flatMap(([name]) => entryPointsOf(name));
+  expect(Object.keys(inTheBundler).filter(line => !lines.includes(line))).toEqual([]);
+});
+
 for (const [name, expected] of kept) {
   test(name, async () => {
     const entryPoints = entryPointsOf(name);
@@ -42,6 +52,8 @@ for (const [name, expected] of kept) {
       const text = (await Promise.all(built.outputs.map(output => output.text()))).join("\n");
       found[entryPoint] = [..."abc"].filter(letter => text.includes(`MARK-${letter}`)).join("");
     }
-    expect(found).toEqual(Object.fromEntries(entryPoints.map(entryPoint => [entryPoint, expected])));
+    expect(found).toEqual(
+      Object.fromEntries(entryPoints.map(entryPoint => [entryPoint, inTheBundler[entryPoint] ?? expected])),
+    );
   });
 }

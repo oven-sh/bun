@@ -1,7 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=CommonJsModule
 // CHECK: PutModuleVariable {{*}}variable=[[exports]]
-// CHECK-NEXT: EvaluateModule module=m{{*}} [isBare]
+// CHECK-NEXT: EvaluateModule module=m{{*}} [isBare, isCallOfRequire]
 // CHECK-NEXT: [[required]] = GetModuleVariable variable=
 // CHECK-NEXT: [[m]] = Convert [[required]] declared={type=number}
 // CHECK-NEXT: PutModuleVariable [[m]] variable=[[exports]]

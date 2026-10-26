@@ -75,6 +75,8 @@ enum Interest {
     // A name that the body of a CommonJS module stores under, and the module that it is read from, which may have it from the other one.
     Name(SyntheticExportId, ModuleRef),
     CalledName(SyntheticExportId, ModuleRef),
+    // The same for an import that nothing refers to: only the link looks for the name.
+    LinkedName(SyntheticExportId, ModuleRef),
     // A mention of an object of the loader that stands for a module.
     ModuleObject(ModuleObjectOwner, ModuleObjectUse),
     // A loader is given a name that the build does not know.
@@ -947,8 +949,10 @@ impl<'a, 's> FileScan<'a, 's> {
                 && let Some(ModuleRef::File(exporter)) = self.find_module_imported_from(symbol)
                 && self.input.graph.has_record(exporter)
                 && !self.input.graph.has_no_side_effects(exporter)
-                && let Some(interest) = self.interest_in_symbol(symbol, None)
+                && let Some(Interest::Name(export, accessed)) =
+                    self.interest_in_symbol(symbol, None)
             {
+                let interest = Interest::LinkedName(export, accessed);
                 self.units.interests[TOP_LEVEL as usize].push(interest);
             }
         }
@@ -1373,6 +1377,7 @@ impl<'a, 's> FileScan<'a, 's> {
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum HandedOn {
     Variable(Sym),
+    Name(SyntheticExportId),
     Namespace(ModuleRef),
 }
 
@@ -1383,12 +1388,13 @@ impl HandedOn {
             ExportBinding::Namespace { module, .. } => {
                 Some(HandedOn::Namespace(module_with_code(module)))
             }
-            ExportBinding::Synthetic(_) | ExportBinding::Indirect { .. } => None,
+            ExportBinding::Synthetic(export) => Some(HandedOn::Name(export)),
+            ExportBinding::Indirect { .. } => None,
         }
     }
 }
 
-// A file that exports a binding of another file, or the object of a module.
+// A file that exports a binding or a name of another file, or the object of a module.
 #[derive(Copy, Clone)]
 struct Exporter {
     file: FileId,
@@ -1462,6 +1468,54 @@ impl<'a, 's> Walk<'a, 's> {
                         file,
                         is_by_star: export.is_from_star_export,
                     });
+                }
+            }
+        }
+        let mut add_exporter = |handed_on: HandedOn, exporter: Exporter| {
+            let exporters = exporters.entry(handed_on).or_default();
+            let is_new = exporters.iter().all(|it| it.file != exporter.file);
+            if is_new {
+                exporters.push(exporter);
+            }
+            is_new
+        };
+        // A CommonJS file evaluates what it has a name from when its own body runs.
+        let mut handed_on_by_commonjs: Vec<(FileId, HandedOn)> = Vec::new();
+        for (module, member) in input.graph.commonjs().names_bound_elsewhere() {
+            let handed_on = match member {
+                Member::Variable(export) => HandedOn::Name(export),
+                Member::Binding(defined) => HandedOn::Variable(defined),
+                Member::Copy(_) | Member::Undefined | Member::Marker(_) | Member::OnObject => {
+                    continue;
+                }
+            };
+            let is_by_star = false;
+            if let ModuleRef::File(file) = module
+                && !matches!(handed_on, HandedOn::Variable(defined) if defined.file == file)
+                && add_exporter(handed_on, Exporter { file, is_by_star })
+            {
+                handed_on_by_commonjs.push((file, handed_on));
+            }
+        }
+        // The table of an ES module lacks the names that `export *` takes from such a file.
+        if !handed_on_by_commonjs.is_empty() {
+            let mut takers_by_star: FxHashMap<FileId, SmallVec<[FileId; 2]>> = FxHashMap::default();
+            let scanned_files = (0..).map(FileId).zip(&files);
+            for (taker, _) in scanned_files.filter(|(_, units)| units.is_some()) {
+                for request in input.graph.requests(taker) {
+                    if let ModuleRef::File(target) | ModuleRef::Face(target) = request.target
+                        && request.is_dynamic_star_export
+                    {
+                        takers_by_star.entry(target).or_default().push(taker);
+                    }
+                }
+            }
+            while let Some((file, handed_on)) = handed_on_by_commonjs.pop() {
+                for &file in takers_by_star.get(&file).into_iter().flatten() {
+                    let is_by_star = true;
+                    if add_exporter(handed_on, Exporter { file, is_by_star }) {
+                        handed_on_by_commonjs.push((file, handed_on));
+                    }
                 }
             }
         }
@@ -1567,7 +1621,7 @@ impl<'a, 's> Walk<'a, 's> {
         let graph = self.input.graph;
         let exporters = self.exporters[&handed_on].clone();
         for request in graph.requests(importer) {
-            let ModuleRef::File(target) = request.target else {
+            let (ModuleRef::File(target) | ModuleRef::Face(target)) = request.target else {
                 continue;
             };
             for exporter in exporters.iter().filter(|exporter| exporter.file == target) {
@@ -1698,6 +1752,7 @@ impl<'a, 's> Walk<'a, 's> {
                 if let Some(module) = find_module_imported_from(self.input, file, id) {
                     self.evaluate(module);
                 }
+                self.reach_files_between(file, HandedOn::Name(export));
                 return self.reach_name(export);
             }
             ImportBinding::Exports { module } => {
@@ -1748,12 +1803,20 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     fn reach_name(&mut self, export: SyntheticExportId) -> bool {
-        let export = *self.input.graph.synthetic_export(export);
-        if self.has_stored_names(export.module) {
-            return self.reach_stored_name(export.module, export.name);
+        let graph = self.input.graph;
+        let export = *graph.synthetic_export(export);
+        if !self.has_stored_names(export.module) {
+            self.evaluate(export.module);
+            return true;
         }
-        self.evaluate(export.module);
-        true
+        let can_read_this = self.reach_stored_name(export.module, export.name);
+        // The copy is taken of what the getter returns.
+        let commonjs = graph.commonjs();
+        match commonjs.member_behind_getter(export.module, export.name) {
+            Some(Member::Variable(returned)) => self.reach_name(returned),
+            Some(Member::Binding(returned)) => self.reach_binding(returned),
+            _ => can_read_this,
+        }
     }
 
     // A name of a CommonJS module that no expression is bound for: a key of a pattern, a member of a namespace object.
@@ -2074,10 +2137,16 @@ impl<'a, 's> Walk<'a, 's> {
             Interest::EveryExport(module) => self.reach_every_export(module),
             Interest::Name(export, accessed) => {
                 self.evaluate(accessed);
+                self.reach_files_between(file, HandedOn::Name(export));
+                self.reach_name(export);
+            }
+            Interest::LinkedName(export, accessed) => {
+                self.evaluate(accessed);
                 self.reach_name(export);
             }
             Interest::CalledName(export, accessed) => {
                 self.evaluate(accessed);
+                self.reach_files_between(file, HandedOn::Name(export));
                 let is_stored =
                     self.has_stored_names(self.input.graph.synthetic_export(export).module);
                 if self.reach_name(export) && is_stored {

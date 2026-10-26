@@ -409,3 +409,27 @@ function turn(i: number): number {
   if (i < 0) handedBack(made);
   return nameOf(made).length + (i & 1);
 }
+//// functions-without-captures-written-as-arguments-of-methods-of-a-list-known-by-a-test-where-another-was-given-a-display-name
+const nothing = process.argv.length > 1000 ? "x" : "";
+const handedBack = new Function("f", "return f;" + nothing) as <T>(f: T) => T;
+(handedBack(function other() {}) as any).displayName = "displayed";
+const inputs: unknown[] = [["a", "b"], ["a", 1, "c"], "no list", [], [null, 0, 2]];
+function stringsOf(value: unknown): unknown[] {
+  if (!Array.isArray(value)) return [];
+  return value.every(item => typeof item === "string") ? value : value.filter(item => typeof item === "string");
+}
+function turn(i: number): number {
+  return stringsOf(inputs[i % 5]).length;
+}
+//// functions-with-typed-parameters-written-as-arguments-of-methods-of-a-list-out-of-a-text-where-another-was-given-a-display-name
+const nothing = process.argv.length > 1000 ? "x" : "";
+const handedBack = new Function("f", "return f;" + nothing) as <T>(f: T) => T;
+(handedBack(function other() {}) as any).displayName = "displayed";
+type Problem = { severity: string; weight: number };
+const problems = JSON.parse('[[{"severity":"warning","weight":1},{"severity":"error","weight":3}],[],[{"severity":"note","weight":2}]]') as Problem[][];
+function serious(errors: Problem[]): Problem[] {
+  return errors.filter(e => e.severity !== "warning");
+}
+function turn(i: number): number {
+  return serious(problems[i % 3]).length + (problems[(i + 1) % 3].some(e => e.weight > 2) ? 1 : 0);
+}

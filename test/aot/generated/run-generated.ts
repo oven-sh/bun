@@ -71,6 +71,8 @@ export type Generated = {
   mayBeUnjudgeable?: true;
   /** Set where plain Bun runs the program for reference, and nowhere else. */
   plainEnv?: Record<string, string>;
+  /** The reference is an executable that is built without --aot, not `bun run`: the two answer the program differently, and docs/compiler/compatibility.mdx says which one --aot follows. */
+  referenceIsCompiled?: true;
   /** Lines whose answer is written down in the test and not asked of plain Bun: a line that starts with a key ends with its value. */
   written?: Record<string, string>;
   /** Nothing is put into its text: it declares names such as `Bun`, `Symbol` and `globalThis` itself, and what a run puts into a text uses them. */
@@ -143,6 +145,7 @@ const sharesAnExecutable = (program: Generated) =>
   !program.exitsAsPlainBunDoes &&
   !program.mayStopOutOfMemory &&
   !program.plainEnv &&
+  !program.referenceIsCompiled &&
   !program.written &&
   !program.linesDepartToday;
 
@@ -483,6 +486,7 @@ export function generated(title: string, given: Generated[]) {
             const folder = join(root, title.replaceAll(" ", "-"), String(index));
             const { file, entryPoints } = write(program, folder);
             const executable = join(folder, isWindows ? "program.exe" : "program");
+            const reference = join(folder, isWindows ? "reference.exe" : "reference");
             try {
               if (
                 program.mayBeUnjudgeable &&
@@ -521,7 +525,18 @@ export function generated(title: string, given: Generated[]) {
                   signal: fromSources.signal,
                   exitCode: fromSources.exitCode,
                 }).toEqual({ stdout: compiled.stdout, signal: compiled.signal, exitCode: compiled.exitCode });
-              const plain = await spawned([bunExe(), "run", file], folder, { ...bunEnv, ...program.plainEnv });
+              if (program.referenceIsCompiled)
+                built(
+                  await spawned(
+                    [bunExe(), "build", "--compile", file, ...entryPoints, "--outfile", reference],
+                    folder,
+                    bunEnv,
+                  ),
+                );
+              const plain = await spawned(program.referenceIsCompiled ? [reference] : [bunExe(), "run", file], folder, {
+                ...bunEnv,
+                ...program.plainEnv,
+              });
               const exitCode = program.exitsAsPlainBunDoes ? plain.exitCode : program.leavesAnError ? 1 : 0;
               expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode });
               expect(compiled.stderr).toContain("[aot] module: ");
@@ -579,6 +594,7 @@ export function generated(title: string, given: Generated[]) {
               }
             } finally {
               rmSync(executable, { force: true });
+              rmSync(reference, { force: true });
             }
           });
         },

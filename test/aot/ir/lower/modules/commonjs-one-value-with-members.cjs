@@ -12,7 +12,7 @@
 // MEMBERS: PropSet [[first]], {{*}}key="version"
 // MEMBERS-NEXT: [[second]] = GetModuleVariable variable=[[exports]]
 // MEMBERS: PropSet [[second]], {{*}}key="twice"
-// MEMBERS: EvaluateModule module=[[file]] {{*}}[isBare]
+// MEMBERS: EvaluateModule module=[[file]] {{*}}[isBare, isCallOfRequire]
 // MEMBERS-NEXT: [[read]] = GetModuleVariable variable=[[exports]]
 // MEMBERS-NEXT: [[create]] = Convert [[read]]
 // MEMBERS: = PropGet [[create]] key="version"

@@ -1,0 +1,361 @@
+////: getter-listed
+Object.defineProperty(exports, "«1»", { enumerable: true, get: function () { return «2».«1»; } });
+////: getter-not-listed
+Object.defineProperty(exports, "«1»", { «3»get: function () { return «2».«1»; } });
+////: counter-of-a-module
+export let count = 1;
+export function change() {
+  count += 10;
+}
+//// an-import-through-a-getter-of-a-commonjs-file-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/by-name.mjs
+export { count } from "./lib.cjs";
+//// an-import-through-a-getter-of-a-commonjs-file-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/counter.mjs
+////= counter-of-a-module
+//// an-import-through-a-getter-of-a-commonjs-file-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/lib.cjs
+var below_1 = require("./counter.mjs");
+////= getter-listed	count	below_1
+//// an-import-through-a-getter-of-a-commonjs-file-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/main.mjs
+// A CommonJS file defines a getter that returns a variable which an ES module exports and stores to later. Whoever imports the name holds what the
+// getter returned when the file was loaded; whoever required the file runs the getter at each read.
+import { count } from "./lib.cjs";
+import * as all from "./lib.cjs";
+import { count as throughStar } from "./star.mjs";
+import { count as byName } from "./by-name.mjs";
+import { count as throughTwoGetters } from "./outer.cjs";
+import { read } from "./reader.cjs";
+import { change, count as live } from "./counter.mjs";
+
+function show() {
+  console.log(count, all.count, throughStar, byName, throughTwoGetters, read(), live);
+}
+show();
+change();
+show();
+//// an-import-through-a-getter-of-a-commonjs-file-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/outer.cjs
+var below_1 = require("./lib.cjs");
+////= getter-listed	count	below_1
+//// an-import-through-a-getter-of-a-commonjs-file-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/reader.cjs
+var lib = require("./lib.cjs");
+exports.read = function () {
+  return lib.count;
+};
+//// an-import-through-a-getter-of-a-commonjs-file-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/star.mjs
+export * from "./lib.cjs";
+//// an-import-through-a-getter-of-a-commonjs-file-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// an-import-through-a-getter-of-a-commonjs-file-whose-object-is-looked-at-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/counter.mjs
+////= counter-of-a-module
+//// an-import-through-a-getter-of-a-commonjs-file-whose-object-is-looked-at-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/late.mjs
+import { count } from "./lib.cjs";
+export const seen = count;
+//// an-import-through-a-getter-of-a-commonjs-file-whose-object-is-looked-at-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/lib.cjs
+var below_1 = require("./counter.mjs");
+////= getter-listed	count	below_1
+//// an-import-through-a-getter-of-a-commonjs-file-whose-object-is-looked-at-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded/main.mjs
+// As above, and the program also looks at the exports object of the CommonJS file and at its namespace object.
+import whole, { count } from "./lib.cjs";
+import * as all from "./lib.cjs";
+import { change } from "./counter.mjs";
+
+const later = await import("./lib.cjs");
+function show() {
+  console.log(count, whole.count, Object.keys(whole).join(), all.count, later.count, later === all, JSON.stringify(all));
+}
+show();
+change();
+show();
+const late = await import("./late.mjs");
+console.log(late.seen);
+//// an-import-through-a-getter-of-a-commonjs-file-whose-object-is-looked-at-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// imports-through-getters-of-commonjs-files-as-three-tools-write-them-hold-what-a-module-held-when-the-files-were-loaded/above.cjs
+var below_1 = require("./between.mjs");
+////= getter-listed	greet	below_1
+exports.read = function () {
+  return below_1.greet;
+};
+//// imports-through-getters-of-commonjs-files-as-three-tools-write-them-hold-what-a-module-held-when-the-files-were-loaded/babel.cjs
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+Object.defineProperty(exports, "greet", {
+  enumerable: true,
+  get: function () {
+    return _greeting.greet;
+  }
+});
+var _greeting = require("./greeting.mjs");
+//// imports-through-getters-of-commonjs-files-as-three-tools-write-them-hold-what-a-module-held-when-the-files-were-loaded/between.mjs
+export { greet } from "./typescript.cjs";
+//// imports-through-getters-of-commonjs-files-as-three-tools-write-them-hold-what-a-module-held-when-the-files-were-loaded/greeting.mjs
+export let greet = function () {
+  return "first";
+};
+export function change() {
+  greet = function () {
+    return "second";
+  };
+}
+//// imports-through-getters-of-commonjs-files-as-three-tools-write-them-hold-what-a-module-held-when-the-files-were-loaded/main.mjs
+// The getters as TypeScript, Babel and swc write them, over a function that its module replaces later, and a getter over an ES module that hands on a
+// name which it imported through another getter.
+import { greet as typescript } from "./typescript.cjs";
+import { greet as babel } from "./babel.cjs";
+import { greet as swc } from "./swc.cjs";
+import { greet as above, read } from "./above.cjs";
+import { change } from "./greeting.mjs";
+
+function show() {
+  console.log(typescript(), babel(), swc(), above(), read()());
+}
+show();
+change();
+show();
+//// imports-through-getters-of-commonjs-files-as-three-tools-write-them-hold-what-a-module-held-when-the-files-were-loaded/swc.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+Object.defineProperty(exports, "greet", {
+    enumerable: true,
+    get: function() {
+        return _greeting.greet;
+    }
+});
+const _greeting = require("./greeting.mjs");
+//// imports-through-getters-of-commonjs-files-as-three-tools-write-them-hold-what-a-module-held-when-the-files-were-loaded/typescript.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.greet = void 0;
+var greeting_mjs_1 = require("./greeting.mjs");
+////= getter-listed	greet	greeting_mjs_1
+//// imports-through-getters-of-commonjs-files-as-three-tools-write-them-hold-what-a-module-held-when-the-files-were-loaded.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// an-import-in-typescript-through-a-getter-of-a-commonjs-file-holds-what-the-variable-held-when-the-file-was-loaded/counter.ts
+export let count: number = 1;
+export const limit: number = 100;
+export function change(): void {
+  count += 10;
+}
+export class Box {
+  constructor(public held: number) {}
+}
+//// an-import-in-typescript-through-a-getter-of-a-commonjs-file-holds-what-the-variable-held-when-the-file-was-loaded/lib.cjs
+var below_1 = require("./counter.ts");
+////= getter-listed	count	below_1
+////= getter-listed	limit	below_1
+////= getter-listed	change	below_1
+////= getter-listed	Box	below_1
+//// an-import-in-typescript-through-a-getter-of-a-commonjs-file-holds-what-the-variable-held-when-the-file-was-loaded/lib.d.cts
+export { Box, change, count, limit } from "./counter.ts";
+//// an-import-in-typescript-through-a-getter-of-a-commonjs-file-holds-what-the-variable-held-when-the-file-was-loaded/main.ts
+// The entry point and the module that has the variable are TypeScript; a constant, a function and a class come through getters of the same file.
+import { Box, change, count, limit } from "./lib.cjs";
+
+console.log(count, limit, new Box(count).held);
+change();
+console.log(count, limit, new Box(count).held);
+//// an-import-in-typescript-through-a-getter-of-a-commonjs-file-holds-what-the-variable-held-when-the-file-was-loaded.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// a-getter-of-a-commonjs-file-that-returns-a-name-which-the-other-file-does-not-have-is-imported-as-undefined/by-name.mjs
+export { absent, never } from "./lib.cjs";
+//// a-getter-of-a-commonjs-file-that-returns-a-name-which-the-other-file-does-not-have-is-imported-as-undefined/inner.cjs
+if (globalThis.nobodySetsThis) exports.never = 1;
+if (globalThis.process) exports.held = 2;
+exports.present = 3;
+exports.fill = function () {
+  exports.later = 4;
+};
+//// a-getter-of-a-commonjs-file-that-returns-a-name-which-the-other-file-does-not-have-is-imported-as-undefined/lib.cjs
+var below_1 = require("./inner.cjs");
+////= getter-listed	absent	below_1
+////= getter-listed	never	below_1
+////= getter-listed	held	below_1
+////= getter-listed	later	below_1
+////= getter-listed	present	below_1
+////= getter-listed	fill	below_1
+exports.read = function () {
+  return below_1.later;
+};
+//// a-getter-of-a-commonjs-file-that-returns-a-name-which-the-other-file-does-not-have-is-imported-as-undefined/main.mjs
+// A CommonJS file defines getters that return names of a second file. The second file never stores one of them, stores one under a condition that does
+// not hold, one under a condition that holds, and one only when a function is called. The file that defines the getters has all of the names.
+import { absent, fill, held, later, never, present, read } from "./lib.cjs";
+import * as all from "./lib.cjs";
+import { absent as throughStar } from "./star.mjs";
+import { absent as byName, never as neverByName } from "./by-name.mjs";
+import { absent as throughTwoGetters, later as laterThroughTwoGetters } from "./outer.cjs";
+import { absent as asTypeScriptWritesIt, present as presentAsTypeScriptWritesIt } from "./typescript.cjs";
+import { absent as unused } from "./unused.cjs";
+
+function show() {
+  console.log(absent, never, held, later, present, read());
+  console.log(all.absent, all.never, all.later, throughStar, byName, neverByName, throughTwoGetters, laterThroughTwoGetters);
+  console.log(asTypeScriptWritesIt, presentAsTypeScriptWritesIt);
+}
+show();
+fill();
+show();
+try {
+  absent();
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+//// a-getter-of-a-commonjs-file-that-returns-a-name-which-the-other-file-does-not-have-is-imported-as-undefined/outer.cjs
+var below_1 = require("./lib.cjs");
+////= getter-listed	absent	below_1
+////= getter-listed	later	below_1
+//// a-getter-of-a-commonjs-file-that-returns-a-name-which-the-other-file-does-not-have-is-imported-as-undefined/star.mjs
+export * from "./lib.cjs";
+//// a-getter-of-a-commonjs-file-that-returns-a-name-which-the-other-file-does-not-have-is-imported-as-undefined/typescript.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.present = exports.absent = void 0;
+var inner_cjs_1 = require("./inner.cjs");
+////= getter-listed	absent	inner_cjs_1
+////= getter-listed	present	inner_cjs_1
+//// a-getter-of-a-commonjs-file-that-returns-a-name-which-the-other-file-does-not-have-is-imported-as-undefined/unused.cjs
+var below_1 = require("./inner.cjs");
+////= getter-listed	absent	below_1
+//// a-getter-of-a-commonjs-file-that-returns-a-name-which-the-other-file-does-not-have-is-imported-as-undefined.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// a-name-that-a-commonjs-file-does-not-have-is-found-through-the-getter-of-another-file-and-not-in-the-file-itself/first.cjs
+var below_1 = require("./second.cjs");
+////= getter-listed	absent	below_1
+exports.own = 1;
+//// a-name-that-a-commonjs-file-does-not-have-is-found-through-the-getter-of-another-file-and-not-in-the-file-itself/from-the-file-itself.mjs
+import { absent } from "./lib.cjs";
+import { absent as direct } from "./inner.cjs";
+console.log(absent, direct);
+//// a-name-that-a-commonjs-file-does-not-have-is-found-through-the-getter-of-another-file-and-not-in-the-file-itself/inner.cjs
+exports.present = 3;
+//// a-name-that-a-commonjs-file-does-not-have-is-found-through-the-getter-of-another-file-and-not-in-the-file-itself/lib.cjs
+var below_1 = require("./inner.cjs");
+////= getter-listed	absent	below_1
+//// a-name-that-a-commonjs-file-does-not-have-is-found-through-the-getter-of-another-file-and-not-in-the-file-itself/main.mjs
+// An import of a name from the file that does not have it fails, beside an import of the same name through a getter of another file. The namespace
+// objects list the getter, two files that require each other see each other half loaded, and an ES module that lacks the name answers undefined too.
+import { absent } from "./lib.cjs";
+import * as all from "./lib.cjs";
+import { absent as ofModule } from "./over-a-module.cjs";
+import { own, absent as inCycle } from "./first.cjs";
+import { seen } from "./second.cjs";
+
+console.log(absent, Object.keys(all).join(), all.absent, "absent" in all, ofModule, own, inCycle, seen);
+const later = await import("./lib.cjs");
+console.log(Object.keys(later).join(), later.absent, "absent" in later);
+try {
+  await import("./from-the-file-itself.mjs");
+} catch (error) {
+  console.log(error.name, error.message.includes("'absent'"), error.message.includes("inner.cjs"));
+}
+//// a-name-that-a-commonjs-file-does-not-have-is-found-through-the-getter-of-another-file-and-not-in-the-file-itself/module.mjs
+export const present = 3;
+//// a-name-that-a-commonjs-file-does-not-have-is-found-through-the-getter-of-another-file-and-not-in-the-file-itself/over-a-module.cjs
+var below_1 = require("./module.mjs");
+////= getter-listed	absent	below_1
+//// a-name-that-a-commonjs-file-does-not-have-is-found-through-the-getter-of-another-file-and-not-in-the-file-itself/second.cjs
+var first = require("./first.cjs");
+exports.present = 3;
+exports.seen = typeof first.absent;
+//// a-name-that-a-commonjs-file-does-not-have-is-found-through-the-getter-of-another-file-and-not-in-the-file-itself.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/behind-star.cjs
+var inner = require("./inner.cjs");
+////= getter-not-listed	x	inner	enumerable: false, 
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/beside-a-getter-that-computes.mjs
+import { sum, x } from "./computes.cjs";
+console.log(x, sum);
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/computes.cjs
+var inner = require("./inner.cjs");
+////= getter-not-listed	x	inner	
+Object.defineProperty(exports, "sum", { enumerable: true, get: function () { return 1 + 1; } });
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/inner.cjs
+exports.x = 1;
+exports.y = 2;
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/later.cjs
+var inner = require("./inner.cjs");
+////= getter-not-listed	x	inner	
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/lib.cjs
+var inner = require("./inner.cjs");
+////= getter-not-listed	x	inner	
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/main.mjs
+// A CommonJS file defines a getter that is not enumerable and returns a name of a second file. No namespace object has the name. Where a second getter
+// of the file computes what it returns, an import statement does not find the name either.
+import * as all from "./lib.cjs";
+import * as whole from "./whole.cjs";
+import * as throughStar from "./star.mjs";
+import * as marked from "./marked.cjs";
+
+console.log(Object.keys(all).join(), all.x, "x" in all);
+console.log(JSON.stringify(whole), Object.keys(whole.default).join(), whole.default.x);
+console.log(Object.keys(throughStar).join(), throughStar.x, "x" in throughStar);
+console.log(Object.keys(marked).join(), marked.x, marked.y, marked.default);
+const later = await import("./later.cjs");
+console.log(Object.keys(later).join(), later.x, "x" in later);
+try {
+  await import("./beside-a-getter-that-computes.mjs");
+} catch (error) {
+  console.log(error.name, error.message.includes("'x'"));
+}
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/marked.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var inner = require("./inner.cjs");
+////= getter-not-listed	x	inner	
+////= getter-listed	y	inner
+exports.default = "the default";
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/star.mjs
+export * from "./behind-star.cjs";
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/whole.cjs
+var inner = require("./inner.cjs");
+////= getter-not-listed	x	inner	
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/behind-star.cjs
+var inner = require("./inner.cjs");
+////= getter-not-listed	x	inner	
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/counter.mjs
+////= counter-of-a-module
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/inner.cjs
+exports.x = 1;
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/lib.cjs
+var inner = require("./inner.cjs");
+////= getter-not-listed	x	inner	
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/main.mjs
+// A CommonJS file defines a getter that is not enumerable and returns a name of a second file, and import statements name it: of the file itself,
+// through `export *`, with `enumerable: false` written out, beside a default import whose object the program looks at, over a name that the second file
+// stores under a condition, and over a variable of an ES module that changes later.
+import { x } from "./lib.cjs";
+import { x as throughStar } from "./star.mjs";
+import { x as writtenOut } from "./written-out.cjs";
+import whole, { x as besideTheDefault } from "./whole.cjs";
+import { held } from "./over-a-store-under-a-condition.cjs";
+import * as seen from "./over-a-store-under-a-condition.cjs";
+import { count } from "./over-a-variable.cjs";
+import { change } from "./counter.mjs";
+
+console.log(x, throughStar, writtenOut, besideTheDefault, Object.keys(whole).join(), whole.x);
+console.log(held, Object.keys(seen).includes("default"), count);
+change();
+console.log(count);
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/over-a-store-under-a-condition.cjs
+var inner = require("./stores-under-a-condition.cjs");
+////= getter-not-listed	held	inner	
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/over-a-variable.cjs
+var inner = require("./counter.mjs");
+////= getter-not-listed	count	inner	
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/star.mjs
+export * from "./behind-star.cjs";
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/stores-under-a-condition.cjs
+if (globalThis.process) exports.held = 2;
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/whole.cjs
+var inner = require("./inner.cjs");
+////= getter-not-listed	x	inner	
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file/written-out.cjs
+var inner = require("./inner.cjs");
+////= getter-not-listed	x	inner	enumerable: false, 
+//// an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file.json
+{ "reference": "compiled", "skipInShell": "it needs Bun's CommonJS modules and require()" }

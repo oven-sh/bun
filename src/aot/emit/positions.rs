@@ -1,5 +1,6 @@
 use crate::ir::generated::{ColumnAdjustment, SourcePositions};
 use bstr::ByteSlice;
+use bun_core::strings::contains_char;
 
 pub fn source_positions(source: &[u8], line_starts: Vec<u32>) -> SourcePositions {
     let column_adjustments = compute_column_adjustments(source, &line_starts);
@@ -209,7 +210,7 @@ impl<'a> Aligner<'a> {
         let find_behind_word = |end: &[u8]| text[start..].find(end).map(|at| start + at);
         if gap
             .rfind(b"//")
-            .is_some_and(|line| !gap[line..].contains(&b'\n'))
+            .is_some_and(|line| !contains_char(&gap[line..], b'\n'))
         {
             return find_behind_word(b"\n");
         }

@@ -274,7 +274,16 @@ impl FileBinder<'_, '_> {
                 StandsFor::ImportedNamespace(_) => None,
             };
         }
-        match self.resolve_name(module, name) {
+        let resolved = match stands_for {
+            StandsFor::ImportedNamespace(_) if self.is_hidden_from_namespace(module, name) => {
+                return None;
+            }
+            StandsFor::ImportedNamespace(_) => self.resolve_name(module, name),
+            StandsFor::RequiredNamespace(_) | StandsFor::Exports(_) => {
+                self.resolve_required_name(module, name)
+            }
+        };
+        match resolved {
             Ok((binding, None)) => {
                 (!is_exports || has_variable(binding)).then_some(NamedMember::Binding(binding))
             }

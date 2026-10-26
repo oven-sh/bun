@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { constants, zstdCompressSync } from "node:zlib";
+import { constants, zstdCompressSync, type ZstdOptions } from "node:zlib";
 import base from "../../tsconfig.base.json";
 import own from "../js/tsconfig.json";
 import "./builtin-parser";
@@ -274,12 +274,15 @@ if (archive) {
   files.push(["positions", Buffer.concat(bundledPositions)]);
   files.push(["manifest", Buffer.from(manifest)]);
   files.sort(([a], [b]) => (a < b ? -1 : 1));
-  const compress = (text: Buffer, dictionary?: Buffer) =>
-    zstdCompressSync(text, {
+  // The installed types of node:zlib do not list `pledgedSrcSize`, with which the frame says how long its text is.
+  const compress = (text: Buffer, dictionary?: Buffer) => {
+    const options: ZstdOptions & { pledgedSrcSize: number } = {
       pledgedSrcSize: text.length,
       params: { [constants.ZSTD_c_compressionLevel]: 19, [constants.ZSTD_c_contentSizeFlag]: 1 },
       dictionary,
-    });
+    };
+    return zstdCompressSync(text, options);
+  };
   const frames = files.map(([name, text]) => compress(text, evaluated[sourceFiles.indexOf(name)]));
   // The list of the files, compressed, stands behind its length. Its offsets count from where it ends.
   const records = Buffer.alloc(files.length * recordLength);

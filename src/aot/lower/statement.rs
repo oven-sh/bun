@@ -5,7 +5,7 @@ mod substitution;
 pub(in crate::lower) use substitution::Printed;
 
 use bun_sema::bind::{Binding, ScopeId, SymbolId};
-use bun_sema::fold::Decision;
+use bun_sema::fold::{Decision, is_removed_where_never_run};
 use bun_sema::hir::{
     ExprId, ExprKind, Flags, FnBody, FnId, IdList, PatKind, StmtId, StmtKind, UnOp, VarDeclId,
     VarKind,
@@ -332,7 +332,7 @@ impl FileLowering<'_, '_, '_, '_> {
     // Whether Bun's transpiler prints anything for the statement.
     fn is_printed(&self, statement: StmtId) -> bool {
         if self.decisions().is_dead_stmt(statement) {
-            return false;
+            return !is_removed_where_never_run(self.hir, statement);
         }
         match self.hir[statement].kind {
             StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty => false,

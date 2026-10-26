@@ -6,7 +6,8 @@ use crate::modules::commonjs_exports::{AliasTarget, ModuleEntries, NameEntry};
 use crate::modules::interop::ModuleKind;
 use crate::modules::module_set::ModuleSet;
 use bun_sema::atom::{Atom, known};
-use bun_sema::util::FxHashMap;
+use bun_sema::program::Files;
+use bun_sema::util::{FxHashMap, FxHashSet};
 
 #[derive(Default)]
 pub(in crate::modules) struct CommonJsNames {
@@ -14,30 +15,52 @@ pub(in crate::modules) struct CommonJsNames {
     entries: Vec<ModuleEntries>,
     /// What a name stands for that has no variable in its own module.
     targets: FxHashMap<(ModuleRef, Atom), Resolution>,
+    /// Of those, the names that an ES importer can tell from what they stand for: it holds what the getter answered when the file was linked, or under `default` the value of the module.
+    copied: FxHashSet<(ModuleRef, Atom)>,
+    /// Of those, the names that no loop over the object sees.
+    hidden: FxHashSet<(ModuleRef, Atom)>,
     is_refused: Vec<bool>,
     /// The modules with a name that stands for something that has no variable: they keep their objects.
     pub(in crate::modules) refused: Vec<ModuleRef>,
 }
 
 impl CommonJsNames {
-    /// `None`: the name is a variable of the module itself, or the module keeps its object.
+    /// What `require` of the module reads under the name. `None`: the name is a variable of the module itself, or the module keeps its object.
     pub(super) fn find(&self, module: ModuleRef, name: Atom) -> Option<Resolution> {
         self.targets.get(&(module, name)).copied()
     }
 
-    /// Whether the CommonJS module of the program may be without the name when an ES module that imports it is linked: a run of the body may end without it, the body may replace the object, or the link may come while the body runs.
+    /// An ES importer has a copy of the name itself, not of what the name stands for.
+    pub(in crate::modules) fn is_copied(&self, module: ModuleRef, name: Atom) -> bool {
+        self.copied.contains(&(module, name))
+    }
+
+    /// No loop over the object sees the name, so the namespace object lacks it. An import statement is still bound to what the name stands for.
+    pub(super) fn is_hidden(&self, module: ModuleRef, name: Atom) -> bool {
+        self.hidden.contains(&(module, name))
+    }
+
+    /// Whether the CommonJS module of the program may be without the name when an ES module that imports it is linked: a run of the body may end without it, the body may replace the object, the link may come while the body runs, or whoever lists the names of the object passes over the name.
     pub(super) fn may_lack(&self, module: ModuleRef, name: Atom) -> bool {
         let Some(&index) = self.index.get(&module) else {
             return false;
         };
         let entries = &self.entries[index];
         let mut names = entries.names.iter();
-        let is_created = |entry: &NameEntry| entry.created_at != u32::MAX;
+        let is_listed = |entry: &NameEntry| entry.target.is_none() || entry.is_enumerable;
+        let is_created = |entry: &NameEntry| entry.created_at != u32::MAX && is_listed(entry);
         entries.is_half
             || !entries.has_names
             || !names
                 .find(|entry| entry.name == name)
                 .is_some_and(is_created)
+    }
+
+    /// Whether an ES importer finds under the name what `require` of the module reads under it. Without the marker its `default` is the value of the module.
+    fn shows_member(&self, module: ModuleRef, name: Atom) -> bool {
+        let index = self.index.get(&module);
+        name != known::default
+            || index.is_some_and(|&index| self.entries[index].marker == Some(true))
     }
 
     /// The names that a loop over the object sees once the body has run, and `default`. `None`: the text does not say.
@@ -64,7 +87,8 @@ enum State {
     Done,
 }
 
-struct Resolver<'a> {
+struct Resolver<'a, 's> {
+    files: &'a Files<'s>,
     modules: &'a ModuleSet,
     /// The tables of the ES modules, in which a name of a CommonJS module is still that name.
     tables: &'a ExportTables,
@@ -72,7 +96,7 @@ struct Resolver<'a> {
     states: Vec<State>,
 }
 
-impl Resolver<'_> {
+impl Resolver<'_, '_> {
     fn es_module_file(&self, module: ModuleRef) -> Option<bun_sema::program::FileId> {
         let file = self.modules.table_file(module)?;
         (self.modules.interop(module).kind == ModuleKind::SourceText).then_some(file)
@@ -94,8 +118,33 @@ impl Resolver<'_> {
         let file = self.es_module_file(module)?;
         match self.tables.resolve(self.modules, file, name).resolution {
             Resolution::Variable(symbol) => Some(Resolution::Variable(symbol)),
-            Resolution::Synthetic { module, name } => self.resolve_name(module, name),
+            // The ES module holds the copy, or the value of the module, which no name of a CommonJS module stands for.
+            Resolution::Synthetic { module, name } => {
+                let target = self.resolve_name(module, name);
+                let names = &self.names;
+                target
+                    .filter(|_| !names.is_copied(module, name) && names.shows_member(module, name))
+            }
             _ => None,
+        }
+    }
+
+    // Whether an import that is bound to the target finds what the getter answers.
+    fn is_found_by_import(&self, target: Resolution) -> bool {
+        match target {
+            Resolution::Synthetic { module, name } => self.names.shows_member(module, name),
+            _ => true,
+        }
+    }
+
+    // Whether what the getter answers may change behind the link, or the getter answers `undefined` for a name that is not there.
+    fn can_be_told_from_copy(&self, target: Resolution) -> bool {
+        match target {
+            Resolution::Variable(symbol) => {
+                !self.files.bound(symbol.file).is_stable_binding(symbol.id)
+            }
+            Resolution::Synthetic { module, name } => self.names.may_lack(module, name),
+            _ => false,
         }
     }
 
@@ -114,7 +163,18 @@ impl Resolver<'_> {
             let Some(target) = target else {
                 return false;
             };
+            let is_found_by_import =
+                self.names.shows_member(module, entry.name) && self.is_found_by_import(target);
+            // Where the run time lists the names of the file it passes over a getter that is not enumerable, so nothing would fill a copy of it, and the `default` of the file is its value.
+            if !entry.is_enumerable && (!is_found_by_import || entry.name == known::default) {
+                return false;
+            }
             self.names.targets.insert((module, entry.name), target);
+            if !entry.is_enumerable {
+                self.names.hidden.insert((module, entry.name));
+            } else if !is_found_by_import || self.can_be_told_from_copy(target) {
+                self.names.copied.insert((module, entry.name));
+            }
         }
         true
     }
@@ -134,6 +194,7 @@ impl Resolver<'_> {
 }
 
 pub(super) fn resolve_commonjs_names(
+    files: &Files<'_>,
     modules: &ModuleSet,
     tables: &ExportTables,
     entries: Vec<ModuleEntries>,
@@ -142,12 +203,15 @@ pub(super) fn resolve_commonjs_names(
     let entry_modules = entries.iter().map(|entries| entries.module);
     let index = entry_modules.zip(0..).collect();
     let mut resolver = Resolver {
+        files,
         modules,
         tables,
         names: CommonJsNames {
             index,
             entries,
             targets: FxHashMap::default(),
+            copied: FxHashSet::default(),
+            hidden: FxHashSet::default(),
             is_refused: vec![false; count],
             refused: Vec::new(),
         },
@@ -158,8 +222,14 @@ pub(super) fn resolve_commonjs_names(
     }
     let mut names = resolver.names;
     let CommonJsNames {
-        targets, refused, ..
+        targets,
+        copied,
+        hidden,
+        refused,
+        ..
     } = &mut names;
     targets.retain(|key, _| !refused.contains(&key.0));
+    copied.retain(|key| !refused.contains(&key.0));
+    hidden.retain(|key| !refused.contains(&key.0));
     names
 }

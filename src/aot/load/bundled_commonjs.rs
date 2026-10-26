@@ -12,17 +12,51 @@ const PARAMETERS: [&[u8]; 5] = [
     b"__dirname",
 ];
 
-fn skip_blanks(text: &[u8], at: usize) -> usize {
-    let blanks = text[at..]
-        .iter()
-        .take_while(|byte| byte.is_ascii_whitespace());
-    at + blanks.count()
+// Blanks and comments.
+fn skip_trivia(text: &[u8], mut at: usize) -> usize {
+    loop {
+        let blanks = text[at..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_whitespace());
+        at += blanks.count();
+        let rest = &text[at..];
+        at += if rest.starts_with(b"//") {
+            strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())
+        } else if let Some(comment) = rest.strip_prefix(b"/*") {
+            match comment.windows(2).position(|pair| pair == b"*/") {
+                Some(length) => length + 4,
+                None => return at,
+            }
+        } else {
+            return at;
+        };
+    }
 }
 
-// `(function(exports, require, module, __filename, __dirname) {`, with blanks wherever a formatter puts them. Returns where the body starts.
+// The same from the end of `text[start..end]`: blanks, `/* .. */`, and lines that hold a `//` comment alone.
+fn skip_trivia_backwards(text: &[u8], start: usize, mut end: usize) -> usize {
+    loop {
+        end = start + text[start..end].trim_ascii_end().len();
+        let before = &text[start..end];
+        if before.ends_with(b"*/") {
+            let Some(comment) = before.windows(2).rposition(|pair| pair == b"/*") else {
+                return end;
+            };
+            end = start + comment;
+            continue;
+        }
+        let line_start = strings::last_index_of_char(before, b'\n').map_or(0, |at| at + 1);
+        if !before[line_start..].trim_ascii_start().starts_with(b"//") {
+            return end;
+        }
+        end = start + line_start;
+    }
+}
+
+// `(function(exports, require, module, __filename, __dirname) {`, with blanks and comments between its tokens. Returns where the body starts.
 fn find_body_start(text: &[u8], start: usize) -> Option<usize> {
     let take = |at: usize, token: &[u8]| {
-        let at = skip_blanks(text, at);
+        let at = skip_trivia(text, at);
         text[at..].starts_with(token).then_some(at + token.len())
     };
     let mut at = take(start, b"(")?;
@@ -41,23 +75,13 @@ fn find_body_start(text: &[u8], start: usize) -> Option<usize> {
 
 // `})` or `});`. Behind the function stand blank lines and comments, such as the one that names a source map.
 fn find_wrapper_end(text: &[u8], body_start: usize) -> Option<Range<usize>> {
-    let mut end = text.len();
-    loop {
-        let before = &text[body_start..end];
-        let line_start =
-            body_start + strings::last_index_of_char(before, b'\n').map_or(0, |at| at + 1);
-        let line = text[line_start..end].trim_ascii();
-        if !line.is_empty() && !line.starts_with(b"//") {
-            let line_end = line_start + text[line_start..end].trim_ascii_end().len();
-            let take = |end: usize, token: u8| {
-                let end = body_start + text[body_start..end].trim_ascii_end().len();
-                text[body_start..end].ends_with(&[token]).then(|| end - 1)
-            };
-            let parenthesis = take(take(line_end, b';').unwrap_or(line_end), b')')?;
-            return Some(take(parenthesis, b'}')?..line_end);
-        }
-        end = line_start.checked_sub(1).filter(|&end| end >= body_start)?;
-    }
+    let take = |end: usize, token: u8| {
+        let end = skip_trivia_backwards(text, body_start, end);
+        text[body_start..end].ends_with(&[token]).then(|| end - 1)
+    };
+    let end = skip_trivia_backwards(text, body_start, text.len());
+    let parenthesis = take(take(end, b';').unwrap_or(end), b')')?;
+    Some(take(parenthesis, b'}')?..end)
 }
 
 fn find_wrapper(text: &[u8]) -> Option<(Range<usize>, Range<usize>)> {
@@ -138,6 +162,23 @@ mod tests {
                 [11, 10, 10, 9, 13, 12, 3]
                     .map(|width| " ".repeat(width))
                     .join("\n")
+            )
+        );
+    }
+
+    #[test]
+    fn comments_between_the_tokens_of_the_function_give_way_with_it() {
+        assert_eq!(
+            unwrap(
+                "// @bun @bun-cjs\n// a\n/* b */ (function /* c */ (exports, require, module, __filename, /* d */ __dirname) /* e */ {\n  exports.a = 1; // f\n} /* g */\n// h\n) /* i */ ; /* j */\n// k\n"
+            ),
+            format!(
+                "// @bun @bun-cjs\n{}\n{}\n  exports.a = 1; // f\n{}\n{}\n{} /* j */\n// k\n",
+                " ".repeat(4),
+                " ".repeat(93),
+                " ".repeat(9),
+                " ".repeat(4),
+                " ".repeat(11)
             )
         );
     }

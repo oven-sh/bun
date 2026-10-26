@@ -729,6 +729,226 @@ fn an_import_of_any_other_name_is_a_copy_that_the_face_takes() {
 }
 
 #[test]
+fn the_face_behind_a_star_takes_the_copy_of_a_name_of_another_file() {
+    let outer = "var inner_1 = require('./inner.cjs');\n\
+        Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return inner_1.a; } });";
+    for main in [
+        "import { a } from './barrel.mjs'; console.log(a);",
+        "import * as all from './barrel.mjs'; console.log(all.a);",
+        "export { a } from './barrel.mjs';",
+        "import { a } from './above.mjs'; console.log(a);",
+    ] {
+        let files = [
+            ("main.mjs", main),
+            ("above.mjs", "export * from './barrel.mjs';"),
+            ("barrel.mjs", "export * from './outer.cjs';"),
+            ("outer.cjs", outer),
+            ("inner.cjs", "exports.a = 1;"),
+        ];
+        with_exports(&files, |exports, input| {
+            let [outer, inner] = ["outer.cjs", "inner.cjs"].map(|name| file_named(input, name));
+            let owners = exports.copies(outer).iter();
+            let owners: Vec<_> = owners.map(|copy| exports.names_by_id.get(copy)).collect();
+            let owner = (ModuleRef::File(inner), atom(input, "a"));
+            assert_eq!(owners, [Some(&owner)], "{main}");
+            // The copy is a variable of the face of the file that has the name.
+            assert!(exports.face(ModuleRef::File(inner)).is_some(), "{main}");
+        });
+    }
+}
+
+fn getter_of_a(inner: &str) -> String {
+    format!(
+        "var inner_1 = require('./{inner}');\n\
+        Object.defineProperty(exports, 'a', {{ enumerable: true, get: function () {{ return inner_1.a; }} }});"
+    )
+}
+
+// The names that the face of `outer.cjs` copies, each with the file that has it, where a getter of `outer.cjs` returns `a` of `inner`.
+fn copies_of_outer(main: &str, inner: (&str, &str)) -> Vec<(String, bool)> {
+    let outer = getter_of_a(inner.0);
+    let files = [
+        ("main.mjs", main),
+        ("barrel.mjs", "export * from './outer.cjs';"),
+        ("outer.cjs", &outer[..]),
+        inner,
+    ];
+    with_exports(&files, |exports, input| {
+        let outer = file_named(input, "outer.cjs");
+        // `export *` looks at the namespace object, which shows the exports object as `default`.
+        let shape = match main.contains("barrel") {
+            true => Shape::Value,
+            false => Shape::Names,
+        };
+        assert_eq!(exports.shape(ModuleRef::File(outer)), shape, "{main}");
+        assert_eq!(exports.check(file_named(input, "main.mjs")), None, "{main}");
+        assert_eq!(
+            exports.face_captures(outer),
+            shape == Shape::Value,
+            "{main}"
+        );
+        let copies = exports.copies(outer).iter().map(|copy| {
+            assert_eq!(
+                exports.imported_member(*copy),
+                Member::Copy(*copy),
+                "{main}"
+            );
+            let (owner, name) = exports.names_by_id[copy];
+            let name = String::from_utf8(input.files.atoms.bytes(name).to_vec());
+            (
+                name.expect("an ASCII name"),
+                owner == ModuleRef::File(outer),
+            )
+        });
+        copies.collect()
+    })
+}
+
+const IMPORTS_OF_A: [&str; 4] = [
+    "import { a } from './outer.cjs'; console.log(a);",
+    "import * as all from './outer.cjs'; console.log(all.a);",
+    "export { a } from './outer.cjs';",
+    "import { a } from './barrel.mjs'; console.log(a);",
+];
+
+#[test]
+fn an_import_holds_what_a_getter_answered_where_the_answer_may_change() {
+    let own_copy = [("a".to_owned(), true)];
+    for inner in [
+        (
+            "inner.mjs",
+            "export let a = 1; export function set() { a = 2; }",
+        ),
+        ("inner.mjs", "export var a; a = 1;"),
+        // The getter answers `undefined`, where an import of the name from the file itself finds nothing.
+        ("inner.cjs", "exports.b = 1;"),
+        ("inner.cjs", "if (Math.random()) exports.a = 1;"),
+        (
+            "inner.cjs",
+            "exports.fill = function () { exports.a = 1; };",
+        ),
+    ] {
+        for main in IMPORTS_OF_A {
+            assert_eq!(copies_of_outer(main, inner), own_copy, "{main} {inner:?}");
+        }
+    }
+}
+
+#[test]
+fn an_import_is_bound_to_what_a_getter_returns_where_nobody_can_tell() {
+    for inner in [
+        ("inner.mjs", "export const a = 1;"),
+        ("inner.mjs", "export let a = 1;"),
+        ("inner.mjs", "export function a() {}"),
+        ("inner.mjs", "export class a {}"),
+        ("inner.cjs", "exports.a = 1;"),
+    ] {
+        for main in &IMPORTS_OF_A[..3] {
+            assert_eq!(copies_of_outer(main, inner), [], "{main} {inner:?}");
+        }
+    }
+}
+
+#[test]
+fn whoever_requires_the_file_reads_what_the_getter_returns() {
+    let main = "import { a } from './outer.cjs'; import './reader.cjs'; console.log(a);";
+    let reader = "var outer = require('./outer.cjs'); console.log(outer.a);";
+    for (inner, is_binding) in [
+        (
+            (
+                "inner.mjs",
+                "export let a = 1; export function set() { a = 2; }",
+            ),
+            true,
+        ),
+        (("inner.cjs", "exports.b = 1;"), false),
+    ] {
+        let outer = getter_of_a(inner.0);
+        let files = [
+            ("main.mjs", main),
+            ("reader.cjs", reader),
+            ("outer.cjs", &outer[..]),
+            inner,
+        ];
+        with_exports(&files, |exports, input| {
+            let outer = module_named(input, "outer.cjs");
+            let a = atom(input, "a");
+            let own = exports.ids[&(outer, a)];
+            match exports.member_named(outer, a) {
+                Some(Member::Binding(_)) => assert!(is_binding),
+                Some(Member::Variable(returned)) => {
+                    assert!(!is_binding);
+                    let owner = (module_named(input, inner.0), a);
+                    assert_eq!(exports.names_by_id.get(&returned), Some(&owner));
+                }
+                member => panic!("{member:?}"),
+            }
+            assert_eq!(
+                Some(exports.required_member(outer, own)),
+                exports.member_named(outer, a)
+            );
+        });
+    }
+}
+
+#[test]
+fn a_getter_over_an_es_module_that_holds_a_copy_keeps_its_object() {
+    let above = "var between_1 = require('./between.mjs');\n\
+        Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return between_1.a; } });";
+    let outer = getter_of_a("inner.mjs");
+    let shape_over = |inner: &str| {
+        let files = [
+            (
+                "main.mjs",
+                "import { a } from './above.cjs'; console.log(a);",
+            ),
+            ("above.cjs", above),
+            ("between.mjs", "export { a } from './outer.cjs';"),
+            ("outer.cjs", &outer[..]),
+            ("inner.mjs", inner),
+        ];
+        shapes_of(&files, ["above.cjs"])
+    };
+    assert_eq!(shape_over("export const a = 1;"), [Shape::Names]);
+    let stored = "export let a = 1; export function set() { a = 2; }";
+    assert_eq!(shape_over(stored), [Shape::Value]);
+}
+
+#[test]
+fn the_namespace_object_answers_for_a_getter_that_is_not_enumerable() {
+    let hidden = "var inner_1 = require('./inner.cjs');\n\
+        Object.defineProperty(exports, 'a', { get: function () { return inner_1.a; } });";
+    let listed = getter_of_a("inner.cjs");
+    let captures = |main: &str, outer: &str| {
+        let files = [
+            ("main.mjs", main),
+            ("outer.cjs", outer),
+            ("inner.cjs", "exports.a = 1;"),
+        ];
+        with_exports(&files, |exports, input| {
+            exports.face_captures(file_named(input, "outer.cjs"))
+        })
+    };
+    let main = "import * as all from './outer.cjs'; console.log(all.a);";
+    assert!(captures(main, hidden));
+    assert!(!captures(main, &listed));
+    // An import statement is bound to what the getter returns, also where a listed getter would have a copy.
+    let files = [
+        ("main.mjs", IMPORTS_OF_A[0]),
+        ("outer.cjs", hidden),
+        ("inner.cjs", "if (Math.random()) exports.a = 1;"),
+    ];
+    with_exports(&files, |exports, input| {
+        let [outer, inner] = ["outer.cjs", "inner.cjs"].map(|name| module_named(input, name));
+        let a = atom(input, "a");
+        assert_eq!(exports.owner_of(outer, a), Some((inner, a)));
+    });
+    for main in &IMPORTS_OF_A[..1] {
+        assert!(!captures(main, hidden), "{main}");
+    }
+}
+
+#[test]
 fn a_name_that_may_be_absent_is_checked_once_every_file_has_run() {
     let main = "import './first.mjs'; import { late } from './k.cjs'; console.log(late);";
     let first = "import { nope } from './k.cjs'; console.log(nope);";

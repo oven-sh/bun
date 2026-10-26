@@ -1,4 +1,4 @@
-use super::{Chain, Expr, ExprId, ExprKind, FileBuilder, FileIn, Storage};
+use super::{Chain, Expr, ExprId, ExprKind, FAR_IN_BRACKETS, FileBuilder, FileIn, Storage};
 use crate::atom::Atom;
 
 bitflags::bitflags! {
@@ -85,7 +85,12 @@ impl<S: Storage> FileIn<S> {
     #[inline]
     pub fn written_kind(&self, e: ExprId) -> ExprKind {
         match self.exprs[e.idx()].kind {
-            ExprKind::Dot { obj, chain, .. } if self.is_written_in_brackets(e) => {
+            ExprKind::Dot {
+                obj,
+                chain,
+                name_before_end: FAR_IN_BRACKETS,
+                ..
+            } => {
                 let index = ExprId(e.0 - 1);
                 ExprKind::Index { obj, index, chain }
             }
@@ -96,9 +101,12 @@ impl<S: Storage> FileIn<S> {
     /// The node as TypeScript's rules take it. No error is reported in the JavaScript of a build.
     #[inline]
     pub fn checked_kind(&self, e: ExprId) -> ExprKind {
-        match self.is_js {
-            true => self.exprs[e.idx()].kind,
-            false => self.written_kind(e),
+        match self.exprs[e.idx()].kind {
+            ExprKind::Dot {
+                name_before_end: FAR_IN_BRACKETS,
+                ..
+            } if !self.is_js => self.written_kind(e),
+            kind => kind,
         }
     }
 

@@ -612,7 +612,6 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             FileKind::Ts
         };
         self.f.is_js = self.options.is_javascript && !self.options.is_json;
-        self.f.is_compiled = self.options.compiles;
         self.f.is_flow = self.is_flow();
         self.next();
         let base = self.s.ids.len();

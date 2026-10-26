@@ -116,7 +116,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     };
     let texts = scan_commonjs_modules(&commonjs_input);
     let entries = collect_export_entries(input, &scans, &modules);
-    let tables = resolve_exports(&scans, &modules, entries, &texts);
+    let tables = resolve_exports(input.files, &scans, &modules, entries, &texts);
     sites.settle(input.files, &modules, &tables);
     let find_marker = |module: ModuleRef| texts.marker(module);
     let imports = bind_imports(

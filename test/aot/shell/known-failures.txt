@@ -435,8 +435,6 @@ data-from-outside/json-into-class-containers	// IR- ^layout (L\d+) .*name="WithA
 data-from-outside/json-parse-into-a-union-of-records-stays-compiled	// IR+ ^ .*JSONParseString
 data-from-outside/json-parse-into-declared-types	// IR+ JSONStartsWith v\d+ text="\\x22id\\x22:"
 data-from-outside/json-parse-recursive-union-retry	// IR+ ^ .*JSONTryRetry
-data-from-outside/json-parse-type-argument-keys-in-another-order-stay-in-line	// IR+ ^ .*JSONKeyOrderAppend
-data-from-outside/json-parse-type-argument-undeclared-keys-stay-compiled	// IR+ ^ .*JSONKeyOrderApply
 data-from-outside/parsed-objects-changed-by-untyped-code	// IR+ ^ .* = JSONSourceOpen v
 data-from-outside/plain-objects-into-class-types	// IR+ ^layout (L\d+) .*name="GivenToAReducer" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 data-from-outside/spread-literal-returned-by-a-callback-over-rows	// IR+ ^layout (L\d+) .*name="Hit" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b

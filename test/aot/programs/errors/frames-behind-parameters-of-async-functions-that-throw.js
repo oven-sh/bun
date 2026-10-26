@@ -49,3 +49,8 @@ await show("a pattern, no await", () => takesPatternAndNeverWaits(null));
 await show("a pattern of an arrow function", () => takesPatternInArrow(null));
 await show("a pattern of a method", () => new Holder().takesPattern(null));
 await show("a default value of a static method", () => Holder.takesDefault());
+const takesPatternInArrowThatAlsoWaits = async ({ part }) => {
+  await part;
+};
+await show("an arrow function that is handed an object", () => takesPatternInArrowThatAlsoWaits({ part: 1 }));
+await show("a pattern of that arrow function", () => takesPatternInArrowThatAlsoWaits(null));

@@ -1092,14 +1092,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // A `#b` that no enclosing class declares is still looked up.
         if let Some(any) = access.any_like {
-            // TypeScript narrows `a["b"]` of an `any` and leaves `a.b` alone. No error is reported in the JavaScript
-            // of a build, so there both are narrowed, and the compiler is told what the tests around them show.
-            if !is_private && any == TypeId::ANY && hir.is_compiled && hir.is_js {
-                let right = (file, name_pos, hir[e].end);
-                let narrowed =
-                    self.get_flow_type_of_access_expression(file, e, None, any, right, target);
-                return (narrowed, may_short_circuit);
-            }
             if !is_private || lexical.is_some() {
                 return (any, may_short_circuit);
             }

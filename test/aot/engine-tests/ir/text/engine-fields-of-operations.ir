@@ -226,7 +226,7 @@
 # CHECK-NEXT: v10 = CallList v0, -, v8
 # CHECK-NEXT: v11 = ConstructList v0, v1, v8 calleeName="C" accessSite=46 callees=[f2, builtin(MathMax), ..]
 # CHECK-NEXT: v12 = ConstructList v0, -, v8
-# CHECK-NEXT: v13 = CallDirect v1, v2 function=f5 accessSite=47 [isNeverInlined, isAlwaysInlined, isAfterInlinedHead, isConstruction] @0 tail
+# CHECK-NEXT: v13 = CallDirect v1, v2 function=f5 accessSite=47 [isNeverInlined, isAlwaysInlined, isAfterInlinedHead, isConstruction, callsOwnFunctionObject] @0 tail
 # CHECK-NEXT: v14 = ResultAt v13 index=1
 # CHECK-NEXT: v15 = ResultAt v13
 # CHECK-NEXT: v16 = CallDirect function=f6
@@ -681,7 +681,7 @@ function f14 module=m0 thisType={type=anything} parameters=[{type=anything}, {ty
     v10 = CallList v0, -, v8
     v11 = ConstructList v0, v1, v8 calleeName="C" accessSite=46 callees=[f2, builtin(MathMax), ..]
     v12 = ConstructList v0, -, v8
-    v13 = CallDirect v1, v2 function=f5 accessSite=47 [isNeverInlined, isAlwaysInlined, isAfterInlinedHead, isConstruction] @0 tail
+    v13 = CallDirect v1, v2 function=f5 accessSite=47 [isNeverInlined, isAlwaysInlined, isAfterInlinedHead, isConstruction, callsOwnFunctionObject] @0 tail
     v14 = ResultAt v13 index=1
     v15 = ResultAt v13
     v16 = CallDirect function=f6

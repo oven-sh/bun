@@ -717,7 +717,9 @@ impl<'a> Build<'a> {
                     EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
                         specifiers
                     }
-                    EntryPoints::Resolved(paths) | EntryPoints::Configured(paths, _) => paths,
+                    EntryPoints::Resolved(paths)
+                    | EntryPoints::Imported(paths)
+                    | EntryPoints::Configured(paths, _) => paths,
                 };
                 self.diagnostics
                     .add_load_failure(failure, entry_point_names);

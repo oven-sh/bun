@@ -1781,11 +1781,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `reportErrorsFromWidening`. Returns true if `reportImplicitAny` still has to be called,
-    /// which is left to the caller, since it knows the declaration.
+    /// which is left to the caller, since it knows the declaration. So is `noImplicitAny`, which it asks of the declaration's file.
     pub(super) fn report_errors_from_widening(&mut self, ty: TypeId) -> bool {
-        self.p.files.options.no_implicit_any
-            && self.contains_widening_type(ty)
-            && !self.report_widening_errors_in_type(ty)
+        self.contains_widening_type(ty) && !self.report_widening_errors_in_type(ty)
     }
 
     /// `reportWideningErrorsInType`: 7018

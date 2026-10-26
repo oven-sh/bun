@@ -149,6 +149,13 @@
       "peakBytes": 9.46
     }
   },
+  "classes that extend one another in a row, each constructed": {
+    "millionInstructions": 16578,
+    "megabytes": 133,
+    "growth": {
+      "instructions": 4.14
+    }
+  },
   "functions on one line after non-ASCII text": {
     "millionInstructions": 13994,
     "megabytes": 243,

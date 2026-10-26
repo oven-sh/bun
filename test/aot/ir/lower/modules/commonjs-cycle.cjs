@@ -5,7 +5,7 @@
 // BACK: module {{*}}/imports/chain/cycle-b.cjs"{{*}}requests=[{target=m{{*}}kind=Require
 
 // RUN(SITES): link
-// SITES-COUNT-3: EvaluateModule module=m{{*}} [isBare]
+// SITES-COUNT-3: EvaluateModule module=m{{*}} [isBare, isCallOfRequire]
 // SITES-NOT: EvaluateModule
 
 // RUN(NOWHERE): link

@@ -495,9 +495,33 @@
     "typed": 112.2,
     "untyped": 112
   },
+  "everyday-copies-that-nobody-keeps/a-list-with-one-more": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-copies-that-nobody-keeps/a-member-in-front": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-copies-that-nobody-keeps/a-new-member-in-front": {
+    "typed": 7,
+    "untyped": 7
+  },
   "everyday-copies-that-nobody-keeps/a-parameter": {
     "typed": 20,
     "untyped": 21
+  },
+  "everyday-copies-that-nobody-keeps/a-source-that-may-be-missing": {
+    "typed": 20.5,
+    "untyped": 20.5
+  },
+  "everyday-copies-that-nobody-keeps/kept.nothing-replaced": {
+    "typed": 96.1,
+    "untyped": 96.1
+  },
+  "everyday-copies-that-nobody-keeps/kept.one-member-replaced": {
+    "typed": 100.1,
+    "untyped": 100.1
   },
   "everyday-copies-that-nobody-keeps/nothing-replaced": {
     "typed": 8,
@@ -514,6 +538,14 @@
   "everyday-copies-that-nobody-keeps/texts-and-numbers": {
     "typed": 8,
     "untyped": 8
+  },
+  "everyday-copies-that-nobody-keeps/the-rest-of-a-pattern": {
+    "typed": 7,
+    "untyped": 7
+  },
+  "everyday-copies-that-nobody-keeps/the-rest-of-a-pattern-over-one-of-a-list": {
+    "typed": 18,
+    "untyped": 18
   },
   "everyday-copies-that-nobody-keeps/two-members-replaced": {
     "typed": 11,
@@ -790,6 +822,14 @@
   "everyday-functions/function-taking-one-or-many": {
     "typed": 30.5,
     "untyped": 32.5
+  },
+  "everyday-functions/functions-with-typed-parameters-written-as-arguments-of-methods-of-a-list-out-of-a-text-where-another-was-given-a-display-name": {
+    "typed": 268.4,
+    "untyped": 342.8
+  },
+  "everyday-functions/functions-without-captures-written-as-arguments-of-methods-of-a-list-known-by-a-test-where-another-was-given-a-display-name": {
+    "typed": 109.9,
+    "untyped": 103.6
   },
   "everyday-functions/generic-identity": {
     "typed": 5,

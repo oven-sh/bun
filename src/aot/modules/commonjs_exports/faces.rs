@@ -14,6 +14,7 @@ use crate::modules::reached_targets::ReachedTargets;
 use crate::modules::requests::Scans;
 use crate::modules::{ApplicationGraph, ModuleRef, collect_pending_failures};
 use bun_sema::atom::{Atom, known};
+use bun_sema::hir::MemberKey;
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -37,7 +38,7 @@ struct AbsentName {
 // A variable of a CommonJS module that an ES module imports.
 #[derive(Copy, Clone)]
 pub(in crate::modules) struct ImportedVariable {
-    /// The file that the import names, whose face takes the copy.
+    /// The file that shows the name to the importer, whose face takes the copy.
     pub(in crate::modules) exporter: FileId,
     /// The module that has the variable, and its name there.
     pub(in crate::modules) owner: ModuleRef,
@@ -87,15 +88,17 @@ pub(in crate::modules) fn collect_seen_namespaces(
     seen
 }
 
-// `ns.name`, where `ns` is the namespace of a CommonJS file, and the names that JSX imports.
+// `ns.name`, where `ns` is the namespace of a CommonJS file or of an ES module that hands its names on, and the names that JSX imports.
 pub(in crate::modules) fn collect_members_of_namespaces(
-    modules: &ModuleSet,
+    input: &CommonJsInput<'_, '_, '_>,
+    tables: &ExportTables,
     imports: &[FileImports],
 ) -> Vec<ImportedVariable> {
+    let (files, modules) = (input.bind.files, input.modules);
     let mut variables = Vec::new();
-    let mut add = |binding: PendingBinding, exporter: ModuleRef| {
+    let mut add = |binding: PendingBinding, named: ModuleRef, written_name: Atom| {
         if let PendingBinding::Synthetic { module, name } = binding
-            && let Some(exporter) = modules.find_commonjs_file(exporter)
+            && let Some(exporter) = tables.find_commonjs_exporter(modules, named, written_name)
         {
             variables.push(ImportedVariable {
                 exporter,
@@ -104,17 +107,20 @@ pub(in crate::modules) fn collect_members_of_namespaces(
             });
         }
     };
-    for file_imports in imports {
+    for (&file, file_imports) in modules.compiled_files.iter().zip(imports) {
         let members = file_imports.members.iter().zip(&file_imports.accessed);
-        for (&(_, binding), &(_, accessed)) in members {
-            if accessed.is_imported {
-                add(binding, accessed.module);
+        for (&(member, binding), &(_, accessed)) in members {
+            if accessed.is_imported
+                && let Some((_, MemberKey::Name(name))) = files.hir(file).member_key(member)
+            {
+                add(binding, accessed.module, name);
             }
         }
         // What JSX imports without a statement.
         for jsx in &file_imports.jsx {
             if let Some(exporter) = jsx.exporter {
-                add(jsx.binding, exporter);
+                let name = files.atoms.intern(jsx.import.export_name());
+                add(jsx.binding, exporter, name);
             }
         }
     }
@@ -186,7 +192,7 @@ impl Faces {
         let (scans, modules) = (input.scans, input.modules);
         let mut faces = Faces {
             written_imports: tables.commonjs_imports.clone(),
-            imported_variables: collect_members_of_namespaces(modules, imports),
+            imported_variables: collect_members_of_namespaces(input, tables, imports),
             seen_namespaces: collect_seen_namespaces(modules, tables, imports),
             ..Faces::default()
         };
@@ -290,8 +296,7 @@ impl Faces {
         name: Atom,
     ) -> Option<ModuleExport> {
         let module = ModuleRef::File(file);
-        let target = exports.targets.get(&(module, name)).copied();
-        let binding = match target.unwrap_or(Target::Name(module, name)) {
+        let binding = match exports.imported_target(module, name) {
             Target::Binding(symbol) => ExportBinding::Variable(symbol),
             Target::Nothing => return None,
             Target::Name(owner, owner_name) => {
@@ -409,7 +414,10 @@ fn is_only_known_to_run(exports: &CommonJsExports, owner: ModuleRef, name: Atom)
             // The face may run while the body of the file does.
             || text.is_half
             || match name == known::default {
-                true => exports.marker(owner) != Some(false) && !exports.has_default_of_its_own(owner),
+                true => {
+                    exports.marker_for_imports(owner) != Some(false)
+                        && !exports.has_default_of_its_own(owner)
+                }
                 false => !text.always_creates(name),
             })
 }

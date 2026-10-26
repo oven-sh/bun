@@ -103,6 +103,15 @@ bun test/aot/tools/same-code-in-every-spelling.ts [--bun <bun>] <program or fold
 
 It writes each program with every name behind a dot, in quotes, in brackets and between backticks, and compares the machine code function by function.
 
+Blanks and comments are no part of a program either. No pass decides by a source position, by the distance between two of them or by the length of a text: a position is data for stack traces, and goes into a
+table beside the code. An order by position is an order only among positions that differ however the text is laid out.
+
+```sh
+bun test/aot/tools/same-code-wherever-the-text-stands.ts [--bun <bun>] <program or folder>..
+```
+
+It builds each program as written and with blanks, comments and empty lines sown between its tokens, and compares the machine code function by function.
+
 Identical output shows that nothing moved **on those programs**. It is no evidence that a change is sound: deleting the "I don't know" arm of an analysis that no test program reaches leaves all output identical, and
 miscompiles the next user's program.
 

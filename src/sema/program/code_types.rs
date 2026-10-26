@@ -43,7 +43,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         &self,
         arena: &'s Arena,
         key: LoadKey<'r>,
-        loaded: Box<Loaded<'s, 'r>>,
+        loaded: Loaded<'s, 'r>,
         mut code: Box<LoadedCode<'s, 'r>>,
     ) -> (Box<Loaded<'s, 'r>>, Box<LoadedCode<'s, 'r>>) {
         let mut module = loaded.module;

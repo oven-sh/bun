@@ -434,6 +434,14 @@ impl ModuleGraph {
         }
     }
 
+    /// What `__esModule` says to whoever imports the module.
+    pub fn marker_for_imports(&self, module: ModuleRef) -> Option<bool> {
+        match self.shape(module) {
+            Shape::Names | Shape::Value => self.commonjs().marker_for_imports(module),
+            Shape::EsModule | Shape::AsToday => self.marker(module),
+        }
+    }
+
     pub fn face(&self, module: ModuleRef) -> Option<ModuleRef> {
         self.commonjs().face(module)
     }

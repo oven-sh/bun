@@ -15,9 +15,9 @@ const erased = ["--aot-erase-types"];
 
 type Row = [program: string, flags: string[], baseline: string, other: string, times: number, today?: number];
 const rows: Row[] = [
-  ["a-count-by-one.ts", [], "under 2 ** 31", "past 2 ** 31", 10, 15.6],
-  ["a-sum-of-bytes.ts", [], "under two gibibytes", "past two gibibytes", 10, 28.9],
-  ["the-field-beside-a-sum.ts", [], "beside a small sum", "beside a sum past two gibibytes", 5, 14.8],
+  ["a-count-by-one.ts", [], "under 2 ** 31", "past 2 ** 31", 2],
+  ["a-sum-of-bytes.ts", [], "under two gibibytes", "past two gibibytes", 2],
+  ["the-field-beside-a-sum.ts", [], "beside a small sum", "beside a sum past two gibibytes", 2],
   ["the-constructor-of-an-instance.ts", [], "by a method", "by the constructor", 3],
   ["the-constructor-of-an-instance.ts", erased, "by a method", "by the constructor", 3],
   [

@@ -8,8 +8,8 @@
 //                  TypeScript; JavaScript alone
 //   the direction  the user calls the maker; reads its constant, a member of its object, awaits it; the maker calls the user's function, constructor, method or setter, or stores to its field; the user hands the
 //                  maker a callback; registers it in a third file; a first file takes from the one and gives to the other
-//   the files      .ts .mts .tsx .js .mjs .cjs .jsx, files between that export again (`export {}`, `export *`, `export * as`, an import exported) or hand on by a function, typed, untyped or generic
-//   the reach      an import by name, under another name, of the namespace, of the default; `require`, `createRequire`, `import()`; a cycle between the two files
+//   the files      .ts .mts .cts .tsx .js .mjs .cjs .jsx, files between that export again (`export {}`, `export *`, `export * as`, an import exported) or hand on by a function, typed, untyped or generic
+//   the reach      an import by name, under another name, of the namespace; `require`, `createRequire`, `import()`; a cycle between the two files
 //   what hides     `as any`, `as unknown as T`, `!`, a variable of type `any`, `// @ts-ignore`, `// @ts-expect-error`, `// @ts-nocheck`, `JSON.parse`, a `Map<any, any>`, `Reflect.get`, a generic function that casts
 //   the type       number, string, boolean, bigint, an object type, one with an optional member, a read-only one, a class, a list, a tuple, unions of literals, of primitives and of objects, an enum, a function,
 //                  an index signature, a generic box; written in place, under a name of each file's own, or in a file of types
@@ -1125,6 +1125,8 @@ class Module {
 export function generate(
   random: Random,
   corner: Corner = random.pick(corners),
+  /** With `.cts` and `export * as`, which came later: without them a seed makes the program that it always made. */
+  isWider = false,
 ): { file: string; text: string; files: Record<string, string> } {
   // The relations first.
   const isStrict = random.chance(0.8);
@@ -1275,6 +1277,8 @@ export function generate(
       typing === "TypeScript"
         ? random.weighted([
             [8, "ts"],
+            // A CommonJS file does not wait at its top.
+            [isWider && late === "require" ? 1 : 0, "cts"],
             [1, "mts"],
             [1, "tsx"],
           ])
@@ -1303,7 +1307,7 @@ export function generate(
     // The real name where the project allows it or does not read the file that imports, and none otherwise.
     return writesEnds || from.folder || (!from.isTyped && !allowsJavaScript)
       ? `${up}${to.path}`
-      : `${up}${to.folder}${to.name}${to.end === "mts" ? ".mjs" : ""}`;
+      : `${up}${to.folder}${to.name}${{ mts: ".mjs", cts: ".cjs" }[to.end] ?? ""}`;
   };
 
   /** Whether TypeScript knows nothing about the file from where it is imported. */
@@ -1673,6 +1677,8 @@ export function generate(
     module.isCommon ? `exports.${name} = ${text};` : `export const ${name}${annotation} = ${text};`;
 
   /** Files between: each exports again what the one before it exports, or hands it on by a function. */
+  /** What stands behind the name that `through` answers, where a file between exports a namespace. */
+  let deeper = "";
   function through(
     from: Module,
     to: Module,
@@ -1680,6 +1686,7 @@ export function generate(
     signature?: { parameters: [string, string][]; returns: string },
   ): [Module, string] {
     let [target, exportedAs] = [to, name];
+    deeper = "";
     for (let id = 0; id < between; id++) {
       // TypeScript sees through a file between that is TypeScript. One of JavaScript stands where nobody checks, or where JavaScript is read.
       const mayBeLoose = !isChecked(from) || allowsJavaScript;
@@ -1695,17 +1702,23 @@ export function generate(
         [isUnknownTo(link, target) ? 0 : 3, "export *"],
         [2, "an import exported"],
         [2, "under another name"],
+        [isWider ? 2 : 0, "export * as"],
         [signature ? 4 : 0, "a function"],
       ] as const);
       if (how === "export {}") link.body.push(...ignore, `export { ${exportedAs} } from ${where};`);
       else if (how === "export *") link.body.push(...ignore, `export * from ${where};`);
       else if (how === "an import exported")
         link.body.push(...ignore, `import { ${exportedAs} } from ${where};`, `export { ${exportedAs} };`);
-      else if (how === "under another name") {
+      else if (how === "export * as") {
+        link.body.push(...ignore, `export * as inner${id} from ${where};`);
+        deeper = `.${exportedAs}${deeper}`;
+        exportedAs = `inner${id}`;
+      } else if (how === "under another name") {
         link.body.push(...ignore, `export { ${exportedAs} as handed${id} } from ${where};`);
         exportedAs = `handed${id}`;
       } else {
-        const inner = take(link, target, exportedAs);
+        const inner = take(link, target, exportedAs) + deeper;
+        deeper = "";
         const typed = random.pick(["the type", "any", "generic"] as const);
         const { parameters, returns } = signature!;
         // Each file writes the type in its own way.
@@ -1806,7 +1819,7 @@ export function generate(
           parameters: argument ? [["turn", "number"]] : [],
           returns: type,
         });
-        const makes = take(entry, from, name);
+        const makes = take(entry, from, name) + deeper;
         const uses = take(entry, user, "use");
         const call = `${uses}(${makes}(${argument}))`;
         const line = isExpression ? `console.log(${call});` : `${call};`;
@@ -1819,7 +1832,7 @@ export function generate(
         parameters: argument ? [["turn", "number"]] : [],
         returns: isAsync ? `Promise<${type}>` : type,
       });
-      const makes = take(user, from, name);
+      const makes = take(user, from, name) + deeper;
       const call = `${isAsync ? "await " : ""}${makes}(${argument})`;
       const lines = useIn(user, isAsync ? `(${call})` : call, false, makerIsUnknown);
       startLines = wrapped(lines, user, loops);
@@ -1841,7 +1854,7 @@ export function generate(
       );
       declareConstant(maker, "given", whole, lines);
       const [from, name] = through(user, maker, "given");
-      const given = take(user, from, name) + (isMember ? ".held" : "");
+      const given = take(user, from, name) + deeper + (isMember ? ".held" : "");
       startLines = wrapped(useIn(user, given, false, makerIsUnknown), user, loops);
       entry = user;
       break;
@@ -1870,7 +1883,7 @@ export function generate(
           parameters: [["callback", `(x: ${type}) => void`]],
           returns: "",
         });
-        const each = take(user, from, name);
+        const each = take(user, from, name) + deeper;
         const lines = [`${each}(${callback[0]}`, ...callback.slice(1, -1), "});"];
         startLines = guard === "round the call" ? guarded(lines, user) : lines;
         entry = user;
@@ -1992,7 +2005,7 @@ export function generate(
         direction === "argument"
           ? through(maker, user, target, { parameters: [["x", type]], returns: "" })
           : through(maker, user, target);
-      const reached = take(maker, from, name);
+      const reached = take(maker, from, name) + deeper;
       const said = maker.isTyped ? typeIn(maker) : typeText;
       const print = (text: string) => (isExpression ? `console.log(${text});` : `${text};`);
       let lines: string[];
@@ -2047,7 +2060,7 @@ export function generate(
       }
       user.head.push(`import ${JSON.stringify(specifier(user, setter))};`);
       const [from, name] = through(user, maker, direction === "set behind" ? "make" : "holder");
-      const reached = take(user, from, name);
+      const reached = take(user, from, name) + deeper;
       startLines = wrapped(
         useIn(user, direction === "set behind" ? `${reached}()` : `${reached}.held`, false),
         user,

@@ -40,6 +40,8 @@ pub enum EntryPoints<'a> {
     WrittenFor(&'a [Vec<u8>], MainModule),
     Resolved(&'a [Vec<u8>]),
     Configured(&'a [Vec<u8>], Option<&'a [u8]>),
+    // Under the configuration nearest to the first. The program begins elsewhere.
+    Imported(&'a [Vec<u8>]),
 }
 
 pub struct CompileRequest<'a, 's> {

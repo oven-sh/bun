@@ -2219,7 +2219,7 @@ function frames(stack: string): string {
   const end = lines.findIndex(line => line.includes("at attempt "));
   return lines
     .slice(0, end + 1)
-    .map(line => line.trim().replace(/[^\s(]*[\\/]/, ""))
+    .map(line => line.trim().replace(/[^\s(]*[\\/]/, "").replace(/native:\d+:\d+/, "native"))
     .join(" | ");
 }
 function note(what: string, stack: string): void {

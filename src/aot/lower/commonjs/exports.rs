@@ -188,7 +188,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         name: Atom,
     ) -> Option<ValueId> {
         // The default of a module without the marker is what `module.exports` holds.
-        if name == known::default && self.file.inputs.modules.marker(module) != Some(true) {
+        let modules = self.file.inputs.modules;
+        if name == known::default && modules.marker_for_imports(module) != Some(true) {
             return emit_module_value(self, module);
         }
         self.read_named_export(module, name)

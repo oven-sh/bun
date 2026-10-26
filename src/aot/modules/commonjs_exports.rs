@@ -15,7 +15,7 @@ use super::bindings::SyntheticExportId;
 use super::exports::{ExportTables, Resolution};
 use super::graph::find;
 use super::imports::{FileImports, PendingBinding};
-use super::interop::ModuleKind;
+use super::interop::{ModuleKind, SyntheticExportRule};
 use super::module_set::ModuleSet;
 use super::namespace_members::find_outermost_type_assertion;
 use super::plan::{Member, Shape};
@@ -29,8 +29,8 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::SymbolId;
 use bun_sema::hir::{ExprId, FnId, StmtId};
 use bun_sema::program::{FileId, Sym};
-use bun_sema::util::FxHashMap;
 use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashMap, FxHashSet};
 
 /// The callback of `__commonJS(cb)` that is a module of its own, and the name that holds what the helper gives.
 #[derive(Copy, Clone, Debug)]
@@ -94,6 +94,8 @@ pub(super) struct ModuleEntries {
     pub has_names: bool,
     pub knows_all_names: bool,
     pub is_half: bool,
+    /// What `__esModule` says to an ES importer, as far as the text of the module says it.
+    pub marker: Option<bool>,
     pub names: Vec<NameEntry>,
 }
 
@@ -101,7 +103,7 @@ pub(super) struct ModuleEntries {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct CommonJsImport {
     pub importer: FileId,
-    /// The file that the import names.
+    /// The file that the import names, or the one whose names the ES module that it names hands on.
     pub exporter: FileId,
     pub name: Atom,
 }
@@ -164,6 +166,12 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
                 Some(known.shape)
             },
         });
+        let rule = modules.interop(ModuleRef::File(file)).export_rule;
+        let ignores_marker = rule == SyntheticExportRule::CommonJsIgnoringAnnotation;
+        for text in found.iter_mut() {
+            text.is_marker_ignored_by_imports =
+                ignores_marker && text.module() == ModuleRef::File(file);
+        }
     });
     let modules: Vec<OwnText> = scanned.into_iter().flat_map(|(_, found)| found).collect();
     let numbered = modules.iter().zip(0..);
@@ -229,6 +237,10 @@ fn create_entries(text: &OwnText) -> ModuleEntries {
         has_names: text.has_names,
         knows_all_names: text.knows_all_names(),
         is_half: text.is_half,
+        marker: match text.is_marker_ignored_by_imports {
+            true => Some(false),
+            false => text.marker,
+        },
         names,
     }
 }
@@ -276,6 +288,8 @@ pub struct CommonJsExports {
     /// By number: the module that has the variable, and the name. Of CommonJS modules of the program alone.
     names_by_id: FxHashMap<SyntheticExportId, (ModuleRef, Atom)>,
     targets: FxHashMap<(ModuleRef, Atom), Target>,
+    /// Of those, the names that an ES importer has a copy of: it holds what the getter answered when the file was linked.
+    copied_names: FxHashSet<(ModuleRef, Atom)>,
     /// The names that other files store, and whether all that they store ignores `this`.
     stored_by_other_files: FxHashMap<(ModuleRef, Atom), bool>,
     faces: Faces,
@@ -338,6 +352,11 @@ impl CommonJsExports {
                 *stored.or_insert(true) &= ignores_this;
             }
         }
+        for &(module, name) in &theirs.copied_names {
+            if let Some(module) = application.local_module(module) {
+                self.copied_names.insert((module, name));
+            }
+        }
         for text in &theirs.modules {
             if theirs.shape(text.module()) == Shape::Value
                 && let Some(module) = application.local_module(text.module())
@@ -390,13 +409,17 @@ impl CommonJsExports {
     fn bind_names_of_module(&mut self, modules: &ModuleSet, tables: &ExportTables, text: &OwnText) {
         let module = text.module();
         for alias in &text.aliases {
-            let target = match tables.resolve_in(modules, module, alias.name).resolution {
+            let resolved = tables.resolve_required(modules, module, alias.name);
+            let target = match resolved.resolution {
                 Resolution::Synthetic { module, name } => Target::Name(module, name),
                 Resolution::Variable(symbol) => Target::Binding(symbol),
                 _ => Target::Nothing,
             };
             if target != Target::Name(module, alias.name) {
                 self.targets.insert((module, alias.name), target);
+            }
+            if tables.commonjs.is_copied(module, alias.name) {
+                self.copied_names.insert((module, alias.name));
             }
             if let Target::Binding(symbol) = target {
                 let table = &mut self.files[symbol.file.idx()];
@@ -473,8 +496,8 @@ impl CommonJsExports {
 
     pub(super) fn has_default_of_its_own(&self, module: ModuleRef) -> bool {
         let text = self.text_of(module);
-        self.marker(module) == Some(true)
-            && text.is_some_and(|text| text.always_creates(known::default))
+        self.marker_for_imports(module) == Some(true)
+            && text.is_some_and(|text| text.always_lists(known::default))
     }
 
     // An ES module gets the object itself as `default`, unless the module has the marker and a `default` of its own.
@@ -488,11 +511,11 @@ impl CommonJsExports {
         let written = written
             .filter(|imported| imported.name == known::default)
             .map(|imported| ModuleRef::File(imported.exporter))
-            .filter(|&module| self.marker(module) != Some(false));
+            .filter(|&module| self.marker_for_imports(module) != Some(false));
         // Only an import statement that names the file itself reads `module.exports` in place of the copy.
         let exported = tables.modules_whose_default_is_exported();
         // `ns.default` is the object itself unless the module has a `default` of its own.
-        let members = collect_members_of_namespaces(input.modules, imports);
+        let members = collect_members_of_namespaces(input, tables, imports);
         let defaults = members.iter();
         let defaults = defaults
             .filter(|member| member.name == known::default)
@@ -614,13 +637,38 @@ impl CommonJsExports {
             .map_or(&[], |number| &self.name_sources[number][..])
     }
 
-    // The module that has the variable of a name, and the name that it has there.
+    /// The names that an import is bound past, to a name of another module or to a binding: each with the module that has the name.
+    pub fn names_bound_elsewhere(&self) -> impl Iterator<Item = (ModuleRef, Member)> + '_ {
+        let names = self.modules.iter().flat_map(|text| {
+            let aliases = text.aliases.iter();
+            aliases.map(|alias| (text.module(), alias.name))
+        });
+        names.filter_map(|(module, name)| {
+            let member = match self.imported_target(module, name) {
+                Target::Name(owner, _) if owner == module => return None,
+                Target::Name(owner, owner_name) => {
+                    Member::Variable(*self.ids.get(&(owner, owner_name))?)
+                }
+                Target::Binding(symbol) => Member::Binding(symbol),
+                Target::Nothing => return None,
+            };
+            Some((module, member))
+        })
+    }
+
+    fn imported_target(&self, module: ModuleRef, name: Atom) -> Target {
+        match self.targets.get(&(module, name)) {
+            Some(&target) if !self.copied_names.contains(&(module, name)) => target,
+            Some(_) | None => Target::Name(module, name),
+        }
+    }
+
+    // The module that has the name which an import is bound to, and the name that it has there.
     fn owner_of(&self, module: ModuleRef, name: Atom) -> Option<(ModuleRef, Atom)> {
         self.text_of(module)?;
-        match self.targets.get(&(module, name)) {
-            Some(&Target::Name(owner, owner_name)) => Some((owner, owner_name)),
-            Some(Target::Binding(_) | Target::Nothing) => None,
-            None => Some((module, name)),
+        match self.imported_target(module, name) {
+            Target::Name(owner, owner_name) => Some((owner, owner_name)),
+            Target::Binding(_) | Target::Nothing => None,
         }
     }
 
@@ -669,11 +717,22 @@ impl CommonJsExports {
         Some(member.unwrap_or(Member::Undefined))
     }
 
-    /// `R.N`, where the access is bound to a variable.
+    /// `R.N`, where the access is bound to a variable, and the source of a copy.
     pub fn required_member(&self, accessed: ModuleRef, variable: SyntheticExportId) -> Member {
-        match self.has_names(accessed) && self.names_by_id.contains_key(&variable) {
-            true => Member::Variable(variable),
-            false => Member::OnObject,
+        match self.names_by_id.get(&variable) {
+            Some(&(owner, name)) if self.has_names(accessed) => {
+                let member = self.member_behind_getter(owner, name);
+                member.unwrap_or(Member::Variable(variable))
+            }
+            Some(_) | None => Member::OnObject,
+        }
+    }
+
+    /// What the getter of the name returns. `None`: the name stands for nothing else.
+    pub fn member_behind_getter(&self, module: ModuleRef, name: Atom) -> Option<Member> {
+        match self.targets.contains_key(&(module, name)) {
+            true => self.member_named(module, name),
+            false => None,
         }
     }
 
@@ -689,7 +748,8 @@ impl CommonJsExports {
 
     // Without the marker `default` is the value of the module.
     fn is_import_bound_to_variable(&self, owner: ModuleRef, name: Atom) -> bool {
-        (name != known::default || self.marker(owner) == Some(true)) && self.settled(owner, name)
+        (name != known::default || self.marker_for_imports(owner) == Some(true))
+            && self.settled(owner, name)
     }
 
     /// The statement has no code.
@@ -713,6 +773,7 @@ impl CommonJsExports {
         };
         self.has_names(module)
             && !text.is_half
+            && !self.targets.contains_key(&(module, name))
             && !self.stored_by_other_files.contains_key(&(module, name))
             && text.creations_of(name).any(|creation| creation.is_in_order)
             && text.creations_of(name).all(|it| it.is_run_by_body_alone)
@@ -750,6 +811,14 @@ impl CommonJsExports {
         let key = (module, known::__esModule);
         let marker = self.text_of(module)?.marker;
         marker.filter(|_| !self.stored_by_other_files.contains_key(&key))
+    }
+
+    /// What `__esModule` says to an ES importer: with `true` the `default` of the module is its member of that name, if it has one.
+    pub fn marker_for_imports(&self, module: ModuleRef) -> Option<bool> {
+        match self.text_of(module)?.is_marker_ignored_by_imports {
+            true => Some(false),
+            false => self.marker(module),
+        }
     }
 
     /// The text stores to one of the five names, names `arguments` at the top, or shows its scope to `eval` or `with`: the body only calls the function of five parameters that the text is.

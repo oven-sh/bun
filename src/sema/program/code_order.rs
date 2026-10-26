@@ -101,7 +101,7 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
             return Some(loaded);
         };
         let (loaded, code) =
-            build.answer_types_question_in_types_program(arena, entry.key, loaded, code);
+            build.answer_types_question_in_types_program(arena, entry.key, *loaded, code);
         *entry.code.get_mut() = Some(code);
         Some(loaded)
     }

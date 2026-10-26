@@ -2255,11 +2255,11 @@ console.log(elements(values));
 console.log(constantElements());
 for (const value of values) console.log(field({ id: value }), field({ id: -value }), truncated(value), truncated(-value));
 //// json-stringify-large-output.ts
-// After one large JSON.stringify output, the next large output allocates its buffer once instead of doubling it from 4 KB.
+// After one large JSON.stringify output, the next one finds the buffer as large as it was left, unless a collection came between: the buffer grows at most once an output on average. Where the buffer was too large to be kept, the next large output makes it large in one step instead of doubling it from 4 KB.
 // ENV JSC_aotCountsPath=/dev/null
-declare const aotOperationCount: undefined | ((name: string) => number);
-const isCounted = typeof aotOperationCount === "function";
-const bufferGrowths = () => (typeof aotOperationCount === "function" ? aotOperationCount("operationAOTJSONWriterReserve") : 0);
+declare const aotRuntimeCounters: undefined | (() => string);
+const isCounted = typeof aotRuntimeCounters === "function";
+const bufferGrowths = () => (typeof aotRuntimeCounters === "function" ? Number(/(\d+)\tcounter:StringBuilderGrowths/.exec(aotRuntimeCounters())?.[1] ?? 0) : 0);
 
 type Message = { role: string; content: string };
 const sentence = "the quick brown fox jumps over the lazy dog. ";
@@ -2286,7 +2286,7 @@ function log(index: number): number {
   return JSON.stringify({ level: "info", index, text: "a short line" }).length;
 }
 
-function measure(name: string, messages: Message[], betweenOutputs: (round: number) => void, expectedGrowths = rounds) {
+function measure(name: string, messages: Message[], betweenOutputs: (round: number) => void, mostGrowths = rounds) {
   let sum = checksum(send(messages));
   const before = bufferGrowths();
   for (let round = 0; round < rounds; round++) {
@@ -2295,7 +2295,7 @@ function measure(name: string, messages: Message[], betweenOutputs: (round: numb
   }
   const growths = bufferGrowths() - before;
   const verdict =
-    !isCounted || growths === expectedGrowths ? "as expected" : `${growths} allocations, expected ${expectedGrowths}`;
+    !isCounted || growths <= mostGrowths ? "as expected" : `the buffer grew ${growths} times, expected at most ${mostGrowths}`;
   console.log(name, messages.length, sum, verdict);
 }
 
@@ -2331,6 +2331,10 @@ measure("a growing conversation", growing, round => {
 
 send(conversation(400, []));
 measure("smaller than the last large output", conversation(40, []), nothing);
+
+const short: Message[] = [];
+for (let i = 0; i < 12000; i++) short.push({ role: "user", content: "a short line " + i });
+measure("more short members than the buffer that is kept holds", short, nothing, rounds);
 //// json-stringify-list-tail-at-once.ts
 declare const aotRuntimeCounters: undefined | (() => string);
 declare const aotOperationCount: undefined | ((name: string) => number);

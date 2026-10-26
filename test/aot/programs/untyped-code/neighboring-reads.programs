@@ -2700,6 +2700,7 @@ show("null and undefined", () => [null, undefined].map(x => { try { return untyp
 show("many", () => { let n = 0; for (let i = 0; i < 3000; i++) { const x = make(); if (i % 3 === 0) hide(x)[tag] = i; n += untyped(x).length; } return n; });
 //// own-symbols-typed-objects-stay-compiled.ts
 // Object.getOwnPropertySymbols(x) where x is an object of a type of the program: by its type and through `any`. Without extra properties it has none, and the last line counts that this is said without entering the runtime.
+// The array that holds the answer needs a cell. About once in a thousand arrays the allocator has none at hand, and then this same operation makes the array: the count starts behind such a call and ends before the next is due.
 declare const aotOperationCount: undefined | ((name: string) => number);
 interface T { a?: number; b: number }
 class Base { constructor(public v: number) {} #hidden = 1; get hidden() { return this.#hidden; } }
@@ -2731,9 +2732,13 @@ console.log([x, plain(), withSymbol, i, [1], "ab", 5, x, () => 1].map(o => say(t
 console.log([null, undefined].map(o => { try { return say(through(o)); } catch (e) { return (e as Error).name; } }).join());
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const other = new Base(3);
-const before = counted("operationAOTOwnPropertyKeys");
 let total = 0;
-for (let k = 0; k < 1000; k++) total += through(x).length + byType(x).length + through(other).length + ofInstance(other).length;
+const ask = () => { total += through(x).length + byType(x).length + through(other).length + ofInstance(other).length; };
+ask();
+const atStart = counted("operationAOTOwnPropertyKeys");
+for (let k = 0; k < 500 && counted("operationAOTOwnPropertyKeys") === atStart; k++) ask();
+const before = counted("operationAOTOwnPropertyKeys");
+for (let k = 0; k < 200; k++) ask();
 console.log(total, counted("operationAOTOwnPropertyKeys") - before);
 //// parameters-and-the-arguments-object-of-sloppy-functions.cjs
 // In sloppy code a parameter and the element of `arguments` at its index are one variable. Every way to see that from either side, beside functions that only read `arguments.length` and `arguments[i]`.

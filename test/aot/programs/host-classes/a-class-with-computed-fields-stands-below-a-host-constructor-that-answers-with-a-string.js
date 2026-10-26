@@ -21,3 +21,6 @@ attempt("a field under a name that is computed", () => typeof new WithName(at));
 
 class Untouched extends Base { [0] = 1; ["k" + 1] = 2; }
 attempt("the parent as it was written", () => { const made = new Untouched(); return made[0] + made.k1; });
+
+// The address is good for as long as the bytes are held.
+console.log("the bytes", bytes.join());

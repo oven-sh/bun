@@ -50,6 +50,7 @@ test.concurrent.each([
   ["another-variable", "[process][process.argv.length - process.argv.length]"],
   ["parameter", "(emitter => emitter)(process)"],
   ["weak-reference", "new WeakRef(process).deref()"],
+  ["cause", `new Error("holder", { cause: process }).cause`],
 ])(
   "the channel works where the receiver of the call lists process: %s",
   async (name, self) => {
@@ -58,9 +59,9 @@ test.concurrent.each([
   120_000,
 );
 
-// What comes out of `cause` is any value to the compiler. It does not take a method called on such a value for one of `process`.
+// What `reason` answers is any value to the compiler. It does not take a method called on such a value for one of `process`.
 test("a listener added through a value that the compiler can't follow leaves the channel's JavaScript out, and the error says so", async () => {
-  expect(await startWithChannel("lost", `new Error("holder", { cause: process }).cause`)).toEqual({
+  expect(await startWithChannel("lost", "AbortSignal.abort(process).reason")).toEqual({
     stdout: "",
     error:
       "error: None of Bun.spawn, process.channel, process.disconnect or process.send was compiled into this executable because your code never uses them. " +

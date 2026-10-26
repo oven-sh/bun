@@ -5,8 +5,8 @@ use super::folder::Folder;
 use crate::atom::known;
 use crate::bind::{Binding, BindingKind, CommonJsVariable};
 use crate::hir::{
-    BinOp, ExprId, ExprKind, Flags, NameKind, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind,
-    UnOp, VarKind,
+    BinOp, ExprId, ExprKind, File, Flags, NameKind, PatId, PatKind, PropKey, PropKind, StmtId,
+    StmtKind, UnOp, VarKind,
 };
 
 #[derive(Copy, Clone)]
@@ -91,7 +91,7 @@ impl Folder<'_, '_> {
                 let mut present = branches.into_iter().filter(|branch| branch.0.is_some());
                 present.all(|(branch, runs_when)| {
                     if condition == Some(!runs_when) {
-                        return self.is_removed_where_never_run(branch);
+                        return is_removed_where_never_run(self.hir, branch);
                     }
                     parts.push((TreeNode::Stmt(branch), unused));
                     true
@@ -262,58 +262,56 @@ impl Folder<'_, '_> {
         }
         true
     }
+}
 
-    fn binds_a_name(&self, pattern: PatId) -> bool {
-        let hir = self.hir;
-        match hir[pattern].kind {
-            PatKind::Missing => false,
-            PatKind::Ident(_) => true,
-            PatKind::Object(props) => (props.iter()).any(|prop| self.binds_a_name(hir[prop].value)),
-            PatKind::Array(elements) => {
-                (elements.iter()).any(|element| self.binds_a_name(hir[element].pat))
-            }
+fn binds_a_name(hir: &File<'_>, pattern: PatId) -> bool {
+    match hir[pattern].kind {
+        PatKind::Missing => false,
+        PatKind::Ident(_) => true,
+        PatKind::Object(props) => (props.iter()).any(|prop| binds_a_name(hir, hir[prop].value)),
+        PatKind::Array(elements) => {
+            (elements.iter()).any(|element| binds_a_name(hir, hir[element].pat))
         }
     }
+}
 
-    /// What declares a `var` stays, because the name is visible outside.
-    fn is_removed_where_never_run(&self, statement: StmtId) -> bool {
-        let hir = self.hir;
-        let is_removed = |part: StmtId| part.is_none() || self.is_removed_where_never_run(part);
-        match hir[statement].kind {
-            StmtKind::Empty
-            | StmtKind::Debugger
-            | StmtKind::Expr(_)
-            | StmtKind::Class(_)
-            | StmtKind::Interface(_)
-            | StmtKind::TypeAlias(_)
-            | StmtKind::Enum(_)
-            | StmtKind::Return(_)
-            | StmtKind::Throw(_)
-            | StmtKind::Break(_)
-            | StmtKind::Continue(_) => true,
-            StmtKind::Var(declarations) => declarations.iter().all(|declaration| {
-                let declaration = hir[declaration];
-                declaration.kind != VarKind::Var || !self.binds_a_name(declaration.pat)
-            }),
-            StmtKind::Fn(function) => {
-                !(hir[function].flags).intersects(Flags::ASYNC | Flags::GENERATOR)
-            }
-            StmtKind::Block(list) => hir.ids(list).all(is_removed),
-            StmtKind::If { yes, no, .. } => is_removed(yes) && is_removed(no),
-            StmtKind::While { body, .. }
-            | StmtKind::DoWhile { body, .. }
-            | StmtKind::Labeled { body, .. } => is_removed(body),
-            StmtKind::For { init, body, .. } => is_removed(init) && is_removed(body),
-            StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } => {
-                is_removed(left) && is_removed(body)
-            }
-            StmtKind::Try {
-                block,
-                handler,
-                finalizer,
-                ..
-            } => is_removed(block) && is_removed(handler) && is_removed(finalizer),
-            _ => false,
+/// What declares a `var` stays, because the name is visible outside.
+pub fn is_removed_where_never_run(hir: &File<'_>, statement: StmtId) -> bool {
+    let is_removed = |part: StmtId| part.is_none() || is_removed_where_never_run(hir, part);
+    match hir[statement].kind {
+        StmtKind::Empty
+        | StmtKind::Debugger
+        | StmtKind::Expr(_)
+        | StmtKind::Class(_)
+        | StmtKind::Interface(_)
+        | StmtKind::TypeAlias(_)
+        | StmtKind::Enum(_)
+        | StmtKind::Return(_)
+        | StmtKind::Throw(_)
+        | StmtKind::Break(_)
+        | StmtKind::Continue(_) => true,
+        StmtKind::Var(declarations) => declarations.iter().all(|declaration| {
+            let declaration = hir[declaration];
+            declaration.kind != VarKind::Var || !binds_a_name(hir, declaration.pat)
+        }),
+        StmtKind::Fn(function) => {
+            !(hir[function].flags).intersects(Flags::ASYNC | Flags::GENERATOR)
         }
+        StmtKind::Block(list) => hir.ids(list).all(is_removed),
+        StmtKind::If { yes, no, .. } => is_removed(yes) && is_removed(no),
+        StmtKind::While { body, .. }
+        | StmtKind::DoWhile { body, .. }
+        | StmtKind::Labeled { body, .. } => is_removed(body),
+        StmtKind::For { init, body, .. } => is_removed(init) && is_removed(body),
+        StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } => {
+            is_removed(left) && is_removed(body)
+        }
+        StmtKind::Try {
+            block,
+            handler,
+            finalizer,
+            ..
+        } => is_removed(block) && is_removed(handler) && is_removed(finalizer),
+        _ => false,
     }
 }

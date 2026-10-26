@@ -95,6 +95,21 @@ fn a_build_takes_a_name_in_brackets_for_a_name_behind_a_dot() {
 }
 
 #[test]
+fn names_in_brackets_keep_their_places_behind_speculation() {
+    let compiled_typescript = Options {
+        compiles: true,
+        ..typescript()
+    };
+    let (file, _) = parsed("(a[\"b\"], c[\"d\"])", compiled_typescript);
+    let accesses = (0..file.exprs.len() as u32).map(ExprId);
+    let places: Vec<u32> = accesses
+        .filter(|&access| file.is_written_in_brackets(access))
+        .map(|access| file.name_pos(access))
+        .collect();
+    assert_eq!(places, [3, 11]);
+}
+
+#[test]
 fn column_survives_speculation_and_removal() {
     let none = ExprFlags::empty();
     let parenthesized = ExprFlags::PARENTHESIZED;

@@ -150,7 +150,7 @@ pub(crate) fn lower_yield(
         unreachable!("lower_yield takes a Yield expression");
     };
     if star {
-        return lowering.lower_yield_star(value);
+        return lowering.lower_yield_star(expression, value);
     }
     let operand = value.some();
     let value = match operand {

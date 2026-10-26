@@ -11,21 +11,23 @@ const declarationsBehindJavaScript = [2000033, 2000136, 2000653, 2001049];
 
 generated(
   "values that cross between files under types that say something else",
-  [...Array(484).keys(), ...declarationsBehindJavaScript.map(seed => seed - 1)].map(index => {
+  [...Array(704).keys(), ...declarationsBehindJavaScript.map(seed => seed - 1)].map(index => {
     const corner = corners[index % corners.length];
+    // From seed 485 on also `.cts` and `export * as` are drawn.
+    const isWider = index >= 484 && index < 704;
     const isErased = index % 3 === 2;
     return {
       name: `seed ${index + 1}, ${corner}${isErased ? ", types erased" : ""}.`,
-      // Every run takes the first forty-four seeds, four of each corner; AOT_GENERATED=all takes all.
-      isAlwaysRun: index < 44,
+      // Every run takes the first forty-four seeds, four of each corner, and twenty-two of the later ones; AOT_GENERATED=all takes all.
+      isAlwaysRun: index < 44 || (isWider && index < 506),
       isOnlyCompiled: true as const,
       // Nothing is put into the text: one more use of the value would tell the compiler more about it.
       keepsItsText: true as const,
       // Where nothing catches what an operation throws for the value that arrived, plain Bun ends with 1.
       exitsAsPlainBunDoes: true as const,
       ...(isErased && { flags: ["--aot-erase-types"] }),
-      ...(index >= 484 && { wasOnceWrong: true }),
-      make: () => generate(new Random(index + 1), corner),
+      ...(index >= 704 && { wasOnceWrong: true }),
+      make: () => generate(new Random(index + 1), corner, isWider),
     };
   }),
 );

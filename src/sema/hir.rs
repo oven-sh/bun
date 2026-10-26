@@ -863,6 +863,8 @@ pub enum ExprKind {
 
 /// `name_before_end` of a `Dot` whose name position is in [`FileIn::far_names`] instead.
 pub const FAR: u16 = u16::MAX;
+/// [`FAR`] of the `Dot` that a build makes of `a["b"]`. Use [`FileIn::written_kind`].
+pub const FAR_IN_BRACKETS: u16 = FAR - 1;
 
 /// [`FileIn::stmt_modifiers`] for callers that only have the file's list.
 #[inline(always)]
@@ -890,7 +892,7 @@ pub fn name_pos_in(exprs: &[Expr], far_names: &[(ExprId, u32)], e: ExprId) -> u3
             },
             end,
             ..
-        }) if name_before_end != FAR => end - u32::from(name_before_end),
+        }) if name_before_end < FAR_IN_BRACKETS => end - u32::from(name_before_end),
         _ => far_name_pos(far_names, e),
     }
 }
@@ -2418,8 +2420,6 @@ pub struct FileIn<S: Storage> {
     /// `.js`, `.jsx`, `.mjs`, `.cjs`. Parsed like `.tsx`: TypeScript-only syntax is accepted and reported as an error
     /// afterwards.
     pub is_js: bool,
-    /// Parsed for a build (`Options::compiles`). A build takes `a["b"]` for `a.b` also where TypeScript takes only `a.b`.
-    pub is_compiled: bool,
     /// The file is parsed as Flow (`Dialect::flow`). Flow syntax that TypeScript lacks is represented with TypeScript's
     /// nodes. `bun_sema_parser`'s `flow.rs` explains how. Only a formatter gets such a file.
     pub is_flow: bool,
@@ -3003,7 +3003,8 @@ impl FileBuilder {
     ) -> ExprKind {
         let before_end = end.checked_sub(name_pos);
         let near = before_end.and_then(|it| u16::try_from(it).ok());
-        let name_before_end = near.filter(|&it| it != FAR).unwrap_or_else(|| {
+        let is_near = |&it: &u16| it < FAR_IN_BRACKETS;
+        let name_before_end = near.filter(is_near).unwrap_or_else(|| {
             let next = ExprId(self.exprs.len() as u32);
             self.far_names.push((next, name_pos));
             FAR
@@ -3013,6 +3014,21 @@ impl FileBuilder {
             name,
             chain,
             name_before_end,
+        }
+    }
+    /// [`Self::dot`] for `obj["name"]`, whose literal starts at `name_pos`.
+    pub fn dot_in_brackets(
+        &mut self,
+        (obj, chain): (ExprId, Chain),
+        (name, name_pos): (Atom, u32),
+    ) -> ExprKind {
+        let next = ExprId(self.exprs.len() as u32);
+        self.far_names.push((next, name_pos));
+        ExprKind::Dot {
+            obj,
+            name,
+            chain,
+            name_before_end: FAR_IN_BRACKETS,
         }
     }
     /// `A.B.C`: each name with its position.
@@ -3093,7 +3109,6 @@ macro_rules! file_in_storage {
         $file {
             kind: $this.kind,
             is_js: $this.is_js,
-            is_compiled: $this.is_compiled,
             is_flow: $this.is_flow,
             check_directive: $this.check_directive,
             is_forced_module: $this.is_forced_module,

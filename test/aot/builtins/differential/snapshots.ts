@@ -84,11 +84,18 @@ function attributesOf({ writable, enumerable, configurable }: PropertyDescriptor
   return `${writable} ${enumerable} ${configurable}`;
 }
 
+// Some data properties of the host make their value at each look: PerformanceObserver.supportedEntryTypes is another array each time.
+function makesItsValueAtEachLook(object: object, key: PropertyKey, { value }: PropertyDescriptor): boolean {
+  const descriptor = Reflect.getOwnPropertyDescriptor(object, key);
+  return descriptor !== undefined && Object.hasOwn(descriptor, "value") && !Object.is(descriptor.value, value);
+}
+
 function compareProperty(object: object, key: PropertyKey, before: PropertyDescriptor, after: PropertyDescriptor): Change[] {
   const changes: Change[] = [];
   const wasData = Object.hasOwn(before, "value");
   const isData = Object.hasOwn(after, "value");
-  if (isData && (!wasData || !Object.is(before.value, after.value))) {
+  const isStored = wasData && !Object.is(before.value, after.value) && !makesItsValueAtEachLook(object, key, after);
+  if (isData && (!wasData || isStored)) {
     changes.push({ kind: wasData ? "Store" : "Define", object, key, values: [after.value] });
   }
   if (!isData && (wasData || before.get !== after.get || before.set !== after.set)) {

@@ -40,8 +40,9 @@ pub(crate) fn finish_application_file(
         .collect();
     // Where the executable forbids the evaluation of text, a call with constant text stays a call, which throws.
     let compiled_texts = texts.map_or(&[][..], |_| resolved.evaluated_texts());
-    for text in compiled_texts {
-        let Some(path) = texts.and_then(|texts| texts.add(request.path, text, request.atoms))
+    for (index, text) in compiled_texts.iter().enumerate() {
+        let Some(path) =
+            texts.and_then(|texts| texts.add(request.path, index, text, request.atoms))
         else {
             continue;
         };

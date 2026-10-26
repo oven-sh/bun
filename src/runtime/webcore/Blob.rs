@@ -1419,6 +1419,7 @@ impl BlobExt for Blob {
                 break 'brk_sink match start_windows_sink(
                     self.global_this()
                         .expect("Blob.global_this set at construction"),
+                    cx.context(),
                     fd,
                     matches!(pathlike, PathOrFileDescriptor::Fd(_)),
                     is_stdout_or_stderr,
@@ -1612,6 +1613,7 @@ impl BlobExt for Blob {
             let sink = match start_windows_sink(
                 self.global_this()
                     .expect("Blob.global_this set at construction"),
+                context,
                 fd,
                 matches!(pathlike, PathOrFileDescriptor::Fd(_)),
                 is_stdout_or_stderr,
@@ -1621,9 +1623,6 @@ impl BlobExt for Blob {
                     return Err(global_this.throw_value(err.to_js(global_this)));
                 }
             };
-            if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
-                sink.close_with_graph(context);
-            }
 
             // SAFETY: `&mut` scoped to the call.
             let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
@@ -5038,6 +5037,7 @@ const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 #[cfg(windows)]
 fn start_windows_sink(
     global: &JSGlobalObject,
+    context: &bun_jsc::ScriptExecutionContext,
     fd: Fd,
     borrowed: bool,
     is_stdout_or_stderr: bool,
@@ -5075,6 +5075,9 @@ fn start_windows_sink(
             writer_fd.close();
         }
         return bun_sys::Result::Err(err);
+    }
+    if !borrowed {
+        sink.close_with_graph(context);
     }
     bun_sys::Result::Ok(sink)
 }

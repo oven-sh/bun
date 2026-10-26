@@ -465,9 +465,8 @@ JSPromise* promiseForReactionsSlow(JSGlobalObject* globalObject, JSPromise* prom
     // A follower that is fulfilled at once holds the cell itself: its `then` is not callable.
     if (follower == promise || follower->status() == JSPromise::Status::Fulfilled)
         return promise;
-    // The follower delivers a rejection from here on.
-    if (promise->status() == JSPromise::Status::Rejected)
-        promise->markAsHandled();
+    // The reactions go on the follower, so nothing else handles a rejection of the cell itself.
+    promise->markAsHandled();
     return follower;
 }
 

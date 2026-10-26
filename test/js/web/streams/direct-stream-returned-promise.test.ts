@@ -165,7 +165,6 @@ describe("what pull() returns", () => {
       const promise = later().then(() => {
         throw new Error("rejected by itself");
       });
-      promise.catch(() => {});
       Object.defineProperty(promise, "then", {
         get() {
           throw new Error("then getter threw");
@@ -185,7 +184,6 @@ describe("what pull() returns", () => {
       const promise = later().then(() => {
         throw new Error("rejected after the close");
       });
-      promise.catch(() => {});
       Object.defineProperty(promise, "then", {
         get() {
           calls.push("then getter");
@@ -198,6 +196,74 @@ describe("what pull() returns", () => {
     expect({ result: await settle(consume(stream)), calls }).toEqual({
       result: { ok: "a" },
       calls: ["pull", "then getter"],
+    });
+  });
+
+  // The reactions go on the follower, so Bun does not read the returned promise itself. As on the
+  // state path, that promise is still never reported as an unhandled rejection.
+  test("a promise that its own then() does not subscribe to is not reported when it rejects", async () => {
+    using dir = tempDir("direct-pull-unsubscribed", {});
+    const src = `
+      const reports = [];
+      process.on("unhandledRejection", e => reports.push("unhandledRejection: " + e.message));
+      const later = () => new Promise(resolve => setImmediate(resolve));
+      const decoder = new TextDecoder();
+      const text = chunk => (typeof chunk === "string" ? chunk : decoder.decode(chunk));
+      const shapes = {
+        "a then getter that throws": promise =>
+          Object.defineProperty(promise, "then", { get() { throw new Error("then getter threw"); } }),
+        "a then() that takes no callbacks": promise => Object.assign(promise, { then() {} }),
+      };
+      const callers = {
+        "a reader": async stream => {
+          let out = "";
+          for await (const chunk of stream) out += text(chunk);
+          return out;
+        },
+        "a native sink": async stream => {
+          await Bun.write(process.env.OUT_FILE, new Response(stream));
+          return await Bun.file(process.env.OUT_FILE).text();
+        },
+        "a buffer consumer": async stream => text(await Bun.readableStreamToBytes(stream)),
+      };
+      const bodies = {};
+      for (const [shape, change] of Object.entries(shapes)) {
+        for (const [caller, consume] of Object.entries(callers)) {
+          const stream = new ReadableStream({
+            type: "direct",
+            pull(c) {
+              c.write("a");
+              c.close();
+              return change(later().then(() => { throw new Error("rejected by itself"); }));
+            },
+          });
+          bodies[shape + ", " + caller] = await consume(stream);
+        }
+      }
+      for (let i = 0; i < 4; i++) await later();
+      console.log(JSON.stringify({ bodies, reports }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: { ...bunEnv, OUT_FILE: join(String(dir), "out.txt") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: stdout && JSON.parse(stdout), exitCode }).toEqual({
+      stderr: "",
+      out: {
+        bodies: {
+          "a then getter that throws, a reader": "a",
+          "a then getter that throws, a native sink": "a",
+          "a then getter that throws, a buffer consumer": "a",
+          "a then() that takes no callbacks, a reader": "a",
+          "a then() that takes no callbacks, a native sink": "a",
+          "a then() that takes no callbacks, a buffer consumer": "a",
+        },
+        reports: [],
+      },
+      exitCode: 0,
     });
   });
 

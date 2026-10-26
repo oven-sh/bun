@@ -407,6 +407,32 @@ describe("next() returns a promise with its own then()", () => {
     });
   });
 
+  // The reactions go on the follower, so Bun does not read the returned promise itself. That
+  // promise is still never reported as an unhandled rejection.
+  test("a promise that its own then() does not subscribe to is not reported when it rejects", async () => {
+    const src = `
+      const reports = [];
+      process.on("unhandledRejection", e => reports.push("unhandledRejection: " + e.message));
+      const later = () => new Promise(resolve => setImmediate(resolve));
+      const returned = Object.defineProperty(
+        later().then(() => { throw new Error("rejected by itself"); }),
+        "then",
+        { get() { throw new Error("then getter threw"); } },
+      );
+      const body = { [Symbol.asyncIterator]: () => ({ next: () => returned }) };
+      const result = await new Response(body).text().then(text => ({ text }), e => ({ err: e.message }));
+      for (let i = 0; i < 4; i++) await later();
+      console.log(JSON.stringify({ result, reports }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: stdout && JSON.parse(stdout), exitCode }).toEqual({
+      stderr: "",
+      out: { result: { err: "then getter threw" }, reports: [] },
+      exitCode: 0,
+    });
+  });
+
   // Once Promise.prototype.then is replaced, every plain promise has an observable then().
   // Bun follows the promises that next() returned through it. The promise that Bun makes for
   // each of its own pulls never reaches the replacement.

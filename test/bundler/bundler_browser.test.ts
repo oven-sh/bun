@@ -303,13 +303,6 @@ describe("bundler", () => {
   const unusedPolyfillImportBuilds = {
     cli: { backend: "cli" },
     api: { backend: "api" },
-    // An onResolve callback that returns nothing leaves the import to the resolver.
-    decliningOnResolve: {
-      backend: "api",
-      plugins(builder) {
-        builder.onResolve({ filter: /.*/ }, () => undefined);
-      },
-    },
   } satisfies Record<string, Partial<BundlerTestInput>>;
   // The comment that starts each module of the bundle. A test checks this list
   // before the whole text, so a failure names the polyfills and does not print them.

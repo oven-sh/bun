@@ -662,8 +662,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // mkdir -p + open.
     let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?;
 
-    let mut maybe_runtime_file_index: Option<u32> = None;
-
     let mut css_chunks_count: usize = 0;
     let mut css_chunks_first: usize = 0;
 
@@ -699,17 +697,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     output_indexes[entry_point as usize] =
                         OutputFileIndex::init(u32::try_from(i).expect("int cast"));
                 }
-            }
-
-            // The output file which contains the runtime (Index.runtime, contains
-            // wrapper functions like `__esm`) is marked as server side, but it is
-            // also used by client
-            if file.bake_extra.bake_is_runtime {
-                debug_assert!(
-                    maybe_runtime_file_index.is_none(),
-                    "Runtime file should only be in one chunk."
-                );
-                maybe_runtime_file_index = Some(u32::try_from(i).expect("int cast"));
             }
 
             // TODO: Maybe not do all the disk-writing in 1 thread?
@@ -800,26 +787,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             }
         }
     }
-    // Write the runtime file to disk if there are any client chunks. The runtime
-    // file doesn't exist if no bundled module uses its helpers.
-    if let Some(runtime_file_index) = maybe_runtime_file_index {
-        let any_client_chunks = bundled_outputs_list.iter().any(|file| {
-            file.side == Some(bun_bundler::options::Side::Client)
-                && file.src_path.text != b"bun-framework-react/client.tsx"
-        });
-        if any_client_chunks {
-            let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
-            if let Err(err) = runtime_file.write_to_disk(root_dir.fd()) {
-                bun_core::handle_error_return_trace(err);
-                Output::err(
-                    err,
-                    "Failed to write {} to output directory",
-                    (bun_core::fmt::quote(&runtime_file.dest_path),),
-                );
-            }
-        }
-    }
-
     *pt = PerThread::init(
         vm_ptr,
         entry_points,

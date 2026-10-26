@@ -71,6 +71,56 @@ pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 
+/// The runtime exports the linker names in wrappers and chunk prologues, one set
+/// per `bun:runtime` module.
+#[derive(Clone, Copy)]
+pub(crate) struct RuntimeRefs {
+    pub(crate) source_index: Index,
+    /// `__commonJS`
+    pub(crate) cjs: Ref,
+    /// `__esm`
+    pub(crate) esm: Ref,
+    /// `__promiseAll`
+    pub(crate) promise_all: Ref,
+    /// `__preload` / `__chunks` (modulepreload), browser variant only.
+    pub(crate) preload: Ref,
+    pub(crate) chunks: Ref,
+}
+
+impl RuntimeRefs {
+    pub(crate) const NONE: RuntimeRefs = RuntimeRefs {
+        source_index: Index::INVALID,
+        cjs: Ref::NONE,
+        esm: Ref::NONE,
+        promise_all: Ref::NONE,
+        preload: Ref::NONE,
+        chunks: Ref::NONE,
+    };
+
+    fn load(graph: &LinkerGraph, source_index: Index) -> RuntimeRefs {
+        let named_exports = &graph.ast.items_named_exports()[source_index.get() as usize];
+        let required = |name: &[u8]| {
+            named_exports
+                .get(name)
+                .expect("infallible: runtime export")
+                .ref_
+        };
+        let optional = |name: &[u8]| {
+            named_exports
+                .get(name)
+                .map_or(Ref::NONE, |export| export.ref_)
+        };
+        RuntimeRefs {
+            source_index,
+            cjs: required(b"__commonJS"),
+            esm: required(b"__esm"),
+            promise_all: required(b"__promiseAll"),
+            preload: optional(b"__preload"),
+            chunks: optional(b"__chunks"),
+        }
+    }
+}
+
 pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
@@ -89,18 +139,13 @@ pub struct LinkerContext<'a> {
     pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub(crate) cycle_detector: Vec<ImportTracker>,
 
-    /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
-    pub(crate) cjs_runtime_ref: Ref,
-    pub(crate) esm_runtime_ref: Ref,
+    /// The runtime at `Index::RUNTIME`. See [`Self::runtime_refs`].
+    pub(crate) main_runtime: RuntimeRefs,
+    /// The runtime at `LinkerGraph::browser_runtime`, if any.
+    pub(crate) browser_runtime: RuntimeRefs,
 
     /// We may need to refer to the CommonJS "module" symbol for exports
     pub(crate) unbound_module_ref: Ref,
-
-    /// We may need to refer to the "__promiseAll" runtime symbol
-    pub(crate) promise_all_runtime_ref: Ref,
-    /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
-    pub(crate) preload_runtime_ref: Ref,
-    pub(crate) chunks_runtime_ref: Ref,
 
     pub(crate) options: LinkerOptions,
 
@@ -161,12 +206,9 @@ impl<'a> Default for LinkerContext<'a> {
             log: core::ptr::null_mut(),
             resolver: None,
             cycle_detector: Vec::new(),
-            cjs_runtime_ref: Ref::NONE,
-            esm_runtime_ref: Ref::NONE,
+            main_runtime: RuntimeRefs::NONE,
+            browser_runtime: RuntimeRefs::NONE,
             unbound_module_ref: Ref::NONE,
-            promise_all_runtime_ref: Ref::NONE,
-            preload_runtime_ref: Ref::NONE,
-            chunks_runtime_ref: Ref::NONE,
             options: Default::default(),
             r#loop: None,
             unique_key_buf: Box::default(),
@@ -356,7 +398,39 @@ impl<'a> LinkerContext<'a> {
             && self.graph.code_splitting
             && self.options.target == Target::Browser
             && self.options.output_format == Format::Esm
-            && self.chunks_runtime_ref.is_valid()
+            && self.main_runtime.chunks.is_valid()
+    }
+
+    /// The runtime that `source_index` links against (`LinkerGraph::runtime_index`).
+    #[inline]
+    pub(crate) fn runtime_refs(&self, source_index: u32) -> &RuntimeRefs {
+        self.runtime_refs_for_target(self.graph.ast.items_target()[source_index as usize])
+    }
+
+    /// See [`Self::runtime_refs`].
+    #[inline]
+    pub(crate) fn runtime_refs_for_target(&self, target: Target) -> &RuntimeRefs {
+        if self.graph.runtime_index_for_target(target) == Index::RUNTIME {
+            &self.main_runtime
+        } else {
+            &self.browser_runtime
+        }
+    }
+
+    /// The output format of `source_index`: the browser side of a server build is ESM.
+    #[inline]
+    pub(crate) fn output_format_for(&self, source_index: u32) -> Format {
+        self.output_format_for_target(self.graph.ast.items_target()[source_index as usize])
+    }
+
+    /// See [`Self::output_format_for`].
+    #[inline]
+    pub(crate) fn output_format_for_target(&self, target: Target) -> Format {
+        if self.graph.runtime_index_for_target(target) == Index::RUNTIME {
+            self.options.output_format
+        } else {
+            Format::Esm
+        }
     }
 
     /// An `import()` — or a split `require()` — whose target is a
@@ -552,6 +626,8 @@ impl<'a> LinkerContext<'a> {
         // the bundle's lifetime; `resolver`/`log`/`options` are stable fields.
         let transpiler = unsafe { &mut *(*bundle).transpiler };
         self.graph.code_splitting = transpiler.options.code_splitting;
+        // SAFETY: see `parse_graph` above; scalar read.
+        self.graph.browser_runtime = unsafe { (*self.parse_graph).browser_runtime };
         // `transpiler.log` is the canonical
         // `*mut Log` (same value aliased into `linker.log` / `resolver.log`).
         self.log = transpiler.log;
@@ -586,28 +662,10 @@ impl<'a> LinkerContext<'a> {
         )?;
         dyn_entry_points.clear_retaining_capacity();
 
-        let runtime_named_exports =
-            &self.graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
-
-        self.esm_runtime_ref = runtime_named_exports
-            .get(b"__esm")
-            .expect("infallible: runtime export")
-            .ref_;
-        self.cjs_runtime_ref = runtime_named_exports
-            .get(b"__commonJS")
-            .expect("infallible: runtime export")
-            .ref_;
-        self.promise_all_runtime_ref = runtime_named_exports
-            .get(b"__promiseAll")
-            .expect("infallible: runtime export")
-            .ref_;
-        // Browser runtime only (`RUNTIME_PRELOAD_BROWSER`).
-        self.preload_runtime_ref = runtime_named_exports
-            .get(b"__preload")
-            .map_or(Ref::NONE, |export| export.ref_);
-        self.chunks_runtime_ref = runtime_named_exports
-            .get(b"__chunks")
-            .map_or(Ref::NONE, |export| export.ref_);
+        self.main_runtime = RuntimeRefs::load(&self.graph, Index::RUNTIME);
+        if self.graph.browser_runtime.is_valid() {
+            self.browser_runtime = RuntimeRefs::load(&self.graph, self.graph.browser_runtime);
+        }
 
         if self.options.output_format == Format::Cjs {
             self.unbound_module_ref = self.graph.generate_new_symbol(
@@ -739,8 +797,6 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: see above; sole accessor of `html_imports` for this scope.
         let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
         if server_len > 0 {
-            let actual_ref = self.graph.runtime_function(b"__jsonParse");
-
             for i in 0..server_len as usize {
                 // SAFETY: `server_source_indices` is a stable Vec; index
                 // bounded by `server_len`.
@@ -785,6 +841,8 @@ impl<'a> LinkerContext<'a> {
                 .ref_;
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
+                let runtime = self.graph.runtime_index(html_import);
+                let actual_ref = self.graph.runtime_function(html_import, b"__jsonParse");
                 // SAFETY: `original_ref`'s symbol slot is disjoint from any live borrow here
                 // (only `actual_ref` is held, a `Copy` value).
                 unsafe { self.graph.symbol_mut(original_ref) }
@@ -798,7 +856,7 @@ impl<'a> LinkerContext<'a> {
                         Index::part(1u32).get(),
                         actual_ref,
                         1,
-                        Index::RUNTIME,
+                        runtime,
                     )
                     .expect("OOM");
             }
@@ -834,6 +892,21 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// Position of entry point `source_index` in the user's list, after the reserved sources.
+    pub(crate) fn bake_entry_point_index(&self, source_index: u32) -> u32 {
+        let reserved: u32 = if self
+            .framework
+            .is_some_and(|fw| fw.server_components.is_some())
+        {
+            3
+        } else {
+            1
+        };
+        let browser_runtime = self.graph.browser_runtime;
+        let shifted = browser_runtime.is_valid() && browser_runtime.get() < source_index;
+        source_index - reserved - u32::from(shifted)
+    }
+
     /// Whether `chunk` is one that bytecode (and, in an executable, module info) is made for. The output file list
     /// counts those files with this before they are made (`OutputFileList::calculate_output_file_list_capacity`).
     pub(crate) fn chunk_gets_bytecode(&self, chunk: &Chunk) -> bool {
@@ -843,7 +916,10 @@ impl<'a> LinkerContext<'a> {
         } else {
             crate::options::Loader::Js
         };
-        chunk.content.is_javascript() && loader.is_javascript_like()
+        chunk.content.is_javascript()
+            && loader.is_javascript_like()
+            // Bytecode is for Bun. The browser side of a server build never runs in it.
+            && self.chunk_side(chunk) == crate::options::Side::Server
     }
 
     /// See [`Self::load`] for why `bundle` is a raw `*mut` (caller passes
@@ -907,7 +983,7 @@ impl<'a> LinkerContext<'a> {
             let mut source_index: u32 = 0;
             while (source_index as usize) < files_len {
                 // Skip runtime
-                if source_index == Index::RUNTIME.get() {
+                if self.graph.is_runtime(source_index) {
                     source_index += 1;
                     continue;
                 }
@@ -2266,7 +2342,10 @@ impl<'a> LinkerContext<'a> {
         // Is this an external import?
         if !record.source_index.is_valid() {
             // Keep the "import" statement if import statements are supported
-            if self.options.output_format.keep_es6_import_export_syntax() {
+            if self
+                .output_format_for_target(ast.target)
+                .keep_es6_import_export_syntax()
+            {
                 return Ok(false);
             }
 
@@ -2369,9 +2448,10 @@ impl<'a> LinkerContext<'a> {
                 );
 
                 if other_flags.is_async_or_has_async_dependency {
+                    let promise_all = self.runtime_refs_for_target(ast.target).promise_all;
                     stmts
                         .inside_wrapper_prefix
-                        .append_async_dependency(init_call, self.promise_all_runtime_ref)?;
+                        .append_async_dependency(init_call, promise_all)?;
                 } else {
                     stmts
                         .inside_wrapper_prefix
@@ -2458,18 +2538,18 @@ impl<'a> LinkerContext<'a> {
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
             input_module_type: ast.module_type,
-            module_type: self.options.output_format,
+            module_type: self.output_format_for(source_index.get()),
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
 
             to_esm_ref,
             to_commonjs_ref,
             module_preload_ref: if self.module_preload() {
-                self.preload_runtime_ref
+                self.runtime_refs(source_index.get()).preload
             } else {
                 Ref::NONE
             },
-            require_ref: match self.options.output_format {
+            require_ref: match self.output_format_for(source_index.get()) {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
@@ -2521,8 +2601,8 @@ impl<'a> LinkerContext<'a> {
             core::mem::transmute::<renamer::Renamer<'_, '_>, renamer::Renamer<'_, '_>>(r)
         };
 
-        let enable_source_maps =
-            self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
+        let enable_source_maps = self.options.source_maps != SourceMapOption::None
+            && !self.graph.is_runtime(source_index.get());
         let result = if enable_source_maps {
             js_printer::print_with_writer::<&mut js_printer::BufferPrinter, true>(
                 &mut printer,
@@ -2974,6 +3054,7 @@ impl<'a> LinkerContext<'a> {
             }
             preload_entries.set(id);
             let part_index = self.entry_point_part_indices[id];
+            let runtime = *self.runtime_refs(entry);
             // Through `ctx.parts` (the tree shaker's view of the parts column), not a second `&mut` via `self.graph`.
             {
                 let ast = self.graph.ast.split_raw();
@@ -2999,9 +3080,9 @@ impl<'a> LinkerContext<'a> {
                     overlay,
                     entry,
                     part_index,
-                    self.chunks_runtime_ref,
+                    runtime.chunks,
                     1,
-                    Index::RUNTIME,
+                    runtime.source_index,
                 )?;
             }
             if ctx.parts_live[id].is_set(part_index as usize) {
@@ -3323,10 +3404,10 @@ fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
 }
 
 impl<'a> LinkerContext<'a> {
-    /// Looks up the symbol `Ref` for a named export of the runtime module.
+    /// The `Ref` of runtime export `name` in the runtime `source_index` links against.
     #[inline]
-    pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
-        self.graph.runtime_function(name)
+    pub(crate) fn runtime_function(&self, source_index: u32, name: &[u8]) -> Ref {
+        self.graph.runtime_function(source_index, name)
     }
 
     /// Returns the part indices within file `id` that declare the
@@ -3336,11 +3417,14 @@ impl<'a> LinkerContext<'a> {
         self.graph.top_level_symbol_to_parts(id, r#ref)
     }
 
-    /// Returns the part indices in the runtime module that declare the
-    /// top-level symbol `ref`.
+    /// The part indices in runtime module `runtime` that declare `ref`.
     #[inline]
-    pub(crate) fn top_level_symbols_to_parts_for_runtime(&self, r#ref: Ref) -> &[u32] {
-        self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
+    pub(crate) fn top_level_symbols_to_parts_for_runtime(
+        &self,
+        runtime: Index,
+        r#ref: Ref,
+    ) -> &[u32] {
+        self.top_level_symbols_to_parts(runtime.get(), r#ref)
     }
 
     /// Note: returns `'static` so callers can hold the source across a
@@ -3438,6 +3522,7 @@ impl<'a> LinkerContext<'a> {
         wrapper_part_index: &mut crate::Index,
         source_index: crate::IndexInt,
     ) {
+        let runtime = *self.runtime_refs(source_index);
         match wrap {
             // If this is a CommonJS file, we're going to need to generate a wrapper
             // for the CommonJS closure. That will end up looking something like this:
@@ -3455,21 +3540,7 @@ impl<'a> LinkerContext<'a> {
             // of it.
             WrapKind::Cjs => {
                 let common_js_parts =
-                    self.top_level_symbols_to_parts_for_runtime(self.cjs_runtime_ref);
-
-                // Note: the inner loop is intentionally a no-op
-                // (`if r#ref.eql(...) continue;` only).
-                for &part_id in common_js_parts {
-                    let runtime_parts =
-                        self.graph.ast.items_parts()[Index::RUNTIME.get() as usize].as_slice();
-                    let part: &Part = &runtime_parts[part_id as usize];
-                    let symbol_refs = part.symbol_uses.keys();
-                    for r#ref in symbol_refs {
-                        if *r#ref == self.cjs_runtime_ref {
-                            continue;
-                        }
-                    }
-                }
+                    self.top_level_symbols_to_parts_for_runtime(runtime.source_index, runtime.cjs);
 
                 // generate a dummy part that depends on the "__commonJS" symbol.
                 let dependencies: DependencyList =
@@ -3478,7 +3549,7 @@ impl<'a> LinkerContext<'a> {
                         for &part in common_js_parts {
                             deps.append_assume_capacity(Dependency {
                                 part_index: part,
-                                source_index: bun_ast::Index::RUNTIME,
+                                source_index: runtime.source_index,
                             });
                         }
                         deps
@@ -3527,9 +3598,9 @@ impl<'a> LinkerContext<'a> {
                         .generate_symbol_import_and_use(
                             source_index,
                             part_index,
-                            self.cjs_runtime_ref,
+                            runtime.cjs,
                             1,
-                            crate::Index::RUNTIME,
+                            runtime.source_index,
                         )
                         .expect("unreachable");
                 }
@@ -3573,7 +3644,7 @@ impl<'a> LinkerContext<'a> {
                 let esm_parts: &[u32] = if wrapper_ref.is_valid()
                     && self.options.output_format != Format::InternalBakeDev
                 {
-                    self.top_level_symbols_to_parts_for_runtime(self.esm_runtime_ref)
+                    self.top_level_symbols_to_parts_for_runtime(runtime.source_index, runtime.esm)
                 } else {
                     &[]
                 };
@@ -3582,7 +3653,10 @@ impl<'a> LinkerContext<'a> {
                     && wrapper_ref.is_valid()
                     && self.options.output_format != Format::InternalBakeDev
                 {
-                    self.top_level_symbols_to_parts_for_runtime(self.promise_all_runtime_ref)
+                    self.top_level_symbols_to_parts_for_runtime(
+                        runtime.source_index,
+                        runtime.promise_all,
+                    )
                 } else {
                     &[]
                 };
@@ -3593,13 +3667,13 @@ impl<'a> LinkerContext<'a> {
                 for &part in esm_parts {
                     dependencies.append_assume_capacity(Dependency {
                         part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
+                        source_index: runtime.source_index,
                     });
                 }
                 for &part in promise_all_parts {
                     dependencies.append_assume_capacity(Dependency {
                         part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
+                        source_index: runtime.source_index,
                     });
                 }
 
@@ -3630,9 +3704,9 @@ impl<'a> LinkerContext<'a> {
                         .generate_symbol_import_and_use(
                             source_index,
                             part_index,
-                            self.esm_runtime_ref,
+                            runtime.esm,
                             1,
-                            crate::Index::RUNTIME,
+                            runtime.source_index,
                         )
                         .expect("OOM");
 
@@ -3642,9 +3716,9 @@ impl<'a> LinkerContext<'a> {
                             .generate_symbol_import_and_use(
                                 source_index,
                                 part_index,
-                                self.promise_all_runtime_ref,
+                                runtime.promise_all,
                                 1,
-                                crate::Index::RUNTIME,
+                                runtime.source_index,
                             )
                             .expect("OOM");
                     }
@@ -3988,7 +4062,9 @@ impl<'a> LinkerContext<'a> {
                 | ImportTrackerStatus::Disabled
                 | ImportTrackerStatus::External => {
                     if status == ImportTrackerStatus::External
-                        && self.options.output_format.keep_es6_import_export_syntax()
+                        && self
+                            .output_format_for(prev_source_index)
+                            .keep_es6_import_export_syntax()
                     {
                         // Imports from external modules should not be converted to CommonJS
                         // if the output format preserves the original ES6 import statements

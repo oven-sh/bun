@@ -1322,14 +1322,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     module_info_index,
                     side: Some(side),
                     entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                        Some(
-                            chunk.entry_point.source_index()
-                                - (if let Some(fw) = c.framework {
-                                    if fw.server_components.is_some() { 3 } else { 1 }
-                                } else {
-                                    1
-                                }) as u32,
-                        )
+                        Some(c.bake_entry_point_index(chunk.entry_point.source_index()))
                     } else {
                         None
                     },
@@ -1351,12 +1344,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             break 'brk BakeExtra::default();
                         }
 
-                        let mut extra = BakeExtra {
-                            bake_is_runtime: chunk
-                                .files_with_parts_in_chunk
-                                .contains(&Index::RUNTIME.get()),
-                            ..Default::default()
-                        };
+                        let mut extra = BakeExtra::default();
                         if output_kind == options::OutputKind::EntryPoint
                             && side == options::Side::Server
                         {

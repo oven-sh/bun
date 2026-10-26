@@ -91,6 +91,10 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
+
+    /// The browser-variant `bun:runtime` of the browser side of a server-side
+    /// build. `Index::INVALID` when the build has no browser side.
+    pub(crate) browser_runtime: Index,
 }
 
 #[derive(Default)]
@@ -179,6 +183,7 @@ impl<'a> Graph<'a> {
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,
+            browser_runtime: Index::INVALID,
         }
     }
 }

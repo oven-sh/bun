@@ -355,7 +355,9 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                 // wrapper if the output format supports import statements. We need to
                 // add those symbols to the top-level scope to avoid causing name
                 // collisions. This code special-cases only those symbols.
-                if c.options.output_format.keep_es6_import_export_syntax() {
+                if c.output_format_for(source_index)
+                    .keep_es6_import_export_syntax()
+                {
                     let import_records = all_import_records[source_index as usize].as_slice();
                     for part in parts.iter() {
                         for stmt in part.stmts.slice() {

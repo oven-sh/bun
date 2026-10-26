@@ -1999,6 +1999,10 @@ pub mod bv2_impl {
                 unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
 
             ct.options.target = Target::Browser;
+            // Client assets are ES modules whatever the server format is.
+            if self.has_browser_runtime() {
+                ct.options.output_format = options::Format::Esm;
+            }
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
             if ct.options.react_compiler.is_ssr() {
@@ -2055,7 +2059,9 @@ pub mod bv2_impl {
             self.owned_client_transpiler = Some(boxed);
             let ct: &mut Transpiler<'a> = self.owned_client_transpiler.as_deref_mut().unwrap();
             self.client_transpiler = Some(bun_ptr::ParentRef::from_ref_mut(&mut *ct));
-            Ok(ct)
+            // The browser side starts here, and its files link against their own runtime.
+            self.ensure_browser_runtime()?;
+            Ok(self.owned_client_transpiler.as_deref_mut().unwrap())
         }
 
         /// By calling this function, it implies that the returned log *will* be
@@ -2400,6 +2406,9 @@ pub mod bv2_impl {
             // If we don't include the runtime, __toESM or __toCommonJS will not get
             // imported and weird things will happen
             visitor.visit::<false>(Index::RUNTIME, false);
+            if self.graph.browser_runtime.is_valid() {
+                visitor.visit::<false>(self.graph.browser_runtime, false);
+            }
 
             if self.transpiler.options.code_splitting {
                 for entry_point in self.graph.entry_points.iter().copied() {
@@ -3766,6 +3775,7 @@ pub mod bv2_impl {
         ) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
             self.reserve_source_indexes_for_bake()?;
+            self.ensure_browser_runtime()?;
 
             let num_entry_points = data.files.count();
             self.graph.entry_points.reserve(num_entry_points);
@@ -3800,19 +3810,24 @@ pub mod bv2_impl {
 
         /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
         fn enqueue_entry_points_common(&mut self) -> Result<(), Error> {
-            // Add the runtime
-            let rt = ParseTask::get_runtime_source(self.transpiler.options.target);
+            debug_assert!(self.graph.input_files.len() == 0);
+            self.enqueue_runtime(self.transpiler.options.target)?;
+            Ok(())
+        }
+
+        /// Adds the `bun:runtime` for `target` at the next source index.
+        fn enqueue_runtime(&mut self, target: options::Target) -> Result<Index, Error> {
+            let source_index = Index::source(self.graph.input_files.len() as IndexInt);
+            let rt = ParseTask::get_runtime_source(target, source_index);
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: rt.source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
                 ..Default::default()
             })?;
-
-            // try this.graph.entry_points.append(arena, Index.runtime);
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
-            self.path_to_source_index_map(self.transpiler.options.target)
-                .put(&b"bun:wrap"[..], Index::RUNTIME.get())
+            self.path_to_source_index_map(target)
+                .put(&b"bun:wrap"[..], source_index.get())
                 .expect("oom");
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
@@ -3829,7 +3844,35 @@ pub mod bv2_impl {
             }
             self.increment_scan_counter();
             self.graph.pool().schedule(runtime_parse_task);
+            Ok(source_index)
+        }
+
+        /// Whether the browser side of this server-side build gets its own
+        /// `bun:runtime`. The dev server format keeps one: it provides `bun:wrap` itself.
+        fn has_browser_runtime(&self) -> bool {
+            self.transpiler.options.target.is_server_side()
+                && self.dev_server.is_none()
+                && self.transpiler.options.output_format != options::Format::InternalBakeDev
+        }
+
+        /// Adds the browser runtime once the build has a browser side, before any
+        /// browser file's import records resolve.
+        pub(crate) fn ensure_browser_runtime(&mut self) -> Result<(), Error> {
+            if self.has_browser_runtime() && !self.graph.browser_runtime.is_valid() {
+                self.graph.browser_runtime = self.enqueue_runtime(Target::Browser)?;
+            }
             Ok(())
+        }
+
+        /// The `bun:runtime` module that a file parsed for `target` links against.
+        pub(crate) fn runtime_source_index(&self, target: options::Target) -> Index {
+            if target == Target::Browser && self.has_browser_runtime() {
+                debug_assert!(self.graph.browser_runtime.is_valid());
+                if self.graph.browser_runtime.is_valid() {
+                    return self.graph.browser_runtime;
+                }
+            }
+            Index::RUNTIME
         }
 
         fn clone_ast(&mut self) -> Result<(), Error> {
@@ -4491,7 +4534,10 @@ pub mod bv2_impl {
                 this.process_server_component_manifest_files()?;
 
                 let reachable_files = this.find_reachable_files()?;
-                *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
+                // Without the runtime modules.
+                *reachable_files_count = reachable_files
+                    .len()
+                    .saturating_sub(1 + usize::from(this.graph.browser_runtime.is_valid()));
 
                 this.process_files_to_copy(&reachable_files)?;
 
@@ -4788,8 +4834,9 @@ pub mod bv2_impl {
                                 };
 
                             // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
-                            // `&mut self` only to pick between two stored `*mut Transpiler`s; it
-                            // never touches `graph.input_files`.
+                            // `&mut self` only to pick between two stored `*mut Transpiler`s. Its
+                            // lazy arm, which appends to `graph.input_files`, is not reached: a
+                            // browser-target file exists only once the client transpiler does.
                             let asset_naming = unsafe {
                                 &(*self_ptr)
                                     .transpiler_for_target(target)
@@ -6675,13 +6722,14 @@ pub mod bv2_impl {
             let only_records = ctx.only_records;
             debug_assert!(only_records.is_none_or(<[u32]>::is_sorted));
             let mut estimated_resolve_queue_count: usize = 0;
+            let runtime_source_index = self.runtime_source_index(ctx.target);
             for import_record in ctx.import_records.iter_mut() {
                 if import_record
                     .flags
                     .contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
                 {
                     import_record.tag = bun_ast::ImportRecordTag::Runtime;
-                    import_record.source_index = Index::RUNTIME;
+                    import_record.source_index = runtime_source_index;
                 }
 
                 // For non-dev-server builds, barrel-deferred records need their
@@ -6770,7 +6818,7 @@ pub mod bv2_impl {
                     import_record.path.namespace = b"bun";
                     import_record.tag = bun_ast::ImportRecordTag::Runtime;
                     import_record.path.text = b"wrap";
-                    import_record.source_index = Index::RUNTIME;
+                    import_record.source_index = runtime_source_index;
                     continue;
                 }
 
@@ -7644,27 +7692,28 @@ pub mod bv2_impl {
                 (&raw mut *transpiler.options.define, transpiler.log)
             };
 
-            let ast_for_html_entrypoint = JSAst::init(
-                bun_js_parser::new_lazy_export_ast(
-                    heap,
-                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
-                    unsafe { &mut *define_ptr },
-                    js_parser_options,
-                    // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
-                    unsafe { &mut *log_ptr },
-                    Expr::init(
-                        E::EString {
-                            data: unique_key.into(),
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    empty_html_file_source,
-                    // We replace this runtime API call's ref later via .link on the Symbol.
-                    b"__jsonParse",
-                )?
-                .ok_or(Error::ParserError)?,
-            );
+            let mut manifest_ast = bun_js_parser::new_lazy_export_ast(
+                heap,
+                // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
+                unsafe { &mut *define_ptr },
+                js_parser_options,
+                // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
+                unsafe { &mut *log_ptr },
+                Expr::init(
+                    E::EString {
+                        data: unique_key.into(),
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                ),
+                empty_html_file_source,
+                // We replace this runtime API call's ref later via .link on the Symbol.
+                b"__jsonParse",
+            )?
+            .ok_or(Error::ParserError)?;
+            // The manifest is a server-side module.
+            manifest_ast.target = target;
+            let ast_for_html_entrypoint = JSAst::init(manifest_ast);
 
             let fake_input_file = crate::Graph::InputFile {
                 source: empty_html_file_source.clone(),
@@ -7826,7 +7875,9 @@ pub mod bv2_impl {
                         [result_source_index]
                         .path
                         .text;
-                    this.source_code_length += if result_source_index != 0 {
+                    this.source_code_length += if result_source_index != 0
+                        && result_source_index != this.graph.browser_runtime.get() as usize
+                    {
                         this.graph.input_files.items_source()[result_source_index]
                             .contents
                             .len()

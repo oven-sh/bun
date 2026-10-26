@@ -44,8 +44,8 @@ impl Index {
         self.0
     }
 
-    /// if you are within the parser, use p.isSourceRuntime() instead, as the
-    /// runtime index (0) is used as the id for single-file transforms.
+    /// The main `bun:runtime` module. In the parser use `p.is_source_runtime()`,
+    /// in the linker `LinkerGraph::is_runtime` (there can be a second runtime).
     #[inline]
     pub const fn is_runtime(self) -> bool {
         self.0 == Self::RUNTIME.0

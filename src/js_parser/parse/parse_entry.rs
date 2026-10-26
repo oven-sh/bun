@@ -2128,86 +2128,29 @@ impl<'a> Parser<'a> {
                 break 'outer;
             }
 
-            let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-            declared_symbols.ensure_total_capacity(items_count)?;
-
             // For CommonJS modules, use require instead of import
             if exports_kind == js_ast::ExportsKind::Cjs {
-                let import_record_id = p.add_import_record(
-                    bun_ast::ImportKind::Require,
-                    bun_ast::Loc::EMPTY,
-                    b"bun:test",
-                );
-
-                // Create object binding pattern for destructuring
-                let mut properties = BumpVec::<B::Property>::with_capacity_in(items_count, p.arena);
+                debug_assert!(wrap_mode == WrapMode::BunCommonjs);
+                let mut imports: [(&'static [u8], js_ast::Ref); Jest::FIELDS.len()] =
+                    [(b"", js_ast::Ref::NONE); Jest::FIELDS.len()];
+                let mut i: usize = 0;
                 for (symbol_name, get_ref) in Jest::FIELDS {
                     let r = get_ref(&p.jest);
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
-                        let key = p.new_expr(
-                            E::String {
-                                data: symbol_name.as_bytes().into(),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        );
-                        let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
-                        properties.push(B::Property {
-                            flags: bun_ast::flags::PROPERTY_NONE,
-                            key,
-                            value,
-                            default_value: None,
-                        });
-                        declared_symbols.append_assume_capacity(DeclaredSymbol {
-                            ref_: r,
-                            is_top_level: true,
-                        });
+                        imports[i] = (symbol_name.as_bytes(), r);
+                        i += 1;
                     }
                 }
-                let properties = bun_ast::StoreSlice::from_bump(properties);
-
-                // Create: const { test, expect, ... } = require("bun:test")
-                let binding = p.b(
-                    B::Object {
-                        properties,
-                        is_single_line: false,
-                        close_brace_loc: bun_ast::Loc::EMPTY,
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let value = p.new_expr(
-                    E::RequireString {
-                        import_record_index: import_record_id,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let mut decls = G::DeclList::init_capacity(1);
-                decls.append_assume_capacity(G::Decl {
-                    binding,
-                    value: Some(value),
-                });
-
-                let local_stmt = p.s(
-                    S::Local {
-                        kind: js_ast::LocalKind::KConst,
-                        decls,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let part_stmts = p.arena.alloc_slice_fill_with(1, |_| local_stmt);
-
-                before.push(js_ast::Part {
-                    stmts: part_stmts.into(),
-                    declared_symbols,
-                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
-                        import_record_id,
-                    ),
-                    tag: bun_ast::PartTag::BunTest,
-                    ..Default::default()
-                });
+                p.generate_require_stmt(
+                    b"bun:test",
+                    &imports[0..i],
+                    &mut before,
+                    false,
+                    bun_ast::PartTag::BunTest,
+                )?;
             } else {
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+                declared_symbols.ensure_total_capacity(items_count)?;
                 let import_record_id = p.add_import_record(
                     bun_ast::ImportKind::Stmt,
                     bun_ast::Loc::EMPTY,

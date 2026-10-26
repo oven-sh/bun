@@ -59,12 +59,19 @@ fn example_code(text: &[u8]) -> &[u8] {
     }
 }
 
-/// Splits `rest`, the lines after an opening fence, into the code and the closing fence: the last line that is ```
-/// behind at most `fence_indent`, the indentation of the opening fence, since a formatted example indents both with
-/// the code. oxfmt 0.72 finds it at the start of the line only, and on its second pass prints the block as code, with
-/// ` *   ```;` at the end.
+/// The backticks at the start of `line`.
+fn fence_of(line: &[u8]) -> &[u8] {
+    let rest = trim_start_matches(line, |c| c == '`');
+    &line[..line.len() - rest.len()]
+}
+
+/// Splits `rest`, the lines after an opening fence, into the code and the closing fence: the last line that is at
+/// least the backticks of `opening`, behind at most `fence_indent`, the indentation of the opening fence, since a
+/// formatted example indents both with the code. oxfmt 0.72 finds it at the start of the line only, and on its second
+/// pass prints the block as code, with ` *   ```;` at the end.
 fn split_at_closing_fence<'a>(
     rest: &'a [u8],
+    opening: &[u8],
     fence_indent: &[u8],
 ) -> Option<(&'a [u8], &'a [u8], &'a [u8])> {
     let mut end = rest.len();
@@ -72,7 +79,8 @@ fn split_at_closing_fence<'a>(
         let start = strings::last_index_of_char(&rest[..end], b'\n').map_or(0, |at| at + 1);
         let line = &rest[start..end];
         let fence = strings::trim_unicode_whitespace_start(line);
-        if fence.starts_with(b"```") && fence_indent.starts_with(&line[..line.len() - fence.len()])
+        if fence_of(fence).len() >= fence_of(opening).len()
+            && fence_indent.starts_with(&line[..line.len() - fence.len()])
         {
             let inner = strings::trim_unicode_whitespace_end(&rest[..start]);
             let text = rest.get(end + 1..).unwrap_or_default();
@@ -199,7 +207,7 @@ impl JsdocFormatter<'_> {
         let fence_indent = &first_line[..first_line.len() - lang_line.len()];
         if lang_line.starts_with(b"```")
             && let Some((inner_code, closing_fence, text)) =
-                split_at_closing_fence(rest, fence_indent)
+                split_at_closing_fence(rest, lang_line, fence_indent)
         {
             return self.format_example_fenced_block(
                 fence_indent,

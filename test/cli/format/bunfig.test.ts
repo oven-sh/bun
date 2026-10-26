@@ -569,6 +569,13 @@ export function add(a, b) {}
       example(["````md", "```js", "x", "```", "````"]),
       example(["  ````md", "  ```js", "  x", "  ```", "  ````"]),
     ],
+    // oxfmt takes the last line of three backticks for the closing fence, whatever the opening fence has.
+    [
+      "a fence inside a fence, and text with a shorter fence after the block",
+      "jsdoc = true",
+      example(["````md", "```js", "x", "```", "````", "Or:", "```"]),
+      example(["  ````md", "  ```js", "  x", "  ```", "  ````", "  Or:", "  ```"]),
+    ],
     // oxfmt keeps one blank line fewer on each pass.
     [
       "blank lines before the closing fence",

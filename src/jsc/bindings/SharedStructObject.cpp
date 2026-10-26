@@ -159,9 +159,8 @@ void JSSharedView::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     // A view has no ClassInfo of its own, so this cannot check it.
     auto* thisObject = static_cast<JSSharedView*>(cell);
     Base::visitChildren(thisObject, visitor);
-    // The constructor sizes the cache under this lock, and a collection can find the cell before the constructor is done.
     WTF::Locker locker { thisObject->cellLock() };
-    for (auto& entry : thisObject->m_cache)
+    for (auto& entry : thisObject->m_cache.values())
         visitor.append(entry.wrapper);
 }
 
@@ -169,30 +168,46 @@ DEFINE_VISIT_CHILDREN(JSSharedView);
 
 void JSSharedView::remember(VM& vm, size_t index, const void* key, JSObject* object)
 {
-    SlotCache& entry = m_cache[index];
+    WTF::Locker locker { cellLock() };
     if (key && object) {
+        SlotCache& entry = m_cache.add(index, SlotCache()).iterator->value;
         if (object != entry.wrapper.get())
             entry.wrapper.set(vm, this, object);
         entry.key = key;
     } else {
-        entry.wrapper.clear();
-        entry.key = nullptr;
+        auto it = m_cache.find(index);
+        if (it != m_cache.end()) {
+            it->value.wrapper.clear();
+            it->value.key = nullptr;
+        }
     }
 }
 
 JSObject* JSSharedView::cachedWrapper(size_t index, const void* key) const
 {
-    const SlotCache& entry = m_cache[index];
-    return key && entry.key == key ? entry.wrapper.get() : nullptr;
+    WTF::Locker locker { cellLock() };
+    auto it = m_cache.find(index);
+    if (it == m_cache.end())
+        return nullptr;
+    return key && it->value.key == key ? it->value.wrapper.get() : nullptr;
 }
 
 JSValue JSSharedView::load(JSGlobalObject* globalObject, size_t index)
 {
     VM& vm = getVM(globalObject);
-    SlotCache& entry = m_cache[index];
+    const void* cachedKey = nullptr;
+    JSObject* cached = nullptr;
+    {
+        WTF::Locker locker { cellLock() };
+        auto it = m_cache.find(index);
+        if (it != m_cache.end()) {
+            cachedKey = it->value.key;
+            cached = it->value.wrapper.get();
+        }
+    }
     const void* key = nullptr;
     // Rust hands back the cached wrapper when the slot still holds the object behind it.
-    JSValue value = JSValue::decode(Bun__SharedBlock__load(m_block, index, globalObject, entry.key, JSValue::encode(JSValue(entry.wrapper.get())), &key));
+    JSValue value = JSValue::decode(Bun__SharedBlock__load(m_block, index, globalObject, cachedKey, JSValue::encode(JSValue(cached)), &key));
     if (!value) {
         // An exception is pending.
         return {};

@@ -82,6 +82,21 @@ fn is_boxed(bits: u64) -> bool {
 struct Retired {
     addr: usize,
     free: unsafe fn(usize),
+    /// The count is one of a [`SharedBlock`], which dropping a chain of blocks releases without recursion.
+    is_block: bool,
+}
+
+impl Retired {
+    /// The block this count belongs to, if it is a block's, without releasing it.
+    fn into_block(self) -> Result<Arc<SharedBlock>, Self> {
+        if !self.is_block {
+            return Err(self);
+        }
+        let addr = self.addr;
+        std::mem::forget(self);
+        // SAFETY: `own` made `self` from the `Arc::into_raw` pointer of an `Arc<SharedBlock>` (`is_block`), whose count it now has.
+        Ok(unsafe { Arc::from_raw(addr as *const SharedBlock) })
+    }
 }
 
 impl Drop for Retired {
@@ -170,7 +185,8 @@ unsafe fn own(bits: u64) -> Option<Retired> {
         return None;
     }
     let addr = (bits & DATUM_MASK) as usize;
-    let free: unsafe fn(usize) = match (bits >> TAG_SHIFT) & TAG_MASK {
+    let tag = (bits >> TAG_SHIFT) & TAG_MASK;
+    let free: unsafe fn(usize) = match tag {
         TAG_STRING => free_box::<Arc<[u16]>>,
         TAG_BIGINT => free_box::<Arc<str>>,
         TAG_SYMBOL => free_box::<Arc<SymbolRecord>>,
@@ -179,7 +195,11 @@ unsafe fn own(bits: u64) -> Option<Retired> {
         TAG_CONDITION => free_arc::<Condition>,
         _ => return None,
     };
-    Some(Retired { addr, free })
+    Some(Retired {
+        addr,
+        free,
+        is_block: tag == TAG_STRUCT,
+    })
 }
 
 /// Frees bits that were never stored in a slot, so no reader can have seen them.
@@ -302,34 +322,72 @@ impl std::fmt::Debug for SharedBlock {
 }
 
 impl Drop for SharedBlock {
+    /// Releases what the slots hold. A block that held the last count of another block would drop it inside this call, and so on along
+    /// a chain of blocks, one stack frame for each link; the blocks are collected and dropped in a loop instead.
     fn drop(&mut self) {
-        for slot in &mut self.slots {
-            // SAFETY: `&mut self` means no reader exists, and each slot owns its count. The
-            // `garbage` list drops with the other fields.
-            drop(unsafe { own(*slot.get_mut()) });
+        let mut pending = Vec::new();
+        self.take_blocks(&mut pending);
+        while let Some(block) = pending.pop() {
+            if let Ok(mut last) = Arc::try_unwrap(block) {
+                last.take_blocks(&mut pending);
+            }
         }
     }
 }
 
 impl SharedBlock {
-    /// Creates a block whose slots all start as `undefined`.
-    pub fn new(len: usize) -> Arc<Self> {
+    /// Empties the slots and the garbage list, releasing everything that is not a block and handing the blocks to `out`.
+    fn take_blocks(&mut self, out: &mut Vec<Arc<SharedBlock>>) {
+        let undefined = boxed(TAG_SPECIAL, 0);
+        for slot in &mut self.slots {
+            let bits = std::mem::replace(slot.get_mut(), undefined);
+            // SAFETY: `&mut self` means no reader exists, and each slot owns its count, which the replacement gave up.
+            if let Some(retired) = unsafe { own(bits) } {
+                match retired.into_block() {
+                    Ok(block) => out.push(block),
+                    Err(other) => drop(other),
+                }
+            }
+        }
+        let garbage = std::mem::take(&mut *self.garbage.lock());
+        for retired in garbage {
+            match retired.into_block() {
+                Ok(block) => out.push(block),
+                Err(other) => drop(other),
+            }
+        }
+    }
+}
+
+impl SharedBlock {
+    /// Creates a block whose slots all start as `undefined`. `None` if that much memory is not there.
+    pub fn try_new(len: usize) -> Option<Arc<Self>> {
         Self::build(len, None)
     }
 
+    /// As [`SharedBlock::try_new`], for a length that is known to be small.
+    #[cfg(test)]
+    pub fn new(len: usize) -> Arc<Self> {
+        Self::build(len, None).expect("a small block")
+    }
+
     /// Creates a block for a shared struct, one slot for each field of `shape`.
-    pub fn with_shape(shape: Arc<StructShape>) -> Arc<Self> {
+    pub fn with_shape(shape: Arc<StructShape>) -> Option<Arc<Self>> {
         Self::build(shape.len(), Some(shape))
     }
 
-    fn build(len: usize, shape: Option<Arc<StructShape>>) -> Arc<Self> {
+    fn build(len: usize, shape: Option<Arc<StructShape>>) -> Option<Arc<Self>> {
         let undefined = boxed(TAG_SPECIAL, 0);
-        Arc::new(Self {
-            slots: (0..len).map(|_| AtomicU64::new(undefined)).collect(),
+        let mut slots = Vec::new();
+        // A length the allocator cannot give is a failure to report, not a crash.
+        slots.try_reserve_exact(len).ok()?;
+        slots.extend((0..len).map(|_| AtomicU64::new(undefined)));
+        Some(Arc::new(Self {
+            slots: slots.into_boxed_slice(),
             shape,
             readers: AtomicUsize::new(0),
             garbage: Guarded::new(Vec::new()),
-        })
+        }))
     }
 
     /// The field names, if this block is a shared struct and not a shared array.
@@ -445,6 +503,25 @@ mod tests {
     }
 
     #[test]
+    fn dropping_a_long_chain_of_blocks_does_not_recurse() {
+        let head = SharedBlock::new(1);
+        let mut tail = head.clone();
+        for _ in 0..30_000 {
+            let next = SharedBlock::new(1);
+            tail.store(0, &Value::Struct(next.clone()));
+            tail = next;
+        }
+        drop(tail);
+        drop(head);
+    }
+
+    #[test]
+    fn a_block_too_big_to_allocate_is_none() {
+        assert!(SharedBlock::try_new(usize::MAX / 16).is_none());
+        assert!(SharedBlock::try_new(4).is_some());
+    }
+
+    #[test]
     fn symbols_are_the_same_by_what_they_stand_for() {
         let unique = |id| {
             Value::Symbol(Arc::new(SymbolRecord {
@@ -551,7 +628,7 @@ mod tests {
     #[test]
     fn shape_marks_a_struct_block() {
         let shape = StructShape::new(vec![vec![u16::from(b'a')]]).unwrap();
-        let b = SharedBlock::with_shape(shape);
+        let b = SharedBlock::with_shape(shape).unwrap();
         assert_eq!(b.len(), 1);
         assert!(b.shape().is_some());
         assert!(SharedBlock::new(1).shape().is_none());

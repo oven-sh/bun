@@ -11,7 +11,7 @@ use std::sync::Arc;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{
-    JSBigInt, JSGlobalObject, JSValue, JsResult, StringJsc as _, VirtualMachineRef,
+    JSBigInt, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _, VirtualMachineRef,
     from_js_host_call, to_js_host_call,
 };
 use bun_shared_struct::{
@@ -506,11 +506,21 @@ fn new_struct_block(global: &JSGlobalObject, names: JSValue) -> JsResult<Arc<Sha
         list.push(utf16_of(&name.to_bun_string(global)?));
     }
     match StructShape::new(list) {
-        Ok(shape) => Ok(SharedBlock::with_shape(shape)),
+        Ok(shape) => {
+            SharedBlock::with_shape(shape).ok_or_else(|| out_of_memory(global, "SharedStruct"))
+        }
         Err(ShapeError::Duplicate(i)) => {
             Err(global.throw_type_error(format_args!("SharedStruct field name {i} is a duplicate")))
         }
     }
+}
+
+/// The RangeError for a block that cannot be allocated: the length is allowed, the memory is not there.
+fn out_of_memory(global: &JSGlobalObject, what: &str) -> JsError {
+    global.throw_value(
+        global
+            .create_range_error_instance(format_args!("{what}: not enough memory for that length")),
+    )
 }
 
 /// A block for `new SharedStruct(names)`, or null with an exception pending.
@@ -548,7 +558,13 @@ pub unsafe extern "C" fn Bun__SharedArray__newBlock(
     };
     match length {
         Some(n) if n.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&n) => {
-            Arc::into_raw(SharedBlock::new(n as usize)).cast()
+            match SharedBlock::try_new(n as usize) {
+                Some(block) => Arc::into_raw(block).cast(),
+                None => {
+                    let _ = out_of_memory(global, "SharedArray");
+                    core::ptr::null()
+                }
+            }
         }
         _ => {
             let _ = global.throw_invalid_arguments(format_args!(

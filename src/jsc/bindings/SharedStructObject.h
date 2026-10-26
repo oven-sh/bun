@@ -65,8 +65,6 @@ protected:
         : Base(vm, structure)
         , m_block(block)
     {
-        WTF::Locker locker { cellLock() };
-        m_cache.grow(Bun__SharedBlock__length(block));
     }
     ~JSSharedView() { Bun__SharedBlock__release(m_block); }
 
@@ -74,14 +72,15 @@ protected:
     bool redefineSlot(JSC::JSGlobalObject*, size_t index, const JSC::PropertyDescriptor&, bool shouldThrow);
 
     // The wrapper that slot `index` last gave out or took in, and the address of the object behind it. The address is checked on every
-    // read, because another thread may have changed the slot. The size is fixed at construction, which the GC relies on.
+    // read, because another thread may have changed the slot. Only slots that were read or written have an entry (an array can be
+    // billions of elements long), and the map is only touched with the cell lock held, which the GC takes to visit it.
     struct SlotCache {
         JSC::WriteBarrier<JSC::JSObject> wrapper;
         const void* key { nullptr };
     };
 
     const void* const m_block;
-    WTF::Vector<SlotCache> m_cache;
+    WTF::HashMap<size_t, SlotCache> m_cache;
 };
 
 // `new SharedStruct(["a", "b"])`: one slot for each name, found by the identifier of the property.

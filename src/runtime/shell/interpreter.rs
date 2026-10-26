@@ -2314,11 +2314,16 @@ pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
 }
 
 /// The `[read, write]` pipe that carries the stdout of a streamed run. POSIX: both ends close on
-/// exec, so a child holds the write end only as its own stdout, and the read end does not block.
+/// exec, so a child holds the write end only as its own stdout, and neither end blocks this thread.
 fn stdout_stream_pipe() -> bun_sys::Result<Pipe> {
-    let pipe = bun_sys::pipe()?;
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
+        bun_sys::pipe2(bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let pipe = bun_sys::pipe()?;
+        // The writer sets `O_NONBLOCK` on its end itself (`Flags::nonblock`).
         let flagged = bun_sys::set_close_on_exec(pipe[0])
             .and_then(|()| bun_sys::set_close_on_exec(pipe[1]))
             .and_then(|()| bun_sys::set_nonblocking(pipe[0]));
@@ -2327,8 +2332,12 @@ fn stdout_stream_pipe() -> bun_sys::Result<Pipe> {
             closefd(pipe[1]);
             return Err(e);
         }
+        Ok(pipe)
     }
-    Ok(pipe)
+    #[cfg(windows)]
+    {
+        bun_sys::pipe()
+    }
 }
 
 /// Joins `parts` into an owned, normalized path. Fails with `ENAMETOOLONG` if the result is

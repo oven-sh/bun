@@ -1572,6 +1572,8 @@ mod safe_libc {
         // `c_int` writes); kernel only writes the slot and reports failure via
         // the return value — no other preconditions.
         pub(crate) safe fn pipe(fds: &mut [c_int; 2]) -> c_int;
+        #[cfg(not(target_os = "macos"))]
+        pub(crate) safe fn pipe2(fds: &mut [c_int; 2], flags: c_int) -> c_int;
         pub(crate) safe fn socketpair(
             domain: c_int,
             ty: c_int,
@@ -3112,6 +3114,13 @@ mod posix_impl {
     pub fn pipe() -> Maybe<[Fd; 2]> {
         let mut fds = [0i32; 2];
         check!(safe_libc::pipe(&mut fds), Tag::pipe);
+        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
+    }
+    /// `pipe2(&fds, flags)`: `O::CLOEXEC` and `O::NONBLOCK` in `flags` apply to both ends. Darwin has no `pipe2`.
+    #[cfg(not(target_os = "macos"))]
+    pub fn pipe2(flags: i32) -> Maybe<[Fd; 2]> {
+        let mut fds = [0i32; 2];
+        check!(safe_libc::pipe2(&mut fds, flags), Tag::pipe);
         Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
     }
     pub fn isatty(fd: Fd) -> bool {

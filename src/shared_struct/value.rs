@@ -293,6 +293,9 @@ impl Drop for ReadGuard<'_> {
     }
 }
 
+/// The most slots one block has: 8 GiB of them.
+const MAX_SLOTS: usize = 1 << 30;
+
 /// A fixed-length block of atomic slots. A slot that holds a string, BigInt, symbol, struct, mutex
 /// or condition owns one strong count of it, and overwriting the slot releases that count once no
 /// reader can still be using the old pointer.
@@ -378,8 +381,12 @@ impl SharedBlock {
 
     fn build(len: usize, shape: Option<Arc<StructShape>>) -> Option<Arc<Self>> {
         let undefined = boxed(TAG_SPECIAL, 0);
+        // Every slot is written, so a length the machine would only pretend to give (overcommit) is refused up front, and one the
+        // allocator cannot give is a failure to report, not a crash.
+        if len > MAX_SLOTS {
+            return None;
+        }
         let mut slots = Vec::new();
-        // A length the allocator cannot give is a failure to report, not a crash.
         slots.try_reserve_exact(len).ok()?;
         slots.extend((0..len).map(|_| AtomicU64::new(undefined)));
         Some(Arc::new(Self {

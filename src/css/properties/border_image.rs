@@ -631,9 +631,7 @@ impl BorderImageHandler {
                 || self.width.as_ref().is_some_and(|v| !v.eql(&val.width))
                 || self.outset.as_ref().is_some_and(|v| !v.eql(&val.outset))
                 || self.repeat.as_ref().is_some_and(|v| !v.eql(&val.repeat));
-            let plain = self.vendor_prefix == VendorPrefix::NONE
-                && *vp == VendorPrefix::NONE
-                && !prefixed_image;
+            let plain = self.vendor_prefix == VendorPrefix::NONE && !prefixed_image;
             // Only an unprefixed value that every target reads replaces what is buffered.
             return differs
                 && !(plain

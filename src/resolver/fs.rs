@@ -206,6 +206,14 @@ impl Entry {
         p
     }
 
+    /// Whether a new read of the directory that finds `name` keeps this entry. `base_` and
+    /// `abs_path` are never rewritten, so both have to fit `name` byte for byte: the lookup
+    /// that leads here ignores case, and `abs_path` ends in the name its first reader asked for.
+    fn is_kept_as(&self, name: &[u8]) -> bool {
+        let path = self.abs_path().as_bytes();
+        self.base() == name && (path.is_empty() || path.ends_with(name))
+    }
+
     /// Stat-on-first-use.
     ///
     /// # Safety
@@ -508,12 +516,11 @@ impl DirEntry {
             if let Some(map) = prev_map {
                 // `data` keys are the lowercased basenames, so an exact match on
                 // `name_lc` is the case-insensitive match — and reuses
-                // `name_hash` instead of re-hashing. An entry is kept only for the
-                // name it has, whose `base_` and `abs_path` are never rewritten: a
-                // file renamed to another case gets a new one.
+                // `name_hash` instead of re-hashing. A file renamed to another case
+                // gets a new entry, see `Entry::is_kept_as`.
                 if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc)
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
-                    && unsafe { (*existing_ptr).base() } == name_slice
+                    && unsafe { (*existing_ptr).is_kept_as(name_slice) }
                 {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };

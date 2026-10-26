@@ -432,8 +432,11 @@ describe("bytes that are copied into a string over the length limit", () => {
       const servername = Buffer.alloc(150, "a").toString() + ".example";
       const handshake = async (label, serverOptions, clientOptions) => {
         const { promise, resolve } = Promise.withResolvers();
+        // What the server reports, and whether the client gets a session.
+        const events = [];
         const server = tls.createServer({ key, cert, ...serverOptions }, socket => socket.end());
-        server.on("tlsClientError", error => resolve(error.code));
+        server.on("tlsClientError", error => events.push("tlsClientError " + error.code));
+        server.on("error", error => resolve(["server error " + error.code]));
         server.listen(0, "127.0.0.1", () => {
           const client = tls.connect({
             port: server.address().port,
@@ -443,15 +446,19 @@ describe("bytes that are copied into a string over the length limit", () => {
             ...clientOptions,
           });
           client.on("error", () => {});
-          client.on("secureConnect", () => resolve("connected"));
+          client.on("secureConnect", () => events.push("secureConnect"));
+          // The server closes after its side of the connection, so its events are complete.
+          client.on("close", () => server.close(() => resolve(events)));
         });
         results[label] = await promise;
-        server.close();
       };
       await handshake("SNICallback", { SNICallback: (name, callback) => callback(null, null) }, {});
       await handshake("ALPNCallback", { ALPNCallback: ({ protocols }) => protocols[0] }, { ALPNProtocols: ["h2"] });
       `,
     );
-    expect(results).toEqual({ SNICallback: "ERR_SSL_CONNECTION_REJECTED", ALPNCallback: "ERR_STRING_TOO_LONG" });
+    expect(results).toEqual({
+      SNICallback: ["tlsClientError ERR_SSL_CONNECTION_REJECTED"],
+      ALPNCallback: ["tlsClientError ERR_STRING_TOO_LONG"],
+    });
   });
 });

@@ -24,12 +24,6 @@ pub struct Err<T> {
     pub(crate) loc: Option<ErrorLocation>,
 }
 
-impl<T: fmt::Display> fmt::Display for Err<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.kind.fmt(f)
-    }
-}
-
 // `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
 
 impl Err<ParserError> {
@@ -179,18 +173,15 @@ impl ErrorLocation {
         &self,
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
-        // SAFETY: `'bump`-erasure — `bun_ast::Location.line_text` is `Option<&'static [u8]>`
-        // (`Str` placeholder per src/logger/lib.rs); the slice borrows
-        // `source.contents` which outlives the diagnostic. Re-thread once
-        // `bun_ast::Location` grows a real lifetime.
+        // Copied: the log can outlive `source.contents`.
         let line_text = bun_core::strings::get_lines_in_text::<1>(&source.contents, self.line)
-            .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
+            .map(|lines| std::borrow::Cow::Owned(lines.as_slice()[0].to_vec()));
         Ok(bun_ast::Location {
             file: std::borrow::Cow::Borrowed(source.path.text),
             namespace: std::borrow::Cow::Borrowed(source.path.namespace),
             line: i32::try_from(self.line + 1).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
-            line_text: line_text.map(std::borrow::Cow::Borrowed),
+            line_text,
             ..Default::default()
         })
     }

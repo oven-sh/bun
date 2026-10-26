@@ -4,13 +4,15 @@ import pkg from "../package.json";
 
 const BUN_VERSION = (process.env.BUN_VERSION || Bun.version || process.versions.bun).replace(/^.*v/, "");
 
-// Usage: bun scripts/build.ts [outDir]
+// Usage: bun scripts/build.ts [outDir] [sourceDocsDir]
 //
 // The generated files (package.json with the version filled in, CLAUDE.md, docs/)
 // are written to outDir, by default this package's own directory, which is what the
 // release workflow publishes. test/integration/bun-types builds into a scratch copy
-// of the package instead so that running the test never modifies the checkout.
+// of the package instead so that running the test never modifies the checkout, and
+// passes a small docs tree of its own to check the link rewrite.
 const outDir = process.argv[2] ? resolve(process.argv[2]) : join(import.meta.dir, "..");
+const sourceDocsDir = process.argv[3] ? resolve(process.argv[3]) : join(import.meta.dir, "../../../docs");
 
 await Bun.write(join(outDir, "package.json"), JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
 
@@ -29,7 +31,6 @@ if (await claude.exists()) {
 
 // Copy docs
 const docsDir = join(outDir, "docs");
-const sourceDocsDir = join(import.meta.dir, "../../../docs");
 await Bun.$`rm -rf ${docsDir}`;
 
 // The per-rule pages under docs/lint/rules/<plugin>/ are generated (src/codegen/lint-rule-docs.ts)

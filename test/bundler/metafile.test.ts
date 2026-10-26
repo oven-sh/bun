@@ -1462,14 +1462,15 @@ describe("metafile markdown: chunks an entry point loads", () => {
   // A chunk file name carries a content hash, so each output is named after what it holds:
   // `./lazy.js` is the output file of the entry point lazy.js, and `chunk(a.js)` is the shared
   // chunk that holds a.js. A line that has no size stays as it is, and fails the expectation.
-  async function loadedChunks(files: Record<string, string>, entrypoints: string[]) {
+  async function loadedChunks(files: Record<string, string>, entrypoints: string[], entryNaming?: string) {
     using dir = tempDir("metafile-md-loaded-chunks", files);
     const result = await Bun.build({
       entrypoints: entrypoints.map(entry => `${dir}/${entry}`),
       outdir: `${dir}/dist`,
       splitting: true,
       target: "bun",
-      metafile: { markdown: "meta.md" },
+      metafile: { markdown: "meta.md" } as any,
+      ...(entryNaming && { naming: { entry: entryNaming } }),
     });
     expect(result.success).toBe(true);
 
@@ -1553,7 +1554,8 @@ describe("metafile markdown: chunks an entry point loads", () => {
   });
 
   test("does not list what an imported entry point loads on demand", async () => {
-    // shared.js is part of entry.js. So the chunks of a.js and b.js import entry.js, and entry.js import()s both.
+    // An entry point takes the code it shares with its import() targets only with [hash] in its name.
+    // Then shared.js is part of entry.js. So the chunks of a.js and b.js import entry.js, and entry.js import()s both.
     // To load a.js does not load b.js.
     const loaded = await loadedChunks(
       {
@@ -1563,6 +1565,7 @@ describe("metafile markdown: chunks an entry point loads", () => {
         "shared.js": `export const s = "S";`,
       },
       ["entry.js"],
+      "[name]-[hash].[ext]",
     );
 
     expect(loaded).toEqual({

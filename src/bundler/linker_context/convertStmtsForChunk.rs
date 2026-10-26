@@ -303,30 +303,35 @@ pub(crate) fn convert_stmts_for_chunk(
                                 )
                             {
                                 // Step 3 bound each name to `ns.name`: declare `ns`.
-                                stmts
-                                    .inside_wrapper_prefix
-                                    .append_non_dependency(Stmt::alloc(
-                                        S::Local {
-                                            decls: G::DeclList::from_slice(&[G::Decl {
-                                                binding: Binding::alloc(
-                                                    bump,
-                                                    B::Identifier {
-                                                        r#ref: s.namespace_ref,
-                                                    },
-                                                    stmt.loc,
-                                                ),
-                                                value: Some(Expr::init(
-                                                    E::RequireString {
-                                                        import_record_index: s.import_record_index,
-                                                        ..Default::default()
-                                                    },
-                                                    stmt.loc,
-                                                )),
-                                            }]),
-                                            ..Default::default()
-                                        },
-                                        stmt.loc,
-                                    ))?;
+                                let decl = Stmt::alloc(
+                                    S::Local {
+                                        decls: G::DeclList::from_slice(&[G::Decl {
+                                            binding: Binding::alloc(
+                                                bump,
+                                                B::Identifier {
+                                                    r#ref: s.namespace_ref,
+                                                },
+                                                stmt.loc,
+                                            ),
+                                            value: Some(Expr::init(
+                                                E::RequireString {
+                                                    import_record_index: s.import_record_index,
+                                                    ..Default::default()
+                                                },
+                                                stmt.loc,
+                                            )),
+                                        }]),
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                );
+                                // A lifted file's export star was `module.exports =
+                                // require()`: the require keeps its place in the file.
+                                if ast.flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM) {
+                                    stmt = decl;
+                                    break 'process_stmt;
+                                }
+                                stmts.inside_wrapper_prefix.append_non_dependency(decl)?;
                             }
                         }
 

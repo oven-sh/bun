@@ -116,6 +116,8 @@ pub mod options {
             const KEEP_STMT = 1 << 0;
             /// `preserveValueImports`: an unused value name stays. `verbatimModuleSyntax` is both.
             const KEEP_VALUES = 1 << 1;
+            /// Auto-install answers a bare specifier from the registry, so the two flags above keep no such import.
+            const NOT_PACKAGES = 1 << 2;
         }
     }
     impl TSUnusedImportFlags {
@@ -123,6 +125,12 @@ pub mod options {
         #[inline]
         pub const fn drops_valueless_clause(self) -> bool {
             !self.contains(Self::KEEP_STMT)
+        }
+
+        /// `NOT_PACKAGES`, for the specifier of one import.
+        #[inline]
+        pub fn skips(self, specifier: &[u8]) -> bool {
+            self.contains(Self::NOT_PACKAGES) && bun_paths::is_package_path(specifier)
         }
 
         /// TypeScript emits nothing for a declaration file, so the settings do not reach one.

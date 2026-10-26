@@ -4097,6 +4097,9 @@ unsafe fn get_loader_and_virtual_source<'a>(
             Ok(Some(dir_info)) => {
                 if may_be_typescript {
                     unused_import_flags_ts = resolver.unused_import_flags_ts(&dir_info);
+                    if !unused_import_flags_ts.is_empty() && resolver.may_auto_install(&dir_info) {
+                        unused_import_flags_ts |= TSUnusedImportFlags::NOT_PACKAGES;
+                    }
                 }
                 dir_info.package_json().or(dir_info.enclosing_package_json)
             }
@@ -4609,8 +4612,18 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     let unused_import_flags_ts = if path.is_node_module() {
         TSUnusedImportFlags::empty()
     } else {
-        // SAFETY: `jsc_vm` is the live per-thread VM.
-        unsafe { (*jsc_vm).transpiler.options.unused_import_flags_ts }
+        // SAFETY: `jsc_vm` is the live per-thread VM; `read_dir_info` is re-entrant on the JS thread.
+        let transpiler = unsafe { &mut (*jsc_vm).transpiler };
+        let mut flags = transpiler.options.unused_import_flags_ts;
+        if !flags.is_empty()
+            && let Ok(Some(top_level)) = transpiler
+                .resolver
+                .read_dir_info(Fs::FileSystem::get().top_level_dir())
+            && transpiler.resolver.may_auto_install(&top_level)
+        {
+            flags |= TSUnusedImportFlags::NOT_PACKAGES;
+        }
+        flags
     };
     let mut extra = TranspileExtra {
         path,

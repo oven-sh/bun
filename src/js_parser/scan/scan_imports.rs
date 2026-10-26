@@ -93,6 +93,10 @@ impl<'a> ImportScanner<'a> {
                     let mut did_remove_star_loc = false;
                     let keep_unused_imports = !p.options.features.trim_unused_imports
                         || (keep_values_ts && p.options.keeps_unused_import_names_ts());
+                    // A statement that tsconfig keeps still goes with an export deleted on request.
+                    let check_deleted_exports = !unused_import_flags.is_empty()
+                        && p.options.features.replace_exports.count() > 0;
+                    let mut lost_name_to_deleted_export = false;
                     // Without trimming (JavaScript), exports deleted on request
                     // (`replace_exports`) still take the imports that only they used: a binding
                     // goes when its only uses were in them. An import that nothing used stays, for
@@ -102,9 +106,14 @@ impl<'a> ImportScanner<'a> {
                     macro_rules! removable {
                         ($ref_:expr) => {{
                             let index = $ref_.inner_index();
-                            p.symbols[index as usize].use_count_estimate == 0
+                            let removable = p.symbols[index as usize].use_count_estimate == 0
                                 && (!only_deleted_exports_uses
-                                    || p.used_by_deleted_exports.contains(&index))
+                                    || p.used_by_deleted_exports.contains(&index));
+                            if removable && check_deleted_exports {
+                                lost_name_to_deleted_export |=
+                                    p.used_by_deleted_exports.contains(&index);
+                            }
+                            removable
                         }};
                     }
                     // TypeScript always trims unused imports. This is important for
@@ -119,8 +128,7 @@ impl<'a> ImportScanner<'a> {
 
                             // TypeScript has a separate definition of unused
                             if is_typescript_enabled
-                                && (p.ts_use_counts[default_name.ref_.inner_index() as usize] != 0
-                                    || keep_values_ts)
+                                && p.ts_use_counts[default_name.ref_.inner_index() as usize] != 0
                             {
                                 is_unused_in_typescript = false;
                             }
@@ -137,8 +145,7 @@ impl<'a> ImportScanner<'a> {
 
                             // TypeScript has a separate definition of unused
                             if is_typescript_enabled
-                                && (p.ts_use_counts[st.namespace_ref.inner_index() as usize] != 0
-                                    || keep_values_ts)
+                                && p.ts_use_counts[st.namespace_ref.inner_index() as usize] != 0
                             {
                                 is_unused_in_typescript = false;
                             }
@@ -184,8 +191,7 @@ impl<'a> ImportScanner<'a> {
 
                                 // TypeScript has a separate definition of unused
                                 if is_typescript_enabled
-                                    && (p.ts_use_counts[ref_.inner_index() as usize] != 0
-                                        || keep_values_ts)
+                                    && p.ts_use_counts[ref_.inner_index() as usize] != 0
                                 {
                                     is_unused_in_typescript = false;
                                 }
@@ -246,14 +252,20 @@ impl<'a> ImportScanner<'a> {
                             && st.star_name_loc.is_empty()
                             // SAFETY: arena-owned slice; see above.
                             && st.items.slice().is_empty()
-                            && st.default_name.is_none();
+                            && st.default_name.is_none()
+                            && (!check_deleted_exports || lost_name_to_deleted_export);
                         // An empty TypeScript clause is an import too: `import {} from 'x'`.
+                        let unused_in_typescript = !keep_unused_imports
+                            && is_typescript_enabled
+                            && (found_imports || had_items_clause)
+                            && is_unused_in_typescript;
+                        // `KEEP_STMT` keeps every statement, `KEEP_VALUES` one that binds a value.
+                        let kept_by_tsconfig = unused_in_typescript
+                            && (!unused_import_flags.drops_valueless_clause()
+                                || (keep_values_ts && found_imports))
+                            && !unused_import_flags.skips(record!().path.text);
                         if unused_after_deleted_exports
-                            || (!keep_unused_imports
-                                && is_typescript_enabled
-                                && (found_imports || had_items_clause)
-                                && is_unused_in_typescript
-                                && unused_import_flags.drops_valueless_clause())
+                            || (unused_in_typescript && !kept_by_tsconfig)
                             || (!is_typescript_enabled
                                 && p.options.features.trim_unused_imports
                                 && found_imports
@@ -273,14 +285,14 @@ impl<'a> ImportScanner<'a> {
                                 continue;
                             }
                         }
+                        if kept_by_tsconfig {
+                            record!()
+                                .flags
+                                .insert(import_record::Flags::KEPT_BY_TSCONFIG);
+                        }
                     }
 
                     let _ = did_remove_star_loc;
-
-                    // The statement stays: a record that `t_import` created unused is live now.
-                    if is_typescript_enabled {
-                        record!().flags.remove(import_record::Flags::IS_UNUSED);
-                    }
 
                     let namespace_ref = st.namespace_ref;
                     // `import defer * as ns` must keep its namespace binding
@@ -756,12 +768,6 @@ impl<'a> ImportScanner<'a> {
                 js_ast::StmtData::SExportFrom(st) => {
                     p.import_records_for_current_part
                         .push(st.import_record_index);
-                    // `export {} from 'x'` that tsconfig keeps: see the import arm.
-                    if is_typescript_enabled {
-                        p.import_records.items_mut()[st.import_record_index as usize]
-                            .flags
-                            .remove(import_record::Flags::IS_UNUSED);
-                    }
                     // SAFETY: arena-owned slice valid for 'p.
                     let items = st.items.slice();
                     p.named_imports

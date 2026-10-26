@@ -234,7 +234,7 @@ impl ResultFlags {
         flags
     }
     #[inline]
-    pub(crate) fn set_unused_import_flags_ts(&mut self, flags: TSUnusedImportFlags) {
+    pub fn set_unused_import_flags_ts(&mut self, flags: TSUnusedImportFlags) {
         self.set(
             Self::TS_KEEP_UNUSED_IMPORT_STMT,
             flags.contains(TSUnusedImportFlags::KEEP_STMT),

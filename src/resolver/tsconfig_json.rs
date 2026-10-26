@@ -162,8 +162,6 @@ pub struct TSConfigJSON {
     pub(crate) preserve_imports_not_used_as_values: Option<bool>,
     pub(crate) preserve_value_imports: Option<bool>,
     pub(crate) verbatim_module_syntax: Option<bool>,
-    /// The three settings above, folded by `fold_unused_import_flags` after the `extends` merge.
-    unused_import_flags: TSUnusedImportFlags,
 
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
@@ -184,7 +182,6 @@ impl Default for TSConfigJSON {
             preserve_imports_not_used_as_values: None,
             preserve_value_imports: None,
             verbatim_module_syntax: None,
-            unused_import_flags: TSUnusedImportFlags::empty(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
@@ -262,27 +259,20 @@ impl TSConfigJSON {
     }
 
     /// What a TypeScript file under this configuration does with an unused import.
-    #[inline]
     pub fn unused_import_flags(&self) -> TSUnusedImportFlags {
-        self.unused_import_flags
-    }
-
-    /// `verbatimModuleSyntax` is both flags. Call it after `parse` and after the `extends` merge.
-    pub(crate) fn fold_unused_import_flags(&mut self) {
-        self.unused_import_flags = if self.verbatim_module_syntax == Some(true) {
-            TSUnusedImportFlags::all()
-        } else {
-            let mut flags = TSUnusedImportFlags::empty();
-            flags.set(
-                TSUnusedImportFlags::KEEP_STMT,
-                self.preserve_imports_not_used_as_values == Some(true),
-            );
-            flags.set(
-                TSUnusedImportFlags::KEEP_VALUES,
-                self.preserve_value_imports == Some(true),
-            );
-            flags
-        };
+        if self.verbatim_module_syntax == Some(true) {
+            return TSUnusedImportFlags::KEEP_STMT | TSUnusedImportFlags::KEEP_VALUES;
+        }
+        let mut flags = TSUnusedImportFlags::empty();
+        flags.set(
+            TSUnusedImportFlags::KEEP_STMT,
+            self.preserve_imports_not_used_as_values == Some(true),
+        );
+        flags.set(
+            TSUnusedImportFlags::KEEP_VALUES,
+            self.preserve_value_imports == Some(true),
+        );
+        flags
     }
 
     /// Support ${configDir}, but avoid allocating when possible.
@@ -716,7 +706,6 @@ impl TSConfigJSON {
             debug_assert!(!result.base_url.is_empty());
         }
 
-        result.fold_unused_import_flags();
         Ok(Some(TSConfigJSON::new(result)))
     }
 

@@ -4115,14 +4115,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Only assert above; do not actually pop.
     }
 
-    /// `starts_unused`: the record is `IS_UNUSED` until `ImportScanner::scan` keeps the statement.
+    /// `binds_no_value`: a TypeScript clause with no value name, which only tsconfig.json keeps.
     pub(crate) fn process_import_statement(
         &mut self,
         stmt_: S::Import,
         path: ParsedPath<'a>,
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
-        starts_unused: bool,
+        binds_no_value: bool,
     ) -> Result<Stmt, crate::Error> {
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
@@ -4255,10 +4255,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_records.items_mut()[stmt.import_record_index as usize]
             .flags
             .set(bun_ast::ImportRecordFlags::PHASE_DEFER, stmt.phase_defer);
-        if Self::IS_TYPESCRIPT_ENABLED && starts_unused {
+        if Self::IS_TYPESCRIPT_ENABLED && binds_no_value {
             self.import_records.items_mut()[stmt.import_record_index as usize]
                 .flags
-                .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
+                .insert(bun_ast::ImportRecordFlags::KEPT_BY_TSCONFIG);
         }
 
         if let Some(star) = stmt.star_name_loc.to_nullable() {

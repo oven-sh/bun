@@ -1250,6 +1250,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     namespace_ref = p.store_name_in_ref(name);
                 }
 
+                // A `declare` block is dropped whole: a statement in it asks for no module.
+                if Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare {
+                    p.lexer.expect_or_insert_semicolon()?;
+                    p.has_es_module_syntax = true;
+                    return Ok(p.s(S::TypeScript {}, loc));
+                }
+
                 let import_record_index = p.add_import_record(
                     ImportKind::Stmt,
                     path.loc,
@@ -1257,12 +1264,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // TODO: import assertions
                     // path.assertions
                 );
-                // A `declare` block is dropped whole, and its records with it.
-                if Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare {
-                    p.import_records.items_mut()[import_record_index as usize]
-                        .flags
-                        .insert(ImportRecordFlags::IS_UNUSED);
-                }
 
                 if path.is_macro {
                     p.log().add_error(
@@ -1317,8 +1318,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // nothing
                         // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
                         if valueless_clause
-                            && p.options.unused_import_flags_ts.drops_valueless_clause()
+                            && (p.options.unused_import_flags_ts.drops_valueless_clause()
+                                || p.options.unused_import_flags_ts.skips(parsed_path.text))
                         {
+                            return Ok(p.s(S::TypeScript {}, loc));
+                        }
+                        // A `declare` block is dropped whole: a statement in it asks for no module.
+                        if opts.is_typescript_declare {
+                            p.has_es_module_syntax = true;
                             return Ok(p.s(S::TypeScript {}, loc));
                         }
                     }
@@ -1339,13 +1346,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
-                    // As for an import: see `starts_unused` in `t_import`.
-                    if Self::IS_TYPESCRIPT_ENABLED
-                        && (opts.is_typescript_declare || (valueless_clause && !SCAN_ONLY))
-                    {
+                    if valueless_clause {
                         p.import_records.items_mut()[import_record_index as usize]
                             .flags
-                            .insert(ImportRecordFlags::IS_UNUSED);
+                            .insert(ImportRecordFlags::KEPT_BY_TSCONFIG);
                     }
                     let path_name = fs::PathName::init(parsed_path.text);
                     let namespace_ref = {
@@ -1578,13 +1582,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let path = p.parse_path()?;
                     p.lexer.expect_or_insert_semicolon()?;
-                    return p.process_import_statement(
-                        stmt,
-                        path,
-                        loc,
-                        false,
-                        Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare,
-                    );
+                    if Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare {
+                        return Ok(p.s(S::TypeScript {}, loc));
+                    }
+                    return p.process_import_statement(stmt, path, loc, false, false);
                 }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
@@ -1711,14 +1712,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let path = p.parse_path()?;
         p.lexer.expect_or_insert_semicolon()?;
 
-        // Not an import until `ImportScanner::scan` keeps it. It never sees a `declare` block.
-        let starts_unused = Self::IS_TYPESCRIPT_ENABLED
-            && (opts.is_typescript_declare
-                || (!SCAN_ONLY
-                    && stmt.has_items_clause
-                    && stmt.items.is_empty()
-                    && stmt.default_name.is_none()));
-        p.process_import_statement(stmt, path, loc, was_originally_bare_import, starts_unused)
+        // A `declare` block is dropped whole: a statement in it asks for no module.
+        if Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare {
+            return Ok(p.s(S::TypeScript {}, loc));
+        }
+        let binds_no_value = Self::IS_TYPESCRIPT_ENABLED
+            && stmt.has_items_clause
+            && stmt.items.is_empty()
+            && stmt.default_name.is_none();
+        if binds_no_value && p.options.unused_import_flags_ts.skips(path.text) {
+            return Ok(p.s(S::TypeScript {}, loc));
+        }
+        p.process_import_statement(stmt, path, loc, was_originally_bare_import, binds_no_value)
     }
 
     /// Out-of-line tail for the (uncommon) `label: stmt` form reached from

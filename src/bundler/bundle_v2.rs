@@ -252,6 +252,16 @@ impl<'a> BundleV2<'a> {
             .unused_import_flags_ts
     }
 
+    /// A `files` entry is a source that no directory holds, like a plugin's.
+    fn set_file_map_result_flags(
+        &mut self,
+        target: options::Target,
+        result: &mut bun_resolver::Result,
+    ) {
+        let flags = self.root_unused_import_flags_ts(target, &result.path_pair.primary);
+        result.flags.set_unused_import_flags_ts(flags);
+    }
+
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
         // SAFETY: all three pointers are live for `'a` (set in `init`); the
         // `client_transpiler` arm is only reached when bake populated it.
@@ -1903,6 +1913,18 @@ pub mod bv2_impl {
         unsafe { (*p).into_static() }
     }
 
+    /// The last error is for an import that only tsconfig.json keeps: `bun install` is no remedy.
+    #[cold]
+    pub(crate) fn note_import_kept_by_tsconfig(log: &mut bun_ast::Log) {
+        if let Some(msg) = log.msgs.last_mut() {
+            msg.notes = Box::new([bun_ast::range_data(
+                None,
+                bun_ast::Range::NONE,
+                "No value uses this import. tsconfig.json keeps it (\"verbatimModuleSyntax\"), so the module must exist. Write \"import type\" to drop it.",
+            )]);
+        }
+    }
+
     /// Logs resolver errors that `resolve()` returns without writing to any
     /// log so `has_errors()` actually fires. Returns `true` when `err` is one
     /// of those; shared by `run_resolver` and `resolve_import_records`.
@@ -2712,7 +2734,8 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
-                    let file_map_result = _file_map_result;
+                    let mut file_map_result = _file_map_result;
+                    self.set_file_map_result_flags(target, &mut file_map_result);
                     let mut path_primary = file_map_result.path_pair.primary;
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
@@ -2828,6 +2851,7 @@ pub mod bv2_impl {
                         }
 
                         let handles_import_errors;
+                        let kept_by_tsconfig;
                         // reshaped for borrowck — `log_for_resolution_failures` borrows
                         // `&mut self`; the returned log is backed by either a DevServer-owned slot or
                         // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
@@ -2849,6 +2873,9 @@ pub mod bv2_impl {
                             handles_import_errors = record
                                 .flags
                                 .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                            kept_by_tsconfig = record
+                                .flags
+                                .contains(bun_ast::ImportRecordFlags::KEPT_BY_TSCONFIG);
 
                             // Disable failing packages from being printed.
                             // This may cause broken code to write.
@@ -2893,8 +2920,13 @@ pub mod bv2_impl {
                                             source,
                                             import_record.range,
                                             format_args!(
-                                                "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
-                                                bstr::BStr::new(path_to_use)
+                                                "Could not resolve: \"{}\"{}",
+                                                bstr::BStr::new(path_to_use),
+                                                if kept_by_tsconfig {
+                                                    ""
+                                                } else {
+                                                    ". Maybe you need to \"bun install\"?"
+                                                },
                                             ),
                                             path_to_use,
                                             import_record.kind,
@@ -2912,6 +2944,9 @@ pub mod bv2_impl {
                                         path_to_use,
                                         import_record.kind,
                                     );
+                                }
+                                if kept_by_tsconfig {
+                                    note_import_kept_by_tsconfig(log);
                                 }
                             }
                         } else {
@@ -3602,14 +3637,13 @@ pub mod bv2_impl {
 
                 // Check FileMap first for in-memory entry points
                 if let Some(file_map) = self.file_map {
-                    if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point)
+                    if let Some(mut file_map_result) =
+                        file_map.resolve(self.arena(), b"", entry_point)
                     {
-                        let _ = self.enqueue_entry_item(
-                            &mut { file_map_result },
-                            true,
-                            self.transpiler.options.target,
-                            None,
-                        )?;
+                        let target = self.transpiler.options.target;
+                        self.set_file_map_result_flags(target, &mut file_map_result);
+                        let _ =
+                            self.enqueue_entry_item(&mut file_map_result, true, target, None)?;
                         continue;
                     }
                 }
@@ -4188,6 +4222,7 @@ pub mod bv2_impl {
             loader: Loader,
             known_target: options::Target,
             module_type: options::ModuleType,
+            unused_import_flags_ts: options::TSUnusedImportFlags,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
@@ -4232,7 +4267,6 @@ pub mod bv2_impl {
             } else {
                 self.transpiler_for_target(known_target).options.jsx.clone()
             };
-            let unused_import_flags_ts = self.root_unused_import_flags_ts(known_target, &task_path);
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
@@ -6924,6 +6958,7 @@ pub mod bv2_impl {
                         file_map.resolve(self.arena(), source.path.text, import_record.path.text)
                     {
                         let mut file_map_result = _file_map_result;
+                        self.set_file_map_result_flags(target, &mut file_map_result);
                         let mut path_primary = file_map_result.path_pair.primary;
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
                             Fs::Path::init(path_primary.text)
@@ -7055,6 +7090,9 @@ pub mod bv2_impl {
                                     && !self.transpiler.options.ignore_module_resolution_errors
                                 {
                                     last_error = Some(err.into());
+                                    let kept_by_tsconfig = import_record
+                                        .flags
+                                        .contains(bun_ast::ImportRecordFlags::KEPT_BY_TSCONFIG);
                                     if is_package_path(import_record.path.text) {
                                         if ctx.target == Target::Browser
                                             && options::is_node_builtin(import_record.path.text)
@@ -7107,8 +7145,13 @@ pub mod bv2_impl {
                                                 Some(source),
                                                 import_record.range,
                                                 format_args!(
-                                                    "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
-                                                    bstr::BStr::new(&import_record.path.text)
+                                                    "Could not resolve: \"{}\"{}",
+                                                    bstr::BStr::new(&import_record.path.text),
+                                                    if kept_by_tsconfig {
+                                                        ""
+                                                    } else {
+                                                        ". Maybe you need to \"bun install\"?"
+                                                    },
                                                 ),
                                                 import_record.path.text,
                                                 import_record.kind,
@@ -7152,6 +7195,9 @@ pub mod bv2_impl {
                                             specifier_to_use,
                                             import_record.kind,
                                         );
+                                    }
+                                    if kept_by_tsconfig {
+                                        note_import_kept_by_tsconfig(log);
                                     }
                                 }
                             } else {
@@ -8058,6 +8104,7 @@ pub mod bv2_impl {
                                     source_loader,
                                     Target::ServerComponentsSsr,
                                     source_module_type,
+                                    result.unused_import_flags_ts,
                                 )
                                 .expect("oom");
 
@@ -8082,6 +8129,7 @@ pub mod bv2_impl {
                                     source_loader,
                                     Target::Browser,
                                     source_module_type,
+                                    result.unused_import_flags_ts,
                                 )
                                 .expect("oom");
 

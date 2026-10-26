@@ -892,7 +892,7 @@ pub struct ParseOptions<'a, 'b> {
 
     pub dont_bundle_twice: bool,
     pub allow_commonjs: bool,
-    /// The output is text that Bun does not link (`bun build --no-bundle`).
+    /// `bun build --no-bundle`: the output is printed, and whatever runs it links it.
     pub transform_only: bool,
     /// `"type"` from `package.json`. Used to make sure the parser defaults
     /// to CommonJS or ESM based on what the package.json says, when it

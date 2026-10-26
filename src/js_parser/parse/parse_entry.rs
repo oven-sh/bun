@@ -174,7 +174,7 @@ pub struct Options<'a> {
     pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
 
-    /// The output is text that Bun does not link (`bun build --no-bundle`). Off by default.
+    /// `bun build --no-bundle`: the output is printed, and whatever runs it links it. Off by default.
     pub transform_only: bool,
 
     /// Used for inlining the state of import.meta.main during visiting
@@ -362,7 +362,7 @@ impl<'a> Options<'a> {
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
-    /// Only transform output prints a name that `KEEP_VALUES` keeps. Everything else is linked.
+    /// Only transform output prints a name that `KEEP_VALUES` keeps: it must be a real export there.
     pub(crate) fn keeps_unused_import_names_ts(&self) -> bool {
         self.ts
             && self.transform_only
@@ -2107,12 +2107,11 @@ impl<'a> Parser<'a> {
                 break 'outer;
             }
 
+            let mut imports_test_names = false;
             for item in p.import_records.items() {
-                // skip if they did import it
-                if !item.flags.contains(ImportRecordFlags::IS_UNUSED)
-                    && (item.path.text == b"bun:test"
-                        || item.path.text == b"@jest/globals"
-                        || item.path.text == b"vitest")
+                if item.path.text == b"bun:test"
+                    || item.path.text == b"@jest/globals"
+                    || item.path.text == b"vitest"
                 {
                     if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                         // If we rewrote import paths, we need to disable the runtime transpiler cache
@@ -2121,8 +2120,13 @@ impl<'a> Parser<'a> {
                         }
                     }
 
-                    break 'outer;
+                    // A statement that binds no value leaves the file on the globals.
+                    imports_test_names |= !item.flags.contains(ImportRecordFlags::KEPT_BY_TSCONFIG);
                 }
+            }
+            // skip if they did import it
+            if imports_test_names {
+                break 'outer;
             }
 
             // if they didn't use any of the jest globals, don't inject it, I guess.

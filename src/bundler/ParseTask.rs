@@ -210,6 +210,9 @@ pub(crate) struct Success {
 
     /// The package name from package.json, used for barrel optimization.
     pub(crate) package_name: ast::StoreStr,
+
+    /// What this parse took, for a second parse of the same file ("use client").
+    pub(crate) unused_import_flags_ts: options::TSUnusedImportFlags,
 }
 
 pub(crate) struct ResultError {
@@ -2791,6 +2794,7 @@ pub mod parse_worker {
             side_effects: task.side_effects,
             loader,
             package_name: task.package_name,
+            unused_import_flags_ts: task.unused_import_flags_ts,
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,

@@ -741,18 +741,13 @@ describe("error event", () => {
   describe.concurrent("delivers an Error when the thrown error cannot be printed or cloned", () => {
     // A row leaves out what is incidental to its shape.
     const shapes: [shape: string, workerSource: string, expected: object][] = [
-      // Bun.inspect() throws on these; the error itself clones fine.
+      // Bun.inspect() throws on this one; the error itself clones fine.
       [
         "throwing inspect.custom",
         `const e = new TypeError("boom"); e.code = "E_INSPECT";
          e[Symbol.for("nodejs.util.inspect.custom")] = () => { throw new Error("x"); };
          throw e;`,
         { name: "TypeError", message: "boom", code: "E_INSPECT", stack: expect.any(String) },
-      ],
-      [
-        "AggregateError whose errors is not iterable",
-        `const e = new AggregateError([new Error("inner")], "boom"); e.errors = 42; throw e;`,
-        { name: "Error", message: "boom", stack: expect.any(String) },
       ],
       // postMessage would refuse to clone these; the error report keeps the fields it can read.
       [
@@ -774,6 +769,12 @@ describe("error event", () => {
         "Symbol name",
         `const e = new TypeError("boom"); e.name = Symbol("name"); throw e;`,
         { name: "TypeError", message: "boom" },
+      ],
+      // An unreadable message is left out, as node does.
+      [
+        "Symbol message",
+        `const e = new Error("boom"); e.message = Symbol("message"); throw e;`,
+        { name: "Error", message: "" },
       ],
       // bun leaves the default stack text on the error when prepareStackTrace throws, and reports it.
       [

@@ -1440,7 +1440,7 @@ console.log(show([...seven("s")].reverse()), show(sixteen(1).map((x) => x * 2).f
 
 // Many of them, with collections between.
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
-const filledByValue = () => count("operationAOTNewArrayOfHoles") + count("operationAOTStoreElement");
+const filledByValue = () => count("operationAOTNewArrayOfHoles") + count("operationAOTArrayPutAtIndex") + count("operationAOTArrayPutAtNumber") + count("operationAOTArrayPutNumberAtIndex");
 const before = filledByValue();
 let kept = [], sum = 0, turn = 0;
 function step() {

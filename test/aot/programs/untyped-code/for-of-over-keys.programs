@@ -1064,8 +1064,17 @@ console.log(read(a, 0), readOften(c, 0), read(new Map([[1, 1]]), 0));
 //// getters-of-every-kind-by-name.js
 // Every kind of getter read by name from untyped code: compiled, bound, proxied and host functions, typed array properties, lazy closure properties.
 // Only the jsc shell can count. Elsewhere the count is zero.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const slowReads = () => count("operationAOTGetByIdAndCache");
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 const lines = [];
 const show = (label, value) => lines.push(label + ": " + String(value));
 
@@ -1085,9 +1094,9 @@ class CompiledGetter {
   }
 }
 const compiled = new CompiledGetter();
-const beforeCompiled = slowReads();
+const beforeCompiled = countsSoFar();
 show("class getter", readRepeatedly(readX, compiled));
-show("class getter stays out of the engine", slowReads() - beforeCompiled <= 10);
+show("class getter stays out of the engine", callsIn(countsSoFar()) - callsIn(beforeCompiled) <= 10);
 
 const withGetter = get => Object.defineProperty({}, "x", { get });
 show("bound getter", readRepeatedly(readX, withGetter(function () { return this.bound; }.bind({ bound: 8 }))));
@@ -1100,10 +1109,10 @@ const views = {
   Float64Array: new Float64Array(new ArrayBuffer(64), 16, 3),
   tracking: new Uint8Array(resizable, 2),
 };
-const beforeByteLength = slowReads();
+const beforeByteLength = countsSoFar();
 show("byteLength of Uint8Array", readRepeatedly(readByteLength, views.Uint8Array));
 show("byteLength of Float64Array", readRepeatedly(readByteLength, views.Float64Array));
-show("byteLength stays out of the engine", slowReads() - beforeByteLength <= 10);
+show("byteLength stays out of the engine", callsIn(countsSoFar()) - callsIn(beforeByteLength) <= 10);
 for (const name of Object.keys(views)) {
   const view = views[name];
   show(name, [readRepeatedly(readByteLength, view), readRepeatedly(readByteOffset, view), readRepeatedly(readLength, view)].join(" "));
@@ -1596,7 +1605,19 @@ console.log(lines.join("\n"));
 //// host-accessors-cached-across-gc.js
 // What the engine knows of a host object's accessor outlives a collection.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed.
+const owed = ["operationAOTConcat", "operationAOTConcatenate"];
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 function lastMatch() { return RegExp.lastMatch; }
 function firstGroup() { return RegExp.$1; }
@@ -1605,12 +1626,12 @@ const read = () => lastMatch() + "|" + firstGroup() + "|" + input();
 /(b+)c/.exec("aabbbcd");
 const seen = new Set();
 for (let i = 0; i < 100; i++) seen.add(read());
-const before = count("operationAOTGetById");
+const before = countsSoFar();
 for (let turn = 0; turn < 40; turn++) {
   collect();
   for (let i = 0; i < 20; i++) seen.add(read());
 }
-const times = count("operationAOTGetById") - before;
+const times = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log([...seen].join(" "), times < 40 ? "and the operation was entered under 40 times" : "and the operation was entered " + times + " times");
 /(x)y/.exec("wxyz");
 console.log(read());

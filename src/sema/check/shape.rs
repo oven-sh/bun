@@ -1849,7 +1849,7 @@ impl<'p, 's> Checker<'p, 's> {
         // For `[Symbol.iterator]`, unless `Symbol` is shadowed, read that property of the global `Symbol` without
         // checking the expression. This is very common in the default libraries.
         let hir = self.hir(file);
-        if let ExprKind::Dot { obj, name, .. } = hir[e].kind
+        if let ExprKind::Dot { obj, name, .. } = hir.checked_kind(e)
             && matches!(hir[obj].kind, ExprKind::Ident(known::Symbol))
             && self.bound(file).symbol_of_expr(obj).is_none()
             && let Some(global) = self.files().global(known::Symbol, SymFlags::VALUE)
@@ -4461,7 +4461,7 @@ impl<'p, 's> Checker<'p, 's> {
         for &(file, decl) in files.decls_of(all).iter() {
             if let Decl::Expando(e) | Decl::ThisProperty(e) = decl
                 && let ExprKind::Assign { target, .. } = self.hir(file)[e].kind
-                && let ExprKind::Index { index, .. } = self.hir(file)[target].kind
+                && let ExprKind::Index { index, .. } = self.hir(file).checked_kind(target)
                 && let Some(name) = self.declared_member_name(file, PropKey::Computed(index))
                 && !b.has(name)
                 && let Some(&(of, first)) = self.declarations_of_member(file, decl).first()
@@ -5808,7 +5808,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return ThisAssignmentDeclaration::None;
             };
             if assignment_declaration_kind(hir, e) != JsDeclarationKind::ThisProperty
-                || matches!(hir[target].kind, ExprKind::Index { index, .. }
+                || matches!(hir.checked_kind(target), ExprKind::Index { index, .. }
                     if !is_string_or_numeric_literal_like(hir, index))
             {
                 return ThisAssignmentDeclaration::None;
@@ -6867,7 +6867,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // A parenthesized expression is neither a property access nor an identifier.
         let left = hir[call].callee;
-        let left = match hir[left].kind {
+        let left = match hir.checked_kind(left) {
             ExprKind::Dot { obj, name, .. }
                 if !is_parenthesized(hir, left) && self.atoms().bytes(name) == b"for" =>
             {

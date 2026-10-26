@@ -215,7 +215,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                 bound,
                 inputs.sources.bundled_names(file),
             ),
-            has_bundled_positions: !inputs.sources.bundled_positions(file).is_empty(),
+            has_bundled_positions: inputs.sources.bundled_positions(file).is_some(),
             printed_operators: PrintedOperators::default(),
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
@@ -311,7 +311,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     }
 
     pub(crate) fn is_file_shown_without_source_map(&self, file: FileId) -> bool {
-        !self.inputs.sources.bundled_positions(file).is_empty()
+        self.inputs.sources.bundled_positions(file).is_some()
             || self.runs_file_as_written(file, self.queries.files().hir(file))
     }
 

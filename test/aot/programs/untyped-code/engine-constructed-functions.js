@@ -28,6 +28,7 @@ function describe(object) {
 
 const said = new Set();
 const before = count("operationAOTCreateThis");
+const listsBefore = count("operationAOTConstructWithArray");
 for (let i = 0; i < 2000; i++) {
   said.add(String(Object.getPrototypeOf(Reflect.construct(Params, [])) === Params.prototype));
   said.add(describe(Reflect.construct(Point, [1, 2])));
@@ -41,7 +42,9 @@ for (let i = 0; i < 2000; i++) {
 }
 const asked = count("operationAOTCreateThis") - before;
 console.log([...said].join("\n"));
-console.log(!counts || asked <= 13000 ? "what `this` is made of was remembered as a rule" : "the run time was asked what `this` is made of " + asked + " times");
+const lists = count("operationAOTConstructWithArray") - listsBefore;
+console.log(!counts || asked <= 10000 ? "what `this` is made of was remembered as a rule" : "the run time was asked what `this` is made of " + asked + " times");
+console.log(!counts || lists === 0 ? "no list of arguments went through the run time" : lists + " lists of arguments went through the run time");
 
 // A `prototype` that is replaced is what the next object inherits from, whoever constructs.
 const first = Point.prototype;

@@ -715,7 +715,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn key_of_assignment_declaration(&self, file: FileId, e: ExprId) -> PropKey {
         let hir = self.hir(file);
         let argument = if let ExprKind::Assign { target, .. } = hir[e].kind {
-            match hir[target].kind {
+            match hir.checked_kind(target) {
                 ExprKind::Dot { name, .. } => return PropKey::Name(name),
                 ExprKind::Index { index, .. } => Some(index),
                 _ => None,
@@ -1025,7 +1025,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getIndexNodeForAccessExpression`, as an error position.
     fn span_of_index_node(&self, access_node: AccessNode) -> Option<FileSpan> {
         match access_node {
-            AccessNode::ElementAccess(file, e) => match self.hir(file)[e].kind {
+            AccessNode::ElementAccess(file, e) => match self.hir(file).checked_kind(e) {
                 ExprKind::Index { index, .. } => Some(self.span_of_parenthesized_expr(file, index)),
                 _ => None,
             },
@@ -1111,7 +1111,7 @@ impl<'p, 's> Checker<'p, 's> {
                     });
                 }
                 if let Some((file, e)) = access_expression
-                    && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
+                    && let ExprKind::Index { obj, .. } = self.hir(file).checked_kind(e)
                     && self.is_assignment_to_readonly_entity(file, e, obj, prop)
                     && let Some(index_node) = self.span_of_index_node(access_node)
                 {
@@ -1214,7 +1214,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && info.key != TypeId::NUMBER
                 {
                     if let Some((file, e)) = access_expression
-                        && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
+                        && let ExprKind::Index { obj, .. } = self.hir(file).checked_kind(e)
                     {
                         let at = self.span_of_expr(file, e);
                         // `originalObjectType`
@@ -1318,7 +1318,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(index_node) = self.span_of_index_node(access_node) {
             let is_bigint_literal = match access_node {
                 AccessNode::ElementAccess(file, e) => {
-                    matches!(self.hir(file)[e].kind, ExprKind::Index { index, .. }
+                    matches!(self.hir(file).checked_kind(e), ExprKind::Index { index, .. }
                     if matches!(self.hir(file)[index].kind, ExprKind::BigInt(_)) && !is_parenthesized(self.hir(file), index))
                 }
                 AccessNode::PropertyName(file, prop) => match self.hir(file)[prop].key {

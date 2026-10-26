@@ -140,6 +140,9 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // The literal that Bun's transpiler prints in place of the name of a constant.
     pub(in crate::lower) fn find_printed_value(&self, name: ExprId) -> Option<ExprId> {
+        if self.runs_as_written() {
+            return None;
+        }
         let Binding::Symbol(symbol) = self.bound.binding(name) else {
             return None;
         };
@@ -163,6 +166,9 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn is_named_by_its_value(&self, declaration: VarDeclId) -> bool {
+        if !self.is_constant_with_literal(declaration) {
+            return false;
+        }
         let statement = self.bound.var_stmt[declaration.idx()];
         let siblings = match self.bound.parent_of_stmt(statement) {
             Parent::File => self.find_among(self.hir.body, false, statement),
@@ -320,15 +326,6 @@ impl FileLowering<'_, '_, '_, '_> {
         let hir = self.hir;
         let is_constant =
             |declaration: VarDeclId| self.bound.variable_kind(hir, declaration) == VarKind::Const;
-        let decl = hir[declaration];
-        let is_literal = matches!(hir[decl.pat].kind, PatKind::Ident(_))
-            && is_constant(declaration)
-            && decl.init.is_some()
-            && (self.is_literal_operand(decl.init) || self.is_printed_as_undefined(decl.init))
-            && !matches!(
-                hir[self.skip_type_syntax(decl.init)].kind,
-                ExprKind::Binary { left, .. } if self.is_text(left)
-            );
         let is_behind_moved_function = || {
             let mut all = hir.ids(siblings.all);
             siblings.is_block
@@ -336,7 +333,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     !budget.take_step() || self.find_function_moved_to_start(other).is_some()
                 })
         };
-        is_literal
+        self.is_constant_with_literal(declaration)
             && hir.ids(siblings.earlier).rev().all(|earlier| {
                 budget.take_step()
                     && match hir[earlier].kind {
@@ -346,6 +343,19 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
             })
             && !is_behind_moved_function()
+    }
+
+    fn is_constant_with_literal(&self, declaration: VarDeclId) -> bool {
+        let hir = self.hir;
+        let decl = hir[declaration];
+        matches!(hir[decl.pat].kind, PatKind::Ident(_))
+            && self.bound.variable_kind(hir, declaration) == VarKind::Const
+            && decl.init.is_some()
+            && (self.is_literal_operand(decl.init) || self.is_printed_as_undefined(decl.init))
+            && !matches!(
+                hir[self.skip_type_syntax(decl.init)].kind,
+                ExprKind::Binary { left, .. } if self.is_text(left)
+            )
     }
 
     fn find_statement_around(&self, expression: ExprId) -> Option<StmtId> {

@@ -881,9 +881,8 @@ impl Checker<'_, '_> {
         let hir = self.hir(cx.file);
         let is_among =
             |names: Span<NameId>, from: usize| hir.texts(names).skip(from).any(|n| n == name);
-        hir.exprs
-            .iter()
-            .any(|e| matches!(e.kind, ExprKind::Dot { name: member, .. } if member == name))
+        (0..hir.exprs.len() as u32)
+            .any(|e| matches!(hir.checked_kind(ExprId(e)), ExprKind::Dot { name: member, .. } if member == name))
             || hir.types.iter().any(|t| match t.kind {
                 TypeNodeKind::Ref { name: names, .. }
                 | TypeNodeKind::Typeof { name: names, .. } => is_among(names, 1),

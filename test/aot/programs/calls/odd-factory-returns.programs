@@ -1954,7 +1954,21 @@ console.log("done", d1(0, n => n))
 // A real stack overflow is still a RangeError that can be caught.
 // ENV JSC_aotCountsPath=/dev/null
 declare const console: any;
-declare const aotOperationCount: (name: string) => number;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+    let sum = 0;
+    for (const line of counts.split("\n")) {
+        const [calls, name] = line.split("\toperation:");
+        if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+    }
+    return sum;
+}
+// Where the stack ends these look, throw and find the catch; the others find RangeError and the message and make the text that is printed.
+const owed = ["operationAOTBytesAllocatedAtPrologueCheck", "operationAOTThrowStackOverflowError", "operationAOTLookupExceptionHandler", "operationAOTCatch", "operationAOTBuiltinCell", "operationAOTGetByIdAndCache", "operationAOTToString", "operationAOTNewStringConstant", "operationAOTConcatThree"];
+const start = countsSoFar();
 let deepest = 0;
 function down(n: number, x: number): number { deepest = n; return down(n + 1, x + 0.5) + 1; }
 function left(n: number): number { return right(n + 1) + 1; }
@@ -1968,7 +1982,7 @@ console.log("two functions that call each other:", attempt(() => left(0)));
 console.log("again, behind the first:", attempt(() => down(0, 0)));
 function fib(n: number): number { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
 console.log("and what ends, ends:", fib(20));
-console.log("the poll at an entry was entered:", aotOperationCount("operationAOTPollAtPrologue") > 0);
+console.log("the poll at an entry was entered:", callsIn(countsSoFar(), ...owed) - callsIn(start, ...owed) > 0);
 //// stack-position-of-first-of-two-reads.ts
 // An addition with its two reads on two lines reports the line of the read that threw.
 function lineIn(name: string, error: unknown): string {

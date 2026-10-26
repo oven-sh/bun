@@ -92,6 +92,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         self.set_position(position);
         match self.file.decisions().decision(expression) {
+            Decision::Constant(_) if self.file.runs_as_written() => {
+                self.record_read_of_builtin_path(expression);
+            }
             Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {}
             Decision::GlobalPath(_) => {
                 self.lower_by_decision(expression, Evaluation::PLAIN);

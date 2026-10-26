@@ -1547,13 +1547,23 @@ show("a table of a thousand getters", () => {
 console.log(lines.join("\n"));
 //// delete-of-absent-name-on-record.ts
 // Untyped code deletes, from typed records, a name that is not there. The answer follows from the Structure, so it is cached: the delete does not enter the runtime every time. A property added later is really deleted.
-declare const aotOperationCount: undefined | ((name: string) => number);
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 interface Point { x: number; y: number; name: string; note?: string }
 function makeTyped(i: number): Point { return { x: i, y: i + 1, name: "p" }; }
 function makeMarked(i: number): Point { const made: Point = { x: i, y: i + 1, name: "p" }; (made as unknown as Record<string, number>).mark = i; return made; }
 const deleteOther: (p: any) => any = function (p: any): any { return delete p.other; };
 const deleteByKey: (p: any, k: any) => any = function (p: any, k: any): any { return delete p[k]; };
-const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTDeleteById") + aotOperationCount("operationAOTDeleteByVal") : 0;
 const other: string = JSON.parse('"other"');
 const secret = Symbol("secret");
 for (const [kind, make] of [["typed", makeTyped], ["marked", makeMarked]] as const) {
@@ -1562,9 +1572,9 @@ for (const [kind, make] of [["typed", makeTyped], ["marked", makeMarked]] as con
   let total = 0;
   for (const p of objects) total += p.x + p.y + p.name.length;
   for (const p of objects) total += (deleteOther(p) ? 1 : 0) + (deleteByKey(p, other) ? 1 : 0) + (deleteByKey(p, secret) ? 1 : 0);
-  const before = entered();
+  const before = countsSoFar();
   for (let round = 0; round < 50; round++) for (const p of objects) total += (deleteOther(p) ? 1 : 0) + (deleteByKey(p, other) ? 1 : 0) + (deleteByKey(p, secret) ? 1 : 0);
-  console.log(kind, total, entered() - before < 100);
+  console.log(kind, total, callsIn(countsSoFar()) - callsIn(before) < 100);
 }
 const show = (p: object): string => Object.keys(p).join() + "|" + Object.getOwnPropertySymbols(p).length;
 for (const make of [makeTyped, makeMarked]) {
@@ -1589,7 +1599,20 @@ for (const make of [makeTyped, makeMarked]) {
 }
 //// delete-of-optional-field-on-record.ts
 // Untyped code deletes optional declared fields from fresh typed objects. The delete is cached by the object's Structure and key order: a stub clears the field. It does not enter the runtime every time, and the keys, their order and later stores are as in plain JavaScript.
-declare const aotOperationCount: undefined | ((name: string) => number);
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the texts that the objects hold and list the names that are left; a cell where the allocator has none at hand is the work of the run time.
+const owed = ["operationAOTOwnPropertyKeys", "operationAOTIntToString", "operationAOTConcat", "operationAOTLiteralStringToString", "operationAOTAllocateSlow"];
 interface Options { id: number; text?: string; count?: number; whole?: number; flag?: boolean; inner?: { a: number }; any?: unknown; big?: bigint }
 function full(i: number): Options { return { id: i, text: "t" + i, count: i + 0.5, whole: i, flag: i % 2 === 0, inner: { a: i }, any: i % 3 ? i : "s", big: 1n }; }
 function reversed(i: number): Options { return { big: 2n, any: i, inner: { a: i }, flag: true, whole: i, count: i + 0.25, text: "r", id: i }; }
@@ -1602,15 +1625,14 @@ const removes: Record<string, (o: any) => any> = {
   label: function (o: any): any { return delete o.label; },
 };
 const removeByKey: (o: any, k: any) => any = function (o: any, k: any): any { return delete o[k]; };
-const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTDeleteById") + aotOperationCount("operationAOTDeleteByVal") : 0;
 const show = (o: object): string => JSON.stringify(o, (key, value) => typeof value === "bigint" ? "big" + value : value) + " " + Object.keys(o).join();
 let read = 0;
 for (const name of names) {
   let yes = 0;
   for (let i = 0; i < 40; i++) yes += removes[name]!(full(i)) ? 1 : 0;
-  const before = entered();
+  const before = countsSoFar();
   for (let i = 0; i < 2000; i++) { const o = full(i); yes += removes[name]!(o) ? 1 : 0; read += o.id + Object.keys(o).length + (name in o ? 100 : 0); }
-  console.log(name, yes, read, entered() - before < 40);
+  console.log(name, yes, read, callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed) < 40);
 }
 for (const make of [full, reversed, some]) {
   for (const name of names) {
@@ -2398,7 +2420,18 @@ const make = (url: string): Reply => ({
   third: undefined,
   fourth: undefined,
 });
-const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 const replies: any[] = [];
 for (let i = 0; i < 100; i++) replies.push(make("/" + i));
 let undefinedOnes = 0;
@@ -2417,9 +2450,9 @@ const read = (reply: any) => {
   if (reply.fourth === undefined) undefinedOnes++;
 };
 for (let i = 0; i < replies.length; i++) read(replies[i]);
-const before = count("operationAOTGetByIdAndCache");
+const before = countsSoFar();
 for (let turn = 0; turn < 100; turn++) for (let i = 0; i < replies.length; i++) read(replies[i]);
-console.log(undefinedOnes, count("operationAOTGetByIdAndCache") - before < 100);
+console.log(undefinedOnes, callsIn(countsSoFar()) - callsIn(before) < 100);
 
 const inherited: any = make("/");
 Object.setPrototypeOf(inherited, { fourth: "from the prototype", size: 1, other: "inherited" });

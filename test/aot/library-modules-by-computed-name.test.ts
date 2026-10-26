@@ -36,7 +36,7 @@ async function build(directory: string, entry: string) {
   expect({ errors: built.errors, exitCode: built.exitCode }).toEqual({ errors: [], exitCode: 0 });
   const { statistics, functions } = await Bun.file(report).json();
   const compiled = (functions as { file: string | null }[]).map(compiled => compiled.file ?? "");
-  const modulesOfBun = [...new Set(compiled.filter(file => /^(node:|bun:|internal\/)/.test(file)))].sort();
+  const modulesOfBun = [...new Set(compiled.filter(file => /^(node:|bun:|internal:)/.test(file)))].sort();
   return { executable, filesOfBun: statistics.SourceFilesRuntime as number, modulesOfBun };
 }
 

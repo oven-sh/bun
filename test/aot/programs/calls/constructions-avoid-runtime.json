@@ -3,5 +3,5 @@
     "JSC_aotCountsPath": "/dev/null"
   },
   "erased": "as plain Bun",
-  "onlyInShell": "aotOperationCount"
+  "onlyInShell": "aotRuntimeCounters"
 }

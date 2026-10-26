@@ -177,7 +177,7 @@ for (const object of objects) object.value = 1;
 console.log(sum(objects));
 `;
 
-async function runWithin(limitInKB: number | undefined, program: string, ...args: string[]) {
+async function runWithinEach(limitsInKB: (number | undefined)[], program: string, ...args: string[]) {
   using folder = tempDir("aot-workers-limit", { "program.ts": program });
   const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "" };
   const built = await runCommand(
@@ -189,9 +189,17 @@ async function runWithin(limitInKB: number | undefined, program: string, ...args
     stderr: expect.not.stringMatching(/^error\b/m),
     exitCode: 0,
   });
-  const command = limitInKB ? `ulimit -v ${limitInKB} && exec ./program "$@"` : `exec ./program "$@"`;
-  const { stdout, stderr, exitCode } = await runCommand(["sh", "-c", command, "sh", ...args], String(folder), env);
-  return { stdout, stderr, exitCode };
+  const results: { stdout: string; stderr: string; exitCode: number | null }[] = [];
+  for (const limitInKB of limitsInKB) {
+    const command = limitInKB ? `ulimit -v ${limitInKB} && exec ./program "$@"` : `exec ./program "$@"`;
+    const { stdout, stderr, exitCode } = await runCommand(["sh", "-c", command, "sh", ...args], String(folder), env);
+    results.push({ stdout, stderr, exitCode });
+  }
+  return results;
+}
+
+async function runWithin(limitInKB: number | undefined, program: string, ...args: string[]) {
+  return (await runWithinEach([limitInKB], program, ...args))[0];
 }
 
 const GB = 1024 * 1024;
@@ -279,6 +287,18 @@ describe.concurrent("Workers of a compiled program within a limit on the address
         stderr: "",
         exitCode: 0,
       });
+    },
+    240_000,
+  );
+
+  test.skipIf(!isLinux || isASAN)(
+    "a Worker starts in the room of Workers that were just terminated within each of 40 limits",
+    async () => {
+      const limits = Array.from({ length: 40 }, (_, i) => (896 + 13 * i) * 1024);
+      const results = await runWithinEach(limits, startsWorkerRightAfterTerminating);
+      expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
+        limits.map(limit => ({ limit, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
+      );
     },
     240_000,
   );

@@ -212,7 +212,7 @@ impl<'p> Checker<'p, '_> {
         let start = self.start_inside_parentheses(file, location);
         // An enum member has a constant value.
         if let (TypeData::EnumLit { value, .. }, ExprKind::Dot { obj, .. }) =
-            (self.data(ty), hir[location].kind)
+            (self.data(ty), hir.checked_kind(location))
             && self.is_resolved_to_an_enum(file, obj)
         {
             // `evaluator.IsTruthy`
@@ -232,7 +232,7 @@ impl<'p> Checker<'p, '_> {
             return;
         }
         // `isPropertyExpressionCast`
-        if matches!(hir[location].kind, ExprKind::Dot { obj, .. } if matches!(hir[obj].kind, ExprKind::As { .. } | ExprKind::AsConst(_)))
+        if matches!(hir.checked_kind(location), ExprKind::Dot { obj, .. } if matches!(hir[obj].kind, ExprKind::As { .. } | ExprKind::AsConst(_)))
             || !self.can_be_truthy(ty)
         {
             return;
@@ -279,7 +279,7 @@ impl<'p> Checker<'p, '_> {
         if is_parenthesized(self.hir(file), e) {
             return false;
         }
-        match self.hir(file)[e].kind {
+        match self.hir(file).checked_kind(e) {
             ExprKind::Ident(name) => {
                 // `declareModuleMember`: where an exported declaration is in scope, its name resolves to a local
                 // symbol, which has `SymbolFlagsExportValue` and no other flag. `expr_symbol` has its `ExportSymbol`. A
@@ -638,7 +638,7 @@ impl<'p> Checker<'p, '_> {
     /// `links.resolvedSymbol` of the property access or the qualified name `e`, as
     /// `getSymbolOfNameOrPropertyAccessExpression` leaves it.
     fn symbol_at_name(&mut self, file: FileId, e: ExprId) -> Option<SymbolAtLocation<'p>> {
-        let ExprKind::Dot { obj, name, .. } = self.hir(file)[e].kind else {
+        let ExprKind::Dot { obj, name, .. } = self.hir(file).checked_kind(e) else {
             return None;
         };
         let receiver = self.type_of_expr(file, obj);

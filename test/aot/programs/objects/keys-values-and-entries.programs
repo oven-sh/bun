@@ -2542,8 +2542,20 @@ interface Options {
   list?: string[];
   [key: string]: unknown;
 }
-declare const aotOperationCount: undefined | ((name: string) => number);
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// A source with names of its own is spread by the run time, a store over a member of another type is its work too, and so is a cell where the allocator has none at hand.
+const owed = ["operationAOTCopyDataProperties", "operationAOTPutByIdAndCache", "operationAOTAllocateSlow"];
 
 ////= lines-180	function make(options: O
 function onOneBranch(options: Options, wide: boolean) {
@@ -2561,10 +2573,11 @@ for (const options of given) {
   console.log(JSON.stringify(makeUntyped(options)), Object.keys(makeUntyped(options)).join());
   console.log(JSON.stringify(onOneBranch(options, true)), JSON.stringify(onOneBranch(options, false)));
 }
-const before = count("operationAOTFinishObjectLiteral");
+const before = countsSoFar();
 let sum = 0;
 for (let i = 0; i < 3000; ++i) sum += make(given[i % given.length]).limit + makeUntyped(given[i % given.length]).limit;
-const asked = count("operationAOTFinishObjectLiteral") - before;
+const after = countsSoFar();
+const asked = callsIn(after, ...owed) - callsIn(before, ...owed);
 console.log(sum, asked <= 30 ? "no literal was copied at its end" : asked + " literals were copied at their end");
 //// literals-with-spreads-and-definitions-behind-branches/untyped.js
 ////= lines-180	export function makeUntyped(o

@@ -69,7 +69,7 @@ impl<'s> Folder<'_, 's> {
         let is_in_chain = chain != Chain::No;
         let form = LinkForm {
             is_in_optional_chain: is_in_chain,
-            is_index: matches!(hir[e].kind, ExprKind::Index { .. }),
+            is_index: hir.is_written_in_brackets(e),
         };
         let object_state = self.path_states.get(&obj);
         let object_state =

@@ -142,7 +142,7 @@ pub(super) fn invalid_reference_code(
     invalid: u32,
     optional_chain: u32,
 ) -> Option<u32> {
-    match hir[skip_assertions(hir, e)].kind {
+    match hir.checked_kind(skip_assertions(hir, e)) {
         ExprKind::Ident(_)
         | ExprKind::Missing
         | ExprKind::Dot {

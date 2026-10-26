@@ -424,13 +424,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let hir = self.hir(file);
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Binary { .. } | ExprKind::Call(_) => {
                 self.resolve_chain_innermost_first(file, e);
             }
             // `checkNonNullExpression(expr)`: the object is checked in `CheckModeNormal`.
             ExprKind::Dot { obj, .. }
-                if !is_rechecked && matches!(hir[obj].kind, ExprKind::Dot { .. }) =>
+                if !is_rechecked && matches!(hir.checked_kind(obj), ExprKind::Dot { .. }) =>
             {
                 let outer = self.suspend_recheck();
                 self.resolve_chain_innermost_first(file, e);
@@ -670,7 +670,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_chain_innermost_first(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         let mut chain: Vec<ExprId> = Vec::new();
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             // `checkBinaryLikeExpression` descends through left operands to any depth, and
             // `checkPropertyAccessExpression` through objects.
             ExprKind::Binary { left: first, .. } | ExprKind::Dot { obj: first, .. } => {
@@ -680,7 +680,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if at.is_none() {
                         return None;
                     }
-                    match hir[at].kind {
+                    match hir.checked_kind(at) {
                         ExprKind::Binary { left: next, .. } | ExprKind::Dot { obj: next, .. } => {
                             (hir[at].kind.tag() == tag).then_some(next)
                         }
@@ -709,7 +709,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Call(_) => {
                 // Returns `at`'s receiver, and whether `at` is a call before `e`. Returns `None` at
                 // the start of the chain, or at a call that's already resolved.
-                let next_link = |c: &mut Self, at: ExprId| match hir[at].kind {
+                let next_link = |c: &mut Self, at: ExprId| match hir.checked_kind(at) {
                     ExprKind::Call(call) => {
                         let is_link = at != e;
                         if is_link && c.has_type_of_expr(file, at) {
@@ -916,7 +916,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isValidConstAssertionArgument`
     pub(super) fn is_valid_const_assertion_argument(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::String(_)
             | ExprKind::Template { .. }
             | ExprKind::Number(_)
@@ -943,7 +943,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn is_in_optional_chain(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain != Chain::No,
             ExprKind::Call(c) => hir[c].chain != Chain::No,
             ExprKind::NonNull(x) => self.is_in_optional_chain(file, x),
@@ -985,7 +985,7 @@ impl<'p, 's> Checker<'p, 's> {
             let Parent::Expr(parent) = bound.parent_of_expr(at) else {
                 return false;
             };
-            match hir[parent].kind {
+            match hir.checked_kind(parent) {
                 ExprKind::NonNull(_) => at = parent,
                 ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
                     return obj == at && chain == Chain::Continue;
@@ -1067,7 +1067,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Dot {
             obj, name, chain, ..
-        } = hir[e].kind
+        } = hir.checked_kind(e)
         else {
             return (TypeId::UNRESOLVED, false);
         };
@@ -1092,6 +1092,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // A `#b` that no enclosing class declares is still looked up.
         if let Some(any) = access.any_like {
+            // TypeScript narrows `a["b"]` of an `any` and leaves `a.b` alone. No error is reported in the JavaScript
+            // of a build, so there both are narrowed, and the compiler is told what the tests around them show.
+            if !is_private && any == TypeId::ANY && hir.is_compiled && hir.is_js {
+                let right = (file, name_pos, hir[e].end);
+                let narrowed =
+                    self.get_flow_type_of_access_expression(file, e, None, any, right, target);
+                return (narrowed, may_short_circuit);
+            }
             if !is_private || lexical.is_some() {
                 return (any, may_short_circuit);
             }
@@ -1348,7 +1356,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let is_class = suggestion.is_some_and(|it| files.flags(it).contains(SymFlags::CLASS));
         let is_property_of_this = !self.bound(file).is_in_type_query(node)
-            && matches!(hir[node].kind, ExprKind::Dot { obj, .. }
+            && matches!(hir.checked_kind(node), ExprKind::Dot { obj, .. }
                 if matches!(hir[obj].kind, ExprKind::This) && !is_parenthesized(hir, obj));
         !declaration_file
             .is_some_and(|decl_file| decl_file != file && !files.module(decl_file).is_module())
@@ -1564,7 +1572,7 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
     ) -> (TypeId, bool) {
         let hir = self.hir(file);
-        let ExprKind::Index { obj, index, chain } = hir[e].kind else {
+        let ExprKind::Index { obj, index, chain } = hir.checked_kind(e) else {
             return (TypeId::UNRESOLVED, false);
         };
         let (object, may_short_circuit) = self.chain_receiver(file, obj, chain);
@@ -1706,7 +1714,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// may short-circuit before it.
     fn type_of_link(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
         let hir = self.hir(file);
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Dot { .. } => self.type_of_property_access(file, e),
             ExprKind::Index { .. } => {
                 let (ty, may_short_circuit) = self.type_of_element_access_unchecked(file, e);
@@ -1791,7 +1799,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub(super) fn type_of_expr_uncached(&mut self, file: FileId, e: ExprId) -> TypeId {
         let hir = self.hir(file);
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             // `checkIdentifier`: the placeholder the parser synthesizes for a missing expression is
             // an error, so it is compatible with anything. A hole in an array literal is handled
             // differently.
@@ -1842,7 +1850,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let expects_literal = self.is_const_context(file, e)
                     // `isTemplateLiteralContext`: as an element access key it is typed by its
                     // possible values.
-                    || matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::Index { index, .. } if index == e))
+                    || matches!(self.bound(file).parent_of_expr(e), Parent::Expr(p) if matches!(hir.checked_kind(p), ExprKind::Index { index, .. } if index == e))
                     || self.contextual_type(file, e, ContextFlags::empty()).is_some_and(|c| self.parts(c).iter().any(|&m| self.is_template_literal_contextual_type(m)));
                 if !expects_literal {
                     return TypeId::STRING;
@@ -2928,7 +2936,8 @@ impl<'p, 's> Checker<'p, 's> {
             && value == owner
             && target.is_some()
             && !is_parenthesized(hir, target)
-            && let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[target].kind
+            && let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } =
+                hir.checked_kind(target)
         {
             // Not in `exports.Point = function (x) { this.x = x }`.
             if hir.is_js

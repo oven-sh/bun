@@ -52,6 +52,10 @@ const programs: Record<string, { text: string; output: string }> = {
     text: `console.log(TextDecoder);\n`,
     output: "[class TextDecoder]\n",
   },
+  "what is stored on the global object is constructed under its bare name": {
+    text: `declare var List: ArrayConstructor;\n(globalThis as any).List = Array;\nconsole.log(new List(3).length);\n`,
+    output: "3\n",
+  },
 };
 
 // These need more of Bun's library than the smallest program (timers, promises, the warning printer), so only the first half holds for them: they stay closed.

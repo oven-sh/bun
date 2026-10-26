@@ -11,6 +11,7 @@ linked_archive = []
 
 [dependencies]
 bun_core.workspace = true
+bun_exe_format.workspace = true
 bun_zstd.workspace = true
 
 [dev-dependencies]

@@ -150,8 +150,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let split = self.split_on_type(key, TypeTable::OBJECT);
 
         self.builder.switch_to(split.taken);
+        // JSC records no place for the test.
+        let position = self.position();
+        self.set_position_to_last_recorded();
         self.builder
             .require_object_coercible(object, NullishAccess::Read, None);
+        self.set_position(position);
         let converted = self.builder.to_property_key(split.taken_value);
         self.builder.write_variable(result, converted);
         self.jump(join);

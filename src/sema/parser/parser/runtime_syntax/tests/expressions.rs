@@ -43,6 +43,58 @@ fn flags_follow_syntax() {
 }
 
 #[test]
+fn a_build_takes_a_name_in_brackets_for_a_name_behind_a_dot() {
+    let none = ExprFlags::empty();
+    let link = ExprFlags::OPTIONAL_CHAIN_LINK;
+    let bracket = ExprFlags::BRACKET_ACCESS;
+    let name = (ExprTag::Ident, none);
+    let text = (ExprTag::String, none);
+    let backticks = (ExprTag::String, ExprFlags::TEMPLATE_LITERAL);
+    let in_parentheses = (ExprTag::String, ExprFlags::PARENTHESIZED);
+    let cases: &[(&str, &[(ExprTag, ExprFlags)])] = &[
+        ("a[\"b\"]", &[name, text, (ExprTag::Dot, bracket)]),
+        ("a['b']", &[name, text, (ExprTag::Dot, bracket)]),
+        ("a[`b`]", &[name, backticks, (ExprTag::Dot, bracket)]),
+        ("a?.[\"b\"]", &[name, text, (ExprTag::Dot, bracket | link)]),
+        ("a[\"class\"]", &[name, text, (ExprTag::Dot, bracket)]),
+        ("a[\"é\"]", &[name, text, (ExprTag::Dot, bracket)]),
+        ("a[\"0\"]", &[name, text, (ExprTag::Index, bracket)]),
+        ("a[\"\"]", &[name, text, (ExprTag::Index, bracket)]),
+        ("a[\"b-c\"]", &[name, text, (ExprTag::Index, bracket)]),
+        ("a[\"#b\"]", &[name, text, (ExprTag::Index, bracket)]),
+        ("a[\"\\u0062\"]", &[name, text, (ExprTag::Index, bracket)]),
+        (
+            "a[(\"b\")]",
+            &[name, in_parentheses, (ExprTag::Index, bracket)],
+        ),
+        ("a[b]", &[name, name, (ExprTag::Index, bracket)]),
+    ];
+    let compiled_typescript = Options {
+        compiles: true,
+        ..typescript()
+    };
+    for &(text, expected) in cases {
+        for options in [compiled_typescript, compiled_javascript()] {
+            let (file, _) = parsed(text, options);
+            assert_eq!(tags_and_flags(&file), expected, "{text}");
+            let access = ExprId(2);
+            assert_eq!(file.written_kind(access).tag(), ExprTag::Index, "{text}");
+            let ExprKind::Index { index, .. } = file.written_kind(access) else {
+                unreachable!();
+            };
+            assert_eq!(index, ExprId(1), "{text}");
+        }
+        let (file, _) = parsed(text, typescript());
+        assert_eq!(file.exprs[2].kind.tag(), ExprTag::Index, "{text}");
+    }
+    let (file, _) = parsed("a[\"b\"]", compiled_typescript);
+    assert_eq!(file.name_pos(ExprId(2)), 2);
+    assert_eq!(file.checked_kind(ExprId(2)).tag(), ExprTag::Index);
+    let (file, _) = parsed("a[\"b\"]", compiled_javascript());
+    assert_eq!(file.checked_kind(ExprId(2)).tag(), ExprTag::Dot);
+}
+
+#[test]
 fn column_survives_speculation_and_removal() {
     let none = ExprFlags::empty();
     let parenthesized = ExprFlags::PARENTHESIZED;

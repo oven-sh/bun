@@ -18,10 +18,11 @@ Other environment variables:
     RUN_OPTIONS     options of `jsc` for the run of an image, separated by blanks
     RUN_SECONDS     how long the run of an image may take, and the run of `$PLAIN` that it is compared with (default: 120)
     KNOWS_SHELL_FUNCTIONS  the compiler is told which functions the shell has and Bun has not (functions-of-the-shell.js), so `typeof aotOperationCount` is "function" and a program that
-                    asks so counts. Without it such a program takes the way that it takes in an executable
+                    asks so counts. Without it such a program takes the way that it takes in an executable. With it a program that names such a function runs a second time, to see that it was answered
 
 Prints one line per program and exits with 1 if any line is a failure:
     same            the output equals <program>.expected.txt or, if there is none, the output of `$PLAIN run <file>`
+    ASKS IN VAIN    it prints what it should, and names a function by which the shell says what compiled code did, but it never called one or was told 0 each time: nothing that it says about a count is held
     DIFFERS         followed by the start of the diff; a run that is killed or dies of a signal always counts as different. After a death by a signal the image runs
                     again under where-it-died.py, which says where it died
     NO IR           the front end rejected the program
@@ -101,6 +102,15 @@ def skip_reason(base, options, compiler_options):
     if "skipInShell" in options:
         return options["skipInShell"]
     return None
+
+
+ASKS_THE_SHELL = re.compile(r"\b(aotOperationCount|aotRuntimeCounters|aotBuiltinEntries|memoryUsageStatistics)\b")
+
+
+def functions_it_names(base, entry):
+    """The functions by which the shell says what compiled code did that the text of the program names."""
+    files = [os.path.join(folder, file) for folder, _, files in os.walk(base) for file in files] if os.path.isdir(base) else [entry]
+    return sorted({name for file in files if file.endswith(EXTENSIONS) for name in ASKS_THE_SHELL.findall(open(file, errors="replace").read())})
 
 
 def where_it_died(ir, image, words, build_env, entry, env, has_own_environment, cwd):
@@ -188,6 +198,13 @@ def run_program(program):
         open(work + ".output", "w").write(output)
         diff = [line for line in difflib.unified_diff(expected.split("\n"), output.split("\n"), lineterm="", n=0) if not line.startswith(("---", "+++", "@@"))]
         return f"DIFFERS (exit code {code}): " + " | ".join(line[:110] for line in diff[:3])
+    named = functions_it_names(base, entry) if os.environ.get("KNOWS_SHELL_FUNCTIONS") else []
+    if named:
+        noted = ["-e", open(HERE + "/answers-of-the-shell-are-noted.js").read()]
+        _, said = toolchain.run_image(image, entries[0], env, [*os.environ.get("RUN_OPTIONS", "").split(), *noted], cwd=cwd, seconds=int(os.environ.get("RUN_SECONDS", 120)))
+        if not re.search(r"^the shell answered ", said, re.M):
+            why = "the run counts nothing: JSC_aotCountsPath is not in its .json" if re.search(r"^the shell counts nothing for ", said, re.M) else "each answer was 0" if re.search(r"^the shell was asked by ", said, re.M) else "it called none"
+            return "ASKS IN VAIN: it names " + ", ".join(named) + ": " + why
     for path in (ir, image, work + ".output"):
         if os.path.exists(path):
             os.remove(path)

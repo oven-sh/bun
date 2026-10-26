@@ -1,8 +1,18 @@
 // Objects made by Object.create(proto) are used through record types thousands of times. Any object passes where a record type is written, and a field is read
 // where the object has it, its own or inherited, also after the prototype gains, loses or changes a member. What the program prints is what plain Bun prints.
 // Only the jsc shell with --aotCountsPath=<path> can count. Elsewhere the program checks the answers alone.
-declare const aotOperationCount: undefined | ((name: string) => number)
-const count = typeof aotOperationCount === 'function' ? aotOperationCount : () => 0
+declare const aotRuntimeCounters: undefined | (() => string)
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === 'function' ? aotRuntimeCounters() : '')
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0
+  for (const line of counts.split('\n')) {
+    const [calls, name] = line.split('\toperation:')
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls)
+  }
+  return sum
+}
 
 interface Cell<A> {
   current: A
@@ -60,9 +70,10 @@ const label: {
 const boxes = [makeBox(1), makeBox(10), makeBox(100)]
 let sum = 0
 for (let i = 0; i < 30; i++) sum += bump(boxes[i % 3], 1).run()
-const before = count('operationAOTEnforceType')
+const before = countsSoFar()
 for (let i = 0; i < 3000; i++) sum += bump(boxes[i % 3], 1).run()
-const entered = count('operationAOTEnforceType') - before
+const after = countsSoFar()
+const entered = callsIn(after) - callsIn(before)
 console.log(sum, entered < 300 ? 'without the whole check' : 'the whole check ran ' + entered + ' times')
 const labels = () => boxes.map(box => label(box, '.').run()).join()
 console.log(labels())

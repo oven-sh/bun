@@ -741,7 +741,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if class.extends.is_some() {
                         has_heritage_clause = true;
                         extends_entity_name = matches!(
-                            hir[class.extends].kind,
+                            hir.checked_kind(class.extends),
                             ExprKind::Ident(_) | ExprKind::Dot { .. }
                         ) && !is_parenthesized(hir, class.extends);
                     }

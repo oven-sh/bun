@@ -70,7 +70,8 @@ impl Binder<'_, '_> {
         if !f.expr_flags(reference).contains(ExprFlags::PRIVATE_NAME) {
             return;
         }
-        let (ExprKind::PrivateIdentifier(name) | ExprKind::Dot { name, .. }) = f[reference].kind
+        let (ExprKind::PrivateIdentifier(name) | ExprKind::Dot { name, .. }) =
+            f.checked_kind(reference)
         else {
             return;
         };

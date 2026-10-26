@@ -133,18 +133,25 @@ impl FileLowering<'_, '_, '_, '_> {
             true => self.type_ranges.remove_from(text),
             false => Vec::new(),
         };
-        let mut line_starts = compute_ecma_line_starts(text);
-        if self.inputs.sources.kind(self.file) == SourceKind::EvaluatedText {
-            let start = find_start_of_written_text(text);
-            line_starts.retain(|&line_start| line_start > start);
-            line_starts.insert(0, start);
-        }
+        let find_line_starts = || {
+            let mut line_starts = compute_ecma_line_starts(text);
+            if self.inputs.sources.kind(self.file) == SourceKind::EvaluatedText {
+                let start = find_start_of_written_text(text);
+                line_starts.retain(|&line_start| line_start > start);
+                line_starts.insert(0, start);
+            }
+            line_starts
+        };
         ModuleFragment {
             body: roots.body,
             data: roots.data,
             positions: match self.inputs.sources.bundled_positions(self.file) {
-                [] => crate::emit::source_positions(text, line_starts),
-                bundled => crate::emit::source_positions_in_bundle(text, bundled),
+                None => crate::emit::source_positions(text, find_line_starts()),
+                Some(bundled) => crate::emit::source_positions_in_bundle(
+                    text,
+                    bundled.evaluated,
+                    bundled.corrections,
+                ),
             },
             function_text,
         }

@@ -505,7 +505,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut begun: SmallVec<[Evaluating; 4]> = SmallVec::new();
         'operand: loop {
             let hir = self.hir(file);
-            let mut result = match hir[e].kind {
+            let mut result = match hir.checked_kind(e) {
                 // A `PrefixUnaryExpression`. `typeof`, `void` and `delete` aren't.
                 ExprKind::Unary {
                     op:
@@ -682,7 +682,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn evaluate_entity(&mut self, file: FileId, e: ExprId, location: Location) -> Entity {
         let (hir, files) = (self.hir(file), self.files());
         let no_value = Entity::Result(Evaluated::default());
-        if let ExprKind::Index { obj, index, .. } = hir[e].kind {
+        if let ExprKind::Index { obj, index, .. } = hir.checked_kind(e) {
             let name = match hir[index].kind {
                 ExprKind::String(name) => name,
                 ExprKind::Template { exprs } if exprs.is_empty() => {
@@ -2817,7 +2817,7 @@ impl<'p, 's> Checker<'p, 's> {
         meaning: SymFlags,
     ) -> Option<Sym> {
         let hir = self.hir(file);
-        let found = match hir[e].kind {
+        let found = match hir.checked_kind(e) {
             // `resolveName(e, name, meaning)`. The binder has already resolved the value meaning of
             // an identifier.
             ExprKind::Ident(name) if meaning == SymFlags::VALUE => {

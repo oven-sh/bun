@@ -1117,16 +1117,17 @@ pub struct ExprsByKind {
 impl ExprsByKind {
     pub fn new(file: &File) -> ExprsByKind {
         let mut starts = [0u32; ExprTag::COUNT + 1];
-        for e in &file.exprs {
-            starts[e.kind.tag() as usize + 1] += 1;
+        let tag_of = |i: usize| file.checked_kind(ExprId(i as u32)).tag();
+        for i in 0..file.exprs.len() {
+            starts[tag_of(i) as usize + 1] += 1;
         }
         for i in 0..ExprTag::COUNT {
             starts[i + 1] += starts[i];
         }
         let mut next = starts;
         let mut ids = vec![ExprId::NONE; file.exprs.len()];
-        for (i, e) in file.exprs.iter().enumerate() {
-            let at = &mut next[e.kind.tag() as usize];
+        for i in 0..file.exprs.len() {
+            let at = &mut next[tag_of(i) as usize];
             ids[*at as usize] = ExprId(i as u32);
             *at += 1;
         }
@@ -2417,6 +2418,8 @@ pub struct FileIn<S: Storage> {
     /// `.js`, `.jsx`, `.mjs`, `.cjs`. Parsed like `.tsx`: TypeScript-only syntax is accepted and reported as an error
     /// afterwards.
     pub is_js: bool,
+    /// Parsed for a build (`Options::compiles`). A build takes `a["b"]` for `a.b` also where TypeScript takes only `a.b`.
+    pub is_compiled: bool,
     /// The file is parsed as Flow (`Dialect::flow`). Flow syntax that TypeScript lacks is represented with TypeScript's
     /// nodes. `bun_sema_parser`'s `flow.rs` explains how. Only a formatter gets such a file.
     pub is_flow: bool,
@@ -3090,6 +3093,7 @@ macro_rules! file_in_storage {
         $file {
             kind: $this.kind,
             is_js: $this.is_js,
+            is_compiled: $this.is_compiled,
             is_flow: $this.is_flow,
             check_directive: $this.check_directive,
             is_forced_module: $this.is_forced_module,
@@ -3440,7 +3444,7 @@ pub fn is_bigint_literal_at(hir: &File, pos: u32) -> bool {
 
 /// `GetFirstIdentifier`: `a` of `a.b.c`.
 pub fn first_identifier(hir: &File, mut e: ExprId) -> ExprId {
-    while let ExprKind::Dot { obj, .. } = hir[e].kind {
+    while let ExprKind::Dot { obj, .. } = hir.checked_kind(e) {
         e = obj;
     }
     e
@@ -3456,7 +3460,7 @@ pub fn is_entity_name_expression(hir: &File, e: ExprId) -> bool {
 
 /// `IsPropertyAccessEntityNameExpression` for `e` itself, ignoring enclosing parentheses.
 pub fn is_property_access_entity_name_expression(hir: &File, e: ExprId) -> bool {
-    matches!(hir[e].kind, ExprKind::Dot { obj, .. }
+    matches!(hir.checked_kind(e), ExprKind::Dot { obj, .. }
         if !is_private_name_at(hir, hir.name_pos(e)) && is_entity_name_expression(hir, obj))
 }
 
@@ -3504,7 +3508,7 @@ pub fn is_dynamic_name(hir: &File, e: ExprId) -> bool {
 
 /// `IsDottedName`
 pub fn is_dotted_name(hir: &File, e: ExprId) -> bool {
-    match hir[e].kind {
+    match hir.checked_kind(e) {
         ExprKind::Ident(_)
         | ExprKind::This
         | ExprKind::Super
@@ -3528,7 +3532,7 @@ pub fn is_narrowable_reference(hir: &File, mut e: ExprId) -> bool {
 /// `isNarrowableReference` of `e`, or the expression that has the same answer.
 #[inline(always)]
 pub(crate) fn narrowable_reference_step(hir: &File, e: ExprId) -> Result<bool, ExprId> {
-    match hir[e].kind {
+    match hir.checked_kind(e) {
         ExprKind::Ident(_)
         | ExprKind::This
         | ExprKind::Super

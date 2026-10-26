@@ -126,6 +126,8 @@ export default b.declarations(
     asyncContext: b.property(b.object, {
       createdOnFirstRead: { capability: "none", uses: { this: [b.returnedFrom(asyncContextCell)] } },
     }),
+    // `require` in a library module hands another library module to it.
+    createInternalModuleById: b.otherwiseBy(b.hostCall),
     // `require` hands an ES module to it.
     esmLoadSync: b.otherwiseBy(b.hostCall),
     makeAbortError: makesAbortError,

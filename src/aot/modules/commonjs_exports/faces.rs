@@ -40,7 +40,7 @@ pub(in crate::modules) struct ImportedVariable {
     /// The file that the import names, whose face takes the copy.
     pub(in crate::modules) exporter: FileId,
     /// The module that has the variable, and its name there.
-    owner: ModuleRef,
+    pub(in crate::modules) owner: ModuleRef,
     pub(in crate::modules) name: Atom,
 }
 

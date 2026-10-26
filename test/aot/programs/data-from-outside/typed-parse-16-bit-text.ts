@@ -13,8 +13,11 @@ function attempt(text: string): string {
 }
 const person = (name: string, more = ""): string => `{"name":"${name}","tags":["${name}${name}","a"],"note":null,"extra":{"${name}":["${name}"]},"counts":{"${name}":1,"b":2}${more}}`;
 const fallbacks = (): number => (typeof aotOperationCount === "function" ? aotOperationCount("operationAOTJSONSourceAbandon") : 0);
+// The compiled parser opens each text once.
+const opened = (): number => (typeof aotOperationCount === "function" ? aotOperationCount("operationAOTJSONSourceOpen") : 0);
 
 const before = fallbacks();
+const openedBefore = opened();
 for (const name of [
   "\u00ff", "\u4e2d", "\u00ff", "\u01ff", "\uffff", "\u00fe\u0100", "\u8000\u9fff", "\ud83d\ude00", "\ud83d", "\ude00x", "x\ud83d",
   "\u0122", "\u015c", "\u0100", "\u010a", "\u017d\u017b\u012c\u013a", "\u00e9", "plain", "\u3042".repeat(40), "a".repeat(40) + "\u3042",
@@ -22,7 +25,7 @@ for (const name of [
   console.log(attempt(person(name)));
   console.log(attempt(person(name, ',"\u3042":"\u3042"')));
 }
-console.log("fast path", fallbacks() - before === 0);
+console.log("fast path", fallbacks() - before === 0 && (typeof aotOperationCount !== "function" || opened() - openedBefore === 40));
 console.log(attempt(person("\\n\u3042\\u3042\\\\")));
 for (const text of [
   "\u017b" + person("x").slice(1), person("x").slice(0, -1) + "\u017d", person("x").replace('"note":', '"note"\u013a'), person("x").replace("null", "nul\u016c"),

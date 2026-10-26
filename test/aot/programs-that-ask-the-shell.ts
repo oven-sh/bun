@@ -2,6 +2,7 @@
 // (aotOperationCount), how many cells of a kind there are (memoryUsageStatistics). Bun has no such function. Most of these programs take 0 for every count where the function
 // is missing, so an executable shows that their answers are right and only the shell shows what they are about. The compiler answers `typeof aotOperationCount` when it builds a
 // program, by Bun's table of built-ins: KNOWS_SHELL_FUNCTIONS of shell/quick.py leaves the question to the run. The others have `"onlyInShell"` in their .json, and nothing else runs them.
+// A program that prints what it should and was never told more than 0 fails too ("ASKS IN VAIN"): it would print the same if nothing were counted.
 // shell/tools.ts says what the script needs.
 //   JSC=.. TESTAOT=.. FRONT_END=.. PLAIN=.. python3 test/aot/shell/quick.py calls/constructions-avoid-runtime     one program
 import { expect, test } from "bun:test";

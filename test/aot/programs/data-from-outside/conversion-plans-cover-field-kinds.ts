@@ -1,5 +1,17 @@
-declare const aotOperationCount: undefined | ((name: string) => number);
-const callsOf = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed; a cell or an array where the allocator has none at hand is the work of the run time.
+const owed = ["operationAOTArrayJoin", "operationAOTTypeOf", "operationAOTAllocateSlow", "operationAOTNewArray", "operationAOTArrayGrow"];
 // Objects built member by member in untyped code are read through record types whose fields are of every usual kind. Any object passes as the record. A member of the wrong kind throws where typed code reads it, undefined, null and a missing member pass, and the object stays as it was. Objects that fit do not enter the runtime's type check once per object.
 type Leaf = { n: number; up: Leaf | null };
 type Solid = { count: number; ratio: number; flag: boolean; label: string; leaf: Leaf; list: number[] };
@@ -61,14 +73,14 @@ function triple(n: number): number {
 
 let text = "";
 const kept: unknown[] = [];
-const before = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType"));
+const before = countsSoFar();
 for (let i = 0; i < 300; i++) {
   const solid = growSolid(i, i % 3 ? i + 0.5 : i, i % 2 === 0, "l" + (i % 5), leaf, list);
   const loose = growLoose(i % 2 === 0, i % 3 ? "m" : null, i % 4 ? leaf : null, i % 2 ? double : triple, i % 2 ? list : leaf, i % 5 ? i : leaf);
   kept.push(solid, loose);
   text = showSolid(solid) + " " + showLoose(loose);
 }
-const slow = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType")) - before;
+const slow = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log(text, slow < 30 ? "without the runtime" : "through the runtime: " + slow);
 console.log(JSON.stringify(kept[0]), JSON.stringify(kept[1]), JSON.stringify(kept[598]), JSON.stringify(kept[599]));
 

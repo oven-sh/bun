@@ -4,6 +4,7 @@
 //   bun test/aot/build-scaling/shapes.ts <name of a shape, or a part of it> <size> <folder>     writes the program there
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { buildFlags } from "../harness/flags";
 
 export type Shape = {
   name: string;
@@ -17,6 +18,8 @@ export type Shape = {
   isBundledFirst?: true;
   /** The build reports errors at every size, also at 0, and makes no executable. */
   isRefused?: true;
+  /** What the build is given besides. Such a shape is no entry point of the build of all shapes. */
+  flags?: string[];
   write(size: number): Record<string, string>;
 };
 
@@ -505,6 +508,62 @@ export const shapes: Shape[] = [
     entry: "main.js",
     write: size => ({
       "main.js": `let sum = 0;\n${lines(size, index => `function f${index}() {\n  const c0 = ${index};\n${lines(24, step => `  const c${step + 1} = c${step} + c${step};`)}  return c24;\n}\nsum += f${index}();`)}console.log(sum);\n`,
+    }),
+  },
+  // Each place constructs any class of one list for any class of the other, and who allocates for a class below a call is found among the class objects above it.
+  {
+    name: "classes below a function that makes their base, kept in a list and constructed for the classes of another list",
+    counted: "classes",
+    size: 200,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function withCount(Base) {\n  return class extends Base {\n    count() {\n      return 1;\n    }\n  };\n}\nconst below = [];\nconst beside = [];\nlet sum = 0;\n` +
+        lines(
+          size,
+          index =>
+            `function step${index}() {\n  class Base {}\n  below.push(class extends withCount(Base) {});\n  beside.push(class extends Base {});\n` +
+            `  return Reflect.construct(below[${index}], [], beside[${index}]) instanceof Base ? 1 : 0;\n}\nsum += step${index}();`,
+        ) +
+        `console.log(sum);\n`,
+    }),
+  },
+  // Every base constructor may allocate for any of the classes, and every constructor below stores into what any of them allocated.
+  {
+    name: "classes below one function that makes their base, each constructed for a class beside it, that store through this",
+    counted: "classes",
+    size: 125,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function withCount(Base) {\n  return class extends Base {\n    count() {\n      return 1;\n    }\n  };\n}\n` +
+        lines(
+          size,
+          index =>
+            `class Base${index} {\n  constructor() {\n    this.base${index} = ${index};\n  }\n}\n` +
+            `class Below${index} extends withCount(Base${index}) {\n  constructor() {\n    super();\n    this.below${index} = ${index};\n  }\n}\n` +
+            `class Beside${index} extends Base${index} {\n  beside${index} = ${index};\n}`,
+        ) +
+        `let sum = 0;\n` +
+        lines(size, index => `sum += new Below${index}().below${index} + Reflect.construct(Below${index}, [], Beside${index}).base${index};`) +
+        `console.log(sum);\n`,
+    }),
+  },
+  {
+    name: "classes that are all declared before the first is constructed, in a build that validates",
+    counted: "classes",
+    size: 1500,
+    entry: "main.ts",
+    flags: [buildFlags.validate],
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `interface Member { v: number }\n` +
+        lines(size, index => `class C${index} { v = 0; x${index} = 1; }`) +
+        `const members: Member[] = [];\n` +
+        lines(size, index => `members.push(new C${index}());`) +
+        `function readMember(m: Member): number { return m.v; }\nlet sum = 0;\nfor (const m of members) sum += readMember(m);\nconsole.log(sum, members.length);\nexport {};\n`,
     }),
   },
   {

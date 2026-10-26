@@ -153,6 +153,8 @@ match hir.kind {
 | A `.js` file                            | `Inferred`  | Hints. The checker infers types as it does for an editor, and nothing has checked the code against them |
 | A `.d.ts` file                          | `TypesOnly` | Hints. Nothing has checked the file against the code it describes                                       |
 
+A `.js` file that only runs takes the types of its imports from the files that it runs with. Its `import { size } from "./lib.js"` sees what the checker infers for `lib.js`, even when a `lib.d.ts` lies beside it. A `.js` file that a `.ts` file imports under `allowJs` is different, because checked code sees the types of its exports. It resolves its imports the way `bun check` does, so `lib.d.ts` answers for `./lib.js`, and the build reports the same type errors in the `.ts` file as `bun check`.
+
 In the IR, the difference is one flag on a declared type: `IsExpected`. The last lines of `map_shape()` set it.
 
 ```rust src/aot/lower/types/shape_table.rs

@@ -311,6 +311,7 @@ name = "bun_builtin_sources"
 version = "0.0.0"
 dependencies = [
  "bun_core",
+ "bun_exe_format",
  "bun_sema_standalone",
  "bun_zstd",
 ]

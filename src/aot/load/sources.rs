@@ -5,7 +5,7 @@ mod tests;
 use std::sync::OnceLock;
 
 use bun_ast::Loader;
-use bun_builtin_sources::{BundledName, Manifest, VIRTUAL_ROOT};
+use bun_builtin_sources::{Archive, BundledName, BundledPositions, Manifest, VIRTUAL_ROOT};
 use bun_sema::bind::SymbolId;
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{ExprId, FnId};
@@ -261,12 +261,10 @@ impl Sources {
         }
     }
 
-    pub fn bundled_positions(&self, file: FileId) -> &'static [u8] {
+    pub fn bundled_positions(&self, file: FileId) -> Option<BundledPositions> {
         match self.kind(file) {
-            SourceKind::RuntimeModule(module) => {
-                self.manifest.bundled_positions(module.registry_id())
-            }
-            _ => &[],
+            SourceKind::RuntimeModule(module) => Archive::bundled_positions(module.registry_id()),
+            _ => None,
         }
     }
 

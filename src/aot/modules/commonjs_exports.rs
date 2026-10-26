@@ -492,17 +492,22 @@ impl CommonJsExports {
         // Only an import statement that names the file itself reads `module.exports` in place of the copy.
         let exported = tables.modules_whose_default_is_exported();
         // `ns.default` is the object itself unless the module has a `default` of its own.
-        let members = collect_members_of_namespaces(input.modules, imports).into_iter();
-        let members = members
+        let members = collect_members_of_namespaces(input.modules, imports);
+        let defaults = members.iter();
+        let defaults = defaults
             .filter(|member| member.name == known::default)
             .map(|member| ModuleRef::File(member.exporter));
         let seen = collect_seen_namespaces(input.modules, tables, imports).into_iter();
         let seen = seen.map(ModuleRef::File);
+        // The link may come while the body runs, and only the object says what the module has then.
+        let is_half = |module: &ModuleRef| self.text_of(*module).is_some_and(|text| text.is_half);
+        let owners = members.iter().map(|member| member.owner);
         let mut modules: Vec<ModuleRef> = written
             .chain(exported)
-            .chain(members)
+            .chain(defaults)
             .chain(seen)
-            .filter(|&module| !self.has_default_of_its_own(module))
+            .filter(|module| !self.has_default_of_its_own(*module) || is_half(module))
+            .chain(owners.filter(is_half))
             .collect();
         // Whether the module has a name by the time the copy is taken: a variable cannot say that it is absent, the object can.
         for &(imported, _) in &tables.absent_commonjs_names {

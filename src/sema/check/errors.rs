@@ -1961,7 +1961,7 @@ impl Checker<'_, '_> {
         };
         // `resolveEntityName(expression, SymbolFlagsInterface, ignoreErrors)`
         let (mut names, mut first) = (Vec::new(), expression);
-        while let ExprKind::Dot { obj, name, .. } = hir[first].kind {
+        while let ExprKind::Dot { obj, name, .. } = hir.checked_kind(first) {
             names.push(name);
             first = obj;
         }
@@ -1993,13 +1993,15 @@ impl Checker<'_, '_> {
     ) -> Option<ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         loop {
-            if !matches!(hir[node].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
-                || is_parenthesized(hir, node)
+            if !matches!(
+                hir.checked_kind(node),
+                ExprKind::Ident(_) | ExprKind::Dot { .. }
+            ) || is_parenthesized(hir, node)
             {
                 return None;
             }
             match bound.parent_of_expr(node) {
-                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                Parent::Expr(parent) if parent.is_some() => match hir.checked_kind(parent) {
                     ExprKind::Dot { .. } => node = parent,
                     ExprKind::Instantiation { .. } => break,
                     _ => return None,
@@ -2476,7 +2478,7 @@ pub(super) fn end_of_extends(c: &Checker<'_, '_>, file: FileId, class: &Class) -
 
 /// `entityNameToString`
 fn entity_name_text(c: &Checker<'_, '_>, file: FileId, e: ExprId) -> Vec<u8> {
-    match c.hir(file)[e].kind {
+    match c.hir(file).checked_kind(e) {
         ExprKind::Dot { obj, name, .. } => {
             cat!(entity_name_text(c, file, obj), b".", c.atoms().bytes(name))
         }
@@ -2909,7 +2911,7 @@ impl Checker<'_, '_> {
         right_type: TypeId,
     ) -> Option<u32> {
         let hir = self.hir(file);
-        let ExprKind::Dot { obj, name, .. } = hir[left].kind else {
+        let ExprKind::Dot { obj, name, .. } = hir.checked_kind(left) else {
             return None;
         };
         if !self.p.files.options.exact_optional_property_types
@@ -2939,7 +2941,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         // A setter may accept a wider type than the getter returns: `checkPropertyAccessExpression` with `writeOnly`,
         // which `(a.b) += c` doesn't reach, and `AccessFlagsWriting`.
-        let property = match hir[left].kind {
+        let property = match hir.checked_kind(left) {
             ExprKind::Dot { obj, name, .. } if !is_parenthesized(hir, left) => Some((obj, name)),
             ExprKind::Index { obj, index, .. } => match hir[index].kind {
                 ExprKind::String(name) => Some((obj, name)),
@@ -2962,7 +2964,7 @@ impl Checker<'_, '_> {
             {
                 expected = write_type;
                 // `checkPropertyAccessExpression` ends with `getFlowTypeOfAccessExpression`.
-                if let ExprKind::Dot { .. } = hir[left].kind {
+                if let ExprKind::Dot { .. } = hir.checked_kind(left) {
                     let prop = self.get_property_of_type(object, name).map(|found| found.0);
                     let right = (file, hir.name_pos(left), hir[left].end);
                     let target = self.target_kind(file, left);

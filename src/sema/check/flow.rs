@@ -1471,10 +1471,13 @@ impl<'p, 's> Checker<'p, 's> {
         let (mut unassigned, mut unsatisfied, mut keyed) = (usize::MAX, usize::MAX, usize::MAX);
         let root = loop {
             is_access = is_access
-                && matches!(hir[at].kind, ExprKind::Dot { .. } | ExprKind::Index { .. })
+                && matches!(
+                    hir.checked_kind(at),
+                    ExprKind::Dot { .. } | ExprKind::Index { .. }
+                )
                 && (at == e || !is_parenthesized(hir, at));
             accesses += is_access as usize;
-            match hir[at].kind {
+            match hir.checked_kind(at) {
                 ExprKind::Ident(name) => break self.root_of_identifier(file, at, name),
                 ExprKind::This => break Root::This,
                 ExprKind::Super => break Root::Super,
@@ -1552,8 +1555,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `[index]` as a step of a reference.
     fn step_of_element_access(&mut self, file: FileId, index: ExprId) -> Step {
         let hir = self.hir(file);
-        let is_entity_name = matches!(hir[index].kind, ExprKind::Ident(_) | ExprKind::Dot { .. })
-            && !is_parenthesized(hir, index);
+        let is_entity_name = matches!(
+            hir.checked_kind(index),
+            ExprKind::Ident(_) | ExprKind::Dot { .. }
+        ) && !is_parenthesized(hir, index);
         let name: AccessedName = if !is_entity_name {
             self.literal_key(file, index).into()
         } else {
@@ -1611,7 +1616,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_parenthesized(hir, index) {
             return None;
         }
-        match hir[index].kind {
+        match hir.checked_kind(index) {
             ExprKind::String(s) => Some(s),
             ExprKind::Number(n) => Some(self.number_name(hir.numbers[n as usize])),
             ExprKind::Template { exprs } if exprs.is_empty() => {
@@ -1815,7 +1820,7 @@ impl<'p, 's> Checker<'p, 's> {
             // At this point it's an access, not a `satisfies`, which is only looked through in the
             // source.
             let is_access = remaining != 0 && !(is_source && remaining == reference.satisfies);
-            match hir[at].kind {
+            match hir.checked_kind(at) {
                 ExprKind::NonNull(x) => at = x,
                 ExprKind::Assign { target, .. } if !is_source => at = target,
                 ExprKind::Satisfies { expr, .. } if is_source => at = expr,
@@ -1975,7 +1980,7 @@ impl<'p, 's> Checker<'p, 's> {
         // without `?.` after it (`tryReparseOptionalChain`).
         let mut is_before_link = false;
         loop {
-            let (expression, chain) = match hir[source].kind {
+            let (expression, chain) = match hir.checked_kind(source) {
                 ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
                     (obj, chain)
                 }
@@ -2060,7 +2065,7 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(reference.root, Root::Pattern(_) | Root::Params(_)) {
             return None;
         }
-        let (obj, chain) = match hir[e].kind {
+        let (obj, chain) = match hir.checked_kind(e) {
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => (obj, chain),
             _ => return None,
         };
@@ -2069,7 +2074,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `getDiscriminantPropertyAccess` calls `getAccessedPropertyName` only for a candidate,
         // because resolving a constant key's name resolves a type.
-        let name = match hir[e].kind {
+        let name = match hir.checked_kind(e) {
             ExprKind::Dot { name, .. } => name,
             ExprKind::Index { index, .. } => self.literal_key(reference.file, index)?,
             _ => return None,
@@ -2176,7 +2181,7 @@ impl<'p, 's> Checker<'p, 's> {
         match parent {
             PatParent::Var(d) if hir[d].ty.is_none() && hir[d].init.is_some() => {
                 let init = hir[d].init;
-                match hir[init].kind {
+                match hir.checked_kind(init) {
                     ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                         self.candidate_discriminant_access(reference, init)
                     }
@@ -2299,7 +2304,9 @@ impl<'p, 's> Checker<'p, 's> {
             // recognized.
             let mut at = reference.at;
             for _ in &reference.path {
-                let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[at].kind else {
+                let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) =
+                    hir.checked_kind(at)
+                else {
                     return false;
                 };
                 if is_parenthesized(hir, obj) {
@@ -2329,7 +2336,8 @@ impl<'p, 's> Checker<'p, 's> {
         // For `a.b.c`, neither `b` in `a` nor `c` in `a.b` can be assigned.
         let mut at = reference.at;
         for step in steps {
-            let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[at].kind else {
+            let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir.checked_kind(at)
+            else {
                 return false;
             };
             let Some(name) = self.name_of_step(reference, step) else {
@@ -2818,7 +2826,7 @@ impl<'p, 's> Checker<'p, 's> {
                 for argument in hir.ids(call.args) {
                     self.note_chain(file, argument, true, 0, about);
                 }
-                if let ExprKind::Dot { obj, .. } = hir[call.callee].kind {
+                if let ExprKind::Dot { obj, .. } = hir.checked_kind(call.callee) {
                     self.note_chain(file, obj, false, 0, about);
                 }
             }
@@ -2837,7 +2845,7 @@ impl<'p, 's> Checker<'p, 's> {
                         self.reference_candidate(file, right),
                     );
                     for (side, other) in [(l, r), (r, l)] {
-                        if let ExprKind::Index { index, .. } = hir[side].kind
+                        if let ExprKind::Index { index, .. } = hir.checked_kind(side)
                             && self.is_computed_key(file, index)
                             && about.bails_on_computed_key(ResolvesKey::Always)
                         {
@@ -2904,7 +2912,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// a pattern, or has neither an annotation nor an initializer, like a `for of` constant.
     fn is_computed_key(&self, file: FileId, index: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        match hir[index].kind {
+        match hir.checked_kind(index) {
             ExprKind::Dot { .. } => true,
             ExprKind::Ident(_) => {
                 let symbol = bound.symbol_of_expr(index);
@@ -2947,7 +2955,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let init = hir[d].init;
         let is_candidate = init.is_some()
-            && match hir[init].kind {
+            && match hir.checked_kind(init) {
                 ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
                 ExprKind::Ident(_) => is_element,
                 _ => false,
@@ -2973,7 +2981,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `at` is the `a` of `a?.b` or of a later link of an optional chain.
         let mut is_link = false;
         loop {
-            at = match hir[at].kind {
+            at = match hir.checked_kind(at) {
                 ExprKind::Ident(name) => {
                     let symbol = bound.symbol_of_expr(at);
                     if symbol.is_none() {
@@ -3043,7 +3051,7 @@ impl<'p, 's> Checker<'p, 's> {
         // The `a` of `a?.b`, `a ?? b` and `a ??= b` is tested for being non-nullish, not for
         // truthiness.
         if let Parent::Expr(parent) = self.bound(file).parent_of_expr(e) {
-            let is_tested_for_presence = match hir[parent].kind {
+            let is_tested_for_presence = match hir.checked_kind(parent) {
                 ExprKind::Dot {
                     obj,
                     chain: Chain::Start,
@@ -3071,7 +3079,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return self.narrow_by_optionality(reference, ty, e, sense);
             }
         }
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Ident(_) | ExprKind::This | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 // `const ok = test; if (ok)`
                 if let ExprKind::Ident(_) = hir[e].kind
@@ -3452,7 +3460,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isMatchingConstructorReference`
     fn is_matching_constructor_reference(&mut self, reference: &Reference, e: ExprId) -> bool {
-        let (obj, name) = match self.hir(reference.file)[e].kind {
+        let (obj, name) = match self.hir(reference.file).checked_kind(e) {
             ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
             ExprKind::Index { obj, index, .. } => (obj, self.literal_key(reference.file, index)),
             _ => return false,
@@ -4151,7 +4159,7 @@ impl<'p, 's> Checker<'p, 's> {
         if reference.accesses != 0
             && self.contains_missing_type(ty)
             && let ExprKind::Call(c) = hir[call].kind
-            && let ExprKind::Dot { obj, name, .. } = hir[hir[c].callee].kind
+            && let ExprKind::Dot { obj, name, .. } = hir.checked_kind(hir[c].callee)
             && !is_parenthesized(hir, hir[c].callee)
         {
             let obj = self.reference_candidate(file, obj);
@@ -4195,7 +4203,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.has_matching_argument(reference, c) || !sense && data.chain != Chain::No {
             return None;
         }
-        let sig = match hir[data.callee].kind {
+        let sig = match hir.checked_kind(data.callee) {
             // `checkPropertyAccessExpression` of a member of the reference being narrowed: the type
             // of the object is already available here, and querying it would re-enter.
             ExprKind::Dot { obj, name, .. } if self.matches(reference, obj) => {
@@ -4263,7 +4271,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let callee = hir[c].callee;
-        matches!(hir[callee].kind, ExprKind::Dot { obj, .. }
+        matches!(hir.checked_kind(callee), ExprKind::Dot { obj, .. }
             if !is_parenthesized(hir, callee)
                 && self.is_or_contains_matching_reference(reference, obj))
     }
@@ -4768,7 +4776,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_parenthesized(hir, e) {
             return false;
         }
-        match hir[parent].kind {
+        match hir.checked_kind(parent) {
             ExprKind::Dot { obj, .. } => obj == e,
             ExprKind::Call(c) | ExprKind::New(c) => hir[c].callee == e,
             // `t[k]` with `t` of type `T` and `k` of type `K` must have type `T[K]`.
@@ -4970,7 +4978,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Every property access reaches this point. `prop.ValueDeclaration` matters for `this.x`
         // and for a property declared by an assignment.
         let by_assignment = SymFlags::ASSIGNMENT | SymFlags::FUNCTION_SCOPED_VARIABLE;
-        if !matches!(hir[e].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
+        if !matches!(hir.checked_kind(e), ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
                 if matches!(hir[obj].kind, ExprKind::This))
             && !matches!(Self::value_declaration(prop), Some(&PropSource::Symbol(sym))
                 if self.files().flags(sym).intersects(by_assignment))
@@ -4982,7 +4990,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `prop.ValueDeclaration`, if it is an assignment.
         let (decl_file, assignment) = match self.value_declaration_of_prop(prop) {
             Some((decl_file, Decl::Member(m))) => {
-                let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[e].kind else {
+                let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir.checked_kind(e)
+                else {
                     return false;
                 };
                 let MemberOwner::Class(class) = self.bound(decl_file).member_owner[m.idx()] else {
@@ -5018,7 +5027,7 @@ impl<'p, 's> Checker<'p, 's> {
         decl_file == file
             // The left side of `f[key] = value` isn't a property access.
             && matches!(hir[assignment].kind, ExprKind::Assign { target, .. }
-                if matches!(hir[target].kind, ExprKind::Dot { .. }))
+                if matches!(hir.checked_kind(target), ExprKind::Dot { .. }))
             && container_of(e) == container_of(assignment)
     }
 
@@ -6361,7 +6370,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // Only the direct syntactic parent of `x.push` and `x[n]` counts. `(x.push)(v)` and
         // `(x[n]) = v` don't qualify.
-        match hir[parent].kind {
+        match hir.checked_kind(parent) {
             ExprKind::Dot { obj, name, .. } if obj == root => {
                 name == known::length
                     || (name == known::push || name == known::unshift)
@@ -7485,11 +7494,11 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_mutation_of(&mut self, reference: &Reference, expr: ExprId) -> bool {
         let hir = self.hir(reference.file);
         let array = match hir[expr].kind {
-            ExprKind::Call(c) => match hir[hir[c].callee].kind {
+            ExprKind::Call(c) => match hir.checked_kind(hir[c].callee) {
                 ExprKind::Dot { obj, .. } if !is_parenthesized(hir, hir[c].callee) => obj,
                 _ => return false,
             },
-            ExprKind::Assign { target, .. } => match hir[target].kind {
+            ExprKind::Assign { target, .. } => match hir.checked_kind(target) {
                 ExprKind::Index { obj, .. } if !is_parenthesized(hir, target) => obj,
                 _ => return false,
             },
@@ -7513,7 +7522,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ty
             }
             ExprKind::Assign { target, value, .. } => {
-                let ExprKind::Index { index, .. } = hir[target].kind else {
+                let ExprKind::Index { index, .. } = hir.checked_kind(target) else {
                     return ty;
                 };
                 let index = self.context_free_type_of_expression(file, index);
@@ -7541,7 +7550,7 @@ impl<'p, 's> Checker<'p, 's> {
         if hir.is_in_with(hir[e].pos) {
             return None;
         }
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Ident(name) => {
                 let sym = self.symbol_of_identifier(file, e, name)?;
                 self.explicit_type_of_symbol(sym, diagnostic)

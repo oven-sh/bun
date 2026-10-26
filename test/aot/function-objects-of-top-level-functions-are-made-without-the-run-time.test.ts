@@ -50,6 +50,8 @@ describe.concurrent("function objects of top-level functions are made without th
     ["functions", "function", []],
     ["async functions", "async function", []],
     ["where all code counts as cold", "function", ["--aot-heat=everything-is-cold"]],
+    ["where all code counts as hot", "function", ["--aot-heat=everything-is-hot"]],
+    ["async functions where all code counts as hot", "async function", ["--aot-heat=everything-is-hot"]],
   ])(
     "%s",
     (_, head, flags) => slot(async () => expect(await callsOfRunTime(head, flags)).toBeLessThan(numberOfFunctions / 8)),

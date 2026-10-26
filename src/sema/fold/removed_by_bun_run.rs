@@ -5,8 +5,8 @@ use super::folder::Folder;
 use crate::atom::known;
 use crate::bind::{Binding, BindingKind, CommonJsVariable};
 use crate::hir::{
-    BinOp, ExprId, ExprKind, Flags, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp,
-    VarKind,
+    BinOp, ExprId, ExprKind, Flags, NameKind, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind,
+    UnOp, VarKind,
 };
 
 #[derive(Copy, Clone)]
@@ -213,7 +213,12 @@ impl Folder<'_, '_> {
             ExprKind::Object(props) => props.iter().all(|prop| {
                 let prop = hir[prop];
                 push(&[prop.value]);
-                prop.kind != PropKind::Spread && !matches!(prop.key, PropKey::Computed(_))
+                let is_key_computed = matches!(prop.key, PropKey::Computed(_))
+                    || matches!(
+                        prop.name_kind,
+                        NameKind::ComputedString | NameKind::ComputedNumber
+                    );
+                prop.kind != PropKind::Spread && !is_key_computed
             }),
             _ => false,
         }

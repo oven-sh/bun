@@ -1,170 +1,293 @@
-// Where the tokens of a module of src/js stand in the text that `bun run` evaluates. A stack trace shows lines and columns of that
+// Where the words of a module of src/js stand in the text that `bun run` evaluates. A stack trace shows lines and columns of that
 // text. A bundler made it, and its source map says which token of the output stands for which token of what it was given.
+//
+// Every Bun holds both texts, and most words of one are found in the other by reading the two side by side. Only the words that such
+// a reading gets wrong are written down. src/aot/emit/positions.rs reads the two texts in the same way.
 
 import { alignWords, decodeMappings, type SourceMap, Text } from "./bundled-names";
-
-/**
- * From byte `offset` of the module on, up to the next piece, the two texts are alike, line breaks included: the byte at `offset`
- * stands at `line` and `column` of the evaluated text, which count from 0.
- */
-export interface Piece {
-  offset: number;
-  line: number;
-  column: number;
-}
 
 const intrinsicPrefix = "__intrinsic__";
 const spellWithoutPrefix = (word: string) =>
   word.startsWith(intrinsicPrefix) ? word.slice(intrinsicPrefix.length) : word.startsWith("$") ? word.slice(1) : word;
 
-const isWordCharacter = (character: string | undefined) => character !== undefined && /[\w$]/.test(character);
-const isSpace = (character: string | undefined) => character !== undefined && /\s/.test(character);
+const isWordCode = (code: number) =>
+  (code >= 97 && code <= 122) || (code >= 65 && code <= 90) || (code >= 48 && code <= 57) || code === 95 || code === 36;
+const isWordAt = (text: string, index: number) => isWordCode(text.charCodeAt(index));
 
-function wordAt(text: string, index: number): string {
-  const word = /[\w$]+/y;
-  word.lastIndex = index;
-  return word.exec(text)?.[0] ?? "";
+function endOfWord(text: string, index: number): number {
+  while (isWordAt(text, index)) index++;
+  return index;
+}
+
+const wordAt = (text: string, index: number) => text.slice(index, endOfWord(text, index));
+
+function skipSpaces(text: string, index: number): number {
+  for (let code = text.charCodeAt(index); code === 32 || (code >= 9 && code <= 13); code = text.charCodeAt(index))
+    index++;
+  return index;
+}
+
+/**
+ * What stands between a word and the next one is alike in both texts but for spaces and for what only says a type. `index` and
+ * `evaluatedIndex` are where two words end that stand for each other. Answers where the two texts stop being alike.
+ */
+function skipWhatIsAlike(written: string, index: number, evaluated: string, evaluatedIndex: number): [number, number] {
+  for (;;) {
+    index = skipSpaces(written, index);
+    evaluatedIndex = skipSpaces(evaluated, evaluatedIndex);
+    if (index >= written.length || isWordAt(written, index)) break;
+    if (written[index] === "/" && (written[index + 1] === "/" || written[index + 1] === "*")) break;
+    if (written[index] === evaluated[evaluatedIndex]) [index, evaluatedIndex] = [index + 1, evaluatedIndex + 1];
+    else if (written[index] === "!" && written[index + 1] !== "=") index++;
+    else break;
+  }
+  return [index, evaluatedIndex];
 }
 
 /** Index in `given`, the text that the bundler read, of a word > index of the word of `output` that stands for it. */
 function findWordsOfOutput(given: string, output: string, map: SourceMap): Map<number, number> {
   const [from, to] = [new Text(given), new Text(output)];
   const found = new Map<number, number>();
+  const next = /[\w$]+\s+(?=[\w$])/y;
   for (const mapping of decodeMappings(map.mappings)) {
     const index = from.indexOf(mapping.sourceLine, mapping.sourceColumn);
     const madeIndex = to.indexOf(mapping.line, mapping.column);
-    if (!isWordCharacter(given[index]) || isWordCharacter(given[index - 1])) continue;
-    if (!isWordCharacter(output[madeIndex]) || isWordCharacter(output[madeIndex - 1])) continue;
-    // The `else` in front of a statement has the place of the statement, whose first word then has none of its own.
-    const next = /[\w$]+\s+(?=[\w$])/y;
-    next.lastIndex = madeIndex;
-    const skipped = next.exec(output)?.[0].length ?? 0;
-    if (
-      skipped > 0 &&
-      wordAt(output, madeIndex) !== wordAt(given, index) &&
-      wordAt(output, madeIndex + skipped) === wordAt(given, index)
-    ) {
-      found.set(index, madeIndex + skipped);
-      continue;
+    if (!isWordAt(given, index) || isWordAt(given, index - 1)) continue;
+    if (!isWordAt(output, madeIndex) || isWordAt(output, madeIndex - 1)) continue;
+    const word = wordAt(given, index);
+    const isSpelledAlike = wordAt(output, madeIndex) === word;
+    if (!isSpelledAlike) {
+      // The `else` in front of a statement has the place of the statement, whose first word then has none of its own.
+      next.lastIndex = madeIndex;
+      const skipped = next.exec(output)?.[0].length ?? 0;
+      if (skipped > 0 && wordAt(output, madeIndex + skipped) === word) {
+        found.set(index, madeIndex + skipped);
+        continue;
+      }
     }
     const other = found.get(index);
-    if (other !== undefined && wordAt(output, other) === wordAt(given, index)) continue;
-    if (other !== undefined && wordAt(output, madeIndex) !== wordAt(given, index)) continue;
+    if (other !== undefined && (!isSpelledAlike || wordAt(output, other) === word)) continue;
     found.set(index, madeIndex);
   }
   return found;
 }
 
+/** The words of a text: `starts[n]` and `ends[n]` are indexes, `spelled[n]` is the word without a `$` in front. */
+export class Words {
+  readonly starts: number[] = [];
+  readonly ends: number[] = [];
+  readonly spelled: string[] = [];
+  constructor(readonly text: string) {
+    for (let at = 0; at < text.length; at++) {
+      if (!isWordAt(text, at)) continue;
+      const end = endOfWord(text, at);
+      this.starts.push(at);
+      this.ends.push(end);
+      this.spelled.push(text.slice(text[at] === "$" ? at + 1 : at, end));
+      at = end;
+    }
+  }
+  get length() {
+    return this.starts.length;
+  }
+}
+
 /**
  * `written`: the module as the compiler reads it. `output`: what the bundler made, with `map`. `evaluated`: what `bun run` evaluates,
- * which is `output` with pieces replaced.
+ * which is `output` with pieces replaced. Answers, for the number of a word of `written`, the number of the word of `evaluated` that
+ * stands for it, or -1: none does. Of a word that is not in the answer nothing is known.
  */
-export function findPositionsInEvaluatedText(
-  written: string,
+export function findWordsInEvaluatedText(
+  written: Words,
   output: string,
   map: SourceMap,
-  evaluated: string,
-): Piece[] {
+  evaluated: Words,
+): Map<number, number> {
   const given = map.sourcesContent[0];
   // A call of a function that only the library can name may stand for a call that is written otherwise.
   const calleesReplaced: [number, number][] = [];
-  const writtenOfGiven = alignWords(written, given, spellWithoutPrefix, (old, replacement) => {
+  const writtenOfGiven = alignWords(written.text, given, spellWithoutPrefix, (old, replacement) => {
     const callee = replacement.findLast(word => word.text.startsWith(intrinsicPrefix));
     if (!callee) return;
     for (const word of old) {
-      if (written[word.index + word.text.length] === "(") calleesReplaced.push([callee.index, word.index]);
+      if (written.text[word.index + word.text.length] === "(") calleesReplaced.push([callee.index, word.index]);
     }
   });
   const outputOfGiven = findWordsOfOutput(given, output, map);
-  const outputOfEvaluated = alignWords(output, evaluated, spellWithoutPrefix);
+  const outputOfEvaluated = alignWords(output, evaluated.text, spellWithoutPrefix);
   const evaluatedOfOutput = new Map([...outputOfEvaluated].map(([to, from]) => [from, to]));
+  const numberOfWritten = new Map(written.starts.map((index, number) => [index, number]));
+  const numberOfEvaluated = new Map(evaluated.starts.map((index, number) => [index, number]));
 
-  // Index in `written` > index in `evaluated`.
-  const places = new Map<number, number>();
-  const ends = new Map<number, number>();
+  const found = new Map<number, number>();
   for (const [givenIndex, writtenIndex] of [...writtenOfGiven, ...calleesReplaced]) {
     const outputIndex = outputOfGiven.get(givenIndex);
-    let evaluatedIndex = outputIndex === undefined ? undefined : evaluatedOfOutput.get(outputIndex);
-    if (evaluatedIndex === undefined) continue;
-    const evaluatedEnd = evaluatedIndex + wordAt(evaluated, evaluatedIndex).length;
-    if (evaluated[evaluatedIndex - 1] === "@") evaluatedIndex--;
-    const writtenEnd = writtenIndex + wordAt(written, writtenIndex).length;
-    places.set(writtenIndex, evaluatedIndex);
-    // What stands between this word and the next one is alike in both texts but for spaces and for what only says a type.
-    let [i, j] = [writtenEnd, evaluatedEnd];
-    ends.set(i, j);
-    for (;;) {
-      while (isSpace(written[i])) i++;
-      while (isSpace(evaluated[j])) j++;
-      if (i >= written.length || isWordCharacter(written[i])) break;
-      if (written[i] === "/" && (written[i + 1] === "/" || written[i + 1] === "*")) break;
-      if (written[i] === evaluated[j]) {
-        places.set(i++, j++);
-        ends.set(i, j);
-      } else if (written[i] === "!" && written[i + 1] !== "=") i++;
-      else break;
-    }
+    const evaluatedIndex = outputIndex === undefined ? undefined : evaluatedOfOutput.get(outputIndex);
+    if (evaluatedIndex !== undefined)
+      found.set(numberOfWritten.get(writtenIndex)!, numberOfEvaluated.get(evaluatedIndex)!);
   }
-  for (const [index, evaluatedIndex] of ends) if (!places.has(index)) places.set(index, evaluatedIndex);
-
-  const lineStarts = [0];
-  for (let at = evaluated.indexOf("\n"); at >= 0; at = evaluated.indexOf("\n", at + 1)) lineStarts.push(at + 1);
-  const lineOf = (index: number) => {
-    let [low, high] = [0, lineStarts.length];
-    while (high - low > 1) {
-      const middle = (low + high) >> 1;
-      if (lineStarts[middle] <= index) low = middle;
-      else high = middle;
+  // The map has no place for many a word. What follows alike on a word that has one stands for what follows there.
+  let [reached, reachedInEvaluated] = [-1, -1];
+  for (let number = 0; number < written.length; number++) {
+    if (!found.has(number)) {
+      if (written.starts[number] !== reached) continue;
+      const mark = evaluated.text[reachedInEvaluated];
+      const partner =
+        numberOfEvaluated.get(mark === "@" || mark === "!" ? reachedInEvaluated + 1 : reachedInEvaluated) ?? -1;
+      const standsForIt = partner >= 0 && (written.spelled[number] === evaluated.spelled[partner]) !== (mark === "!");
+      found.set(number, standsForIt ? partner : -1);
     }
-    return low;
-  };
-
-  const pieces: Piece[] = [];
-  let [bytes, counted, lastEvaluatedIndex] = [0, 0, 0];
-  for (const [index, evaluatedIndex] of [...places].sort((a, b) => a[0] - b[0])) {
-    const between = written.slice(counted, index);
-    const isAlike = pieces.length > 0 && between === evaluated.slice(lastEvaluatedIndex, evaluatedIndex);
-    bytes += Buffer.byteLength(between);
-    [counted, lastEvaluatedIndex] = [index, evaluatedIndex];
-    if (isAlike) continue;
-    const line = lineOf(evaluatedIndex);
-    pieces.push({ offset: bytes, line, column: evaluatedIndex - lineStarts[line] });
+    const partner = found.get(number)!;
+    if (partner < 0) continue;
+    [reached, reachedInEvaluated] = skipWhatIsAlike(
+      written.text,
+      written.ends[number],
+      evaluated.text,
+      evaluated.ends[partner],
+    );
   }
-  return pieces;
+  return found;
 }
 
-/** A line for the manifest of the sources. */
-export function formatBundledPositions(file: string, written: string, pieces: Piece[]): string {
-  return `positions\t${file}\t${Buffer.from(encodePieces(written, pieces)).toString("base64")}`;
+const farthestLookAhead = 8;
+const wordsRemembered = 8;
+
+/**
+ * Reads two texts side by side. `partners[n]` is the number of the word of `evaluated` that stands for word `n` of `written`, or -1.
+ * The same steps, in the same order, as `Aligner` of src/aot/emit/positions.rs.
+ */
+export class Aligner {
+  /** The next words to look at. */
+  written = 0;
+  evaluated = 0;
+  /** Words of `evaluated` that were passed over: what the bundler moved to the front finds its partner here. */
+  passedOver: number[] = [];
+  readonly partners: Int32Array;
+
+  constructor(
+    readonly a: Words,
+    readonly b: Words,
+  ) {
+    this.partners = new Int32Array(a.length).fill(-1);
+  }
+
+  /** The partner of word `written` stands `distance` words from where the reading is. */
+  correct(distance: number) {
+    this.evaluated += distance;
+    this.partners[this.written++] = this.evaluated++;
+  }
+
+  /** Word `written` has no partner. */
+  passOver() {
+    this.written++;
+  }
+
+  /** Where the comment ends that word `written` stands in, if the text in front of the word opens one. */
+  #endOfComment(): number {
+    const { text, starts, ends } = this.a;
+    const start = starts[this.written];
+    const gap = text.slice(this.written > 0 ? ends[this.written - 1] : 0, start);
+    const [line, block] = [gap.lastIndexOf("//"), gap.lastIndexOf("/*")];
+    if (line >= 0 && !gap.includes("\n", line)) return text.indexOf("\n", start);
+    if (block >= 0 && !gap.includes("*/", block)) return text.indexOf("*/", start);
+    return -1;
+  }
+
+  /** Decides on one or more words of `written`, none of them at or behind `stop`. */
+  step(stop: number) {
+    const [a, b] = [this.a.spelled, this.b.spelled];
+    const [i, j] = [this.written, this.evaluated];
+    if (j < b.length && a[i] === b[j]) {
+      this.partners[this.written++] = this.evaluated++;
+      return;
+    }
+    const endOfComment = this.#endOfComment();
+    if (endOfComment >= 0) {
+      while (this.written < stop && this.a.starts[this.written] < endOfComment) this.written++;
+      return;
+    }
+    let [skipped, skippedOfEvaluated, isFound] = [1, 1, false];
+    search: for (let distance = 1; distance <= farthestLookAhead; distance++) {
+      for (let s = Math.min(distance, a.length - i); s >= 0; s--) {
+        const [x, y] = [i + s, j + distance - s];
+        if (x < a.length && y < b.length ? a[x] !== b[y] : x < a.length || y < b.length) continue;
+        [skipped, skippedOfEvaluated, isFound] = [s, distance - s, x < a.length];
+        break search;
+      }
+    }
+    // Of more words of `written` the first ones say a type; of more words of `evaluated` the last ones were put in.
+    const replaced = Math.min(skipped, skippedOfEvaluated);
+    const leftOut = skipped - replaced;
+    for (let k = 0; k < skipped; k++) {
+      if (i + k >= stop) {
+        this.evaluated += Math.max(0, k - leftOut);
+        return;
+      }
+      this.written++;
+      if (k >= leftOut) {
+        if (j + k - leftOut < b.length) this.partners[i + k] = j + k - leftOut;
+        continue;
+      }
+      const moved = this.passedOver.findLastIndex(number => b[number] === a[i + k]);
+      if (moved >= 0) [this.partners[i + k]] = this.passedOver.splice(moved, 1);
+    }
+    for (let k = replaced; k < skippedOfEvaluated && j + k < b.length; k++) this.passedOver.push(j + k);
+    if (this.passedOver.length > wordsRemembered) this.passedOver.splice(0, this.passedOver.length - wordsRemembered);
+    this.evaluated += skippedOfEvaluated;
+    if (isFound && this.written < stop) this.partners[this.written++] = this.evaluated++;
+  }
 }
 
 /**
- * Numbers of 7 bits a byte, the lowest first; one that may be negative has its sign in its lowest bit. Each piece: how far its offset
- * is behind the last one's, then twice how many columns it stands further right than it would as a part of the last piece, or, on
- * another line than that, twice the difference of the lines plus one, and the column.
+ * The words that reading the two texts side by side gets wrong. Each word: how many words
+ * it stands behind the last one that is written down, then 0 if it has no partner, or one more than how many words its partner stands
+ * from where the reading is, with the sign in the lowest bit.
  */
-export function encodePieces(written: string, pieces: Piece[]): Uint8Array {
-  const text = Buffer.from(written);
+export function encodeWordsInEvaluatedText(written: Words, evaluated: Words, found: Map<number, number>): Uint8Array {
+  const numbers: number[] = [];
+  const aligner = new Aligner(written, evaluated);
+  let last = 0;
+  while (aligner.written < written.length) {
+    const [start, startOfEvaluated, passedOver] = [aligner.written, aligner.evaluated, [...aligner.passedOver]];
+    aligner.step(written.length);
+    let wrong = start;
+    while (wrong < aligner.written && (found.get(wrong) ?? aligner.partners[wrong]) === aligner.partners[wrong])
+      wrong++;
+    if (wrong === aligner.written) continue;
+    aligner.partners.fill(-1, start, aligner.written);
+    [aligner.written, aligner.evaluated, aligner.passedOver] = [start, startOfEvaluated, passedOver];
+    if (wrong > start) aligner.step(wrong);
+    numbers.push(wrong - last);
+    last = wrong;
+    if (found.get(wrong)! < 0) {
+      numbers.push(0);
+      aligner.passOver();
+      continue;
+    }
+    const distance = found.get(wrong)! - aligner.evaluated;
+    numbers.push((distance < 0 ? -distance * 2 - 1 : distance * 2) + 1);
+    aligner.correct(distance);
+  }
+  return encodeNumbers(numbers);
+}
+
+/** 7 bits a byte, the lowest first. */
+export function encodeNumbers(numbers: number[]): Uint8Array {
   const bytes: number[] = [];
-  const push = (value: number) => {
+  for (let value of numbers) {
     for (; value >= 128; value = Math.floor(value / 128)) bytes.push((value % 128) | 128);
     bytes.push(value);
-  };
-  const signed = (value: number) => (value < 0 ? -value * 2 - 1 : value * 2);
-  let last: Piece = { offset: 0, line: 0, column: 0 };
-  for (const piece of pieces) {
-    push(piece.offset - last.offset);
-    let { line, column } = last;
-    for (let at = last.offset; at < piece.offset; at++) {
-      if (text[at] === 10) [line, column] = [line + 1, 0];
-      else column++;
-    }
-    if (piece.line === line) push(signed(piece.column - column) * 2);
-    else {
-      push(signed(piece.line - line) * 2 + 1);
-      push(piece.column);
-    }
-    last = piece;
   }
   return Uint8Array.from(bytes);
+}
+
+export function encodeBundledPositions(written: string, output: string, map: SourceMap, evaluated: string): Uint8Array {
+  const [wordsOfWritten, wordsOfEvaluated] = [new Words(written), new Words(evaluated)];
+  const found = findWordsInEvaluatedText(wordsOfWritten, output, map, wordsOfEvaluated);
+  return encodeWordsInEvaluatedText(wordsOfWritten, wordsOfEvaluated, found);
+}
+
+/** A line for the manifest of the sources. */
+export function formatBundledPositions(file: string, encoded: Uint8Array): string {
+  return `positions\t${file}\t${Buffer.from(encoded).toString("base64")}`;
 }

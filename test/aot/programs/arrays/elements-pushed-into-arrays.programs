@@ -1034,7 +1034,7 @@ console.log(lines.join("\n"));
 declare const console: { log(...values: unknown[]): void };
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const asked = () => (counted ? (counted("operationAOTInByValAndCache") + counted("operationAOTInByValGeneric")) + counted("operationAOTElementOrEmpty") : 0);
+const asked = () => (counted ? (counted("operationAOTInByValAndCache") + counted("operationAOTInByValGeneric")) + counted("operationAOTGetByValAndCache") + counted("operationAOTGetByValGeneric") : 0);
 class Rows<T> extends Array<T> {}
 class Inherits<T> extends Array<T> {}
 (Inherits.prototype as any)[1] = "inherited";

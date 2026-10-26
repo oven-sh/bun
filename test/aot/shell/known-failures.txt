@@ -114,7 +114,6 @@ calls-fast-paths/builtins-passed-to-helpers	// IR= 1 composed TypeTest v[0-9]+ t
 calls-fast-paths/builtins-passed-to-helpers	// IR= 1 composed TypeTest v[0-9]+ testedType=builtin\(ObjectKeys\)
 calls-fast-paths/builtins-passed-to-helpers	// IR= 1 composed TypeTest v[0-9]+ testedType=builtin\(Object\)
 calls-fast-paths/call-known	// IR+ TypeTest v[0-9]+ testedType=Function\^
-calls-fast-paths/callbacks-whose-variables-lie-in-the-frame-of-their-maker	// ENTRY-SIZE< addsToSum 24 16
 calls-fast-paths/callees-that-a-loop-does-not-change	// CALLS+ Array$map ResolveCallValue3
 calls-fast-paths/callees-that-a-loop-does-not-change	// CALLS+ Array$some ResolveCallValue3
 calls-fast-paths/callees-that-a-loop-does-not-change	// CALLS- Array$map [^e]CallValue3
@@ -556,21 +555,8 @@ private-class-members/no-prototype-lookup	// COUNTER: UseAsPrototype >= 1
 private-class-members/private-field-reads-run-no-user-code	// IR= 1 accessor PrivateGet v[0-9]+, v[0-9]+( @|$)
 private-class-members/private-field-reads-run-no-user-code	// IR= 1 field PrivateGet v[0-9]+, v[0-9]+ layout=L[0-9]+ privateField=
 private-class-members/private-field-reads-run-no-user-code	// IR= 1 method PrivateGet v[0-9]+, v[0-9]+( @|$)
-runtime-caches/dead-structures-leave-caches	// COUNTER: SiteCacheRefill <= 500
-runtime-caches/declared-fields-by-name	// COUNTER: RedefinedProperty = 0
-runtime-caches/declared-fields-by-name	// COUNTER: StoreOfOtherType = 0
-runtime-caches/flattened-dictionary	// COUNTER: SiteCachesClearedByFlattening <= 40
-runtime-caches/flattened-dictionary	// COUNTER: SiteCachesClearedByFlattening >= 1
-runtime-caches/long-string-keys	// COUNTER: LongKeyComparisonLimitReached >= 1
-runtime-caches/lookup-table-full	// COUNTER: LookupTableIsFull <= 30000
-runtime-caches/lookup-table-full	// COUNTER: LookupTableIsFull >= 1
 runtime-caches/lookup-table-slots-full	// COUNTER: LookupTableIsFull <= 20000
 runtime-caches/lookup-table-slots-full	// COUNTER: LookupTableIsFull >= 1
-runtime-caches/prototype-change-invalidates-by-name	// COUNTER: SiteCacheRefill <= 300
-runtime-caches/site-cache-access-kinds	// COUNTER: SiteCacheRefill <= 44
-runtime-caches/site-cache-access-kinds	// COUNTER: SiteCacheRefill >= 7
-runtime-caches/site-cache-refill	// COUNTER: SiteCacheRefill <= 5100
-runtime-caches/site-cache-refill	// COUNTER: SiteCacheRefill >= 100
 strings/anchored-searches	// CALLS+ oldEndsWith StringFindString
 strings/anchored-searches	// CALLS- lastIndexOfBelowZero ReverseFind|LastIndexOf
 strings/anchored-searches	// CALLS- oldStartsWith ReverseFind|LastIndexOf
@@ -869,9 +855,7 @@ untyped-code/records-obtained-by-js-keep-layout	// IR= 1 total : number = PropGe
 untyped-code/records-passed-to-js-keep-layout	// IR= 1 total : number = PropGet v[0-9]+ name="value"(?!.* isFallback)
 untyped-code/records-passed-to-js-keep-layout	// IR= 2 half : number = PropGet v[0-9]+ name="(count|total)"(?!.* isFallback)
 untyped-code/records-passed-to-js-keep-layout	// IR= 2 total : undefined\|null\|=?L[0-9]+!? = PropGet v[0-9]+ name="(left|right)"(?!.* isFallback)
-untyped-code/truthiness-of-builtin-results	// IR= 0 owns ^  b[1-9][0-9]*\(v
 untyped-code/truthiness-of-builtin-results	// IR= 1 direct boolean = CallBuiltin - \(v[0-9]+\) overload=ArrayIsArray/
-untyped-code/truthiness-of-builtin-results	// IR= 1 owns ToBoolean
 untyped-code/truthiness-of-builtin-results	// IR= 1 owns boolean = CallBuiltin - \(v[0-9]+, v[0-9]+\) overload=ObjectHasOwn/
 untyped-code/unread-results	// IR= 0 unused ^  b[1-9][0-9]*\(v
 # These state what the compiler does not do yet: each came with the report of a gain that is missed, and waits for the change that brings it.
@@ -904,3 +888,4 @@ untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth
 untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 readBoth GetSlotOrUndefined
 untyped-code/parameters-read-beside-arguments-length-keep-their-types	// IR= 0 sum = PropGet
 untyped-code/parameters-read-beside-arguments-length-keep-their-types	// IR= 0 sum = TypeTest
+calls-fast-paths/callbacks-whose-variables-lie-in-the-frame-of-their-maker	// ENTRY-SIZE< addsToSum 24 16

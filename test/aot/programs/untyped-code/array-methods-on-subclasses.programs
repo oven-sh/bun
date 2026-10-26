@@ -1984,6 +1984,19 @@ console.log(said.join("\n"));
 // Calls of built-in functions whose operands say more than their types: a target that was made on the spot, a needle that is a constant. The same call stands at several places, far from any loop.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed, count the names for it and keep it in a set; a cell where the allocator has none at hand is the work of the run time.
+const owed = ["operationAOTConcat", "operationAOTConcatenate", "operationAOTToString", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTAllocateSlow", "operationAOTNewDictionary"];
 const first = (source) => Object.assign({}, source);
 const second = (source) => Object.assign({}, source);
 const third = (source) => Object.assign({}, source);
@@ -2006,13 +2019,15 @@ const withGetter = { get a() { seen++; return "got"; }, b: 2 };
 const show = (value) => JSON.stringify(value) + " " + Object.keys(value).length;
 const before = count("operationAOTCopyDataProperties");
 const said = new Set();
+let known = "";
 for (let i = 0; i < 300; i++) {
+  if (i === 30) known = countsSoFar();
   for (const f of [first, second, third]) {
     const copy = call(f, source);
     said.add(show(copy) + (copy !== source) + (copy.c === source.c));
   }
 }
-const calls = count("operationAOTCopyDataProperties") - before;
+const calls = count("operationAOTCopyDataProperties") - before + callsIn(countsSoFar(), ...owed) - callsIn(known, ...owed);
 console.log([...said].join(" | "), calls === 0 ? "and each copy was made in one step" : "and " + calls + " copies were made property by property");
 console.log(show(call(first, withGetter)), seen, show(call(second, null)), show(call(third, "ab")), show(call(first, [7, 8])), show(call(second, 5)));
 console.log(show(call(withMore, source, { a: 9, z: 0 })), show(call(alsoWithMore, { z: 0 }, source)), show(call(withMore, undefined, source)));

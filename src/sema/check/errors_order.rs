@@ -65,7 +65,7 @@ impl Checker<'_, '_> {
         for &e in index.of(ExprTag::Dot) {
             let may_be_in_initializer = initializer_ranges.contain(hir[e].pos);
             if !may_be_in_initializer
-                && !matches!(hir[e].kind, ExprKind::Dot { name, .. } if names_of_classes.contains(&name))
+                && !matches!(hir.checked_kind(e), ExprKind::Dot { name, .. } if names_of_classes.contains(&name))
             {
                 continue;
             }
@@ -479,7 +479,7 @@ impl Checker<'_, '_> {
         may_be_in_initializer: bool,
     ) {
         let hir = self.hir(file);
-        let ExprKind::Dot { obj, name, .. } = hir[e].kind else {
+        let ExprKind::Dot { obj, name, .. } = hir.checked_kind(e) else {
             return;
         };
         let (node, right) = (hir.node(e), hir.name(hir.node(e)));

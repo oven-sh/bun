@@ -1,6 +1,6 @@
 // Each kind of access by name has a site of its own: own, inherited and absent values, getters, stores that add, replace and fail. A site cache fills on its first lookup-table hit, backs off at a site with two structures, never caches a getter, and is invalidated when a prototype changes.
-// COUNTER: SiteCacheRefill >= 7
-// COUNTER: SiteCacheRefill <= 44
+// COUNTER: SiteCacheRefills >= 7
+// COUNTER: SiteCacheRefills <= 44
 const counts = typeof aotRuntimeCounters === "function";   // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 function counter(name) { if (!counts) return 0; for (const line of aotRuntimeCounters().split("\n")) { const [count, counted] = line.split("\t"); if (counted === name) return Number(count); } throw new Error("no counter " + name); }
 function calls(...names) { let sum = 0; if (counts) for (const name of names) sum += aotOperationCount("operationAOT" + name); return sum; }
@@ -8,9 +8,9 @@ function expectBetween(label, value, low, high) { if (counts && !(value >= low &
 const trips = JSON.parse("10000");
 const key = JSON.parse('"shared"');
 
-let refillsBefore = counter("SiteCacheRefill");
+let refillsBefore = counter("counter:SiteCacheRefills");
 function say(label, answer, maxRefills) {
-  const refills = counter("SiteCacheRefill");
+  const refills = counter("counter:SiteCacheRefills");
   expectBetween(label, refills - refillsBefore, 0, maxRefills);
   refillsBefore = refills;
   console.log(label + ": " + answer);

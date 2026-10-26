@@ -554,7 +554,7 @@ impl<'p, 's> Checker<'p, 's> {
             if node != e && is_parenthesized(hir, node) {
                 return Some(whole(node));
             }
-            match hir[node].kind {
+            match hir.checked_kind(node) {
                 ExprKind::Instantiation { expr: inner, .. } | ExprKind::NonNull(inner) => {
                     node = inner
                 }

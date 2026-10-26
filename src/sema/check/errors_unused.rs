@@ -472,7 +472,8 @@ impl Checker<'_, '_> {
             .iter()
             .chain(index.of(ExprTag::Index))
         {
-            let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[e].kind else {
+            let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir.checked_kind(e)
+            else {
                 continue;
             };
             if !is_property_access_entity_name_expression(hir, obj) || !is_checked(u, e) {
@@ -506,7 +507,7 @@ impl Checker<'_, '_> {
         // `getAccessedPropertyName(e)` resolves the key of `x[a.b]`. `getFlowTypeOfReference` calls it where it
         // compares `e` with another reference.
         for &e in index.of(ExprTag::Index) {
-            let ExprKind::Index { index: key, .. } = hir[e].kind else {
+            let ExprKind::Index { index: key, .. } = hir.checked_kind(e) else {
                 continue;
             };
             if !is_parenthesized(hir, key)
@@ -558,7 +559,7 @@ impl Checker<'_, '_> {
     fn note_qualified_name(&self, file: FileId, u: &mut Unused, e: ExprId) {
         let hir = self.hir(file);
         let mut first = e;
-        while let ExprKind::Dot { obj, .. } = hir[first].kind {
+        while let ExprKind::Dot { obj, .. } = hir.checked_kind(first) {
             first = obj;
         }
         if let ExprKind::Ident(name) = hir[first].kind {
@@ -574,7 +575,7 @@ impl Checker<'_, '_> {
         let mut operands = smallvec::SmallVec::<[(ExprId, Location); 8]>::new();
         operands.push((e, location));
         while let Some((e, location)) = operands.pop() {
-            match hir[e].kind {
+            match hir.checked_kind(e) {
                 ExprKind::Unary {
                     op:
                         UnOp::Plus
@@ -795,7 +796,7 @@ impl Checker<'_, '_> {
         ];
         for &e in kinds.iter().flat_map(|&kind| index.of(kind)) {
             let i = e.idx();
-            let is_skipped = match hir.exprs[i].kind {
+            let is_skipped = match hir.checked_kind(e) {
                 ExprKind::Dot { name, .. } => adds_nothing(u, name),
                 ExprKind::Assign { op, .. } => op.is_some(),
                 _ => false,
@@ -803,7 +804,7 @@ impl Checker<'_, '_> {
             if is_skipped || bound.is_unchecked(i) || u.is_unchecked(e) {
                 continue;
             }
-            match hir.exprs[i].kind {
+            match hir.checked_kind(e) {
                 ExprKind::Dot { obj, name, .. } => {
                     let receiver = self.type_of_expr(file, obj);
                     let receiver = self.non_nullable(receiver);
@@ -1160,7 +1161,7 @@ impl Checker<'_, '_> {
     /// `isSelfTypeAccess` for `e`: `obj.name`, or `obj[key]` where `of` is the type a property access uses for `obj`.
     fn is_self_type_access(&self, file: FileId, e: ExprId, of: TypeId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (obj, is_dot) = match hir[e].kind {
+        let (obj, is_dot) = match hir.checked_kind(e) {
             ExprKind::Dot { obj, .. } => (obj, true),
             ExprKind::Index { obj, .. } => (obj, false),
             _ => return false,

@@ -245,7 +245,7 @@ pub fn is_module_exports(hir: &File, e: ExprId) -> bool {
 
 /// Same, but ignores the parentheses around `e`.
 pub fn is_module_exports_inside_parentheses(hir: &File, e: ExprId) -> bool {
-    let (obj, name) = match hir[e].kind {
+    let (obj, name) = match hir.checked_kind(e) {
         ExprKind::Dot { obj, name, .. } => (obj, name),
         ExprKind::Index { obj, index, .. } => (obj, string_literal_text(hir, index)),
         _ => return false,
@@ -283,7 +283,7 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
         return JsDeclarationKind::ModuleExports;
     }
     // `GetElementOrPropertyAccessName`
-    let (obj, name) = match hir[target].kind {
+    let (obj, name) = match hir.checked_kind(target) {
         ExprKind::Dot { obj, name, .. } => (
             obj,
             (!is_private_name_at(hir, hir.name_pos(target))).then_some(name),
@@ -312,7 +312,7 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
 /// `IsBindableStaticNameExpression` with `excludeThisKeyword`: `a`, `a.b`, `a["b"]`, `a[0]`.
 fn is_bindable_static_name(hir: &File, e: ExprId) -> bool {
     !is_parenthesized(hir, e)
-        && match hir[e].kind {
+        && match hir.checked_kind(e) {
             ExprKind::Ident(_) => true,
             ExprKind::Dot { obj, .. } => {
                 !is_private_name_at(hir, hir.name_pos(e)) && is_bindable_static_name(hir, obj)
@@ -339,7 +339,7 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
         obj,
         name: known::defineProperty,
         ..
-    } = hir[call.callee].kind
+    } = hir.checked_kind(call.callee)
     else {
         return None;
     };
@@ -2208,7 +2208,7 @@ impl Bound<'_> {
                 {
                     return None;
                 }
-                match hir[left].kind {
+                match hir.checked_kind(left) {
                     ExprKind::Ident(_) => Some(hir[left].pos),
                     ExprKind::Dot { .. } => Some(hir.name_pos(left)),
                     // `IsStringOrNumericLiteralLike(SkipParentheses(argument))`

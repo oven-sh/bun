@@ -1,5 +1,16 @@
 // Untyped code asks `key in object` for optional declared fields of typed objects. The answer depends on the object, not on its Structure alone: the stub reads the field. It does not enter the runtime every time, and it follows what happens to the object and to its prototype chain.
-declare const aotOperationCount: undefined | ((name: string) => number);
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 interface Options { id: number; text?: string; count?: number; whole?: number; flag?: boolean; inner?: { a: number }; any?: unknown; big?: bigint }
 function full(i: number): Options { return { id: i, text: "t" + i, count: i + 0.5, whole: i, flag: i % 2 === 0, inner: { a: i }, any: i % 3 ? i : "s", big: 1n }; }
 function bare(i: number): Options { return { id: i }; }
@@ -12,24 +23,23 @@ const asks: Record<string, (o: any) => any> = {
   label: function (o: any): any { return "label" in o; }, weight: function (o: any): any { return "weight" in o; },
 };
 const askByKey: (o: any, k: any) => any = function (o: any, k: any): any { return k in o; };
-const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTInByValAndCache") : 0;
 const objects: Options[] = [];
 for (let i = 0; i < 90; i++) objects.push(i % 3 === 0 ? full(i) : i % 3 === 1 ? bare(i) : withUndefined(i));
 for (const name of names) {
   let yes = 0;
   for (const o of objects) yes += asks[name]!(o) ? 1 : 0;
-  const before = entered();
+  const before = countsSoFar();
   for (let round = 0; round < 20; round++) for (const o of objects) yes += (asks[name]!(o) ? 1 : 0) + (askByKey(o, name) ? 1 : 0);
-  console.log(name, yes, entered() - before < 20);
+  console.log(name, yes, callsIn(countsSoFar()) - callsIn(before) < 20);
 }
 const nodes: Node[] = [];
 for (let i = 0; i < 90; i++) { nodes.push(new Node(i, i % 2 ? "n" : undefined)); if (i % 5 === 0) nodes[i]!.grow(); }
 for (const name of ["label", "weight"]) {
   let yes = 0;
   for (const o of nodes) yes += asks[name]!(o) ? 1 : 0;
-  const before = entered();
+  const before = countsSoFar();
   for (let round = 0; round < 20; round++) for (const o of nodes) yes += asks[name]!(o) ? 1 : 0;
-  console.log(name, yes, entered() - before < 20);
+  console.log(name, yes, callsIn(countsSoFar()) - callsIn(before) < 20);
 }
 const answers = (o: object): string => names.map(name => (asks[name]!(o) ? "1" : "0") + (askByKey(o, name) ? "1" : "0")).join(" ");
 const one = bare(1), loose: any = one;

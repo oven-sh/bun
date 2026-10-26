@@ -940,9 +940,10 @@ print(attempt(() => lengthOfAnything(new Uint8Array(3))));
 type Units = number[];
 type Kind = { name: string; create: (units: Units) => string };
 
-const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const count: (name: string) => number = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 // Without counters the function is absent or returns null.
-const canCount = typeof (globalThis as any).aotOperationCount === "function" && count("operationAOTStringsAreEqual") !== null;
+const canCount = typeof aotOperationCount === "function" && count("operationAOTStringsAreEqual") !== null;
 
 export function equal(left: string, right: string): boolean {
   return left === right;

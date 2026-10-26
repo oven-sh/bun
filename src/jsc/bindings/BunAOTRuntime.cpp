@@ -125,7 +125,7 @@ extern "C" void Bun__askForAddressSpaceToStart()
 
 extern "C" void Bun__AOT__takePagesForTablesOfFirstThread()
 {
-    JSC::AOT::PagesForNewThread result = JSC::AOT::tryReservePagesForNewThread();
+    JSC::AOT::PagesForNewThread result = JSC::AOT::tryReservePagesForFirstThread();
     if (result.isRefused) {
         dataLogLn("error: the limit on address space (ulimit -v) leaves no room for the tables of this executable's program. Raise the limit.");
         exit(EXIT_FAILURE);

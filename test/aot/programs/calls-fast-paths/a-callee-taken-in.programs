@@ -1078,11 +1078,23 @@ module.exports = { P, Q, WithStatics, Optional, K, fewer, fewer2, make, call };
 // `new` on derived classes taken from a table: counts how often the C++ runtime is entered for `new` and `super(..)`.
 // ENV JSC_aotCountsPath=/dev/null
 declare const console: any;
-declare const aotOperationCount: (name: string) => number;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// A cell where the allocator has none at hand is the work of the run time.
+const owed = ["operationAOTAllocateSlow"];
 import { B, D, E, Implicit, F, make } from "./untyped.js";
 const table: any[] = [B, D, E, F, Implicit];
-function entered(): number { return aotOperationCount("operationAOTConstruct") + aotOperationCount("operationAOTSuperConstruct") + aotOperationCount("operationAOTSuperConstructList"); }
-function counted(what: string, f: () => unknown): void { const before = entered(); const r = f(); const times = entered() - before; console.log(what + ": " + r + "; the run time was entered " + (times < 100 ? "under 100 times" : times + " times")); }
+function counted(what: string, f: () => unknown): void { const before = countsSoFar(); const r = f(); const times = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed); console.log(what + ": " + r + "; the run time was entered " + (times < 100 ? "under 100 times" : times + " times")); }
 console.log(make(table, 0, 1000), make(table, 3, 1000), make(table, 1, 1000), make(table, 2, 1000), make(table, 4, 1000));
 counted("a base class, 400,000", () => make(table, 0, 400000));
 counted("a plain function, 400,000", () => make(table, 3, 400000));

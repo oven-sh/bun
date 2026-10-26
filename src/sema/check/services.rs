@@ -575,7 +575,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// `tryGetElementAccessExpressionName` finds for the key of an element access.
     pub fn accessed_property_name(&mut self, node: NodeRef) -> Option<&'p [u8]> {
         let e = self.expr_of(node)?;
-        let name = match self.c.hir(node.file)[e].kind {
+        let name = match self.c.hir(node.file).checked_kind(e) {
             hir::ExprKind::Dot { name, .. } => name,
             hir::ExprKind::Index { index, .. } => self.c.literal_key(node.file, index)?,
             _ => return None,
@@ -708,7 +708,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 _ => {}
             },
             NodeData::Expr(e) => {
-                let chain = match hir[e].kind {
+                let chain = match hir.checked_kind(e) {
                     ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
                     ExprKind::Call(call) => hir[call].chain,
                     _ => Chain::No,

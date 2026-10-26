@@ -1,10 +1,17 @@
-// Flattening a dictionary invalidates the answers cached under its structure, whether the dictionary is the receiver or a prototype, and no object is flattened twice.
-// COUNTER: SiteCachesClearedByFlattening >= 1
-// COUNTER: SiteCachesClearedByFlattening <= 40
+// What the caches answer for a dictionary holds when it is flattened, whether the dictionary is the receiver or a prototype: nothing is filed under a structure whose offsets a flattening moves, which a validating run checks at every
+// flattening. A dictionary, a flattened one and one that was flattened before are answered by the caches like any other object.
 const counts = typeof aotRuntimeCounters === "function";   // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 function counter(name) { if (!counts) return 0; for (const line of aotRuntimeCounters().split("\n")) { const [count, counted] = line.split("\t"); if (counted === name) return Number(count); } throw new Error("no counter " + name); }
 function expectBetween(what, value, low, high) { if (counts && !(value >= low && value <= high)) throw new Error(what + ": " + value + " is not in " + low + ".." + high); }
-function cleared() { return counter("SiteCachesClearedByFlattening"); }
+function calls(...names) { let sum = 0; if (counts) for (const name of names) sum += aotOperationCount("operationAOT" + name); return sum; }
+function entries() { return calls("GetByIdAndCache", "PutByIdAndCache", "InByIdAndCache", "FillSiteCache", "GetByValGeneric", "InByValGeneric"); }
+// Eight accesses a trip.
+function say(what, o, n, most) {
+  const before = entries();
+  const result = use(o, n);
+  expectBetween("entries, " + what, entries() - before, 0, most);
+  console.log(what + ": " + result);
+}
 
 const names = JSON.parse('["k595","k590"]');
 const [trips, fewTrips] = JSON.parse("[50, 2]");
@@ -28,46 +35,40 @@ function use(o, n) {
 
 const big = Object.create(null);
 fill(big, 0, 600);
-console.log("dictionary by size: " + use(big, trips));
+say("dictionary by size", big, trips, 16);
 {
-  const before = cleared();
-  const keyCount = Object.keys(big).length;
-  expectBetween("sites cleared", cleared() - before, 1, 10);
-  console.log("keys: " + keyCount);
+  console.log("keys: " + Object.keys(big).length);
 }
-console.log("flattened by Object.keys: " + use(big, trips));
+say("flattened by Object.keys", big, trips, 4);
 
 const holes = Object.create(null);
 fill(holes, 0, 600);
 drop(holes, 0, 580);
-console.log("dictionary by deletion: " + use(holes, trips));
+say("dictionary by deletion", holes, trips, 20);
 fill(holes, 600, 620);
-console.log("names added after flattening: " + use(holes, trips));
+say("names added after flattening", holes, trips, 12);
 
 const parent = Object.create(null);
 fill(parent, 0, 600);
 drop(parent, 0, 580);
 const child = Object.create(parent);
-console.log("dictionary as a prototype: " + use(child, trips));
+say("dictionary as a prototype", child, trips, 12);
 delete parent["k595"];
-console.log("name deleted from the flattened prototype: " + use(child, trips));
+say("name deleted from the flattened prototype", child, trips, 4);
 
 {
-  const before = cleared();
+  const before = entries();
   const results = [];
   for (let i = 0; i < 200; i++) {
     holes["x" + i] = i;
     delete holes["x" + (i - 1)];
     results.push(use(holes, fewTrips));
   }
-  expectBetween("sites cleared for an object flattened before", cleared() - before, 0, 0);
+  expectBetween("entries in 3200 accesses to an object flattened before, between 200 additions and 200 deletions", entries() - before, 0, 70);
   console.log("flattened before: " + results.join(" "));
 }
 {
   const small = Object.create(null);
   for (const i of [590, 595, 599]) small["k" + i] = i;
-  const before = cleared();
-  const result = use(small, trips);
-  expectBetween("sites cleared for an object that was never a dictionary", cleared() - before, 0, 0);
-  console.log("never a dictionary: " + result);
+  say("never a dictionary", small, trips, 10);
 }

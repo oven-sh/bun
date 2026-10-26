@@ -641,7 +641,7 @@ impl Checker<'_, '_> {
         if is_parenthesized(hir, e) {
             return true;
         }
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::True | ExprKind::False | ExprKind::BigInt(_) => false,
             // `isInitializerBigIntLiteralExpression`
             ExprKind::Unary {

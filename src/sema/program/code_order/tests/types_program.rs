@@ -102,6 +102,34 @@ fn inferred_file_imports_code_targets() {
 }
 
 #[test]
+fn inferred_file_of_types_program_imports_declarations() {
+    let host = host_of(&[
+        ("/main.ts", "import \"./between.js\""),
+        ("/between.js", "import \"pkg\""),
+        ("/node_modules/pkg/package.json", "pkg@1.0.0"),
+        ("/node_modules/pkg/index.js", ""),
+        ("/node_modules/pkg/index.d.ts", ""),
+    ]);
+    let build = TestBuild {
+        options: Options {
+            allow_js: true,
+            ..Options::default()
+        },
+        ..TestBuild::new(&host, &["/main.ts"])
+    };
+    with_build(&build, |files| {
+        let between = file_at(files, "/between.js");
+        let code = file_at(files, "/node_modules/pkg/index.js");
+        let declarations = file_at(files, "/node_modules/pkg/index.d.ts");
+        assert_eq!(files.role(between), FileRole::Inferred);
+        assert!(files.module(between).is_in_types_program);
+        assert_eq!(files.code_answers(between), [CodeAnswer::File(code)]);
+        assert_eq!(imported_files(files, between), [declarations]);
+        assert!(!files.module(code).is_in_types_program);
+    });
+}
+
+#[test]
 fn required_file_is_import_of_inferred_file() {
     let host = host_of(&[
         ("/main.js", "require(\"./a.js\")\nrequire(\"./missing.js\")"),

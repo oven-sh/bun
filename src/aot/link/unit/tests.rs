@@ -274,7 +274,7 @@ fn records_are_listed_by_kind() {
 fn target_and_referrer_are_separate_lists() {
     let [owner, target, referrer, resolved] = [0, 1, 2, 3].map(ModuleId::new);
     let function = build_function(&[], |builder| {
-        builder.import_module(target, referrer);
+        builder.import_module(target, None, referrer);
         builder.resolve_module(resolved, referrer, StringId::new(0), false);
         builder.module_namespace(referrer, ImportPhase::Evaluation);
         builder.return_value(None);

@@ -2,8 +2,18 @@
 // that this program declares: the literal is created with that record's layout, and the parameter's test passes in compiled code, without a call into the run time.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 // IR= 0 makeSpan  = NewPlainObject
-declare const aotOperationCount: undefined | ((name: string) => number)
-const count = typeof aotOperationCount === 'function' ? aotOperationCount : () => 0
+declare const aotRuntimeCounters: undefined | (() => string)
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === 'function' ? aotRuntimeCounters() : '')
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0
+  for (const line of counts.split('\n')) {
+    const [calls, name] = line.split('\toperation:')
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls)
+  }
+  return sum
+}
 type Kind = 'internal' | 'server' | 'client' | 'producer' | 'consumer'
 class Context {
   constructor(readonly size: number) {}
@@ -43,9 +53,11 @@ function makeSpan(fiber: Fiber<any>, name: string, kind: Kind | undefined): Nati
 const fiber: Fiber<any> = JSON.parse('{"cache":{},"value":1}')
 let total = 0
 for (let r = 0; r < 20; r++) total += makeSpan(fiber, 'n', r % 7 === 0 ? 'server' : undefined).name.length
-const before = count('operationAOTEnforceType')
+const before = countsSoFar()
 for (let r = 0; r < 2000; r++) total += makeSpan(fiber, 'name', r % 7 === 0 ? 'server' : undefined).kind.length
-console.log(total, count('operationAOTEnforceType') - before < 200 ? 'tested in compiled code' : 'tested by the run time ' + (count('operationAOTEnforceType') - before) + ' times')
+const after = countsSoFar()
+const entered = callsIn(after) - callsIn(before)
+console.log(total, entered < 200 ? 'tested in compiled code' : 'the run time was called ' + entered + ' times')
 
 const seen: string[] = []
 const untyped: any = {

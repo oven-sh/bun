@@ -2,17 +2,30 @@
 // IR+ ^ .*JSONParseExtraMembers
 // IR+ ^ .*JSONKeyOrderApply
 declare const aotOperationCount: undefined | ((name: string) => number);
+declare const aotRuntimeCounters: undefined | (() => string);
 interface Point { x: number; y: number; label?: string }
 interface Segment { id: number; from: Point; to: Point; tags: string[] }
 
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
 const count = (name: string) => (counted ? counted(name) : 0);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text that are not the compiled parser's own.
+function callsOutsideTheParser(counts: string): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !name.startsWith("operationAOTJSON")) sum += Number(calls);
+  }
+  return sum;
+}
 function measure(what: string, texts: string[], readAgainExpected: number, callsForUndeclaredKeys: number): void {
   for (let i = 0; i < 8; i++) for (const text of texts) (JSON.parse(text) as Segment);
-  const [converted, readAgain, called] = [count("operationAOTEnforceType"), count("operationAOTJSONSourceAbandon"), count("operationAOTJSONParseExtraMembers")];
+  const [before, readAgain, called] = [countsSoFar(), count("operationAOTJSONSourceAbandon"), count("operationAOTJSONParseExtraMembers")];
   let sum = 0;
   for (const text of texts) sum += (JSON.parse(text) as Segment).to.y;
-  const isAsExpected = (readAgainExpected > 0 || count("operationAOTEnforceType") === converted) && count("operationAOTJSONSourceAbandon") - readAgain === readAgainExpected && count("operationAOTJSONParseExtraMembers") - called === callsForUndeclaredKeys;
+  const after = countsSoFar();
+  const isAsExpected = (readAgainExpected > 0 || callsOutsideTheParser(after) === callsOutsideTheParser(before)) && count("operationAOTJSONSourceAbandon") - readAgain === readAgainExpected && count("operationAOTJSONParseExtraMembers") - called === callsForUndeclaredKeys;
   console.log(what, sum, counted ? isAsExpected : true);
 }
 const point = '{"x":1,"y":2}';

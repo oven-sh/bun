@@ -1,3 +1,5 @@
+use bun_sema::bind::Binding;
+use bun_sema::fold::Decision;
 use bun_sema::hir::{ExprId, ExprKind};
 
 use crate::builtins::id::BuiltinId;
@@ -16,7 +18,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
             _ => return,
         };
-        if self.file.builtins.of_expr(inner).is_none() {
+        // `undefined`, `NaN` and `Infinity` are names to JSC. Bun's transpiler prints none of them as a name.
+        let is_constant_of_global_object = object.is_none()
+            && self.file.runs_as_written()
+            && matches!(self.file.bound.binding(inner), Binding::Free)
+            && matches!(self.file.decisions().decision(inner), Decision::Constant(_));
+        if self.file.builtins.of_expr(inner).is_none() && !is_constant_of_global_object {
             return;
         }
         let position = match object {

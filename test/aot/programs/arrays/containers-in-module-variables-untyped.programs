@@ -2259,7 +2259,17 @@ for (const n of [0, 1, 2, 3, 4, 7, 8, 9, 100, 5000]) {
 }
 //// edge-lengths-untyped.js
 // `new Array(n)` and `Array(n)` where the text does not say what n is: every length round the edges of what is made at once, and what the arrays are afterwards.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 const attempt = (f) => { try { return f(); } catch (error) { return error.constructor.name + ": " + error.message; } };
 function constructed(n) { return new Array(n); }
 function called(n) { return Array(n); }
@@ -2296,7 +2306,7 @@ for (const n of [1, 5, 6, 126, 127, 128]) {
 
 // Kept across collections, many at a time, of every kind of value.
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
-const before = count("operationAOTPutByVal");
+const before = countsSoFar();
 const kept = [];
 let sum = 0, turn = 0;
 function step() {
@@ -2312,7 +2322,7 @@ function hundred() { ten(); ten(); ten(); ten(); ten(); ten(); ten(); ten(); ten
 function thousand() { hundred(); hundred(); hundred(); hundred(); hundred(); hundred(); hundred(); hundred(); hundred(); hundred(); }
 thousand(); thousand(); thousand();
 collect();
-const asked = count("operationAOTPutByVal") - before;
+const asked = callsIn(countsSoFar()) - callsIn(before);
 console.log(sum, kept.length, kept.map(describe).slice(0, 12).join(" "), JSON.stringify(kept[3][kept[3].length - 1]), asked <= 1200 ? "and stores into the short ones did not ask the run time" : "and the run time was asked " + asked + " times");
 //// element-getter-key-types.ts
 // A typed read of an array element that is an accessor runs the getter, as in plain Bun.

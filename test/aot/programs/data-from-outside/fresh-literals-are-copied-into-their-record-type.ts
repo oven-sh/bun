@@ -1,5 +1,15 @@
-declare const aotOperationCount: undefined | ((name: string) => number);
-const callsOf = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 // An object literal typed any is passed to a parameter of a record type: any object passes, and a member is tested where typed code reads it. Literals that fit do not enter the runtime's type check once per object.
 type Inner = { n: number };
 type Message = { id: number; inner: Inner; tags: string[]; title?: string };
@@ -20,13 +30,13 @@ const inner = makeInner(7);
 const tags = ["x", "y"];
 let last: Message = typedMessage();
 let sum = 0;
-const before = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType"));
+const before = countsSoFar();
 for (let i = 0; i < 400; i++) {
   const message: any = { id: i, inner, tags };
   last = stamp(message, 1);
   sum += last.id + last.inner.n + last.tags.length;
 }
-const slow = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType")) - before;
+const slow = callsIn(countsSoFar()) - callsIn(before);
 console.log(sum, slow < 20 ? "without the runtime" : "through the runtime: " + slow);
 console.log(JSON.stringify(last), Object.keys(last).join(), last.inner === inner, last.tags === tags, last.title);
 last.title = "late";

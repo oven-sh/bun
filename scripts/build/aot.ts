@@ -327,6 +327,7 @@ export function emitBuiltinSources({ n, cfg, sources, o, dirStamp, engine }: Ctx
       resolve(cfg.cwd, "src", "runtime.main.js"),
       o.bundledNamesOfModules,
       o.bundledHelpers,
+      o.internalModulesBin,
       ...readdirSync(bunTypes, { recursive: true, encoding: "utf8" })
         .filter(file => file.endsWith(".d.ts") && !file.includes("node_modules"))
         .sort()
@@ -348,6 +349,7 @@ export function emitBuiltinSources({ n, cfg, sources, o, dirStamp, engine }: Ctx
         `--engine-directory=${engine.directory}`,
         `--bundled-names-of-modules=${o.bundledNamesOfModules}`,
         `--bundled-helpers=${o.bundledHelpers}`,
+        `--evaluated-modules=${o.internalModulesBin}`,
       ]),
     },
   });

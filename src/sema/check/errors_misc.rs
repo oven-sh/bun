@@ -264,7 +264,7 @@ impl Checker<'_, '_> {
     fn syntactic_nullishness(&self, file: FileId, e: ExprId) -> u8 {
         let hir = self.hir(file);
         let e = self.skip_outer_expressions(file, e);
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Await(_)
             | ExprKind::Call(_)
             | ExprKind::ImportCall { .. }
@@ -327,7 +327,7 @@ impl Checker<'_, '_> {
             ExprKind::Missing if !is_parenthesized(self.hir(file), operand) => start,
             _ => self.error_end_inside_parentheses(file, operand),
         };
-        let (obj, name) = match hir[operand].kind {
+        let (obj, name) = match hir.checked_kind(operand) {
             ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
             // `getPropertyNameFromIndex`: the single property name that the index expression's type represents.
             ExprKind::Index { obj, index, .. } => {
@@ -341,8 +341,8 @@ impl Checker<'_, '_> {
             }
         };
         let Some(name) = name else { return };
-        let is_private =
-            self.atoms().is_private_name(name) && matches!(hir[operand].kind, ExprKind::Dot { .. });
+        let is_private = self.atoms().is_private_name(name)
+            && matches!(hir.checked_kind(operand), ExprKind::Dot { .. });
         if is_private {
             self.early_error_at((file, start, end), 18011, &[]);
         }
@@ -351,7 +351,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `checkNonNullType(getOptionalExpressionType(..))`
-        let object = match hir[operand].kind {
+        let object = match hir.checked_kind(operand) {
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }
                 if chain == Chain::Start =>
             {
@@ -361,7 +361,7 @@ impl Checker<'_, '_> {
         };
         // `getIndexedAccessTypeOrUndefined`: the index expression then represents any string, and no property is looked
         // up.
-        if matches!(hir[operand].kind, ExprKind::Index { .. })
+        if matches!(hir.checked_kind(operand), ExprKind::Index { .. })
             && self.is_string_index_signature_only(object)
         {
             return;

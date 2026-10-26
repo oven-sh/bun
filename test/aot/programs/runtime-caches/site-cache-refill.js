@@ -1,17 +1,17 @@
-// An empty site cache fills at its first lookup-table hit, a site cache that keeps seeing other structures is refilled less and less often, and an accessor never enters one.
-// COUNTER: SiteCacheRefill >= 100
-// COUNTER: SiteCacheRefill <= 5100
+// An empty site cache is filled once its site has missed before, a site cache that keeps seeing other structures is refilled less and less often, and an accessor never enters one.
+// COUNTER: SiteCacheRefills >= 100
+// COUNTER: SiteCacheRefills <= 5100
 const counts = typeof aotRuntimeCounters === "function";   // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 function counter(name) { if (!counts) return 0; for (const line of aotRuntimeCounters().split("\n")) { const [count, counted] = line.split("\t"); if (counted === name) return Number(count); } throw new Error("no counter " + name); }
 function calls(...names) { let sum = 0; if (counts) for (const name of names) sum += aotOperationCount("operationAOT" + name); return sum; }
 function expectBetween(label, value, low, high) { if (counts && !(value >= low && value <= high)) throw new Error(label + ": " + value + " is not in " + low + ".." + high); }
 function byName() { return calls("GetByIdAndCache", "PutByIdAndCache", "FillSiteCache"); }
 function fills() { return calls("FillSiteCache"); }
-function refills() { return counter("SiteCacheRefill"); }
+function refills() { return counter("counter:SiteCacheRefills"); }
 
 const key = JSON.parse('"shared"');
 const [tripsA, tripsB, tripsC, tripsD, tripsE] = JSON.parse("[100000, 1000, 1000000, 10000, 2]");
-const readFortyTrips = JSON.parse("[1, 9]");
+const readFortyTrips = JSON.parse("[1, 400, 1000]");
 
 function shape(k) {
   const o = Object.create(null);
@@ -71,6 +71,8 @@ const b = shape(2);
 {
   const o = shape(3);
   readA(o, o, tripsE);   // Enters the structure into the lookup table, so that each of the forty sites hits it at its first read.
+  // A site comes to the run time twice: the first time says that it has missed, the second fills it. Sites share the counters that say when to come, so not all come in the first trips.
+  let entriesToFill = 0;
   for (let pass = 0; pass < readFortyTrips.length; pass++) {
     const n = readFortyTrips[pass];
     const refillsBefore = refills();
@@ -78,8 +80,10 @@ const b = shape(2);
     const entriesBefore = byName();
     const sum = readForty(o, n);
     const entries = byName() - entriesBefore;
-    if (pass === 0) expectBetween("fills of empty sites", fills() - fillsBefore, 10, 40);
-    else expectBetween("entries for filled sites", entries, 0, 0);
+    if (pass === 0) expectBetween("sites that say that they have missed", fills() - fillsBefore, 1, 40);
+    if (pass < 2) entriesToFill += entries;
+    if (pass === 1) expectBetween("entries that fill forty sites", entriesToFill, 80, 90);
+    if (pass === 2) expectBetween("entries for filled sites", entries, 0, 0);
     expectBetween("refills of forty sites", refills() - refillsBefore, 0, 0);
     console.log("forty sites, pass " + pass + ": " + sum);
   }

@@ -2,7 +2,8 @@
 // configurable, past setters and read-only properties of the prototypes; `length` and names that are indexes keep the meaning an array
 // gives them; an array that takes no more properties refuses; and the elements stay what they were when the storage grows.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-function counted() { return count("operationAOTPutByIdAndCache") > 0; }
+function visited() { return count("operationAOTPutByIdAndCache") + count("operationAOTAddPropertyBySlot"); }
+function counted() { return visited() > 0; }
 function show(value) { return typeof value === "function" ? "function" : typeof value === "symbol" ? String(value) : value === undefined ? "undefined" : JSON.stringify(value); }
 function describe(o) {
   var parts = [];
@@ -90,7 +91,7 @@ attempt("array literals", function () { var one = new FieldsOnReturned(literal()
 
 // Only the first field of each array, which needs new storage, reaches the runtime.
 var made = [];
-var visits = count("operationAOTPutByIdAndCache");
+var visits = visited();
 for (var i = 0; i < 300; i++) made.push(new Four(i, i + 1));
-visits = count("operationAOTPutByIdAndCache") - visits;
+visits = visited() - visits;
 console.log(made.length, made[299].second, made[299][1], !counted() || visits === 300);

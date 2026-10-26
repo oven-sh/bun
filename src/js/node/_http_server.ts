@@ -3097,7 +3097,7 @@ function ServerResponse(
   if (options === kHandle) {
     const events: $Node.HttpResponseEvents = { __proto__: null, finish: emitResponseFinish };
     this._events = events as any;
-    this._eventsCount = 1;
+    this._eventsCount = 0;
     this[kShapeMode] = false;
     this._maxListeners = undefined;
     if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
@@ -3113,7 +3113,7 @@ function ServerResponse(
     this.maxRequestsOnConnectionReached = false;
     this._defaultKeepAlive = true;
     this.useChunkedEncodingByDefault = true;
-    this.sendDate = true;
+    this.sendDate = false;
     this._removedConnection = false;
     this._removedContLen = false;
     this._removedTE = false;
@@ -3132,25 +3132,30 @@ function ServerResponse(
     this[kSocket] = nativeSocket!;
     this._header = null;
     this[kOutHeaders] = null;
-    this._keepAliveTimeout = nativeKeepAliveTimeout;
+    this._keepAliveTimeout = 0;
     this._onPendingData = nop;
     this[kErrored] = null;
     this[kHighWaterMark] = nativeHighWaterMark!;
     this[kRejectNonStandardBodyWrites] = nativeRejectsBodyWrites;
     this[kLenientValidation] = undefined;
     this.$exchange = makeExchange(this, nativeSocket!, events, req._readableState);
+    this.useChunkedEncodingByDefault = true;
     this.req = req;
+    this.sendDate = true;
     this._sent100 = false;
     this[headerStateSymbol] = NodeHTTPHeaderState.none;
     this[kPendingCallbacks] = noCallbacks;
+    this.finished = false;
     this[kHandle] = nativeHandle;
     this.statusCode = 200;
     this.statusMessage = undefined;
+    this._keepAliveTimeout = nativeKeepAliveTimeout;
     if (this.on !== eventEmitterOn) {
       ("unlikely");
       this._events = Object.create(null);
-      this._eventsCount = 0;
       this.on("finish", emitResponseFinish);
+    } else {
+      this._eventsCount = 1;
     }
     return;
   }
@@ -3177,7 +3182,7 @@ function ServerResponse(
   this.maxRequestsOnConnectionReached = false;
   this._defaultKeepAlive = true;
   this.useChunkedEncodingByDefault = true;
-  this.sendDate = true;
+  this.sendDate = false;
   this._removedConnection = false;
   this._removedContLen = false;
   this._removedTE = false;
@@ -3204,18 +3209,22 @@ function ServerResponse(
     options?.[kRejectNonStandardBodyWrites] ?? options?.rejectNonStandardBodyWrites ?? false;
   this[kLenientValidation] = undefined;
   this.$exchange = exchange;
+  this.useChunkedEncodingByDefault = true;
   this.req = req;
+  this.sendDate = true;
   this._sent100 = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[kPendingCallbacks] = [];
-  this[kHandle] = (options ? options[kHandle] : undefined) || req[kHandle];
-  this.statusCode = 200;
-  this.statusMessage = undefined;
+  this.finished = false;
 
   if (req.httpVersionMajor! < 1 || req.httpVersionMinor! < 1) {
     this.useChunkedEncodingByDefault = chunkExpression.test((req.headers?.te as string | undefined) ?? "");
     this.shouldKeepAlive = false;
   }
+
+  this[kHandle] = (options ? options[kHandle] : undefined) || req[kHandle];
+  this.statusCode = 200;
+  this.statusMessage = undefined;
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 
@@ -4828,16 +4837,21 @@ function hasThePrototypesOfItsClass(socket: $Node.HttpServerSocket): boolean {
 }
 
 function readsFlowUnseen(socket: $Node.HttpServerSocket): boolean {
-  if (
+  if (!(
     IS_COMPILED_AHEAD_OF_TIME &&
     ObjectGetPrototypeOf(socket) === serverSocketPrototype &&
     $findsDeclaredMember(socket, "readable") &&
     $findsDeclaredMember(socket, "readableLength") &&
     $findsDeclaredMember(socket, "readableHighWaterMark") &&
     $findsDeclaredMember(socket, "readableEnded")
-  ) {
-    return true;
+  )) {
+    ("unlikely");
+    return walksToAccessorsOfFlow(socket);
   }
+  return true;
+}
+
+function walksToAccessorsOfFlow(socket: $Node.HttpServerSocket): boolean {
   return (
     hasThePrototypesOfItsClass(socket) &&
     reachesReadablePrototype(socket, "readable") &&
@@ -4848,14 +4862,19 @@ function readsFlowUnseen(socket: $Node.HttpServerSocket): boolean {
 }
 
 function readsHighWaterMarksUnseen(socket: $Node.HttpServerSocket): boolean {
-  if (
+  if (!(
     IS_COMPILED_AHEAD_OF_TIME &&
     ObjectGetPrototypeOf(socket) === serverSocketPrototype &&
     $findsDeclaredMember(socket, "readableHighWaterMark") &&
     $findsDeclaredMember(socket, "writableHighWaterMark")
-  ) {
-    return true;
+  )) {
+    ("unlikely");
+    return walksToHighWaterMarks(socket);
   }
+  return true;
+}
+
+function walksToHighWaterMarks(socket: $Node.HttpServerSocket): boolean {
   return (
     hasThePrototypesOfItsClass(socket) &&
     reachesReadablePrototype(socket, "readableHighWaterMark") &&
@@ -4864,14 +4883,19 @@ function readsHighWaterMarksUnseen(socket: $Node.HttpServerSocket): boolean {
 }
 
 function readsItsEndUnseen(socket: $Node.HttpServerSocket): boolean {
-  if (
+  if (!(
     IS_COMPILED_AHEAD_OF_TIME &&
     ObjectGetPrototypeOf(socket) === serverSocketPrototype &&
     $findsDeclaredMember(socket, "destroyed") &&
     $findsDeclaredMember(socket, "writableEnded")
-  ) {
-    return true;
+  )) {
+    ("unlikely");
+    return walksToAccessorsOfItsEnd(socket);
   }
+  return true;
+}
+
+function walksToAccessorsOfItsEnd(socket: $Node.HttpServerSocket): boolean {
   return (
     hasThePrototypesOfItsClass(socket) &&
     reachesDuplexPrototype(socket, "destroyed") &&

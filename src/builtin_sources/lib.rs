@@ -1,3 +1,4 @@
+use bun_exe_format::builtins::Builtins;
 use std::sync::OnceLock;
 
 const HEADER: &[u8] = b"bun-builtins-manifest\t6";
@@ -19,6 +20,13 @@ pub struct BundledName {
     pub is_own_name: bool,
 }
 
+/// What it takes to find the words of a module in the text that `bun run` evaluates.
+pub struct BundledPositions {
+    pub evaluated: &'static [u8],
+    /// As src/codegen/bundled-positions.ts writes them.
+    pub corrections: &'static [u8],
+}
+
 #[derive(Default)]
 pub struct Manifest {
     defines: Vec<(Box<[u8]>, Box<[u8]>)>,
@@ -28,7 +36,6 @@ pub struct Manifest {
     builtin_functions: Vec<(Box<[u8]>, u32)>,
     function_file_indexes: Vec<(u32, u32)>,
     bundled_names: Vec<(Box<[u8]>, Vec<BundledName>)>,
-    bundled_positions: Vec<(Box<[u8]>, std::ops::Range<usize>)>,
 }
 
 #[derive(Debug)]
@@ -83,13 +90,6 @@ impl Manifest {
                         Some((last, names)) if **last == *file => names.push(name),
                         _ => manifest.bundled_names.push((file.into(), vec![name])),
                     }
-                }
-                b"positions" => {
-                    let file = field()?;
-                    let start = number(field()?).ok_or_else(error)? as usize;
-                    let length = number(field()?).ok_or_else(error)? as usize;
-                    let range = start..start + length;
-                    manifest.bundled_positions.push((file.into(), range));
                 }
                 b"function" => {
                     let id = number(field()?).ok_or_else(error)?;
@@ -186,20 +186,6 @@ impl Manifest {
         found.map_or(&[], |(_, names)| names)
     }
 
-    /// Where the text of the module stands in the text that `bun run` evaluates, as src/codegen/bundled-positions.ts writes it. Empty: nobody knows.
-    pub fn bundled_positions(&self, module: u32) -> &'static [u8] {
-        static POSITIONS: OnceLock<Vec<u8>> = OnceLock::new();
-        let path = self
-            .module(module)
-            .and_then(|module| module.path.as_deref());
-        let mut files = self.bundled_positions.iter();
-        let Some((_, range)) = files.find(|(file, _)| Some(&**file) == path) else {
-            return &[];
-        };
-        let positions = POSITIONS.get_or_init(|| Archive::read(b"positions").unwrap_or_default());
-        positions.get(range.clone()).unwrap_or_default()
-    }
-
     pub fn function_files(&self) -> &[Box<[u8]>] {
         &self.function_files
     }
@@ -248,8 +234,37 @@ fn archive() -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(start, end.offset_from_unsigned(start)) }
 }
 
+#[cfg(not(feature = "linked_archive"))]
+fn evaluated_modules() -> &'static [u8] {
+    include_bytes!(concat!(
+        env!("BUN_CODEGEN_DIR"),
+        "/InternalModuleRegistryConstants.bin"
+    ))
+}
+
+#[cfg(feature = "linked_archive")]
+fn evaluated_modules() -> &'static [u8] {
+    use bun_exe_format::builtins::HEADER_SIZE;
+    unsafe extern "C" {
+        static bun_internal_modules_header: [u8; HEADER_SIZE];
+    }
+    // SAFETY: InternalModuleRegistryConstants.S puts the symbol in front of one read-only file, whose header says where its data starts and how long it is.
+    unsafe {
+        let header = &bun_internal_modules_header;
+        let length = u32_at(&header[32..]) + u32_at(&header[36..]);
+        core::slice::from_raw_parts(header.as_ptr(), length)
+    }
+}
+
+/// What `bun run` evaluates for a module.
+fn evaluated_text(module: u32) -> Option<&'static [u8]> {
+    static EVALUATED: OnceLock<Option<Builtins<'static>>> = OnceLock::new();
+    let evaluated = EVALUATED.get_or_init(|| Builtins::parse(evaluated_modules()).ok());
+    Some(evaluated.as_ref()?.module(module)?.source)
+}
+
 const NAME_LEN: usize = 63;
-const RECORD_LEN: usize = 1 + NAME_LEN + 4 + 4;
+const RECORD_LEN: usize = 1 + NAME_LEN + 4 + 4 + 4;
 
 pub struct Archive {
     manifest: Manifest,
@@ -288,11 +303,44 @@ impl Archive {
     pub fn read(name: &[u8]) -> Option<Vec<u8>> {
         let records = records();
         let found = records.binary_search_by(|record| name_of(record).cmp(name));
-        let offset_and_len = &records[found.ok()?][1 + NAME_LEN..];
-        bun_zstd::decompress_alloc(
-            &archive()[u32_at(offset_and_len)..][..u32_at(&offset_and_len[4..])],
-        )
-        .ok()
+        let numbers = &records[found.ok()?][1 + NAME_LEN..];
+        let archive = archive();
+        let files = &archive[4 + u32_at(archive)..];
+        let frame = &files[u32_at(numbers)..][..u32_at(&numbers[4..])];
+        // One more than the id of the module whose evaluated text the file follows on.
+        match u32_at(&numbers[8..]).checked_sub(1) {
+            None => bun_zstd::decompress_alloc(frame).ok(),
+            Some(module) => {
+                bun_zstd::decompress_alloc_with_prefix(frame, evaluated_text(module as u32)?).ok()
+            }
+        }
+    }
+
+    /// None: a stack trace shows the lines and columns of the module as it is written.
+    pub fn bundled_positions(module: u32) -> Option<BundledPositions> {
+        // The part of each module stands behind its id and its length, in the order of the ids.
+        static POSITIONS: OnceLock<(Vec<u8>, Vec<(u32, core::ops::Range<usize>)>)> =
+            OnceLock::new();
+        let (positions, parts) = POSITIONS.get_or_init(|| {
+            let positions = Archive::read(b"positions").unwrap_or_default();
+            let mut parts = Vec::new();
+            let mut rest = &positions[..];
+            while let (Some(id), Some(length)) = (read_number(&mut rest), read_number(&mut rest)) {
+                let start = positions.len() - rest.len();
+                let Some(behind) = rest.get(length as usize..) else {
+                    break;
+                };
+                parts.push((id, start..start + length as usize));
+                rest = behind;
+            }
+            (positions, parts)
+        });
+        let found = parts.binary_search_by_key(&module, |part| part.0).ok()?;
+        let corrections = &positions[parts[found].1.clone()];
+        Some(BundledPositions {
+            evaluated: evaluated_text(module)?,
+            corrections,
+        })
     }
 
     pub fn has(name: &[u8]) -> bool {
@@ -315,9 +363,27 @@ fn u32_at(bytes: &[u8]) -> usize {
 }
 
 fn records() -> &'static [[u8; RECORD_LEN]] {
-    let archive = archive();
-    let records = &archive[4..][..u32_at(archive) * RECORD_LEN];
+    static RECORDS: OnceLock<Vec<u8>> = OnceLock::new();
+    let records = RECORDS.get_or_init(|| {
+        let archive = archive();
+        bun_zstd::decompress_alloc(&archive[4..][..u32_at(archive)])
+            .expect("the archive starts with the list of its files")
+    });
     records.as_chunks::<RECORD_LEN>().0
+}
+
+/// 7 bits a byte, the lowest first.
+fn read_number(bytes: &mut &[u8]) -> Option<u32> {
+    let mut value = 0u32;
+    for shift in (0..32).step_by(7) {
+        let (byte, rest) = bytes.split_first()?;
+        *bytes = rest;
+        value |= u32::from(byte & 0x7F) << shift;
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn name_of(record: &[u8; RECORD_LEN]) -> &[u8] {

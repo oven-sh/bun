@@ -41,7 +41,7 @@ Checked against the size of the data that describes the program to the run time 
     // MESSAGE-DATA< <n>               fewer than n layouts carry what only the text of a type error reads
     // TYPES< <n>                      fewer than n types are described to the run time
 Checked against the run-time counters (`aotRuntimeCounters()`) when the program has run in the shell, on every platform:
-    // COUNTER: <RuntimeCounter> (= | >= | <=) <n>    the counter's value. A counter that the shell does not print fails the line
+    // COUNTER: <RuntimeCounter | LimitID> (= | >= | <=) <n>    the counter's value, or how often the limit was met at run time. A counter that the shell does not print fails the line
 Checked by compiling the program once more with the word `validate`, which tests every value against the type the engine trusts, on every platform:
     // VALIDATED compiles              the compiler finishes and writes an image
 Not read here: // CODE (a disassembly) and // JSCALLS (CALLS for the same program without type annotations).
@@ -237,7 +237,7 @@ def runtime_counters(name, path, image, entry):
     printed = output.split('\n')
     if '@counters' not in printed: return exit_code, None
     fields = [line.split('\t') for line in printed[printed.index('@counters') + 1:]]
-    return exit_code, {f[1].split(':', 1)[1]: int(f[0]) for f in fields if len(f) == 2 and f[0].isdigit() and f[1].startswith(('counter:', 'exit:'))}
+    return exit_code, {f[1].split(':', 1)[1]: int(f[0]) for f in fields if len(f) == 2 and f[0].isdigit() and f[1].startswith(('counter:', 'exit:', 'limit:'))}
 
 
 def counter_failure(rest, counters, exit_code):

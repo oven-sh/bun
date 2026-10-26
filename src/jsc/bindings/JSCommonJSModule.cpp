@@ -1475,6 +1475,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
         }
     }
 
+    // An ES module of an executable runs here. A stack that is taken meanwhile lists the function that loads an ES module from disk.
+    if (Bun::hasCompiledModules() && !child->moduleGraph()) [[unlikely]] {
+        JSObject* loader = Bun::loaderOfCompiledESModule(globalObject, specifier, !typeAttribute.isEmpty());
+        REQUIRE_CJS_RETURN_IF_EXCEPTION;
+        if (loader)
+            callframe->setCallee(loader);
+    }
+
     // Load the module
     JSValue fetchResult = Bun::fetchCommonJSModule(
         globalObject,

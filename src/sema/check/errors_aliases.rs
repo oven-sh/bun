@@ -244,7 +244,7 @@ impl Checker<'_, '_> {
         }
         let index = self.exprs_by_kind(file);
         let mut lefts: Vec<ExprId> = (index.of(ExprTag::Dot).iter())
-            .filter_map(|&e| match hir[e].kind {
+            .filter_map(|&e| match hir.checked_kind(e) {
                 ExprKind::Dot { obj, .. }
                     if matches!(hir[obj].kind, ExprKind::Ident(_))
                         && !is_parenthesized(hir, obj)
@@ -334,7 +334,7 @@ impl Checker<'_, '_> {
             .filter(|&e| !bound.is_unchecked(e.idx()) && !bound.is_in_type_query(e))
             // `visitPropertyAccessExpression` of the class fields transformer, which runs earlier, has turned `a.#b`
             // into a helper call.
-            .filter(|&e| match hir[e].kind {
+            .filter(|&e| match hir.checked_kind(e) {
                 ExprKind::Dot { name, .. } => {
                     !(transforms_private_elements
                         && self.atoms().is_private_name(name)

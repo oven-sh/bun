@@ -23,6 +23,7 @@ import {
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { dirname, join } from "path";
 import { limitsLowered } from "./harness/limits";
+import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./harness/memory-limit";
 import {
   inPrograms,
   isGroup,
@@ -174,6 +175,8 @@ async function spawned(
   seconds: number,
   everyTenSeconds?: (stdoutSoFar: string) => void,
 ) {
+  const timeout = Math.ceil(seconds * 1000);
+  const began = performance.now();
   await using proc = Bun.spawn({
     cmd,
     cwd,
@@ -181,9 +184,10 @@ async function spawned(
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    timeout: Math.ceil(seconds * 1000),
+    timeout,
     killSignal: "SIGKILL",
   });
+  using held = endAtMemoryLimit(proc, memoryLimitOfAKnownProgram);
   let stdout = "";
   const decoder = new TextDecoder();
   const readStdout = async () => {
@@ -192,7 +196,13 @@ async function spawned(
   const timer = everyTenSeconds && setInterval(() => everyTenSeconds(stdout), 10_000);
   const [, stderr, exitCode] = await Promise.all([readStdout(), proc.stderr.text(), proc.exited]);
   clearInterval(timer);
-  return { stdout, stderr, exitCode, signal: proc.signalCode };
+  if (held.exceeded)
+    console.error(
+      `KILLED at its memory limit of ${Math.round(memoryLimitOfAKnownProgram / 2 ** 20)} MB: ${cmd.at(-1)}`,
+    );
+  // The memory limit, and a machine that is out of memory, end a process with the signal of the clock.
+  const isEndedByClock = proc.signalCode === "SIGKILL" && !held.exceeded && performance.now() - began >= timeout;
+  return { stdout, stderr, exitCode, signal: proc.signalCode, isEndedByClock };
 }
 
 const findLastStarted = (stdout: string) => [...stdout.matchAll(/^== (\d+) (\S+)$/gm)].at(-1) ?? [];
@@ -235,7 +245,8 @@ async function run(
     if (/^== end$/m.test(ran.stdout)) break;
     if (left() < 1) return { printed: byProgram(output), stopped, isCut: true };
     const [, index, name] = findLastStarted(ran.stdout);
-    stopped.push(`${name ?? "before the first program"}: ${ran.signal ?? `exit code ${ran.exitCode}`}`);
+    const ending = ran.signal === "SIGKILL" && !ran.isEndedByClock ? "SIGKILL before its time was up" : ran.signal;
+    stopped.push(`${name ?? "before the first program"}: ${ending ?? `exit code ${ran.exitCode}`}`);
     // No machine that runs one of these lanes can be asked afterwards.
     if (ran.signal)
       console.error(`DIED: ${name ?? "before the first program"}: ${ran.signal}\n${ran.stderr.slice(0, 4000)}`);
@@ -321,7 +332,14 @@ async function written(
     };
   };
   // A program that the compiler refuses beside the others, for a name that two of them declare, leaves the group.
-  let first: Awaited<ReturnType<typeof build>> = { stdout: "", stderr: "", exitCode: 1, signal: null, executable: "" };
+  let first: Awaited<ReturnType<typeof build>> = {
+    stdout: "",
+    stderr: "",
+    exitCode: 1,
+    signal: null,
+    isEndedByClock: false,
+    executable: "",
+  };
   for (let attempt = 0; attempt < 6 && first.exitCode; attempt++) {
     writeFileSync(join(cwd, "group.ts"), textOfGroup(names));
     first = await build(name, flags, bunEnv, left);
@@ -334,8 +352,7 @@ async function written(
     if (first.exitCode) console.error(`LEFT OUT of group ${group}: ${[...refused].join(", ")}`);
     if (first.exitCode) names = names.filter(name => !refused.has(name));
   }
-  if (endsByItsOwnClock && first.signal === "SIGKILL")
-    return void leaveToAnotherRun(group, "the clock ended the build");
+  if (endsByItsOwnClock && first.isEndedByClock) return void leaveToAnotherRun(group, "the clock ended the build");
   expect({ build: name, stderr: first.exitCode ? first.stderr.slice(-2000) : "", exitCode: first.exitCode }).toEqual({
     build: name,
     stderr: "",
@@ -379,7 +396,7 @@ async function compareBuilds(cwd: string, carrier: string[], group: number | str
   const { names, build, first } = made;
   const buildTested = () => build("tested", [...flags, "--explain=statistics"], bunEnv, secondsLeft);
   const second = await (validates && paths.some(isLargeProgram) ? withEverySlot(1, buildTested) : buildTested());
-  if (endsByItsOwnClock && second.signal === "SIGKILL") return leaveToAnotherRun(group, "the clock ended the build");
+  if (endsByItsOwnClock && second.isEndedByClock) return leaveToAnotherRun(group, "the clock ended the build");
   expect({
     build: "tested",
     stderr: second.exitCode ? second.stderr.slice(-2000) : "",
@@ -549,7 +566,7 @@ async function compareWays(
     if (mark !== undefined) console.error(says(way.name, `todo: ${made.names[0]}: ${mark}`));
     if (mark !== undefined && (names.length === 0 || /^(Not every time|Beside others):/.test(mark))) return;
     let built = await made.build(name, [...way.flags, "--explain=statistics"], { ...bunEnv, ...way.env }, secondsLeft);
-    if (endsByItsOwnClock && built.signal === "SIGKILL")
+    if (endsByItsOwnClock && built.isEndedByClock)
       return void notThrough.push(says(way.name, "NOT THROUGH: the clock ended the build"));
     // A limit that no program of the group has met was not tried.
     const met = new RegExp(`^${way.name.split(":")[0]}Hits (\\d+)$`, "m").exec(built.stderr + built.stdout)?.[1];
@@ -572,7 +589,7 @@ async function compareWays(
         { ...bunEnv, ...way.env, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: undefined },
         secondsLeft,
       );
-      if (endsByItsOwnClock && built.signal === "SIGKILL")
+      if (endsByItsOwnClock && built.isEndedByClock)
         return void notThrough.push(says(way.name, "NOT THROUGH: the clock ended the unchecked build"));
       if (built.exitCode !== 0)
         return void reds.push(

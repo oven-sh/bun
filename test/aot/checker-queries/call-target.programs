@@ -1119,6 +1119,40 @@ absent: no-single-parent.js:24 constructor function parent `ReassignedParent` = 
 absent: no-single-parent.js:28 constructor function parent `TheFunctionItself` = no-single-parent.js:1
 absent: no-single-parent.js:32 constructor function parent `OtherObject` = no-single-parent.js:1
 absent: no-single-parent.js:34 constructor function parent `OtherCreate` = no-single-parent.js:1
+//// constructor-function-parents/parents-in-a-circle.js
+function BelowItsSubclass() {}
+class Subclass extends BelowItsSubclass {}
+Object.setPrototypeOf(BelowItsSubclass.prototype, Subclass.prototype);
+function Top() {}
+class Middle extends Top {}
+class Lowest extends Middle {}
+Top.prototype = Object.create(Lowest.prototype);
+function First() {}
+class Between extends First {}
+function Second() {}
+Object.setPrototypeOf(Second.prototype, Between.prototype);
+Object.setPrototypeOf(First.prototype, Second.prototype);
+function One() {}
+function Other() {}
+Object.setPrototypeOf(One.prototype, Other.prototype);
+Object.setPrototypeOf(Other.prototype, One.prototype);
+function LeadsIntoTheCircle() {}
+Object.setPrototypeOf(LeadsIntoTheCircle.prototype, Subclass.prototype);
+class Base {}
+class Derived extends Base {}
+function BelowTwoClasses() {}
+Object.setPrototypeOf(BelowTwoClasses.prototype, Derived.prototype);
+//// constructor-function-parents/parents-in-a-circle.queries.txt
+# A function has no parent where the parents above it, functions and classes alike, come round to one of themselves.
+absent: parents-in-a-circle.js:1 constructor function parent `BelowItsSubclass` = parents-in-a-circle.js:2
+absent: parents-in-a-circle.js:4 constructor function parent `Top` = parents-in-a-circle.js:6
+absent: parents-in-a-circle.js:8 constructor function parent `First` = parents-in-a-circle.js:10
+absent: parents-in-a-circle.js:10 constructor function parent `Second` = parents-in-a-circle.js:9
+absent: parents-in-a-circle.js:13 constructor function parent `One` = parents-in-a-circle.js:14
+absent: parents-in-a-circle.js:14 constructor function parent `Other` = parents-in-a-circle.js:13
+absent: parents-in-a-circle.js:17 constructor function parent `LeadsIntoTheCircle` = parents-in-a-circle.js:2
+# Classes above a function that end at a class without a parent leave the function its parent.
+parents-in-a-circle.js:21 constructor function parent `BelowTwoClasses` = parents-in-a-circle.js:20
 //// contextual-type/discriminated-union.queries.txt
 # A discriminant property selects the union member that is the literal's contextual type.
 discriminated-union.ts:3 contextual `{ kind: "a", x: 1 }` = { kind: "a"; x: number; }

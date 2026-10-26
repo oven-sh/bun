@@ -93,7 +93,7 @@ impl Checker<'_, '_> {
                 return None;
             }
             // `GetElementOrPropertyAccessName`, or else the whole left-hand side.
-            ExprKind::Assign { target, .. } => match hir[target].kind {
+            ExprKind::Assign { target, .. } => match hir.checked_kind(target) {
                 ExprKind::Dot { .. } if !is_private_name_at(hir, hir.name_pos(target)) => {
                     return Some(self.span_of_token(file, hir.name_pos(target)));
                 }
@@ -891,7 +891,7 @@ impl OperatorPrecedence {
 
     /// `GetExpressionPrecedence` of `e` without the parentheses around it.
     fn for_expression(hir: &hir::File, e: ExprId) -> OperatorPrecedence {
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Spread(_) => OperatorPrecedence::Spread,
             ExprKind::Yield { .. } => OperatorPrecedence::Yield,
             ExprKind::Assign { .. } => OperatorPrecedence::Assignment,
@@ -2074,7 +2074,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
 
     /// `a`, `a.b.c`
     fn entity_name_text(&self, file: FileId, e: ExprId) -> Option<Vec<u8>> {
-        match self.c.hir(file)[e].kind {
+        match self.c.hir(file).checked_kind(e) {
             ExprKind::Ident(name) => Some(self.text(name)),
             ExprKind::Dot { obj, name, .. } => Some(cat! {
                 self.entity_name_text(file, obj)?, b".", self.text(name)
@@ -4722,7 +4722,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 Some((file, Decl::Expando(e) | Decl::ThisProperty(e))) => {
                     let hir = self.c.hir(file);
                     if let ExprKind::Assign { target, .. } = hir[e].kind
-                        && let ExprKind::Index { index, .. } = hir[target].kind
+                        && let ExprKind::Index { index, .. } = hir.checked_kind(target)
                         && !is_parenthesized(hir, index)
                         && is_property_access_entity_name_expression(hir, index)
                     {
@@ -5025,7 +5025,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 Chain::No | Chain::Continue => b"",
             }
         };
-        let text = match hir[e].kind {
+        let text = match hir.checked_kind(e) {
             ExprKind::Ident(name) | ExprKind::PrivateIdentifier(name) => self.text(name),
             ExprKind::This => b"this".to_vec(),
             ExprKind::Super => b"super".to_vec(),

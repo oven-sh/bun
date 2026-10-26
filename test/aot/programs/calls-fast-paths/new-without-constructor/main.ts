@@ -13,11 +13,21 @@
 // IR= 0 keeps = Construct v
 // ENV JSC_aotCountsPath=/dev/null
 declare const console: any;
-declare const aotOperationCount: (name: string) => number;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 import { direct, implicit, forwards, keeps } from "./untyped.js";
-function entered(): number { return aotOperationCount("operationAOTConstruct") + aotOperationCount("operationAOTSuperConstruct") + aotOperationCount("operationAOTSuperConstructList"); }
 // The functions are handed over as values: one that is called from one place only is moved there and has no body to look into.
-function counted(what: string, f: (n: number) => unknown): void { const before = entered(); const r = f(400000); const times = entered() - before; console.log(what + ": " + r + "; the run time was entered " + (times < 100 ? "under 100 times" : times + " times")); }
+function counted(what: string, f: (n: number) => unknown): void { const before = countsSoFar(); const r = f(400000); const times = callsIn(countsSoFar()) - callsIn(before); console.log(what + ": " + r + "; the run time was entered " + (times < 100 ? "under 100 times" : times + " times")); }
 counted("the constructor written out, 400,000", direct);
 counted("no constructor of its own, 400,000", implicit);
 counted("a forwarder, 400,000", forwards);

@@ -1,4 +1,17 @@
-declare const aotOperationCount: (name: string) => number;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that `show` returns.
+const makeText = ["operationAOTIntToString", "operationAOTStringOfAnyValue", "operationAOTConcat"];
 // A plain object that untyped code built enters a typed parameter: any object passes and stays the same object, also when its properties hold typed objects, arrays and functions. A property of the wrong kind throws where typed code reads it, and one that is missing reads undefined. For 400 objects of one shape the slow type test of the runtime is entered fewer than 20 times.
 type Author = { nick: string; editor: Author | null };
 type Post = { id: number; author: Author; tags: string[]; render: (text: string) => string; note: unknown; reviewer?: Author };
@@ -38,13 +51,14 @@ const tags = ["x", "y"];
 const upper = (text: string) => text.toUpperCase();
 const kept: any[] = [];
 let text = "";
-const before = aotOperationCount("operationAOTEnforceType");
+const before = countsSoFar();
 for (let i = 0; i < 400; i++) {
   const post = grow(i, author, tags, upper, i % 2 ? "n" : [i]);
   kept.push(post);
   text = show(post);
 }
-const slow = aotOperationCount("operationAOTEnforceType") - before;
+const after = countsSoFar();
+const slow = callsIn(after, ...makeText) - callsIn(before, ...makeText);
 console.log(text, slow < 20 ? "cached" : "not cached: " + slow);
 
 const same = kept[7];

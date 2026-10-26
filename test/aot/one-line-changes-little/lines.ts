@@ -219,6 +219,11 @@ export const libraryLines: readonly Line[] = [
   ["console-log-response-json", "console.log(await new Response(K).json());"],
   ["console-log-request-json", "console.log(await new Request(\"http://localhost\", { method: \"POST\", body: K }).json());"],
   ["console-log-file-json", "console.log(await Bun.file(K).json());"],
+  ["global-write-constant-constructed", "globalThis.List = Array; new List(3);"],
+  ["global-write-constant-printed", "globalThis.List = Array; console.log(new List(3));"],
+  ["console-log-host-instance", "console.log(new TextDecoder());"],
+  ["console-log-host-objects", "console.log(navigator, new Event(K), new TextEncoder());"],
+  ["console-log-usage", "console.log(process.memoryUsage(), process.cpuUsage(), process.resourceUsage());"],
 ];
 
 /** Built into the entry point that imports everything of ./program.js: what a line does to the program's own code. */

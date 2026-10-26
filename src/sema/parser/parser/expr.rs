@@ -139,6 +139,19 @@ fn is_inside_type_list(text: &[u8], end: usize) -> bool {
 
 /// True for a name or a member access that isn't part of an optional chain.
 #[inline(always)]
+/// `IsIdentifierText`
+fn is_identifier_text(text: &[u8]) -> bool {
+    use bun_core::lexer::{
+        char_and_size, end_of_run, is_identifier_start, is_type_script_identifier_part,
+    };
+    if text.is_empty() {
+        return false;
+    }
+    let (first, size) = char_and_size(text, 0);
+    is_identifier_start(first as u32)
+        && end_of_run(text, size, is_type_script_identifier_part) == text.len()
+}
+
 fn is_plain_target(kind: ExprKind) -> bool {
     matches!(
         kind,
@@ -1820,7 +1833,28 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             _ => self.expression_allowing_in(),
         };
         self.expect(T::CloseBracket);
-        self.finish_expr(ExprKind::Index { obj, index, chain }, start)
+        let Some(name) = self.name_in_brackets(index) else {
+            return self.finish_expr(ExprKind::Index { obj, index, chain }, start);
+        };
+        let dot = self.finish_dot((obj, chain), name, start);
+        self.f.add_flags(dot, ExprFlags::BRACKET_ACCESS);
+        dot
+    }
+
+    /// In a build `a["b"]` is `a.b`: the name and where its literal starts, for a literal that holds what can stand behind
+    /// a dot. `FileIn::written_kind` finds the literal in front of the access.
+    fn name_in_brackets(&self, index: ExprId) -> Option<(Atom, u32)> {
+        let is_last = index.idx() + 1 == self.f.exprs.len();
+        let is_in_parentheses = (self.f.expr_flags(index)).contains(ExprFlags::PARENTHESIZED);
+        if !self.options.compiles || !is_last || is_in_parentheses {
+            return None;
+        }
+        let MemberKey::Name(name) = self.f.index_member_key(index) else {
+            return None;
+        };
+        let literal = self.f[index];
+        let text = (self.lx.src).get(literal.pos as usize + 1..literal.end as usize - 1)?;
+        is_identifier_text(text).then_some((name, literal.pos))
     }
 
     /// `parseArgumentList`, at the `(`. Returns the arguments and the position of the `)`.

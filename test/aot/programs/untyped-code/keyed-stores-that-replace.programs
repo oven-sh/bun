@@ -2131,8 +2131,17 @@ console.log(lines.join("\n"));
 //// method-resolved-once-any-class.js
 // The first call of a method by name asks the run time for it, and no later call does, whatever the class looks like: the prototype of the class need not make its members for that.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const asked = () => count("operationAOTGetByIdAndCache");
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 class Plain { f = 0; m1() { return 1; } m2() { return 2; } m3() { return 3; } m4() { return 4; } m5() { return 5; } m6() { return 6; } }
 class WithGetter { f = 0; m1() { return 1; } m2() { return 2; } m3() { return 3; } m4() { return 4; } m5() { return 5; } get g() { return 6; } }
 class Parent { f = 0; m1() { return 1; } m2() { return 2; } m3() { return 3; } m4() { return 4; } m5() { return 5; } m6() { return 6; } }
@@ -2144,9 +2153,9 @@ function callsOfChild(object, turns) { let sum = 0; for (let i = 0; i < turns; i
 const lines = [];
 let most = 0;
 function measure(label, run) {
-  const before = asked();
+  const before = countsSoFar();
   const result = run();
-  most = Math.max(most, asked() - before);
+  most = Math.max(most, callsIn(countsSoFar()) - callsIn(before));
   lines[lines.length] = label + " " + result;
 }
 const plain = new Plain(), withGetter = new WithGetter(), parent = new Parent(), child = new Child(), callsAnother = new CallsAnother(), few = new Few();

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
-import { readFileSync, readdirSync, realpathSync, statSync, utimesSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync, utimesSync } from "node:fs";
 import { join, relative } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import {
@@ -9,11 +9,17 @@ import {
   helperModules,
   locate,
   moduleList,
+  sourceFiles,
   specifierOf,
   typesOnlySchemas,
 } from "../../src/codegen/builtins-manifest-model";
 import { listBundledNamesOfModule } from "../../src/codegen/bundled-names";
-import { encodePieces, findPositionsInEvaluatedText } from "../../src/codegen/bundled-positions";
+import {
+  Aligner,
+  encodeWordsInEvaluatedText,
+  findWordsInEvaluatedText,
+  Words,
+} from "../../src/codegen/bundled-positions";
 import { run } from "../aot/harness/run";
 
 const root = join(import.meta.dir, "..", "..");
@@ -46,8 +52,23 @@ const engineFunctions: EngineFunctions = {
   functions: [{ id: 7, file: "A.js", name: "first", exportName: "first" }],
 };
 
+// What `bun run` evaluates for node/os.ts. The other modules have an empty text.
+const evaluatedText = readFileSync(join(root, "src", "js", "node", "os.ts"), "latin1").replaceAll("const ", "let ");
+
+function createEvaluatedModules() {
+  const [header, record] = [48, 24];
+  const section = Buffer.alloc(header + sourceFiles.length * record + evaluatedText.length);
+  [sourceFiles.length, header, 0, 0, header + sourceFiles.length * record, evaluatedText.length].forEach(
+    (value, index) => section.writeUInt32LE(value, 16 + index * 4),
+  );
+  section.writeUInt32LE(evaluatedText.length, header + sourceFiles.indexOf("node/os.ts") * record + 20);
+  section.write(evaluatedText, header + sourceFiles.length * record, "latin1");
+  return section;
+}
+
 function createFixture(engine: EngineFunctions = engineFunctions) {
   const dir = tempDir("builtins-manifest", {
+    "evaluated_modules.bin": createEvaluatedModules(),
     "aot_engine_functions.json": JSON.stringify(engine),
     "bundled_names_of_modules.txt": [
       `name\tnode/fs.ts\t12\tread2\town`,
@@ -68,6 +89,7 @@ function createFixture(engine: EngineFunctions = engineFunctions) {
     nameFlags: [
       `--bundled-names-of-modules=${file("bundled_names_of_modules.txt")}`,
       `--bundled-helpers=${file("runtime.out.js")}`,
+      `--evaluated-modules=${file("evaluated_modules.bin")}`,
     ],
     [Symbol.dispose]: () => dir[Symbol.dispose](),
   };
@@ -75,13 +97,18 @@ function createFixture(engine: EngineFunctions = engineFunctions) {
 
 function readArchive(file: string) {
   const bytes = readFileSync(file);
-  const frames = new Map<string, Buffer>();
-  for (let record = 4; record < 4 + bytes.readUInt32LE(0) * 72; record += 72) {
-    const name = bytes.toString("latin1", record + 1, record + 1 + bytes[record]);
-    const offset = bytes.readUInt32LE(record + 64);
-    frames.set(name, bytes.subarray(offset, offset + bytes.readUInt32LE(record + 68)));
+  const files = bytes.subarray(4 + bytes.readUInt32LE(0));
+  const records = zstdDecompressSync(bytes.subarray(4, 4 + bytes.readUInt32LE(0)));
+  const frames = new Map<string, { frame: Buffer; module: number; text: () => Buffer }>();
+  for (let record = 0; record < records.length; record += 76) {
+    const name = records.toString("latin1", record + 1, record + 1 + records[record]);
+    const offset = records.readUInt32LE(record + 64);
+    const frame = files.subarray(offset, offset + records.readUInt32LE(record + 68));
+    const module = records.readUInt32LE(record + 72) - 1;
+    const dictionary = sourceFiles[module] === "node/os.ts" ? Buffer.from(evaluatedText, "latin1") : undefined;
+    frames.set(name, { frame, module, text: () => zstdDecompressSync(frame, { dictionary }) });
   }
-  return { names: [...frames.keys()], read: (name: string) => zstdDecompressSync(frames.get(name)!).toString() };
+  return { names: [...frames.keys()], read: (name: string) => frames.get(name)!.text().toString(), frames };
 }
 
 describe("builtins-manifest.ts", () => {
@@ -102,7 +129,7 @@ describe("builtins-manifest.ts", () => {
 
   afterAll(() => fixture[Symbol.dispose]());
 
-  test("the manifest has format 6 and its seven record kinds", () => {
+  test("the manifest has format 6 and its six record kinds", () => {
     expect(records[0]).toEqual(["bun-builtins-manifest", "6"]);
     expect([...new Set(records.slice(1).map(([kind]) => kind))]).toEqual([
       "define",
@@ -111,7 +138,6 @@ describe("builtins-manifest.ts", () => {
       "function",
       "declarations",
       "name",
-      "positions",
     ]);
   });
 
@@ -119,12 +145,27 @@ describe("builtins-manifest.ts", () => {
     expect(records.filter(([kind]) => kind === "name")).toEqual([["name", "node/fs.ts", "12", "read2", "own"]]);
   });
 
-  test("the positions of all modules are one file of the archive, and the manifest says which part is whose", () => {
-    expect(records.filter(([kind]) => kind === "positions")).toEqual([
-      ["positions", "node/fs.ts", "0", "3"],
-      ["positions", "node/os.ts", "3", "2"],
+  test("the positions of all modules are one file of the archive, each part behind the id of its module and its length", () => {
+    // 7 bits a byte, the lowest first.
+    const idOf = (file: string) => {
+      const id = moduleList.indexOf(file);
+      expect(id).toBeWithin(0, 128 * 128);
+      return id < 128 ? [id] : [(id & 127) | 128, id >> 7];
+    };
+    expect([...readArchive(fixture.archive).frames.get("positions")!.text()]).toEqual([
+      ...[...idOf("node/fs.ts"), 3, 1, 2, 3],
+      ...[...idOf("node/os.ts"), 2, 5, 6],
     ]);
-    expect([...Buffer.from(readArchive(fixture.archive).read("positions"), "latin1")]).toEqual([1, 2, 3, 5, 6]);
+  });
+
+  test("a module is compressed as what follows on the text that is evaluated for it", () => {
+    const { read, frames } = readArchive(fixture.archive);
+    for (const [id, file] of sourceFiles.entries()) expect([file, frames.get(file)!.module]).toEqual([file, id]);
+    expect(frames.get("manifest")!.module).toBe(-1);
+    const text = readFileSync(join(root, "src", "js", "node", "os.ts"), "utf8");
+    expect(read("node/os.ts")).toBe(text);
+    expect(frames.get("node/os.ts")!.frame.length).toBeLessThan(text.length / 20);
+    expect(() => zstdDecompressSync(frames.get("node/os.ts")!.frame)).toThrow();
   });
 
   test("the defines do not depend on --debug", () => {
@@ -317,22 +358,42 @@ describe("bundled-positions.ts", () => {
       /__intrinsic__/g,
       "@",
     );
-    const pieces = findPositionsInEvaluatedText(written, output, JSON.parse(map), evaluated);
-    const lines = evaluated.split("\n");
-    const textBehind = (inWritten: string) => {
-      const offset = written.indexOf(inWritten);
-      const piece = pieces.findLast(piece => piece.offset <= offset)!;
-      expect(written.slice(piece.offset, offset)).not.toContain("\n");
-      return lines[piece.line].slice(piece.column + offset - piece.offset);
-    };
-    expect(textBehind(`("node:stream")`)).toStartWith("(12)");
-    expect(textBehind(`(name, "string", value)`)).toStartWith(`(118, name, "string", value)`);
-    expect(textBehind(`$ERR_INVALID_ARG_TYPE`)).toStartWith("@makeErrorWithCode(");
-    expect(textBehind(`(value!, false)`)).toStartWith("(value, !1)");
-    expect(textBehind(`.$call`)).toStartWith(".@call(");
-    expect(textBehind(` as any).end(name)`)).toStartWith(".end(name)");
-    expect(textBehind(`(name);`)).toStartWith("(name)");
-    expect(encodePieces(written, pieces).length).toBeLessThan(written.length / 4);
+    const [words, wordsOfEvaluated] = [new Words(written), new Words(evaluated)];
+    const found = findWordsInEvaluatedText(words, output, JSON.parse(map), wordsOfEvaluated);
+    const encoded = encodeWordsInEvaluatedText(words, wordsOfEvaluated, found);
+
+    const numbers: number[] = [];
+    for (let at = 0, scale = 1; at < encoded.length; at++) {
+      if (scale === 1) numbers.push(0);
+      numbers[numbers.length - 1] += (encoded[at] & 127) * scale;
+      scale = encoded[at] < 128 ? 1 : scale * 128;
+    }
+    const aligner = new Aligner(words, wordsOfEvaluated);
+    for (let corrected = numbers.shift(); aligner.written < words.length;) {
+      if (aligner.written !== corrected) {
+        aligner.step(corrected ?? words.length);
+        continue;
+      }
+      const distance = numbers.shift()! - 1;
+      if (distance < 0) aligner.passOver();
+      else aligner.correct(distance & 1 ? -(distance >> 1) - 1 : distance >> 1);
+      corrected = numbers.length > 0 ? corrected + numbers.shift()! : undefined;
+    }
+    for (const [word, partner] of found) expect([word, aligner.partners[word]]).toEqual([word, partner]);
+
+    const partnerOf = (inWritten: string) => aligner.partners[words.starts.indexOf(written.indexOf(inWritten))];
+    const textAt = (inWritten: string) => evaluated.slice(wordsOfEvaluated.starts[partnerOf(inWritten)]);
+    const textBehind = (inWritten: string) => evaluated.slice(wordsOfEvaluated.ends[partnerOf(inWritten)]);
+    expect(textBehind(`require("node:stream")`)).toStartWith("(12)");
+    expect(textBehind(`$ERR_INVALID_ARG_TYPE(name, "string", value)`)).toStartWith(`(118, name, "string", value)`);
+    expect(textAt(`$ERR_INVALID_ARG_TYPE`)).toStartWith("makeErrorWithCode(");
+    expect(textBehind(`$call(value!, false)`)).toStartWith("(value, !1)");
+    expect(textBehind(`stream.$call`)).toStartWith(".@call(");
+    expect(textBehind(`stream as any).end(name)`)).toStartWith(".end(name)");
+    expect(textBehind(`end(name);`)).toStartWith("(name)");
+    expect(partnerOf("unknown")).toBe(-1);
+    expect(partnerOf("Nothing")).toBe(-1);
+    expect(encoded.length).toBeLessThan(written.length / 40);
   });
 });
 

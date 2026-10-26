@@ -1,6 +1,16 @@
-// An element read from an array whose elements are not in plain storage (a template object: it is frozen) is returned as it is when it fits the declared type. The program counts how often the run time is asked whether a value fits.
-declare const aotOperationCount: undefined | ((name: string) => number);
-const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// An element read from an array whose elements are not in plain storage (a template object: it is frozen) is returned as it is when it fits the declared type. The program counts how often compiled code calls the run time, whatever for.
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 interface Point {
   x: number;
   y: number;
@@ -20,5 +30,6 @@ const seen: unknown[] = [];
 for (let i = 0; i < 5; i++) seen.push(frozen[i]);
 const points = Object.freeze(JSON.parse('[{"x":1,"y":2}]')) as readonly Point[];
 const sum = points[0]!.x + points[0]!.y;
-const asked = counted ? counted("operationAOTEnforceType") : null;
+const counts = countsSoFar();
+const asked = counts === "" ? null : callsIn(counts);
 console.log(total, JSON.stringify(seen), sum, asked === null || asked < 100);

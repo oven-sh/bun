@@ -1,5 +1,5 @@
 // String keys longer than 2,048 characters are compared with property names instead of being atomized: flat strings and ropes in reads, `in` and stores, on an object that owns an equal name, on one that owns a name of equal length, through a prototype and a proxy, and on an object with 5,000 names.
-// COUNTER: LongKeyComparisonLimitReached >= 1
+// COUNTER: MaxNamesComparedWithLongKey >= 1
 const turns = JSON.parse("40");
 const box = JSON.parse("[0]");
 function hidden(value) { box[0] = value; return box[0]; }

@@ -2381,7 +2381,8 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[target].kind else {
+        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir.checked_kind(target)
+        else {
             return None;
         };
         if !is_entity_name_expression(self.hir(file), obj) {
@@ -3330,7 +3331,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             };
             // `GetLeftmostAccessExpression`
             let mut root = target;
-            while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[root].kind {
+            while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } =
+                hir.checked_kind(root)
+            {
                 if is_parenthesized(hir, root) {
                     break;
                 }
@@ -3389,7 +3392,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 _ => continue,
             }
             // `tryGetPropertyName`
-            let property = match hir[target].kind {
+            let property = match hir.checked_kind(target) {
                 ExprKind::Dot { name, .. } => Some(name),
                 ExprKind::Index { index, .. } => match hir[index].kind {
                     ExprKind::String(name) => Some(name),
@@ -7167,7 +7170,7 @@ fn get_name_of_declaration(hir: &hir::File, node: Node) -> Node {
     match hir.data(node) {
         NodeData::Expr(e) => match hir[e].kind {
             // `GetElementOrPropertyAccessName`, falling back to the left operand.
-            ExprKind::Assign { target, .. } => match hir[target].kind {
+            ExprKind::Assign { target, .. } => match hir.checked_kind(target) {
                 ExprKind::Index { index, .. }
                     if is_string_or_numeric_literal_like_in_parentheses(hir, index) =>
                 {

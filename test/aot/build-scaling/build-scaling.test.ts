@@ -79,7 +79,18 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<C
   try {
     return await measureCommand(
       cwd,
-      [bunExe(), "build", "--compile", "--aot", withThreads(1), ...carrier, entry, "--outfile", executable],
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        withThreads(1),
+        ...(shape.flags ?? []),
+        ...carrier,
+        entry,
+        "--outfile",
+        executable,
+      ],
       900_000,
       bunEnv,
       shape.isRefused ? 1 : 0,
@@ -93,7 +104,7 @@ const allShapesTogether = "all shapes as the entry points of one build, on four 
 const slackOfAllShapesTogether = 1.15;
 
 async function measureAllShapesTogether(carrier: string[]): Promise<Cost> {
-  const built = shapes.filter(shape => !shape.isRefused && !shape.isBundledFirst);
+  const built = shapes.filter(shape => !shape.isRefused && !shape.isBundledFirst && !shape.flags);
   const files = built.flatMap((shape, index) =>
     Object.entries(shape.write(shape.size * factor)).map(([path, text]) => [`shape-${index}/${path}`, text]),
   );

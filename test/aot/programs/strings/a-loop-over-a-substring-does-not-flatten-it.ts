@@ -1,8 +1,18 @@
 // What slice, substring and substr return shares the characters of the string it was cut from. A loop over its characters reads them where they
 // lie: it does not ask the runtime for a flat copy of the string's header first. A string put together with + is still flattened once.
 // Only the jsc shell with --aotCountsPath=<path> can count. Elsewhere the program checks the answers alone.
-declare const aotOperationCount: undefined | ((name: string) => number)
-const count = typeof aotOperationCount === 'function' ? aotOperationCount : () => 0
+declare const aotRuntimeCounters: undefined | (() => string)
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === 'function' ? aotRuntimeCounters() : '')
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0
+  for (const line of counts.split('\n')) {
+    const [calls, name] = line.split('\toperation:')
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls)
+  }
+  return sum
+}
 
 function isClean(path: string): boolean {
   for (let i = 1; i < path.length; i++) {
@@ -34,7 +44,7 @@ for (let i = 0; i < 64; i++) urls.push('http://localhost:' + (3000 + i) + '/user
 for (const url of urls) sum(url)
 
 let clean = 0, total = 0
-const before = count('operationAOTFlatten')
+const before = countsSoFar()
 for (let turn = 0; turn < 50; turn++) {
   for (const url of urls) {
     const path = url.slice(url.indexOf('/', 8))
@@ -42,7 +52,7 @@ for (let turn = 0; turn < 50; turn++) {
     total += sum(path.substring(1, 9)) + sumGuarded(path.substr(2, 12))
   }
 }
-const flattened = count('operationAOTFlatten') - before
+const flattened = callsIn(countsSoFar()) - callsIn(before)
 console.log(clean, total, flattened < 3300 ? 'substrings were read in place' : 'flattened ' + flattened + ' times')
 
 const wide = 'préfixe/Zoë/Müller/日本語/конец'

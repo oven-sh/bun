@@ -129,8 +129,9 @@ server.listen(0, async () => {
   const directory = String(dir);
   const alone = await build(directory, "alone.js");
   const named = await build(directory, "named.js");
-  expect(alone.files.has("internal/cluster/child")).toBe(false);
-  expect(named.files.has("internal/cluster/child")).toBe(true);
+  const ofCluster = (files: Set<string>) => [...files].filter(file => file.includes("cluster")).sort();
+  expect(ofCluster(alone.files)).toEqual(["internal:cluster/isPrimary"]);
+  expect(ofCluster(named.files)).toContain("internal:cluster/child");
   expect(await run([alone.executable], directory)).toEqual({ stdout: "200 hello /a\n", errors: [], exitCode: 0 });
   expect(await run([named.executable], directory)).toEqual({ stdout: "200 hello /a\n", errors: [], exitCode: 0 });
 });

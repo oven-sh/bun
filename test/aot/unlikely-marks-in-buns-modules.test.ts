@@ -21,9 +21,7 @@ async function build(dir: string, name: string, flags: string[]) {
   }).toEqual({ stderr: [], exitCode: 0 });
   const unlikelyInBunsModules = readFileSync(map, "utf8")
     .split("\n")
-    .filter(
-      line => line.startsWith("W\t") && line.endsWith("\tUnlikely") && /^W\t(node:|internal\/)/.test(line),
-    ).length;
+    .filter(line => line.startsWith("W\t") && line.endsWith("\tUnlikely") && /^W\t(node:|internal:)/.test(line)).length;
   return { executable, unlikelyInBunsModules };
 }
 

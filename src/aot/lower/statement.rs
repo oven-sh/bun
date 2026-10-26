@@ -432,7 +432,8 @@ impl FileLowering<'_, '_, '_, '_> {
             | StmtKind::Interface(_)
             | StmtKind::TypeAlias(_) => return None,
             StmtKind::Expr(value) if self.is_removed_when_unused(value) => return None,
-            StmtKind::Expr(value) | StmtKind::Throw(value) => last_of(value),
+            StmtKind::Expr(value) => last_of(self.skip_operators_dropped_when_unused(value)),
+            StmtKind::Throw(value) => last_of(value),
             StmtKind::Return(value) => value.some().map_or(stmt.start, last_of),
             StmtKind::Var(declarations) => {
                 let mut declarations = declarations.iter().rev();

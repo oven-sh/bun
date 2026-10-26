@@ -495,6 +495,34 @@
     "typed": 112.2,
     "untyped": 112
   },
+  "everyday-copies-that-nobody-keeps/a-parameter": {
+    "typed": 20,
+    "untyped": 21
+  },
+  "everyday-copies-that-nobody-keeps/nothing-replaced": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-copies-that-nobody-keeps/one-inside-another": {
+    "typed": 9,
+    "untyped": 9
+  },
+  "everyday-copies-that-nobody-keeps/one-of-a-list": {
+    "typed": 21,
+    "untyped": 21
+  },
+  "everyday-copies-that-nobody-keeps/texts-and-numbers": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-copies-that-nobody-keeps/two-members-replaced": {
+    "typed": 11,
+    "untyped": 11
+  },
+  "everyday-copies-that-nobody-keeps/two-sources-of-one-type": {
+    "typed": 13,
+    "untyped": 13
+  },
   "everyday-data-and-control/abort-controller": {
     "typed": 8761.2,
     "untyped": 8754
@@ -1735,9 +1763,17 @@
     "typed": 74.2,
     "untyped": 74.3
   },
+  "everyday-spellings/literal-copy.listed": {
+    "typed": 7,
+    "untyped": 7
+  },
   "everyday-spellings/literal-copy.object-assign": {
     "typed": 11,
     "untyped": 11
+  },
+  "everyday-spellings/literal-copy.spread": {
+    "typed": 9,
+    "untyped": 9
   },
   "everyday-spellings/literal.new-object": {
     "typed": 10,

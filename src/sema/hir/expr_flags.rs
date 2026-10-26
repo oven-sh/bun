@@ -80,7 +80,34 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    fn index_member_key(&self, index: ExprId) -> MemberKey {
+    /// The node as the text has it. A build parses `a["b"]` into the node of `a.b`, with `"b"` as the expression in front
+    /// of it. Only what shows the text to somebody asks: an error of TypeScript's, a position in a stack trace.
+    #[inline]
+    pub fn written_kind(&self, e: ExprId) -> ExprKind {
+        match self.exprs[e.idx()].kind {
+            ExprKind::Dot { obj, chain, .. } if self.is_written_in_brackets(e) => {
+                let index = ExprId(e.0 - 1);
+                ExprKind::Index { obj, index, chain }
+            }
+            kind => kind,
+        }
+    }
+
+    /// The node as TypeScript's rules take it. No error is reported in the JavaScript of a build.
+    #[inline]
+    pub fn checked_kind(&self, e: ExprId) -> ExprKind {
+        match self.is_js {
+            true => self.exprs[e.idx()].kind,
+            false => self.written_kind(e),
+        }
+    }
+
+    #[inline]
+    pub fn is_written_in_brackets(&self, e: ExprId) -> bool {
+        self.expr_flags(e).contains(ExprFlags::BRACKET_ACCESS)
+    }
+
+    pub fn index_member_key(&self, index: ExprId) -> MemberKey {
         match self.exprs.get(index.idx()).map(|expr| expr.kind) {
             Some(ExprKind::String(text)) => MemberKey::Name(text),
             Some(ExprKind::Template { exprs }) if exprs.is_empty() => {
@@ -93,7 +120,7 @@ impl<S: Storage> FileIn<S> {
     /// The transpiler resolves `object["name"]` like `object.name` only when it stores the key as
     /// bytes, which it does for ASCII text (`E::String::is_utf16`).
     pub fn is_name_resolved_by_transpiler(&self, access: ExprId, name: &[u8]) -> bool {
-        !self.expr_flags(access).contains(ExprFlags::BRACKET_ACCESS) || name.is_ascii()
+        !self.is_written_in_brackets(access) || name.is_ascii()
     }
 
     pub fn jsx_attribute_text(&self, value: ExprId) -> Atom {

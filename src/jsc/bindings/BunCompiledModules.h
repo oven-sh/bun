@@ -36,6 +36,8 @@ inline bool isCompiledModule(const WTF::String& path) { return compiledModuleFor
 JSC::JSPromise* compiledModuleSource(Zig::GlobalObject*, const WTF::String& key, bool hasImportAttributes);
 JSC::JSPromise* importCompiledModule(Zig::GlobalObject*, const WTF::String& key, bool hasImportAttributes, int64_t referrerAsyncOrder);
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool hasImportAttributes);
+// The function of the host that require() hands an ES module to, if the path names a compiled one.
+JSC::JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const WTF::String& path, bool hasImportAttributes);
 
 JSC::JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const WTF::String& path);
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool isTypeScriptLoader);

@@ -481,7 +481,7 @@
 -	-	-	-	-	ts	class MARK { [{} as any]() {} }
 -	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static [f()] = 1; }
 -	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { [f()] = 1; }
--	+	+	missed	-	ts	import * as ns from "./dep.ts"; class MARK { [ns["value"]]() {} }
++	+	+	-	-	ts	import * as ns from "./dep.ts"; class MARK { [ns["value"]]() {} }
 +	+	+	-	-	ts	function f(...a: any[]): any {} class MARK { #a = f(); static #b = 1; #m() {} static #s() {} get #g() { return 1; } }
 -	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static #b = f(); }
 -	-	-	-	-	ts	class MARK { accessor a = 1; }

@@ -227,7 +227,11 @@ const changesId = [
   refusal(["id"]),
 ] satisfies b.FunctionField[];
 
-const usageRecord = { ...systemCall, returns: b.object.fresh, uses: { this: b.inspected } } satisfies b.FunctionField;
+const usageRecord = {
+  ...systemCall,
+  returns: b.plainData.fresh,
+  uses: { this: b.inspected },
+} satisfies b.FunctionField;
 
 const usageSincePrevious = [
   { ...usageRecord, args: { previous: b.undefined.optional } },

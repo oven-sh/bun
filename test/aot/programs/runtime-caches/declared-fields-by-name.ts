@@ -1,12 +1,19 @@
 // Untyped code reads and stores the declared fields of typed objects by name, in loops. The first accesses enter the run time, all others are answered by the caches, and the objects keep their layout.
-// COUNTER: StoreOfOtherType = 0
-// COUNTER: RedefinedProperty = 0
-declare const aotOperationCount: undefined | ((name: string) => number);
-const countOf = typeof aotOperationCount === "function" ? aotOperationCount : null;   // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-function calls(...names: string[]): number { let sum = 0; if (countOf) for (const name of names) sum += countOf("operationAOT" + name); return sum; }
-function expectBetween(what: string, value: number, low: number, high: number): void { if (countOf && !(value >= low && value <= high)) throw new Error(what + ": " + value + " is not in " + low + ".." + high); }
-function entries(): number { return calls("GetByIdAndCache", "PutByIdAndCache"); }
-function fills(): number { return calls("FillSiteCache"); }
+// COUNTER: FieldsLeftSlotByStoreOfOtherType = 0
+// COUNTER: FieldsLeftSlotByRedefinition = 0
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+function expectBetween(what: string, value: number, low: number, high: number): void { if (!(value >= low && value <= high)) throw new Error(what + ": " + value + " is not in " + low + ".." + high); }
 
 const trips: number = JSON.parse("10000");
 const box: any[] = JSON.parse("[0]");
@@ -33,11 +40,12 @@ function storeLoose(o: any, values: any[], n: number): void { for (let i = 0; i 
 
 // Each run has one access by name. A site cache cannot hold a field, so the access asks the table that all sites share, and the site tries to fill itself less and less often.
 function measure(what: string, run: () => unknown): void {
-  const entriesBefore = entries();
-  const fillsBefore = fills();
+  const before = countsSoFar();
   const result = run();
-  expectBetween(what + ", entries", entries() - entriesBefore, 0, 8);
-  expectBetween(what + ", attempts to fill the site cache", fills() - fillsBefore, 0, 60);
+  const after = countsSoFar();
+  const entries = callsIn(after, "operationAOTFillSiteCache") - callsIn(before, "operationAOTFillSiteCache");
+  expectBetween(what + ", entries", entries, 0, 8);
+  expectBetween(what + ", attempts to fill the site cache", callsIn(after) - callsIn(before) - entries, 0, 60);
   console.log(what + ": " + String(result));
 }
 

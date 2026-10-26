@@ -145,7 +145,8 @@ impl Checker<'_, '_> {
         if source.is_undefined()
             && let crate::bind::JsDeclarationKind::ExportsProperty(name) =
                 crate::bind::assignment_declaration_kind(hir, assignment)
-            && let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[target].kind
+            && let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } =
+                hir.checked_kind(target)
         {
             let object = self.type_of_expr(file, obj);
             let object = self.apparent_type(object);

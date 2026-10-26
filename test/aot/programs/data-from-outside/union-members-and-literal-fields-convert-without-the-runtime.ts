@@ -1,5 +1,17 @@
-declare const aotOperationCount: undefined | ((name: string) => number);
-const callsOf = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed; a cell where the allocator has none at hand is the work of the run time.
+const owed = ["operationAOTValueAdd", "operationAOTConcat", "operationAOTAllocateSlow"];
 // Plain objects that untyped code built are read as members of a discriminated union, and as records with fields whose type is a union of string literals. A text among the literals passes however it was built: at run time, as a rope, out of a 16-bit text. Any other text, and a value that is no string, throws where typed code reads the field; undefined and null pass. The program also prints whether the slow type test of the runtime was entered for most of the objects.
 type Inner = { n: number };
 type Circle = { kind: "circle"; inner: Inner; radius: number };
@@ -51,22 +63,22 @@ const kept: any[] = [];
 let sum = 0;
 let text = "";
 const letters = ["cir", "cle", "squ", "are", "clo", "sed", "op", "en"];
-let before = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType"));
+let before = countsSoFar();
 for (let i = 0; i < 400; i++) {
   const figure = growFigure(i % 2 ? "circle" : "square", inner, i);
   kept.push(figure);
   sum += area(figure);
 }
-let slow = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType")) - before;
+let slow = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log(sum, slow < 20 ? "without the runtime" : "through the runtime: " + slow);
-before = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType"));
+before = countsSoFar();
 for (let i = 0; i < 400; i++) {
   const issue = growIssue(i % 3 ? (i % 3 === 1 ? "open" : "closed") : "", i % 4 ? (i % 4 === 1 ? "low" : i % 4 === 2 ? "high" : null) : undefined, inner);
   kept.push(issue);
   text = describe(issue);
   sum += text.length;
 }
-slow = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType")) - before;
+slow = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log(sum, text, slow < 20 ? "without the runtime" : "through the runtime: " + slow);
 console.log(JSON.stringify(kept[1]), JSON.stringify(kept[2]), Object.keys(kept[1]).join(), kept[1].kind, kept[2].kind);
 console.log(JSON.stringify(kept[401]), JSON.stringify(kept[402]), JSON.stringify(kept[403]), JSON.stringify(kept[404]), Object.keys(kept[401]).join());

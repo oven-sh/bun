@@ -120,6 +120,7 @@ All entry points are one program beside a program that can load a module under a
 - A program that the compiler refuses leaves, and the rest is built again.
 - When the process ends in the middle, the program it was in gets the blame and the rest run in a new process. `stopped-before.txt` holds the programs that the runner had stopped earlier in that process: their threads can outlive them.
 - The programs that differ run a second time, both ways, with twenty times the time. The rules for what counts are those in the table above.
+- A program that names `.stack`, `.message` or `.raw` is counted as a documented difference when both runs end alike and each line that differs is printed by a statement that names one of the three, or a variable that such a line names, and so on. A difference in what else it prints counts.
 - They also run in an executable that is built without `--aot`, each as a group of its own. A program that prints and ends there as in the `--aot` executable is counted as "as an executable without --aot" and not kept.
 - A file that `bun run` refuses when it loads it is counted as "bun run refuses the file" and not kept.
 - A program in which an object literal or a class has two getters, or two setters, of one name, and which ends the same way in both runs, is counted as "an accessor defined twice" and not kept: the place of that key among the others differs.
@@ -133,6 +134,29 @@ All entry points are one program beside a program that can load a module under a
 - A program whose second pair of runs agrees is kept as "unsteady", with what the first pair printed in `first-compiled.stdout` and `first-bun-run.stdout`.
 
 What it keeps under `--finds` is laid out as under `BUN_FUZZILLI_FINDS`. `--also-keep=<way>,<way>` keeps programs that ended in a way that is only counted otherwise, for example `bun run is unsteady`. It prints a line for each batch: programs a second of processor time, the time and peak memory of the build and of the two runs, and how many programs ended in which way.
+
+## Programs that the driver rewrites
+
+`run-batch.ts` can rewrite a program when it takes it. What is drawn depends on the text of the program alone, and what is kept under `--finds` is the text that was built.
+
+`--splits <percent>` (`split-into-files.ts`) cuts functions and classes of that share of the programs out into other files, so that calls and values cross from file to file. The program moves into a folder of its own, `./split-<hash>/main.ts`, and what the driver lays out as the program only imports that file. A function without indentation can move, a function directly in a block without indentation, and a class. A part imports the names of main that it uses, so the two files import each other. A function that assigns to a variable of main stays, because an import cannot be assigned to. A class whose definition reads variables of main is defined where it stood, by a function of the part that returns it.
+
+| What is drawn                      | From                                                                                                                                                                                      |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The form of a part                 | `.ts`, `.js`, `.mjs`, `.cjs`, or a package in `node_modules`: CommonJS or a module, found by `main` or by `exports`, in JavaScript, in TypeScript, or in both with an `"aot"` condition   |
+| What main is told about JavaScript | A declaration file that is right, one that is wrong, one that isn't valid, or none                                                                                                        |
+| What is wrong in a declaration     | Another type for a parameter or the result (a primitive, `never`, a literal, a tuple, an object type), one parameter more or fewer, a member under another name, a declaration left out   |
+| A part in TypeScript               | As it stood, or with annotations that its code doesn't fit, below `// @ts-nocheck`                                                                                                        |
+| How main gets past the checker     | `// @ts-ignore` or `// @ts-expect-error` above each line that names something of a part, `// @ts-nocheck`, or nothing                                                                     |
+| `tsconfig.json` in the folder      | None, or `strict`, `skipLibCheck`, `allowJs`, `checkJs`, `noImplicitAny`, `strictNullChecks`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `isolatedModules`, each on or off |
+| Between main and a part            | Nothing, or a file in TypeScript that exports the names again                                                                                                                             |
+| Calls from JavaScript into main    | A part calls functions of main by their names, or as callbacks that main hands over, with arguments of other types and in other numbers                                                   |
+
+JavaScript is the same text with its types erased by `Bun.Transpiler`. One program in ten is refused by the checker, and the line of a batch counts the refusals by the code of the first error.
+
+`--prints-members <percent>` (`print-members-of-objects.ts`) rewrites each `printValue("v1", v1)`. The compiler follows an object for as long as it sees everything that is done to it, and `console.log(object)` ends that. A rewritten program prints a primitive as it is and `typeof` for an object, and behind that members of the object, read by name. One program in four reads no member, one reads one member of one variable, one reads one member of each, and one reads up to three, the keys and the length.
+
+`--one-scene <percent>` leaves a program one of its scenes: what the compiler makes of a function depends on what else the program holds.
 
 ## TypeScript
 

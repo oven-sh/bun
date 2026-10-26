@@ -847,7 +847,17 @@ export {};
 //// has-own-property-misses-untyped.js
 // hasOwnProperty asked with a string that is the name of no property anywhere, as Express asks its settings for "json escape": the answers, and that the run time is asked once and not every time.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const settings = { etag: "weak", env: "test", "query parser": "extended", "x-powered-by": true };
 function get(settings, setting) {
@@ -859,20 +869,20 @@ function get(settings, setting) {
   return undefined;
 }
 const seen = new Set();
-let before = (count("operationAOTHasOwnByIdAndCache") + count("operationAOTHasOwnByValAndCache"));
+let before = countsSoFar();
 for (let i = 0; i < 2000; i++)
   seen.add([get(settings, "json escape"), get(settings, "json replacer"), get(settings, "json spaces"), get(settings, "etag"), get(settings, "query parser")].join());
-let calls = (count("operationAOTHasOwnByIdAndCache") + count("operationAOTHasOwnByValAndCache")) - before;
+let calls = callsIn(countsSoFar()) - callsIn(before);
 console.log([...seen].join(" | "), calls <= 40 ? "and the run time was asked at most 40 times" : "and the run time was asked " + calls + " times");
 
 // Object.hasOwn likewise, and a name that is put together.
 const parts = ["never", "a", "name"];
 const others = new Set();
-before = (count("operationAOTHasOwnByIdAndCache") + count("operationAOTHasOwnByValAndCache"));
+before = countsSoFar();
 const joined = parts.join(" ");
 for (let i = 0; i < 2000; i++)
   others.add([Object.hasOwn(settings, "nobody has this"), Object.hasOwn(settings, joined), Object.hasOwn(settings, "env")].join());
-calls = (count("operationAOTHasOwnByIdAndCache") + count("operationAOTHasOwnByValAndCache")) - before;
+calls = callsIn(countsSoFar()) - callsIn(before);
 console.log([...others].join(" | "), calls <= 40 ? "and the run time was asked at most 40 times" : "and the run time was asked " + calls + " times");
 
 // The answer changes with the object.
@@ -1113,16 +1123,28 @@ console.log(lines.join("\n"));
 //// in-on-typed-arrays-untyped.js
 // `"name" in view` where view is a typed array, as the package etag asks a Buffer for "ctime": the answers, and that the run time is asked once and not every time.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed and keep it in a set.
+const owed = ["operationAOTConcatenate", "operationAOTSetAdd"];
 function isStats(object) {
   return object && typeof object === "object" && "ctime" in object && "mtime" in object && "ino" in object && "size" in object;
 }
 const bytes = new Uint8Array([1, 2, 3]);
 const seen = new Set();
-let before = count("operationAOTInByValAndCache");
+let before = countsSoFar();
 for (let i = 0; i < 2000; i++)
   seen.add([isStats(bytes), "byteLength" in bytes, "subarray" in bytes, "toString" in bytes, "nothing of the kind" in bytes].join());
-let calls = count("operationAOTInByValAndCache") - before;
+let calls = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log([...seen].join(" | "), calls <= 40 ? "and the run time was asked at most 40 times" : "and the run time was asked " + calls + " times");
 console.log("length" in bytes, "name" in bytes, "prototype" in bytes, "__proto__" in bytes);
 

@@ -7,6 +7,9 @@
 // `--count 1,3,12` takes one program for the first batch, three for the second, twelve for the third, one for the fourth. Which code the compiler takes for hot depends on what else the executable holds.
 // `--group 1` makes each program an entry point, which the compiler takes for a program of its own: up to 127 of them share an executable and nothing else.
 // `--hides-function-text` is for a Bun built with --fuzzilli=on: neither run shows the text of a function, which the two spell differently.
+// `--prints-members 60` rewrites 60 programs of 100 so that they print members of their objects in place of the objects (print-members-of-objects.ts).
+// `--one-scene 40` leaves 40 programs of 100 one of their scenes.
+// `--splits 80` cuts functions and classes of 80 programs of 100 out into other files, with declarations that can be wrong (split-into-files.ts).
 import {
   appendFileSync,
   copyFileSync,
@@ -18,9 +21,11 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { extname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { opensTheWorld } from "../the-world-is-open.ts";
+import { keepOneScene, printMembersOfObjects, randomFrom } from "./print-members-of-objects.ts";
+import { splitIntoFiles } from "./split-into-files.ts";
 
 const { values: options } = parseArgs({
   options: {
@@ -34,6 +39,9 @@ const { values: options } = parseArgs({
     flags: { type: "string", default: "" },
     milliseconds: { type: "string", default: "250" },
     keep: { type: "boolean", default: false },
+    "prints-members": { type: "string", default: "0" },
+    splits: { type: "string", default: "0" },
+    "one-scene": { type: "string", default: "0" },
     "hides-function-text": { type: "boolean", default: false },
     // Kinds of outcomes that are only counted otherwise, separated by commas.
     "also-keep": { type: "string", default: "" },
@@ -113,8 +121,10 @@ function layOut(folder: string, texts: string[], extension: string, inGroup: num
       ),
       "latin1",
     );
-    for (let other = 0; other < others.length; other += 2)
+    for (let other = 0; other < others.length; other += 2) {
+      mkdirSync(dirname(join(folder, "programs", others[other])), { recursive: true });
       writeFileSync(join(folder, "programs", others[other]), others[other + 1], "latin1");
+    }
   });
   for (let first = 0; first < texts.length; first += inGroup) {
     const rows = texts
@@ -128,10 +138,12 @@ function layOut(folder: string, texts: string[], extension: string, inGroup: num
   copyFileSync(join(import.meta.dir, runner), join(folder, runner));
 }
 
-/** The programs in `folder` that import the file beside them, or a file that imports it. The names of such files are hashes. */
+/** The programs in `folder` that import the file or the folder beside them, or a file that imports it. The names of such files and folders are hashes. */
 function importersOf(file: string, folder: string) {
   const texts = new Map(
-    readdirSync(join(folder, "programs")).map(name => [name, readFileSync(join(folder, "programs", name), "latin1")]),
+    readdirSync(join(folder, "programs"), { withFileTypes: true })
+      .filter(entry => entry.isFile())
+      .map(({ name }) => [name, readFileSync(join(folder, "programs", name), "latin1")]),
   );
   const isProgram = (name: string) => /^\d+\./.test(name);
   const importers = new Set([file]);
@@ -139,6 +151,12 @@ function importersOf(file: string, folder: string) {
     if (!isProgram(imported))
       for (const [name, text] of texts) if (text.includes(imported.replace(/\.[a-z]+$/, ""))) importers.add(name);
   return [...importers].filter(isProgram).map(name => parseInt(name));
+}
+
+/** The programs that a path below "programs" belongs to: "programs/3.ts", or a file or a folder that programs import. */
+function programsNamedBy(text: string, folder: string) {
+  const [, file, index] = /programs[\\/]((?:(\d+)\.)?[^\\/:\s"')]+)/.exec(text) ?? [];
+  return file === undefined ? [] : index === undefined ? importersOf(file, folder) : [Number(index)];
 }
 
 /** Whether the compiler made one program of the entry points in place of one of each, and the first of our programs that its report names as the reason. */
@@ -151,18 +169,20 @@ function programsOf(folder: string, entryPoints: number) {
   } catch {
     return {};
   }
-  const named = report.unseenCode.map(({ location }) => /programs[\\/](\d+)\./.exec(location?.file ?? "")?.[1]);
+  const named = report.unseenCode.map(({ location }) => programsNamedBy(location?.file ?? "", folder)[0]);
   const openedBy = named.find(index => index !== undefined);
   return {
     // The compiler runs once for each program. When they turn out to be one, it runs once more.
     areOneProgram: report.statistics.EngineRuns !== entryPoints,
-    openedBy: openedBy === undefined ? undefined : Number(openedBy),
+    openedBy,
     reasons: report.unseenCode.map(({ cause, builtin }) => cause + (builtin ? ` ${builtin}` : "")).join(", "),
   };
 }
 
 type Built = {
   refused: Set<number>;
+  /** The first error of each refused program: its code, or its first words. */
+  reasonsOfRefusals?: string[];
   writesToBuiltins: Set<number>;
   areOneProgram?: boolean;
   openedBy?: number;
@@ -201,12 +221,14 @@ async function build(
   );
   // "error: .." or "warn: ..", and below it "at <file>:<line>:<column>".
   const [refused, writesToBuiltins] = [new Set<number>(), new Set<number>()];
+  const reasonsOfRefusals: string[] = [];
   let header = "";
   for (const line of ran.stderr.split("\n")) {
     if (/^(error|warn|note)\b/.test(line)) header = line;
-    const [, file, index] = /^\s+at .*programs[\\/]((?:(\d+)\.)?[^\\/:]+):\d+/.exec(line) ?? [];
-    if (file === undefined) continue;
-    for (const program of index === undefined ? importersOf(file, folder) : [Number(index)]) {
+    if (!/^\s+at .*programs[\\/][^:]+:\d+/.test(line)) continue;
+    for (const program of programsNamedBy(line, folder)) {
+      if (header.startsWith("error") && !refused.has(program))
+        reasonsOfRefusals.push(/\bTS\d+\b/.exec(header)?.[0] ?? header.slice(7, 47));
       if (header.startsWith("error")) refused.add(program);
       if (header.includes("read-only in a compiled executable")) writesToBuiltins.add(program);
     }
@@ -214,20 +236,18 @@ async function build(
   if (ran.exitCode === 0 && existsSync(join(folder, "batch")))
     return { refused: new Set<number>(), writesToBuiltins, ...programsOf(folder, groups.length + 1) };
   // Of several such lines, the first that names a program.
-  const stops = [
-    ...ran.stderr.matchAll(
-      /internal compiler error.*?(?:programs[\\/](\d+)\.[a-z]+\b.*)?$|Stopped while compiling.*?(?:programs[\\/](\d+)\.[a-z]+\b.*)?$/gm,
-    ),
-  ];
-  const [reason, ...named] = stops.find(([, ...named]) => named.some(index => index !== undefined)) ?? stops[0] ?? [];
-  if (!ran.signal && reason === undefined && refused.size) return { refused, writesToBuiltins };
-  const culprit = named.find(index => index !== undefined);
+  const stops = [...ran.stderr.matchAll(/internal compiler error.*$|Stopped while compiling.*$/gm)].map(
+    ([stop]) => stop,
+  );
+  const reason = stops.find(stop => programsNamedBy(stop, folder).length) ?? stops[0];
+  if (!ran.signal && reason === undefined && refused.size) return { refused, reasonsOfRefusals, writesToBuiltins };
+  const culprit = programsNamedBy(reason ?? "", folder)[0];
   return {
     refused,
     writesToBuiltins,
     stopped: {
       reason: `${ran.signal ?? `exit code ${ran.exitCode}`}: ${reason ?? "the errors name no program"}`,
-      culprit: culprit === undefined ? undefined : Number(culprit),
+      culprit,
       stderr: ran.stderr.slice(-8000),
     },
   };
@@ -300,7 +320,7 @@ async function run(
 }
 
 // What a compiled program says when it does something that docs/compiler/compatibility.mdx lists, and what a program names when its output depends on such a thing or on the collector.
-// The same lists as in src/runtime/cli/fuzzilli_run_comparison.rs.
+// The same lists as in src/runtime/cli/fuzzilli_run_comparison.rs, which has `namesOfDetails` among the names.
 const documentedMessages = [
   "read-only in a compiled executable",
   "Attempted to assign to readonly property",
@@ -311,16 +331,74 @@ const documentedNames = [
   "eval(",
   "Function(",
   ".caller",
-  ".stack",
-  ".message",
   "WeakRef",
   "FinalizationRegistry",
   "import.meta",
   "__filename",
   "__dirname",
   ".argv",
-  ".raw",
 ];
+/** What these hold differs between the two runs, and so does what a program prints from them. What else it prints doesn't. */
+const namesOfDetails = [".stack", ".message", ".raw"];
+
+/** What a program printed, cut in front of each line that starts with a word. A generated program prints a label first, and the lines of an object are indented. */
+function recordsOf(output: string) {
+  const records: { label: string; printed: string }[] = [];
+  for (const line of removeDetailsOfErrors(output).split("\n")) {
+    const label = /^[A-Za-z_$][\w$]*/.exec(line)?.[0];
+    if (label === undefined && records.length) records.at(-1)!.printed += "\n" + line;
+    else records.push({ label: label ?? "", printed: line });
+  }
+  return records;
+}
+
+/**
+ * The lines of `text` that name one of `namesOfDetails`, or a variable that such a line names, and so on.
+ * A variable of a generated program ends in a number. A line inside a function or a class counts for the lines that open those too.
+ */
+function linesDerivedFromDetails(text: string) {
+  const lines = text.split("\n");
+  const variablesOf = lines.map(line => line.match(/(?<![.\w$"])[A-Za-z_$]+\d+\b/g) ?? []);
+  const derived = new Set<string>();
+  const isDerived = lines.map(line => namesOfDetails.some(name => line.includes(name)));
+  for (let grew = true; grew; ) {
+    grew = false;
+    lines.forEach((line, index) => {
+      if (!isDerived[index] && !variablesOf[index].some(variable => derived.has(variable))) return;
+      const around = [index];
+      for (let above = index - 1, indent = line.search(/\S/); above >= 0 && indent > 0; above--) {
+        const indentAbove = lines[above].search(/\S/);
+        if (indentAbove < 0 || indentAbove >= indent) continue;
+        indent = indentAbove;
+        if (opensAFunctionOrAClass.test(lines[above])) around.push(above);
+      }
+      for (const one of around) {
+        grew ||= !isDerived[one];
+        isDerived[one] = true;
+        for (const variable of variablesOf[one]) derived.add(variable);
+      }
+    });
+  }
+  return lines.filter((_, index) => isDerived[index]);
+}
+
+/** Whether the two runs end alike and every difference in what they printed, up to where they print under different labels, comes from a statement that `linesDerivedFromDetails` lists. */
+function differOnlyInDetails(text: string, a: Ended, b: Ended) {
+  if (a.end !== b.end || !namesOfDetails.some(name => text.includes(name))) return false;
+  const [left, right] = [recordsOf(a.stdout), recordsOf(b.stdout)];
+  const derived = linesDerivedFromDetails(text);
+  for (
+    let index = 0;
+    index < Math.min(left.length, right.length) && left[index].label === right[index].label;
+    index++
+  ) {
+    if (left[index].printed === right[index].printed) continue;
+    const { label } = left[index];
+    const prints = (line: string) => (label === "noted" ? line.includes("note(") : line.includes(`"${label}`));
+    if (text.split("\n").some(prints) && !derived.some(prints)) return false;
+  }
+  return true;
+}
 
 /** `Reflect.setPrototypeOf()` of a built-in object returns false in an executable, and `Object.setPrototypeOf()` throws. */
 // `bun run` replaces the length and the characters of a string that it knows by their values, also below `delete`.
@@ -645,6 +723,16 @@ async function takePrograms(): Promise<string[]> {
   }
 }
 
+/** The program as the batch takes it. What is drawn depends on the text alone, and a find holds the text that was built. */
+function rewritten(text: string, extension: string) {
+  const random = randomFrom("rewritten" + text);
+  const isTypeScript = extension.endsWith("ts");
+  if (random() * 100 < Number(options["one-scene"])) text = keepOneScene(text);
+  if (random() * 100 < Number(options["prints-members"])) text = printMembersOfObjects(text, isTypeScript);
+  if (random() * 100 < Number(options.splits)) text = splitIntoFiles(text, extension);
+  return text;
+}
+
 let extension = "";
 for (let batch = 0; batches === 0 || batch < batches || waitingWithTheWorldOpen.length; batch++) {
   for (const stage in spent) delete spent[stage];
@@ -656,7 +744,7 @@ for (let batch = 0; batches === 0 || batch < batches || waitingWithTheWorldOpen.
     const paths = await takePrograms();
     extension = extname(paths[0]);
     for (const path of paths) {
-      const text = readFileSync(path, "latin1");
+      const text = rewritten(readFileSync(path, "latin1"), extension);
       (isWrittenToOpenTheWorld(text) ? waitingWithTheWorldOpen : texts).push(text);
       rmSync(path, { force: true });
     }
@@ -694,6 +782,7 @@ for (let batch = 0; batches === 0 || batch < batches || waitingWithTheWorldOpen.
     }
     if (refused.size) {
       add("refused", refused.size - (stopped ? 1 : 0));
+      for (const reason of built.reasonsOfRefusals ?? []) add(`refused: ${reason}`);
       texts = texts.filter((_, index) => !refused.has(index));
       continue;
     }
@@ -754,6 +843,7 @@ for (let batch = 0; batches === 0 || batch < batches || waitingWithTheWorldOpen.
                 : documentedMessages.some(says) ||
                     (!isLimit(second) && referenceAgain.stderr.includes("Maximum call stack size exceeded")) ||
                     documentedNames.some(name => texts[index].includes(name)) ||
+                    differOnlyInDetails(texts[index], second, referenceAgain) ||
                     setsThePrototypeOfABuiltIn.test(texts[index]) ||
                     deletesTheLengthOfAString.test(texts[index]) ||
                     deletesACharacterOfAString.test(texts[index]) ||

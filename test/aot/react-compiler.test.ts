@@ -21,6 +21,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     "component-file-loaded-by-require",
     "names-that-only-types-in-a-component-use",
     "outside-variables-that-a-component-only-assigns",
+    "list-of-two-spreads-in-a-component",
   ])(
     "%s",
     name =>

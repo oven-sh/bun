@@ -1702,7 +1702,7 @@ impl<'s> Checker<'_, 's> {
             cold_path();
             self.check_const_enum_access(file, e, ty);
         }
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::Template { exprs, .. } | ExprKind::Array(exprs) => {
                 for x in hir.ids(exprs) {
                     self.check_expression(file, x);

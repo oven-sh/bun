@@ -280,7 +280,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 last = self.skip_type_syntax(value);
                 continue;
             }
-            let next = match hir[last].kind {
+            let next = match hir.written_kind(last) {
                 ExprKind::Index { obj, index, .. } => {
                     self.find_printed_element(obj, index).unwrap_or(index)
                 }
@@ -441,6 +441,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprKind::Array(elements) if is_last(elements, last) => {
                     match self.find_access_printed_as(parent, last) {
                         Some(access) => access,
+                        None if !self.is_list_printed_on_one_line(parent, elements) => break,
                         None => return Some(self.last_token_position(parent)),
                     }
                 }
@@ -483,6 +484,26 @@ impl FileLowering<'_, '_, '_, '_> {
             };
         }
         None
+    }
+
+    // Bun's transpiler gives each element and the `]` a line of their own if a line ends behind the `[`, beside a comma or in front of the `]`.
+    fn is_list_printed_on_one_line(&self, list: ExprId, elements: IdList<ExprId>) -> bool {
+        let hir = self.hir;
+        let has_line_break = |start: u32, end: u32| {
+            let gap = hir.text.get(start as usize..end as usize);
+            gap.is_some_and(|gap| gap.contains(&b'\n'))
+        };
+        let mut gap = hir[list].pos;
+        for element in hir.ids(elements) {
+            if matches!(hir[element].kind, ExprKind::Missing) {
+                continue;
+            }
+            if has_line_break(gap, start_of(hir, element)) {
+                return false;
+            }
+            gap = end_of_expr(hir, element);
+        }
+        !has_line_break(gap, self.last_token_position(list))
     }
 
     // JSC's parser starts the name of a shorthand member at the token behind it, and JSC records a name where it ends: as many characters behind
@@ -556,7 +577,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let Parent::Expr(access) = self.bound.parent_of_expr(list) else {
             return None;
         };
-        let ExprKind::Index { obj, index, .. } = self.hir[access].kind else {
+        let ExprKind::Index { obj, index, .. } = self.hir.written_kind(access) else {
             return None;
         };
         (obj == list && self.find_printed_element(obj, index) == Some(element)).then_some(access)
@@ -613,7 +634,7 @@ impl FileLowering<'_, '_, '_, '_> {
         // The result of an operator that the transpiler computes stands where the operator's expression is written.
         let mut is_computed = false;
         loop {
-            let next = match hir[first].kind {
+            let next = match hir.written_kind(first) {
                 ExprKind::Binary {
                     op: BinOp::Comma,
                     left,
@@ -636,7 +657,15 @@ impl FileLowering<'_, '_, '_, '_> {
                         let operand = self.skip_type_syntax(operand);
                         matches!(hir[operand].kind, ExprKind::Ident(_))
                     };
+                    // A text that it joins stands where the left operand does, which is the initializer that it has printed in place of a name.
+                    let is_joined_to_initializer = op == BinOp::Add
+                        && is_name(printed_left)
+                        && self.find_literal_kind(first) == Some(LiteralKind::String)
+                        && self
+                            .find_printed_value(self.skip_type_syntax(printed_left))
+                            .is_none();
                     is_computed |= is_literal
+                        && !is_joined_to_initializer
                         && (is_name(printed_left)
                             || is_behind_comma && self.is_literal_operand(printed_right));
                     match is_literal {
@@ -694,7 +723,7 @@ impl FileLowering<'_, '_, '_, '_> {
         loop {
             let is_access = matches!(around, Around::Access { .. });
             let is_loose = !matches!(around, Around::Spread);
-            let (next, below) = match hir[first].kind {
+            let (next, below) = match hir.written_kind(first) {
                 _ if self.is_printed_as_literal(first) => return false,
                 ExprKind::Binary {
                     op: BinOp::Comma,
@@ -790,7 +819,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // `1 + "ab".length` and `Level.High`, of which Bun's transpiler prints the value.
     pub(in crate::lower) fn is_folded_into_literal(&self, expression: ExprId) -> bool {
-        match self.hir[self.skip_type_syntax(expression)].kind {
+        match self.hir.written_kind(self.skip_type_syntax(expression)) {
             ExprKind::Binary { .. }
             | ExprKind::Unary { .. }
             | ExprKind::Dot { .. }
@@ -801,7 +830,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn is_printed_as_literal(&self, expression: ExprId) -> bool {
         let hir = self.hir;
-        match hir[self.skip_type_syntax(expression)].kind {
+        match hir.written_kind(self.skip_type_syntax(expression)) {
             ExprKind::Unary { op, operand } => {
                 let name = self.skip_type_syntax(operand);
                 let is_number_name = match hir[name].kind {
@@ -923,23 +952,106 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // Bun's transpiler drops the left operand of a comma if evaluating it does nothing.
     pub(in crate::lower) fn is_removed_when_unused(&self, expression: ExprId) -> bool {
-        let inner = self.skip_type_syntax(expression);
-        match self.hir[inner].kind {
-            ExprKind::Ident(_) => !matches!(self.bound.binding(inner), Binding::Free),
-            ExprKind::This | ExprKind::BigInt(_) | ExprKind::Fn(_) => true,
-            ExprKind::Unary {
-                op: UnOp::Typeof,
-                operand,
-            } if matches!(self.hir[operand].kind, ExprKind::Ident(_)) => true,
-            _ => self.is_literal_operand(inner),
+        let hir = self.hir;
+        let mut parts: SmallVec<[ExprId; 8]> = smallvec![expression];
+        while let Some(part) = parts.pop() {
+            let inner = self.skip_type_syntax(part);
+            let is_removed = match hir[inner].kind {
+                ExprKind::Ident(_) => match self.bound.binding(inner) {
+                    Binding::Free => false,
+                    // It keeps a read of what `import { name }` or `import name` binds.
+                    Binding::Symbol(symbol) => {
+                        let mut declarations = self.bound.symbol(symbol).decls.iter();
+                        !declarations.any(|decl| {
+                            matches!(decl, Decl::ImportDefault(_) | Decl::ImportSpec(_))
+                        })
+                    }
+                    Binding::Arguments(_) | Binding::CommonJs(_) => true,
+                },
+                ExprKind::This | ExprKind::BigInt(_) | ExprKind::Fn(_) => true,
+                ExprKind::Unary {
+                    op: UnOp::Typeof,
+                    operand,
+                } if matches!(hir[operand].kind, ExprKind::Ident(_)) => true,
+                // It decides at the first visit, where a variable that is used once still stands in the expression.
+                _ if self.is_literal_operand(inner)
+                    && !self.becomes_literal_when_visited_again(inner) =>
+                {
+                    true
+                }
+                // An operator that converts nothing goes with its operands.
+                ExprKind::Unary {
+                    op: UnOp::Not | UnOp::Void,
+                    operand,
+                } => {
+                    parts.push(operand);
+                    true
+                }
+                ExprKind::Binary {
+                    op:
+                        BinOp::EqEqEq
+                        | BinOp::NotEqEq
+                        | BinOp::Comma
+                        | BinOp::And
+                        | BinOp::Or
+                        | BinOp::Nullish,
+                    left,
+                    right,
+                } => {
+                    parts.extend([left, right]);
+                    true
+                }
+                ExprKind::Cond { test, branches } => {
+                    let branches = hir.branches(branches);
+                    parts.extend([test, branches.yes, branches.no]);
+                    true
+                }
+                _ => false,
+            };
+            if !is_removed {
+                return false;
+            }
         }
+        true
+    }
+
+    // Of `!a` and `void a` whose value nobody takes it prints `a`.
+    pub(in crate::lower) fn skip_operators_dropped_when_unused(
+        &self,
+        expression: ExprId,
+    ) -> ExprId {
+        let mut kept = self.skip_type_syntax(expression);
+        while let ExprKind::Unary {
+            op: UnOp::Not | UnOp::Void,
+            operand,
+        } = self.hir[kept].kind
+        {
+            kept = self.skip_type_syntax(operand);
+        }
+        kept
+    }
+
+    fn becomes_literal_when_visited_again(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        let mut stack = vec![TreeNode::Expr(expression)];
+        while let Some(node) = stack.pop() {
+            if let TreeNode::Expr(part) = node
+                && matches!(hir[part].kind, ExprKind::Ident(_))
+                && self.find_printed_value(part).is_none()
+                && self.find_literal_visited_again(part).is_some()
+            {
+                return true;
+            }
+            push_children(hir, node, &mut stack);
+        }
+        false
     }
 
     // An expression without what Bun's transpiler does not print: type syntax, a comma whose left operand it drops, and what a literal decides against.
     pub(in crate::lower) fn skip_unprinted_syntax(&self, expression: ExprId) -> ExprId {
         let mut printed = self.skip_type_syntax(expression);
         loop {
-            let inner = match self.hir[printed].kind {
+            let inner = match self.hir.written_kind(printed) {
                 ExprKind::Binary {
                     op: BinOp::Comma,
                     left,
@@ -1030,7 +1142,7 @@ impl FileLowering<'_, '_, '_, '_> {
             return false;
         };
         let mut root = self.skip_type_syntax(hir[id].callee);
-        if let ExprKind::Dot { obj, .. } = hir[root].kind {
+        if let ExprKind::Dot { obj, .. } = hir.written_kind(root) {
             root = self.skip_type_syntax(obj);
         }
         let is_declared = matches!(hir[root].kind, ExprKind::Ident(_))
@@ -1169,7 +1281,8 @@ impl FileLowering<'_, '_, '_, '_> {
             return kind;
         }
         // `"ab".length`
-        if matches!(hir[operand].kind, ExprKind::Dot { .. }) && self.is_printed_as_literal(operand)
+        if matches!(hir.written_kind(operand), ExprKind::Dot { .. })
+            && self.is_printed_as_literal(operand)
         {
             return Some(LiteralKind::Number);
         }
@@ -1436,7 +1549,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn names_what_is_printed(&self, path: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let inner = self.skip_type_syntax(path);
-        match hir[inner].kind {
+        match hir.written_kind(inner) {
             ExprKind::Ident(_) => {
                 let Binding::Symbol(symbol) = bound.binding(inner) else {
                     return true;
@@ -1465,7 +1578,7 @@ impl FileLowering<'_, '_, '_, '_> {
         const LONGEST_PATH: usize = 80;
         let hir = self.hir;
         let inner = self.skip_type_syntax(expression);
-        match hir[inner].kind {
+        match hir.written_kind(inner) {
             ExprKind::Ident(name) => self.append_identifier(inner, name, path),
             ExprKind::This => path.extend_from_slice(b"this"),
             ExprKind::Super => path.extend_from_slice(b"super"),

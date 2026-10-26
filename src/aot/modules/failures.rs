@@ -59,6 +59,18 @@ pub enum ModuleFailureKind {
 }
 
 impl ModuleFailure {
+    /// The module that the importer names and that lacks the name.
+    pub fn exporter(&self) -> Option<ModuleRef> {
+        match self.kind {
+            ModuleFailureKind::ExportNotFound { exporter, .. }
+            | ModuleFailureKind::ExportAmbiguous { exporter, .. }
+            | ModuleFailureKind::ExportMayBeAbsent { exporter, .. } => Some(exporter),
+            ModuleFailureKind::Unresolved { .. }
+            | ModuleFailureKind::UnresolvedAtLoad { .. }
+            | ModuleFailureKind::NotAProgram { .. } => None,
+        }
+    }
+
     pub fn effect(&self) -> FailureEffect {
         match self.kind {
             ModuleFailureKind::Unresolved { .. } => match site_form(self.site) {

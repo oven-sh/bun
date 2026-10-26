@@ -66,7 +66,7 @@ fn reports_undefined_exported_variable() {
             unit.fragment.declare_module(ModuleRef::File(library)),
         );
         unit.define_body(|builder| {
-            builder.import_module(target, referrer);
+            builder.import_module(target, None, referrer);
         });
 
         let marked = mark_fragments(projects, [unit.finish()]);

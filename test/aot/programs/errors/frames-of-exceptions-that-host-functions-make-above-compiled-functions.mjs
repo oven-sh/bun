@@ -1,5 +1,5 @@
 // Prints the own properties and the frames of the DOMException objects that host functions make: the reason of an aborted signal and what atob, structuredClone and a timeout throw, made in a tail call, by a
-// constructor, a getter, call, apply and bind, below callbacks of built-in functions, in async functions and generators and under limits of the stack trace.
+// constructor, a getter, call, apply and bind, below callbacks of built-in functions, in getters and methods that built-in functions call, in async functions and generators and under limits of the stack trace.
 const file = /[^ @()]*frames-of-exceptions-that-host-functions-make-above-compiled-functions\.mjs(:\d+:\d+)?/g;
 function describe(exception) {
   const own = Object.getOwnPropertyNames(exception).join(",");
@@ -116,6 +116,77 @@ show("abort as a callback", () => {
   [undefined].forEach(controller.abort, controller);
   return controller.signal.reason;
 });
+const readByBuiltIns = {
+  assign: holder => Object.assign({}, holder),
+  "define property": holder => Object.defineProperty({}, "a", holder),
+  "define properties": holder => Object.defineProperties({}, { a: holder }),
+  entries: holder => Object.entries(holder),
+  stringify: holder => JSON.stringify(holder),
+};
+for (const [name, read] of Object.entries(readByBuiltIns)) {
+  show("tail call in a getter, " + name, () =>
+    read({
+      get value() {
+        return atob("*");
+      },
+    }),
+  );
+  show("kept in a getter, " + name, () =>
+    read({
+      get value() {
+        const decoded = atob("*");
+        kept = decoded;
+        return decoded;
+      },
+    }),
+  );
+  show("abort in a tail call in a getter, " + name, () => {
+    const controller = new AbortController();
+    read({
+      get value() {
+        return controller.abort();
+      },
+    });
+    return controller.signal.reason;
+  });
+}
+show("tail call in toJSON", () =>
+  JSON.stringify({
+    toJSON() {
+      return structuredClone(() => 1);
+    },
+  }),
+);
+show("tail call in valueOf", () =>
+  Math.max({
+    valueOf() {
+      return atob("*");
+    },
+  }),
+);
+show("tail call in toString", () =>
+  "a".concat({
+    toString() {
+      return atob("*");
+    },
+  }),
+);
+show("tail call in a comparison", () => [2, 1].sort(() => atob("*")));
+for (const limit of [1, 2, 3]) {
+  const before = Error.stackTraceLimit;
+  Error.stackTraceLimit = limit;
+  show("tail call in a getter, limit " + limit, () =>
+    Object.assign(
+      {},
+      {
+        get value() {
+          return atob("*");
+        },
+      },
+    ),
+  );
+  Error.stackTraceLimit = before;
+}
 show("map", () => [1].map(() => reasonOfAbort())[0]);
 show("sort", () => {
   let reason;

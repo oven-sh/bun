@@ -2207,7 +2207,19 @@ for (const mode of ["strict", "sloppy"] as const) {
 //// capacity-for-superclass-constructor-fields.js
 // Inheritance as it was written before there were classes: each constructor calls the one above it on `this`, and finds it by reading a property, as `http.ServerResponse.call(this, req)` does.
 // What the objects have and in which order, whatever stands on the prototype chain. Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed, list the names for it and keep it in a set; a cell where the allocator has none at hand is the work of the run time.
+const owed = ["operationAOTArrayJoin", "operationAOTConcat", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTStringOfAnyValue", "operationAOTAllocateSlow"];
 const kState = Symbol("kState");
 const kBytes = Symbol("kBytes");
 const kSocket = Symbol("kSocket");
@@ -2262,11 +2274,11 @@ function describe(object) {
 }
 
 const said = new Set();
-const counts = typeof aotOperationCount === "function";
+const before = countsSoFar();
 for (let i = 0; i < 3000; i++) said.add(describe(new Injected("r")));
-const grown = count("operationAOTEnsureExtensionGranules");
+const grown = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log([...said].join("\n"));
-console.log(!counts || grown <= 300 ? "the object had room for what the constructors above give it" : "the storage of " + grown + " objects had to grow");
+console.log(grown <= 300 ? "the object had room for what the constructors above give it" : "the storage of " + grown + " objects had to grow");
 
 // Nothing of the program runs while room is made: no getter of `constructor`, no trap of a Proxy.
 const log = [];
@@ -2678,7 +2690,17 @@ console.log(labels(meter, 50), typeof gauge.read, typeof meter.read);
 //// class-member-materializing-read-stays-fast.js
 // The prototype of a class makes its members once they have been asked for often enough. The method whose read makes them is read like every other inherited value from then on.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 class Counter {
   n = 0;
   add(k) { this.n += k; return this; }
@@ -2694,12 +2716,11 @@ class Stepper extends Counter {
 function addMany(counter, turns) { for (let i = 0; i < turns; i++) counter.add(1); return counter.n; }
 function advanceMany(stepper, turns) { for (let i = 0; i < turns; i++) stepper.advance(); return stepper.n; }
 function readTwice(counter, turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += counter.twice; return sum; }
-const asked = () => count("operationAOTGetById") + count("operationAOTGetByIdAndCache");
-const before = asked();
+const before = countsSoFar();
 const counter = new Counter();
 const stepper = new Stepper();
 console.log(addMany(counter, 1000), advanceMany(stepper, 1000), addMany(stepper, 1000), readTwice(counter, 1000), readTwice(stepper, 1000));
-const entered = asked() - before;
+const entered = callsIn(countsSoFar()) - callsIn(before);
 console.log(entered <= 100 ? "the run time was asked for a member at most 100 times" : "the run time was asked for a member " + entered + " times");
 
 // What was learnt ends when it should.
@@ -2720,7 +2741,17 @@ try { addMany(new Counter(), 1); } catch (error) { console.log(error.constructor
 //// class-methods-resolved-once.js
 // A method of a class that is called by name is asked of the run time once for each shape of receiver, and the prototype need not make its members for that. What was learnt ends when the prototype changes.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } };
 class Shape {
   sides = 0;
@@ -2746,15 +2777,14 @@ function areas(shape, turns) { let sum = 0; for (let i = 0; i < turns; i++) sum 
 function names(shape, turns) { let text = ""; for (let i = 0; i < turns; i++) text = shape.name(); return text; }
 function describes(shape, turns) { let text = ""; for (let i = 0; i < turns; i++) text = shape.describe(); return text; }
 const all = () => [new Shape(), new Square(), new Tile()];
-const asked = () => count("operationAOTGetByIdAndCache");
 const [shape, square, tile] = all();
 let most = 0;
 const results = [];
 for (const call of [areas, names]) {
   for (const receiver of [shape, square, tile]) {
-    const before = asked();
+    const before = countsSoFar();
     results.push(call(receiver, 500));
-    most = Math.max(most, asked() - before);
+    most = Math.max(most, callsIn(countsSoFar()) - callsIn(before));
   }
 }
 console.log(results.join());

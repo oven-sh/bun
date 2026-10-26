@@ -115,7 +115,13 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
             SourceKind::RuntimeModule(runtime_module) => {
                 let runtime_module = context.manifest.module(runtime_module.registry_id());
                 let specifier = runtime_module.and_then(|module| module.specifier.as_deref());
-                // `bun run` shows a module of src/js/internal as internal:<name>.
+                // `bun run` shows a module of src/js/thirdparty under the name of its file.
+                let file = runtime_module.and_then(|module| module.path.as_deref());
+                if let Some(name) = file.and_then(|it| it.strip_prefix(b"thirdparty/")) {
+                    let end = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
+                    return name[..end].into();
+                }
+                // It shows a module of src/js/internal as internal:<name>.
                 return match (
                     specifier,
                     specifier.and_then(|it| it.strip_prefix(b"internal/")),
@@ -625,6 +631,21 @@ mod tests {
         assert_eq!(path_with_specifier("node:fs"), b"node:fs");
         assert_eq!(path_with_specifier("internal/fs/a"), b"internal:fs/a");
         assert_eq!(path_with_specifier("-"), path);
+    }
+
+    #[test]
+    fn third_party_module_is_shown_under_the_name_of_its_file() {
+        let id = RuntimeModule::NodeFs.registry_id();
+        let text = format!("bun-builtins-manifest\t6\nmodule\t{id}\tthirdparty/a_b.js\t@a/b\n");
+        let manifest = Manifest::parse(text.as_bytes()).unwrap();
+        let input = PathInput {
+            kind: runtime_kind(),
+            ..program_file(1, b"/$bun/js/thirdparty/a_b.js", BY_NAME)
+        };
+        assert_eq!(
+            public_path_with_manifest(&manifest, &FileMaps::default(), input),
+            b"a_b"
+        );
     }
 
     #[test]

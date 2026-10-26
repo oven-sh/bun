@@ -273,7 +273,7 @@ fn build_body_with_references(offset: usize) -> Body {
         );
         builder.new_closure(function_id(40), &[operand]);
         builder.call_direct(function_id(41), &[operand]);
-        builder.import_module(module(50), module(51));
+        builder.import_module(module(50), None, module(51));
         builder.convert(operand, declare_every_part(offset), IllTypedCause::None);
         let from_compiler = DeclaredType::from_compiler(ty(63));
         builder.convert(operand, from_compiler, IllTypedCause::None);

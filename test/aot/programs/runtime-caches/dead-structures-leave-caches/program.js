@@ -1,5 +1,5 @@
 // A collection removes the cache entries of dead structures and keys, among them a dictionary that was flattened between two reads. The site caches and lookup table rows of live structures stay filled.
-// COUNTER: SiteCacheRefill <= 500
+// COUNTER: SiteCacheRefills <= 100
 const counts = typeof aotRuntimeCounters === "function";   // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 function calls(...names) { let sum = 0; if (counts) for (const name of names) sum += aotOperationCount("operationAOT" + name); return sum; }
 function expectBetween(label, value, low, high) { if (counts && !(value >= low && value <= high)) throw new Error(label + ": " + value + " is not in " + low + ".." + high); }
@@ -84,7 +84,8 @@ function useDictionaryConstructor(round) {
   return sum;
 }
 
-let total = readInTurn(longLived, 32);
+// A row is filed at the third miss between two collections and a site is filled when it has missed before, so both are read until they are.
+let total = readInTurn(longLived, 512) + readStable(stable, 300);
 for (let round = 0; round < 60; round++) {
   total += useShortLived(round);
   total += useDictionaryConstructor(round);
@@ -92,7 +93,7 @@ for (let round = 0; round < 60; round++) {
   else edenGC();
   const before = byName();
   total += readStable(stable, turns);
-  if (round > 0) expectBetween("entries for sites whose Structure lives", byName() - before, 0, 0);
+  expectBetween("entries for sites whose Structure lives", byName() - before, 0, 0);
   const missesBefore = calls("GetByIdAndCache");
   total += readInTurn(longLived, 32);
   expectBetween("misses for rows whose Structure lives", calls("GetByIdAndCache") - missesBefore, 0, 0);

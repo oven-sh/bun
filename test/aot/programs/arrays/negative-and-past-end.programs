@@ -290,7 +290,19 @@ console.log(sum, kept.length, kept[9999].length, kept[9999][0].n, new Set(kept).
 //// non-numeric-length-untyped.js
 // `new Array(n)` and `Array(n)` where the text does not say that n is a number, as Express's restore() has it with `arguments.length - 2`: what is made, and that filling it does not ask the run time.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed and keep it in a set; a cell or an array where the allocator has none at hand is the work of the run time.
+const owed = ["operationAOTArrayJoin", "operationAOTConcat", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTSetAdd", "operationAOTAllocateSlow", "operationAOTNewArrayOfHoles"];
 const attempt = (f) => { try { return f(); } catch (error) { return error.constructor.name; } };
 // A method that is looked up under a name put together, and that has no loop of its own, so that no loop of the text is near it: a server's handlers are such functions.
 const router = { restore(holder, object) {
@@ -305,10 +317,10 @@ const nameOfMethod = ["re", "store"].join("");
 const restore = (holder, object) => router[nameOfMethod](holder, object);
 const request = { baseUrl: "/", next: 1, params: "p" };
 const seen = new Set();
-let before = count("operationAOTPutByVal");
+let before = countsSoFar();
 for (let i = 0; i < 2000; i++)
   seen.add(restore({ count: 5, 2: "baseUrl", 3: "next", 4: "params" }, request) + " " + restore({ count: 2 }, request) + " " + restore({ count: 3, 2: "next" }, request));
-let calls = count("operationAOTPutByVal") - before;
+let calls = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log([...seen].join(" | "), calls <= 8 ? "and the run time was asked at most 8 times" : "and the run time was asked " + calls + " times");
 
 // What is handed over decides what is made.

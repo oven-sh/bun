@@ -17,7 +17,7 @@ const tsconfig = JSON.stringify({
 
 // These programs have no handler, and end by an error that nobody catches.
 const endByAnError = [5, 20, 30, 51, 85, 87, 108, 114, 118, 124, 151, 181, 192, 196, 201];
-const onceWrong = [155, 191];
+const onceWrong = [155, 191, 5687];
 // This seed links the prototypes of a function and of a class below it into a ring, which is refused.
 const ring = 5687;
 
@@ -34,7 +34,6 @@ generated(
       // Nothing is put into the text: whatever a run adds would use the classes in one more way.
       keepsItsText: true as const,
       ...(endByAnError.includes(index + 1) ? { exitsAsPlainBunDoes: true as const } : {}),
-      ...(index + 1 === ring ? { failsToday: "does not end" } : {}),
       make: () => ({
         file: isTyped ? "main.ts" : index % 4 === 0 ? "main.js" : "main.mjs",
         text: generate(new Random(index + 1), isTyped),

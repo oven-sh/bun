@@ -1,6 +1,18 @@
 // A constructor function that many classes share gives `this` its properties; each class has its own prototype.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed, list the names for it and keep it in a set; a cell or an array where the allocator has none at hand is the work of the run time.
+const owed = ["operationAOTArrayJoin", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTStackStringBuilderFinish", "operationAOTAllocateSlow", "operationAOTNewArrayOfHoles"];
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 function Emitter() { this.events = undefined; this.count = 0; this.limit = undefined; }
 Emitter.prototype.on = function () { return this; };
@@ -13,10 +25,10 @@ for (let i = 0; i < 24; i++) {
 const show = o => Object.keys(o).join() + ":" + o.events + o.count + o.limit + o.name + o.state;
 const round = () => { const seen = new Set(); for (const C of classes) seen.add(show(new C("n"))); return seen.size + " " + [...seen][5]; };
 for (let i = 0; i < 40; i++) round();
-const before = count("operationAOTTryPutProperties");
+const before = countsSoFar();
 const said = new Set();
 for (let i = 0; i < 100; i++) said.add(round());
-const times = count("operationAOTTryPutProperties") - before;
+const times = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log([...said].join(" | "), times < 200 ? "and the operation went the long way under 200 times" : "and the operation went the long way " + times + " times");
 collect();
 console.log(round());

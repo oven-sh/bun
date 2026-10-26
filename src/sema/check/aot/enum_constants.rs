@@ -3,6 +3,7 @@ use super::queries::Queries;
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, Decl, SymFlags};
 use crate::check::Checker;
+use crate::check::errors_enums_names::is_ambient_enum;
 use crate::fold::is_exact_power;
 use crate::hir::{self, BinOp, EnumMemberId, ExprFlags, ExprId, Kind, MemberKey, Node};
 use crate::program::{FileId, Sym};
@@ -197,11 +198,17 @@ impl Checker<'_, '_> {
             return self.resolve_entity_name_expression(file, entity, SymFlags::VALUE);
         }
         let named = self.resolve_member_path(file, entity)?;
-        if named.member.file != file {
+        let (hir, owners) = (self.hir(file), &self.bound(file).enum_member_owner);
+        let declarations = self.files().decls_of(named.member);
+        let has_own_value = |&(declared_in, declaration): &(FileId, Decl)| {
+            let Decl::EnumMember(member) = declaration else {
+                return true;
+            };
+            declared_in == file && !is_ambient_enum(hir, owners[member.idx()])
+        };
+        if named.member.file != file || !declarations.iter().all(has_own_value) {
             return Some(named.member);
         }
-        let hir = self.hir(file);
-        let declarations = self.files().decls_of(named.member);
         let is_known_to_transpiler = named.is_path_declared_here
             && declarations.iter().all(|&(declared_in, declaration)| {
                 let Decl::EnumMember(member) = declaration else {

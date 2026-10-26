@@ -49,7 +49,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // Where Bun's transpiler prints an initializer in place of the name, JSC records what the initializer records, and nothing for the name.
     fn record_printed_initializer(&mut self, identifier: ExprId) -> bool {
         let Some(printed) = self.file.find_printed_in_place(identifier) else {
-            return false;
+            return self.file.find_printed_value(identifier).is_some();
         };
         if let Printed::Initializer(initializer) = printed
             && let Some(&recorded) = self.records_of_initializers.get(&initializer)

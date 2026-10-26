@@ -24,6 +24,19 @@ pub(in crate::lower) enum AssignmentTarget {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    // An expression that makes an object wherever it is evaluated.
+    fn is_written_as_object(&self, expression: ExprId) -> bool {
+        matches!(
+            self.hir[self.skip_type_syntax(expression)].kind,
+            ExprKind::New(_)
+                | ExprKind::Object(_)
+                | ExprKind::Array(_)
+                | ExprKind::Fn(_)
+                | ExprKind::Class(_)
+                | ExprKind::Regex { .. }
+        )
+    }
+
     pub(in crate::lower) fn classify_assignment_target(&self, target: ExprId) -> AssignmentTarget {
         let hir = self.hir;
         let mut erased = target;
@@ -224,6 +237,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 is_in_register
             }
             _ => match self.file.hir.member_key(self.file.skip_type_syntax(target)) {
+                // `o` was tested ahead of the conversion of a key that is an object.
+                Some((object, MemberKey::Computed(key))) if self.file.is_written_as_object(key) => {
+                    self.set_position(self.file.member_position(object));
+                    return;
+                }
                 // The test of `o` is reported there. A getter or a trap that the read calls has its caller at `o`.
                 Some((object, MemberKey::Computed(key))) if !self.file.is_literal_operand(key) => {
                     self.set_position_to_last_recorded();

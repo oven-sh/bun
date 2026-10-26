@@ -86,6 +86,6 @@ const missed = visits() - before;
 for (let i = 1; i < 1000; i++) round();
 const asked = visits() - before;
 console.log("the sum:", total);
-console.log("each of the 96 pairs of a structure and a key was looked up at least once:", typeof aotOperationCount !== "function" || lookups() >= 96);
+console.log("the run time looks a key up at most 22 times in the whole run:", typeof aotOperationCount !== "function" || lookups() <= 22);
 console.log("at least 90 of the 96 pairs are cached after 400 rounds:", typeof aotOperationCount !== "function" || missed <= 6);
 console.log("the run time is asked at most 960 times for 96000 reads under 3 keys that come again:", typeof aotOperationCount !== "function" || asked <= 960);

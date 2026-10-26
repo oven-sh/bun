@@ -21,7 +21,9 @@
 %TypedArray%.prototype : @@iterator/wc @@toStringTag/ac at/wc buffer/ac byteLength/ac byteOffset/ac constructor/wc copyWithin/wc entries/wc every/wc fill/wc filter/wc find/wc findIndex/wc findLast/wc findLastIndex/wc forEach/wc includes/wc indexOf/wc join/wc keys/wc lastIndexOf/wc length/ac map/wc reduce/wc reduceRight/wc reverse/wc set/wc slice/wc some/wc sort/wc subarray/wc toLocaleString/wc toReversed/wc toSorted/wc toString/wc values/wc with/wc
 %URLSearchParamsIterator%.prototype : @@toStringTag/c next/wc
 %WrapForValidIterator%.prototype : @@toStringTag/c next/wc return/wc
+AbortController.prototype : @@toStringTag/c abort/wc constructor/wc signal/ac
 AbortSignal : abort/wc any/wc length/c name/c prototype/- timeout/wc
+AbortSignal.prototype : @@toStringTag/c aborted/ac constructor/wc onabort/ac reason/ac throwIfAborted/wc
 AggregateError : length/? name/? prototype/-
 AggregateError.prototype : constructor/wc message/wc name/wc
 Array : @@species/ac from/wc fromAsync/wc isArray/wc length/? name/? of/wc prototype/-
@@ -57,6 +59,7 @@ Error.prototype : constructor/wc message/wc name/wc toString/wc
 EvalError : length/? name/? prototype/-
 EvalError.prototype : constructor/wc message/wc name/wc
 Event : AT_TARGET/- BUBBLING_PHASE/- CAPTURING_PHASE/- NONE/- length/c name/c prototype/-
+Event.prototype : @@toStringTag/c AT_TARGET/- BUBBLING_PHASE/- CAPTURING_PHASE/- NONE/- bubbles/ac cancelBubble/ac cancelable/ac composed/ac composedPath/wc constructor/wc currentTarget/ac defaultPrevented/ac eventPhase/ac initEvent/wc preventDefault/wc returnValue/ac srcElement/ac stopImmediatePropagation/wc stopPropagation/wc target/ac timeStamp/ac type/ac
 EventTarget : length/c name/c prototype/-
 EventTarget.prototype : @@toStringTag/c addEventListener/wc constructor/wc dispatchEvent/wc removeEventListener/wc
 File : length/c name/c prototype/-
@@ -160,6 +163,8 @@ Temporal.PlainYearMonth : compare/wc from/wc length/? name/? prototype/-
 Temporal.PlainYearMonth.prototype : @@toStringTag/c add/wc calendarId/ac constructor/wc daysInMonth/ac daysInYear/ac equals/wc era/ac eraYear/ac inLeapYear/ac month/ac monthCode/ac monthsInYear/ac since/wc subtract/wc toJSON/wc toLocaleString/wc toPlainDate/wc toString/wc until/wc valueOf/wc with/wc year/ac
 Temporal.ZonedDateTime : compare/wc from/wc length/? name/? prototype/-
 Temporal.ZonedDateTime.prototype : @@toStringTag/c add/wc calendarId/ac constructor/wc day/ac dayOfWeek/ac dayOfYear/ac daysInMonth/ac daysInWeek/ac daysInYear/ac epochMilliseconds/ac epochNanoseconds/ac equals/wc era/ac eraYear/ac getTimeZoneTransition/wc hour/ac hoursInDay/ac inLeapYear/ac microsecond/ac millisecond/ac minute/ac month/ac monthCode/ac monthsInYear/ac nanosecond/ac offset/ac offsetNanoseconds/ac round/wc second/ac since/wc startOfDay/wc subtract/wc timeZoneId/ac toInstant/wc toJSON/wc toLocaleString/wc toPlainDate/wc toPlainDateTime/wc toPlainTime/wc toString/wc until/wc valueOf/wc weekOfYear/ac with/wc withCalendar/wc withPlainTime/wc withTimeZone/wc year/ac yearOfWeek/ac
+TextDecoder.prototype : @@toStringTag/c constructor/wc decode/w encoding/a fatal/a ignoreBOM/a
+TextEncoder.prototype : @@toStringTag/c constructor/wc encode/wc encodeInto/wc encoding/ac
 TransformStream : length/c name/c prototype/-
 TypeError : length/? name/? prototype/-
 TypeError.prototype : constructor/wc message/wc name/wc
@@ -215,6 +220,7 @@ eval : length/? name/?
 globalThis open : $vm/? AggregateError/wc Array/wc ArrayBuffer/wc AsyncDisposableStack/wc Atomics/wc BigInt/wc BigInt64Array/wc BigUint64Array/wc Boolean/wc DataView/wc Date/wc DisposableStack/wc Error/wc EvalError/wc FinalizationRegistry/wc Float16Array/wc Float32Array/wc Float64Array/wc Function/wc Infinity/- Int16Array/wc Int32Array/wc Int8Array/wc Intl/wc Iterator/wc JSON/wc Loader/? Map/wc Math/wc NaN/- Number/wc Object/wc Promise/wc Proxy/wc RangeError/wc ReferenceError/wc Reflect/wc RegExp/wc Set/wc ShadowRealm/wc SharedArrayBuffer/wc String/wc SuppressedError/wc Symbol/wc SyntaxError/wc Temporal/wc TypeError/wc URIError/wc Uint16Array/wc Uint32Array/wc Uint8Array/wc Uint8ClampedArray/wc WeakMap/wc WeakRef/wc WeakSet/wc WebAssembly/wc __disableSamplingProfiler/? __disableSuperSampler/? __dumpAndClearSamplingProfilerSamples/? __enableSamplingProfiler/? __enableSuperSampler/? __signpostStart/? __signpostStop/? __tracePointStart/? __tracePointStop/? decodeURI/wc decodeURIComponent/wc encodeURI/wc encodeURIComponent/wc escape/wc eval/wc gc/wc globalThis/wc isFinite/wc isNaN/wc parseFloat/wc parseInt/wc undefined/- unescape/wc
 isFinite : length/? name/?
 isNaN : length/? name/?
+navigator : @@toStringTag/c hardwareConcurrency/ac platform/ac userAgent/ac
 parseFloat : length/? name/?
 parseInt : length/? name/?
 performance : now/wc

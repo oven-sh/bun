@@ -1141,7 +1141,17 @@ export const server = { ssr: "server of both", csr: "never seen" };
 //// missing-namespace-names/main.js
 // Code that does not know what it is handed asks namespace objects for names that some of them export and some do not (`node?.universal?.[option] ?? node?.server?.[option]`). A namespace never gains an export, so a name it
 // lacks is answered without asking the run time every time; a store to it still throws, `in` says false, and what an object in its place has is still found.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 const lines = [];
 function attempt(run) { try { return String(run()); } catch (error) { return error.constructor.name; } }
 const option = (node, name) => node?.universal?.[name] ?? node?.server?.[name];
@@ -1161,10 +1171,10 @@ function tell(tag) {
 tell("at first");
 {
   for (let i = 0; i < 100; i++) for (const node of nodes) option(node, "ssr");
-  const before = count("operationAOTGetByIdAndCache");
+  const before = countsSoFar();
   let seen = 0;
   for (let i = 0; i < 3000; i++) for (const node of nodes) seen += option(node, "ssr") === undefined ? 0 : 1;
-  const asked = count("operationAOTGetByIdAndCache") - before;
+  const asked = callsIn(countsSoFar()) - callsIn(before);
   lines.push("rounds " + seen);
   lines.push(asked <= 200 ? "the reads asked the run time at most 200 times" : "the reads asked the run time " + asked + " times");
 }

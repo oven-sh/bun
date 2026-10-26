@@ -1678,7 +1678,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isPossiblyDiscriminantValue`: the kinds of expression whose type doesn't depend on their
     /// contextual type.
     fn is_possibly_discriminant_value(hir: &File, e: ExprId) -> bool {
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::String(_)
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
@@ -1928,7 +1928,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let mut leftmost = target;
                 while !is_parenthesized(hir, leftmost) {
-                    leftmost = match hir[leftmost].kind {
+                    leftmost = match hir.checked_kind(leftmost) {
                         ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
                         ExprKind::Call(c) | ExprKind::TaggedTemplate(c) => hir[c].callee,
                         ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
@@ -2029,8 +2029,8 @@ impl<'p, 's> Checker<'p, 's> {
         target: ExprId,
     ) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[target].kind {
-            match hir[obj].kind {
+        if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir.checked_kind(target) {
+            match hir.checked_kind(obj) {
                 // `f.id = value`, where that makes `id` a property of the function `f`.
                 ExprKind::Ident(name) => {
                     // The values exported by `module.exports = value` and `exports.a = value` have
@@ -2064,7 +2064,7 @@ impl<'p, 's> Checker<'p, 's> {
                             && hir[d].ty.is_some()
                         {
                             let declared = self.type_from_node(file, hir[d].ty);
-                            return match hir[target].kind {
+                            return match hir.checked_kind(target) {
                                 ExprKind::Dot { name, .. } => {
                                     self.contextual_property(declared, name)
                                 }
@@ -2097,7 +2097,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ExprKind::This => {
                     let this = self.get_type_of_expression(file, obj);
                     let this = self.apparent_type(this);
-                    let name = match hir[target].kind {
+                    let name = match hir.checked_kind(target) {
                         ExprKind::Dot { name, .. } => Some(name),
                         ExprKind::Index { index, .. } => {
                             let key = self.type_of_expr(file, index);

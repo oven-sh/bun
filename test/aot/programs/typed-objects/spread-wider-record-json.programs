@@ -101,9 +101,10 @@ function withName(): any {
 //// spread-wider-record-json.ts
 // A record spread into a wider record type keeps the key order JavaScript gives it, and the compiled JSON.stringify writes it without leaving for the runtime's writer.
 // ENV JSC_aotCountsPath=/dev/null
+declare const aotRuntimeCounters: undefined | (() => string);
 declare const aotOperationCount: undefined | ((name: string) => number);
-const slowPathCalls = () =>
-  typeof aotOperationCount === "function" ? aotOperationCount("operationAOTJSONAppendElements") : 0;
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+const slowPathCalls = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
 
 ////= lines	UserRef	login	string	name	string
 interface Comment {

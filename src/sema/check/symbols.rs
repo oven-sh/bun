@@ -1123,7 +1123,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let before = self.non_cacheable_mark();
         let ty = self.check_expression_cached_ex(file, e, CheckMode::empty());
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             // `argumentsSymbol` isn't a property of any type.
             ExprKind::Ident(name)
                 if name == known::arguments

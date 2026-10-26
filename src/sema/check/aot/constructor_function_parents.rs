@@ -144,10 +144,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let parent = self.find_linked_parent(function)?;
         let mut ancestor = parent;
         for _ in 0..MAX_CHAIN_OF_PARENTS {
-            let ClassParent::Declared(ClassDeclaration::Function(linked)) = ancestor else {
-                return Some(parent);
+            let above = match ancestor {
+                ClassParent::Declared(ClassDeclaration::Function(linked)) => {
+                    self.find_linked_parent(linked)
+                }
+                ClassParent::Declared(ClassDeclaration::Class(class)) => self.class_parent(class),
+                ClassParent::Library(_) => None,
             };
-            match self.find_linked_parent(linked) {
+            match above {
                 Some(above) => ancestor = above,
                 None => return Some(parent),
             }

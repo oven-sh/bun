@@ -676,7 +676,7 @@ impl Checker<'_, '_> {
             let args = [Arg::Bytes(&name), least, Arg::Bytes(&factory), most];
             let mut diagnostic = self.new_diagnostic(error_node, 6229, &args);
             // `getSymbolAtLocation(tagName).ValueDeclaration`
-            let declared = match hir[tag].kind {
+            let declared = match hir.checked_kind(tag) {
                 ExprKind::Ident(name) => self
                     .symbol_of_identifier(file, tag, name)
                     .filter(|&sym| self.files().flags(sym).intersects(SymFlags::VALUE))

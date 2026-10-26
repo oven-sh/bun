@@ -2659,7 +2659,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::VOID;
         };
         let chain = match self.bound(file).parent_of_expr(this_arg) {
-            Parent::Expr(access) => match self.hir(file)[access].kind {
+            Parent::Expr(access) => match self.hir(file).checked_kind(access) {
                 ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
                 _ => Chain::No,
             },

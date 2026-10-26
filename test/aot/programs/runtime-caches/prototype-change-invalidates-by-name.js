@@ -1,5 +1,5 @@
 // A cached answer for a name on a prototype chain survives changes to other names and is invalidated by every change to its own name.
-// COUNTER: SiteCacheRefill <= 300
+// COUNTER: SiteCacheRefills <= 300
 const counts = typeof aotRuntimeCounters === "function";   // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 function calls(...names) { let sum = 0; if (counts) for (const name of names) sum += aotOperationCount("operationAOT" + name); return sum; }
 function expectBetween(what, value, low, high) { if (counts && !(value >= low && value <= high)) throw new Error(what + ": " + value + " is not in " + low + ".." + high); }

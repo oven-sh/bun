@@ -495,8 +495,7 @@ function splitEscapedAltNames(altNames: string) {
 }
 
 function checkServerIdentity(hostname: string, cert: $Node.PeerCertificate) {
-  const subject = cert.subject;
-  const altNames = cert.subjectaltname;
+  const { subject, subjectaltname: altNames } = cert;
   const dnsNames = [];
   const ips = [];
 

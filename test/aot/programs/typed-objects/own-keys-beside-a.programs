@@ -2482,9 +2482,18 @@ attempt("arithmetic", () => n4.v * 2)
 attempt("held", () => plusOne(n4.v))
 //// records-spread-after-another-source.ts
 // `{ ...defaults, ...record }`, `Object.assign({}, defaults, record)` and `Object.assign(target, record)` where the record is an object of a written type and the code that copies knows nothing of it. The copy has what plain Bun gives it, in that order, whatever the record has been through; and copying records of one type onto targets of one shape takes a plan that is made once.
-declare const aotOperationCount: undefined | ((name: string) => number);
-const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const byPlan = () => counted ? counted("operationAOTCopyDataProperties") + counted("operationAOTNewObjectWithSpreads") : 0;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 interface Inner { v: number }
 interface Row { count: number; ratio: number; ok: boolean; name: string; inner: Inner; any: unknown; maybe?: number; other?: string; nothing: number | undefined; none: Inner | null }
 const make = (i: number): Row => ({ count: i, ratio: i + 0.5, ok: i % 2 === 0, name: "n" + i, inner: { v: i }, any: i, nothing: undefined, none: null });
@@ -2530,10 +2539,12 @@ const targets: [string, () => any][] = [
 for (let turn = 0; turn < 2; turn++) for (const [t, target] of targets) { const before = calls.length, into = target(); console.log(turn, t, attempt(() => assignOnto(into, make(3)) === into), show(into), calls.slice(before).join()); }
 const same = make(1), copy = spreadSecond({}, same);
 console.log(copy.inner === same.inner, copy !== same, Object.getPrototypeOf(copy) === Object.prototype);
-const start = byPlan();
+const start = countsSoFar();
 let sum = 0;
 for (let i = 0; i < 2000; i++) { const r = make(i); sum += spreadSecond(firsts[0][1](), r).count + assignSecond(firsts[0][1](), r).count + assignOnto(JSON.parse('{"p":1}'), r).count; }
-console.log(sum, counted ? byPlan() - start >= 5900 : true);
+// `make` writes a number into a name.
+const end = countsSoFar();
+console.log(sum, callsIn(end, "operationAOTIntToString") - callsIn(start, "operationAOTIntToString") <= 100);
 //// recursive-types.ts
 // Types that refer to themselves and to each other: lists, trees, cycles, a narrower recursive type over wider nodes, and nodes from `JSON.parse` in between.
 interface ListItem { value: number; next: ListItem | null }

@@ -5768,7 +5768,11 @@ impl<'s> Files<'s> {
                             }
                             continue;
                         }
-                        let of_code = code_files.as_mut().and_then(|it| it.take_loaded(*id));
+                        let of_code = code_files.as_mut().zip(build.as_ref()).and_then(
+                            |(code_files, build)| {
+                                code_files.take_loaded_into_types_program(build, arena, *id)
+                            },
+                        );
                         let mut loaded = of_code.or_else(|| prefetch.take(path, is_lib));
                         if loaded.is_none() {
                             // `prefetch_files` couldn't predict this file. Load it now, along with the

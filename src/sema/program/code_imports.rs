@@ -52,6 +52,7 @@ pub(super) fn resolve_code_imports<'s, 'r>(
         targets,
         targets_by_specifier: FxHashMap::default(),
         types_answers: Vec::new(),
+        is_in_types_program: false,
         requests: ImportRequests::default(),
         exported_requires: Vec::new(),
     };

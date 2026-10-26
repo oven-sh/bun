@@ -1,9 +1,11 @@
 use bun_ast::Target;
 use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{CommonJsVariable, Decl};
+use bun_sema::bind::{Binding, CommonJsVariable, Decl};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{self, Branches, CallId, Chain, ExprId, ExprKind, IdList, ImportEqualsId};
+use bun_sema::hir::{
+    self, Branches, CallId, Chain, ExprFlags, ExprId, ExprKind, IdList, ImportEqualsId, MemberKey,
+};
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, OwnRequire, RequireCallForm, find_own_require,
     find_require_call, holds_import_meta_require, is_made_require, is_require_made_for_own_file,
@@ -191,19 +193,22 @@ pub(crate) fn lower_import_call(
         SiteAnswer::Module(module) => {
             let first = hir.ids(args).next();
             let specifier = lowering.lower_computed_specifier(SiteAnswer::Module(module), first);
-            lowering.lower_arguments_for_effect(args, 1);
+            // The options are read, and refused if they are not what the language asks for. The host goes by them where it loads a module that stays outside of the executable.
+            let options = hir.ids(args).nth(1);
+            let options = options.map(|options| lowering.lower_expression(options));
+            lowering.lower_arguments_for_effect(args, 1 + usize::from(options.is_some()));
             lowering.set_position(position);
             let test = specifier.zip(first).and_then(|(text, node)| {
                 let written = lowering.file.decisions().specifier(node);
                 lowering.branch_on_path_made_by_call(written, node, text)
             });
             let Some(test) = test else {
-                return lowering.emit_import_of_module(args, module);
+                return lowering.emit_import_of_module(args, module, options);
             };
             let result = lowering.builder.create_variable(None);
             let done = lowering.create_block();
             lowering.continue_in(test.as_written);
-            let loaded = lowering.emit_import_of_module(args, module);
+            let loaded = lowering.emit_import_of_module(args, module, options);
             lowering.builder.write_variable(result, loaded);
             lowering.jump(done);
 
@@ -251,19 +256,24 @@ pub(crate) fn lower_import_call(
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn emit_import_of_module(&mut self, arguments: IdList<ExprId>, module: ModuleRef) -> ValueId {
+    fn emit_import_of_module(
+        &mut self,
+        arguments: IdList<ExprId>,
+        module: ModuleRef,
+        options: Option<ValueId>,
+    ) -> ValueId {
         if let Some(object) = find_object_replacing_namespace(self.file.hir, arguments, module) {
             let value = self.emit_builtin_import(object, None);
             return self.emit_settled_promise(BuiltinId::PromiseResolve, value);
         }
-        self.emit_import_through_face(module)
+        self.emit_import_through_face(module, options)
     }
 
-    fn emit_import_through_face(&mut self, module: ModuleRef) -> ValueId {
+    fn emit_import_through_face(&mut self, module: ModuleRef, options: Option<ValueId>) -> ValueId {
         let module = self.file.inputs.modules.face(module).unwrap_or(module);
         let module = self.file.fragment.declare_module(module);
         let referrer = self.file.module_id();
-        self.builder.import_module(module, referrer)
+        self.builder.import_module(module, options, referrer)
     }
 
     pub(crate) fn try_lower_module_call(
@@ -584,7 +594,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         // The function that holds the text of a file with a wrapper is not the body of the module, and what stands behind a `using` declaration stands under the handler that disposes of the resource.
         let is_bare = plan.is_bare && self.is_module_body() && self.handler().is_none();
         // The callback of a wrapper in a bundle is called by the function that the wrapper has made.
-        let is_call_of_require = matches!(plan.target, ModuleRef::File(_));
+        let is_call_of_require = matches!(plan.target, ModuleRef::File(_) | ModuleRef::Runtime(_));
         self.builder
             .evaluate_module(module, referrer, is_bare, is_call_of_require);
         if plan.records {
@@ -823,7 +833,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.continue_in(arm);
             let loaded = match load {
                 ComputedLoad::Require => self.emit_require_of_candidate(spelled.module, spelling),
-                ComputedLoad::Import => self.emit_import_through_face(spelled.module),
+                ComputedLoad::Import => self.emit_import_through_face(spelled.module, None),
             };
             self.builder.write_variable(result, loaded);
             self.jump(done);
@@ -961,12 +971,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let first = (arguments.len() > 0).then(|| hir.id_at(arguments, 0));
         let specifier = self.lower_computed_specifier(site.answer, first);
         self.lower_arguments_for_effect(arguments, 1);
-        self.set_position(match hir[call].kind {
-            ExprKind::Call(id) if self.file.is_shown_without_source_map() => {
-                self.file.call_position(hir[id])
-            }
-            _ => hir[call].pos,
-        });
+        self.set_position(self.file.load_position(call));
         self.emit_operation(operation, site, specifier)
     }
 
@@ -992,6 +997,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         for index in start..arguments.len() {
             self.lower_expression_for_effect(hir.id_at(arguments, index));
+        }
+    }
+}
+
+impl FileLowering<'_, '_, '_, '_> {
+    // A call that loads a module is reported where any call of its callee is. Of `module.require(..)` Bun's transpiler prints `require(..)`, which stands where `module` does.
+    fn load_position(&self, call: ExprId) -> u32 {
+        let hir = self.hir;
+        let ExprKind::Call(id) = hir[call].kind else {
+            return hir[call].pos;
+        };
+        let callee = self.skip_type_syntax(hir[id].callee);
+        let object = match hir.member_key(callee) {
+            Some((object, MemberKey::Name(name))) if name == known::require => {
+                self.skip_type_syntax(object)
+            }
+            _ => return self.call_position(hir[id]),
+        };
+        let is_printed_as_require = !self.is_shown_without_source_map()
+            && !hir
+                .expr_flags(callee)
+                .contains(ExprFlags::OPTIONAL_CHAIN_LINK)
+            && self.bound.binding(object) == Binding::CommonJs(CommonJsVariable::Module);
+        match is_printed_as_require {
+            true => hir[object].pos,
+            false => self.call_position(hir[id]),
         }
     }
 }
@@ -1062,7 +1093,7 @@ fn lower_tested_call(
     let Arguments::Values(values) = lowering.lower_arguments(hir[id].args) else {
         unreachable!("a module call with a spread argument is an ordinary call");
     };
-    lowering.set_position(hir[call].pos);
+    lowering.set_position(lowering.file.load_position(call));
     let condition = match test {
         CalleeTest::Expected(expected) => {
             let expected = lowering.emit_expected_callee(expected);

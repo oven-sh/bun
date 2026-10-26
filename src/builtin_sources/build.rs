@@ -32,6 +32,8 @@ fn main() {
         );
     }
     println!("cargo:rerun-if-changed={}", archive.display());
+    let evaluated_modules = codegen_dir.join("InternalModuleRegistryConstants.bin");
+    println!("cargo:rerun-if-changed={}", evaluated_modules.display());
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
 }

@@ -15,6 +15,7 @@ import {
   sourceFiles,
   specifierOf,
 } from "./builtins-manifest-model";
+import { encodeNumbers } from "./bundled-positions";
 import { writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { define, globalsToPrefix } from "./replacements";
 
@@ -28,16 +29,18 @@ const flagValue = (flag: string) =>
 const engineFunctions = flagValue("--engine-functions=");
 const bundledNamesOfModules = flagValue("--bundled-names-of-modules=");
 const bundledHelpers = flagValue("--bundled-helpers=");
+const evaluatedModules = flagValue("--evaluated-modules=");
 if (
   !/^--debug=(OFF|ON)$/.test(process.argv[2] ?? "") ||
   !output ||
   output.startsWith("--") ||
   !engineFunctions ||
   !bundledNamesOfModules ||
-  !bundledHelpers
+  !bundledHelpers ||
+  (archive && !evaluatedModules)
 ) {
   console.error(
-    "Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] --engine-functions=<aot_engine_functions.json> --bundled-names-of-modules=<bundled_names_of_modules.txt> --bundled-helpers=<runtime.out.js> [--engine-directory=<Source/JavaScriptCore/aot>]",
+    "Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] --engine-functions=<aot_engine_functions.json> --bundled-names-of-modules=<bundled_names_of_modules.txt> --evaluated-modules=<InternalModuleRegistryConstants.bin> --bundled-helpers=<runtime.out.js> [--engine-directory=<Source/JavaScriptCore/aot>]",
   );
   process.exit(1);
 }
@@ -152,7 +155,8 @@ for (const listing of listOfModules.listings.keys()) {
   lines.push(`declarations\t${listing}`);
 }
 
-const bundledPositions: Buffer[] = [];
+// The positions of each module stand behind its id and their length.
+const bundledPositions: Uint8Array[] = [];
 for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
   const [kind, file, encoded] = line.split("\t");
   // The positions are those of the text that was bundled.
@@ -161,9 +165,8 @@ for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
     lines.push(line);
     continue;
   }
-  const start = bundledPositions.reduce((sum, bytes) => sum + bytes.length, 0);
-  bundledPositions.push(Buffer.from(encoded, "base64"));
-  lines.push(`positions\t${file}\t${start}\t${bundledPositions.at(-1)!.length}`);
+  const positions = Buffer.from(encoded, "base64");
+  bundledPositions.push(encodeNumbers([moduleList.indexOf(file), positions.length]), positions);
 }
 
 const manifest = lines.join("\n") + "\n";
@@ -243,9 +246,21 @@ function declarationsOfRuntime(): [string, Buffer][] {
   return files;
 }
 
+/** The texts that `bun run` evaluates, by the id of the module: the section that bundle-modules.ts writes. */
+function readEvaluatedModules(file: string): Buffer[] {
+  const section = fs.readFileSync(file);
+  const [count, records, data] = [16, 20, 32].map(at => section.readUInt32LE(at));
+  return Array.from({ length: count }, (_, id) => {
+    const [start, length] = [16, 20].map(at => section.readUInt32LE(records + id * 24 + at));
+    return section.subarray(data + start, data + start + length);
+  });
+}
+
 if (archive) {
   const nameLength = 63;
-  const recordLength = 1 + nameLength + 4 + 4;
+  const recordLength = 1 + nameLength + 4 + 4 + 4;
+  // Every Bun holds the text of a module that `bun run` evaluates, and most of the module is found in it.
+  const evaluated = readEvaluatedModules(evaluatedModules!);
   const files = [...sourceFiles, ...functionFiles, "builtins.d.ts"].map((file): [string, Buffer] => [
     file,
     fs.readFileSync(locate(file)),
@@ -259,24 +274,29 @@ if (archive) {
   files.push(["positions", Buffer.concat(bundledPositions)]);
   files.push(["manifest", Buffer.from(manifest)]);
   files.sort(([a], [b]) => (a < b ? -1 : 1));
-  const frames = files.map(([, text]) => {
-    const options = {
+  const compress = (text: Buffer, dictionary?: Buffer) =>
+    zstdCompressSync(text, {
       pledgedSrcSize: text.length,
       params: { [constants.ZSTD_c_compressionLevel]: 19, [constants.ZSTD_c_contentSizeFlag]: 1 },
-    };
-    return zstdCompressSync(text, options);
-  });
-  const header = Buffer.alloc(4 + files.length * recordLength);
-  header.writeUInt32LE(files.length, 0);
-  let offset = header.length;
+      dictionary,
+    });
+  const frames = files.map(([name, text]) => compress(text, evaluated[sourceFiles.indexOf(name)]));
+  // The list of the files, compressed, stands behind its length. Its offsets count from where it ends.
+  const records = Buffer.alloc(files.length * recordLength);
+  let offset = 0;
   for (const [i, [name]] of files.entries()) {
     if (name.length > nameLength) throw new Error(`${name} is longer than ${nameLength} bytes`);
-    const record = 4 + i * recordLength;
-    header.writeUInt8(name.length, record);
-    header.write(name, record + 1, "latin1");
-    header.writeUInt32LE(offset, record + 1 + nameLength);
-    header.writeUInt32LE(frames[i].length, record + 1 + nameLength + 4);
+    const record = i * recordLength;
+    records.writeUInt8(name.length, record);
+    records.write(name, record + 1, "latin1");
+    records.writeUInt32LE(offset, record + 1 + nameLength);
+    records.writeUInt32LE(frames[i].length, record + 1 + nameLength + 4);
+    // One more than the id of the module whose evaluated text the file follows on.
+    records.writeUInt32LE(sourceFiles.indexOf(name) + 1, record + 1 + nameLength + 8);
     offset += frames[i].length;
   }
-  writeIfNotChangedBinary(archive, Buffer.concat([header, ...frames]));
+  const list = compress(records);
+  const header = Buffer.alloc(4);
+  header.writeUInt32LE(list.length, 0);
+  writeIfNotChangedBinary(archive, Buffer.concat([header, list, ...frames]));
 }

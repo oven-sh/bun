@@ -1,5 +1,5 @@
 use bun_sema::check::aot::{CheckedType, GaveUp};
-use bun_sema::hir::{ExprId, PatId, PatKind, StmtId, StmtKind, VarKind};
+use bun_sema::hir::{ExprId, NameKind, PatId, PatKind, PatProp, StmtId, StmtKind, VarKind};
 use smallvec::SmallVec;
 
 use super::control::{BreakTargetKind, CleanupLanding, CleanupPath};
@@ -301,7 +301,20 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             PatKind::Object(properties) => {
                 let mut properties = properties.iter().rev().map(|property| hir[property]);
-                properties.find_map(|property| last_of(property.value, property.default))
+                // `{ "a": a }` is printed as `{ a }`, at the key.
+                let is_printed_as_one_name = |property: &PatProp| {
+                    let name = property.key.name();
+                    matches!(
+                        property.name_kind,
+                        NameKind::Identifier | NameKind::StringLiteral
+                    ) && name.is_some()
+                        && property.default.is_none()
+                        && matches!(hir[property.value].kind, PatKind::Ident(bound) if Some(bound) == name)
+                };
+                properties.find_map(|property| match is_printed_as_one_name(&property) {
+                    true => Some(property.key_pos),
+                    false => last_of(property.value, property.default),
+                })
             }
         }
     }

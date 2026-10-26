@@ -13,7 +13,7 @@ setDefaultTimeout(240_000);
 const leastCodeOfLineEditor = 150_000;
 
 const isOfLineEditor = (file: string) =>
-  /^(node:readline|internal\/readline\/interface|internal\/repl\/history)/.test(file);
+  /^(node:readline|internal:readline\/interface|internal:repl\/history)/.test(file);
 
 async function build(directory: string, entry: string) {
   const executable = join(directory, entry.replace(/\.m?js$/, isWindows ? ".exe" : ""));

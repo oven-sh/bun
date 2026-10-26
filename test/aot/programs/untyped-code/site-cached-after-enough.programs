@@ -160,7 +160,17 @@ console.log([...after].join(" ; "));
 //// site-first-used-after-gc.js
 // A site that is first used after a collection is filled without the run time's operation, where all sites' table knows the answer.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 // Far enough back that the two are kept outside the object.
 const make = n => { const o = {}; for (let i = 0; i < 30; i++) o["early" + i] = i; o.alpha = n; o.beta = -n; return o; };
@@ -251,9 +261,9 @@ let sum = 0;
 for (let turn = 0; turn < 20; turn++) for (const read of all) sum += read(object, false);
 sum += read0(object, true);
 collect();
-const before = count("operationAOTGetById");
+const before = countsSoFar();
 for (let turn = 0; turn < 40; turn++) for (const read of all) sum += read(object, true);
-const times = count("operationAOTGetById") - before;
+const times = callsIn(countsSoFar()) - callsIn(before);
 console.log(sum, times < 40 ? "and the operation was entered under 40 times" : "and the operation was entered " + times + " times");
 // What was filled so dies with its structure, as any slot.
 let other = make(5);
@@ -2008,6 +2018,19 @@ for (const all of kept) {
 // `super(a, b, c, ..)` and `new Derived(a, b, c, ..)` with more arguments than fit in registers, where nothing is known of the parent or of the callee.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed, list the names for it and keep it in a set; a cell or an array where the allocator has none at hand is the work of the run time; a place that several kinds of objects pass tries now and then to remember the one that it sees.
+const owed = ["operationAOTConcat", "operationAOTConcatenate", "operationAOTSetAdd", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTValueAdd", "operationAOTOwnPropertyKeys", "operationAOTAllocateSlow", "operationAOTArraySlice", "operationAOTFillSiteCache"];
 function Request(id, params, raw, query, log, context) {
   this.id = id;
   this.params = params;
@@ -2067,13 +2090,15 @@ class OverArray extends Array {
 const holder = { made: [OverFunction, OverClass, OverDerived, OverArray] };
 const said = new Set();
 const before = count("operationAOTSuperConstruct");
+let known = "";
 for (let turn = 0; turn < 500; turn++) {
+  if (turn === 50) known = countsSoFar();
   for (const callee of holder.made.slice(0, 3)) {
     said.add(new callee(1, 2, 3, 4, 5, 6, 7, 8, 9, 0, "k").show());
     said.add(new callee(1, 2, 3, 4, 5).show());
   }
 }
-const inRunTime = count("operationAOTSuperConstruct") - before;
+const inRunTime = count("operationAOTSuperConstruct") - before + callsIn(countsSoFar(), ...owed) - callsIn(known, ...owed);
 console.log([...said].join("\n"));
 console.log(inRunTime === 0 ? "the run time called no parent" : "the run time called a parent " + inRunTime + " times");
 console.log(new holder.made[3](1, 2, 3, 4, 5, 6, 7, 8, 9, 0).show());

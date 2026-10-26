@@ -3416,10 +3416,17 @@ console.log([c.bare(), c.held(), c.called({ v: "called" }), c.same(d)].join());
 console.log([said(() => C.onArgument({})), said(() => C.onArgument(null)), said(() => C.onArgument(1)), said(() => c.onOther(Object.create(d))), said(() => c.onOther(new Proxy(d, {})))].join());
 //// private-method-calls-on-an-open-class-avoid-runtime.ts
 // A call of a private method on a class that also takes untyped objects does not look the method up by name. The program counts the entries of the operations that a lookup by name goes through.
-declare const aotOperationCount: undefined | ((name: string) => number);
-const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-function entered(): number {
-  return counted ? counted("operationAOTGetById") + counted("operationAOTGetByIdAndCache") : 0;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
 }
 class Pool {
   served = 0;
@@ -3439,9 +3446,9 @@ class Heir extends Untyped {}
 const taken: any[] = [new Heir(), new Pool()];
 const pool = taken[1] as Pool;
 pool.drain();
-const before = entered();
+const before = countsSoFar();
 for (let turn = 0; turn < 2000; turn++) pool.drain();
-const entries = entered() - before;
+const entries = callsIn(countsSoFar()) - callsIn(before);
 console.log(pool.served, entries);
 //// private-method-calls-several-classes-untyped.js
 // Calls of private methods in JavaScript: on `this`, on another object of the class, on an object that lacks the method, in classes that are evaluated once and many times, with more and fewer arguments than parameters, and of a private field that holds a function.
@@ -3525,8 +3532,18 @@ try {
 }
 //// private-methods-are-searched-for-once.ts
 // A private method that is read by name is searched for among the methods of its class once, not at every read. The program counts how often the run time is asked for it.
-declare const aotOperationCount: undefined | ((name: string) => number);
-const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 let evaluated = 0;
 function argument(): number {
   evaluated++;
@@ -3546,6 +3563,7 @@ const Untyped: any = Pool;
 class Heir extends Untyped {}
 const taken: any[] = [new Heir(), new Pool()];
 const pool = taken[1] as Pool;
+const before = countsSoFar();
 for (let turn = 0; turn < 2000; turn++) pool.add();
-const searches = counted ? counted("operationAOTPrivateGet") : null;
-console.log(pool.total, evaluated, searches === null || searches < 10);
+const searches = callsIn(countsSoFar()) - callsIn(before);
+console.log(pool.total, evaluated, searches < 10);

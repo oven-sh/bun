@@ -219,6 +219,18 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
     return true;
 }
 
+JSObject* loaderOfCompiledESModule(Zig::GlobalObject* globalObject, const String& path, bool hasImportAttributes)
+{
+    auto module = compiledModuleForRequest(path, hasImportAttributes);
+    if (!module || !AOT::isESModule(*module))
+        return nullptr;
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue loader = globalObject->get(globalObject, WebCore::builtinNames(vm).esmLoadSyncPrivateName());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return loader.getObject();
+}
+
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject* globalObject, const String& path)
 {
     auto module = compiledModuleForPath(path);
@@ -682,6 +694,7 @@ std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::
 JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, bool) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, bool, int64_t) { return nullptr; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
+JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const String&, bool) { return nullptr; }
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return {}; }
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
 bool compiledModulesRunInPlaceOfFiles() { return false; }

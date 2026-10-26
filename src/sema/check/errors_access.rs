@@ -209,7 +209,7 @@ impl<'p> Checker<'p, '_> {
         let expressions = (index.of(ExprTag::PrivateIdentifier).iter())
             .chain(index.of(ExprTag::Dot))
             .map(|&e| {
-                let pos = match hir[e].kind {
+                let pos = match hir.checked_kind(e) {
                     ExprKind::Dot { .. } => hir.name_pos(e),
                     _ => hir[e].pos,
                 };
@@ -305,7 +305,7 @@ impl<'p> Checker<'p, '_> {
         (key, keys): (TypeId, TypeId),
         name: Option<Atom>,
     ) {
-        let ExprKind::Index { obj, index, .. } = self.hir(file)[e].kind else {
+        let ExprKind::Index { obj, index, .. } = self.hir(file).checked_kind(e) else {
             return;
         };
         let at_access = self.span_of_expr(file, e);
@@ -406,7 +406,7 @@ impl<'p> Checker<'p, '_> {
             }
             (Kind::ElementAccessExpression, NodeData::Expr(access)) => {
                 let base = self.access_to_string(file, hir.expression(expr))?;
-                let ExprKind::Index { index, .. } = hir[access].kind else {
+                let ExprKind::Index { index, .. } = hir.checked_kind(access) else {
                     return None;
                 };
                 // `IsPropertyName`, `GetPropertyNameForPropertyNameNode`
@@ -582,7 +582,7 @@ impl<'p> Checker<'p, '_> {
         access: Option<(FileId, ExprId)>,
     ) -> Option<Atom> {
         let text = written_name(self.atoms().bytes(name));
-        let access = access.and_then(|(file, e)| match self.hir(file)[e].kind {
+        let access = access.and_then(|(file, e)| match self.hir(file).checked_kind(e) {
             ExprKind::Dot { obj, chain, .. } => Some((file, e, obj, chain)),
             _ => None,
         });
@@ -1014,7 +1014,7 @@ impl<'p> Checker<'p, '_> {
         name: Atom,
         apparent: TypeId,
     ) -> Option<(Atom, Option<(FileId, u32, u32)>)> {
-        let is_access = matches!(self.hir(file)[e].kind, ExprKind::Dot { .. })
+        let is_access = matches!(self.hir(file).checked_kind(e), ExprKind::Dot { .. })
             && !self.bound(file).is_in_type_query(e);
         let inspected = self.reduced(apparent);
         let suggestion =

@@ -1,6 +1,18 @@
 // `new F(..)` where F is known and short: its stores to `this` stand right behind the allocation. The object inherits a setter, a getter alone, or a read-only property for one of the names.
 // What the objects have, in which order things happen, and that the run time does not construct every one of them. Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed, list the names for it and keep it in a set; a cell or an array where the allocator has none at hand is the work of the run time, and so is the way from a throw to its catch.
+const owed = ["operationAOTArrayJoin", "operationAOTConcat", "operationAOTConcatenate", "operationAOTJSONStringifyPrimitive", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTReserveCollectionCapacity", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTValueAdd", "operationAOTAllocateSlow", "operationAOTNewArray", "operationAOTArrayPush", "operationAOTLookupExceptionHandler", "operationAOTCatch"];
 const log = [];
 function note(text) { if (log.length < 6) log.push(text); }
 function prototypeOf(constructor) { return Object.getPrototypeOf(Object.create(constructor.prototype)); }
@@ -43,7 +55,7 @@ function Plain(value) {
 }
 
 const said = new Set();
-const before = count("operationAOTCreateThis");
+const before = countsSoFar();
 for (let i = 0; i < 3000; i++) {
   const made = new WithSetter(i & 1);
   said.add(describe(made) + " " + made.guarded);
@@ -59,7 +71,7 @@ for (let i = 0; i < 3000; i++) {
     }
   }
 }
-const constructed = count("operationAOTCreateThis") - before;
+const constructed = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log([...said].join("\n"));
 console.log(log.splice(0, 2).join("\n"));
 console.log(constructed <= 200 ? "the run time constructed at most 200 of them" : "the run time constructed " + constructed + " of them");

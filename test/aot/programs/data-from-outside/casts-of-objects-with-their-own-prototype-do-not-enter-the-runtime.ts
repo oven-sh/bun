@@ -1,8 +1,20 @@
 // Objects made by Object.create(proto) stay as they are when they are cast to a record type. Once the runtime has looked at one such object, the
 // next ones of the same Structure are let through without a call into the runtime, whatever fitting values they hold.
 // Only the jsc shell with --aotCountsPath=<path> can count. Elsewhere the program checks the answers alone.
-declare const aotOperationCount: undefined | ((name: string) => number)
-const count = typeof aotOperationCount === 'function' ? aotOperationCount : () => 0
+declare const aotRuntimeCounters: undefined | (() => string)
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === 'function' ? aotRuntimeCounters() : '')
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0
+  for (const line of counts.split('\n')) {
+    const [calls, name] = line.split('\toperation:')
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls)
+  }
+  return sum
+}
+// These make the text of a number.
+const makeText = ['operationAOTStackStringBuilderAppend', 'operationAOTStackStringBuilderDiscard', 'operationAOTDoubleToString']
 
 interface Zone {
   readonly name: string
@@ -50,10 +62,11 @@ function pass(): string {
   return utc + ' ' + length + ' ' + sum
 }
 console.log(pass())
-const before = count('operationAOTEnforceType')
+const before = countsSoFar()
 let last = ''
 for (let turn = 0; turn < 100; turn++) last = pass()
-const entered = count('operationAOTEnforceType') - before
+const after = countsSoFar()
+const entered = callsIn(after, ...makeText) - callsIn(before, ...makeText)
 console.log(last, entered < 1000 ? 'without the runtime' : 'entered the runtime ' + entered + ' times')
 
 StampProto.kind = 'zoned'

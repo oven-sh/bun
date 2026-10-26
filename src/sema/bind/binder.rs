@@ -579,7 +579,7 @@ impl<'f, 's> Binder<'f, 's> {
             // `GetElementOrPropertyAccessName`
             Decl::ExportsProperty(e) | Decl::Expando(e) | Decl::ThisProperty(e) => {
                 return match (f[e].kind, define_property_call(f, e)) {
-                    (ExprKind::Assign { target, .. }, _) => match f[target].kind {
+                    (ExprKind::Assign { target, .. }, _) => match f.checked_kind(target) {
                         ExprKind::Dot { name, .. } => name,
                         ExprKind::Index { index, .. } => self.literal_name(index),
                         _ => Atom::NONE,
@@ -1145,7 +1145,7 @@ impl<'f, 's> Binder<'f, 's> {
         {
             e = left;
         }
-        match self.f[e].kind {
+        match self.f.checked_kind(e) {
             ExprKind::Ident(_) | ExprKind::This | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 self.contains_narrowable_reference(e)
             }
@@ -1158,7 +1158,7 @@ impl<'f, 's> Binder<'f, 's> {
                 {
                     return true;
                 }
-                matches!(self.f[call.callee].kind, ExprKind::Dot { obj, .. } if self.contains_narrowable_reference(obj))
+                matches!(self.f.checked_kind(call.callee), ExprKind::Dot { obj, .. } if self.contains_narrowable_reference(obj))
             }
             ExprKind::NonNull(x) => self.is_narrowing_expression(x),
             ExprKind::Unary {
@@ -1574,7 +1574,7 @@ impl<'f, 's> Binder<'f, 's> {
             if is_parenthesized(self.f, e) {
                 return None;
             }
-            let (obj, name) = match self.f[e].kind {
+            let (obj, name) = match self.f.checked_kind(e) {
                 ExprKind::Ident(name) => break self.lookup_name(name, scope)?,
                 ExprKind::Dot { obj, name, .. }
                     if !is_private_name_at(self.f, self.f.name_pos(e)) =>
@@ -1764,7 +1764,7 @@ impl<'f, 's> Binder<'f, 's> {
                     {
                         continue;
                     }
-                    match self.f[target].kind {
+                    match self.f.checked_kind(target) {
                         ExprKind::Dot { obj, name, .. }
                             if !is_private_name_at(self.f, self.f.name_pos(target)) =>
                         {
@@ -4323,7 +4323,7 @@ impl<'f, 's> Binder<'f, 's> {
                 let mut at = expr;
                 loop {
                     self.b.type_query_operands.push(at);
-                    let ExprKind::Dot { obj, .. } = self.f[at].kind else {
+                    let ExprKind::Dot { obj, .. } = self.f.checked_kind(at) else {
                         break;
                     };
                     at = obj;
@@ -4579,7 +4579,7 @@ impl<'f, 's> Binder<'f, 's> {
             self.b.unchecked_exprs.push(id);
         }
         self.note_private_reference(id);
-        match self.f[id].kind {
+        match self.f.checked_kind(id) {
             // A declaration file's source text isn't available, so the names declared by the
             // enclosing classes decide instead.
             ExprKind::Dot { name, .. }
@@ -4632,7 +4632,7 @@ impl<'f, 's> Binder<'f, 's> {
         let scope_change_of = self.scope_change_of;
         if scope_change_of.is_some() {
             cold_path();
-            let answer = match self.f[id].kind {
+            let answer = match self.f.checked_kind(id) {
                 ExprKind::Binary {
                     op: BinOp::Nullish, ..
                 } => Some(self.options.before_es2020),
@@ -4656,7 +4656,7 @@ impl<'f, 's> Binder<'f, 's> {
         if self.f.is_js {
             self.bind_define_property_call(id);
         }
-        match self.f[id].kind {
+        match self.f.checked_kind(id) {
             ExprKind::Missing
             | ExprKind::PrivateIdentifier(_)
             | ExprKind::Null
@@ -4708,7 +4708,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
             ExprKind::Call(c) if self.f[c].chain != Chain::No => {
                 self.optional_chain_flow(id, parent, targets);
-                if let ExprKind::Dot { obj, name, .. } = self.f[self.f[c].callee].kind
+                if let ExprKind::Dot { obj, name, .. } = self.f.checked_kind(self.f[c].callee)
                     && (name == known::push || name == known::unshift)
                     && self.is_narrowable_operand(obj)
                 {
@@ -4746,7 +4746,7 @@ impl<'f, 's> Binder<'f, 's> {
                     self.is_unchecked = was_unchecked;
                     self.exprs(call.args, me);
                 }
-                if let ExprKind::Dot { obj, name, .. } = self.f[call.callee].kind
+                if let ExprKind::Dot { obj, name, .. } = self.f.checked_kind(call.callee)
                     && (name == known::push || name == known::unshift)
                     && self.is_narrowable_operand(obj)
                 {
@@ -4778,7 +4778,7 @@ impl<'f, 's> Binder<'f, 's> {
                 // `bindDeleteExpressionFlow`: only `delete a.b`; not `delete a[b]`, `delete a`, `delete (a.b)`.
                 UnOp::Delete => {
                     self.expr(operand, me);
-                    if matches!(self.f[operand].kind, ExprKind::Dot { .. })
+                    if matches!(self.f.checked_kind(operand), ExprKind::Dot { .. })
                         && !is_parenthesized(self.f, operand)
                     {
                         self.assignment_target(operand);
@@ -4869,7 +4869,7 @@ impl<'f, 's> Binder<'f, 's> {
                 {
                     self.assignment_target(target);
                     if op.is_none()
-                        && let ExprKind::Index { obj, .. } = self.f[target].kind
+                        && let ExprKind::Index { obj, .. } = self.f.checked_kind(target)
                         && self.is_narrowable_operand(obj)
                     {
                         self.flow_mutation(Flow::ArrayMutation {
@@ -5027,7 +5027,7 @@ impl<'f, 's> Binder<'f, 's> {
         if self.this_member.is_none() && self.this_property.is_none()
             || assignment_declaration_kind(self.f, e) != JsDeclarationKind::ThisProperty
             || matches!(self.f[e].kind, ExprKind::Assign { target, .. }
-                if matches!(self.f[target].kind, ExprKind::Dot { .. } if is_private_name_at(self.f, self.f.name_pos(target))))
+                if matches!(self.f.checked_kind(target), ExprKind::Dot { .. } if is_private_name_at(self.f, self.f.name_pos(target))))
         {
             return;
         }
@@ -5085,7 +5085,7 @@ impl<'f, 's> Binder<'f, 's> {
     /// `tryReparseOptionalChain`: `x!` is a link if a link without `?.` follows it, which is
     /// visible from its parent. `enter_expr` records the parent.
     fn chain_of(&self, e: ExprId) -> Option<(ExprId, bool)> {
-        let (inner, chain) = match self.f[e].kind {
+        let (inner, chain) = match self.f.checked_kind(e) {
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => (obj, chain),
             ExprKind::Call(c) => (self.f[c].callee, self.f[c].chain),
             ExprKind::NonNull(x) => {
@@ -5176,7 +5176,7 @@ impl<'f, 's> Binder<'f, 's> {
         }
         // `bindOptionalChainRest`: only reached if the chain hasn't short-circuited.
         (self.true_target, self.false_target) = (FlowId::NONE, FlowId::NONE);
-        match self.f[id].kind {
+        match self.f.checked_kind(id) {
             ExprKind::Index { index, .. } => self.expr(index, me),
             ExprKind::Call(c) => {
                 let call = self.f[c];

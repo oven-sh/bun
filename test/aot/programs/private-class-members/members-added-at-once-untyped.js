@@ -1,6 +1,18 @@
 // A class in JavaScript with private fields, private methods, public fields and arrow-function fields: what `new` gives each object, in which order, and what happens when a member cannot be added.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed, list the names for it and keep it in a set; a cell where the allocator has none at hand is the work of the run time.
+const owed = ["operationAOTArrayJoin", "operationAOTConcat", "operationAOTConcatThree", "operationAOTLiteralStringToString", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTStringConstant", "operationAOTToString", "operationAOTValueAdd", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTReserveCollectionCapacity", "operationAOTAllocateSlow"];
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } };
 const thrownBy = f => { try { f(); return "nothing"; } catch (error) { return error.constructor.name; } };
@@ -37,14 +49,13 @@ const describe = c => Object.keys(c).join() + " | " + JSON.stringify(c) + " | " 
 const env = { name: "env" };
 const make = i => new Context("raw" + (i & 1), i & 2 ? { env, path: "/p" } : undefined);
 const seen = new Set();
-const asksBefore = count("operationAOTTryPutProperties");
+const asksBefore = countsSoFar();
 for (let i = 0; i < 60; i++) seen.add(describe(make(i)));
-const asks = count("operationAOTTryPutProperties") - asksBefore;
+const asks = callsIn(countsSoFar(), ...owed) - callsIn(asksBefore, ...owed);
 for (let i = 0; i < 340; i++) seen.add(describe(make(i)));
-const names = ["operationAOTPrivateDefine", "operationAOTTryPutProperties"];
-const before = names.map(name => count(name));
+const before = countsSoFar();
 for (let i = 0; i < 1000; i++) seen.add(describe(make(i)));
-const calls = names.map((name, i) => count(name) - before[i]).reduce((a, b) => a + b);
+const calls = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log([...seen].sort().join("\n"));
 console.log(asks <= 10 ? "the members were learnt as one step in at most 10 calls" : "the run time was asked " + asks + " times to add the members in one step");
 console.log(calls < 100 ? "1,000 objects were made with under 100 calls of the run time" : "1,000 objects were made with " + calls + " calls of the run time");

@@ -2,7 +2,15 @@
 function show(label, error) {
   const frames = String(error.stack).split("\n").slice(1, 5);
   const places = frames.map(line => line.trim().replace(/\(?[^ (]*\/([^\/ ]+:\d+:\d+)\)?/, "$1"));
-  console.log(label, "|", error.name, "|", String(error.message).replace(/ \(evaluating .*$/, ""), "|", places.join(" < "));
+  console.log(
+    label,
+    "|",
+    error.name,
+    "|",
+    String(error.message).replace(/ \(evaluating .*$/, ""),
+    "|",
+    places.join(" < "),
+  );
 }
 function viaNew(f) {
   return new f(1n);

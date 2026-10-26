@@ -67,11 +67,12 @@ impl FileLowering<'_, '_, '_, '_> {
         let own_file = self.file;
         let mut lowering = FunctionLowering::begin(self, function);
         for &(export, failure) in modules.commonjs().checked_copies(own_file) {
-            // A self that is left out is never linked, and nothing stores the copies of one.
-            let importer = ModuleRef::File(modules.failure(failure).importer);
-            if modules.is_left_out(importer)
-                || modules.is_left_out(modules.synthetic_export(export).module)
-            {
+            // A file that is left out is never linked, no import is linked to one, and nothing stores the copies of one.
+            let written = modules.failure(failure);
+            let importer = Some(ModuleRef::File(written.importer));
+            let owner = Some(modules.synthetic_export(export).module);
+            let mut linked = [importer, written.exporter(), owner].into_iter().flatten();
+            if linked.any(|module| modules.is_left_out(module)) {
                 continue;
             }
             let copy = lowering.file.ensure_variable(VariableKey::Copy(export));

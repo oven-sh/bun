@@ -54,7 +54,7 @@ use commonjs_exports::{CommonJsInput, InnerCommonJs, scan_commonjs_modules};
 use core::cmp::Ordering;
 use exports::{ExportTables, collect_export_entries, finish_exports, resolve_exports};
 use failures::{PendingFailure, number_failures};
-use graph::FileRow;
+use graph::{FileRow, find};
 use imports::{FileImports, bind_imports, finish_bindings, finish_named_members};
 use module_set::{ModuleSet, collect_modules};
 use order::{SiteKey, SitePosition, compute_order};
@@ -218,8 +218,10 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             has_top_level_await: is_compiled
                 && interop.kind == ModuleKind::SourceText
                 && files.analysis(file).has_live_top_level_await,
+            // A load that fails throws, whatever the package says of the file.
             has_no_side_effects: is_code_of_program
                 && !is_library[file.idx()]
+                && find(&load_failures, file).is_none()
                 && is_declared_free_of_side_effects(
                     files.declared_side_effects(file),
                     files.module(file).file_name(),

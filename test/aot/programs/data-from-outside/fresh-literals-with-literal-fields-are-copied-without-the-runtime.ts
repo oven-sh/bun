@@ -1,5 +1,15 @@
-declare const aotOperationCount: undefined | ((name: string) => number);
-const callsOf = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
 // An object literal typed any is passed to a parameter of a record type that has fields whose types are unions of string literals: any object passes, and a member that typed code never reads is never tested. Literals that fit do not enter the runtime's type check once per object, whichever texts the fields hold.
 type Author = { login: string };
 type Hit = { id: number; state: "open" | "closed"; level: "low" | "high"; author: Author; note?: string };
@@ -22,13 +32,13 @@ console.log(JSON.stringify(stamp(typedHit(), 1)), weigh(typedHit()));
 const author = makeAuthor("u");
 let last: Hit = typedHit();
 let sum = 0;
-const before = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType"));
+const before = countsSoFar();
 for (let i = 0; i < 400; i++) {
   const hit: any = { id: i, state: i % 2 ? "open" : "closed", level: i % 4 < 2 ? "low" : "high", author };
   last = stamp(hit, 1);
   sum += weigh(last);
 }
-const slow = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType")) - before;
+const slow = callsIn(countsSoFar()) - callsIn(before);
 console.log(sum, slow < 20 ? "without the runtime" : "through the runtime: " + slow);
 console.log(JSON.stringify(last), Object.keys(last).join(), last.author === author, last.note);
 last.note = "late";

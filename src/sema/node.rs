@@ -823,7 +823,7 @@ impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
 
     fn expr(&mut self, e: ExprId, node: Node) -> bool {
         let file = self.file;
-        match file[e].kind {
+        match file.checked_kind(e) {
             ExprKind::Missing
             | ExprKind::Ident(_)
             | ExprKind::PrivateIdentifier(_)
@@ -1631,7 +1631,7 @@ impl<'s> File<'s> {
                 self.key_of(row).0.name().unwrap_or(Atom::NONE)
             }
             NodeData::Part(Part::Name, row) => match self.data(row) {
-                NodeData::Expr(e) => match self[e].kind {
+                NodeData::Expr(e) => match self.checked_kind(e) {
                     ExprKind::Dot { name, .. } | ExprKind::NewTarget(name) => name,
                     ExprKind::AsConst(_) => known::r#const,
                     ExprKind::Fn(f) => self[f].name,
@@ -1680,7 +1680,7 @@ impl<'s> File<'s> {
             }
         };
         match self.data(node) {
-            NodeData::Expr(e) => match self[e].kind {
+            NodeData::Expr(e) => match self.checked_kind(e) {
                 ExprKind::Dot { .. } | ExprKind::ImportMeta | ExprKind::NewTarget(_) => {
                     node.with(Part::Name)
                 }
@@ -2034,7 +2034,7 @@ impl<'s> File<'s> {
 
     fn kind_of_name(&self, part: Part, row: Node) -> Kind {
         match self.data(row) {
-            NodeData::Expr(e) => match self[e].kind {
+            NodeData::Expr(e) => match self.checked_kind(e) {
                 ExprKind::Dot { .. } if is_private_name_at(self, self.name_pos(e)) => {
                     Kind::PrivateIdentifier
                 }
@@ -2093,7 +2093,7 @@ impl<'s> File<'s> {
     fn kind_of_expr(&self, e: ExprId, node: Node) -> Kind {
         let parent = || self.parent(node);
         let is_in = |kind: fn(&ExprKind) -> bool| matches!(self.data(parent()), NodeData::Expr(parent) if kind(&self[parent].kind));
-        match self[e].kind {
+        match self.checked_kind(e) {
             ExprKind::Missing if is_in(|parent| matches!(parent, ExprKind::Array(_))) => {
                 Kind::OmittedExpression
             }
@@ -2419,7 +2419,7 @@ impl<'s> File<'s> {
                 let rest = self.text.get(start as usize..).unwrap_or_default();
                 if rest.starts_with(b"const") { start } else { 0 }
             }
-            (Part::Name, NodeData::Expr(e)) => match self[e].kind {
+            (Part::Name, NodeData::Expr(e)) => match self.checked_kind(e) {
                 ExprKind::Dot { .. } => self.name_pos(e),
                 ExprKind::ImportMeta | ExprKind::ImportCall { .. } => {
                     self.token_after_dot(self[e].pos + b"import".len() as u32)
@@ -2522,7 +2522,7 @@ impl File<'_> {
     /// `node.Expression()`
     pub fn expression(&self, node: Node) -> Node {
         match self.data(node) {
-            NodeData::Expr(e) => match self[e].kind {
+            NodeData::Expr(e) => match self.checked_kind(e) {
                 ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => self.child(obj),
                 ExprKind::Call(c) | ExprKind::New(c) => self.child(self[c].callee),
                 ExprKind::Unary { operand: e, .. }
@@ -3529,7 +3529,7 @@ impl File<'_> {
             match self.data(node) {
                 NodeData::Expr(e)
                     if matches!(
-                        self[e].kind,
+                        self.checked_kind(e),
                         ExprKind::Ident(_) | ExprKind::This | ExprKind::Dot { .. }
                     ) => {}
                 NodeData::Part(Part::Name, _) => {}

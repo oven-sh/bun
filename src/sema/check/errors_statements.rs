@@ -1000,7 +1000,7 @@ impl Checker<'_, '_> {
             }
             // `newIdentifier`: also after a dot.
             for &e in index.of(ExprTag::Dot) {
-                if matches!(hir[e].kind, ExprKind::Dot { name: n, .. } if n == name)
+                if matches!(hir.checked_kind(e), ExprKind::Dot { name: n, .. } if n == name)
                     && let Some(s) = self.statement_with_await_identifier(file, e)
                 {
                     flagged.push((s, false));

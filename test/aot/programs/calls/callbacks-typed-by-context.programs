@@ -2719,6 +2719,19 @@ for (const callee of [target, forward, forwardTwice]) {
 // `new F(a, b, c, d, e, ..)` with more arguments than are passed in registers, where F is a function held in a property or a variable: what is made, and that the run time is not asked to make it.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts, ...besides) {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the text that is printed, list the names for it and keep it in a set; a cell or an array where the allocator has none at hand is the work of the run time.
+const owed = ["operationAOTArrayJoin", "operationAOTConcatenate", "operationAOTToString", "operationAOTValueAdd", "operationAOTStackStringBuilderFinish", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTAllocateSlow", "operationAOTNewArrayOfHoles"];
 const attempt = (f) => { try { return f(); } catch (error) { return error instanceof RangeError ? error.message : error.constructor.name; } };
 function Request(id, params, raw, query, log, context) {
   this.id = id;
@@ -2755,17 +2768,19 @@ for (const name of Object.keys(all))
 const contexts = [{ Request: context.Request }, { Request: context.OtherRequest }];
 
 const seen = new Set();
-let before = count("operationAOTConstruct");
+let before = count("operationAOTConstruct"), known = "";
 for (let i = 0; i < 2000; i++) {
+  if (i === 100) known = countsSoFar();
   const request = new contexts[i & 1].Request(i & 1, "p", "r", "q", "l", "c");
   seen.add(request.describe() + " " + (request instanceof Request) + " " + Object.keys(request).join());
 }
-let calls = count("operationAOTConstruct") - before;
+let calls = count("operationAOTConstruct") - before + callsIn(countsSoFar(), ...owed) - callsIn(known, ...owed);
 console.log([...seen].join(" | "), calls <= 8 ? "and the run time was asked at most 8 times" : "and the run time was asked " + calls + " times");
 
 const others = new Set();
 before = count("operationAOTConstruct");
 for (let i = 0; i < 1000; i++) {
+  if (i === 100) known = countsSoFar();
   others.add([
     new context.TakesTwo(1, 2, 3, 4, 5, 6).sum,
     new context.CountsArguments(1, 2, 3, 4, 5, 6).count,
@@ -2778,7 +2793,7 @@ for (let i = 0; i < 1000; i++) {
     new context.TakesSeven(1, 2, 3, 4, 5, 6, 7, 8).text,
   ].join());
 }
-calls = count("operationAOTConstruct") - before;
+calls = count("operationAOTConstruct") - before + callsIn(countsSoFar(), ...owed) - callsIn(known, ...owed);
 console.log([...others].join(" | "), calls <= 8 ? "and the run time was asked at most 8 times" : "and the run time was asked " + calls + " times");
 
 for (let i = 0; i < 3; i++) {
@@ -2811,13 +2826,25 @@ const note = (value) => { order.push(value); return value; };
 console.log(attempt(() => new (note(arrow))(note(1), note(2), note(3), note(4), note(5))), order.map((value) => typeof value === "function" ? "callee" : value).join());
 //// constructions-avoid-runtime.ts
 // `new C(..)` where C comes out of a table does not go through the runtime's general construction: for classes of the engine and for a function that asks new.target. The program counts the entries.
-declare const aotOperationCount: (name: string) => number;
-function entered(): number { return aotOperationCount("operationAOTConstruct"); }
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+    let sum = 0;
+    for (const line of counts.split("\n")) {
+        const [calls, name] = line.split("\toperation:");
+        if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+    }
+    return sum;
+}
+// These make the text of a message.
+const owed = ["operationAOTStringBuilderBegin", "operationAOTStringBuilderAppend", "operationAOTStringBuilderFinish"];
 const lines: string[] = [];
 function measure(label: string, constructions: number, run: () => number): void {
-    const before = entered();
+    const before = countsSoFar();
     const result = run();
-    const entries = entered() - before;
+    const entries = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
     lines.push(label + ": " + result + ", " + (entries * 20 < constructions ? "few entries" : entries + " ENTRIES FOR " + constructions + " CONSTRUCTIONS"));
 }
 function Asks(this: any, value: any): any { if (!new.target) return new (Asks as any)(value + 100); this.value = value; }

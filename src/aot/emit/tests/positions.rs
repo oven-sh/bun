@@ -90,34 +90,131 @@ fn column_formula() {
     }
 }
 
+const WRITTEN: &str = r#"const stream = require("node:stream");
+// Nothing of this line is evaluated.
+function check(value: unknown, name: string): void {
+  if (typeof value !== "string") {
+    throw $ERR_INVALID_ARG_TYPE(name, "string", value);
+  }
+  stream.$call(value!, false);
+  (stream as any).end(name);
+}
+export default check;
+"#;
+
+const EVALUATED: &str = r#"(function (){"use strict";// module.ts
+var $, stream = @getInternalField(12) || @createInternalModuleById(12);
+function check(value, name) {
+  if (typeof value !== "string")
+    throw @makeErrorWithCode(118, name, "string", value);
+  stream.@call(value, !1), stream.end(name);
+}
+$ = check;
+done($);})"#;
+
+fn find_text_behind(adjustments: &[ColumnAdjustment], in_written: &str) -> &'static str {
+    let offset = WRITTEN.find(in_written).unwrap();
+    let preceding = adjustments.partition_point(|it| it.offset as usize <= offset);
+    let adjustment = &adjustments[preceding - 1];
+    let line = EVALUATED.split('\n').nth(adjustment.line as usize).unwrap();
+    &line[adjustment.column as usize + offset - adjustment.offset as usize..]
+}
+
 #[test]
-fn pieces_of_a_bundle_go_on_over_line_breaks() {
-    // 2 bytes in: 3 columns further right. 6 bytes on: 1 line further up, column 7. 3 bytes on: 1 column further left.
-    let encoded = [2, 12, 6, 3, 7, 3, 2];
-    let positions = source_positions_in_bundle(b"ab cd\nef gh ij\nk", &encoded);
+fn tokens_of_a_module_are_found_in_the_text_that_is_evaluated() {
+    // Word 2, `require`, stands for the word 2 words behind the one that a reading side by side comes to.
+    let positions = source_positions_in_bundle(WRITTEN.as_bytes(), EVALUATED.as_bytes(), &[2, 5]);
     assert!(positions.line_starts.is_empty());
+    let adjustments = &positions.column_adjustments;
+    assert!(adjustments.is_sorted_by(|first, second| first.offset < second.offset));
+    for (in_written, expected) in [
+        (r#"("node:stream")"#, "(12)"),
+        (
+            r#"(name, "string", value)"#,
+            r#"(118, name, "string", value)"#,
+        ),
+        ("$ERR_INVALID_ARG_TYPE", "@makeErrorWithCode("),
+        ("(value!, false)", "(value, !1)"),
+        ("false)", "!1)"),
+        (".$call", ".@call("),
+        (" as any).end(name)", ".end(name)"),
+        ("(name);", "(name)"),
+        ("check(value", "check(value"),
+        ("check;", "check;"),
+    ] {
+        let found = find_text_behind(adjustments, in_written);
+        assert!(found.starts_with(expected), "{in_written}: {found}");
+    }
+}
+
+#[test]
+fn what_stands_alike_in_a_bundle_goes_on_over_line_breaks() {
+    let positions = source_positions_in_bundle(b"ab cd\nef  gh\n\nk", b"{ab cd\nef gh\nk", &[]);
     assert_eq!(
         positions.column_adjustments,
         [
-            adjustment(2, 0, 5),
+            adjustment(0, 0, 1),
             adjustment(6, 1, 0),
-            adjustment(8, 0, 7),
-            adjustment(11, 0, 9),
-            adjustment(15, 1, 0),
+            adjustment(10, 1, 3),
+            adjustment(13, 2, 0),
+            adjustment(14, 2, 0),
         ]
     );
 }
 
 #[test]
-fn pieces_that_end_early_or_pass_the_text_are_left_out() {
-    let positions = source_positions_in_bundle(b"ab", &[1, 0, 9, 0, 1]);
-    assert_eq!(
-        positions.column_adjustments,
-        [adjustment(1, 0, 1), adjustment(2, 0, 2)]
-    );
-    assert!(
-        source_positions_in_bundle(b"ab", &[0x80])
-            .column_adjustments
-            .is_empty()
-    );
+fn a_word_that_was_moved_to_the_front_is_found_there() {
+    let written = b"first(a);\nif (second) third();";
+    let evaluated = b"if (first(a), second)\n  third();";
+    let positions = source_positions_in_bundle(written, evaluated, &[]);
+    let find = |offset: u32| {
+        let adjustments = &positions.column_adjustments;
+        let preceding = adjustments.partition_point(|it| it.offset <= offset);
+        let adjustment = &adjustments[preceding - 1];
+        (
+            adjustment.line,
+            adjustment.column + offset - adjustment.offset,
+        )
+    };
+    assert_eq!(find(0), (0, 4));
+    assert_eq!(find(5), (0, 9));
+    assert_eq!(find(6), (0, 10));
+    assert_eq!(find(10), (0, 0));
+    assert_eq!(find(14), (0, 14));
+    assert_eq!(find(22), (1, 2));
+    assert_eq!(find(27), (1, 7));
+}
+
+#[test]
+fn corrections_that_do_not_fit_the_texts_stop_nothing() {
+    let far = [0xFF, 0xFF, 0xFF, 0xFF, 0x0F];
+    let records: [&[u8]; 8] = [
+        &[],
+        &[0x80],
+        &[0],
+        &[0, 0, 0, 0, 0, 0],
+        &[0, 2, 0, 2, 0, 2],
+        &[1, 200, 1, 1, 201, 1],
+        &[
+            0, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 1, 0xFE, 0xFF, 0xFF, 0xFF, 0x0F,
+        ],
+        &far,
+    ];
+    let texts: [&[u8]; 6] = [
+        b"",
+        b"a",
+        b"!",
+        b"// a b c",
+        b"a /* b\nc",
+        WRITTEN.as_bytes(),
+    ];
+    for corrections in records {
+        for written in texts {
+            for evaluated in texts {
+                let positions = source_positions_in_bundle(written, evaluated, corrections);
+                let adjustments = positions.column_adjustments;
+                assert!(adjustments.is_sorted_by(|first, second| first.offset < second.offset));
+            }
+        }
+    }
 }

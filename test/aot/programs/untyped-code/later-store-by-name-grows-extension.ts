@@ -35,7 +35,20 @@ const make = (url: string): Reply => ({
   third: undefined,
   fourth: undefined,
 });
-const count = (globalThis as any).aotOperationCount ?? (() => 0);
+declare const aotRuntimeCounters: undefined | (() => string);
+// What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
+const countsSoFar = (): string => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
+// The calls in such a text, whatever they were for, but for the operations named.
+function callsIn(counts: string, ...besides: string[]): number {
+  let sum = 0;
+  for (const line of counts.split("\n")) {
+    const [calls, name] = line.split("\toperation:");
+    if (name !== undefined && !besides.includes(name)) sum += Number(calls);
+  }
+  return sum;
+}
+// These make the texts that the objects hold and the text that is printed.
+const owed = ["operationAOTIntToString", "operationAOTConcat", "operationAOTFlatten", "operationAOTJSONAppendString", "operationAOTArrayJoin", "operationAOTStringBuilderBegin", "operationAOTStringBuilderFinish"];
 const setters: ((reply: any, n: number) => void)[] = [
   (reply, n) => { reply.statusMessage = "s" + n; },
   (reply, n) => { reply.header = "h" + n; },
@@ -64,10 +77,10 @@ const orders = [ascending, [...ascending].reverse(), [0, 6, 11], [11, 6, 0], [1,
 for (const order of orders) {
   const kept: any[] = [];
   run(order, 300, kept);
-  const before = count("operationAOTPutByIdAndCache");
+  const before = countsSoFar();
   run(order, 3000, kept);
   (globalThis as any).Bun?.gc?.(true);
-  console.log(order.join(" "), kept.length, show(kept[kept.length - 1]), kept.every((reply, i) => i < 4 || reply.url.startsWith("/")), count("operationAOTPutByIdAndCache") - before < 300);
+  console.log(order.join(" "), kept.length, show(kept[kept.length - 1]), kept.every((reply, i) => i < 4 || reply.url.startsWith("/")), callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed) < 300);
 }
 const old = make("/old");
 for (let i = 0; i < 20000; i++) make("/" + i);

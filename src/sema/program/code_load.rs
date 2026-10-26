@@ -156,6 +156,7 @@ pub(super) struct LoadedCode<'s, 'r> {
     pub(super) targets: Vec<CodeTarget<'r>>,
     pub(super) targets_by_specifier: FxHashMap<(Atom, CodeImportKind), u32>,
     pub(super) types_answers: Vec<(Atom, ResolutionMode, u32)>,
+    pub(super) is_in_types_program: bool,
     pub(super) requests: ImportRequests,
     pub(super) exported_requires: Vec<ExportedRequire>,
 }

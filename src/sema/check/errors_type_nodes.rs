@@ -527,7 +527,7 @@ impl Checker<'_, '_> {
             if bound.is_unchecked(i) {
                 continue;
             }
-            let (name, name_pos) = match hir[right].kind {
+            let (name, name_pos) = match hir.checked_kind(right) {
                 ExprKind::Ident(name) => (name, hir[right].pos),
                 ExprKind::Dot { name, .. } => (name, hir.name_pos(right)),
                 _ => continue,

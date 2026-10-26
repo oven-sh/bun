@@ -216,6 +216,18 @@
     "millionInstructions": 5178,
     "megabytes": 220
   },
+  "classes below a function that makes their base, kept in a list and constructed for the classes of another list": {
+    "millionInstructions": 9643,
+    "megabytes": 129
+  },
+  "classes below one function that makes their base, each constructed for a class beside it, that store through this": {
+    "millionInstructions": 6964,
+    "megabytes": 153
+  },
+  "classes that are all declared before the first is constructed, in a build that validates": {
+    "millionInstructions": 62300,
+    "megabytes": 720
+  },
   "a declaration where an expression belongs, nested in itself": {
     "millionInstructions": 6900,
     "megabytes": 280

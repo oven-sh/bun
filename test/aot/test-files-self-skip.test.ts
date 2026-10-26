@@ -38,6 +38,7 @@ const needNoCompiler = [
   "aot/what-is-only-expected-of-a-position-is-widened-in-one-place.test.ts",
   "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off.test.ts",
   "aot/host-object-accessors.test.ts",
+  "aot/only-errors-replacements-and-positions-ask-how-a-member-name-is-written.test.ts",
   "aot/mockable-function-arguments.test.ts",
   "aot/many-modules-in-place.test.ts",
   "aot/mocked-barrels.test.ts",

@@ -85,6 +85,27 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
         self.entries[index].loaded.get_mut().take()
     }
 
+    pub(super) fn take_loaded_into_types_program(
+        &mut self,
+        build: &CodeLoadContext<'_, 's, 'r>,
+        arena: &'s Arena,
+        file: FileId,
+    ) -> Option<Box<Loaded<'s, 'r>>> {
+        let loaded = self.take_loaded(file)?;
+        let index = self.entry_of(file)?;
+        let entry = &mut self.entries[index];
+        if entry.is_types_root() {
+            return Some(loaded);
+        }
+        let Some(code) = entry.code.get_mut().take() else {
+            return Some(loaded);
+        };
+        let (loaded, code) =
+            build.answer_types_question_in_types_program(arena, entry.key, loaded, code);
+        *entry.code.get_mut() = Some(code);
+        Some(loaded)
+    }
+
     pub(super) fn has_loaded(code_files: &Option<CodeFiles<'s, 'r>>, file: FileId) -> bool {
         let Some(code_files) = code_files else {
             return false;

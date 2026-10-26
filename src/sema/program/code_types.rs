@@ -38,6 +38,33 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         (Box::new(loaded), code, payload)
     }
 
+    // Other files take their types from a file of the types program, so it imports what the type checker finds.
+    pub(super) fn answer_types_question_in_types_program(
+        &self,
+        arena: &'s Arena,
+        key: LoadKey<'r>,
+        loaded: Box<Loaded<'s, 'r>>,
+        mut code: Box<LoadedCode<'s, 'r>>,
+    ) -> (Box<Loaded<'s, 'r>>, Box<LoadedCode<'s, 'r>>) {
+        let mut module = loaded.module;
+        let no_tree = hir::File::empty_in(arena, module.hir.lazy.session);
+        let parse = Parse {
+            hir: std::mem::replace(&mut module.hir, no_tree),
+            bound: std::mem::replace(&mut module.bound, Bound::empty_in(arena)),
+            is_shared: false,
+        };
+        code.types_answers.clear();
+        code.is_in_types_program = true;
+        let parsed = ParsedCodeFile {
+            parse,
+            specifies_esm: module.specifies_esm,
+            code,
+            payload: None,
+        };
+        let (loaded, code, _) = self.answer_types_question(arena, key, parsed);
+        (loaded, code)
+    }
+
     fn find_own_declaration(
         &self,
         key: LoadKey<'r>,
@@ -139,7 +166,7 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
         role: FileRole,
         names: &[(Atom, ResolutionMode, bool)],
     ) -> bool {
-        if role != FileRole::Inferred {
+        if role != FileRole::Inferred || self.is_in_types_program {
             return false;
         }
         let mut answered = FxHashSet::default();

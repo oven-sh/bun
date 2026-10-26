@@ -95,6 +95,14 @@ bun test/aot/tools/same-output.ts --before <bun> --after <bun> [<program or fold
 It builds each program with both Buns and compares the IR that the front end hands over and the machine code of every function. It prints `IDENTICAL`, or the programs and functions that differ. Without
 programs it takes the 260 small benchmarks, in a minute. Give it large programs too: a server with its packages, the type checker of the `typescript` package.
 
+`x["name"]` is `x.name`, so a program must compile to the same code however it spells the names of its properties:
+
+```sh
+bun test/aot/tools/same-code-in-every-spelling.ts [--bun <bun>] <program or folder>..
+```
+
+It writes each program with every name behind a dot, in quotes, in brackets and between backticks, and compares the machine code function by function.
+
 Identical output shows that nothing moved **on those programs**. It is no evidence that a change is sound: deleting the "I don't know" arm of an analysis that no test program reaches leaves all output identical, and
 miscompiles the next user's program.
 

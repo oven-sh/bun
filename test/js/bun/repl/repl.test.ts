@@ -997,6 +997,17 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("-e keeps the type attribute of an import statement", async () => {
+      using dir = tempDir("repl-import-type", { "config.conf": "a = 1\n" });
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        `import config from ${JSON.stringify(path.join(String(dir), "config.conf"))} with { type: "toml" }; console.log(config.a)`,
+      ]);
+      expect(stdout).toBe("1\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("-e has access to __dirname and __filename", async () => {
       const { stdout, stderr, exitCode } = await runReplWith([
         "-e",

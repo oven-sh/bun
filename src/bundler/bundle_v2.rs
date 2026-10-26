@@ -6909,7 +6909,6 @@ pub mod bv2_impl {
                                 .loader(&transpiler.options.loaders)
                                 .unwrap_or(Loader::File)
                         });
-                        import_record.loader = Some(import_record_loader);
 
                         if let Some(id) =
                             self.path_to_source_index_map(target).get(path_primary.text)
@@ -7296,7 +7295,6 @@ pub mod bv2_impl {
                     }
                     break 'brk resolved_loader;
                 };
-                import_record.loader = Some(import_record_loader);
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()

@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 const nestedFunctions = /* js */ `
@@ -76,6 +77,168 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "RedisClient\nRedisClient\nRedisClient\n" },
+  });
+  // cjs and iife output turn an import statement of an external module into a
+  // require() call. The `type` attribute has to go with it, as the second
+  // argument: the runtime cannot tell a sqlite database from the name `my.db`.
+  const messagesDb = (() => {
+    const db = new Database(":memory:");
+    db.exec("create table messages (message text)");
+    db.exec("insert into messages values ('Hello, world!')");
+    return db.serialize();
+  })();
+  const sqliteEntry = /* js */ `
+    import db from './my.db' with {type: "sqlite"};
+    console.log(db.query("select message from messages LIMIT 1").get().message);
+  `;
+  for (const bytecode of [false, true]) {
+    itBundled(`bun/sqlite-type-attribute-cjs${bytecode ? "-bytecode" : ""}`, {
+      target: "bun",
+      format: "cjs",
+      bytecode,
+      outdir: "/out",
+      files: { "/entry.ts": sqliteEntry },
+      runtimeFiles: { "/out/my.db": messagesDb },
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.js").toContain(`__toESM(require("./my.db", { type: "sqlite" }));`);
+      },
+      run: { stdout: "Hello, world!" },
+    });
+  }
+  itBundled("bun/sqlite-type-attribute-iife", {
+    target: "bun",
+    format: "iife",
+    files: { "/entry.ts": sqliteEntry },
+    runtimeFiles: { "/my.db": messagesDb },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`__toESM(__require("./my.db", { type: "sqlite" }));`);
+    },
+    run: { stdout: "Hello, world!" },
+  });
+  for (const minifyWhitespace of [false, true]) {
+    const call = (path: string, type: string) =>
+      minifyWhitespace ? `require("${path}",{type:"${type}"})` : `require("${path}", { type: "${type}" })`;
+    itBundled(`bun/external-type-attribute-cjs${minifyWhitespace ? "-minify-whitespace" : ""}`, {
+      target: "bun",
+      format: "cjs",
+      minifyWhitespace,
+      external: ["*.conf"],
+      files: {
+        "/entry.ts": /* js */ `
+          import './bare.conf' with { type: "text" };
+          import toml from './default.conf' with { type: "toml" };
+          import * as json from './star.conf' with { type: "json" };
+          console.log(toml.a, json.b);
+        `,
+      },
+      runtimeFiles: {
+        "/bare.conf": "not JavaScript\n",
+        "/default.conf": "a = 1\n",
+        "/star.conf": `{ "b": 2 }`,
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(call("./bare.conf", "text"));
+        expect(out).toContain(call("./default.conf", "toml"));
+        expect(out).toContain(call("./star.conf", "json"));
+      },
+      run: { stdout: "1 2" },
+    });
+  }
+  // "type": "module" makes the importer an ES module by type, so `__toESM`
+  // gets `, 1` and takes what require() returns as the default import. For
+  // sqlite, text and md that is an ES module namespace, which has its own default.
+  itBundled("bun/type-attribute-cjs-es-module-importer", {
+    target: "bun",
+    format: "cjs",
+    external: ["*.conf", "*.db"],
+    files: {
+      "/package.json": `{ "type": "module" }`,
+      "/entry.ts": /* js */ `
+        import db from './my.db' with { type: "sqlite" };
+        import embedded from './embedded.db' with { type: "sqlite", embed: "true" };
+        import text from './text.conf' with { type: "text" };
+        import md from './md.conf' with { type: "md" };
+        import toml from './toml.conf' with { type: "toml" };
+        const message = db => db.query("select message from messages LIMIT 1").get().message;
+        console.log([message(db), message(embedded), text.trim(), md.trim(), toml.a].join(" | "));
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    runtimeFiles: {
+      "/my.db": messagesDb,
+      "/embedded.db": messagesDb,
+      "/text.conf": "plain\n",
+      "/md.conf": "# Title\n",
+      "/toml.conf": "a = 1\n",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`__toESM(require("./my.db", { type: "sqlite" }));`);
+      expect(out).toContain(`__toESM(require("./embedded.db", { type: "sqlite" }));`);
+      expect(out).toContain(`__toESM(require("./text.conf", { type: "text" }));`);
+      expect(out).toContain(`__toESM(require("./md.conf", { type: "md" }));`);
+      expect(out).toContain(`__toESM(require("./toml.conf", { type: "toml" }), 1);`);
+    },
+    run: { stdout: "Hello, world! | Hello, world! | plain | <h1>Title</h1> | 1" },
+  });
+  // The printer leaves `, 1` off for the types in `Loader::require_returns_generated_es_module`
+  // (src/ast/loader.rs). That list is a copy of what the runtime does, which this pins.
+  test("require(path, { type }) returns a module namespace for text, md and sqlite only", async () => {
+    const types = [
+      ["css", "a { color: red }"],
+      ["file", "file"],
+      ["json", `{ "a": 1 }`],
+      ["jsonc", `{ "a": 1 /* comment */ }`],
+      ["json5", "{ a: 1 }"],
+      ["toml", "a = 1\n"],
+      ["yaml", "a: 1\n"],
+      ["xml", "<a>1</a>"],
+      ["wasm", Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0])],
+      ["base64", "base64"],
+      ["dataurl", "dataurl"],
+      ["text", "text"],
+      ["sh", "echo hi\n"],
+      ["sqlite", messagesDb],
+      ["html", "<p>hi</p>"],
+      ["md", "# hi\n"],
+    ] as const;
+    using dir = tempDir("require-type-namespace", {
+      ...Object.fromEntries(types.map(([type, contents]) => [type + ".data", contents])),
+      "main.cjs": `
+        const isNamespace = value =>
+          value != null && typeof value === "object" && !!value.__esModule && Object.hasOwn(value, "default");
+        const namespaces = ${JSON.stringify(types.map(([type]) => type))}.filter(type =>
+          isNamespace(require("./" + type + ".data", { type })),
+        );
+        console.log(JSON.stringify(namespaces));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: `["text","sqlite","md"]\n`, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+  // Node's require() takes one argument.
+  itBundled("bun/type-attribute-cjs-target-node", {
+    target: "node",
+    format: "cjs",
+    external: ["*.conf"],
+    files: {
+      "/entry.ts": /* js */ `
+        import toml from './default.conf' with { type: "toml" };
+        console.log(toml.a);
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`__toESM(require("./default.conf"));`);
+    },
   });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",

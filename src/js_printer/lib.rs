@@ -2706,6 +2706,21 @@ pub(crate) mod __gated_printer {
             &self.import_records[import_record_index]
         }
 
+        /// The loader that the import's `type` attribute names. Other targets still strip the attribute.
+        #[inline]
+        pub(crate) fn import_type_attribute(record: &ImportRecord) -> Option<bun_ast::Loader> {
+            if IS_BUN_PLATFORM { record.loader } else { None }
+        }
+
+        /// Out of line: with these prints inline, the `)` of every external require() is no longer inlined.
+        #[cold]
+        #[inline(never)]
+        fn print_type_attribute(&mut self, prefix: Whitespacer, loader: bun_ast::Loader) {
+            self.print_whitespacer(prefix);
+            self.print(loader.import_attribute_type());
+            self.print_whitespacer(ws!(b"\" }"));
+        }
+
         pub(crate) fn is_unbound_identifier(&self, expr: &Expr) -> bool {
             let ExprData::EIdentifier(id) = &expr.data else {
                 return false;
@@ -2978,8 +2993,19 @@ pub(crate) mod __gated_printer {
                     self.print(b"require");
                 }
 
+                // An import statement lowered to require(): the runtime reads `type` from the second argument.
+                let type_attribute = Self::import_type_attribute(record);
+                debug_assert!(
+                    type_attribute.is_none()
+                        || !record.flags.contains(ImportRecordFlags::IMPORTS_CHUNK),
+                    "a chunk is JavaScript: its record carries no `type` attribute"
+                );
+
                 self.print(b"(");
                 self.print_import_record_path(record);
+                if let Some(loader) = type_attribute {
+                    self.print_type_attribute(ws!(b", { type: \""), loader);
+                }
                 self.print(b")");
 
                 // A split `require()` of a module that is CommonJS at link
@@ -2992,7 +3018,14 @@ pub(crate) mod __gated_printer {
                 }
 
                 if wrap_with_to_esm {
-                    self.print_to_esm_suffix();
+                    // `isNodeMode` would make a generated module's whole namespace the default import.
+                    if type_attribute
+                        .is_some_and(|loader| loader.require_returns_generated_es_module())
+                    {
+                        self.print(b")");
+                    } else {
+                        self.print_to_esm_suffix();
+                    }
                 }
                 if wrap {
                     self.print(b")");
@@ -6279,76 +6312,8 @@ pub(crate) mod __gated_printer {
 
                     self.print_import_record_path(record);
 
-                    // backwards compatibility: previously, we always stripped type
-                    if IS_BUN_PLATFORM {
-                        if let Some(loader) = record.loader {
-                            use bun_ast::Loader;
-                            match loader {
-                                Loader::Jsx => {
-                                    self.print_whitespacer(ws!(b" with { type: \"jsx\" }"))
-                                }
-                                Loader::Js => {
-                                    self.print_whitespacer(ws!(b" with { type: \"js\" }"))
-                                }
-                                Loader::Ts => {
-                                    self.print_whitespacer(ws!(b" with { type: \"ts\" }"))
-                                }
-                                Loader::Tsx => {
-                                    self.print_whitespacer(ws!(b" with { type: \"tsx\" }"))
-                                }
-                                Loader::Css => {
-                                    self.print_whitespacer(ws!(b" with { type: \"css\" }"))
-                                }
-                                Loader::File => {
-                                    self.print_whitespacer(ws!(b" with { type: \"file\" }"))
-                                }
-                                Loader::Json => {
-                                    self.print_whitespacer(ws!(b" with { type: \"json\" }"))
-                                }
-                                Loader::Jsonc => {
-                                    self.print_whitespacer(ws!(b" with { type: \"jsonc\" }"))
-                                }
-                                Loader::Toml => {
-                                    self.print_whitespacer(ws!(b" with { type: \"toml\" }"))
-                                }
-                                Loader::Yaml => {
-                                    self.print_whitespacer(ws!(b" with { type: \"yaml\" }"))
-                                }
-                                Loader::Json5 => {
-                                    self.print_whitespacer(ws!(b" with { type: \"json5\" }"))
-                                }
-                                Loader::Xml => {
-                                    self.print_whitespacer(ws!(b" with { type: \"xml\" }"))
-                                }
-                                Loader::Wasm => {
-                                    self.print_whitespacer(ws!(b" with { type: \"wasm\" }"))
-                                }
-                                Loader::Napi => {
-                                    self.print_whitespacer(ws!(b" with { type: \"napi\" }"))
-                                }
-                                Loader::Base64 => {
-                                    self.print_whitespacer(ws!(b" with { type: \"base64\" }"))
-                                }
-                                Loader::Dataurl => {
-                                    self.print_whitespacer(ws!(b" with { type: \"dataurl\" }"))
-                                }
-                                Loader::Text => {
-                                    self.print_whitespacer(ws!(b" with { type: \"text\" }"))
-                                }
-                                Loader::Bunsh => {
-                                    self.print_whitespacer(ws!(b" with { type: \"sh\" }"))
-                                }
-                                Loader::Sqlite | Loader::SqliteEmbedded => {
-                                    self.print_whitespacer(ws!(b" with { type: \"sqlite\" }"))
-                                }
-                                Loader::Html => {
-                                    self.print_whitespacer(ws!(b" with { type: \"html\" }"))
-                                }
-                                Loader::Md => {
-                                    self.print_whitespacer(ws!(b" with { type: \"md\" }"))
-                                }
-                            }
-                        }
+                    if let Some(loader) = Self::import_type_attribute(record) {
+                        self.print_type_attribute(ws!(b" with { type: \""), loader);
                     }
                     self.print_semicolon_after_statement();
 
@@ -6360,39 +6325,12 @@ pub(crate) mod __gated_printer {
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let irp_id = mi.str(record.path.text);
-                            let fetch_parameters: FP = if IS_BUN_PLATFORM {
-                                if let Some(loader) = record.loader {
-                                    use bun_ast::Loader;
-                                    match loader {
-                                        Loader::Json => FP::Json,
-                                        Loader::Jsx => FP::host_defined(mi.str(b"jsx")),
-                                        Loader::Js => FP::host_defined(mi.str(b"js")),
-                                        Loader::Ts => FP::host_defined(mi.str(b"ts")),
-                                        Loader::Tsx => FP::host_defined(mi.str(b"tsx")),
-                                        Loader::Css => FP::host_defined(mi.str(b"css")),
-                                        Loader::File => FP::host_defined(mi.str(b"file")),
-                                        Loader::Jsonc => FP::host_defined(mi.str(b"jsonc")),
-                                        Loader::Toml => FP::host_defined(mi.str(b"toml")),
-                                        Loader::Yaml => FP::host_defined(mi.str(b"yaml")),
-                                        Loader::Wasm => FP::host_defined(mi.str(b"wasm")),
-                                        Loader::Napi => FP::host_defined(mi.str(b"napi")),
-                                        Loader::Base64 => FP::host_defined(mi.str(b"base64")),
-                                        Loader::Dataurl => FP::host_defined(mi.str(b"dataurl")),
-                                        Loader::Text => FP::host_defined(mi.str(b"text")),
-                                        Loader::Bunsh => FP::host_defined(mi.str(b"sh")),
-                                        Loader::Sqlite | Loader::SqliteEmbedded => {
-                                            FP::host_defined(mi.str(b"sqlite"))
-                                        }
-                                        Loader::Html => FP::host_defined(mi.str(b"html")),
-                                        Loader::Json5 => FP::host_defined(mi.str(b"json5")),
-                                        Loader::Xml => FP::host_defined(mi.str(b"xml")),
-                                        Loader::Md => FP::host_defined(mi.str(b"md")),
-                                    }
-                                } else {
-                                    FP::None
+                            let fetch_parameters: FP = match Self::import_type_attribute(record) {
+                                None => FP::None,
+                                Some(bun_ast::Loader::Json) => FP::Json,
+                                Some(loader) => {
+                                    FP::host_defined(mi.str(loader.import_attribute_type()))
                                 }
-                            } else {
-                                FP::None
                             };
                             let phase = if phase_defer {
                                 analyze_transpiled_module::ModulePhase::Defer

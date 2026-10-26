@@ -270,10 +270,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
                     //   import * as X from 'mod'   -> var X = await import('mod')
                     //   import 'mod'              -> await import('mod')
-                    let path_str: &'static [u8] = self.import_records.items()
-                        [import_data.import_record_index as usize]
-                        .path
-                        .text;
+                    let record =
+                        &self.import_records.items()[import_data.import_record_index as usize];
+                    let path_str: &'static [u8] = record.path.text;
+                    let type_attribute = record.loader;
                     let str_expr = self.new_expr(
                         E::String {
                             data: path_str.into(),
@@ -281,10 +281,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         },
                         stmt.loc,
                     );
+                    let options = match type_attribute {
+                        Some(loader) => self.repl_import_type_options(loader, bump, stmt.loc),
+                        None => Expr::EMPTY,
+                    };
                     let import_expr = self.new_expr(
                         E::Import {
                             expr: str_expr,
-                            options: Expr::EMPTY,
+                            options,
                             import_record_index: u32::MAX,
                             namespace_ref: bun_ast::Ref::NONE,
                         },
@@ -713,6 +717,61 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             B::B::BMissing(_) => {}
         }
         Ok(())
+    }
+
+    /// `{ with: { type: "<name>" } }`: the options of the `import()` that replaces a typed import statement.
+    fn repl_import_type_options<'bump>(
+        &mut self,
+        loader: js_ast::Loader,
+        bump: &'bump Bump,
+        loc: js_ast::Loc,
+    ) -> Expr {
+        let mut attributes = BumpVec::<G::Property>::with_capacity_in(1, bump);
+        attributes.push(G::Property {
+            key: Some(self.new_expr(
+                E::String {
+                    data: b"type".into(),
+                    ..Default::default()
+                },
+                loc,
+            )),
+            value: Some(self.new_expr(
+                E::String {
+                    data: loader.import_attribute_type().into(),
+                    ..Default::default()
+                },
+                loc,
+            )),
+            ..Default::default()
+        });
+        let with = self.new_expr(
+            E::Object {
+                properties: G::PropertyList::from_bump_vec(attributes),
+                is_single_line: true,
+                ..Default::default()
+            },
+            loc,
+        );
+        let mut options = BumpVec::<G::Property>::with_capacity_in(1, bump);
+        options.push(G::Property {
+            key: Some(self.new_expr(
+                E::String {
+                    data: b"with".into(),
+                    ..Default::default()
+                },
+                loc,
+            )),
+            value: Some(with),
+            ..Default::default()
+        });
+        self.new_expr(
+            E::Object {
+                properties: G::PropertyList::from_bump_vec(options),
+                is_single_line: true,
+                ..Default::default()
+            },
+            loc,
+        )
     }
 
     /// Create { __proto__: null, value: expr } wrapper object

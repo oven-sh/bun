@@ -286,10 +286,11 @@ describe("rmdir with recursive: true does what Node 24 does", () => {
   });
 
   for (const [name, make, expected, flags] of cases) {
-    if (flags?.posixOnly && isWindows) continue;
+    // On Windows rmdir removes a symlink to a directory, so the symlink rows, which hold what Node does on POSIX, do not apply.
+    const skip = flags?.posixOnly && isWindows ? "the symlink rows hold what Node does on POSIX" : false;
     forms.forEach(([form, run], i) => {
       if (flags?.noCallback && form === "rmdir") return;
-      test(`${form}: ${name}`, async () => {
+      test(`${form}: ${name}`, { skip }, async () => {
         const { target, options, left } = make(fs.mkdtempSync(path.join(root, "case-")));
         const outcome = await run(target, options);
         assert.strictEqual(`${outcome}, ${left()}`, expected[i]);

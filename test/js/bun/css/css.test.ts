@@ -7469,19 +7469,22 @@ describe("css tests", () => {
     // The output for a mask property that has a differently named -webkit- property is a
     // fixed point: minifying it again changes nothing.
     test.each([
-      "mask-border",
-      "mask-border-source",
-      "mask-border-slice",
-      "mask-border-width",
-      "mask-border-outset",
-      "mask-border-repeat",
-      "mask-composite",
-      "mask-mode",
-    ])("transition over %s is the same when minified again", property => {
+      ["mask-border", "-webkit-mask-box-image"],
+      ["mask-border-source", "-webkit-mask-box-image-source"],
+      ["mask-border-slice", "-webkit-mask-box-image-slice"],
+      ["mask-border-width", "-webkit-mask-box-image-width"],
+      ["mask-border-outset", "-webkit-mask-box-image-outset"],
+      ["mask-border-repeat", "-webkit-mask-box-image-repeat"],
+      ["mask-composite", "-webkit-mask-composite"],
+      ["mask-mode", "-webkit-mask-source-type"],
+    ])("transition over %s is the same when minified again", (property, webkit) => {
       const targets = { safari: 15 << 16 };
-      for (const source of [`.foo{transition:${property} 1s}`, `.foo{transition-property:${property}}`]) {
+      for (const [source, expected] of [
+        [`.foo{transition:${property} 1s}`, `.foo{transition:${webkit} 1s,${property} 1s}`],
+        [`.foo{transition-property:${property}}`, `.foo{transition-property:${webkit},${property}}`],
+      ]) {
         const once = cssInternals.minifyTest(source, "", targets);
-        expect(once).toContain("-webkit-mask-");
+        expect(once).toBe(expected);
         expect(cssInternals.minifyTest(once, "", targets)).toBe(once);
       }
     });
@@ -8862,8 +8865,19 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
 
     // The default targets include a Safari that needs -webkit-mask-composite.
     const first = await build();
-    expect(first).toContain("transition: -webkit-mask-composite 1s, mask-composite 1s;");
-    expect(first).toContain("transition: -webkit-mask-composite 1s, mask-composite 2s;");
+    // The first line is a comment with the path of the file.
+    expect(first.slice(first.indexOf("\n") + 1)).toBe(
+      [
+        ".a {",
+        "  transition: -webkit-mask-composite 1s, mask-composite 1s;",
+        "}",
+        "",
+        ".b {",
+        "  transition: -webkit-mask-composite 1s, mask-composite 2s;",
+        "}",
+        "",
+      ].join("\n"),
+    );
 
     await Bun.write(entry, first);
     expect(await build()).toBe(first);

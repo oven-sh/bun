@@ -680,7 +680,8 @@ test("composes takes -webkit-mask-composite as one property in any letter case, 
       "b.module.css": `.b { ${declaration} }`,
     });
     const result = await Bun.build({ entrypoints: [join(String(dir), "a.module.css")], throw: false });
-    return result.logs.map(log => log.message);
+    // The message has ANSI bold codes around the names when colors are on.
+    return result.logs.map(log => Bun.stripANSI(log.message));
   };
 
   expect(await messages("-WEBKIT-MASK-COMPOSITE: source-over;")).toEqual([

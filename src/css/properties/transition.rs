@@ -542,9 +542,7 @@ mod transition_handler_body {
             }
         }
 
-        // Entries the declaration already spells out (`-webkit-transform, transform`,
-        // which is also what this handler's own output looks like when a merged rule
-        // is minified again) must not be generated a second time below.
+        // This handler's own output lists every entry it generates, so an entry that is already listed is not generated again.
         let as_written: SmallList<PropertyId, 4> = properties.iter().copied().collect();
         let mut rtl_properties: Option<SmallList<PropertyId, 1>> = None;
         let mut i: u32 = 0;
@@ -606,10 +604,7 @@ mod transition_handler_body {
         rtl_properties
     }
 
-    /// Expands the vendor prefixes of `property_id` for the targets, minus the
-    /// prefixes that other entries of the same property in `as_written` already
-    /// carry: `-webkit-transform, transform` expands `transform` to the remaining
-    /// prefixes only, so each entry keeps its own duration, delay and timing function.
+    /// Expands the prefixes of `property_id` for the targets, minus those that another `as_written` entry of the property has.
     fn expand_prefixes(property_id: &mut PropertyId, as_written: &[PropertyId], targets: &Targets) {
         let written = property_id.prefix();
         property_id.set_prefixes_for_targets(targets);
@@ -625,9 +620,7 @@ mod transition_handler_body {
         *property_id = property_id.with_prefix(property_id.prefix().difference(added & listed));
     }
 
-    /// The `-webkit-` mask property that animates alongside `property_id` for the
-    /// targets (`mask-border` -> `-webkit-mask-box-image`, which has a different
-    /// name rather than a prefix), unless the declaration already lists it.
+    /// The `-webkit-` property with another name (`mask-border` -> `-webkit-mask-box-image`) to insert, unless `as_written` has it.
     fn webkit_mask_property_to_insert(
         property_id: &PropertyId,
         as_written: &[PropertyId],

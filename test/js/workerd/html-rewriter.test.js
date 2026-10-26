@@ -3656,6 +3656,27 @@ describe("content handlers run in the async context of transform()", () => {
       expect(stores(seen)).toEqual(everyHandlerIn(expected));
     });
 
+    it("a direct ReadableStream, written in another store", async () => {
+      let controller;
+      // pull() runs inside transform() and leaves the stream open. Each write() below runs lol-html on the writer's stack.
+      const body = new ReadableStream({ type: "direct", pull: c => void (controller = c) });
+      const seen = [];
+      const res = transformIn(() => recorder(seen).transform(new Response(body)));
+      const text = als.run("R", () => res.text());
+      const writer = als.run("W", () => {
+        const after = [];
+        for (const chunk of doc) {
+          controller.write(encoder.encode(chunk));
+          after.push(als.getStore());
+        }
+        controller.close();
+        return after;
+      });
+      expect(await text).toBe(doc.join(""));
+      expect(stores(seen)).toEqual(everyHandlerIn(expected));
+      expect(writer).toEqual(["W", "W", "W"]);
+    });
+
     it.each([
       ["text()", res => res.text()],
       [

@@ -38,7 +38,6 @@ describe("export default struct", () => {
     expect(() => transpiler.transformSync("var struct = 1; export default struct;")).not.toThrow();
     expect(() => transpiler.transformSync("var shared = 1; export default shared + 1;")).not.toThrow();
     // A newline after `struct` ends the expression, so the `{` that follows is not a struct body.
-    expect(() => transpiler.transformSync("var struct = 1; export default struct
-{}")).not.toThrow();
+    expect(() => transpiler.transformSync("var struct = 1; export default struct\n{}")).not.toThrow();
   });
 });

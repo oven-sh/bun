@@ -2628,6 +2628,7 @@ impl<'a> Transpiler<'a> {
         log: *mut bun_ast::Log,
         _opts: api::TransformOptions,
     ) -> crate::Result<options::TransformResult> {
+        self.resolver.settings_from_real_path = true;
         let _ = self.enqueue_entry_points::<true>();
 
         // `log` is the same `*mut Log` stored on `self.log`; caller

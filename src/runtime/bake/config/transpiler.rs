@@ -109,6 +109,8 @@ impl Framework {
         // `BundleOptions`, so re-project via the dedicated helper rather than
         // `Clone`.
         out.sync_resolver_opts();
+        // `BundleV2::init` sets this for the server transpiler only.
+        out.resolver.settings_from_real_path = true;
 
         out.configure_linker();
         out.configure_defines()?;

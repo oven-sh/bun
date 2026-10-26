@@ -2089,17 +2089,13 @@ describe("bundler", () => {
     },
   });
 
-  // ValidateNoRefAccessInRender runs a fixpoint for each function. The type it
-  // gives a function holds the type of what the function returns, so the type of
-  // a function that returns itself contains itself and the fixpoint of `outer`
-  // does not converge. babel-plugin-react-compiler 1.0.0 throws there and leaves
-  // the component as written. The port recorded a ref read by `outer` and
-  // continued, and the fixpoint of `other` then cleared the `changed` flag that
-  // all of them share, so the component compiled on an unfinished validation.
+  // The ref validation of `outer` does not converge: the type of `f` holds
+  // itself. babel-plugin-react-compiler 1.0.0 throws there and leaves the
+  // component as written. Here `outer` became a function that reads a ref, and
+  // the validation of `other` then cleared the flag that said it was unfinished.
   //
-  // The fake `c` records the size of every memo cache, so the second element of
-  // each pair is the `_c(n)` of that component. A component that the compiler
-  // skips has `[]` there.
+  // The second element of each pair is the `_c(n)` of that component, as in
+  // ClosureAboveReassignedLet. A component that the compiler skips has `[]`.
   itBundled("react-compiler/NestedFunctionThatDoesNotConverge", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -4810,23 +4806,18 @@ describe("react-compiler does not overflow the stack on a component that is nest
   });
 });
 
-// ValidateNoRefAccessInRender runs a fixpoint of at most 10 passes for each
-// function, and the fixpoint of a function that holds `const f = () => f` does
-// not converge. babel-plugin-react-compiler 1.0.0 throws there. The port
-// recorded it and continued, so each enclosing function ran all 10 of its
-// passes too: 10^depth passes. With two arrows around that function the build
-// took 93 seconds, and with three it did not finish. `p.a ? [f] : f` makes the
-// type of `f` twice as large on each pass, so one arrow around it was enough to
-// use memory without bound.
+// The ref validation of the function that holds `const f = () => f` does not
+// converge. It was validated again in each of the 10 rounds of each function
+// or object method around it: 3 levels took 3 seconds and 4 did not finish.
 const functionsThatReturnThemselves = {
   "under 20 arrows": `${Buffer.alloc("() => ".length * 20, "() => ")}{
     const f = () => f;
     return f;
   }`,
-  "in two shapes under one arrow": `() => {
-    const f = () => (p.a ? [f] : f);
+  "under object methods and arrows": `{ m() { return () => ({ m() { return () => {
+    const f = () => f;
     return f;
-  }`,
+  }; } }); } }`,
 };
 
 // Not concurrent: when a test times out, `bun test` kills the process that the

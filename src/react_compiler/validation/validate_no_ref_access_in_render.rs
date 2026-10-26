@@ -1087,14 +1087,6 @@ fn validate_no_ref_access_in_render_impl(
                             ref_env,
                             &mut inner_errors,
                         );
-                        // Not in upstream: the TypeScript original throws this invariant.
-                        if inner_errors
-                            .iter()
-                            .any(|error| error.category == ErrorCategory::Invariant)
-                        {
-                            errors.append(&mut inner_errors);
-                            return RefAccessType::None;
-                        }
                         let mut details = inner_errors.iter().flat_map(|it| &it.details);
                         let access = details.find_map(|it| match it {
                             CompilerDiagnosticDetail::Error {
@@ -1106,6 +1098,10 @@ fn validate_no_ref_access_in_render_impl(
                         });
                         let (return_type, read_ref_effect) = if inner_errors.is_empty() {
                             (result, false)
+                        } else if inner_errors[0].category == ErrorCategory::Invariant {
+                            // Not in upstream: the TypeScript original throws this invariant, and it alone leaves.
+                            *errors = inner_errors;
+                            return RefAccessType::None;
                         } else {
                             (RefAccessType::None, true)
                         };

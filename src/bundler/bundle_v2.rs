@@ -2964,9 +2964,7 @@ pub mod bv2_impl {
             if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
                 out_source_index = Some(Index::init(existing));
             } else {
-                path = self
-                    .path_with_pretty_initialized(&path, target)
-                    .expect("oom");
+                path = self.path_with_pretty_initialized(&path, target);
                 // The borrowck-reshape above cloned
                 // `path` out, so write the prettified path back so
                 // `ParseTask::init(&resolve_result, ..)` (via `enqueue_parse_task`)
@@ -2988,7 +2986,7 @@ pub mod bv2_impl {
                     // HTML is only allowed at the entry point.
                 };
                 let mut tmp_source = bun_ast::Source {
-                    path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
+                    path: path_as_static(&path.dupe_alloc(self.arena())),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     ..Default::default()
                 };
@@ -3080,21 +3078,16 @@ pub mod bv2_impl {
                 Err(_) => return Ok(()),
             };
             let mut path = result.path_pair.primary;
-            self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
             let loader = self.requested_file_loader(&path, loader);
 
-            path = self.path_with_pretty_initialized(&path, target)?;
+            path = self.path_with_pretty_initialized(&path, target);
             path.assert_pretty_is_valid();
             // see `enqueue_entry_item` — write the prettified path back
             // into `result` so `ParseTask::init(&result, ..)` reads the relativized
             // `pretty`.
             result.path_pair.primary = path;
-            self.path_to_source_index_map(target)
-                .put(path_slice, source_index.get())
-                .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
-
+            // The one step that can fail goes first: an error leaves the graph as it was.
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
                     path: path_as_static(&path),
@@ -3106,6 +3099,11 @@ pub mod bv2_impl {
                 side_effects: result.primary_side_effects_data,
                 ..Default::default()
             })?;
+            self.path_to_source_index_map(target)
+                .put(path_slice, source_index.get())
+                .expect("oom");
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(&result, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
@@ -3117,6 +3115,9 @@ pub mod bv2_impl {
                 .transpiler_for_target(target)
                 .options
                 .forced_jsx_development();
+
+            // Counted at the hand-off: a count with no task behind it never returns to zero.
+            self.increment_scan_counter();
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -3144,6 +3145,8 @@ pub mod bv2_impl {
             })
         }
 
+        /// Cannot fail: the `enqueue_entry_points_*` loops call it with work already handed
+        /// out, and no caller can take that work back.
         /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_item(
             &mut self,
@@ -3151,7 +3154,7 @@ pub mod bv2_impl {
             is_entry_point: bool,
             target: options::Target,
             loader: Option<Loader>,
-        ) -> Result<Option<IndexInt>, Error> {
+        ) -> Option<IndexInt> {
             let result = &mut *resolve;
             // borrowck: clone the active path out so we don't hold a `&mut`
             // into `result` across the `&mut self` calls below.
@@ -3166,9 +3169,8 @@ pub mod bv2_impl {
                 .get(path.text)
                 .is_some()
             {
-                return Ok(None);
+                return None;
             }
-            self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
             let loader = self.requested_file_loader(&path, loader);
@@ -3177,7 +3179,7 @@ pub mod bv2_impl {
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
             // `Path<'static>` alias so `path` doesn't keep `self` borrowed.
             path = unsafe {
-                self.path_with_pretty_initialized(&path, target)?
+                self.path_with_pretty_initialized(&path, target)
                     .into_static()
             };
             path.assert_pretty_is_valid();
@@ -3191,7 +3193,7 @@ pub mod bv2_impl {
             // surfacing as "Failed to load bundled module
             // 'bun-framework-react/server.tsx'" when the worker can no longer match
             // `built_in_modules`.
-            path = path.dupe_alloc(self.arena()).expect("oom");
+            path = path.dupe_alloc(self.arena());
             // The borrowck-reshape
             // above cloned `path` out, which left `result.path_pair` with the
             // unrelativized `pretty` — and `ParseTask::init(&result, ..)` reads
@@ -3206,7 +3208,8 @@ pub mod bv2_impl {
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
             let side_effects = result.primary_side_effects_data;
-            self.graph.input_files.append(crate::Graph::InputFile {
+            // Inside the capacity that the enqueue reserved. `on_resolve` gets here without one.
+            bun_core::handle_oom(self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
                     path: path_as_static(&path),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -3216,7 +3219,7 @@ pub mod bv2_impl {
                 loader,
                 side_effects,
                 ..Default::default()
-            })?;
+            }));
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(result, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
@@ -3229,6 +3232,9 @@ pub mod bv2_impl {
                 .transpiler_for_target(target)
                 .options
                 .forced_jsx_development();
+
+            // Counted at the hand-off: a count with no task behind it never returns to zero.
+            self.increment_scan_counter();
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -3250,7 +3256,7 @@ pub mod bv2_impl {
                 .entry_points
                 .push(bun_ast::Index::init(source_index.get()));
 
-            Ok(Some(source_index.get()))
+            Some(source_index.get())
         }
 
         /// `heap` is not freed when `deinit`ing the BundleV2
@@ -3565,17 +3571,13 @@ pub mod bv2_impl {
             &mut self,
             data: &[P],
         ) -> Result<(), Error> {
-            self.enqueue_entry_points_common()?;
-            // (variant != .dev_server)
-            self.reserve_source_indexes_for_bake()?;
+            self.enqueue_entry_points_common(data.len(), true)?;
+            self.hand_out_entry_points_normal(data);
+            Ok(())
+        }
 
-            // Setup entry points
-            let num_entry_points = data.len();
-            self.graph.entry_points.reserve(num_entry_points);
-            self.graph
-                .input_files
-                .ensure_unused_capacity(num_entry_points)?;
-
+        /// No `Result`: see `enqueue_entry_points_common`.
+        fn hand_out_entry_points_normal<P: AsRef<[u8]>>(&mut self, data: &[P]) {
             for entry_point in data {
                 let entry_point: &[u8] = entry_point.as_ref();
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(
@@ -3595,7 +3597,7 @@ pub mod bv2_impl {
                             true,
                             self.transpiler.options.target,
                             None,
-                        )?;
+                        );
                         continue;
                     }
                 }
@@ -3620,9 +3622,8 @@ pub mod bv2_impl {
                     }
                     break 'brk main_target;
                 };
-                let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
+                let _ = self.enqueue_entry_item(&mut resolved, true, target, None);
             }
-            Ok(())
         }
 
         pub(crate) fn enqueue_entry_points_dev_server(
@@ -3630,15 +3631,28 @@ pub mod bv2_impl {
             files: &bake_types::EntryPointList,
             css_data: &mut ArrayHashMap<Index, CssEntryPointMeta>,
         ) -> Result<(), Error> {
-            self.enqueue_entry_points_common()?;
             debug_assert!(self.dev_server.is_some());
 
-            let num_entry_points = files.set.count();
-            self.graph.entry_points.reserve(num_entry_points);
-            self.graph
-                .input_files
-                .ensure_unused_capacity(num_entry_points)?;
+            // One row for each graph that an entry point is in, and one `css_data` entry for each CSS one.
+            let (mut num_input_files, mut num_css) = (0usize, 0usize);
+            for flags in files.set.values() {
+                num_input_files += usize::from(flags.client())
+                    + usize::from(flags.server())
+                    + usize::from(flags.ssr());
+                num_css += usize::from(flags.client() && flags.css());
+            }
+            css_data.ensure_unused_capacity(num_css)?;
+            self.enqueue_entry_points_common(num_input_files, false)?;
+            self.hand_out_entry_points_dev_server(files, css_data);
+            Ok(())
+        }
 
+        /// No `Result`: see `enqueue_entry_points_common`.
+        fn hand_out_entry_points_dev_server(
+            &mut self,
+            files: &bake_types::EntryPointList,
+            css_data: &mut ArrayHashMap<Index, CssEntryPointMeta>,
+        ) {
             debug_assert_eq!(files.set.keys().len(), files.set.values().len());
             for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
                 // Ensure we have the proper conditions set for client-side entrypoints.
@@ -3726,17 +3740,17 @@ pub mod bv2_impl {
                             true,
                             Target::Browser,
                             client_loader,
-                        )?
-                        else {
+                        ) else {
                             break 'brk;
                         };
                         if flags.css() {
-                            css_data.put_no_clobber(
+                            debug_assert!(!css_data.contains(&Index::init(source_index)));
+                            css_data.put_assume_capacity(
                                 Index::init(source_index),
                                 CssEntryPointMeta {
                                     imported_on_server: false,
                                 },
-                            )?;
+                            );
                         }
                     }
                 }
@@ -3746,7 +3760,7 @@ pub mod bv2_impl {
                         true,
                         self.transpiler.options.target,
                         None,
-                    )?;
+                    );
                 }
                 if flags.ssr() {
                     let _ = self.enqueue_entry_item(
@@ -3754,25 +3768,25 @@ pub mod bv2_impl {
                         true,
                         Target::ServerComponentsSsr,
                         None,
-                    )?;
+                    );
                 }
             }
-            Ok(())
         }
 
         pub(crate) fn enqueue_entry_points_bake_production(
             &mut self,
             data: &bake_types::production::EntryPointMap,
         ) -> Result<(), Error> {
-            self.enqueue_entry_points_common()?;
-            self.reserve_source_indexes_for_bake()?;
+            self.enqueue_entry_points_common(data.files.count(), true)?;
+            self.hand_out_entry_points_bake_production(data);
+            Ok(())
+        }
 
-            let num_entry_points = data.files.count();
-            self.graph.entry_points.reserve(num_entry_points);
-            self.graph
-                .input_files
-                .ensure_unused_capacity(num_entry_points)?;
-
+        /// No `Result`: see `enqueue_entry_points_common`.
+        fn hand_out_entry_points_bake_production(
+            &mut self,
+            data: &bake_types::production::EntryPointMap,
+        ) {
             for key in data.files.keys() {
                 let abs_path = key.abs_path();
                 let target = match key.side {
@@ -3791,15 +3805,20 @@ pub mod bv2_impl {
                 };
 
                 // TODO: wrap client files so the exports arent preserved.
-                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target, None)? else {
-                    continue;
-                };
+                let _ = self.enqueue_entry_item(&mut resolved, true, target, None);
             }
-            Ok(())
         }
 
-        /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
-        fn enqueue_entry_points_common(&mut self) -> Result<(), Error> {
+        /// Common prelude shared by all enqueue_entry_points_* variants. It adds the row of the
+        /// runtime and reserves every row that the caller's loop appends (`num_input_files`).
+        /// Then it schedules the runtime task, which is the first work handed out. Everything
+        /// that can fail is before that, so an `Err` from an enqueue means that no work of this
+        /// bundle is out. The loops run in `hand_out_entry_points_*`, which return no `Result`.
+        fn enqueue_entry_points_common(
+            &mut self,
+            num_input_files: usize,
+            reserve_for_bake: bool,
+        ) -> Result<(), Error> {
             // Add the runtime
             let rt = ParseTask::get_runtime_source(self.transpiler.options.target);
             self.graph.input_files.append(crate::Graph::InputFile {
@@ -3814,6 +3833,14 @@ pub mod bv2_impl {
             self.path_to_source_index_map(self.transpiler.options.target)
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
+            if reserve_for_bake {
+                self.reserve_source_indexes_for_bake()?;
+            }
+            self.graph.entry_points.reserve(num_input_files);
+            self.graph
+                .input_files
+                .ensure_unused_capacity(num_input_files)?;
+            self.graph.ast.ensure_unused_capacity(num_input_files)?;
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
@@ -4601,14 +4628,7 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
 
-            // enqueueEntryPoints schedules the runtime task before any fallible
-            // allocation. If a later allocation fails we must still drain the
-            // pool so workers aren't left holding pointers into the caller's
-            // stack-allocated Transpiler.
-            if let Err(err) = this.enqueue_entry_points_normal(entry_points) {
-                this.wait_for_parse();
-                return Err(err);
-            }
+            this.enqueue_entry_points_normal(entry_points)?;
 
             // Even if entry point resolution produced errors we still wait for
             // all enqueued parse tasks to finish so the graph is consistent.
@@ -5278,14 +5298,12 @@ pub mod bv2_impl {
                                 return;
                             };
                             let mut resolved = resolved;
-                            let Ok(source_index) = this.enqueue_entry_item(
+                            let source_index = this.enqueue_entry_item(
                                 &mut resolved,
                                 true,
                                 target,
                                 resolve.import_record.loader,
-                            ) else {
-                                return;
-                            };
+                            );
 
                             // Store the original entry point name for virtual entries that fall back to file resolution
                             if let Some(idx) = source_index {
@@ -5387,12 +5405,10 @@ pub mod bv2_impl {
                             // when the Box itself is moved into the Vec.
                             this.free_list.push(result.namespace);
                             this.free_list.push(result.path);
-                            path = this
-                                .path_with_pretty_initialized(
-                                    &path,
-                                    resolve.import_record.original_target,
-                                )
-                                .expect("oom");
+                            path = this.path_with_pretty_initialized(
+                                &path,
+                                resolve.import_record.original_target,
+                            );
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
 
@@ -5573,6 +5589,8 @@ pub mod bv2_impl {
         }
 
         pub fn deinit_without_freeing_arena(&mut self) {
+            // A driver waits for its parse tasks before it gets here, or it handed none out.
+            debug_assert!(self.asynchronous || self.graph.pending_items == 0);
             // A build that stops between `compute_data_for_source_map` and the waits in
             // `generate_chunks_in_parallel` gets here with those tasks still on the pool,
             // creating `Worker`s and reading `graph`.
@@ -6462,18 +6480,17 @@ pub mod bv2_impl {
             &self,
             path: &Fs::Path<'static>,
             target: options::Target,
-        ) -> Result<Fs::Path<'static>, Error> {
+        ) -> Fs::Path<'static> {
             // SAFETY: arena outlives the bundle pass; erase the `&self` lifetime so the
             // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
             let bump: &'static bun_alloc::Arena =
                 unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
-            let out = generic_path_with_pretty_initialized(
+            generic_path_with_pretty_initialized(
                 path,
                 target,
                 self.transpiler.fs().top_level_dir(),
                 bump,
-            )?;
-            Ok(out)
+            )
         }
 
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
@@ -7260,9 +7277,7 @@ pub mod bv2_impl {
                                 import_record.path.text = path.text;
                                 import_record.path.pretty = rel;
                                 import_record.path = path_as_static(
-                                    &self
-                                        .path_with_pretty_initialized(path, target)
-                                        .expect("oom"),
+                                    &self.path_with_pretty_initialized(path, target),
                                 );
                                 if loader == Loader::Html
                                     || entry.kind == bake_types::CacheKind::Css
@@ -7324,9 +7339,7 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                *path = self
-                    .path_with_pretty_initialized(path, target)
-                    .expect("oom");
+                *path = self.path_with_pretty_initialized(path, target);
 
                 import_record.path = path_as_static(path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
@@ -8023,14 +8036,10 @@ pub mod bv2_impl {
                             // `fs_path_from_logger`/`fs_path_to_logger` until the
                             // three `Path` mirrors unify.
                             ssr_source.path.pretty = ssr_source.path.text;
-                            ssr_source.path = path_as_static(
-                                &this
-                                    .path_with_pretty_initialized(
-                                        &ssr_source.path,
-                                        Target::ServerComponentsSsr,
-                                    )
-                                    .expect("oom"),
-                            );
+                            ssr_source.path = path_as_static(&this.path_with_pretty_initialized(
+                                &ssr_source.path,
+                                Target::ServerComponentsSsr,
+                            ));
                             let ssr_index = this
                                 .enqueue_parse_task2(
                                     &mut ssr_source,
@@ -8047,14 +8056,11 @@ pub mod bv2_impl {
                                 this.graph.input_files.items_source()[result_source_index].clone();
                             server_source.path.pretty = server_source.path.text;
                             let server_target = this.transpiler.options.target;
-                            server_source.path = path_as_static(
-                                &this
-                                    .path_with_pretty_initialized(
-                                        &server_source.path,
-                                        server_target,
-                                    )
-                                    .expect("oom"),
-                            );
+                            server_source.path =
+                                path_as_static(&this.path_with_pretty_initialized(
+                                    &server_source.path,
+                                    server_target,
+                                ));
                             let server_index = this
                                 .enqueue_parse_task2(
                                     &mut server_source,
@@ -8345,7 +8351,7 @@ pub mod bv2_impl {
         target: options::Target,
         top_level_dir: &[u8],
         bump: &bun_alloc::Arena,
-    ) -> crate::Result<bun_paths::fs::Path<'static>> {
+    ) -> bun_paths::fs::Path<'static> {
         use crate::bun_fs::PathResolverExt as _;
         use crate::bun_node_fallbacks;
 
@@ -8354,7 +8360,7 @@ pub mod bv2_impl {
             && (strings::has_prefix(path.text, bun_node_fallbacks::IMPORT_PATH)
                 || !bun_paths::is_absolute(path.text))
         {
-            return Ok(*path);
+            return *path;
         }
 
         // `pretty` is only displayed, never opened, so it can be longer than MAX_PATH_BYTES.
@@ -8384,7 +8390,7 @@ pub mod bv2_impl {
             prefixed.extend_from_slice(path.text);
             &prefixed
         };
-        path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
+        path_clone.dupe_alloc_fix_pretty(bump)
     }
 
     fn push_escaped_namespace(out: &mut Vec<u8>, namespace: &[u8]) {

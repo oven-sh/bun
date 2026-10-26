@@ -7,6 +7,7 @@ import {
   bunRun,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   MAX_PATH_BYTES,
   tempDir,
@@ -364,6 +365,123 @@ describe("Bun.build", () => {
       expect(stdout).toBe("0\n");
       expect(exitCode).toBe(0);
     },
+  );
+
+  // Under the cap one allocation fails: the reserve of a row for each entry point. A build that has a task on
+  // the pool at that time frees the bundle under the task.
+  test.skipIf(!isASAN)("a build whose entry point reserve fails leaves no task on the pool", async () => {
+    using dir = tempDir("bun-build-api-enqueue-reserve", {
+      "reserve-fixture.ts": /* ts */ `
+        import { bundlerWorkerLiveCount } from "bun:internal-for-testing";
+        const files = {};
+        for (let i = 0; i < 8000; i++) files["/entry" + i + ".ts"] = "export default " + i + ";";
+        const error = await Bun.build({ entrypoints: Object.keys(files), files }).then(() => undefined, e => e);
+        console.log(error?.message, error?.errors?.length);
+        const deadline = Date.now() + 5000;
+        while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
+        console.log(bundlerWorkerLiveCount());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "reserve-fixture.ts"],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=1"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("Bundle failed 0\n0\n");
+    expect(exitCode, stderr).toBe(0);
+  });
+
+  // The resolver interns file names in a store with a fixed number of slots. The fill is the one of
+  // test/regression/issue/31503.test.ts, so Linux only for the same reasons. It is about 8.4 million names.
+  test.skipIf(!isLinux)(
+    "builds when the resolver's filename store is full",
+    async () => {
+      using dir = tempDir("bun-build-api-filename-store-full", {
+        "on-disk.ts": `console.log("on-disk");`,
+        "full-store-fixture.ts": /* ts */ `
+          import fs from "fs";
+          import path from "path";
+
+          const cwd = process.cwd();
+          const real = path.join(cwd, "tree", "real");
+          fs.mkdirSync(real, { recursive: true });
+          // A mixed-case name of more than 31 bytes is interned twice for each read of its directory.
+          for (let i = 0; i < 4000; i++) {
+            fs.closeSync(fs.openSync(path.join(real, "ZzThisIsAFilenameWellOverThirtyOneBytesLong_" + i + ".js"), "w"));
+          }
+          fs.closeSync(fs.openSync(path.join(real, "target.js"), "w"));
+          // Each new spelling of the directory is read again. The store is full when a read fails.
+          for (let spelling = 0; ; spelling++) {
+            if (spelling > 2000) throw new Error("the filename store did not fill");
+            const link = path.join(cwd, "tree", "s" + spelling);
+            fs.symlinkSync(real, link, "dir");
+            try {
+              Bun.resolveSync("./target.js", link);
+            } catch {
+              break;
+            }
+          }
+
+          const inside = name => path.join(cwd, name);
+          const outside = path.join(path.dirname(cwd), path.basename(cwd) + "-outside.ts");
+          const source = marker => "console.log(" + JSON.stringify(marker) + ");";
+          const declines = {
+            name: "declines",
+            setup(build) {
+              build.onResolve({ filter: /on-disk\\.ts$/ }, () => undefined);
+            },
+          };
+          async function build(options, ...markers) {
+            const result = await Bun.build(options);
+            const text = (await Promise.all(result.outputs.map(output => output.text()))).join("\\n");
+            return result.success && markers.every(marker => text.includes(marker));
+          }
+          console.log(
+            JSON.stringify({
+              // The path of an entry point outside the working directory needs no slot, so its task is out
+              // when the next entry point needs one.
+              afterATaskIsOut: await build(
+                {
+                  entrypoints: [outside, inside("a.ts")],
+                  files: { [outside]: source("outside"), [inside("a.ts")]: source("a") },
+                },
+                "outside",
+                "a",
+              ),
+              twoThatNeedASlot: await build(
+                {
+                  entrypoints: [inside("b.ts"), inside("c.ts")],
+                  files: { [inside("b.ts")]: source("b"), [inside("c.ts")]: source("c") },
+                },
+                "b",
+                "c",
+              ),
+              declinedByAPlugin: await build({ entrypoints: ["./on-disk.ts"], plugins: [declines] }, "on-disk"),
+            }),
+          );
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "full-store-fixture.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe(`{"afterATaskIsOut":true,"twoThatNeedASlot":true,"declinedByAPlugin":true}\n`);
+      expect(exitCode, stderr).toBe(0);
+    },
+    isDebug ? 240_000 : 60_000,
   );
 
   test("ignores a corrupted or truncated .jsc sidecar", async () => {

@@ -24,6 +24,7 @@ arrays/array-prototype-is-sealed
 arrays/array-subclass-prototype-element
 arrays/array-with-hundreds-of-negative-keys-in-a-validating-build
 arrays/arrays-of-the-greatest-length-are-read-and-stored-into
+arrays/computed-nans-written-by-index-into-float-views
 arrays/concat-called-on-a-primitive-wraps-it-in-an-object
 arrays/element-reads-with-double-keys
 arrays/elements-of-frozen-arrays-that-fit-are-not-coerced
@@ -136,6 +137,7 @@ async-and-generators/what-a-call-made-and-dropped-is-released-while-its-async-ca
 async-and-generators/what-a-suspended-function-holds
 async-and-generators/what-a-yield-answers-is-used-and-its-operand-rejects
 async-and-generators/what-an-async-generator-throws-reaches-the-catch-around-the-loop
+async-and-generators/what-the-names-of-the-parameters-of-a-suspended-function-hold
 built-ins-alone/array-from-over-maps-sets-and-their-iterators
 built-ins-alone/built-ins-that-take-only-objects-are-handed-everything
 built-ins-alone/object-prototype-to-string-of-proxies-that-have-been-revoked
@@ -170,6 +172,8 @@ builtin-modules/next-tick-read-returned-to-a-caller-that-ignores-it
 builtin-modules/next-tick-read-used-only-in-a-branch-not-taken
 builtin-modules/rejected-argument-description
 builtin-modules/rejected-argument-whose-fields-nobody-reads
+builtin-modules/refused-arguments-run-their-getters-and-traps
+builtin-modules/refused-arguments-with-and-without-a-constructor
 builtin-modules/require-resolve-answers-the-name-of-a-built-in-module-as-it-was-asked
 builtin-modules/slow-buffer-to-json
 builtin-modules/sqlite-in-memory-with-no-optional-pass
@@ -393,6 +397,7 @@ classes/twenty-subclasses-override-a-method-beside-an-entry-point-that-requires-
 classes/unread-field-is-stored-below-a-replaced-parent
 classes/what-a-loop-reads-is-changed-inside-the-loop-without-naming-it
 closed-world/a-member-of-bun-is-named-by-the-default-of-a-key-picked-at-run-time
+closed-world/a-member-of-bun-is-named-on-a-copy-by-descriptors-of-a-value-the-build-does-not-know
 closed-world/a-member-of-bun-is-named-on-a-copy-by-descriptors-of-what-a-built-in-handed-on
 closed-world/a-member-of-bun-is-named-on-a-copy-of-bun-behind-many-calls
 closed-world/a-member-of-bun-is-named-on-a-field-of-what-promise-all-resolves-to
@@ -579,6 +584,8 @@ conditions-of-passes/spreads-of-every-kind-of-list
 conditions-of-passes/string-methods-with-many-kinds-of-arguments
 conditions-of-passes/values-arrive-where-their-types-say-they-cannot-be
 const-and-dead-zones/a-large-var-read-only-where-a-parameter-has-another-type-than-the-written-one
+const-and-dead-zones/import-store-const-arrow-assign
+const-and-dead-zones/namespace-store-self-import
 const-and-dead-zones/texts-joined-from-constants-that-are-read-in-their-dead-zones
 constructor-functions/a-factory-makes-a-constructor-below-another-and-the-chain-changes
 constructor-functions/a-factory-makes-two-constructors-of-one-text
@@ -649,6 +656,7 @@ effects/a-helper-is-handed-more-callbacks-than-a-summary-follows
 effects/a-refused-operand-keeps-the-code-of-the-operands-behind-it-from-running
 effects/a-split-that-nobody-reads-still-converts-and-throws
 effects/an-array-of-strings-made-at-run-time-is-read-and-written-around-every-touch
+effects/literals-with-elements-name-a-prototype-that-answers-for-indices-validated
 effects/things-read-right-where-they-are-made
 enums/a-number-outside-the-enum-is-given-for-a-parameter-with-a-default-and-read-in-a-closure
 enums/a-number-outside-the-enum-is-given-for-it-and-read-in-a-closure
@@ -679,22 +687,28 @@ errors/a-read-through-super-under-a-null-prototype-quotes-the-expression
 errors/call-sites-and-limits-of-stack-traces-that-list-a-built-in-function
 errors/capture-stack-trace-on-objects-that-take-no-new-properties
 errors/classes-that-extend-error
+errors/errors-of-every-operand-that-a-built-in-function-converts-are-caught
 errors/every-kind-of-place-that-throws
 errors/iterating-what-is-not-iterable
 errors/own-property-names-of-errors-made-in-programs-classes-and-built-in-modules
 errors/places-that-throw-with-another-text-or-column
 errors/reads-of-null-with-many-values-in-registers
 errors/stack-frames-below-an-async-generator-behind-an-await
+errors/stack-frames-below-an-async-generator-that-steps-another
 errors/stack-frames-follow-the-name-of-the-function-object
+errors/stack-frames-list-next-where-it-is-called-on-an-async-generator
+errors/stack-frames-list-replace-above-its-callback
 errors/stack-frames-name-each-function-object-of-a-factory
 errors/stack-frames-of-async-functions-and-generators-that-take-their-names-from-where-they-are-stored
 errors/stack-frames-of-built-in-functions-above-their-callers
+errors/stack-frames-of-built-in-functions-that-convert-alike
 errors/stack-frames-of-classes-and-members-named-while-the-program-runs
 errors/stack-frames-of-classes-called-without-new
 errors/stack-frames-of-default-constructors
 errors/stack-frames-of-functions-called-through-an-await
 errors/stack-frames-of-functions-that-name-a-returned-variable-again-behind-the-return
 errors/stack-frames-of-functions-that-return-a-new-error
+errors/stack-frames-of-functions-that-return-a-variable-behind-a-type
 errors/stack-frames-of-functions-that-return-a-variable-used-once
 errors/stack-frames-of-functions-that-return-a-variable-with-a-type
 errors/stack-frames-of-reflect-construct-by-the-way-it-is-called
@@ -714,6 +728,7 @@ errors/stack-positions-of-expressions-that-throw
 errors/stack-positions-of-expressions-that-throw-in-commonjs
 errors/stack-positions-of-operators-beside-parentheses-and-literals
 errors/stack-positions-of-operators-in-chains
+errors/stack-trace-limits-where-tail-calls-remove-frames
 errors/traces-of-many-places-asked-round-after-round
 errors/what-a-program-can-ask-about-a-stack
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made
@@ -1111,6 +1126,7 @@ modules/cycles-with-top-level-await-in-which-a-module-throws
 modules/each-way-to-require-a-module-with-top-level-await
 modules/each-way-to-require-by-a-computed-name-a-module-with-top-level-await
 modules/esbuild-require-shim-loads-files-and-packages
+modules/fifteen-ways-to-store-to-an-import-or-a-namespace
 modules/glob-symlink-and-chdir-start-at-a-folder-of-the-executable
 modules/graphs-with-a-cycle-in-which-a-module-throws
 modules/import-meta-require-held-by-a-binding
@@ -1352,6 +1368,8 @@ site-records/a-field-is-deleted-and-added-again
 site-records/the-object-changes-in-the-middle-of-an-operation
 small-benchmarks/string-build-loop
 soundness/a-binding-read-in-its-dead-zone-beside-the-shapes-of-other-modules
+soundness/a-class-extends-a-number-where-a-built-in-class-is-stored-on-a-branch-not-taken
+soundness/a-class-extends-a-variable-that-still-holds-undefined
 soundness/a-class-that-a-module-of-bun-makes-is-named-long-after-bun-has-left
 soundness/a-fraction-in-an-enum-field-survives-a-rest-copy
 soundness/a-function-that-anybody-may-call-is-handed-everything-but-what-its-own-callers-pass
@@ -1392,6 +1410,8 @@ soundness/a-reviver-puts-a-literal-into-the-holder-and-the-walk-deletes-there
 soundness/a-reviver-puts-an-instance-into-the-holder-and-the-walk-deletes-and-defines-there
 soundness/a-reviver-puts-arrays-into-the-holder-and-the-walk-makes-holes-and-stores-other-kinds
 soundness/a-setter-of-node-fs-stores-into-a-field-of-its-receiver
+soundness/a-static-block-in-a-try-reads-a-list-declared-as-an-interface-and-then-names-a-variable-nobody-declares
+soundness/an-element-of-a-list-declared-as-an-interface-is-captured-by-a-function-nobody-calls
 soundness/bindings-read-in-their-dead-zone-beside-many-shapes-with-the-same-field
 soundness/computed-stores-onto-names-stored-by-name-in-a-validating-build
 soundness/constructor-function-constructed-for-a-bound-function-that-was-given-a-prototype
@@ -1402,6 +1422,7 @@ soundness/elements-stored-into-objects-below-string-objects-typed-arrays-and-pro
 soundness/elements-stored-into-objects-below-string-objects-typed-arrays-and-proxies-typed
 soundness/evaluated-text-plants-the-custom-inspect-function-on-array-prototype
 soundness/evaluated-text-plants-to-json-on-map-prototype
+soundness/every-way-of-asking-a-namespace-in-a-cycle
 soundness/first-use-of-built-ins-in-the-handler-of-a-stack-overflow
 soundness/has-own-of-a-function-member-overwritten-through-a-wider-type
 soundness/in-sloppy-code-the-arguments-object-and-the-parameters-are-two-names-of-the-same-places
@@ -1447,6 +1468,9 @@ static-modules/five-names/path-join-slashes
 static-modules/five-names/require-main-is-only-tested
 static-modules/rulings/the-cache-lists-no-module-of-the-executable
 strings/a-block-reads-one-started-string-and-starts-another
+strings/a-character-of-a-returned-part-goes-through-a-function-that-also-gets-numbers
+strings/a-part-of-a-string-returned-behind-a-loop-is-read-by-position
+strings/a-part-of-a-string-returned-behind-a-loop-is-read-by-position-typed
 strings/a-pattern-out-of-run-time-text-goes-on-behind-a-hundred-million-steps-back
 strings/a-pattern-out-of-run-time-text-that-takes-nearly-all-the-turns-a-match-may-have-is-not-ten-times-as-slow-a-turn
 strings/a-repeated-group-that-can-match-nothing-finds-the-match-behind-a-stretch-it-divides-in-many-ways

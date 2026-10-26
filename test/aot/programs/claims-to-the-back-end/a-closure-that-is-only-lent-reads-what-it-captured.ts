@@ -7,6 +7,7 @@ function around(value: number): number {
   return twice(() => value + 1, 2);
 }
 
+const turns = process.argv.length > 99 ? 6 : 5;
 const seen: number[] = [];
-for (let turn = 0; turn < 5; turn++) seen.push(around(turn));
+for (let turn = 0; turn < turns; turn++) seen.push(around(turn));
 console.log(seen.join(" "));

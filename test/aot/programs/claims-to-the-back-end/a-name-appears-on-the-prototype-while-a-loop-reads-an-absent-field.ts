@@ -15,9 +15,11 @@ function put(name: string, depth: number): void {
   (Card.prototype as any)[name] = "noted";
 }
 
+const turns = process.argv.length > 99 ? 5 : 4;
+
 function walk(card: Card, names: string[]): number {
   let sum = 0;
-  for (let turn = 0; turn < 4; turn++) {
+  for (let turn = 0; turn < turns; turn++) {
     sum = sum * 10 + lengthOf(card.note);
     put(names[turn], 2);
   }

@@ -1,1 +1,0 @@
-The program asks that, at the very end of the stack, a call of a function of a library module finds no room for its frame. `bun run` finds none three times; the executable reaches the same depth of the recursion and finds room every time, so the last line says false.

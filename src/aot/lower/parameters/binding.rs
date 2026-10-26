@@ -1,11 +1,12 @@
-use bun_sema::bind::{Binding, CodeUnit, Decl, has_simple_parameter_list};
+use bun_sema::bind::{Binding, Bound, CodeUnit, Decl, SymbolId, has_simple_parameter_list};
 use bun_sema::fold::{TreeNode, push_children};
-use bun_sema::hir::{ExprId, ExprKind, FnId, FnKind, ParamId, PatId, PatKind, UnOp};
+use bun_sema::hir::{self, ExprId, ExprKind, FnId, FnKind, ParamId, PatId, PatKind, UnOp};
 use smallvec::SmallVec;
 
+use crate::ir::generated::FunctionFlags;
 use crate::ir::{DeclaredType, ValueId};
 use crate::lower::pattern::{PatternNode, PatternOrigin, apply_default_with};
-use crate::lower::scope::{BindingForm, BindingRef, ScopeSlot};
+use crate::lower::scope::{BindingForm, BindingRef, ScopeSlot, Storage};
 use crate::lower::{FileLowering, FunctionLowering, convert, scope};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -90,7 +91,72 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             scope::initialize_binding(self, Binding::Symbol(copy.variable), name, value);
         }
         self.instantiate_functions(top);
+        self.list_held_bindings(source);
     }
+
+    fn list_held_bindings(&mut self, source: FnId) {
+        let flags = self.builder.function().flags;
+        if !flags.intersects(FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR) {
+            return;
+        }
+        let top = self.file.bound.fns[source.idx()].scope;
+        let symbols = parameter_symbols(self.file.hir, self.file.bound, source);
+        let names = symbols.into_iter().map(BindingRef::Symbol);
+        let arguments = BindingRef::Slot(top, ScopeSlot::Arguments);
+        self.coroutine.held = names.chain([arguments]).collect();
+    }
+
+    // What the names of the parameters hold here. A name that closures share lies in an environment.
+    pub(in crate::lower) fn get_held_values(&mut self) -> SmallVec<[ValueId; 4]> {
+        let mut values: SmallVec<[ValueId; 4]> = SmallVec::new();
+        for index in 0..self.coroutine.held.len() {
+            let binding = self.coroutine.held[index];
+            let placement = self.file.scopes.placement(binding);
+            let value = match (self.scopes.find_local(binding), placement) {
+                (Some(local), _) => self.builder.read_variable(local.variable),
+                (None, Some(placement)) => match placement.storage {
+                    Storage::Field { scope, .. } => self.get_environment(scope),
+                    Storage::Local | Storage::Variable(_) => continue,
+                },
+                (None, None) => continue,
+            };
+            if !values.contains(&value) {
+                values.push(value);
+            }
+        }
+        values
+    }
+}
+
+pub(in crate::lower) fn parameter_symbols(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+) -> SmallVec<[SymbolId; 4]> {
+    let mut symbols: SmallVec<[SymbolId; 4]> = SmallVec::new();
+    let parameters = hir[function].params.iter();
+    let mut pending: SmallVec<[PatId; 8]> =
+        parameters.map(|parameter| hir[parameter].pat).collect();
+    while let Some(pattern) = pending.pop() {
+        if pattern.is_none() {
+            continue;
+        }
+        match hir[pattern].kind {
+            PatKind::Ident(_) => match bound.initialized_binding(pattern) {
+                Binding::Symbol(symbol) => symbols.push(symbol),
+                Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {}
+            },
+            PatKind::Missing => {}
+            PatKind::Object(properties) => {
+                pending.extend(properties.iter().map(|property| hir[property].value));
+            }
+            PatKind::Array(elements) => {
+                pending.extend(elements.iter().map(|element| hir[element].pat));
+            }
+        }
+    }
+    symbols.sort_unstable();
+    symbols
 }
 
 fn apply_default(

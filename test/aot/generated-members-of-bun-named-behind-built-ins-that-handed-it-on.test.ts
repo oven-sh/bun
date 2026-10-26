@@ -4,7 +4,7 @@ import { generate } from "./fuzz/members-of-bun-named-behind-built-ins-that-hand
 import { Random } from "./fuzz/random";
 import { generated } from "./generated/run-generated";
 
-const lacksAMember: number[] = [18, 71, 78, 131, 148];
+const lacksAMember: number[] = [18];
 
 generated(
   "a member of Bun that is named behind built-ins answers as in plain Bun",

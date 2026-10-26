@@ -7,7 +7,7 @@
 //   TEST_PART=all bun test test/aot/parts.test.ts                        everything
 //
 // A part that takes more than three minutes in CI: raise the number of parts.
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -452,9 +452,11 @@ export const rows: Row[] = [
   ...["bun", "elysia", "express", "fastify", "hono", "node"].map(
     (name): Row => [`aot/servers/features-of-${name}`, 0, "./servers/one-server", "testServers", ["features", name]],
   ),
-  ...["bun", "elysia", "express", "fastify", "hono", "koa", "node", "tanstack", "typescript"].map(
-    (name): Row => [`aot/servers/budgets-of-${name}`, 0, "./servers/one-server", "testServers", ["budgets", name]],
-  ),
+  ...Object.keys(JSON.parse(readFileSync(join(here, "servers/budgets.json"), "utf8")))
+    .sort()
+    .map(
+      (name): Row => [`aot/servers/budgets-of-${name}`, 0, "./servers/one-server", "testServers", ["budgets", name]],
+    ),
   [
     "aot/servers/api-servers",
     0,

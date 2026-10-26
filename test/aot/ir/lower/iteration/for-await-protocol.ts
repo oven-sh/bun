@@ -1,15 +1,15 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="drain"{{*}}IsAsync
-// CHECK: [[iterator]] = IteratorOpen {{*}}iteratorKind=Async
+// CHECK: [[iterator]] = IteratorOpen [[source]] iteratorKind=Async
 // CHECK-NOT: handler=
 // CHECK: LoopHint
-// CHECK-NEXT: [[step]] = IteratorResume [[iterator]] iteratorKind=Async
+// CHECK-NEXT: [[step]] = IteratorResume [[iterator]], -, [[source]] iteratorKind=Async
 // CHECK-NEXT: [[done]] = ResultAt [[step]]
 // CHECK-NEXT: [[value]] = ResultAt [[step]] index=1
 // CHECK-NEXT: Branch [[done]] -> taken [[after]]({{*}}), notTaken [[body]]({{*}})
 // CHECK: role=IterationCleanup subject=[[iterator]]
 // CHECK-NEXT: [[exception]] = CatchException
-// CHECK-NEXT: IteratorClose [[iterator]] iteratorKind=Async completion=Throw
+// CHECK-NEXT: IteratorClose [[iterator]], [[source]] iteratorKind=Async completion=Throw
 // CHECK-NEXT: Rethrow [[exception]]
 
 // RUN(CLOSES): lower

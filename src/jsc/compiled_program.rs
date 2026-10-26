@@ -45,6 +45,7 @@ unsafe extern "C" {
     fn Bun__AOT__loadsCodeOutsideImage(image: Bytes) -> bool;
     fn Bun__AOT__omitsFunctionSource(image: Bytes) -> bool;
     safe fn Bun__AOT__imageCode() -> Bytes;
+    safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
     safe fn Bun__AOT__entryPointIsCommonJS(global: &JSGlobalObject) -> bool;
     safe fn Bun__AOT__errorIfCodeOutsideImageIsRefused(
@@ -597,6 +598,7 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         };
         let _ = IDENTITY.set(identity);
         use_image_on_this_thread(program, program.first_image());
+        Bun__AOT__takePagesForTablesOfFirstThread();
         #[cfg(not(bun_hardened))]
         write_execute::deny();
         #[cfg(bun_hardened)]

@@ -90,7 +90,7 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
   ["adjacent-old-objects-get-young-values", "ts"],
   ["old-typed-objects-get-young-extras", "ts"],
   ["one-object-two-types", "ts"],
-  ["one-property-two-spellings", "js"],
+  ["one-property-two-spellings", "js", { foundByFreshSeeds: [2075222713] }],
   ["async-code-order", "ts"],
   ["microtask-order", "ts"],
   ["own-property-queries-by-name", "js"],

@@ -1,8 +1,8 @@
 // A pass proves that what a built-in was observed to do is within what its entry declares, for what JavaScript can see:
 // which code of its operands runs, with what, and when; what it stores, deletes, freezes and keeps; what it returns and throws;
 // which memory its result depends on. Retention in native memory that nothing hands back, and allocation of strings, cannot be seen.
-// The table is about executables, and an executable describes a value that a native function rejects without running code of the
-// program (docs/compiler/compatibility.mdx). So do the processes that make the calls here: differential/describe-values-as-an-executable.ts.
+// How a native function describes an argument that it rejects is no part of its entry: the table says it once, for all. The processes that
+// make the calls here describe such a value without running code of the program: differential/describe-values-without-running-code.ts.
 //
 //   AOT_BUILTINS_UPDATE=1   checks every declared overload and writes differential/not-checked.txt: those that do not pass, each with the reason
 //   AOT_BUILTINS_TABLE=<f>  takes the table from the generator's aot_builtin_table.json in place of the one in this build of Bun
@@ -302,7 +302,7 @@ function defineWrongEntryTests(): void {
 
 function defineDescriptionTests(): void {
   const programs = join(import.meta.dir, "../programs/builtin-modules");
-  describe("the processes that make the calls describe a rejected value as an executable does:", () => {
+  describe("the processes that make the calls describe a rejected value without running code of the program:", () => {
     for (const program of ["rejected-argument-description", "rejected-argument-whose-fields-nobody-reads"]) {
       test(program, async () => {
         await using run = Bun.spawn({
@@ -310,7 +310,7 @@ function defineDescriptionTests(): void {
             bunExe(),
             "--expose-internals",
             "--preload",
-            join(import.meta.dir, "differential/describe-values-as-an-executable.ts"),
+            join(import.meta.dir, "differential/describe-values-without-running-code.ts"),
             join(programs, `${program}.ts`),
           ],
           env: workerEnv,
@@ -318,7 +318,7 @@ function defineDescriptionTests(): void {
           stderr: "inherit",
         });
         const [stdout, exitCode] = await Promise.all([run.stdout.text(), run.exited]);
-        expect(stdout).toBe(readFileSync(join(programs, `${program}.expected.txt`), "utf8"));
+        expect(stdout).toBe(readFileSync(join(import.meta.dir, `differential/${program}.txt`), "utf8"));
         expect(exitCode).toBe(0);
       });
     }

@@ -5,7 +5,7 @@ import { groups } from "./system-library-calls-fixture";
 
 const fixture = join(import.meta.dir, "system-library-calls-fixture.ts");
 const divisor = isDebug || isASAN ? "10" : "1";
-// The frameworks behind these write logs of their own to stderr.
+// The frameworks behind these write logs of their own to stdout and stderr.
 const logsOnMacOS = ["images", "web views", "secrets"];
 const complaint = /malloc|alloc|freed|corrupt|panic|crash|abort|signal|fault/i;
 
@@ -25,14 +25,19 @@ describe.each([
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-        const relevant =
-          isMacOS && logsOnMacOS.includes(group)
-            ? stderr
-                .split("\n")
-                .filter(line => complaint.test(line))
-                .join("\n")
-            : stderr;
-        expect({ stdout, stderr: relevant, exitCode, signalCode: child.signalCode }).toEqual({
+        const hasLogs = isMacOS && logsOnMacOS.includes(group);
+        const relevant = hasLogs
+          ? stderr
+              .split("\n")
+              .filter(line => complaint.test(line))
+              .join("\n")
+          : stderr;
+        expect({
+          stdout: hasLogs ? stdout.slice(stdout.lastIndexOf("\n", stdout.length - 2) + 1) : stdout,
+          stderr: relevant,
+          exitCode,
+          signalCode: child.signalCode,
+        }).toEqual({
           stdout: "done\n",
           stderr: "",
           exitCode: 0,

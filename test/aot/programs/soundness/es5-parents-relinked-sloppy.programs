@@ -1822,6 +1822,7 @@ tell("symbol object", Object(Symbol.iterator));
 console.log(rows.join("\n"));
 //// every-way-of-asking-a-namespace-in-a-cycle/early.js
 import * as cycle from "./late.js";
+const sameObject = cycle;
 const lateKey = ["la", "te"].join("");
 const attempt = ask => { try { return String(ask()); } catch (error) { return error.name; } };
 export const ways = [
@@ -1851,7 +1852,7 @@ export const ways = [
   ["destructuring with a default", () => (({ late = "default" }) => late)(cycle)],
   ["typeof", () => typeof cycle.late],
   ["??", () => cycle.late ?? "absent"],
-  ["delete", () => delete cycle.late],
+  ["delete", () => delete sameObject.late],
 ];
 export const before = ways.map(([, ask]) => attempt(ask));
 export const askAgain = () => ways.map(([, ask]) => attempt(ask));
@@ -1882,7 +1883,7 @@ try { direct.push(String((({ late }) => late)(cycle))); } catch (error) { direct
 try { direct.push(String((({ late = "default" }) => late)(cycle))); } catch (error) { direct.push(error.name); }
 try { direct.push(String(typeof cycle.late)); } catch (error) { direct.push(error.name); }
 try { direct.push(String(cycle.late ?? "absent")); } catch (error) { direct.push(error.name); }
-try { direct.push(String(delete cycle.late)); } catch (error) { direct.push(error.name); }
+try { direct.push(String(delete sameObject.late)); } catch (error) { direct.push(error.name); }
 //// every-way-of-asking-a-namespace-in-a-cycle/late.js
 import "./early.js";
 export const other = 0;

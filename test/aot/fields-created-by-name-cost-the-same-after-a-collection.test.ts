@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { measureCommand } from "./analysis-scaling/measure-check";
 import { test } from "./supported";
@@ -84,6 +85,18 @@ test.skipIf(skipped)(
     console.error(
       `a round with the last collection in front of the stores that fill the filter: ${before.toFixed(1)} instructions | behind them: ${behind.toFixed(1)}`,
     );
+    if (behind - before >= 20) {
+      // Which counts of the run time differ between the two orders.
+      const countsOf = async (when: string) => {
+        const path = join(String(dir), `counts-${when}.txt`);
+        const counting = { ...env, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
+        await measureCommand(String(dir), [executable, String(many), when], 120_000, counting);
+        return new Set(readFileSync(path, "utf8").split("\n"));
+      };
+      const [first, last] = [await countsOf("first"), await countsOf("last")];
+      for (const line of first.difference(last)) console.error("in front:", line);
+      for (const line of last.difference(first)) console.error("behind:", line);
+    }
     // A round is an allocation, its share of two collections and the store. The long way costs 60 instructions more.
     expect(behind - before).toBeLessThan(20);
   },

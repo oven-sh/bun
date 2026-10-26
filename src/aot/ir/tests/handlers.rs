@@ -514,12 +514,12 @@ fn roles_and_subject() {
         let cleanup = builder.create_handler(BlockRole::IterationCleanup, Some(iterator), None);
         enter_block(builder, Some(cleanup));
         let (kind, mode) = (IteratorKind::Sync, ResumeMode::Next);
-        builder.iterator_resume(iterator, None, kind, mode, None, false);
+        builder.iterator_resume(iterator, None, kind, mode, None, &[], false);
         builder.return_value(None);
         builder.seal(cleanup.block());
         builder.switch_to(cleanup.block());
         let exception = builder.catch_exception();
-        builder.iterator_close(iterator, kind, IteratorCompletion::Throw);
+        builder.iterator_close(iterator, kind, IteratorCompletion::Throw, &[]);
         builder.rethrow(exception);
     });
 }

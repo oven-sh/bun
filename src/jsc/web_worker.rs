@@ -93,6 +93,8 @@ pub struct WebWorker {
     /// the worker itself (`process.exit()`); polled by the worker loop between
     /// ticks and turned into a JSC TerminationException for running script.
     requested_terminate: AtomicBool,
+    /// `shutdown()` has begun.
+    is_shutting_down: AtomicBool,
     /// The worker VM's uncounted handle: how the parent (or an exiting
     /// ancestor) asks it to terminate. `None` before `start_vm()` publishes it
     /// and after `shutdown()` unpublishes it.
@@ -473,6 +475,7 @@ impl WebWorker {
             },
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             requested_terminate: AtomicBool::new(false),
+            is_shutting_down: AtomicBool::new(false),
             vm_handle: bun_threading::Guarded::new(None),
             vm: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
@@ -515,27 +518,50 @@ impl WebWorker {
         // space that only the new thread touches.
         unsafe impl Send for ThreadStart {}
         let mut table_pages: *mut c_void = core::ptr::null_mut();
+        // A child that is ending still holds address space, so those are waited
+        // for before this one is refused.
         // SAFETY: `table_pages` is a live local the callee writes once.
-        if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages) } {
+        while !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages) } {
+            // SAFETY: `parent` is the calling thread's VM.
+            if unsafe { Self::join_ending_children(parent) } {
+                continue;
+            }
             worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
             *error_message = BunString::static_("Failed to spawn worker thread");
             return core::ptr::null_mut();
         }
-        let start = ThreadStart {
+        /// Outlives a `spawn` that fails, which drops its closure.
+        struct OwnedByThread(*mut ThreadStart);
+        // SAFETY: as for `ThreadStart`; whoever holds it last takes the box.
+        unsafe impl Send for OwnedByThread {}
+        let start = bun_core::heap::alloc(ThreadStart {
             worker: thread_ref,
             init,
             table_pages,
             _parent_ticket: parent_ticket,
+        });
+        let spawn = loop {
+            let owned = OwnedByThread(start);
+            let spawn = std::thread::Builder::new()
+                .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+                .spawn(move || {
+                    let owned = owned;
+                    // SAFETY: `heap::alloc`'d above; the thread that runs is its only owner.
+                    let start = *unsafe { bun_core::heap::take(owned.0) };
+                    Bun__AOT__adoptPagesForNewThread(start.table_pages);
+                    start.worker.thread_main(start.init);
+                    Bun__AOT__releaseUnusedPagesOfThread();
+                    // The thread's ref (and the parent ticket) drop here.
+                });
+            // SAFETY: `parent` is the calling thread's VM.
+            if spawn.is_err()
+                && !table_pages.is_null()
+                && unsafe { Self::join_ending_children(parent) }
+            {
+                continue;
+            }
+            break spawn;
         };
-        let spawn = std::thread::Builder::new()
-            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
-            .spawn(move || {
-                let start = start;
-                Bun__AOT__adoptPagesForNewThread(start.table_pages);
-                start.worker.thread_main(start.init);
-                Bun__AOT__releaseUnusedPagesOfThread();
-                // The thread's ref (and the parent ticket) drop here.
-            });
         match spawn {
             Ok(handle) => {
                 worker_ref.join_handle.set(Some(handle));
@@ -545,13 +571,37 @@ impl WebWorker {
                 worker
             }
             Err(_) => {
-                // The thread's ref went down with the closure; ours drops on return.
+                // The thread's ref goes down with this; ours drops on return.
+                // SAFETY: `heap::alloc`'d above; no thread took it.
+                drop(unsafe { bun_core::heap::take(start) });
                 Bun__AOT__releasePagesForNewThread(table_pages);
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
                 *error_message = BunString::static_("Failed to spawn worker thread");
                 core::ptr::null_mut()
             }
         }
+    }
+
+    /// Block until the threads of `parent`'s children that were asked to
+    /// terminate, or are shutting down on their own, have returned. Returns
+    /// whether there were any. The parent-side release still happens in each
+    /// child's `workerGlobalScopeDestroyed` task.
+    ///
+    /// # Safety
+    /// `parent` is the calling thread's VM.
+    unsafe fn join_ending_children(parent: *mut VirtualMachine) -> bool {
+        let mut joined_any = false;
+        // SAFETY: fn contract; nothing runs on this thread during a join, so the list does not change.
+        for &child in unsafe { (*parent).child_workers.iter() } {
+            let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
+            let is_ending =
+                worker.has_requested_terminate() || worker.is_shutting_down.load(Ordering::Acquire);
+            if is_ending && worker.join_handle.with_mut(|handle| handle.is_some()) {
+                Self::join(child);
+                joined_any = true;
+            }
+        }
+        joined_any
     }
 
     /// Drop one ref; the last one frees the allocation (`Drop` below). Any thread.
@@ -1072,6 +1122,7 @@ impl WebWorker {
     /// task, so nothing after it may touch the parent.
     fn shutdown(&self) {
         jsc::mark_binding();
+        self.is_shutting_down.store(true, Ordering::Release);
         self.set_status(Status::Terminated);
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);

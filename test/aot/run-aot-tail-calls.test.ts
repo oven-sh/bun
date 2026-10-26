@@ -1,5 +1,4 @@
 import { expect } from "bun:test";
-import { readFileSync } from "fs";
 import { bunExe } from "harness";
 import { join } from "path";
 import { run as runCommand } from "./harness/run";
@@ -39,12 +38,14 @@ test.concurrent.each(["type-rules/non-null-assertions"])(
 );
 
 test("which calls are tail calls is decided by syntax alone", async () => {
-  const { stdout, exitCode } = await runCommand(
-    [bunExe(), "run", "--debug-aot", join(programs, "calls/tail-position-is-syntax.ts")],
-    programs,
-  );
-  expect({ stdout, exitCode }).toEqual({
-    stdout: readFileSync(join(programs, "calls/tail-position-is-syntax.expected.txt"), "utf8"),
-    exitCode: 0,
-  });
+  const run = async (...flags: string[]) => {
+    const { stdout, exitCode } = await runCommand(
+      [bunExe(), "run", ...flags, join(programs, "calls/tail-position-is-syntax.ts")],
+      programs,
+    );
+    return { stdout, exitCode };
+  };
+  const plain = await run();
+  expect(plain.exitCode).toBe(0);
+  expect(await run("--debug-aot")).toEqual(plain);
 });

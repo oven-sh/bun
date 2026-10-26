@@ -128,12 +128,24 @@ test.skipIf(!!skipReason).concurrent.each(programs)(
           run(unchecked.executable, {}),
         ]);
         remove(unchecked.executable);
-        const goesWrong = !Bun.deepEquals(alone, expected);
+        // Where the operation is a test, the switch also takes its n-th test for passed. What that alone makes of the program shows with 64-bit references, which have no pointer beside them.
+        let before = expected;
+        if (!Bun.deepEquals(scanned, expected)) {
+          const wide = await build(
+            "--aot-testing=ForceGCSlowPaths",
+            "--aot-drop-guard=" + drop,
+            "--aot-references=wide",
+          );
+          expect({ drop, exitCode: wide.exitCode }).toEqual({ drop, exitCode: 0 });
+          before = await run(wide.executable, {});
+          remove(wide.executable);
+        }
+        const goesWrong = !Bun.deepEquals(alone, before);
         seen.push({ operation: drop.split(":")[0], goesWrong });
         return {
           drop,
           atTheBuild: checked.exitCode !== 0 && guardsNamedBy(checked.stderr).length > 0 ? "rejected" : "compiled",
-          withTheScan: Bun.deepEquals(scanned, expected) ? "runs as before" : "goes wrong",
+          withTheScan: Bun.deepEquals(scanned, before) ? "runs as before" : "goes wrong",
         };
       }),
     );

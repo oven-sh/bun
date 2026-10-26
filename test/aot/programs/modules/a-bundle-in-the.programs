@@ -1066,7 +1066,8 @@ console.log(path.join === join, path.default.join === join, path.posix.join("a",
 console.log(jsc.heapSize === heapSize, jsc.default.heapSize === heapSize, typeof jsc.heapSize());
 console.log(path.nothing, jsc.nothing, path.default.default, jsc.default.default);
 try {
-  path.join = null;
+  const other = path;
+  other.join = null;
 } catch (error) {
   console.log(error.constructor.name);
 }
@@ -2037,12 +2038,13 @@ export const seen: string[] = [];
 //// fifteen-ways-to-store-to-an-import-or-a-namespace/m.mjs
 export let v = 1; export const o = { x: 1 }; export default 0;
 //// fifteen-ways-to-store-to-an-import-or-a-namespace/main.mjs
-// Fifteen ways to store to an import or a namespace.
+// Fifteen ways to store to an import or a namespace. A build stops at such a store where it is written, so the stores to the imports are text that is evaluated, and the namespace has another name.
 import { v, o } from "./m.mjs";
-import * as ns from "./m.mjs";
+import * as star from "./m.mjs";
 import d from "./m.mjs";
+const ns = star;
 const r = [];
-for (const f of [() => { v = 2; }, () => { v++; }, () => { ns.v = 2; }, () => { d = 1; }, () => { ns.added = 1; }, () => { delete ns.v; }, () => { delete ns.missing; return "ok"; }, () => { o.x = 2; return o.x; }, () => { [v] = [1]; }, () => { ({ v } = { v: 1 }); }, () => { for (v of [1]); }, () => Reflect.set(ns, "v", 3), () => Reflect.defineProperty(ns, "v", { value: 1 }), () => Reflect.defineProperty(ns, "v", { value: 9 }), () => Object.isFrozen(ns)])
+for (const f of [() => { eval("v = 2"); }, () => { eval("v++"); }, () => { ns.v = 2; }, () => { eval("d = 1"); }, () => { ns.added = 1; }, () => { delete ns.v; }, () => { delete ns.missing; return "ok"; }, () => { o.x = 2; return o.x; }, () => { eval("[v] = [1]"); }, () => { eval("({ v } = { v: 1 })"); }, () => { eval("for (v of [1]);"); }, () => Reflect.set(ns, "v", 3), () => Reflect.defineProperty(ns, "v", { value: 1 }), () => Reflect.defineProperty(ns, "v", { value: 9 }), () => Object.isFrozen(ns)])
   try { r.push(String(f())); } catch (e) { r.push(e.name); }
 console.log(r.join(), v);
 //// filename-and-dirname-stores.js

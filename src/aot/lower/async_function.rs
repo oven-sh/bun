@@ -32,6 +32,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .contains(FunctionFlags::IS_ASYNC),
             "only an async function or a module body with top-level await awaits"
         );
-        self.builder.await_value(value, false)
+        let held = self.get_held_values();
+        self.builder.await_value(value, &held, false)
     }
 }

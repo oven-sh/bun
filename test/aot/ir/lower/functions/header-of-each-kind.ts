@@ -23,10 +23,10 @@
 // DERIVED: function {{*}}name="Derived"{{*}}kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName]
 
 // RUN(ASYNC): lower
-// ASYNC: function {{*}}name="asynchronous"{{*}}flags=[IsAsync, IsChecked, HasExplicitName]
+// ASYNC: function {{*}}name="asynchronous"{{*}}flags=[IsAsync, HasThis, IsChecked, HasExplicitName]
 
 // RUN(GENERATOR): lower
-// GENERATOR: function {{*}}name="generator"{{*}}flags=[IsGenerator, TakesCallee, IsChecked, HasExplicitName]
+// GENERATOR: function {{*}}name="generator"{{*}}flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName]
 
 // RUN(PLAIN): lower
 // PLAIN-NOT: name="declared"{{*}}kind=

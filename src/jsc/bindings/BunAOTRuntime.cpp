@@ -6,6 +6,7 @@
 #include <JavaScriptCore/AOTBuiltinTableBindings.h>
 #include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/AOTImageLoading.h>
+#include <JavaScriptCore/AOTModuleHost.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/MarkedBlockCage.h>
 #include <JavaScriptCore/Options.h>
@@ -18,6 +19,11 @@
 #include <wtf/DataLog.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
+
+#if ENABLE(AOT) && OS(LINUX)
+#include <mimalloc.h>
+#include <unistd.h>
+#endif
 
 #if ENABLE(AOT)
 static_assert(sizeof(JSC::AOT::Wire::ImageVerdict) == sizeof(uint32_t));
@@ -89,6 +95,43 @@ void discardBackEndOptionsOfEnvironment()
 } // namespace Bun
 
 #if ENABLE(AOT)
+
+#if OS(LINUX)
+extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr();
+extern "C" size_t Bun__sizeOfPayloadWithCompiledProgram();
+
+// Called before the first allocation of the process, which is where the allocator reserves its first arena.
+extern "C" void Bun__askForAddressSpaceToStart()
+{
+    if (!*Bun__getStandaloneModuleGraphELFVaddr())
+        return;
+    size_t sizeOfProgram = Bun__sizeOfPayloadWithCompiledProgram();
+    if (!sizeOfProgram)
+        return;
+    // An arena has the size of the option. If that is refused and the option is larger, it has the second size.
+    static constexpr size_t sizesOfArena[] = { GB, 128 * MB };
+    auto [needed, left, largestArena, isRefused] = JSC::AOT::askForAddressSpaceToStart(sizeOfProgram, sizesOfArena);
+    if (isRefused) {
+        char message[256];
+        int length = snprintf(message, sizeof(message), "error: this executable needs %zu MB of address space to start, and the limit on address space (ulimit -v) leaves %zu MB. Raise the limit.\n", (needed + MB - 1) / MB, left / MB);
+        if (length > 0)
+            (void)!write(STDERR_FILENO, message, length);
+        _exit(EXIT_FAILURE);
+    }
+    if (largestArena < sizesOfArena[0])
+        mi_option_set_default(mi_option_arena_reserve, largestArena / KB);
+}
+#endif
+
+extern "C" void Bun__AOT__takePagesForTablesOfFirstThread()
+{
+    JSC::AOT::PagesForNewThread result = JSC::AOT::tryReservePagesForNewThread();
+    if (result.isRefused) {
+        dataLogLn("error: the limit on address space (ulimit -v) leaves no room for the tables of this executable's program. Raise the limit.");
+        exit(EXIT_FAILURE);
+    }
+    JSC::AOT::adoptPagesForNewThread(result.pages);
+}
 
 extern "C" void Bun__ThreadPool__exitWithoutAnyThread();
 
@@ -226,6 +269,10 @@ extern "C" bool Bun__AOT__admittedCode(BunAOTBytes, uint32_t*) { return false; }
 extern "C" bool Bun__AOT__admitsUnknownJavaScript(BunAOTBytes) { return true; }
 extern "C" bool Bun__AOT__loadsCodeOutsideImage(BunAOTBytes) { return true; }
 extern "C" BunAOTBytes Bun__AOT__imageCode() { return { nullptr, 0 }; }
+extern "C" void Bun__AOT__takePagesForTablesOfFirstThread() {}
+#if OS(LINUX)
+extern "C" void Bun__askForAddressSpaceToStart() {}
+#endif
 extern "C" void Bun__AOT__setMismatchLog(intptr_t, bool) {}
 extern "C" void Bun__AOT__setMismatchLogFormat(bool) {}
 extern "C" void Bun__AOT__listRefusedChanges() {}

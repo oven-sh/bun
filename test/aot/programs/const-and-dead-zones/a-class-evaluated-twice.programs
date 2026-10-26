@@ -2606,7 +2606,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// import-store-capturing-arrow-pattern-default/main.js
 // An imported `const` arrow function that captures a variable is the target of an array pattern with a default, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2617,7 +2618,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// import-store-class-assign/main.js
 // An imported class is assigned to with `=`, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2628,7 +2630,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// import-store-const-arrow-assign/main.js
 // An imported `const` arrow function is assigned to with `=`, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2639,7 +2642,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// import-store-const-arrow-for-of/main.js
 // An imported `const` arrow function is the target of a `for..of` loop, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2657,7 +2661,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// import-store-const-arrow-increment/main.js
 // An imported `const` arrow function is the operand of `++`, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2668,7 +2673,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// import-store-const-arrow-plus/main.js
 // An imported `const` arrow function is assigned to with `+=`, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2679,7 +2685,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// import-store-const-number-assign/main.js
 // An imported `const` number is assigned to with `=`, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2690,7 +2697,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// import-store-const-number-object-pattern/main.js
 // An imported `const` number is the target of an object pattern, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2701,7 +2709,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// import-store-function-assign/main.js
 // An imported function declaration is assigned to with `=`, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2712,7 +2721,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// import-store-let-arrow-and/main.js
 // An imported `let` arrow function is assigned to with `&&=`, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2804,7 +2814,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// namespace-store-computed-key/main.js
 // A store to a property of a module namespace object by a computed key, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2815,7 +2826,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// namespace-store-default-export/main.js
 // A store to the default export of a module through its namespace object, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2826,7 +2838,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// namespace-store-in-deferred-function/main.js
 // A store through a module namespace object inside a function that is called later, which throws a TypeError when it runs.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 function poke(V) { ns.k = V; }
@@ -2838,7 +2851,8 @@ export const inside = () => { try { return typeof k === "function" ? (k.who ? k.
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
 //// namespace-store-missing-export/main.js
 // A store through a module namespace object to a name that the module does not export.
-import * as ns from "./m.js";
+import * as star from "./m.js";
+const ns = star;
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
 tell("first", () => ns.inside());
@@ -2858,7 +2872,8 @@ tell("first", () => ns.inside());
 //// namespace-store-re-export/mid.js
 export * as inner from "./m.js";
 //// namespace-store-self-import/m.js
-import * as self from "./m.js";
+import * as star from "./m.js";
+const self = star;
 export const k = () => "first";
 export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
 export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }

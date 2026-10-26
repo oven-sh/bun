@@ -39,12 +39,24 @@ fn expected_types(file_name: &str, source: &str, function_name: &str) -> Vec<Typ
 #[test]
 fn inferred_call_result_is_expected_once() {
     let source = "function g() { return 1; }
-export function probe() { const v = g(); return v; }
+export function probe() { const v = g(); return [v]; }
 ";
     let expected = expected_types("main.js", source, "probe");
     let number = Type::primitives(Primitives::NUMBER);
     let numbers = expected.iter().filter(|&ty| *ty == number);
     assert_eq!(numbers.count(), 1, "{expected:?}");
+}
+
+#[test]
+fn call_in_tail_position_is_not_expected() {
+    let source = "function g() { return 1; }
+export function returned() { return g(); }
+export function returned_through_constant() { const v = g(); return v; }
+";
+    for name in ["returned", "returned_through_constant"] {
+        let expected = expected_types("main.js", source, name);
+        assert!(expected.is_empty(), "{name}: {expected:?}");
+    }
 }
 
 #[test]

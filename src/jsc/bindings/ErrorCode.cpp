@@ -352,7 +352,7 @@ static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, cha
     }
 }
 
-// The compiler counts on it that a native function runs no script while it describes an argument that it rejects.
+// For the tests that hold native functions against the compiler's table of built-ins: they look at what a function does apart from describing an argument that it rejects.
 static std::atomic<bool> describesWithoutScriptForTesting { false };
 
 void describeRejectedValuesWithoutScriptForTesting()
@@ -360,14 +360,9 @@ void describeRejectedValuesWithoutScriptForTesting()
     describesWithoutScriptForTesting.store(true, std::memory_order_relaxed);
 }
 
-static bool describesWithoutScript(JSC::JSGlobalObject* globalObject)
+static bool describesWithoutScript()
 {
-#if ENABLE(AOT)
-    return globalObject->aotInstance() || describesWithoutScriptForTesting.load(std::memory_order_relaxed);
-#else
-    UNUSED_PARAM(globalObject);
-    return false;
-#endif
+    return describesWithoutScriptForTesting.load(std::memory_order_relaxed);
 }
 
 // What util.inspect prints from own data properties and class names alone, on one line: an accessor is not called, and an object that is neither plain nor an array (a proxy, a Map, ..) is "[Name]".
@@ -555,7 +550,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
     }
     }
 
-    if (auto* object = cell->getObject(); object && describesWithoutScript(globalObject)) {
+    if (auto* object = cell->getObject(); object && describesWithoutScript()) {
         appendInspectedObject(globalObject, builder, object, 0);
         return;
     }
@@ -770,7 +765,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
         builder.append(')');
         return;
     }
-    if (auto* object = cell->getObject(); object && describesWithoutScript(globalObject)) {
+    if (auto* object = cell->getObject(); object && describesWithoutScript()) {
         describeObjectWithoutScript(vm, globalObject, builder, object);
         RETURN_IF_EXCEPTION(scope, );
         return;

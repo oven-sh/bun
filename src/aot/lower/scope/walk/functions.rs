@@ -4,6 +4,7 @@ use bun_sema::hir::{Flags, FnBody, FnId, FnKind, StmtId};
 
 use super::{Context, EvalUse, Initialization, PatternRole, Task, WalkedFunctionId, Walker};
 use crate::ir::{ClassSlot, FunctionKey};
+use crate::lower::parameters::parameter_symbols;
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{class, commonjs};
 
@@ -38,11 +39,16 @@ impl Walker<'_, '_> {
     fn push_function(&mut self, function: FnId, id: WalkedFunctionId) {
         let context = self.enter_unit(id, self.bound.fns[function.idx()].scope);
         self.push_task(Task::MarkCreated(id), context);
-        // A function that can be suspended holds its receiver until it ends.
+        // A function that can be suspended holds its receiver, and what the names of its parameters hold, until it ends.
         let flags = self.hir[function].flags;
         let can_be_suspended = flags.intersects(Flags::ASYNC | Flags::GENERATOR);
         if can_be_suspended && self.hir.runtime_function_kind(function) != FnKind::Arrow {
             self.use_this(context);
+        }
+        if can_be_suspended {
+            for symbol in parameter_symbols(self.hir, self.bound, function) {
+                self.record_symbol_use(context, symbol);
+            }
         }
         self.push_function_code(function, context);
     }

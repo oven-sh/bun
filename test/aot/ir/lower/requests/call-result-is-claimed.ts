@@ -2,7 +2,7 @@
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: [[call]] = Call [[callee]] calleeName="g"
 // CHECK-NEXT: [[converted]] = Convert [[call]] declared={type=number site=w{{*}}} @
-// CHECK-NEXT: Return [[converted]]
+// CHECK: Return [[converted]]
 // CHECK-LABEL: function {{*}}name="tail"
 // CHECK: [[last]] = Call
 // CHECK-NEXT: ReturnCall [[last]] casts=[{declared={type=number site=w{{*}}}}
@@ -13,7 +13,7 @@ function g(): number {
 
 export function f() {
   const v = g();
-  type Result = typeof v;
+  g();
   return v;
 }
 

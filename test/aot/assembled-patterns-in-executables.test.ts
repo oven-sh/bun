@@ -8,8 +8,10 @@ import { built, slot, spawned, unsupported } from "./run-programs";
 
 const sources = {
   "entry.ts": `
+const pieces = ["pattern", "Built", "In", "A", "Loop"];
+const turns = process.argv.length > 99 ? 0 : pieces.length;
 let source = "";
-for (const piece of ["pattern", "Built", "In", "A", "Loop"]) source += piece;
+for (let at = 0; at < turns; at++) source += pieces[at];
 const first = new RegExp(source + "[0-9]+");
 function edit(regex: RegExp) {
   let text = regex.source;

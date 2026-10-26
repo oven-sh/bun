@@ -2196,8 +2196,9 @@ late.bump();
 console.log(a.changing, late.changing, late === a);
 console.log(JSON.stringify(a), Object.entries(b).length, { ...c }.other, Object.assign({}, e).second);
 console.log(Object.getOwnPropertyDescriptor(a, "unused")?.enumerable, Object.isFrozen(b), Object.isSealed(b), Object.isExtensible(b), String((a as any)[Symbol.toStringTag]));
-try { (a as any).used = 5; console.log("stored"); } catch (error: any) { console.log(error.name); }
-try { delete (a as any).unused; console.log("deleted"); } catch (error: any) { console.log(error.name); }
+const sameObject: any = a;
+try { sameObject.used = 5; console.log("stored"); } catch (error: any) { console.log(error.name); }
+try { delete sameObject.unused; console.log("deleted"); } catch (error: any) { console.log(error.name); }
 //// worker-runs-the-same-module/main.js
 import { isMainThread, parentPort, Worker } from "node:worker_threads";
 import { inc, obj } from "./shared.js";

@@ -52,7 +52,7 @@ pub(super) fn destructure_array(
             CleanupPath::Rethrow | CleanupPath::Throw { .. } => IteratorCompletion::Throw,
         };
         let builder = &mut lowering.builder;
-        builder.iterator_close(iterator, IteratorKind::Sync, completion);
+        builder.iterator_close(iterator, IteratorKind::Sync, completion, &[]);
     });
 }
 

@@ -1,7 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="awaited"
-// CHECK: b0([[s]]: anything,
-// CHECK: [[awaitedS]] = Convert [[s]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
+// CHECK: b0([[s]]: anything, [[ownS]]: anything,
+// CHECK: [[awaitedS]] = Convert [[ownS]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
 // CHECK-NEXT: [[awaitedRead]] = PropGet [[awaitedS]] key="area"
 // CHECK-NEXT: [[awaitedArea]] = Convert [[awaitedRead]] declared={type=undefined|null|function flags=[IsExpected]}
 // CHECK: = Await
@@ -10,7 +10,7 @@
 // CHECK: [[bracketS]] = Convert [[s]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
 // CHECK-NEXT: [[bracketRead]] = PropGet [[bracketS]] key="area"
 // CHECK-NEXT: [[bracketArea]] = Convert [[bracketRead]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: = Call [[bracketArea]], [[bracketS]], {{*}}calleeKey="area" calleeName="area"
+// CHECK-NEXT: = Call [[bracketArea]], [[bracketS]], {{*}}calleeKey="area" calleeName="s.area"
 // CHECK-LABEL: function {{*}}name="call"
 // CHECK: [[callS]] = Convert [[s]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
 // CHECK-NEXT: [[callRead]] = PropGet [[callS]] key="area"

@@ -94,10 +94,27 @@ if (Bun.isMainThread) {
 }
 `;
 
-const startsWorkersAgainAndAgain = `if (Bun.isMainThread) {
+const startsWorkersAgainAndAgain = `import { readFileSync } from "node:fs";
+function describeLargeMaps(): string {
+  const described: string[] = [];
+  for (const line of readFileSync("/proc/self/maps", "utf8").split("\\n")) {
+    const [range, , , , , name] = line.split(/ +/);
+    const [from, to] = range.split("-");
+    const megabytes = Math.round((parseInt(to, 16) - parseInt(from, 16)) / 2 ** 20);
+    if (megabytes >= 16) described.push(megabytes + " MB " + (name || "anonymous"));
+  }
+  return described.join(", ");
+}
+if (Bun.isMainThread) {
   let ended = 0;
   for (let round = 0; round < 250; round++) {
-    const workers = [1, 2, 3, 4].map(() => new Worker(new URL(import.meta.url)));
+    const workers: Worker[] = [];
+    try {
+      while (workers.length < 4) workers.push(new Worker(new URL(import.meta.url)));
+    } catch (error) {
+      console.error("in round", round, "after", workers.length, "with", describeLargeMaps());
+      throw error;
+    }
     await Promise.all(workers.map(worker => new Promise(resolve => (worker.onmessage = resolve))));
     await Promise.all(workers.map(worker => worker.terminate()));
     ended += workers.length;
@@ -109,6 +126,35 @@ const startsWorkersAgainAndAgain = `if (Bun.isMainThread) {
   let head: Entry | null = null;
   for (let i = 0; i < 10_000; i++) head = { id: i, next: head };
   postMessage(head!.id);
+}
+`;
+
+// Workers start one by one until the constructor throws. Two are terminated, and the next one starts in the same turn.
+const startsWorkerRightAfterTerminating = `if (Bun.isMainThread) {
+  const startAndWait = async () => {
+    const worker = new Worker(new URL(import.meta.url));
+    await new Promise(resolve => (worker.onmessage = resolve));
+    return worker;
+  };
+  const workers: Worker[] = [];
+  for (let round = 0; round < 4; round++) {
+    for (;;) {
+      try {
+        workers.push(await startAndWait());
+      } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+        break;
+      }
+    }
+    workers.shift()!.terminate();
+    workers.shift()!.terminate();
+    workers.push(await startAndWait());
+  }
+  console.log("at least 8 run:", workers.length >= 8);
+  process.exit(0);
+} else {
+  setInterval(() => {}, 1000);
+  postMessage(1);
 }
 `;
 
@@ -218,6 +264,18 @@ describe.concurrent("Workers of a compiled program within a limit on the address
     async () => {
       expect(await runWithin(GB, startsWorkersAgainAndAgain)).toEqual({
         stdout: "ended 1000\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    240_000,
+  );
+
+  test.skipIf(!isLinux || isASAN)(
+    "a Worker starts in the room of Workers that were just terminated",
+    async () => {
+      expect(await runWithin(GB, startsWorkerRightAfterTerminating)).toEqual({
+        stdout: "at least 8 run: true\n",
         stderr: "",
         exitCode: 0,
       });

@@ -284,6 +284,9 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         for index in 1..statements.len {
             let statement = hir.id_at(statements, index as usize);
+            if !self.is_printed(statement) {
+                continue;
+            }
             match hir[statement].kind {
                 StmtKind::Return(value)
                     if value.is_some() && self.reads_variable(value, symbol) =>
@@ -309,6 +312,14 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         }
         (None, statements.len)
+    }
+
+    fn is_printed(&self, statement: StmtId) -> bool {
+        let is_type = matches!(
+            self.hir[statement].kind,
+            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty
+        );
+        !is_type && !self.decisions().is_dead_stmt(statement)
     }
 
     fn declares_pattern(&self, statement: StmtId) -> bool {
@@ -337,14 +348,10 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let head = head_of(statement)?;
-        let is_printed = |&earlier: &StmtId| {
-            let is_type = matches!(
-                hir[earlier].kind,
-                StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty
-            );
-            !is_type && !self.decisions().is_dead_stmt(earlier)
-        };
-        let previous = hir.ids(earlier).rev().find(is_printed)?;
+        let previous = hir
+            .ids(earlier)
+            .rev()
+            .find(|&earlier| self.is_printed(earlier))?;
         let previous_head = head_of(previous)?;
         let is_exported = |flags: Flags| flags.contains(Flags::EXPORT);
         let is_ambient = previous_head.flags.contains(Flags::AMBIENT);

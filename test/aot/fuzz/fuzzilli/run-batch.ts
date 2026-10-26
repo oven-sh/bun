@@ -32,6 +32,8 @@ const { values: options } = parseArgs({
     milliseconds: { type: "string", default: "250" },
     keep: { type: "boolean", default: false },
     "hides-function-text": { type: "boolean", default: false },
+    // Kinds of outcomes that are only counted otherwise, separated by commas.
+    "also-keep": { type: "string", default: "" },
   },
 });
 const { bun, programs: source, work, finds } = options as Record<string, string>;
@@ -43,6 +45,7 @@ const [count, groupSize, batches, milliseconds] = [
   options.milliseconds,
 ].map(Number);
 const hidesFunctionText = options["hides-function-text"];
+const alsoKept = options["also-keep"].split(",").filter(Boolean);
 const buildFlags = [
   ...options.flags.split(" ").filter(Boolean),
   ...(hidesFunctionText ? ["--no-compile-function-source"] : []),
@@ -91,11 +94,14 @@ function layOut(folder: string, texts: string[], extension: string, inGroup: num
   texts.forEach((text, index) => {
     // Behind a line "// @filename: ./<name>" stands a file that the program imports by that name. The name is a hash of the file, so programs can share one.
     const [program, ...others] = text.split(/^\/\/ @filename: \.\/(\S+)\n/m);
-    // A guard, `try { .. } catch (e) {}`, would hide the message of a documented difference. It goes to stderr, which isn't compared.
-    const caught = extension.endsWith("ts") ? "(e as any)" : "e";
+    // An empty catch block at the top level would hide the message of a documented difference. It goes to stderr, which isn't compared.
+    const cast = extension.endsWith("ts") ? " as any" : "";
     writeFileSync(
       join(folder, "programs", index + extension),
-      program.replace(/\} catch \(e\) \{\}$/gm, `} catch (e) { console.error(String(${caught}?.message)); }`),
+      program.replace(
+        /\} catch ?\((e\d*)\) \{\n?\}$/gm,
+        (_, caught) => `} catch (${caught}) { console.error(String((${caught}${cast})?.message)); }`,
+      ),
       "latin1",
     );
     for (let other = 0; other < others.length; other += 2)
@@ -312,7 +318,7 @@ const isLimit = ({ end }: Ended) => end === "time" || end === "memory";
 const classOfError = ({ stderr }: Ended) => /\b\w*Error\b/.exec(stderr)?.[0];
 
 function keepFind(kind: string, summary: string, files: Record<string, string>) {
-  const group = `${kind}-${Bun.hash
+  const group = `${kind.replaceAll(" ", "-")}-${Bun.hash
     .crc32(summary.replace(/[0-9a-f]/gi, ""))
     .toString(16)
     .padStart(8, "0")}`;
@@ -556,11 +562,13 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
       rmSync(alone, { recursive: true, force: true });
     }
     add(kind);
-    if (!["bun-run-signal", "unsteady", "signal", "limit", "exit-code", "stdout"].includes(kind)) continue;
-    const summary = `compiled: ${second.end}\nbun run:  ${referenceAgain.end}\n${firstDifference(second.stdout, referenceAgain.stdout)}`;
+    if (!["bun-run-signal", "unsteady", "signal", "limit", "exit-code", "stdout", ...alsoKept].includes(kind)) continue;
+    // What the process wrote last, in front of the report that starts with a line of "=", tells one end by a signal from another.
+    const lastWords = kind === "signal" ? (/([^\n]*)\n={20,}\n/.exec(second.stderr)?.[1] ?? "") : "";
+    const summary = `compiled: ${second.end}${lastWords && " | " + lastWords}\nbun run:  ${referenceAgain.end}\n${firstDifference(second.stdout, referenceAgain.stdout)}`;
     let where = "not tried alone";
     let enough: number[] = [];
-    if (kind !== "unsteady" && kind !== "bun-run-signal" && isolated++ < maxFindsIsolated) {
+    if (kind !== "unsteady" && kind !== "bun-run-signal" && !alsoKept.includes(kind) && isolated++ < maxFindsIsolated) {
       const subset = join(work, `subset-${process.pid}`);
       where = (await differsAmong(subset, [texts[index]], extension, 0))
         ? "differs alone too"
@@ -600,7 +608,7 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
       ...(enough.length && {
         "neighbors.txt": enough.map(other => `// ---- neighbor\n${texts[other]}`).join("\n"),
       }),
-      ...(kind === "unsteady" && {
+      ...((kind === "unsteady" || alsoKept.includes(kind)) && {
         "first-compiled.stdout": first.stdout,
         "first-bun-run.stdout": reference.stdout,
       }),

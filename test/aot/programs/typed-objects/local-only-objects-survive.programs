@@ -1283,7 +1283,8 @@ show("only a type", () => (ns as any).OnlyAType)
 show("of Object.prototype", () => typeof (ns as any).toString + " " + typeof (ns as any).hasOwnProperty + " " + typeof (ns as any).__proto__)
 show("a computed key", () => { const k = ["de", "ep"].join(""); return (ns as any)[k] + " " + (ns as any)["Kind"].A })
 show("in", () => ("bump" in ns) + " " + ("nope" in (ns as any)))
-try { (ns as any).replaceable = () => "replaced" } catch {}
+const sameObject: any = ns
+try { sameObject.replaceable = () => "replaced" } catch {}
 show("and nothing has changed", () => ns.replaceable() + " " + (ns as any).replaceable())
 show("the same, afterwards", () => early())
 //// module-namespace-via-any/req/ns_any_a.ts

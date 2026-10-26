@@ -93,6 +93,6 @@ let bunCompilerProfile = Profile(
     optionalPostProcessor: PostProcessors(
         all: ([
             GuardsOutsideFunctions.share == nil ? nil : GuardsOutsideFunctions(),
-            TypeScriptSettings.fromEnvironment == nil ? nil : TypeScriptSeeds(),
+            TypeScriptSettings.fromEnvironment == nil ? ProgramsThatCanBuild() : TypeScriptSeeds(),
         ] as [FuzzingPostProcessor?]).compactMap { $0 })
 )

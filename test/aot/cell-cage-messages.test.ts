@@ -6,6 +6,7 @@ import { beforeAll, describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
 
+const canLimitAddressSpace = isLinux && !isASAN && !isDebug;
 const cageSize = (size: string | undefined) => ({ ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: size });
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
@@ -22,6 +23,26 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
   return { stdout, stderr: stderr.replaceAll("\r\n", "\n"), exitCode, signalCode: proc.signalCode };
 }
 
+/** What the system maps of an ELF file before the first instruction runs. */
+async function kilobytesMappedFromFile(path: string) {
+  const header = new DataView(await Bun.file(path).slice(0, 64).arrayBuffer());
+  const [offset, size, count] = [
+    Number(header.getBigUint64(32, true)),
+    header.getUint16(54, true),
+    header.getUint16(56, true),
+  ];
+  const segments = new DataView(
+    await Bun.file(path)
+      .slice(offset, offset + size * count)
+      .arrayBuffer(),
+  );
+  const isLoaded = 1;
+  let bytes = 0;
+  for (let at = 0; at < size * count; at += size)
+    if (segments.getUint32(at, true) === isLoaded) bytes += Number(segments.getBigUint64(at + 40, true));
+  return Math.ceil(bytes / 1024);
+}
+
 const printsProgramOutput = { stdout: "ran\n", stderr: "", exitCode: 0, signalCode: null };
 const exitsWith = (message: string) => ({
   stdout: "",
@@ -36,9 +57,9 @@ describe("cell cage messages", () => {
   let narrow: string;
   let wide: string;
 
-  async function build(flags: string[], outfile: string) {
+  async function build(flags: string[], outfile: string, entry = "main.ts") {
     const built = await run(
-      [bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", outfile],
+      [bunExe(), "build", "--compile", "--aot", ...flags, entry, "--outfile", outfile],
       cwd,
       bunEnv,
     );
@@ -47,11 +68,27 @@ describe("cell cage messages", () => {
   }
 
   beforeAll(async () => {
-    folder = tempDir("aot-cell-cage-messages", { "main.ts": `console.log("ran");\n` });
+    folder = tempDir("aot-cell-cage-messages", {
+      "main.ts": `console.log("ran");\n`,
+      "server.ts": `
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+const server = createServer((request, response) => response.end("ran"));
+server.listen(0, async () => {
+  const response = await fetch("http://127.0.0.1:" + (server.address() as AddressInfo).port);
+  console.log(await response.text());
+  server.close();
+});
+`,
+    });
     cwd = String(folder);
     narrow = join(cwd, isWindows ? "narrow.exe" : "narrow");
     wide = join(cwd, isWindows ? "wide.exe" : "wide");
-    await Promise.all([build([], narrow), build(["--aot-huge-heap"], wide)]);
+    await Promise.all([
+      build([], narrow),
+      build(["--aot-huge-heap"], wide),
+      canLimitAddressSpace && build([], join(cwd, "server"), "server.ts"),
+    ]);
   });
   afterAll(() => folder?.[Symbol.dispose]());
 
@@ -79,18 +116,45 @@ describe("cell cage messages", () => {
     );
   });
 
-  test.skipIf(!isLinux || isASAN || isDebug)("reservation failure", async () => {
-    expect(await run(["sh", "-c", 'ulimit -v 300000 && exec "$0"', narrow], cwd, cageSize(undefined))).toEqual({
-      stdout: "",
-      stderr: expect.stringMatching(
-        /^error: this executable needs 64 MB of address space for its JavaScript heap, and the limit on address space \(ulimit -v\) leaves \d+ MB for it\. Raise the limit, or build with --aot-huge-heap\.\n/,
-      ),
-      exitCode: 1,
-      signalCode: null,
-    });
-  });
+  const runWithin = (limitInKB: number, executable: string) =>
+    run(["sh", "-c", `ulimit -v ${limitInKB} && exec "$0"`, executable], cwd, cageSize(undefined));
 
-  test.skipIf(!isLinux || isASAN || isDebug).each([2_000_000, 1_000_000, 500_000])(
+  describe.skipIf(!canLimitAddressSpace).each(["narrow", "wide", "server"])(
+    "%s within a limit on address space",
+    name => {
+      const MB = 1024;
+      const whatItNeeds =
+        /^error: this executable needs (\d+) MB of address space to start, and the limit on address space \(ulimit -v\) leaves (\d+) MB\. Raise the limit\.\n$/;
+      const saysWhatItNeeds = { stdout: "", stderr: expect.stringMatching(whatItNeeds), exitCode: 1, signalCode: null };
+
+      test("says what it needs where less is left than the heap takes", async () => {
+        const executable = join(cwd, name);
+        expect(await runWithin((await kilobytesMappedFromFile(executable)) + 48 * MB, executable)).toEqual(
+          saysWhatItNeeds,
+        );
+      });
+
+      test("runs from the limit that leaves what it needs", async () => {
+        const executable = join(cwd, name);
+        const tooLittle = (await kilobytesMappedFromFile(executable)) + 48 * MB;
+        const [, needed, left] = (await runWithin(tooLittle, executable)).stderr.match(whatItNeeds)!;
+        const enough = tooLittle + (Number(needed) - Number(left)) * MB;
+        const below = [32, 24, 16, 8, 4, 2].map(less => enough - less * MB);
+        // The allocator reserves 128 MB or 1 GB at once where that leaves enough.
+        const above = [1, 2, 4, 8, 16, 32, 64, 96, 120, 128, 136, 160, 256, 512, 1000, 1024, 1032, 1100].map(
+          more => enough + more * MB,
+        );
+        expect(await Promise.all(below.map(limit => runWithin(limit, executable)))).toEqual(
+          below.map(() => saysWhatItNeeds),
+        );
+        expect(await Promise.all(above.map(limit => runWithin(limit, executable)))).toEqual(
+          above.map(() => printsProgramOutput),
+        );
+      });
+    },
+  );
+
+  test.skipIf(!canLimitAddressSpace).each([2_000_000, 1_000_000, 500_000])(
     "narrow references run under a limit of %d kB on address space",
     async limit => {
       expect(await run(["sh", "-c", `ulimit -v ${limit} && exec "$0"`, narrow], cwd, cageSize(undefined))).toEqual(

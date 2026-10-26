@@ -1,7 +1,8 @@
 // Flow keeps a list of values for every place in a program. A proof reads everything that may reach the place
 // (possibleValuesOf). A prediction reads what the program itself brings there (seenValuesOf), and code that follows a
-// prediction tests it at run time. Goes by the text of the engine's sources: each reader names the list it reads, and
-// the files that predict are listed here.
+// prediction tests it at run time. A report that names the place where a value is handed out reads that list too. Goes
+// by the text of the engine's sources: each reader names the list it reads, and the files that read the second list are
+// listed here.
 import { expect, test } from "bun:test";
 import { filesOfCompiler, sayWhenSkipped, sources } from "./harness/engine-text";
 
@@ -13,6 +14,7 @@ const filesThatPredict = [
   "valueflow/AOTValueFlowResultsFunctions.cpp",
   "valueflow/AOTValueFlowResultsHeap.cpp",
   "valueflow/AOTValueFlowResultsInternal.h",
+  "valueflow/AOTValueFlowResultsPlaces.cpp",
   "valueflow/AOTValueFlowSolver.h",
 ];
 

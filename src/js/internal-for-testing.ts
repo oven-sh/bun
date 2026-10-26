@@ -805,7 +805,7 @@ export const readFreedStringUnderASAN: () => number | undefined = $newCppFunctio
   0,
 );
 
-/** From here on this process describes a value that a native function rejects as an executable does: without running code of the program. */
+/** From here on this process describes a value that a native function rejects without running code of the program. */
 export const describeRejectedValuesWithoutScript: () => void = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_describeRejectedValuesWithoutScript",

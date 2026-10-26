@@ -3,7 +3,7 @@
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: [[call]] = Call
 // CHECK-NEXT: [[converted]] = Convert [[call]] declared={type=number site=w{{*}}} illTypedCause=FromLooseType
-// CHECK-NEXT: Return [[converted]]
+// CHECK: Return [[converted]]
 
 // RUN(SITES): link
 // SITES: typesite {{*}}kind=Result text="T"
@@ -17,6 +17,6 @@ function id<T>(x: T): T {
 
 export function f(z: any) {
   const v = id<number>(z);
-  type Result = typeof v;
+  id<number>(z);
   return v;
 }

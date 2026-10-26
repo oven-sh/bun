@@ -1,6 +1,8 @@
 mod arguments;
 mod binding;
 
+pub(in crate::lower) use binding::parameter_symbols;
+
 use bun_sema::hir::{self, Call, ExprKind};
 
 pub(in crate::lower) fn literal_argument_position(hir: &hir::File<'_>, call: &Call) -> Option<u32> {

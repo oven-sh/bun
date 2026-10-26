@@ -95,10 +95,7 @@ const noticedBy: Record<string, Row | Row[]> = {
     "typed/countsUp-looksAtAnotherObjectFirst-withAnAccessorForTheSecondField-inAClosure",
     "typed/saysSomething-isAMethod-withoutAField-inAClosure",
   ),
-  SharedPatternsReachCalls: ofFamily(
-    "pattern-literals-met-again",
-    "typed/withIndices-isHandedToAFunction-nothingMoreIsAsked-inTheHandler-types-erased",
-  ),
+  SharedPatternsReachCalls: conditionOfAPass("a-pattern-literal-in-the-handler-of-a-loop-is-handed-to-a-function.ts"),
   SharedPatternsAreSticky: ofFamily(
     "pattern-literals-met-again",
     "typed/sticky-replace-nothingMoreIsAsked-constructor",
@@ -222,8 +219,8 @@ const noticedBy: Record<string, Row | Row[]> = {
   ),
   CarriedVariablesAreWrittenByOthers: ofFamily(
     "variables-of-enclosing-code-in-loops",
-    "typed/moduleLet-object-storesOnBothSides-aWriterUnderAProxy-overAList-loop",
-    "untyped/moduleVar-text-readsThenStores-aWriterUnderANative-overAList-method",
+    "typed/moduleLet-whole-storesThenReads-aWriterUnderAProxy-asLongAsTheTurnSays-moduleLoop",
+    "untyped/moduleVar-text-readsOnBothSides-aWriterUnderAProxy-asLongAsTheTurnSays-loop",
   ),
   DelayedStoresAreLeftOut: ofFamily(
     "variables-of-enclosing-code-in-loops",
@@ -232,8 +229,8 @@ const noticedBy: Record<string, Row | Row[]> = {
   ),
   DelayedStoresPassWhatMayThrow: ofFamily(
     "variables-of-enclosing-code-in-loops",
-    "untyped/twoFunctionsAbove-text-storesOnSomeTurns-aBuiltInThatThrowsOutOfTheFunction-overAList-awaitUnderAHandler",
-    "untyped/twoFunctionsAbove-text-storesOnSomeTurns-aBuiltInThatThrowsOutOfTheFunction-overAList-handler",
+    "typed/parameterAbove-text-storesOnBothSides-aBuiltInThatThrowsOutOfTheFunction-testedBehind-handler",
+    "untyped/parameterAbove-text-storesOnBothSides-aBuiltInThatThrowsOutOfTheFunction-testedBehind-awaitUnderAHandler",
   ),
   TailCallsSwapTheirLastArguments: ofFamily(
     "functions-whose-last-act-is-to-call-themselves",

@@ -1,21 +1,12 @@
 import { test } from "bun:test";
-import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { findBuiltinTable } from "./generate";
-import {
-  families,
-  fileThatDescribes,
-  programsOf,
-  type Callable,
-} from "./generated/built-ins-given-operands-that-run-code";
+import { families, programsOf, type Callable } from "./generated/built-ins-given-operands-that-run-code";
 import { generated } from "./generated/run-generated";
 
 const title = "a built-in is given operands that run code of the program";
 const table = findBuiltinTable(bunExe());
-const files = {
-  [fileThatDescribes]: readFileSync(join(import.meta.dir, "builtins/differential", fileThatDescribes), "utf8"),
-};
 
 function listed(tablePath: string): Callable[] {
   using folder = tempDir("aot-built-ins-listed", {});
@@ -39,7 +30,7 @@ else
         isOnlyCompiled: true as const,
         mayBeUnjudgeable: true as const,
         flags: ["--aot-validate"],
-        make: () => ({ file: "main.js", text: programsOf([callable], family, Infinity)[0] ?? "", files }),
+        make: () => ({ file: "main.js", text: programsOf([callable], family, Infinity)[0] ?? "" }),
       })),
     ),
   );

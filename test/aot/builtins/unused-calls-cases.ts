@@ -50,12 +50,6 @@ const parse = (stdout: string): Case[] =>
       used: withoutQuotedSource(used),
     }));
 
-// docs/compiler/compatibility.mdx, "When a function of Bun or Node rejects an argument": an executable describes what it got without running
-// a trap of a proxy, which it shows as [Object]. Plain Bun asks a revoked proxy, and the error of that takes the place of the rejection.
-const isRejectionOfProxy = (plain: string, compiled: string) =>
-  plain.startsWith("threw TypeError: Proxy has already been revoked.") &&
-  /^threw TypeError: .* Received \[Object\] \[ERR_INVALID_ARG_TYPE\]$/.test(compiled);
-
 // No program may count on an error for lack of memory, so it may go with the allocation that nobody uses.
 const mayGoUnused = (outcome: string) => outcome === "threw RangeError: Out of memory";
 
@@ -88,7 +82,7 @@ async function findDifferences(module: string | null, expressions: readonly stri
   ).length;
   const differences = expected.flatMap((plainCase, index) => {
     const { declared, unused, used } = actual[index];
-    const isUsedAlike = used === plainCase.used || isRejectionOfProxy(plainCase.used, used);
+    const isUsedAlike = used === plainCase.used;
     const isSame = (outcome: string) => outcome === used || (outcome === "returned" && mayGoUnused(plainCase.used));
     if (isUsedAlike && isSame(declared) && isSame(unused)) return [];
     return [`${plainCase.expression}\n  plain Bun: ${inForms(plainCase)}\n  compiled: ${inForms(actual[index])}`];

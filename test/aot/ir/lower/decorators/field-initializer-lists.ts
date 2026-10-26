@@ -9,7 +9,17 @@
 // INSTANCE: [[extra]] = ElemGet
 // INSTANCE: [[run]] = Builtin builtin=CompilerHelpersRunInitializers
 // INSTANCE: = Call [[run]], -, [[extra]], [[this]]
+// INSTANCE: PropDefine [[this]], {{*}}key="last"
+// INSTANCE-NOT: CompilerHelpersRunInitializers
 // INSTANCE: Return
+
+// RUN(LAST): lower
+// LAST-LABEL: function {{*}}name="C"{{*}}kind=BaseConstructor
+// LAST: = CallDirect [[this]] function=
+// LAST: [[extra]] = ElemGet
+// LAST: [[run]] = Builtin builtin=CompilerHelpersRunInitializers
+// LAST: = Call [[run]], -, [[extra]], [[this]]
+// LAST: Return [[this]]
 
 // RUN(STATIC): lower
 // STATIC-LABEL: function {{*}}kind=Initializer{{*}}thisType={type=function flags=[IsFromCompiler]}
@@ -30,5 +40,6 @@ declare function f(): unknown;
 
 export class C {
   @d a = f();
+  @d last = 1;
   @d static b = 1;
 }

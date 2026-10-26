@@ -1,5 +1,6 @@
 use bun_sema::check::aot::{CheckedType, GaveUp};
 use bun_sema::hir::{ExprId, PatId, PatKind, StmtId, StmtKind, VarKind};
+use smallvec::SmallVec;
 
 use super::control::{BreakTargetKind, CleanupLanding, CleanupPath};
 use super::pattern::PatternOrigin;
@@ -48,9 +49,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         kind: IteratorKind,
         step_index: Option<u32>,
     ) -> IteratorStep {
-        let results =
-            self.builder
-                .iterator_resume(iterator, None, kind, ResumeMode::Next, step_index, false);
+        let held = self.get_values_held_by_step(kind);
+        let mode = ResumeMode::Next;
+        let builder = &mut self.builder;
+        let results = builder.iterator_resume(iterator, None, kind, mode, step_index, &held, false);
         self.read_step_results(results)
     }
 
@@ -61,9 +63,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         mode: ResumeMode,
         sent: ValueId,
     ) -> IteratorStep {
-        let results = self
-            .builder
-            .iterator_resume(iterator, Some(sent), kind, mode, None, true);
+        let held = self.get_values_held_by_step(kind);
+        let builder = &mut self.builder;
+        let results = builder.iterator_resume(iterator, Some(sent), kind, mode, None, &held, true);
         self.read_step_results(results)
     }
 
@@ -73,7 +75,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         kind: IteratorKind,
         completion: IteratorCompletion,
     ) {
-        self.builder.iterator_close(iterator, kind, completion);
+        let held = self.get_values_held_by_step(kind);
+        self.builder
+            .iterator_close(iterator, kind, completion, &held);
+    }
+
+    // Only a step of an async iterator suspends the function.
+    fn get_values_held_by_step(&mut self, kind: IteratorKind) -> SmallVec<[ValueId; 4]> {
+        match kind {
+            IteratorKind::Async => self.get_held_values(),
+            IteratorKind::Sync => SmallVec::new(),
+        }
     }
 
     fn read_step_results(&mut self, results: ValueId) -> IteratorStep {

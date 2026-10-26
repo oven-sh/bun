@@ -24,8 +24,9 @@ function read(held: Point): string {
   return held.label + " " + held.x;
 }
 const values: unknown[] = [new Point(), new Other()];
+const turns = process.argv.length > 99 ? 5 : 4;
 let out = "";
-for (let turn = 0; turn < 4; turn++) out += read(values[turn & 1] as Point) + "|";
+for (let turn = 0; turn < turns; turn++) out += read(values[turn & 1] as Point) + "|";
 console.log(out);
 `,
     printed: "point 1.5|other undefined|point 1.5|other undefined|\n",

@@ -1,5 +1,8 @@
 use bun_sema::hir::{self, ExprId, ExprKind, Flags, FnId};
 
+use smallvec::SmallVec;
+
+use super::scope::BindingRef;
 use super::{FileLowering, FunctionLowering, convert};
 use crate::ir::generated::{FunctionFlags, ResumeMode, YieldResult};
 use crate::ir::{DeclaredType, Edge, FunctionKey, ValueId};
@@ -7,6 +10,8 @@ use crate::ir::{DeclaredType, Edge, FunctionKey, ValueId};
 #[derive(Default)]
 pub(crate) struct CoroutineState {
     yielded: Option<DeclaredType>,
+    /// What the function holds until it ends. Every suspension lists the values.
+    pub(in crate::lower) held: SmallVec<[BindingRef; 4]>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -42,7 +47,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             FunctionKey::Source(source) => self.file.function_positions(source.function).yielded,
             _ => DeclaredType::untyped(),
         };
-        self.builder.initial_yield();
+        let held = self.get_held_values();
+        self.builder.initial_yield(&held);
         self.coroutine.yielded = Some(yielded);
     }
 
@@ -60,8 +66,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn emit_yield(&mut self, value: ValueId) -> Resumption {
+        let held = self.get_held_values();
         let builder = &mut self.builder;
-        let results = builder.yield_value(value);
+        let results = builder.yield_value(value, &held);
         Resumption {
             sent: builder.result_at(results, YieldResult::Sent.to_wire()),
             mode: builder.result_at(results, YieldResult::Mode.to_wire()),

@@ -201,6 +201,15 @@ diff --git a/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift b/Sources/Fuzzilli/
                  w.emit("\(EXPR);")
  
              case .callSuperMethod(let op):
+@@ -2182,7 +2207,7 @@
+                 } else {
+                     assert(lines.count > 1)
+                     w.emit("try {")
+-                    lines.forEach({ w.emit(String($0)) })
++                    lines.forEach({ w.emit("    " + String($0)) })
+                     w.emit("} catch (e) {}")
+                 }
+             }
 @@ -2200,7 +2225,7 @@
              w.emitComment(footer)
          }

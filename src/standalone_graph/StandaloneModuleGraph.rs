@@ -679,6 +679,76 @@ mod elf {
         Some((payload, payload_len as usize))
     }
 
+    /// The size of the payload if it holds a program compiled ahead of time, else 0.
+    /// Allocates nothing: it is asked before the allocator has started.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__sizeOfPayloadWithCompiledProgram() -> usize {
+        use super::{Flags, Offsets, TRAILER};
+
+        // SAFETY: it returns the address of a static.
+        let vaddr = unsafe { core::ptr::read_unaligned(Bun__getStandaloneModuleGraphELFVaddr()) };
+        // SAFETY: `getauxval` only reads the vector the kernel gave the process.
+        let (first_header, header_count) = unsafe {
+            (
+                libc::getauxval(libc::AT_PHDR) as *const libc::Elf64_Phdr,
+                libc::getauxval(libc::AT_PHNUM) as usize,
+            )
+        };
+        if vaddr == 0 || first_header.is_null() {
+            return 0;
+        }
+        // SAFETY: the kernel mapped that many program headers of this executable there.
+        let headers = unsafe { core::slice::from_raw_parts(first_header, header_count) };
+        let load_bias = headers
+            .iter()
+            .find(|header| header.p_type == libc::PT_PHDR)
+            .map_or(0, |header| {
+                (first_header as usize).wrapping_sub(header.p_vaddr as usize)
+            });
+        let target = (vaddr as usize).wrapping_add(load_bias);
+        // `PT_LOAD` headers are in the order of their addresses.
+        let mut mapped_end = None;
+        for header in headers {
+            if header.p_type != bun_sys::elf::PT_LOAD {
+                continue;
+            }
+            let start = load_bias.wrapping_add(header.p_vaddr as usize);
+            let end = start + header.p_memsz as usize;
+            match mapped_end {
+                None if (start..end).contains(&target) => mapped_end = Some(end),
+                Some(previous_end) if previous_end == start => mapped_end = Some(end),
+                _ => {}
+            }
+        }
+        let Some(capacity) = mapped_end.and_then(|end| (end - target).checked_sub(8)) else {
+            return 0;
+        };
+        exit_if_page_is_past_eof(target);
+        // SAFETY: at least 8 bytes are mapped at `target`.
+        let len =
+            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target as *const [u8; 8]) });
+        if len > capacity as u64 || (len as usize) < size_of::<Offsets>() + TRAILER.len() {
+            return 0;
+        }
+        let end = target + 8 + len as usize;
+        exit_if_page_is_past_eof(end - 1);
+        // SAFETY: the payload is mapped up to `end` and is at least as long as both.
+        let (offsets, trailer) = unsafe {
+            (
+                core::ptr::read_unaligned(
+                    (end - TRAILER.len() - size_of::<Offsets>()) as *const Offsets,
+                ),
+                core::slice::from_raw_parts((end - TRAILER.len()) as *const u8, TRAILER.len()),
+            )
+        };
+        if trailer == TRAILER && offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
+            len as usize
+        } else {
+            0
+        }
+    }
+
     /// The end of the `PT_LOAD` segments that follow the found one without a gap.
     fn end_of_adjacent_segments(module: &bun_sys::elf::LoadedModule) -> usize {
         // SAFETY: `program_headers` points to `program_header_count` headers of a loaded object.

@@ -37,6 +37,7 @@ const programs: [entry: string, pairs: Pair[]][] = [
   ],
   ["names-in-a-list.js", [["a name found by a loop", "a name found by indexOf", 0]]],
   ["wrappers.js", [["a wrapper that is called", "a wrapper that is called through call", 4]]],
+  ["errors.js", [["an error that is kept", "an error that is returned at once", 32]]],
   [
     "creation-order.ts",
     [

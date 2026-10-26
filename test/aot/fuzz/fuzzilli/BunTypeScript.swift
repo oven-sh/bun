@@ -30,6 +30,8 @@ struct TypeScriptSettings {
     var int32 = 10
     /// How often the declarations in front of a program are in files of their own.
     var files = 0
+    /// How often tests that narrow a declared type follow a declaration. Twice as often at the start of a function.
+    var tested = 12
     /// Added to what is computed from a program to seed its choices.
     var seed: UInt64 = 0
 
@@ -61,6 +63,7 @@ struct TypeScriptSettings {
             case "declared": settings.declared = value
             case "int32": settings.int32 = value
             case "files": settings.files = value
+            case "tested": settings.tested = value
             case "seed": settings.seed = UInt64(value)
             default: fatalError("BUN_FUZZILLI_TYPES: unknown setting \(part)")
             }
@@ -314,6 +317,12 @@ final class TypeScriptPlan {
     private var returnAnnotations = [Int: TypeScriptType]()
     private var fieldAnnotations = [Int: String]()
     private var helpers = Set<String>()
+    private var writtenHelpers = [String: String]()
+    private var helpersThatNameTypes = [String: String]()
+    private var testedParameters = [Int: [(name: String, type: TypeScriptType, isConstant: Bool)]]()
+    private var sitesWithTests = 0
+    private var moduleVariables = [String]()
+    private var sceneIsAsync = false
     private var usesInt32 = false
     private var interfaceOrder = [String]()
 
@@ -1958,6 +1967,11 @@ final class TypeScriptPlan {
             }
             callable.parameters.append(
                 .init(name: name, type: annotation ?? (isRest ? .array(.any) : .any), isOptional: optional, isRest: isRest))
+            if let type = declared[v], annotation != typeParameter, !type.arms.contains(.int32),
+                !(instr.op is BeginClassConstructor && isInDerivedClass(instr.index))
+            {
+                testedParameters[instr.index, default: []].append((name, type, !reassigned.contains(v)))
+            }
         }
         if canReturn {
             let right =
@@ -2188,7 +2202,7 @@ final class TypeScriptPlan {
 
     /// Stands behind the last parameter until `finish` puts the type behind the bracket.
     func returnMarker(at index: Int) -> String {
-        (genericHeads[index] == nil ? "" : "/*generic \(index)*/") + (ignoredHeads.contains(index) ? Self.ignoredLineMarker : "") + (returnAnnotations[index] == nil ? "" : "/*returns \(index)*/")
+        (testedParameters[index] == nil ? "" : "/*tests \(index)*/") + (genericHeads[index] == nil ? "" : "/*generic \(index)*/") + (ignoredHeads.contains(index) ? Self.ignoredLineMarker : "") + (returnAnnotations[index] == nil ? "" : "/*returns \(index)*/")
     }
 
     func fieldAnnotation(at index: Int) -> String { fieldAnnotations[index] ?? "" }
@@ -2257,6 +2271,90 @@ final class TypeScriptPlan {
             }
             """,
         "pass": "function pass<T>(value: T): T { return value; }",
+        "note": """
+            let notes = 0;
+            function note(value: unknown): void {
+                if (notes++ < 80) console.log("noted", value);
+            }
+            """,
+        "assert": """
+            function assert(condition: unknown): asserts condition {
+                if (!condition) throw new RangeError("It isn't so");
+            }
+            """,
+        "assume": "function assume(condition: unknown): asserts condition {}",
+        "Pile": """
+            class Pile<T> {
+                private items: T[] = [];
+                add(item: T): this {
+                    this.items.push(item);
+                    return this;
+                }
+                top(): T { return this.items[this.items.length - 1]; }
+                all(): readonly T[] { return this.items; }
+                map<U>(change: (item: T) => U): Pile<U> {
+                    const changed = new Pile<U>();
+                    for (const item of this.items) changed.add(change(item));
+                    return changed;
+                }
+            }
+            """,
+        "Source": """
+            abstract class Source<T> {
+                abstract next(): T;
+                take(): T { return this.next(); }
+            }
+            class Fixed<T> extends Source<T> {
+                constructor(private value: T) { super(); }
+                next(): T { return this.value; }
+            }
+            """,
+        "Lazy": """
+            class Lazy<T> {
+                #make: () => T;
+                #made: { value: T } | undefined;
+                constructor(make: () => T) { this.#make = make; }
+                get value(): T { return (this.#made ??= { value: this.#make() }).value; }
+            }
+            """,
+        "Watched": """
+            function traced<This, Arguments extends any[], Result>(method: (this: This, ...given: Arguments) => Result, context: ClassMethodDecoratorContext) {
+                return function (this: This, ...given: Arguments): Result { return method.call(this, ...given); };
+            }
+            function kept<This, Value>(field: undefined, context: ClassFieldDecoratorContext<This, Value>) {
+                return (initial: Value): Value => initial;
+            }
+            class Watched<T> {
+                @kept held: T;
+                accessor seen: T;
+                constructor(held: T) {
+                    this.held = held;
+                    this.seen = held;
+                }
+                @traced read(): T { return this.held; }
+            }
+            """,
+        "Link": "type Link<T> = { value: T; next: Link<T> | null };",
+        "Outcome": "type Outcome<T> = { ok: true; value: T } | { ok: false; reason: string };",
+        "pluck": "function pluck<T, K extends keyof T>(from: T, key: K): T[K] { return from[key]; }",
+        "choose": "function choose<T>(first: T, second: T): T { return first === second ? second : first; }",
+        "longest": "function longest<T extends { length: number }>(first: T, second: T): T { return first.length >= second.length ? first : second; }",
+        "convert": """
+            function convert(value: number): string;
+            function convert(value: string): number;
+            function convert(value: unknown): unknown { return value; }
+            """,
+        "Keeper": """
+            class Keeper<T> {
+                constructor(public held: T) {}
+            }
+            """,
+        "Pretender": """
+            class Pretender {
+                held = 1;
+                static [Symbol.hasInstance](value: unknown): boolean { return true; }
+            }
+            """,
         "passThroughNamespace": """
             namespace Passing {
                 export let count = 0;
@@ -2396,7 +2494,9 @@ final class TypeScriptPlan {
         var openClassExpressions = [Substring]()
         /// The name that a declaration over several lines at the top level declares.
         var openDeclaration: String? = nil
-        lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        lines = addTests(to: text.split(separator: "\n", omittingEmptySubsequences: false))
+        // The time of the run is in what these print.
+        let unsteady = Set(inferred.filter { $0.value.group == "Date" }.map { "v\($0.key.number)" })
         for var line in lines {
             let indentation = line.prefix(while: { $0 == " " })
             // A program that ends early has printed what it had until then.
@@ -2408,7 +2508,7 @@ final class TypeScriptPlan {
                     finished = name
                     openDeclaration = nil
                 }
-                if let finished {
+                if let finished, !unsteady.contains(finished) {
                     if acceptance == .everyLineIgnored { body.append("// @ts-ignore") }
                     body.append("printValue(\"\(finished)\", \(finished));")
                 }
@@ -2434,8 +2534,8 @@ final class TypeScriptPlan {
         }
 
         if helpers.contains("passThroughList") { helpers.insert("Same") }
-        var library = helpers.sorted().map { Self.helperDeclarations[$0]! }
-        let declarations = declarationOrder.map(declaration(of:))
+        var library = helpers.sorted().map { Self.helperDeclarations[$0]! } + writtenHelpers.sorted { $0.key < $1.key }.map(\.value)
+        let declarations = declarationOrder.map(declaration(of:)) + helpersThatNameTypes.sorted { $0.key < $1.key }.map(\.value)
         if enumMembers.isEmpty, (body + declarations).contains(where: { $0.contains("Numbers") }) { enumMembers["N0"] = "0" }
         for (name, members) in [("Numbers", enumMembers), ("Texts", textMembers)] where !members.isEmpty {
             let list = members.sorted(by: { $0.key < $1.key }).map { "    \($0.key) = \($0.value)," }
@@ -2452,15 +2552,35 @@ final class TypeScriptPlan {
             let classes = nameOfGroup.values.filter { $0.hasPrefix("C") }
             let typesCanMove = !declarations.contains { declaration in classes.contains { declaration.contains($0) } }
             var imports = [String]()
+            var paths = [String]()
             if !library.isEmpty {
-                let made = makeFile(named: "library", firstLines + importOfInt32(for: library), library)
+                // Two files can import each other: one counts what is noted, the other one reads the count to say how much may be.
+                let isCycle = helpers.contains("note") && seedOfProgram % 5 < 2
+                if isCycle { library = library.map { $0.replacingOccurrences(of: "notes++ < 80", with: "notes++ < limit()") } }
+                let limits = "./limits-\(String(mix(0, (firstLines + library).joined(separator: "\n").utf8), radix: 36)).ts"
+                let made = makeFile(
+                    named: "library", firstLines + importOfInt32(for: library) + (isCycle ? ["import { limit } from \"\(limits)\";"] : []), library)
                 imports.append(made.import)
                 otherFiles += made.file
+                paths.append(made.path)
+                if isCycle {
+                    otherFiles += "// @filename: \(limits)\n" + (firstLines + [
+                        "import { notes } from \"\(made.path)\";", "export function limit(): number { return notes > 80 ? 0 : 80; }", "",
+                    ]).joined(separator: "\n")
+                }
             }
             if typesCanMove, !declarations.isEmpty {
                 let made = makeFile(named: "types", firstLines + importOfInt32(for: declarations) + imports, declarations)
                 imports.append(made.import)
                 otherFiles += made.file
+                paths.append(made.path)
+            }
+            if seedOfProgram % 7 < 2, !paths.isEmpty {
+                // The program imports everything from a file that only hands on what the others export.
+                let content = (firstLines + paths.map { "export * from \"\($0)\";" } + [""]).joined(separator: "\n")
+                let index = "./index-\(String(mix(0, content.utf8), radix: 36)).ts"
+                otherFiles += "// @filename: \(index)\n\(content)"
+                for path in paths { imports = imports.map { $0.replacingOccurrences(of: "\"\(path)\"", with: "\"\(index)\"") } }
             }
             head += imports
             head.append("const printValue = console.log;")
@@ -2469,14 +2589,19 @@ final class TypeScriptPlan {
             head.append("const printValue = console.log;")
             head += library + declarations
         }
+        head += moduleVariables
 
         var tail = [String]()
         var printed = Set<String>()
         for line in lines {
-            if let name = Self.nameDeclared(by: line), printed.insert(name).inserted {
+            if let name = Self.nameDeclared(by: line), printed.insert(name).inserted, !unsteady.contains(name) {
                 if acceptance == .everyLineIgnored { tail.append("// @ts-ignore") }
                 tail.append("printValue(\"\(name)\", \(name));")
             }
+        }
+        if helpers.contains("note") {
+            if acceptance == .everyLineIgnored { tail.append("// @ts-ignore") }
+            tail.append("printValue(\"notes\", Math.min(notes, 80));")
         }
         tail.append("export {};")
         return (head + body + tail).joined(separator: "\n") + "\n" + otherFiles
@@ -2493,12 +2618,12 @@ final class TypeScriptPlan {
     }
 
     /// Writes declarations as a file of their own, behind a line with its name, and the import of everything in it.
-    private func makeFile(named name: String, _ firstLines: [String], _ declarations: [String]) -> (file: String, import: String) {
+    private func makeFile(named name: String, _ firstLines: [String], _ declarations: [String]) -> (file: String, import: String, path: String) {
         var values = [String]()
         var types = [String]()
         var lines = firstLines
         for line in declarations.flatMap({ $0.split(separator: "\n", omittingEmptySubsequences: false) }) {
-            guard let keyword = ["function* ", "function ", "class ", "const enum ", "enum ", "namespace ", "type ", "interface "].first(where: { line.hasPrefix($0) })
+            guard let keyword = ["function* ", "function ", "class ", "abstract class ", "let ", "const enum ", "enum ", "namespace ", "type ", "interface "].first(where: { line.hasPrefix($0) })
             else {
                 lines.append(String(line))
                 continue
@@ -2523,11 +2648,981 @@ final class TypeScriptPlan {
         } else {
             statement = "import { \((values + types.map { "type \($0)" }).joined(separator: ", ")) } from \"\(path)\";"
         }
-        return ("// @filename: \(path)\n\(content)", statement)
+        return ("// @filename: \(path)\n\(content)", statement, path)
     }
 
     private func propertyKey(_ name: String) -> String {
         environment.isValidIdentifierOrIndex(name) ? name : "\"\(name)\""
+    }
+}
+
+// MARK: Tests that narrow
+
+extension TypeScriptPlan {
+    /// What the checker takes a value for behind a test.
+    private enum Narrowed {
+        case never
+        /// The plan can't tell.
+        case unfollowed
+        case type(TypeScriptType)
+    }
+
+    private struct Test {
+        var condition: String
+        var kept: Narrowed
+        var rest: Narrowed
+        /// The checker reports an error at the condition.
+        var isRefused = false
+        /// The plan may be mistaken about what is left.
+        var isUnsure = false
+
+        var negated: Test { Test(condition: "!(\(condition))", kept: rest, rest: kept, isRefused: isRefused, isUnsure: isUnsure) }
+    }
+
+    /// Something with a declared type that tests are written for.
+    private struct Subject {
+        var text: String
+        var type: TypeScriptType
+        /// Nothing is stored to it behind its declaration.
+        var isConstant: Bool
+        /// The instruction that declares it.
+        var index: Int
+    }
+
+    private static let valuesOfEveryKind = [
+        "undefined", "null", "0", "-0", "1.5", "NaN", "2147483648", "-1", "\"\"", "\"text\"", "\"7\"", "true", "false", "10n",
+        "Symbol.iterator", "[]", "[1.5]", "[\"a\", 1]", "[, 1]", "{}", "{ a: 1 }", "{ length: 2 }", "{ kind: \"first\" }", "() => 1",
+        "new Map()", "new Set([1])", "/x/g", "Object.create(null)", "new Proxy({}, {})", "new Uint8Array(2)",
+        "new String(\"boxed\")", "new Number(3)", "class {}", "Promise.resolve(1)", "new Date(0)", "[[1], [2]]", "{ a: { a: 1 } }",
+    ]
+
+    /// What can be done with an object of the library. `$` stands for the object.
+    private static let usesOfLibraryObjects: [String: [String]] = [
+        "Map": ["$.size", "$.has(1)", "$.get(\"a\")", "[...$.keys()]"],
+        "Set": ["$.size", "$.has(1)", "[...$]"],
+        "RegExp": ["$.source", "$.flags", "$.lastIndex", "$.test(\"x\")"],
+        "Error": ["$.message", "$.name"],
+        "Promise": ["typeof $.then"],
+        "Uint8Array": ["$.length", "$[0]", "$.byteLength", "$.subarray(1).length"],
+        "String": ["$.length", "$.valueOf()", "$.charAt(0)"],
+        "Number": ["$.valueOf()", "$.toFixed(1)"],
+        "Pretender": ["$.held", "$.held + 1", "$.held.toFixed(1)", "($.held = 2)"],
+    ]
+
+    private static let guardedTypes: [(name: String, type: TypeScriptType, text: String, check: String)] = [
+        ("Text", .string, "string", "typeof value === \"string\""),
+        ("Number", .number, "number", "typeof value === \"number\""),
+        ("Flag", .boolean, "boolean", "typeof value === \"boolean\""),
+        ("BigNumber", .bigint, "bigint", "typeof value === \"bigint\""),
+        ("Nothing", .union([.null, .undefined]), "null | undefined", "value == null"),
+        ("List", .array(.unknown), "unknown[]", "Array.isArray(value)"),
+    ]
+
+    private func narrowed(_ arms: [TypeScriptType]) -> Narrowed { arms.isEmpty ? .never : .type(.union(of: arms)) }
+
+    private func isFollowed(_ type: TypeScriptType) -> Bool { type != .any && type != .unknown && type != .untracked }
+
+    private func allMembers(of name: String) -> [(name: String, member: Member)] {
+        var table = [String: Member]()
+        var owner: String? = name
+        while let current = owner {
+            for (key, member) in members[current] ?? [:] where table[key] == nil { table[key] = member }
+            owner = baseOf[current]
+        }
+        return table.filter { parameterModifiers[$0.key] == nil }.sorted { $0.key < $1.key }.map { (name: $0.key, member: $0.value) }
+    }
+
+    private func read(_ name: String, of subject: String) -> String {
+        let isIdentifier =
+            name.first.map { $0.isLetter || $0 == "_" || $0 == "$" } == true
+            && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "$") }
+        return isIdentifier ? "\(subject).\(name)" : "\(subject)[\"\(name)\"]"
+    }
+
+    /// What `typeof` gives for every value of the type, where there is one answer.
+    private func tag(of arm: TypeScriptType) -> String? {
+        switch arm {
+        case .literals(_, let base), .alias(_, let base): return tag(of: base)
+        case .number, .int32: return "number"
+        case .string: return "string"
+        case .boolean: return "boolean"
+        case .bigint: return "bigint"
+        case .symbol: return "symbol"
+        case .undefined: return "undefined"
+        case .null, .array, .readonlyArray, .tuple: return "object"
+        case .named(let name): return Self.typedArrays[name] != nil || !allMembers(of: name).isEmpty ? "object" : nil
+        case .generic(let name, let arguments):
+            if ["Map", "Set", "Promise", "Generator", "AsyncGenerator"].contains(name) { return "object" }
+            return ["Readonly", "Partial"].contains(name) ? tag(of: arguments[0]) : nil
+        case .function, .classOf: return "function"
+        default: return nil
+        }
+    }
+
+    private func primitive(for tag: String) -> TypeScriptType? {
+        switch tag {
+        case "string": return .string
+        case "number": return .number
+        case "boolean": return .boolean
+        case "bigint": return .bigint
+        case "symbol": return .symbol
+        case "undefined": return .undefined
+        default: return nil
+        }
+    }
+
+    /// An expression that the checker accepts for a value of the type and for no other.
+    private func use(_ s: String, as type: TypeScriptType, isShallow: Bool = false, depth: Int = 0) -> String {
+        switch type {
+        case .literals(_, let base): return use(s, as: base, isShallow: isShallow, depth: depth)
+        case .alias(_, let aliased): return use(s, as: aliased, isShallow: true, depth: depth)
+        case .generic("Readonly", let arguments), .generic("Partial", let arguments):
+            return use(s, as: arguments[0], isShallow: true, depth: depth)
+        case .number, .int32:
+            return choices.pick([
+                "\(s) + 1", "\(s) * 2", "\(s) - 1", "\(s) | 0", "\(s) >>> 1", "-\(s)", "\(s) % 3", "\(s) / 2", "\(s) < 3", "\(s) >= 0",
+                "\(s).toFixed(1)", "Math.abs(\(s))", "Math.floor(\(s))", "Math.max(\(s), 2)", "\(s).toString(2)", "[10, 20, 30][\(s)]",
+                "\"abc\".charAt(\(s))", "Number.isInteger(\(s))", "\(s) ** 2", "`${\(s)}`", "isNaN(\(s))", "\(s) & 255", "~\(s)",
+                "\(s) << 2", "Math.imul(\(s), 3)", "Math.sqrt(\(s))", "\(s) + \(s)", "\(s) * \(s)", "new Array<number>(3).fill(\(s))",
+            ])
+        case .string:
+            return choices.pick([
+                "\(s).length", "\(s) + \"!\"", "\(s).charCodeAt(0)", "\(s).slice(1)", "\(s)[0]", "\(s).toUpperCase()",
+                "\(s).indexOf(\"a\")", "`<${\(s)}>`", "\(s).split(\"\")", "\(s).padStart(3)", "\(s) < \"m\"", "\(s).at(-1)", "[...\(s)]",
+                "\(s).trim().length", "\(s).concat(\(s))", "\(s).codePointAt(0)", "\(s).repeat(2)", "\(s).startsWith(\"a\")",
+                "\(s).includes(\"1\")", "\(s) + \(s)", "\(s).replace(\"t\", \"d\")", "parseInt(\(s))", "\(s).substring(0, 1)",
+            ])
+        case .boolean:
+            return choices.pick([
+                "!\(s)", "\(s) ? 1 : 2", "\(s) && 3", "\(s) || 4", "Number(\(s))", "\(s).valueOf()", "\(s).toString()",
+                "[\(s)].includes(true)",
+            ])
+        case .bigint:
+            return choices.pick([
+                "\(s) + 1n", "\(s) * 2n", "-\(s)", "\(s) > 0n", "BigInt.asIntN(8, \(s))", "\(s).toString()", "\(s) << 1n", "\(s) % 3n",
+            ])
+        case .symbol: return choices.pick(["\(s).description", "\(s).toString()", "typeof \(s)"])
+        case .undefined, .null, .void: return choices.pick(["String(\(s))", "typeof \(s)", "[\(s)].length", "\(s) ?? \"nothing\""])
+        case .named(let name):
+            if let uses = Self.usesOfLibraryObjects[name] ?? (Self.typedArrays[name] == nil ? nil : Self.usesOfLibraryObjects["Uint8Array"]) {
+                return choices.pick(uses).replacingOccurrences(of: "$", with: s)
+            }
+            let table = allMembers(of: name)
+            guard !table.isEmpty else { return s }
+            let (key, member) = choices.pick(table)
+            let value = read(key, of: s)
+            switch choices.below(isShallow || depth > 1 ? 4 : 8) {
+            case 0: return "Object.keys(\(s)).length"
+            case 1: return "({ ...\(s) })"
+            case 2: return "\"\(key)\" in \(s)"
+            case 3: return value
+            case 4 where !member.isReadonly && !member.isMethod && member.type != .int32 && genericFields[name] != key:
+                return "(\(value) = \(value))"
+            default:
+                if member.isMethod { return "typeof \(value)" }
+                return member.isOptional ? "\(value) ?? \"absent\"" : use(value, as: member.type, depth: depth + 1)
+            }
+        case .array(let element), .readonlyArray(let element):
+            var uses = [
+                "\(s).length", "\(s)[0]", "\(s).at(-1)", "\(s).slice(0, 2)", "\(s).map(element => element)", "[...\(s)]",
+                "\(s).indexOf(\(s)[0])", "\(s).join()", "\(s).includes(\(s)[0])", "Array.from(\(s)).length",
+                "\(s).filter(() => true).length", "\(s).some(() => true)", "\(s).length > 0 ? \(s)[\(s).length - 1] : 0",
+            ]
+            if case .array = type, !isShallow { uses += ["\(s).push(\(s)[0])", "\(s).concat(\(s)).length", "\(s).reverse().length", "\(s).pop()"] }
+            if depth < 2, !isShallow, isFollowed(element) { uses += [use("\(s)[0]", as: element, depth: depth + 1), use("\(s)[1]", as: element, depth: depth + 1)] }
+            return choices.pick(uses)
+        case .tuple(let elements):
+            guard let first = elements.first, depth < 2 else { return "\(s).length" }
+            let uses = ["\(s).length", "[...\(s)]", "\(s)[0]", use("\(s)[0]", as: first, depth: depth + 1)]
+            return choices.pick(uses)
+        case .generic(let name, _):
+            guard let uses = Self.usesOfLibraryObjects[name] else { return s }
+            return choices.pick(uses).replacingOccurrences(of: "$", with: s)
+        case .function, .classOf: return choices.pick(["typeof \(s)", "\(s).length", "\(s).name"])
+        case .object: return choices.pick(["Object.keys(\(s)).length", "typeof \(s)"])
+        default: return s
+        }
+    }
+
+    private func use(_ s: String, as narrowed: Narrowed) -> String {
+        if case .type(let type) = narrowed { return use(s, as: type) }
+        return s
+    }
+
+    // MARK: The tests
+
+    private func testTypeof(_ s: String, _ type: TypeScriptType, _ wanted: String) -> Test {
+        let condition = choices.pick(["typeof \(s) === \"\(wanted)\"", "\"\(wanted)\" === typeof \(s)", "typeof \(s) == \"\(wanted)\""])
+        guard isFollowed(type) else {
+            return Test(condition: condition, kept: primitive(for: wanted).map { .type($0) } ?? .unfollowed, rest: .unfollowed)
+        }
+        let tags = type.arms.map(tag(of:))
+        guard !tags.contains(nil) else { return Test(condition: condition, kept: .unfollowed, rest: .unfollowed) }
+        return Test(
+            condition: condition, kept: narrowed(type.arms.filter { tag(of: $0) == wanted }),
+            rest: narrowed(type.arms.filter { tag(of: $0) != wanted }))
+    }
+
+    private func testNothing(_ s: String, _ type: TypeScriptType) -> Test {
+        let form = choices.below(3)
+        let condition = ["\(s) === null", "\(s) === undefined", "\(s) == null"][form]
+        guard isFollowed(type), !type.arms.map(tag(of:)).contains(nil) else {
+            return Test(condition: condition, kept: .unfollowed, rest: .unfollowed)
+        }
+        func isKept(_ arm: TypeScriptType) -> Bool { (form != 1 && arm == .null) || (form != 0 && arm == .undefined) }
+        return Test(condition: condition, kept: narrowed(type.arms.filter(isKept)), rest: narrowed(type.arms.filter { !isKept($0) }))
+    }
+
+    private func testTruth(_ s: String, _ type: TypeScriptType) -> Test {
+        guard isFollowed(type), !type.arms.map(tag(of:)).contains(nil) else { return Test(condition: s, kept: .unfollowed, rest: .unfollowed) }
+        let hasFewValues = type.arms.contains { $0.isLiterals || $0.mentionsEnumeration }
+        let isAlwaysDefined = type.arms.allSatisfy {
+            if case .generic("Promise", _) = $0 { return true }
+            return tag(of: $0) == "function"
+        }
+        let primitives = ["number", "string", "boolean", "bigint", "undefined"]
+        return Test(
+            condition: s, kept: narrowed(type.arms.filter { !$0.isNullish }),
+            rest: hasFewValues ? .unfollowed : narrowed(type.arms.filter { $0 == .null || primitives.contains(tag(of: $0)!) }),
+            isRefused: isAlwaysDefined)
+    }
+
+    private func testValue(_ s: String, _ type: TypeScriptType) -> Test {
+        let (text, base): (String, TypeScriptType) = choices.pick([
+            ("0", .number), ("1", .number), ("-1", .number), ("1.5", .number), ("\"\"", .string), ("\"a\"", .string), ("\"text\"", .string),
+            ("true", .boolean), ("false", .boolean), ("10n", .bigint),
+        ])
+        let condition = choices.pick(["\(s) === \(text)", "\(text) === \(s)", "\(s) == \(text)"])
+        guard isFollowed(type), !type.arms.map(tag(of:)).contains(nil), !type.arms.contains(where: { $0.isLiterals || $0.mentionsEnumeration }) else {
+            return Test(condition: condition, kept: .unfollowed, rest: .unfollowed, isRefused: isFollowed(type))
+        }
+        let overlaps = type.arms.contains { $0.plain == base || ($0.plain == .int32 && base == .number) }
+        return Test(condition: condition, kept: overlaps ? .type(base) : .never, rest: .type(type), isRefused: !overlaps)
+    }
+
+    private func classesDeclared(before index: Int) -> [String] {
+        nameOfGroup.values.filter { name in
+            guard name.hasPrefix("C"), let number = Int(name.dropFirst()), let begin = indexOfDefinition[Variable(number: number)] else { return false }
+            return end(ofBlockAt: begin) < index
+        }.sorted()
+    }
+
+    private func isDerived(_ arm: TypeScriptType, from base: String) -> Bool {
+        guard case .named(var name) = arm else { return false }
+        while name != base {
+            guard let next = baseOf[name] else { return false }
+            name = next
+        }
+        return true
+    }
+
+    private func testInstance(_ s: String, _ type: TypeScriptType, at index: Int) -> Test {
+        let classes = classesDeclared(before: index)
+        let name = !classes.isEmpty && choices.percent(60) ? choices.pick(classes) : choices.pick(Self.usesOfLibraryObjects.keys.sorted() + ["Array"])
+        if name == "Pretender" { helpers.insert("Pretender") }
+        let condition = "\(s) instanceof \(name)"
+        guard isFollowed(type), !type.arms.map(tag(of:)).contains(nil) else {
+            return Test(condition: condition, kept: type == .unknown || type == .any ? .type(name == "Array" ? .array(.any) : .named(name)) : .unfollowed, rest: .unfollowed, isUnsure: true)
+        }
+        let isRefused = type.arms.allSatisfy { $0 == .null || !["object", "function"].contains(tag(of: $0)!) }
+        func isKept(_ arm: TypeScriptType) -> Bool {
+            if name == "Array" {
+                switch arm {
+                case .array, .tuple: return true
+                default: return false
+                }
+            }
+            if case .generic(name, _) = arm { return true }
+            return isDerived(arm, from: name)
+        }
+        let kept = type.arms.filter(isKept)
+        return Test(
+            condition: condition, kept: kept.isEmpty ? .type(name == "Array" ? .array(.any) : .named(name)) : narrowed(kept),
+            rest: narrowed(type.arms.filter { !isKept($0) }), isRefused: isRefused, isUnsure: true)
+    }
+
+    private func testMember(_ s: String, _ type: TypeScriptType) -> Test? {
+        var names = [String]()
+        for arm in type.arms {
+            guard case .named(let name) = arm, members[name] != nil else { return nil }
+            names += allMembers(of: name).map(\.name)
+        }
+        let key = choices.percent(80) && !names.isEmpty ? choices.pick(names) : "missing"
+        let holders = type.arms.filter { member(key, of: $0) != nil }
+        return Test(
+            condition: "\"\(key)\" in \(s)", kept: holders.isEmpty ? .unfollowed : narrowed(holders),
+            rest: holders.isEmpty ? .type(type) : narrowed(type.arms.filter { member(key, of: $0).map(\.isOptional) ?? true }), isUnsure: true)
+    }
+
+    /// A function that says what its argument is. Some of them say it whatever the argument is.
+    private func testGuard(_ s: String, _ type: TypeScriptType) -> Test {
+        let guarded = choices.pick(Self.guardedTypes)
+        let (prefix, check) = choices.pick([
+            ("is", guarded.check), ("is", guarded.check), ("isAlways", "true"), ("isNever", "false"), ("isNot", "!(\(guarded.check))"),
+        ])
+        let name = "\(prefix)\(guarded.name)"
+        writtenHelpers[name] = "function \(name)(value: unknown): value is \(guarded.text) { return \(check); }"
+        return split(type, by: guarded.type, condition: "\(name)(\(s))")
+    }
+
+    /// What a function that says `value is T` leaves of a type.
+    private func split(_ type: TypeScriptType, by candidate: TypeScriptType, condition: String) -> Test {
+        guard isFollowed(type) else { return Test(condition: condition, kept: .type(candidate), rest: .unfollowed) }
+        guard !type.arms.map(tag(of:)).contains(nil) else { return Test(condition: condition, kept: .unfollowed, rest: .unfollowed) }
+        func isKept(_ arm: TypeScriptType) -> Bool {
+            if case .array = candidate {
+                switch arm {
+                case .array, .tuple: return true
+                default: return false
+                }
+            }
+            return candidate.arms.contains { tag(of: $0) == tag(of: arm) && ($0 == .null) == (arm == .null) }
+        }
+        let kept = type.arms.filter(isKept)
+        let rest = narrowed(type.arms.filter { !isKept($0) })
+        if !kept.isEmpty { return Test(condition: condition, kept: narrowed(kept), rest: rest) }
+        let hasObjects = type.arms.contains { $0 != .null && ["object", "function"].contains(tag(of: $0)!) }
+        let meets = hasObjects && !candidate.arms.contains(where: \.isNullish)
+        if case .array = candidate { return Test(condition: condition, kept: .unfollowed, rest: rest) }
+        return Test(condition: condition, kept: meets ? .type(candidate) : .never, rest: rest, isUnsure: meets)
+    }
+
+    private func testNamedGuard(_ s: String, _ type: TypeScriptType) -> Test? {
+        guard let name = pickNamedType(where: { !self.allMembers(of: $0).isEmpty }) else { return nil }
+        let key = choices.pick(allMembers(of: name)).name
+        let (prefix, check) = choices.pick([
+            ("is", "typeof value === \"object\" && value !== null && \"\(key)\" in value"), ("isAlways", "true"), ("isNever", "false"),
+        ])
+        let helper = "\(prefix)\(name)"
+        helpersThatNameTypes[helper] = "function \(helper)(value: unknown): value is \(name) { return \(check); }"
+        let kept = isFollowed(type) ? type.arms.filter { assignable($0, to: .named(name)) } : []
+        return Test(
+            condition: "\(helper)(\(s))", kept: kept.isEmpty ? .type(.alias(name, .named(name))) : narrowed(kept),
+            rest: isFollowed(type) ? narrowed(type.arms.filter { !assignable($0, to: .named(name)) }) : .unfollowed, isUnsure: true)
+    }
+
+    private func makeTest(on subject: Subject, as type: TypeScriptType) -> Test {
+        let s = subject.text
+        var test: Test
+        switch choices.weighted([30, 10, 12, 10, 12, 8, 14, 8, 6]) {
+        case 0:
+            let own = type.arms.compactMap(tag(of:))
+            test = testTypeof(s, type, !own.isEmpty && choices.percent(60) ? choices.pick(own) : choices.pick(["string", "number", "boolean", "object", "function", "undefined", "bigint", "symbol"]))
+        case 1: test = testNothing(s, type)
+        case 2: test = testTruth(s, type)
+        case 3: test = testValue(s, type)
+        case 4: test = testInstance(s, type, at: subject.index)
+        case 5: test = testMember(s, type) ?? testTypeof(s, type, "object")
+        case 6: test = testGuard(s, type)
+        case 7: test = testNamedGuard(s, type) ?? testGuard(s, type)
+        default: test = split(type, by: .array(.any), condition: "Array.isArray(\(s))")
+        }
+        return choices.percent(25) ? test.negated : test
+    }
+
+    // MARK: The statements
+
+    private func note(_ expression: String, ignoring: Bool = false) -> String {
+        helpers.insert("note")
+        return "\(ignoring ? Self.ignoredLineMarker : "")note(\(expression));"
+    }
+
+    private func indented(_ lines: [String]) -> [String] { lines.map { "    \($0)" } }
+
+    /// Statements that test a value and use it as what is left of its type.
+    private func writeTest(on subject: Subject, as type: TypeScriptType, depth: Int = 0) -> [String] {
+        let s = subject.text
+        let test = makeTest(on: subject, as: type)
+        let mark = test.isRefused ? Self.ignoredLineMarker : ""
+        let unsure = test.isUnsure
+        let kept = use(s, as: test.kept)
+        let rest = use(s, as: test.rest)
+        func further(_ narrowed: Narrowed, _ otherwise: String) -> [String] {
+            if depth < 2, case .type(let left) = narrowed, !unsure, left.arms.count > 1 || choices.percent(20) {
+                return writeTest(on: subject, as: left, depth: depth + 1)
+            }
+            return [note(otherwise, ignoring: unsure)]
+        }
+        switch choices.below(subject.isConstant ? 13 : 11) {
+        case 0, 1:
+            var lines = ["\(mark)if (\(test.condition)) {"]
+            lines += indented(further(test.kept, kept))
+            lines.append("} else {")
+            lines += indented(further(test.rest, rest))
+            lines.append("}")
+            return lines
+        case 2: return [note("\(test.condition) ? \(kept) : \(rest)", ignoring: unsure || test.isRefused)]
+        case 3: return ["\(mark)\(unsure ? Self.ignoredLineMarker : "")\(test.condition) && note(\(kept));"]
+        case 4: return ["\(mark)\(unsure ? Self.ignoredLineMarker : "")\(test.condition) || note(\(rest));"]
+        case 5:
+            var lines = ["tested\(depth): {", "    \(mark)if (\(test.condition)) break tested\(depth);"]
+            lines += indented(further(test.rest, rest))
+            lines.append("}")
+            return lines
+        case 6:
+            return [
+                "note((() => {", "    \(mark)\(unsure ? Self.ignoredLineMarker : "")if (\(test.condition)) return \(kept);",
+                "    \(unsure ? Self.ignoredLineMarker : "")return \(rest);", "})());",
+            ]
+        case 7:
+            var lines = ["\(mark)while (\(test.condition)) {"]
+            lines += indented(further(test.kept, kept))
+            lines += ["    break;", "}"]
+            return lines
+        case 8:
+            let turns = choices.pick([2, 3, 20])
+            var lines = ["for (let turn = 0; turn < \(turns); turn++) {", "    \(mark)if (\(test.condition)) {"]
+            lines += indented(indented(further(test.kept, kept)))
+            lines.append("    } else {")
+            lines += indented(indented(further(test.rest, rest)))
+            lines += ["    }", "}"]
+            return lines
+        case 9:
+            let helper = choices.pick(["assert", "assume"])
+            helpers.insert(helper)
+            let copy = Subject(text: "copy\(depth)", type: type, isConstant: true, index: subject.index)
+            let copied = makeTest(on: copy, as: type)
+            return [
+                "{", "    const \(copy.text): \(type.text) = \(s);", "    \(copied.isRefused ? Self.ignoredLineMarker : "")\(helper)(\(copied.condition));",
+                "    \(note(use(copy.text, as: copied.kept), ignoring: copied.isUnsure))", "}",
+            ]
+        case 10:
+            let holder = choices.below(3)
+            let path = Subject(text: ["holder\(depth).held", "pair\(depth)[0]", "keeper\(depth).held"][holder], type: type, isConstant: false, index: subject.index)
+            if holder == 2 { helpers.insert("Keeper") }
+            let declaration = [
+                "const holder\(depth): { held: \(type.text) } = { held: \(s) };", "const pair\(depth): [\(type.text), number] = [\(s), 1];",
+                "const keeper\(depth) = new Keeper<\(type.text)>(\(s));",
+            ][holder]
+            var lines = ["{", "    \(declaration)"]
+            lines += indented(writeTest(on: path, as: type, depth: depth + 1))
+            lines.append("}")
+            return lines
+        case 11:
+            return ["{", "    \(mark)const passes = \(test.condition);", "    if (passes) \(note(kept, ignoring: unsure))", "    else \(note(rest, ignoring: unsure))", "}"]
+        default:
+            return ["\(mark)if (\(test.condition)) {", "    \(note("[0, 1].map(() => \(kept))", ignoring: unsure))", "}"]
+        }
+    }
+
+    /// A `switch` over what `typeof` gives.
+    private func writeSwitchOverTypeof(on subject: Subject) -> [String] {
+        let s = subject.text
+        var lines = ["switch (typeof \(s)) {"]
+        var left = subject.type.arms
+        let isExact = isFollowed(subject.type) && !left.map(tag(of:)).contains(nil)
+        var tags = ["string", "number", "boolean", "object", "function", "undefined", "bigint", "symbol"]
+        for _ in 0..<(1 + choices.below(4)) {
+            let wanted = tags.remove(at: choices.below(tags.count))
+            let kept: Narrowed = isExact ? narrowed(left.filter { tag(of: $0) == wanted }) : (isFollowed(subject.type) ? .unfollowed : primitive(for: wanted).map { .type($0) } ?? .unfollowed)
+            left.removeAll { tag(of: $0) == wanted }
+            lines += ["    case \"\(wanted)\":", "        \(note(use(s, as: kept)))", "        break;"]
+        }
+        lines += ["    default:", "        \(note(use(s, as: isExact ? narrowed(left) : .unfollowed)))", "}"]
+        return lines
+    }
+
+    /// A `switch` over the value itself, with cases of its type and of others.
+    private func writeSwitchOverValue(on subject: Subject) -> [String] {
+        let s = subject.text
+        var lines = ["switch (\(s)) {"]
+        var cases = ["0", "1", "-1", "1.5", "\"\"", "\"a\"", "\"text\"", "true", "false", "null", "undefined", "10n"]
+        for _ in 0..<(2 + choices.below(4)) {
+            let value = cases.remove(at: choices.below(cases.count))
+            lines += ["    \(Self.ignoredLineMarker)case \(value):", "        \(note("[\(value), \(s)]"))", choices.percent(80) ? "        break;" : "        // Goes on."]
+        }
+        let isPlain = subject.type.arms.count == 1 && !subject.type.isLiterals && !subject.type.mentionsEnumeration && subject.type != .boolean
+        lines += ["    default:", "        \(note(isPlain ? use(s, as: subject.type) : s))", "}"]
+        return lines
+    }
+
+    /// A union with a member that tells its parts apart, around the value.
+    private func writeTaggedUnion(on subject: Subject) -> [String] {
+        let other = falsify(subject.type)
+        let tags = choices.pick([["\"first\"", "\"second\"", "\"third\""], ["1", "2", "3"], ["true", "false", "null"], ["\"a\"", "1", "undefined"]])
+        let given = choices.percent(70) ? choices.pick(tags) : choices.pick(["\"fourth\"", "4", "{}", "\"\""])
+        let first = use("tagged.value", as: subject.type)
+        let second = use("tagged.value", as: other)
+        var lines = [
+            "type Tagged = { kind: \(tags[0]); value: \(subject.type.text) } | { kind: \(tags[1]); value: \(other.text) } | { kind: \(tags[2]); other: number };",
+            "const tagged: Tagged = { kind: \(given), value: \(subject.text) } as any;",
+        ]
+        switch choices.below(4) {
+        case 0:
+            lines += [
+                "switch (tagged.kind) {", "    case \(tags[0]):", "        \(note(first))", "        break;", "    case \(tags[1]):",
+                "        \(note(second))", "        break;", "    case \(tags[2]):", "        \(note("tagged.other + 1"))", "        break;",
+                "    default:", "        const impossible: never = tagged;", "        \(note("impossible"))", "}",
+            ]
+        case 1:
+            lines += [
+                "if (tagged.kind === \(tags[0])) \(note(first))", "else if (tagged.kind !== \(tags[1])) \(note("tagged.other * 2"))",
+                "else \(note(second))",
+            ]
+        case 2:
+            lines += [
+                "const { kind } = tagged;", "if (\"other\" in tagged) \(note("tagged.other - 1"))",
+                "else if (tagged.kind === \(tags[1])) \(note(second))", "else \(note(first))", note("kind"),
+            ]
+        default:
+            lines += [
+                "const read = (from: Tagged): unknown => (from.kind === \(tags[0]) ? \(first.replacingOccurrences(of: "tagged.", with: "from.")) : from.kind === \(tags[1]) ? \(second.replacingOccurrences(of: "tagged.", with: "from.")) : from.other);",
+                "for (let turn = 0; turn < 3; turn++) \(note("read(tagged)"))",
+            ]
+        }
+        return lines
+    }
+
+    /// Reads that stop at `null` and `undefined`.
+    private func writeOptionalReads(on subject: Subject) -> [String] {
+        let s = subject.text
+        let present = subject.type.withoutNullish
+        guard isFollowed(subject.type), present.arms.count == 1, !present.isNullish else { return [note("\(s) ?? \"nothing\"")] }
+        var lines = [String]()
+        switch present.plain {
+        case .named(let name) where !allMembers(of: name).isEmpty:
+            let (key, member) = choices.pick(allMembers(of: name))
+            let isIdentifier = read(key, of: "") == ".\(key)"
+            let value = isIdentifier ? "\(s)?.\(key)" : "\(s)?.[\"\(key)\"]"
+            lines += [note(value), note("\(value) ?? \"absent\"")]
+            if !member.isOptional, !member.isMethod, present == present.plain {
+                lines += ["if (\(value) !== undefined) \(note(use(read(key, of: s), as: member.type, depth: 1), ignoring: true))"]
+            }
+        case .array, .readonlyArray, .tuple, .string:
+            lines += [note("\(s)?.length"), note("\(s)?.[0]"), note("(\(s)?.length ?? -1) + 1"), "if (\(s)?.length) \(note(use(s, as: present)))"]
+        case .number, .boolean, .bigint:
+            lines += [note("\(s)?.toString()"), note(use("(\(s) ?? \(present.plain == .number ? "0" : present.plain == .boolean ? "false" : "0n"))", as: present.plain))]
+        default:
+            lines += [note("\(s) ?? \"nothing\"")]
+        }
+        return lines
+    }
+
+    private func writeStatements(on subject: Subject) -> [String] {
+        helpers.insert("note")
+        switch choices.weighted([50, 10, 10, 15, 15]) {
+        case 1: return writeSwitchOverTypeof(on: subject)
+        case 2: return writeSwitchOverValue(on: subject)
+        case 3: return writeTaggedUnion(on: subject)
+        case 4: return writeOptionalReads(on: subject)
+        default: return writeTest(on: subject, as: subject.type)
+        }
+    }
+
+    private func enclose(_ lines: [String]) -> [String] {
+        let isGuarded = choices.percent(80)
+        var enclosed = [isGuarded ? "try {" : "{"]
+        enclosed += indented(lines)
+        enclosed += isGuarded ? ["} catch (error) {", "    \(note("(error as any)?.name"))", "}"] : ["}"]
+        return enclosed
+    }
+
+    /// A type to declare for a value that can be anything.
+    private func drawType() -> TypeScriptType {
+        func one() -> TypeScriptType {
+            if choices.percent(35), let name = pickNamedType(where: { !self.allMembers(of: $0).isEmpty }) { return .named(name) }
+            return choices.pick([
+                .number, .number, .string, .string, .boolean, .bigint, .symbol, .null, .undefined, .array(.number), .array(.string),
+                .tuple([.number, .string]), .readonlyArray(.number), .array(.union([.number, .string])),
+            ])
+        }
+        switch choices.below(10) {
+        case 0: return choices.pick([.unknown, .any])
+        case 1, 2, 3: return one()
+        case 4, 5, 6, 7: return .union(of: [one(), one()])
+        default: return .union(of: [one(), one(), one()])
+        }
+    }
+
+    /// What is written behind the declaration of a variable.
+    fileprivate func testsBehindDeclaration(of v: Variable, named name: String, isStore: Bool = false) -> [String] {
+        guard let index = indexOfDefinition[v], sitesWithTests < 10, inferred[v]?.group != "Date" else { return [] }
+        choose(at: index, for: 0x7e57)
+        guard choices.percent(settings.tested) else { return [] }
+        sitesWithTests += 1
+        if !isStore, let type = annotations[v], type != .int32, !type.arms.contains(.int32), choices.percent(60) {
+            var isExact = type.arms.count == 1 && type.plain != .boolean && !type.isLiterals && !type.mentionsEnumeration
+            switch outputConversions[v] {
+            case .toAny?, .throughUnknown?, .helper?, .parsed?: isExact = true
+            default: break
+            }
+            if isExact || acceptance != .casts {
+                return enclose(writeStatements(on: Subject(text: name, type: type, isConstant: !reassigned.contains(v), index: index)))
+            }
+        }
+        if choices.percent(50) { return sceneBehindDeclaration(of: v, named: name, at: index) }
+        let type = drawType()
+        let function = "test\(v.number)"
+        var given = [name]
+        for _ in 0..<(1 + choices.below(4)) { given.append(choices.pick(Self.valuesOfEveryKind)) }
+        let body = enclose(writeStatements(on: Subject(text: "value", type: type, isConstant: true, index: index)))
+        let calls =
+            choices.percent(50)
+            ? ["for (const given of [\(given.joined(separator: ", "))] as any[]) \(function)(given);"]
+            : given.map { "\(function)((\($0)) as any);" }
+        var lines = ["{", "    function \(function)(value: \(type.text)): void {"]
+        lines += indented(indented(body))
+        lines.append("    }")
+        lines += indented(calls)
+        lines.append("}")
+        return lines
+    }
+
+    /// Writes the tests between the lines of a program.
+    fileprivate func addTests(to lines: [Substring]) -> [Substring] {
+        let canTest = settings.tested > 0 && !code.contains { $0.op is BeginCodeString }
+        var result = [Substring]()
+        var storedTo = Set<Int>()
+        for line in lines {
+            let indentation = String(line.prefix(while: { $0 == " " }))
+            var added = [String]()
+            var written = line
+            if let marker = line.range(of: "/*tests "), let end = line[marker.upperBound...].range(of: "*/") {
+                let index = Int(line[marker.upperBound..<end.lowerBound])
+                written = Substring(line.replacingCharacters(in: marker.lowerBound..<end.upperBound, with: ""))
+                if canTest, let index, line.hasSuffix("{") { added = indented(testsBehindHead(at: index)) }
+            } else if canTest, line.hasSuffix(";"), !line.hasSuffix(" = undefined;") {
+                let words = line.dropFirst(indentation.count)
+                for keyword in ["const v", "let v", "v"] where words.hasPrefix(keyword) {
+                    let digits = words.dropFirst(keyword.count).prefix(while: \.isNumber)
+                    let rest = words.dropFirst(keyword.count + digits.count)
+                    guard let number = Int(digits) else { continue }
+                    if keyword == "v" {
+                        // A variable that is declared in front of a block and gets its value in it.
+                        if rest.hasPrefix(" = "), storedTo.insert(number).inserted {
+                            added = testsBehindDeclaration(of: Variable(number: number), named: "v\(number)", isStore: true)
+                        }
+                    } else if rest.hasPrefix(":") || rest.hasPrefix(" ") {
+                        added = testsBehindDeclaration(of: Variable(number: number), named: "v\(number)")
+                    }
+                }
+            }
+            result.append(written)
+            result += added.map { Substring(indentation + $0) }
+        }
+        return result
+    }
+
+    /// Whether the instruction is directly in a class that has a base class.
+    fileprivate func isInDerivedClass(_ index: Int) -> Bool {
+        var depth = 0
+        for i in stride(from: index - 1, through: 0, by: -1) {
+            if code[i].isBlockEnd { depth += 1 }
+            guard code[i].isBlockStart else { continue }
+            if depth == 0 {
+                if case .beginClassDefinition(let op) = code[i].op.opcode { return op.hasSuperclass }
+                return false
+            }
+            depth -= 1
+        }
+        return false
+    }
+
+    /// What is written at the start of a function.
+    fileprivate func testsBehindHead(at index: Int) -> [String] {
+        guard let parameters = testedParameters[index], sitesWithTests < 10 else { return [] }
+        choose(at: index, for: 0x7e58)
+        guard choices.percent(settings.tested * 2) else { return [] }
+        sitesWithTests += 1
+        let parameter = choices.pick(parameters)
+        return enclose(writeStatements(on: Subject(text: parameter.name, type: parameter.type, isConstant: parameter.isConstant, index: index)))
+    }
+}
+
+// MARK: Values on their way through a program
+
+extension TypeScriptPlan {
+    /// An expression over a value of the type, and the type that the checker gives it.
+    private func derive(_ s: String, from type: TypeScriptType) -> (text: String, type: TypeScriptType)? {
+        var steps: [(String, TypeScriptType)]
+        switch type {
+        case .number:
+            steps = [
+                ("\(s) + 1", .number), ("\(s) * 2", .number), ("\(s) | 0", .number), ("-\(s)", .number), ("\(s).toFixed(1)", .string),
+                ("`${\(s)}`", .string), ("\(s) < 3", .boolean), ("[\(s), \(s)]", .array(.number)), ("Math.max(\(s), 1)", .number),
+                ("convert(\(s))", .string),
+            ]
+            helpers.insert("convert")
+        case .string:
+            steps = [
+                ("\(s).length", .number), ("\(s) + \"!\"", .string), ("\(s).slice(1)", .string), ("\(s).split(\"\")", .array(.string)),
+                ("\(s).charCodeAt(0)", .number), ("\(s)[0]", .string), ("\(s) < \"m\"", .boolean), ("[\(s)]", .array(.string)),
+                ("convert(\(s))", .number), ("longest(\(s), \"ab\")", .string),
+            ]
+            helpers.insert("convert")
+            helpers.insert("longest")
+        case .boolean: steps = [("!\(s)", .boolean), ("\(s) ? 1 : 2", .number), ("Number(\(s))", .number), ("String(\(s))", .string)]
+        case .bigint: steps = [("\(s) + 1n", .bigint), ("\(s).toString()", .string), ("\(s) > 0n", .boolean)]
+        case .array(let element):
+            steps = [
+                ("\(s).length", .number), ("\(s).slice(0, 2)", type), ("[...\(s)]", type), ("\(s).map(element => element)", type),
+                ("\(s).join()", .string), ("\(s).concat(\(s))", type), ("\(s).filter(() => true)", type),
+            ]
+            if element != .any, element != .unknown { steps += [("\(s)[0]", element), ("\(s)[\(s).length - 1]", element)] }
+        case .tuple(let elements):
+            steps = [("\(s).length", .number)]
+            if let first = elements.first { steps.append(("\(s)[0]", first)) }
+        case .named(let name):
+            steps = allMembers(of: name).filter { !$0.member.isOptional && !$0.member.isMethod && $0.member.type != .int32 && genericFields[name] != $0.name }
+                .map { (read($0.name, of: s), $0.member.type) }
+        case .function(let parameters, let result) where !parameters.contains(where: \.isRest):
+            steps = [("\(s)(\(parameters.map { sample(of: $0.type) ?? "undefined as any" }.joined(separator: ", ")))", result)]
+        default: return nil
+        }
+        steps.removeAll { $0.1 == .untracked || $0.1 == .void }
+        return steps.isEmpty ? nil : choices.pick(steps)
+    }
+
+    /// A value that has the type.
+    private func sample(of type: TypeScriptType) -> String? {
+        switch type {
+        case .number: return choices.pick(["1", "0", "2.5", "-3", "1073741824"])
+        case .string: return choices.pick(["\"a\"", "\"\"", "\"sample\""])
+        case .boolean: return choices.pick(["true", "false"])
+        case .bigint: return "1n"
+        case .null: return "null"
+        case .undefined: return "undefined"
+        case .any, .unknown: return "0"
+        case .array(let element), .readonlyArray(let element): return sample(of: element).map { "[\($0), \($0)]" }
+        case .tuple(let elements):
+            let samples = elements.map(sample(of:))
+            return samples.contains(nil) ? nil : "[\(samples.map { $0! }.joined(separator: ", "))]"
+        case .union(let arms): return arms.first.flatMap(sample(of:))
+        default: return nil
+        }
+    }
+
+    /// Lines that hand a value on, and where it is afterwards.
+    private func carry(_ s: String, _ type: TypeScriptType, _ step: Int, site: Int) -> (lines: [String], text: String) {
+        if choices.percent(45) { return carryThroughDeclaredCode(s, type, step) }
+        var t = type.text
+        if case .function = type { t = "(\(t))" }
+        let list = TypeScriptType.array(type).text
+        switch choices.below(12) {
+        case 0: return (["const carried\(step) = \(s);"], "carried\(step)")
+        case 1: return (["const carried\(step): \(t) = \(s);"], "carried\(step)")
+        case 2: return (["const shelf\(step): { held: \(t) } = { held: \(s) };"], "shelf\(step).held")
+        case 3:
+            return (["let captured\(step): \(t) = \(s);", "const read\(step) = (): \(t) => captured\(step);", "const write\(step) = (next: \(t)): void => { captured\(step) = next; };", "write\(step)(read\(step)());"], "read\(step)()")
+        case 4:
+            moduleVariables.append("let kept\(site)_\(step): any;")
+            return (["kept\(site)_\(step) = \(s);", "const readKept\(step) = (): \(t) => kept\(site)_\(step);"], "readKept\(step)()")
+        case 5: return (["const handOn\(step) = (given: \(t)): \(t) => given;"], "handOn\(step)(\(s))")
+        case 6: return (["const list\(step): \(list) = [\(s), \(s)];"], choices.pick(["list\(step)[1]", "list\(step)[list\(step).length - 1]", "[...list\(step)][0]", "list\(step).map(element => element)[0]"]))
+        case 7: return (["const map\(step) = new Map<string, \(t)>([[\"key\", \(s)]]);"], "map\(step).get(\"key\")!")
+        case 8: return (["const [first\(step), ...others\(step)]: \(list) = [\(s), \(s)];"], choices.pick(["first\(step)", "others\(step)[0]"]))
+        case 9: return (["const { held: taken\(step) }: { held: \(t) } = { held: \(s) };"], "taken\(step)")
+        case 10:
+            helpers.insert("Keeper")
+            return (["const keeper\(step) = new Keeper<\(t)>(\(s));"], "keeper\(step).held")
+        default: return (["let found\(step): \(t) = \(s);", "for (const element of new Set<\(t)>([\(s)])) found\(step) = element;"], "found\(step)")
+        }
+    }
+
+    /// Through generic classes and functions, an abstract class, decorated members, a `this` parameter and classes of the function itself.
+    private func carryThroughDeclaredCode(_ s: String, _ type: TypeScriptType, _ step: Int) -> (lines: [String], text: String) {
+        var t = type.text
+        if case .function = type { t = "(\(t))" }
+        func with(_ helper: String) { helpers.insert(helper) }
+        switch choices.below(sceneIsAsync ? 14 : 13) {
+        case 0:
+            with("Pile")
+            return (["const pile\(step) = new Pile<\(t)>().add(\(s)).add(\(s));"], choices.pick(["pile\(step).top()", "pile\(step).map<\(t)>(item => item).top()", "pile\(step).all()[0]"]))
+        case 1:
+            with("Source")
+            return (["const source\(step): Source<\(t)> = new Fixed<\(t)>(\(s));"], choices.pick(["source\(step).take()", "source\(step).next()"]))
+        case 2:
+            with("Lazy")
+            return (["const lazy\(step) = new Lazy<\(t)>(() => \(s));"], "lazy\(step).value")
+        case 3:
+            with("Watched")
+            return (["const watched\(step) = new Watched<\(t)>(\(s));"], choices.pick(["watched\(step).read()", "watched\(step).held", "watched\(step).seen"]))
+        case 4:
+            return (["function readHeld\(step)(this: { held: \(t) }): \(t) { return this.held; }"], choices.pick(["readHeld\(step).call({ held: \(s) })", "readHeld\(step).apply({ held: \(s) })", "readHeld\(step).bind({ held: \(s) })()"]))
+        case 5:
+            with("Link")
+            return (["const link\(step): Link<\(t)> = { value: \(s), next: { value: \(s), next: null } };"], choices.pick(["link\(step).next!.value", "link\(step).value"]))
+        case 6:
+            with("Outcome")
+            return ([
+                "const wrap\(step) = (given: \(t)): Outcome<\(t)> => ({ ok: true, value: given });", "const outcome\(step) = wrap\(step)(\(s));",
+                "if (!outcome\(step).ok) throw new RangeError(outcome\(step).reason);",
+            ], "outcome\(step).value")
+        case 7:
+            return ([
+                "function inner\(step)(given: \(t)): \(t) { return given; }", "function outer\(step)(given: \(t)): \(t) { return inner\(step)(given); }",
+            ], "outer\(step)(\(s))")
+        case 8:
+            return ([
+                "class Carrier\(step) {", "    private held: \(t);", "    static last: \(t);", "    constructor(held: \(t)) { this.held = Carrier\(step).last = held; }",
+                "    read(): \(t) { return this.held; }", "}", "const carrier\(step) = new Carrier\(step)(\(s));",
+            ], choices.pick(["carrier\(step).read()", "Carrier\(step).last"]))
+        case 9:
+            with("pluck")
+            return (["const bag\(step) = { first: \(s), second: 1 };"], "pluck(bag\(step), \"first\")")
+        case 10:
+            with("choose")
+            return ([], "choose<\(t)>(\(s), \(s))")
+        case 11:
+            return (["function* give\(step)(given: \(t)): Generator<\(t), \(t), unknown> { yield given; return given; }"], choices.pick(["[...give\(step)(\(s))][0]", "give\(step)(\(s)).next().value"]))
+        case 12:
+            return (["const record\(step): Record<string, \(t)> = { key: \(s) };"], choices.pick(["record\(step).key", "record\(step)[\"key\"]", "Object.values(record\(step))[0]", "Object.entries(record\(step))[0][1]"]))
+        default:
+            let awaited = choices.pick(["await Promise.resolve(\(s))", "await (async (): Promise<\(t)> => \(s))()", "(await Promise.all([\(s)]))[0]"])
+            return (["const awaited\(step) = \(awaited);"], "awaited\(step)")
+        }
+    }
+
+    /// The value gets another declared type on its way.
+    private func declareAnew(_ s: String, _ type: TypeScriptType, _ step: Int) -> (lines: [String], text: String, type: TypeScriptType) {
+        let other = falsify(type)
+        var t = other.text
+        if case .function = other { t = "(\(t))" }
+        switch choices.below(5) {
+        case 0: return ([], "(\(s) as unknown as \(t))", other)
+        case 1:
+            helpers.insert("pass")
+            return ([], "pass<\(t)>(\(s) as any)", other)
+        case 2:
+            helpers.insert("Keeper")
+            return (["const other\(step) = new Keeper<\(t)>(\(s) as any);"], "other\(step).held", other)
+        case 3:
+            helpers.insert("Pile")
+            return (["const other\(step) = new Pile<\(t)>().add(\(s) as any);"], "other\(step).top()", other)
+        default: return (["const other\(step) = new Map<string, \(t)>([[\"key\", \(s) as any]]);"], "other\(step).get(\"key\")!", other)
+        }
+    }
+
+    /// A value goes through declarations, operations and calls, and is used as what the checker takes it for at the end.
+    private func writeJourney(of s: String, _ type: TypeScriptType, site: Int, firstStep: Int = 0) -> [String] {
+        var lines = [String]()
+        var (text, current) = (s, type)
+        for step in firstStep..<(firstStep + 1 + choices.below(4)) {
+            if choices.percent(12) {
+                let anew = declareAnew(text, current, step)
+                lines += anew.lines
+                lines.append("const anew\(step) = \(anew.text);")
+                (text, current) = ("anew\(step)", anew.type)
+            } else if choices.percent(50), let derived = derive(text, from: current) {
+                lines.append("const derived\(step) = \(derived.text);")
+                (text, current) = ("derived\(step)", derived.type)
+            } else {
+                let carried = carry(text, current, step, site: site)
+                lines += carried.lines
+                text = carried.text
+            }
+            if choices.percent(25) { lines.append(compareOnly(text, current)) }
+        }
+        if case .function = current, let called = derive(text, from: current) {
+            lines.append("const result\(firstStep) = \(called.text);")
+            (text, current) = ("result\(firstStep)", called.type)
+        }
+        lines.append(noteUse(of: text, current))
+        return lines
+    }
+
+    private func noteUse(of s: String, _ type: TypeScriptType) -> String {
+        helpers.insert("note")
+        return "note(\(use(s, as: type)));"
+    }
+
+    /// A statement that only looks at a value.
+    private func compareOnly(_ s: String, _ type: TypeScriptType) -> String {
+        helpers.insert("note")
+        let same = sample(of: type) ?? "null"
+        return choices.pick([
+            "\(Self.ignoredLineMarker)if (\(s) === \(same)) note(\"same\");", "\(Self.ignoredLineMarker)switch (\(s)) { case \(same): note(\"case\"); }",
+            "note(typeof \(s));", "\(Self.ignoredLineMarker)note(\(s) == \(same));", "note([\(s)].length);", "note(Object.is(\(s), \(s)));",
+        ])
+    }
+
+    /// The value arrives in a variable that held what its type says until then.
+    private func writeLateArrival(of s: String, _ type: TypeScriptType) -> [String]? {
+        guard let first = sample(of: type) else { return nil }
+        let turns = choices.pick([2, 3, 4, 30])
+        let arrival = choices.below(turns)
+        var lines = ["let held: \(type.text) = \(first);", "for (let turn = 0; turn < \(turns); turn++) {"]
+        if choices.percent(50) {
+            lines += ["    \(noteUse(of: "held", type))", "    if (turn === \(arrival)) held = \(s);"]
+        } else {
+            lines += ["    if (turn === \(arrival)) held = \(s);", "    \(noteUse(of: "held", type))"]
+        }
+        lines += ["}", noteUse(of: "held", type)]
+        return lines
+    }
+
+    private func drawPlainType() -> TypeScriptType {
+        if choices.percent(30), let name = pickNamedType(where: { !self.allMembers(of: $0).isEmpty }) { return .named(name) }
+        return choices.pick([
+            .number, .number, .string, .string, .boolean, .bigint, .array(.number), .array(.string), .tuple([.number, .string]),
+            .array(.array(.number)), .union([.number, .string]), .union([.string, .null]), .union([.number, .undefined]),
+        ])
+    }
+
+    private func drawFunctionType() -> TypeScriptType {
+        let parameter = choices.pick([TypeScriptType.number, .string, .boolean, .array(.number)])
+        let result = choices.pick([TypeScriptType.number, .string, .boolean, .array(.number), .array(.string)])
+        return .function(choices.percent(80) ? [TypeScriptParameter(name: "given", type: parameter)] : [], result)
+    }
+
+    private static let functionsOfEveryKind = [
+        "(given: any) => given", "() => \"text\"", "() => 1.5", "() => undefined", "() => [\"a\"]", "function (this: any) { return this; }",
+        "Math.abs", "String", "Array", "async () => 1", "function* () { yield 1; }", "(given: any) => ({ given })", "parseInt",
+        "[].push", "Object.keys", "(...all: any[]) => all", "(() => 1).bind(null)", "Symbol",
+    ]
+
+    /// A function of its own that takes values of every kind as a declared type.
+    fileprivate func sceneBehindDeclaration(of v: Variable, named name: String, at index: Int) -> [String] {
+        let site = v.number
+        let takesFunction = choices.percent(15)
+        let first = takesFunction ? drawFunctionType() : drawPlainType()
+        let second = drawPlainType()
+        let hasSecond = choices.percent(40)
+        var body = [String]()
+        let kind = choices.below(6)
+        sceneIsAsync = kind == 2
+        switch choices.below(hasSecond ? 5 : 4) {
+        case 0, 1: body = writeJourney(of: "value", first, site: site)
+        case 2: body = writeLateArrival(of: "value", first) ?? writeJourney(of: "value", first, site: site)
+        case 3:
+            body = [compareOnly("value", first)] + writeJourney(of: "value", first, site: site)
+        default:
+            body = writeStatements(on: Subject(text: "other", type: second, isConstant: true, index: index))
+            body += [noteUse(of: "value", first), noteUse(of: "other", second)]
+        }
+        if hasSecond, choices.percent(50) { body += writeJourney(of: "other", second, site: site, firstStep: 10) }
+        let gaps = body.indices.filter { !body[$0].hasPrefix(" ") && !body[$0].hasPrefix("}") && !body[$0].hasPrefix("else") } + [body.count]
+        if kind == 2 { body.insert("await null;", at: choices.pick(gaps)) }
+        if kind == 3 { body.insert("yield 1;", at: choices.pick(gaps)) }
+        let guarded = choices.percent(75)
+        var lines = ["{"]
+        let parameters = "value: \(first.text)\(hasSecond ? ", other: \(second.text)" : "")"
+        let function = "scene\(site)"
+        switch kind {
+        case 2: lines.append("    async function \(function)(\(parameters)): Promise<void> {")
+        case 3: lines.append("    function* \(function)(\(parameters)): Generator<number, void, unknown> {")
+        case 4: lines.append("    const \(function) = (\(parameters)): void => {")
+        default: lines.append("    function \(function)(\(parameters)): void {")
+        }
+        if guarded { lines.append("        try {") }
+        lines += body.map { "\(guarded ? "            " : "        ")\($0)" }
+        if guarded { lines += ["        } catch (error) {", "            note((error as any)?.name);", "        }"] }
+        lines.append(kind == 4 ? "    };" : "    }")
+        var given = [name]
+        for _ in 0..<(1 + choices.below(4)) { given.append(choices.pick(takesFunction && choices.percent(70) ? Self.functionsOfEveryKind : Self.valuesOfEveryKind)) }
+        if let right = sample(of: first), choices.percent(60) { given.insert(right, at: 0) }
+        let others = given.reversed().map { $0 }
+        for (i, value) in given.enumerated() {
+            let call = "\(function)((\(value)) as any\(hasSecond ? ", (\(others[i])) as any" : ""))"
+            switch kind {
+            case 2: lines.append("    \(call).catch(() => note(\"rejected\"));")
+            case 3: lines.append("    try { note([...\(call)]); } catch { note(\"threw\"); }")
+            default: lines.append(guarded ? "    \(call);" : "    try { \(call); } catch { note(\"threw\"); }")
+            }
+        }
+        lines.append("}")
+        helpers.insert("note")
+        return lines
     }
 }
 
@@ -2540,8 +3635,57 @@ extension ILType {
 /// Throws for a program that stores to a built-in or to a member of one, that names a private member outside the class
 /// that declares it or declares one twice, that calls `super()` in a class without a base class, or that has a regular
 /// expression with the flag `v`, whose patterns Fuzzilli doesn't write.
+/// Whether a `*`, `+`, `?` or `{n}` in the pattern follows nothing that can be repeated.
+private func repeatsNothing(_ pattern: String) -> Bool {
+    let characters = Array(pattern)
+    var canRepeat = false
+    var isInClass = false
+    var i = 0
+    while i < characters.count {
+        let c = characters[i]
+        i += 1
+        if isInClass {
+            if c == "\\" { i += 1 }
+            if c == "]" { (isInClass, canRepeat) = (false, true) }
+            continue
+        }
+        switch c {
+        case "\\":
+            canRepeat = i < characters.count && characters[i] != "b" && characters[i] != "B"
+            i += 1
+        case "[": isInClass = true
+        case "(":
+            canRepeat = false
+            if i < characters.count, characters[i] == "?" {
+                i += 1
+                while i < characters.count, !":=!>".contains(characters[i]) { i += 1 }
+                i += 1
+            }
+        case "|", "^", "$": canRepeat = false
+        case "*", "+", "?":
+            if !canRepeat { return true }
+            canRepeat = false
+            if i < characters.count, characters[i] == "?" { i += 1 }
+        case "{":
+            var end = i
+            while end < characters.count, characters[end].isNumber || characters[end] == "," { end += 1 }
+            guard end > i, end < characters.count, characters[end] == "}", characters[i].isNumber else {
+                canRepeat = true
+                continue
+            }
+            if !canRepeat { return true }
+            canRepeat = false
+            i = end + 1
+            if i < characters.count, characters[i] == "?" { i += 1 }
+        default: canRepeat = true
+        }
+    }
+    return false
+}
+
 func rejectProgramThatCannotBuild(_ program: Program, in environment: JavaScriptEnvironment) throws {
     var builtins = Set<Variable>()
+    var strings = Set<Variable>()
     var privateNames = [Set<String>]()
     var classesHaveBases = [Bool]()
     func use(_ name: String) throws {
@@ -2554,12 +3698,16 @@ func rejectProgramThatCannotBuild(_ program: Program, in environment: JavaScript
             throw InternalError.postProcessRejection("a store to a built-in")
         }
         switch instr.op.opcode {
+        case .loadString: strings.insert(instr.output)
         case .setProperty, .updateProperty, .setElement, .updateElement, .setComputedProperty, .updateComputedProperty:
             if builtins.contains(instr.input(0)) { throw InternalError.postProcessRejection("a store to a member of a built-in") }
+            let name = (instr.op as? SetProperty)?.propertyName ?? (instr.op as? UpdateProperty)?.propertyName
+            if name == "length", strings.contains(instr.input(0)) { throw InternalError.postProcessRejection("a store to the length of a string") }
         case .callSuperConstructor:
             if classesHaveBases.last != true { throw InternalError.postProcessRejection("super() without a base class") }
         case .loadRegExp(let op):
             if op.flags.contains(.unicodeSets) { throw InternalError.postProcessRejection("a regular expression with the flag v") }
+            if repeatsNothing(op.pattern) { throw InternalError.postProcessRejection("a regular expression that repeats nothing") }
         case .createNamedVariable(let op):
             if op.declarationMode == .none, environment.builtins.contains(op.variableName) { builtins.insert(instr.output) }
         case .beginClassDefinition(let op):

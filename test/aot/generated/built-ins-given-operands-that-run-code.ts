@@ -415,17 +415,14 @@ function writeCase(index: number, callable: Callable, position: number, kind: Ki
 
 // What the built-ins themselves print is not compared: the program starts itself again with nothing to print to, its cases write their lines to the file that AOT_LINES_FILE names, and it prints that file.
 // Whoever sets AOT_LINES_FILE gets the cases at once, from the one whose number is in process.argv[2] on.
-// Plain Bun describes an operand that a native function rejects by running code of the operand, and an executable does not (docs/compiler/compatibility.mdx). With builtins/differential/describe-values-as-an-executable.ts
-// beside the program plain Bun does as an executable does. A case whose call throws says no more than that all the same, unless AOT_EVERY_LINE is set. Then each case also says what it reads a little later, which hangs on the clock.
-export const fileThatDescribes = "describe-values-as-an-executable.ts";
+// A case whose call throws says no more than that, unless AOT_EVERY_LINE is set. Then each case also says what it reads a little later, which hangs on the clock.
 const epilogue = (count: number) => `
 const fs = require("node:fs");
 if (!process.env.AOT_LINES_FILE) {
   const file = require("node:path").join(require("node:os").tmpdir(), "lines-of-" + process.pid + ".txt");
   const isExecutable = /[$]bunfs|~BUN/.test(process.argv[1]);
-  const describing = require("node:path").join(require("node:path").dirname(process.argv[1]), "${fileThatDescribes}");
   const folder = fs.mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "files-of-the-cases-"));
-  const child = require("node:child_process").spawnSync(process.execPath, isExecutable ? [] : [...(fs.existsSync(describing) ? ["--expose-internals", "--preload", describing] : []), process.argv[1]], { cwd: folder, env: { ...process.env, AOT_LINES_FILE: file }, stdio: ["ignore", "ignore", "pipe"] });
+  const child = require("node:child_process").spawnSync(process.execPath, isExecutable ? [] : [process.argv[1]], { cwd: folder, env: { ...process.env, AOT_LINES_FILE: file }, stdio: ["ignore", "ignore", "pipe"] });
   fs.rmSync(folder, { recursive: true, force: true });
   console.log(fs.readFileSync(file, "utf8"));
   console.log(String(child.stderr).split("\\n").filter(line => line.startsWith("AOT ")).join("\\n"));

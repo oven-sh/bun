@@ -23,4 +23,4 @@ let cb20 = () => 1; function call20() { return cb20(); } log(20, call20()); cb20
 let once21; function set21(v) { once21 = v; } set21(1); log(21, once21); [2, "3"].forEach(set21); log(21, once21);
 function f23(a = b23, b23 = 1) { return a; } try { f23(); } catch (e) { log(23, e.constructor.name); } log(23, f23(2));
 
-import * as self26 from "./variables-that-change-behind-a-conversion-a-getter-or-a-callback.js"; export let exported26 = 1; log(26, self26.exported26); exported26 = 2; log(26, self26.exported26, Object.keys(self26).join()); try { self26.exported26 = 3; } catch (e) { log(26, e.constructor.name); }
+import * as self26 from "./variables-that-change-behind-a-conversion-a-getter-or-a-callback.js"; export let exported26 = 1; log(26, self26.exported26); exported26 = 2; log(26, self26.exported26, Object.keys(self26).join()); const other26 = self26; try { other26.exported26 = 3; } catch (e) { log(26, e.constructor.name); }

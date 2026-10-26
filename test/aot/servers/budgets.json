@@ -1,6 +1,6 @@
 {
   "node": {
-    "codeBytes": 4536336,
+    "codeBytes": 4619588,
     "bytesAValue": 33.08,
     "tests": {
       "executed": 10569,
@@ -65,8 +65,8 @@
     }
   },
   "express": {
-    "codeBytes": 7626108,
-    "bytesAValue": 32.6,
+    "codeBytes": 7791720,
+    "bytesAValue": 33.3,
     "tests": {
       "executed": 14131,
       "failed": 751
@@ -137,8 +137,8 @@
     }
   },
   "hono": {
-    "codeBytes": 1728584,
-    "bytesAValue": 24.14,
+    "codeBytes": 1744968,
+    "bytesAValue": 24.3,
     "tests": {
       "executed": 4936,
       "failed": 191
@@ -183,8 +183,8 @@
     }
   },
   "fastify": {
-    "codeBytes": 10894484,
-    "bytesAValue": 33.79,
+    "codeBytes": 11082392,
+    "bytesAValue": 34.48,
     "tests": {
       "executed": 14791,
       "failed": 559
@@ -278,8 +278,8 @@
     }
   },
   "elysia": {
-    "codeBytes": 5810320,
-    "bytesAValue": 26.2,
+    "codeBytes": 5893820,
+    "bytesAValue": 26.43,
     "tests": {
       "executed": 4313,
       "failed": 265
@@ -462,7 +462,7 @@
   },
   "bun": {
     "codeBytes": 1580704,
-    "bytesAValue": 23.84,
+    "bytesAValue": 23.99,
     "tests": {
       "executed": 4063,
       "failed": 142
@@ -504,8 +504,8 @@
     }
   },
   "koa": {
-    "codeBytes": 6774672,
-    "bytesAValue": 29.12,
+    "codeBytes": 6860920,
+    "bytesAValue": 29.36,
     "tests": {
       "executed": 21537.02,
       "failed": 724.01

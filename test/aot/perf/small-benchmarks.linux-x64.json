@@ -43,7 +43,7 @@
     "millionInstructions": 148,
     "testsFailed": 80000,
     "alwaysFailing": 2,
-    "accessesByName": 160000,
+    "accessesByName": 79999,
     "runtimeOperations": 80745,
     "callsNotExpected": 10
   },
@@ -59,7 +59,7 @@
     "millionInstructions": 65,
     "testsFailed": 120000,
     "alwaysFailing": 2,
-    "accessesByName": 5,
+    "accessesByName": 0,
     "runtimeOperations": 20,
     "callsNotExpected": 7
   },
@@ -67,7 +67,7 @@
     "millionInstructions": 22,
     "testsFailed": 4,
     "alwaysFailing": 2,
-    "accessesByName": 4014,
+    "accessesByName": 4,
     "runtimeOperations": 2110,
     "callsNotExpected": 5
   },
@@ -201,10 +201,10 @@
   },
   "the-jobs-of-coroutines-follow-one-another": {
     "millionInstructions": 111,
-    "testsFailed": 60,
+    "testsFailed": 20,
     "alwaysFailing": 3,
-    "accessesByName": 1122,
-    "runtimeOperations": 1354,
+    "accessesByName": 79,
+    "runtimeOperations": 876,
     "callsNotExpected": 0
   },
   "tokens-maps-objects": {

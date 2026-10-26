@@ -11,9 +11,12 @@ function never(key) {
   byIndex[0] = 1;
   star.added += 1;
   star.defaulted ||= 1;
+  star.conjoined &&= 1;
+  star.default = 1;
   star.incremented++;
   --star.decremented;
   [star.element] = [1];
+  [star.elementWithDefault = 0] = [1];
   [...star.rest] = [1];
   ({ a: star.property } = { a: 1 });
   for (star.ofLoop of [1]);

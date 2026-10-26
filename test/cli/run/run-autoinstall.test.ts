@@ -165,6 +165,63 @@ test.concurrent("an installed package is not fetched for a directory created aft
   expect(exitCode).toBe(0);
 });
 
+// The first step caches "not found" for `my-app`. A bare import from `my-app` then started in the
+// directory above it: the node_modules of `my-app` was not searched, and the registry copy ran.
+test.each([
+  [
+    "a failed require() of its package.json",
+    `
+      try {
+        require(path.join(app, "package.json"));
+      } catch {}
+    `,
+    [],
+  ],
+  [
+    "a Bun.build() and a failed import of a package from it",
+    `
+      const build = () => Bun.build({ entrypoints: [path.join(__dirname, "probe.js")], throw: false });
+      fs.writeFileSync(path.join(__dirname, "probe.js"), 'require("./probe/page.js");');
+      await build();
+      fs.mkdirSync(path.join(__dirname, "probe"));
+      fs.writeFileSync(path.join(__dirname, "probe", "page.js"), "");
+      while (!(await build()).success) {}
+      try {
+        Bun.resolveSync("pkg-that-does-not-exist-anywhere", app);
+      } catch {}
+    `,
+    ["/pkg-that-does-not-exist-anywhere"],
+  ],
+])("an installed package is not fetched for a project created after %s", async (_, early, requests) => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-created-project", {
+    "index.js": `
+      const fs = require("fs");
+      const path = require("path");
+      const { createRequire } = require("module");
+      const app = path.join(__dirname, "my-app");
+      const write = (file, contents) => {
+        fs.mkdirSync(path.dirname(path.join(app, file)), { recursive: true });
+        fs.writeFileSync(path.join(app, file), contents);
+      };
+      (async () => {
+        ${early}
+        write("package.json", JSON.stringify({ name: "my-app", dependencies: { "no-deps": "1.0.0" } }));
+        write("node_modules/no-deps/package.json", JSON.stringify({ name: "no-deps", version: "1.0.0" }));
+        write("node_modules/no-deps/index.js", 'module.exports = require("./package.json");');
+        console.log(createRequire(path.join(app, "noop.js"))("no-deps").version);
+      })();
+    `,
+    "bunfig.toml": registry.bunfig,
+  });
+
+  const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+  expect(stdout).toBe("1.0.0\n");
+  expect(stderr).not.toContain("error");
+  expect(registry.requests).toEqual(requests);
+  expect(exitCode).toBe(0);
+});
+
 // A directory of mode 0o311 can be entered but not listed. Each script sets that mode and restores it.
 // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
 describe.skipIf(isWindows)("an installed package is not fetched", () => {
@@ -200,7 +257,7 @@ describe.skipIf(isWindows)("an installed package is not fetched", () => {
     "bunfig.toml": registry.bunfig,
   });
 
-  async function run(script: string, unlistable: string) {
+  async function run(script: string, unlistable: string, env: Record<string, string> = {}) {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-unlistable", project(script, registry));
     using unprivileged = unprivilegedSpawnOptions(String(dir));
@@ -208,7 +265,7 @@ describe.skipIf(isWindows)("an installed package is not fetched", () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "index.js"],
         cwd: String(dir),
-        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"), ...env },
         stdout: "pipe",
         stderr: "pipe",
         ...unprivileged,
@@ -252,6 +309,73 @@ describe.skipIf(isWindows)("an installed package is not fetched", () => {
         "a/b",
       ),
     ).toEqual({ stdout: "page 1.0.0\n", stderr: "", requests: [], exitCode: 0 });
+  });
+
+  // The resolver opens pages/a/b again when pages/a/b/c is looked up. That fails, and the failure is
+  // kept: more lookups from pages/a/b/c do not open pages/a/b again. The debug build logs each open.
+  test.skipIf(!isDebug)("a directory that still cannot be listed is not opened again for each lookup", async () => {
+    const opens = async (lookups: number) => {
+      const { stdout, stderr, requests, exitCode } = await run(
+        `
+        for (let i = 0; i < 3; i++) missing("a/b/c/d/page.js");
+        write("a/b/c/d/page.js", "module.exports = 'page';");
+        unlistable("a/b", () => {
+          const c = path.join(pages, "a", "b", "c");
+          for (let i = 0; i < ${lookups}; i++) createRequire(c + path.sep).resolve("no-deps");
+        });
+      `,
+        "a/b",
+        { BUN_DEBUG_fs: "1" },
+      );
+      expect({ requests, exitCode }).toEqual({ requests: [], exitCode: 0 });
+      return (stdout + stderr).match(/^\[fs\] open\(.*\/pages\/a\/b\/\)$/gm)?.length ?? 0;
+    };
+    const one = await opens(1);
+    expect(one).toBeGreaterThan(0);
+    expect(one).toBeLessThanOrEqual(2);
+    expect(await opens(50)).toBe(one);
+  });
+
+  // pages/a, pages/a/b and pages/a/b/c are cached as "not found". The build finds the file through the
+  // listing of pages/a/b/c, so the resolver looks pages/a/b/c up again. pages/a/b does not open, so
+  // pages/a/b/c cannot get its parents: it stays "not found", and the import of no-deps starts in a
+  // directory above, as before.
+  test("Bun.build() of a file in a directory below one that cannot be listed", async () => {
+    expect(
+      await run(
+        `
+        (async () => {
+          const build = entry => Bun.build({ entrypoints: [path.join(__dirname, entry)], throw: false });
+          // The first builds of a process can run at resolver generation 0, where a cached "not found" is
+          // final (#38212). Build until one build reads such a directory again: each later build does too.
+          fs.writeFileSync(path.join(__dirname, "probe.js"), 'require("./probe/page.js");');
+          await build("probe.js");
+          fs.mkdirSync(path.join(__dirname, "probe"));
+          fs.writeFileSync(path.join(__dirname, "probe", "page.js"), "");
+          while (!(await build("probe.js")).success) {}
+          for (let i = 0; i < 2; i++) {
+            try {
+              Bun.resolveSync("./a/b/c/page.js", pages);
+            } catch {}
+          }
+          write("a/b/c/page.js", 'module.exports = require("no-deps");');
+          fs.writeFileSync(path.join(__dirname, "entry.js"), 'require("./pages/a/b/c/page.js");');
+          fs.chmodSync(path.join(pages, "a", "b"), 0o311);
+          try {
+            const result = await build("entry.js");
+            console.log(
+              result.success
+                ? (await result.outputs[0].text()).includes("node_modules/no-deps/")
+                : result.logs.map(String).join("; "),
+            );
+          } finally {
+            fs.chmodSync(path.join(pages, "a", "b"), 0o755);
+          }
+        })();
+      `,
+        "a/b",
+      ),
+    ).toEqual({ stdout: "true\n", stderr: "", requests: [], exitCode: 0 });
   });
 });
 

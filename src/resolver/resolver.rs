@@ -571,6 +571,42 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// Set while the resolver looks up a directory whose "not found" it dropped by itself.
+    /// If the directory cannot get its parents, it is cached as "not found" again.
+    pub(crate) keep_not_found: bool,
+    /// The last directory that did not open failed with an error that can go away by itself.
+    pub(crate) open_error_is_transient: bool,
+    /// `load_as_file` found an entry that is not a file for the path of its last call.
+    pub(crate) listed_not_file: bool,
+}
+
+/// The kind of a directory lookup: one byte, as the `bool` that it replaces. The last three
+/// kinds look again at a directory that the cache has as "not found"
+/// (`Resolver::recheck_not_found_dir`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirLookup {
+    /// A directory that cannot be read is not logged.
+    Quiet,
+    /// A directory that cannot be read is logged.
+    Logged,
+    /// As `Logged`, for the directory that a package import starts in. Nothing shows that a
+    /// "not found" directory exists now, so one failed look is the last one.
+    ImportSource,
+    /// As `Quiet`, for the directory of a file that the resolver found: the directory exists.
+    FoundFile,
+    /// As `Logged`, for an imported directory that the listing of the directory above names.
+    /// The resolver looks again when the stored listing names it as a directory.
+    ImportedDir,
+}
+
+impl DirLookup {
+    fn logs(self) -> bool {
+        !matches!(self, Self::Quiet | Self::FoundFile)
+    }
+    fn rechecks(self) -> bool {
+        !matches!(self, Self::Quiet | Self::Logged)
+    }
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -648,6 +684,9 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            keep_not_found: false,
+            open_error_is_transient: false,
+            listed_not_file: false,
         }
     }
 
@@ -970,6 +1009,9 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            keep_not_found: false,
+            open_error_is_transient: false,
+            listed_not_file: false,
         }
     }
 
@@ -1583,7 +1625,8 @@ impl<'a> Resolver<'a> {
         while let Some(path) = iter.next() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
-            let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
+            let dir = self.dir_info_cached_maybe_log(DirLookup::FoundFile, name.dir);
+            let Ok(Some(dir)) = dir else {
                 continue;
             };
 
@@ -2233,7 +2276,8 @@ impl<'a> Resolver<'a> {
         global_cache: GlobalCache,
     ) -> ResultUnion {
         let mut import_path = unremapped_import_path;
-        let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
+        let source_dir_info = self.dir_info_cached_maybe_log(DirLookup::ImportSource, source_dir);
+        let mut source_dir_info: DirInfoRef = match source_dir_info {
             Err(_) => return ResultUnion::NotFound,
             Ok(Some(d)) => d,
             Ok(None) => 'dir: {
@@ -2437,6 +2481,95 @@ impl<'a> Resolver<'a> {
             MatchStatus::Failure(p) => ResultUnion::Failure(p),
             MatchStatus::NotFound => ResultUnion::NotFound,
         }
+    }
+
+    /// Flags of `RealFS::not_found_checks`. The directory did not open again when a directory
+    /// below it opened: the walk does not open it again.
+    const REOPEN_FAILED: u8 = 1 << 0;
+    /// A look at the directory failed that `DirLookup::ImportSource` asked for.
+    const BLIND_CHECK_FAILED: u8 = 1 << 1;
+    /// A look at the directory failed that a listing asked for.
+    const LISTED_CHECK_FAILED: u8 = 1 << 2;
+
+    /// The cache has `key` as "not found", and the lookup that found that did not cache it:
+    /// drops the "not found" and looks `key` up again. Not when an earlier look with no more
+    /// reason than this one failed. `unlock` is the caller's guard of the resolver mutex.
+    #[cold]
+    #[inline(never)]
+    fn recheck_not_found_dir(
+        &mut self,
+        lookup: DirLookup,
+        key: &[u8],
+        hash: u64,
+        unlock: bun_threading::MutexGuard,
+    ) -> Option<DirInfoRef> {
+        let (blocked_by, failed) = if lookup == DirLookup::ImportSource {
+            (
+                Self::BLIND_CHECK_FAILED | Self::LISTED_CHECK_FAILED,
+                Self::BLIND_CHECK_FAILED,
+            )
+        } else {
+            (Self::LISTED_CHECK_FAILED, Self::LISTED_CHECK_FAILED)
+        };
+        let rfs = self.rfs_ptr();
+        let parent_listing = {
+            // SAFETY: the process-global RealFS singleton.
+            let rfs = unsafe { &mut *rfs };
+            let _lock = rfs.entries_mutex.lock_guard();
+            if !rfs.not_found_checks.is_empty()
+                && rfs
+                    .not_found_checks
+                    .get(&hash)
+                    .is_some_and(|checks| checks & blocked_by != 0)
+            {
+                return None;
+            }
+            if lookup == DirLookup::ImportedDir {
+                let parent = strings::without_trailing_slash_windows_path(Dirname::dirname(key));
+                if parent.is_empty() || parent.len() >= key.len() {
+                    return None;
+                }
+                Some(bun_ptr::BackRef::new(&*rfs.entries.get(parent)?))
+            } else {
+                None
+            }
+        };
+        if let Some(parent_listing) = parent_listing {
+            let base = bun_paths::basename(key);
+            let (named, _) = parent_listing.get().lookup(base);
+            let named = named?;
+            // SAFETY: as in `load_as_file`: the lazy stat inside `kind()` is serialized on the entry's mutex.
+            let kind = unsafe { named.entry().kind(rfs, self.store_fd) };
+            if named.entry().base() != base || kind != Fs::file_system::EntryKind::Dir {
+                return None;
+            }
+        }
+        self.dir_cache_mut().remove(key);
+        drop(unlock);
+        // The lookup below writes the buffer that `key` can be in.
+        let mut key_buf = bun_paths::path_buffer_pool::get();
+        key_buf[..key.len()].copy_from_slice(key);
+        let key = &key_buf[..key.len()];
+        self.keep_not_found = true;
+        self.open_error_is_transient = false;
+        let found = self.read_dir_info(key).ok().flatten();
+        self.keep_not_found = false;
+        if found.is_none() {
+            let _unlock = self.mutex.lock_guard();
+            // The lookup can end at a directory above `key`: `key` is "not found" as it was.
+            if let Ok(again) = self.dir_cache_mut().get_or_put(key)
+                && again.status == allocators::ItemStatus::Unknown
+            {
+                self.dir_cache_mut().mark_not_found(again);
+            }
+            if !self.open_error_is_transient {
+                // SAFETY: the process-global RealFS singleton.
+                let rfs = unsafe { &mut *rfs };
+                let _lock = rfs.entries_mutex.lock_guard();
+                *rfs.not_found_checks.entry(hash).or_default() |= failed;
+            }
+        }
+        found
     }
 
     /// Directory cache keys must follow the following rules. If the rules are broken,
@@ -4186,30 +4319,32 @@ impl<'a> Resolver<'a> {
     }
 
     fn dir_info_cached(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
-        self.dir_info_cached_maybe_log(true, path)
+        self.dir_info_cached_maybe_log(DirLookup::Logged, path)
     }
 
     pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
-        self.dir_info_cached_maybe_log(false, path)
+        self.dir_info_cached_maybe_log(DirLookup::Quiet, path)
     }
 
     /// Like `readDirInfo`, but returns `null` instead of throwing an error.
     pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-        self.dir_info_cached_maybe_log(false, path).ok().flatten()
+        self.dir_info_cached_maybe_log(DirLookup::Quiet, path)
+            .ok()
+            .flatten()
     }
 
     // NOTE: `follow_symlinks` is `true` at every call
-    // site, so it's dropped here; `enable_logging` is a plain runtime parameter
-    // (it gates one cold error-formatting branch) so this large dir-walk function
+    // site, so it's dropped here; `lookup` is a plain runtime parameter
+    // (it gates two cold branches) so this large dir-walk function
     // monomorphizes to a single copy instead of two faulted in at startup.
     fn dir_info_cached_maybe_log(
         &mut self,
-        enable_logging: bool,
+        lookup: DirLookup,
         raw_input_path: &[u8],
     ) -> crate::CrateResult<Option<DirInfoRef>> {
         // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
         // doesn't keep `self` borrowed across the body.
-        let _unlock = self.mutex.lock_guard();
+        let unlock = self.mutex.lock_guard();
         let mut input_path = raw_input_path;
 
         if is_dot_slash(input_path) || input_path == b"." {
@@ -4278,13 +4413,19 @@ impl<'a> Resolver<'a> {
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::ItemStatus::Unknown {
-            return Ok(self
+            let cached = self
                 .dir_cache_mut()
                 .at_index(top_result.index)
-                .map(DirInfoRef::from_slot));
+                .map(DirInfoRef::from_slot);
+            // This lookup did not cache the "not found" itself: the directory can be newer.
+            if cached.is_none() && lookup.rechecks() {
+                let key = path_without_trailing_slash;
+                return Ok(self.recheck_not_found_dir(lookup, key, top_result.hash, unlock));
+            }
+            return Ok(cached);
         }
 
-        self.dir_info_cached_miss(enable_logging, input_path, top_result)
+        self.dir_info_cached_miss(lookup, input_path, top_result)
     }
 
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
@@ -4296,7 +4437,7 @@ impl<'a> Resolver<'a> {
     #[inline(never)]
     fn dir_info_cached_miss(
         &mut self,
-        enable_logging: bool,
+        lookup: DirLookup,
         input_path: &[u8],
         top_result: allocators::Result,
     ) -> crate::CrateResult<Option<DirInfoRef>> {
@@ -4545,8 +4686,33 @@ impl<'a> Resolver<'a> {
                     match open_req {
                         Ok(fd) => break 'open_dir fd,
                         Err(err) => {
+                            self.open_error_is_transient = matches!(
+                                err,
+                                crate::Error::Sys(
+                                    bun_errno::SystemErrno::EMFILE
+                                        | bun_errno::SystemErrno::ENFILE
+                                        | bun_errno::SystemErrno::ENOMEM
+                                        | bun_errno::SystemErrno::EINTR
+                                        | bun_errno::SystemErrno::EAGAIN
+                                )
+                            );
                             // An ancestor that still does not open: it and the ancestors below it stay as cached.
                             if queue_slice_len >= reopened_from {
+                                if !self.open_error_is_transient {
+                                    // SAFETY: `queue_ancestors_to_reopen` initialised this slot: the
+                                    // directory above the first one.
+                                    let above = unsafe { queue[reopened_from].assume_init_ref() };
+                                    *rfs!()
+                                        .not_found_checks
+                                        .entry(above.result.hash)
+                                        .or_default() |= Self::REOPEN_FAILED;
+                                }
+                                if self.keep_not_found {
+                                    // SAFETY: slot 0 is the directory that the caller asked for.
+                                    let asked = unsafe { queue[0].assume_init_ref() }.result;
+                                    self.dir_cache_mut().mark_not_found(asked);
+                                    return Ok(None);
+                                }
                                 queue_slice_len = reopened_from;
                                 top_parent = Self::NO_PARENT;
                                 continue 'walk;
@@ -4592,7 +4758,7 @@ impl<'a> Resolver<'a> {
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                                if enable_logging {
+                                if lookup.logs() {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
                                         None,
@@ -4623,9 +4789,9 @@ impl<'a> Resolver<'a> {
 
             // A listing that `read_directory` cached first names the directory with no separator at the end.
             let dir_path: &'static [u8] = if queue_top_safe_path.last() == Some(&SEP) {
-                // SAFETY: non-empty `safe_path` is always a dirname_store-backed
-                // `&'static [u8]` (set from `entries.dir` above); widen the
-                // `RawSlice`-tied borrow back to its true `'static` lifetime.
+                // SAFETY: a `safe_path` that is not empty is always a dirname_store-backed
+                // `&'static [u8]` (set from `entries.dir` above), and one that ends with `SEP`
+                // is not empty; widen the `RawSlice`-tied borrow back to its true `'static` lifetime.
                 unsafe { bun_ptr::detach_lifetime(queue_top_safe_path) }
             } else {
                 // ensure trailing slash
@@ -4778,12 +4944,22 @@ impl<'a> Resolver<'a> {
             if below_negative {
                 below_negative = false;
                 let mut len = queue_slice_len + 1;
-                if let Some(above) = self.queue_ancestors_to_reopen(
-                    queue,
-                    &mut len,
-                    Dirname::dirname(&path[..queue_top_unsafe_path.len()]),
-                    &path[..root_path_len],
-                )? {
+                let above_len = Dirname::dirname(&path[..queue_top_unsafe_path.len()]).len();
+                let still_fails = !rfs!().not_found_checks.is_empty() && {
+                    let above = self.dir_cache_mut().get_or_put(&path[..above_len])?;
+                    rfs!()
+                        .not_found_checks
+                        .get(&above.hash)
+                        .is_some_and(|checks| checks & Self::REOPEN_FAILED != 0)
+                };
+                if !still_fails
+                    && let Some(above) = self.queue_ancestors_to_reopen(
+                        queue,
+                        &mut len,
+                        &path[..above_len],
+                        &path[..root_path_len],
+                    )?
+                {
                     // SAFETY: this slot is the initialised item that `queue_top` is a clone of.
                     let slot = unsafe { queue[queue_slice_len].assume_init_mut() };
                     slot.safe_path = bun_ptr::RawSlice::new(dir_path);
@@ -4793,6 +4969,17 @@ impl<'a> Resolver<'a> {
                     queue_slice_len = len;
                     continue 'walk;
                 }
+                if self.keep_not_found {
+                    // SAFETY: slot 0 is the directory that the caller asked for.
+                    let asked = unsafe { queue[0].assume_init_ref() }.result;
+                    self.dir_cache_mut().mark_not_found(asked);
+                    return Ok(None);
+                }
+            }
+
+            // The directory is found: what failed while it was "not found" is out of date.
+            if !rfs!().not_found_checks.is_empty() {
+                rfs!().not_found_checks.remove(&queue_top.result.hash);
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -5696,6 +5883,7 @@ impl<'a> Resolver<'a> {
         let extension_order = self.extension_order;
 
         // Is this a file?
+        self.listed_not_file = false;
         if let Some(file) = self.load_as_file(path, extension_order) {
             // Determine the package folder by looking at the last node_modules/ folder in the path
             let nm_seg = const_format::concatcp!("node_modules", SEP_STR).as_bytes();
@@ -5759,7 +5947,13 @@ impl<'a> Resolver<'a> {
         // NOTE: `DirInfoRef` (not `&mut`).
         // The callees fetch `get_enclosing_browser_scope()` which can resolve
         // back to this same BSSMap slot — holding a `&mut` here would alias.
-        let dir_info: DirInfoRef = match self.dir_info_cached(path) {
+        // A listing that names `path` is a reason to look again at a "not found" of it.
+        let lookup = if self.listed_not_file {
+            DirLookup::ImportedDir
+        } else {
+            DirLookup::Logged
+        };
+        let dir_info: DirInfoRef = match self.dir_info_cached_maybe_log(lookup, path) {
             Ok(Some(d)) => d,
             Ok(None) => dec_ret!(MatchStatus::NotFound),
             Err(_err) => {
@@ -6052,6 +6246,7 @@ impl<'a> Resolver<'a> {
                     file_fd: query.entry().cache().fd,
                 }));
             }
+            self.listed_not_file = true;
         }
 
         // Try the path with extensions

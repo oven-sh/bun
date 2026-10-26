@@ -902,6 +902,11 @@ pub mod fs {
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
+        /// What failed when the resolver looked again at a directory that is cached as "not
+        /// found": flags (`Resolver::REOPEN_FAILED` and the two after it) by key hash. The same
+        /// look is not made again until the directory is found. Guarded by `entries_mutex`.
+        pub(crate) not_found_checks:
+            bun_collections::HashMap<u64, u8, bun_collections::IdentityContext<u64>>,
         pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
         pub(crate) file_limit: usize,
@@ -918,6 +923,7 @@ pub mod fs {
             RealFS {
                 entries_mutex: Mutex::default(),
                 entries: EntriesMap::new(),
+                not_found_checks: Default::default(),
                 cwd,
                 #[cfg(not(windows))]
                 file_limit,
@@ -1190,10 +1196,6 @@ pub mod fs {
             );
 
             let out = self.entries.put(&mut cache_result, result)?;
-            if cache_result.status == bun_alloc::ItemStatus::NotFound {
-                // The directory exists now, so its "not found" in the `DirInfo` cache is stale too.
-                crate::dir_info::forget_not_found(dir);
-            }
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
             Ok(unsafe { &mut *out })
         }

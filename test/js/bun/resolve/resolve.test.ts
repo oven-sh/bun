@@ -2430,9 +2430,9 @@ describe.concurrent("a directory created below one that was looked up while it w
     expect(exitCode).toBe(0);
   });
 
-  // Not fixed, and the same on main: pages/a/b itself is cached as "not found", so the lookup starts in pages
-  // and skips pages/a/node_modules. Node prints "pages/a/node_modules/dep/index.js" for the second line.
-  it("a bare resolve from the directory that was itself looked up while it was missing starts above it", async () => {
+  // pages/a/b itself is cached as "not found". A bare import from such a directory looks the directory
+  // up again before it starts in a directory above: the lookup used to start in pages and skip pages/a.
+  it("a bare resolve from the directory that was itself looked up while it was missing starts in it", async () => {
     const { stdout, stderr, exitCode } = await run(`
       const dir = path.join(pages, "a", "b");
       console.log(resolve("./a/b/page.ts", pages));
@@ -2440,7 +2440,108 @@ describe.concurrent("a directory created below one that was looked up while it w
       fs.mkdirSync(dir, { recursive: true });
       console.log(resolve("dep", dir));
     `);
-    expect(stdout).toEqual(["ERR_MODULE_NOT_FOUND", "node_modules/dep/index.js"]);
+    expect(stdout).toEqual(["ERR_MODULE_NOT_FOUND", "pages/a/node_modules/dep/index.js"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The failed imports cache "not found" for plugins and for plugins/foo/bar.
+  it("a bare resolve from a directory that was imported two times while it was missing gives its own copy", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const plugin = path.join(root, "plugins", "foo", "bar");
+      for (let i = 0; i < 2; i++) console.log(await load(plugin));
+      write("plugins/foo/bar/node_modules/dep/index.js", 'module.exports = "dep of the plugin";');
+      write("plugins/foo/bar/index.js", "module.exports = 'plugin';");
+      console.log(resolve("dep", plugin));
+      console.log(relative(createRequire(plugin + path.sep).resolve("dep")));
+    `);
+    expect(stdout).toEqual([
+      "ERR_MODULE_NOT_FOUND",
+      "ERR_MODULE_NOT_FOUND",
+      "plugins/foo/bar/node_modules/dep/index.js",
+      "plugins/foo/bar/node_modules/dep/index.js",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // plugins is opened again when plugins/foo is read. plugins/foo/bar is looked up after that, while it is
+  // missing: it is cached as "not found" below a directory that has its parents.
+  it("a bare resolve from a directory that was missed after its parent was read gives its own copy", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const foo = path.join(root, "plugins", "foo");
+      console.log(resolve("./plugins/x.js", root));
+      write("plugins/foo/a.js", "export default 'a';");
+      console.log(await load(path.join(foo, "a.js")));
+      console.log(resolve("./bar/x.js", foo));
+      write("plugins/foo/bar/node_modules/dep/index.js", 'module.exports = "dep of the plugin";');
+      console.log(resolve("dep", path.join(foo, "bar")));
+    `);
+    expect(stdout).toEqual([
+      "ERR_MODULE_NOT_FOUND",
+      "a",
+      "ERR_MODULE_NOT_FOUND",
+      "plugins/foo/bar/node_modules/dep/index.js",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // Each resolve from pages/a answers from a directory above it. The second one checks pages/a again, and
+  // that check fails. The failure must not stop the walk from opening pages/a when pages/a/b is read.
+  it("a directory below one that was resolved from two times while it was missing gets its parents", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const a = path.join(pages, "a");
+      for (let i = 0; i < 2; i++) console.log(resolve("pkg", a));
+      write("pages/a/b/page.ts", 'import pkg from "pkg"; export default pkg;');
+      console.log(resolve("pkg", path.join(a, "b")));
+      console.log(await load(path.join(a, "b", "page.ts")));
+    `);
+    expect(stdout).toEqual([
+      "node_modules/pkg/index.js",
+      "node_modules/pkg/index.js",
+      "node_modules/pkg/index.js",
+      "pkg",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // As above, and the failed check must not stop the check that the listing of pages asks for.
+  it("a directory import resolves after two resolves from the directory while it was missing", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const one = path.join(pages, "one");
+      for (let i = 0; i < 2; i++) console.log(resolve("pkg", one));
+      write("pages/one/index.ts", 'import pkg from "pkg"; export default "index of one, " + pkg;');
+      console.log(resolve("./one", pages));
+      console.log(await load(one));
+    `);
+    expect(stdout).toEqual([
+      "node_modules/pkg/index.js",
+      "node_modules/pkg/index.js",
+      "pages/one/index.ts",
+      "index of one, pkg",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The retry of the failed lookup lists pages again. That listing names pages/one as a directory, so the
+  // resolver looks pages/one up again.
+  it.each([1, 2, 3])("a directory import resolves after %d failed lookups of the directory", async count => {
+    const { stdout, stderr, exitCode } = await run(`
+      const failed = [];
+      for (let i = 0; i < ${count}; i++) failed.push(resolve("./one", pages));
+      write("pages/one/index.ts", 'import pkg from "pkg"; export default "index of one, " + pkg;');
+      console.log(failed.join(" "));
+      console.log(resolve("./one", pages));
+      console.log(await load(path.join(pages, "one")));
+    `);
+    expect(stdout).toEqual([
+      Array(count).fill("ERR_MODULE_NOT_FOUND").join(" "),
+      "pages/one/index.ts",
+      "index of one, pkg",
+    ]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
@@ -2491,8 +2592,9 @@ describe.concurrent("a directory created below one that was looked up while it w
   });
 
   // A failed build caches "not found" for the first two levels of the path that are missing. The next
-  // build lists the directory of the file: that drops the directory's own "not found". The levels above
-  // it are opened again. pages/four is imported by an absolute path.
+  // build finds the file through the listing of its directory. The directory is still cached as "not
+  // found" then: the resolver looks it up again, and the levels above it are opened again.
+  // pages/four is imported by an absolute path.
   // Serial: the runner ends the child of a test that times out only when the test does not run in a group.
   it.serial("Bun.build() after a lookup that failed on the missing path", async () => {
     const { stdout, stderr, exitCode } = await run(`
@@ -2530,6 +2632,92 @@ describe.concurrent("a directory created below one that was looked up while it w
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // The build finds the file through the listing of pages/one. pages/one is still cached as "not found"
+  // then, and the file was compiled without the tsconfig.json of the directories above it.
+  // With 2 resolves from pages/one while it is missing, the second one checks pages/one again and fails.
+  // That failure must not stop the check that the found file asks for.
+  it.serial.each([0, 2])(
+    "Bun.build() of a file applies the tsconfig.json above it after a build that did not find its directory and %d resolves from it",
+    async resolves => {
+      const { stdout, stderr, exitCode } = await run(
+        `
+      const build = entry => Bun.build({ entrypoints: [path.join(root, entry)], throw: false, external: ["react", "react/*"] });
+      // As in the test above: build until a build reads a directory again that was "not found".
+      write("probe.ts", 'import page from "./probe/page.ts"; console.log(page);');
+      await build("probe.ts");
+      write("probe/page.ts", "export default 1;");
+      while (!(await build("probe.ts")).success) {}
+      write("one.ts", 'import page from "./pages/one/page.tsx"; console.log(page);');
+      const failed = await build("one.ts");
+      for (let i = 0; i < ${resolves}; i++) resolve("pkg", path.join(pages, "one"));
+      write("pages/one/page.tsx", "export default <div />;");
+      const result = await build("one.ts");
+      const bundle = result.success ? await result.outputs[0].text() : result.logs.map(log => String(log.message)).join("; ");
+      console.log(failed.success, ["jsxDEV(", "h("].filter(call => bundle.includes(call + '"div"')).join(", ") || bundle);
+    `,
+        { "pages/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "h" } }) },
+      );
+      expect(stdout).toEqual(["false h("]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // A build reads the listing of pages again only when it runs at a newer generation than that listing.
+  // The first such build names pages/five as a directory, so the resolver looks pages/five up again.
+  it.serial("Bun.build() of a directory import after a build that did not find the directory", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const build = entry => Bun.build({ entrypoints: [path.join(root, entry)], throw: false });
+      // As in the test above: build until a build reads a directory again that was "not found".
+      write("probe.ts", 'import page from "./probe/page.ts"; console.log(page);');
+      await build("probe.ts");
+      write("probe/page.ts", "export default 1;");
+      while (!(await build("probe.ts")).success) {}
+      write("five.ts", 'import page from "./pages/five"; console.log(page);');
+      const failed = await build("five.ts");
+      write("pages/five/index.ts", 'import pkg from "pkg"; export default ["index of five", pkg];');
+      // A timeout of this test means that no build found the directory.
+      let result;
+      while (!(result = await build("five.ts")).success) {}
+      const bundle = await result.outputs[0].text();
+      const modules = ["index of five", "node_modules/pkg/index.js"];
+      console.log(failed.success, modules.filter(module => bundle.includes(module)).join(", ") || bundle);
+    `);
+    expect(stdout).toEqual(["false index of five, node_modules/pkg/index.js"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // pages/y/b/d is cached as "not found" and pages/y is listed after pages/y/b/d exists. A resolve from
+  // pages/y/b/d after a Bun.build() gives the copy in it, as a resolve in a process with no build does.
+  it.serial.each(["after a Bun.build()", "with no Bun.build()"])(
+    "a bare resolve from a directory that was looked up while it was missing gives its own copy, %s",
+    async order => {
+      const { stdout, stderr, exitCode } = await run(`
+      if (${JSON.stringify(order)} === "after a Bun.build()") {
+        const build = () => Bun.build({ entrypoints: [path.join(root, "probe.ts")], throw: false });
+        write("probe.ts", 'import page from "./probe/page.ts"; console.log(page);');
+        await build();
+        write("probe/page.ts", "export default 1;");
+        while (!(await build()).success) {}
+      }
+      console.log(resolve("dep", path.join(pages, "y", "b")));
+      console.log(resolve("./y/b/d", pages));
+      write("pages/y/b/d/node_modules/dep/index.js", 'module.exports = "dep of pages/y/b/d";');
+      console.log(resolve("./y/page.ts", pages));
+      console.log(resolve("dep", path.join(pages, "y", "b", "d")));
+    `);
+      expect(stdout).toEqual([
+        "node_modules/dep/index.js",
+        "ERR_MODULE_NOT_FOUND",
+        "ERR_MODULE_NOT_FOUND",
+        "pages/y/b/d/node_modules/dep/index.js",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // On Windows these are not how the resolver spells the path, and it was asked again about its own spelling.

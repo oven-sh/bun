@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -689,5 +689,183 @@ devTest("dev.write resolves only after the new module body has run", {
     // dev.write resolves on bun:afterUpdate, i.e. after replaceModules has
     // awaited the 500ms TLA. Acking on WS receipt would see "initial" here.
     expect(await c.js`globalThis.marker`).toBe("updated");
+  },
+});
+
+devTest("the modules that accept a hot update wait for a saved module with top-level await", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./one";
+      import "./two";
+    `,
+    "one.ts": `
+      import { v } from "./tla";
+      console.log("one saw " + v);
+      import.meta.hot.accept();
+    `,
+    "two.ts": `
+      import { v } from "./tla";
+      console.log("two saw " + v);
+      import.meta.hot.accept();
+    `,
+    "tla.ts": `
+      await 0;
+      export const v = "v1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one saw v1", "two saw v1");
+    // The update evaluates "tla", then "one" and "two". "tla" is still suspended at its await then.
+    await dev.write(
+      "tla.ts",
+      `
+        await 0;
+        export const v = "v2";
+      `,
+    );
+    await c.expectMessage("one saw v2", "two saw v2");
+  },
+});
+
+devTest("a request waits for a saved module that waits on top-level await", {
+  framework: minimalFramework,
+  files: {
+    "saved.ts": `
+      export const version = "v1";
+    `,
+    "routes/index.ts": `
+      import { version } from "../saved";
+      export default function () {
+        return new Response("index " + version);
+      }
+    `,
+    // "late" is loaded for the first time while the new "saved" waits. "open" runs first and
+    // lets "saved" continue, but "saved" does not resume before "late" gets to it.
+    "open.ts": `
+      globalThis.openSaved();
+    `,
+    "routes/late.ts": `
+      import "../open";
+      import * as saved from "../saved";
+      const added = saved.added();
+      export default function () {
+        return new Response("late " + saved.version + " " + added);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index v1");
+    await dev.write(
+      "saved.ts",
+      `
+        const { promise, resolve } = Promise.withResolvers();
+        globalThis.openSaved = resolve;
+        await promise;
+        export const version = "v2";
+        export const added = () => "added";
+      `,
+    );
+    await dev.fetch("/late").equals("late v2 added");
+    // The route is loaded now. It is not stored as a route that failed.
+    await dev.fetch("/late").equals("late v2 added");
+  },
+});
+
+devTest("a hot update replaces a module whose top-level await never ends", {
+  framework: minimalFramework,
+  files: {
+    "stuck.ts": `
+      await new Promise(() => {});
+      export const version = "v1";
+    `,
+    "routes/index.ts": `
+      export default function () {
+        import("../stuck");
+        return new Response("started");
+      }
+    `,
+    "routes/read.ts": `
+      import { version } from "../stuck";
+      export default function () {
+        return new Response(version);
+      }
+    `,
+    // The new code of "stuck" imports "cycle", and "cycle" imports "stuck" back.
+    "cycle.ts": `
+      import { version } from "./stuck";
+      export const readVersion = () => version;
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("started");
+    // "cycle" gets the new "stuck" as it is. It does not wait for the evaluation that never ends.
+    await dev.write(
+      "stuck.ts",
+      `
+        import { readVersion } from "./cycle";
+        export const version = "v2";
+        export const viaCycle = () => readVersion();
+      `,
+    );
+    await dev.fetch("/read").equals("v2");
+  },
+});
+
+devTest("a load during a hot update waits for a module that the update makes CommonJS", {
+  framework: minimalFramework,
+  files: {
+    // The ES code of "flipped" waits until "end-flipped" runs.
+    "flipped.ts": `
+      await new Promise(resolve => (globalThis.endFlipped = resolve));
+      export const kind = "esm";
+    `,
+    // The update waits for this dispose callback before it evaluates a module again.
+    "parks.ts": `
+      import.meta.hot.accept();
+      import.meta.hot.dispose(() => new Promise(resolve => (globalThis.endDispose = resolve)));
+      export const parks = 1;
+    `,
+    "routes/index.ts": `
+      import "../parks";
+      export default function () {
+        import("../flipped");
+        return new Response("started");
+      }
+    `,
+    // "end-flipped" runs first and lets "flipped" continue, but "flipped" does not resume
+    // before "late" gets to it.
+    "end-flipped.ts": `
+      globalThis.endFlipped();
+    `,
+    "routes/late.ts": `
+      import "../end-flipped";
+      import { kind } from "../flipped";
+      const kindAtLoad = kind;
+      export default function () {
+        return new Response("late " + kindAtLoad + " " + kind);
+      }
+    `,
+    "routes/end-dispose.ts": `
+      export default function () {
+        globalThis.endDispose();
+        return new Response("ended");
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("started");
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write("flipped.ts", `module.exports = { kind: "commonjs" };`);
+      await dev.patch("parks.ts", { find: "parks = 1", replace: "parks = 2" });
+    }
+    // The update has the CommonJS code of "flipped" and waits for the dispose callback. The ES
+    // code of "flipped" is still in flight, and "late" waits for it.
+    await dev.fetch("/late").equals("late esm esm");
+    // The update continues and evaluates the CommonJS code.
+    await dev.fetch("/end-dispose").equals("ended");
+    await dev.fetch("/late").equals("late esm commonjs");
   },
 });

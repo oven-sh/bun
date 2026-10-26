@@ -326,6 +326,328 @@ devTest("importer tracking survives flipping a module from ESM to CJS", {
     await c.expectMessage("leaf 2", "index run 3");
   },
 });
+// The loader visits the whole graph of an entry point before a suspended module resumes. So
+// "tla" is still suspended at its await when the loader gets to "b" and "c".
+const topLevelAwaitDiamond = {
+  "tla.ts": `
+    console.log("tla start");
+    await 0;
+    export const v = "tla";
+    console.log("tla end");
+  `,
+  // The first importer. It has no await: it waits for "tla".
+  "a.ts": `
+    import { v } from "./tla";
+    export const a = "a(" + v + ")";
+  `,
+  // The second importer of a module that waits on its own await.
+  "b.ts": `
+    import { v } from "./tla";
+    export const b = "b(" + v + ")";
+  `,
+  // The second importer of a module that waits for an import.
+  "c.ts": `
+    import { a } from "./a";
+    export const c = "c(" + a + ")";
+  `,
+};
+devTest("every importer waits for a module that waits on top-level await (client)", {
+  files: {
+    ...topLevelAwaitDiamond,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { a } from "./a";
+      import { b } from "./b";
+      import { c } from "./c";
+      console.log(a + " " + b + " " + c);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("tla start", "tla end", "a(tla) b(tla) c(a(tla))");
+  },
+});
+devTest("every importer waits for a module that waits on top-level await (server)", {
+  framework: {
+    ...minimalFramework,
+    fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], layouts: true }],
+  },
+  files: {
+    ...topLevelAwaitDiamond,
+    // The server loads the page and then the layout. Each of the two is a load of its own.
+    "routes/_layout.ts": `
+      import { v } from "../tla";
+      export const layout = "layout(" + v + ")";
+    `,
+    "routes/index.ts": `
+      import { a } from "../a";
+      import { b } from "../b";
+      import { c } from "../c";
+      export default function (req, meta) {
+        return new Response([a, b, c, ...meta.layouts.map(layout => layout.layout)].join(" "));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("a(tla) b(tla) c(a(tla)) layout(tla)");
+    // The route is loaded now. It is not stored as a route that failed.
+    await dev.fetch("/").equals("a(tla) b(tla) c(a(tla)) layout(tla)");
+  },
+});
+devTest("an importer outside an import cycle waits for the cycle's module that waits on top-level await", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { a } from "./a";
+      import { outside } from "./outside";
+      console.log(a + " " + outside);
+    `,
+    "a.ts": `
+      import { b } from "./b";
+      export const a = "a(" + b + ")";
+    `,
+    // "a" is not done when "b" runs: "b" is the import of "a". So "b" gets "a" as it is.
+    "b.ts": `
+      import { a } from "./a";
+      await 0;
+      export const b = "b";
+      export const readA = () => a;
+    `,
+    // "outside" is not in the cycle. It runs after "a" and "b".
+    "outside.ts": `
+      import { a } from "./a";
+      import { readA } from "./b";
+      export const outside = "outside(" + a + "," + readA() + ")";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("a(b) outside(a(b),a(b))");
+  },
+});
+devTest("import() waits for a module that waits on top-level await", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // "one" starts "tla". "two" gets to it from a second load, and the last import() asks for it directly.
+    "index.ts": `
+      const [one, two, tla] = await Promise.all([import("./one"), import("./two"), import("./tla")]);
+      console.log(one.one + " " + two.two + " " + tla.v);
+    `,
+    "one.ts": `
+      import { v } from "./tla";
+      export const one = "one(" + v + ")";
+    `,
+    "two.ts": `
+      import { v } from "./tla";
+      export const two = "two(" + v + ")";
+    `,
+    "tla.ts": `
+      await 0;
+      export const v = "tla";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("one(tla) two(tla) tla");
+  },
+});
+devTest("a module that awaits import() of a module that imports it back does not wait for itself", {
+  // "back" cannot wait for "m": "m" only ends after the import() of "back" does. As in Bun's
+  // runtime, "back" gets "m" as it is, and its binding is set when "m" ends.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { m, readFromBack } from "./m";
+      console.log("index saw " + m);
+      console.log(readFromBack());
+    `,
+    "m.ts": `
+      await 0;
+      const back = await import("./back");
+      export const m = "m";
+      export const readFromBack = back.read;
+    `,
+    "back.ts": `
+      import { m } from "./m";
+      console.log("back ran");
+      export const read = () => "back reads " + m;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("back ran", "index saw m", "back reads m");
+  },
+});
+devTest("require() of a module that waits on top-level await throws", {
+  framework: minimalFramework,
+  files: {
+    "tla.ts": `
+      await 0;
+      export const v = "tla";
+    `,
+    "a.ts": `
+      import { v } from "./tla";
+      export const a = "a(" + v + ")";
+    `,
+    // It waits for "tla", and it has an await too.
+    "own.ts": `
+      import { v } from "./tla";
+      await 0;
+      export const own = "own(" + v + ")";
+    `,
+    // It has no import, so it runs while "tla", "a" and "own" wait.
+    "probes.ts": `
+      function tryRequire(load) {
+        try {
+          return "returned " + JSON.stringify(load());
+        } catch (e) {
+          return "threw: " + e.message;
+        }
+      }
+      export const tla = tryRequire(() => require("./tla"));
+      export const a = tryRequire(() => require("./a"));
+      export const own = tryRequire(() => require("./own"));
+    `,
+    "routes/index.ts": `
+      import { a } from "../a";
+      import { own } from "../own";
+      import * as whileItWaits from "../probes";
+      export default function () {
+        return Response.json({ a, own, whileItWaits, afterTheLoad: require("../tla").v });
+      }
+    `,
+    // CommonJS, so that the next load evaluates it again after it threw.
+    "flaky.ts": `
+      if (!globalThis.flakyThrew) {
+        globalThis.flakyThrew = true;
+        throw new Error("flaky failed");
+      }
+      module.exports = { flaky: "flaky" };
+    `,
+    "x.ts": `
+      import { flaky } from "./flaky";
+      await 0;
+      export const x = "x(" + flaky + ")";
+    `,
+    "routes/refused.ts": `
+      export default async function () {
+        const steps = [];
+        // "flaky" throws the first time, so "x" is not evaluated.
+        try {
+          await import("../x");
+          steps.push("loaded");
+        } catch (e) {
+          steps.push(e.message);
+        }
+        try {
+          require("../x");
+          steps.push("required");
+        } catch {
+          steps.push("refused");
+        }
+        // The require() that was refused does not stop the next import from evaluating "x".
+        const ns = await import("../x");
+        steps.push(ns === null ? "null" : ns.x);
+        return Response.json(steps);
+      }
+    `,
+    // "back" imports "top", which waits. So the body of "top" cannot require "back" either.
+    "top.ts": `
+      await 0;
+      let result;
+      try {
+        require("./back");
+        result = "required";
+      } catch (e) {
+        result = e.message;
+      }
+      export const fromTop = result;
+    `,
+    "back.ts": `
+      import { fromTop } from "./top";
+      export const back = () => fromTop;
+    `,
+    "routes/cycle.ts": `
+      import { fromTop } from "../top";
+      export default function () {
+        return new Response(fromTop);
+      }
+    `,
+  },
+  async test(dev) {
+    // The same errors as before the load starts. Each names the module that has the await: the
+    // required module if it has one, else the import that it waits for.
+    const refused = (id: string, hasAwait: string) =>
+      `threw: Cannot require "${id}" because "${hasAwait}" uses top-level await, but 'require' is a synchronous operation.`;
+    expect(await dev.fetch("/").json()).toEqual({
+      a: "a(tla)",
+      own: "own(tla)",
+      whileItWaits: {
+        tla: refused("tla.ts", "tla.ts"),
+        a: refused("a.ts", "tla.ts"),
+        own: refused("own.ts", "own.ts"),
+      },
+      afterTheLoad: "tla",
+    });
+    expect(await dev.fetch("/refused").json()).toEqual(["flaky failed", "refused", "x(flaky)"]);
+    await dev
+      .fetch("/cycle")
+      .equals(
+        `Cannot require "back.ts" because "top.ts" uses top-level await, but 'require' is a synchronous operation.`,
+      );
+  },
+});
+devTest("a module that waits on top-level await and fails, fails every importer that waits for it", {
+  framework: minimalFramework,
+  files: {
+    "tla.ts": `
+      await 0;
+      throw new Error("tla failed");
+      export const v = "unreachable";
+    `,
+    "a.ts": `
+      import { v } from "./tla";
+      export const a = "a(" + v + ")";
+    `,
+    "b.ts": `
+      import { v } from "./tla";
+      export const b = "b(" + v + ")";
+    `,
+    "routes/index.ts": `
+      import { a } from "../a";
+      import { b } from "../b";
+      export default function () {
+        return new Response(a + " " + b);
+      }
+    `,
+    "routes/other.ts": `
+      export default function () {
+        return new Response("other");
+      }
+    `,
+  },
+  async test(dev) {
+    // The dev error page embeds its payload as JSON (see src/runtime/server/DevErrorPage.rs).
+    const errorPagePayload = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/;
+    for (let i = 0; i < 2; i++) {
+      const failed = await dev.fetch("/");
+      const payload = JSON.parse(errorPagePayload.exec(await failed.text())![1]);
+      expect(payload.problems.exceptions.map((exception: { message: string }) => exception.message)).toEqual([
+        "tla failed",
+      ]);
+      expect(failed.status).toBe(500);
+    }
+    await dev.fetch("/other").equals("other");
+  },
+});
 devTest("cannot require a module with top level await", {
   // TODO: after the module-loader rewrite the dev server's /_bun/report_error
   // handler can hang (never responds), so the client overlay never mounts and

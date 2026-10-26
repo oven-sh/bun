@@ -35,6 +35,8 @@ let refreshRuntime: any;
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
  * thrown upon first usage. */
 let lazyDynamicImportWithOptions: null | Function = null;
+/** The module whose `import()` started the load that is on the stack. */
+let importCaller: HMRModule | null = null;
 
 const enum State {
   Pending,
@@ -90,6 +92,13 @@ interface CJSModule {
   require: (id: Id) => unknown;
 }
 
+interface InFlightLoad {
+  /** What `loadModuleAsync` returned to the importer that started the evaluation. */
+  promise: Promise<HMRModule>;
+  /** The module whose top-level await the evaluation waits on. `require()` names it. */
+  asyncId: Id;
+}
+
 /** Implementation details must remain in sync with the parser (src/js_parser) and bundler (src/bundler/bundle_v2.rs) */
 export class HMRModule {
   /** Key in `registry` */
@@ -105,6 +114,10 @@ export class HMRModule {
   /** When a module fails to load, trying to load it again
    *  should throw the same error */
   failure: unknown = null;
+  /** The evaluation that waits: on its own top-level await, or for an import that waits.
+   *  It counts only while `state` is `Pending`. A `Pending` module without it is on the
+   *  load stack, and an import cycle gets that module as it is. */
+  loading: InFlightLoad | null = null;
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
    * 2. any[] - List of module namespace objects. Read by the ESM module's load function.
@@ -156,7 +169,14 @@ export class HMRModule {
 
   /** Lowered from `.e_import` (import(id)) */
   dynamicImport(id: Id, opts?: ImportCallOptions) {
-    const found = loadModuleAsync(id, true, this);
+    const outerCaller = importCaller;
+    importCaller = this;
+    let found: HMRModule | Promise<HMRModule> | null;
+    try {
+      found = loadModuleAsync(id, true, this);
+    } finally {
+      importCaller = outerCaller;
+    }
     if (found) {
       if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
       return (found as Promise<HMRModule>).then(getEsmExports);
@@ -299,16 +319,21 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
   // First, try and re-use an existing module.
   let mod = registry.get(id);
   if (mod) {
-    if (mod.state === State.Error) throw mod.failure;
-    if (mod.state === State.Stale) {
-      mod.state = State.Pending;
-      isUserDynamic = false;
-    } else {
-      if (importer) {
-        mod.importers.add(importer);
-      }
+    const state = mod.state;
+    if (state === State.Loaded) {
+      if (importer) mod.importers.add(importer);
       return mod;
     }
+    if (state === State.Error) throw mod.failure;
+    if (state === State.Pending) {
+      // A synchronous load cannot wait for an evaluation that is in flight.
+      if (mod.loading !== null) throw new AsyncImportError(mod.loading.asyncId);
+      if (importer) mod.importers.add(importer);
+      return mod;
+    }
+    mod.state = State.Pending;
+    mod.loading = null;
+    isUserDynamic = false;
   }
   const loadOrEsmModule = unloadedModuleRegistry[id];
   if (!loadOrEsmModule) throwNotFound(id, isUserDynamic);
@@ -355,6 +380,8 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
     const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
+      // It was stale and it stays stale: the next `import` of it evaluates it.
+      if (mod) mod.state = State.Stale;
       throw new AsyncImportError(id);
     }
     if (!mod) {
@@ -408,17 +435,22 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   // First, try and re-use an existing module.
   let mod = registry.get(id)!;
   if (mod) {
-    const { state } = mod;
-    if (state === State.Error) throw mod.failure;
-    if (state === State.Stale) {
-      mod.state = State.Pending;
-      isUserDynamic = false as IsUserDynamic;
-    } else {
-      if (importer) {
-        mod.importers.add(importer);
-      }
+    const state = mod.state;
+    if (state === State.Loaded) {
+      if (importer) mod.importers.add(importer);
       return mod;
     }
+    if (state === State.Error) throw mod.failure;
+    if (state === State.Pending) {
+      if (importer) mod.importers.add(importer);
+      const { loading } = mod;
+      // The module that called `import()` can await this load, so a wait for that module could
+      // never end. It is taken as it is, as `referrerAsyncOrder` does in JSC's module loader.
+      return loading !== null && mod !== importCaller ? loading.promise : mod;
+    }
+    mod.state = State.Pending;
+    mod.loading = null;
+    isUserDynamic = false as IsUserDynamic;
   }
   const loadOrEsmModule = unloadedModuleRegistry[id];
   if (!loadOrEsmModule) {
@@ -467,7 +499,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         throw e;
       }
     }
-    const [deps /* exports */ /* stars */, , , load /* isAsync */] = loadOrEsmModule;
+    const [deps /* exports */ /* stars */, , , load, hasTopLevelAwait] = loadOrEsmModule;
 
     if (!mod) {
       mod = new HMRModule(id, false);
@@ -481,35 +513,44 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.importers.add(importer);
     }
 
-    let list: (HMRModule | Promise<HMRModule>)[], isAsync: boolean;
+    let list: (HMRModule | Promise<HMRModule>)[], asyncId: Id | null;
     try {
-      ({ list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
+      ({ list, asyncId } = parseEsmDependencies(mod, deps, loadModuleAsync<false>));
     } catch (e) {
       // A dependency threw before this module's body ran, so the next load evaluates it again.
       mod.state = State.Stale;
       throw e;
     }
     DEBUG.ASSERT(
-      isAsync //
+      asyncId !== null //
         ? list.some(x => x instanceof Promise)
         : list.every(x => x instanceof HMRModule),
     );
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.
-    return isAsync
-      ? Promise.all(list).then(
-          list => finishLoadModuleAsync(mod, load, list),
-          e => {
-            mod.state = State.Stale;
-            throw e;
-          },
-        )
-      : finishLoadModuleAsync(
-          mod,
-          load,
-          list as HMRModule[], // no promises as by assert above
-        );
+    const loaded =
+      asyncId !== null
+        ? Promise.all(list).then(
+            list => finishLoadModuleAsync(mod, load, list),
+            e => {
+              mod.state = State.Stale;
+              throw e;
+            },
+          )
+        : finishLoadModuleAsync(
+            mod,
+            load,
+            list as HMRModule[], // no promises as by assert above
+          );
+    if (loaded !== mod) {
+      mod.loading = {
+        promise: loaded as Promise<HMRModule>,
+        // The order of `loadModuleSync`: the await of the module before the await of an import.
+        asyncId: hasTopLevelAwait || asyncId === null ? id : asyncId,
+      };
+    }
+    return loaded;
   }
 }
 
@@ -557,7 +598,8 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
 ) {
   let i = 0;
   let list: ReturnType<T>[] = [];
-  let isAsync = false;
+  /** Set when an import came back as a promise: the top-level await that the first of them waits on. */
+  let asyncId: Id | null = null;
   const { length } = deps;
   while (i < length) {
     const dep = deps[i] as string;
@@ -566,6 +608,9 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
     DEBUG.ASSERT(typeof deps[i + 1] === "number");
     const promiseOrModule = enqueueModuleLoad(dep, false, parent);
     list.push(promiseOrModule);
+    // Not only for an ES record: an update can make the record of a module CommonJS while the
+    // evaluation of its ES code is in flight.
+    if (promiseOrModule instanceof Promise) asyncId ??= registry.get(dep)!.loading!.asyncId;
 
     const unloadedModule = unloadedModuleRegistry[dep];
     if (!unloadedModule) {
@@ -578,17 +623,11 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         DEBUG.ASSERT(typeof key === "string");
         i++;
       }
-      isAsync ||= promiseOrModule instanceof Promise;
     } else {
-      DEBUG.ASSERT(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
-
-      if (IS_BUN_DEVELOPMENT) {
-        DEBUG.ASSERT((list[list.length - 1] as any) instanceof HMRModule);
-      }
     }
   }
-  return { list, isAsync };
+  return { list, asyncId };
 }
 
 function getEsmExports(m: HMRModule) {
@@ -907,6 +946,7 @@ function toESM(mod: any) {
 function registerSynthetic(id: Id, esmExports) {
   const module = new HMRModule(id, false);
   module.exports = esmExports;
+  module.state = State.Loaded;
   registry.set(id, module);
   unloadedModuleRegistry[id] = true as any;
 }

@@ -58,28 +58,35 @@ describe("Bun.Transpiler still accepts data-format loaders", () => {
   test("text", () => {
     expect(t.transformSync("hello", "text")).toContain("export default");
   });
+});
 
-  // What the JSDoc of `Bun.TranspilerLoader` says that each data loader prints.
-  const dataLoaders: [loader: Bun.TranspilerLoader, input: string, defaultExport: unknown][] = [
-    ["json", '{ "name": "bun", "tags": [1, 2] }', { name: "bun", tags: [1, 2] }],
-    ["jsonc", '{ "name": "bun", /* a comment */ "tags": [1, 2], }', { name: "bun", tags: [1, 2] }],
-    ["json5", "{ name: 'bun', tags: [1, 2], }", { name: "bun", tags: [1, 2] }],
-    ["toml", 'name = "bun"\ntags = [1, 2]', { name: "bun", tags: [1, 2] }],
-    ["yaml", "name: bun\ntags:\n  - 1\n  - 2", { name: "bun", tags: [1, 2] }],
-    ["xml", "<pkg><name>bun</name></pkg>", { pkg: { name: "bun" } }],
-    ["text", "Hello, Bun!", "Hello, Bun!"],
-    ["md", "# Hello", "<h1>Hello</h1>\n"],
-  ];
+// One row for each loader name that transform() and transformSync() declare. No top-level key
+// here is a reserved word: with such a key the printed module does not parse.
+describe("Bun.Transpiler prints a module for each loader of transform() and transformSync()", () => {
+  type TransformLoader = NonNullable<Parameters<Bun.Transpiler["transform"]>[1]>;
+  const modules: Record<TransformLoader, [input: string, defaultExport: unknown]> = {
+    js: ["export default 1;", 1],
+    jsx: ["export default 1;", 1],
+    ts: ["export default 1 as number;", 1],
+    tsx: ["export default 1 as number;", 1],
+    json: ['{ "name": "bun", "tags": [1, 2] }', { name: "bun", tags: [1, 2] }],
+    jsonc: ['{ "name": "bun", /* a comment */ "tags": [1, 2], }', { name: "bun", tags: [1, 2] }],
+    json5: ["{ name: 'bun', tags: [1, 2], }", { name: "bun", tags: [1, 2] }],
+    toml: ['name = "bun"\ntags = [1, 2]', { name: "bun", tags: [1, 2] }],
+    yaml: ["name: bun\ntags:\n  - 1\n  - 2", { name: "bun", tags: [1, 2] }],
+    xml: ["<pkg><name>bun</name></pkg>", { pkg: { name: "bun" } }],
+    text: ["Hello, Bun!", "Hello, Bun!"],
+    md: ["# Hello", "<h1>Hello</h1>\n"],
+  };
+  const t = new Bun.Transpiler();
 
-  test.each(dataLoaders)(
-    "%s: transformSync and transform print a module with the value as its default export",
-    async (loader, input, defaultExport) => {
-      const output = t.transformSync(input, loader);
-      expect(await t.transform(input, loader)).toBe(output);
+  test.each(Object.keys(modules) as TransformLoader[])("%s", async loader => {
+    const [input, defaultExport] = modules[loader];
+    const output = t.transformSync(input, loader);
+    expect(await t.transform(input, loader)).toBe(output);
 
-      using dir = tempDir("transpiler-data-loader", { "printed.mjs": output });
-      const printed = await import(join(String(dir), "printed.mjs"));
-      expect(printed.default).toEqual(defaultExport);
-    },
-  );
+    using dir = tempDir("transpiler-loader-argument", { "printed.mjs": output });
+    const printed = await import(join(String(dir), "printed.mjs"));
+    expect(printed.default).toEqual(defaultExport);
+  });
 });

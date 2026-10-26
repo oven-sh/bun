@@ -17,6 +17,8 @@ const transpiler = new Bun.Transpiler({
 
 Transpile code synchronously with the `.transformSync()` method. The transpiler does not resolve modules or execute the code. The result is a string of vanilla JavaScript code.
 
+[Macros](/bundler/macros) are the exception. When the code calls a macro, the transpiler resolves, loads and runs the module of the macro. Pass `macro: false` to the constructor to turn macros off.
+
 <CodeGroup>
 ```ts transpile.ts icon="/icons/typescript.svg" 
 const transpiler = new Bun.Transpiler({
@@ -185,11 +187,6 @@ const result = transpiler.scanImports(code);
 ```ts See Typescript Definitions expandable
 type Loader = "jsx" | "js" | "ts" | "tsx";
 
-// A loader for one transform() or transformSync() call
-// The data loaders print a module with a default export:
-// the parsed value, the text, or the HTML of the Markdown
-type TranspilerLoader = Loader | "json" | "jsonc" | "json5" | "toml" | "yaml" | "xml" | "text" | "md";
-
 interface TranspilerOptions {
   // Replace key with value. Value must be a JSON string.
   // { "process.env.NODE_ENV": "\"production\"" }
@@ -231,6 +228,7 @@ interface TranspilerOptions {
   // Minify the output
   // true turns on whitespace, syntax and identifier minification
   // An object turns on each kind that it sets to true
+  // With target "bun", Bun always minifies syntax
   minify?: boolean | {
       whitespace?: boolean;
       syntax?: boolean;
@@ -258,8 +256,9 @@ interface MacroMap {
 class Bun.Transpiler {
   constructor(options: TranspilerOptions)
 
-  transform(code: string, loader?: TranspilerLoader): Promise<string>
-  transformSync(code: string, loader?: TranspilerLoader): string
+  // With a data loader, these parse the input and print it as an ES module
+  transform(code: string, loader?: Loader | "json" | "jsonc" | "json5" | "toml" | "yaml" | "xml" | "text" | "md"): Promise<string>
+  transformSync(code: string, loader?: Loader | "json" | "jsonc" | "json5" | "toml" | "yaml" | "xml" | "text" | "md"): string
 
   scan(code: string, loader?: Loader): {exports: string[], imports: Import[]}
   scanImports(code: string, loader?: Loader): Import[]

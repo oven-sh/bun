@@ -2905,30 +2905,6 @@ declare module "bun" {
   type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 
   /**
-   * A loader for one call of {@link Transpiler.transform} or
-   * {@link Transpiler.transformSync}.
-   *
-   * A {@link JavaScriptLoader} transpiles the code. The other loaders print
-   * an ES module from data:
-   *
-   * - `"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"` and `"xml"` parse
-   *   the input. The default export of the module is the parsed value.
-   * - `"text"` makes the input the default export, as a string.
-   * - `"md"` renders the Markdown. The default export is the HTML, as a string.
-   *
-   * The `loader` option of the constructor takes a {@link JavaScriptLoader}
-   * only.
-   *
-   * @example
-   * ```ts
-   * const transpiler = new Bun.Transpiler();
-   * transpiler.transformSync("Hello, Bun!", "text");
-   * // export default "Hello, Bun!";
-   * ```
-   */
-  type TranspilerLoader = JavaScriptLoader | "json" | "jsonc" | "json5" | "toml" | "yaml" | "xml" | "text" | "md";
-
-  /**
    * Fast deep-equality check two objects.
    *
    * This also powers expect().toEqual in `bun:test`
@@ -2993,10 +2969,20 @@ declare module "bun" {
     tsconfig?: string | TSConfig;
 
     /**
+     *    A map of macros, or `false` to turn macros off.
+     *
      *    Replace an import statement with a macro.
      *
      *    This removes the import statement from the final output
      *    and replaces any function calls or template strings with the result returned by the macro
+     *
+     *    By default, `transform()`, `transformSync()` and `scan()` run a macro
+     *    when the code calls a function that it imports
+     *    `with { type: "macro" }`. With `false`, they fail with
+     *    `Macros are disabled` at that call, and Bun does not load the module
+     *    of the macro. A macro runs code while Bun transpiles, so pass `false`
+     *    for code that you do not trust. `true` is the same as no `macro`
+     *    option.
      *
      *    @example
      *    ```json
@@ -3028,17 +3014,8 @@ declare module "bun" {
      *    import UserQuery from "./UserQuery.graphql";
      *    const query = UserQuery;
      *    ```
-     *
-     *    Pass `false` to turn macros off. By default, `transform()`,
-     *    `transformSync()` and `scan()` run a macro when the code calls a
-     *    function that it imports `with { type: "macro" }`. With `false`,
-     *    they fail with `Macros are disabled` at that call, and Bun does
-     *    not load the module of the macro. A macro runs code while Bun
-     *    transpiles, so pass `false` for code that you do not trust.
-     *
-     *    `true` is the same as no `macro` option.
      */
-    macro?: MacroMap | boolean;
+    macro?: MacroMap | boolean | undefined;
 
     autoImportJSX?: boolean;
     allowBunRuntime?: boolean;
@@ -3066,6 +3043,9 @@ declare module "bun" {
      * With `minify: false` or `minify: { whitespace: false }`, the output
      * keeps its whitespace.
      *
+     * With `target: "bun"`, Bun always minifies syntax. `minify: false` and
+     * `syntax: false` do not turn that off.
+     *
      * @default false
      *
      * @example
@@ -3084,12 +3064,13 @@ declare module "bun" {
       | boolean
       | {
           /** Remove whitespace, like {@link TranspilerOptions.minifyWhitespace}. */
-          whitespace?: boolean;
+          whitespace?: boolean | undefined;
           /** Rewrite code into a shorter form that does the same, such as `undefined` into `void 0`. */
-          syntax?: boolean;
+          syntax?: boolean | undefined;
           /** Rename variables, functions and parameters that the code does not export to shorter names. */
-          identifiers?: boolean;
-        };
+          identifiers?: boolean | undefined;
+        }
+      | undefined;
     /**
      * **Experimental**
      *
@@ -3155,19 +3136,40 @@ declare module "bun" {
 
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
-     * This function does not resolve imports.
+     * This function does not resolve imports, except to load a macro that the code calls.
+     *
+     * With a data loader (`"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"`,
+     * `"xml"`, `"text"` or `"md"`), this function prints an ES module. The
+     * default export is the parsed value, the text, or the HTML of the
+     * Markdown. Each top-level key of a parsed object, other than `default`,
+     * is also a named export. A key that is a reserved word, such as `new`,
+     * makes a module that does not parse.
      * @param code The code to transpile
      */
-    transform(code: Bun.StringOrBuffer, loader?: TranspilerLoader): Promise<string>;
+    transform(
+      code: Bun.StringOrBuffer,
+      loader?: JavaScriptLoader | "json" | "jsonc" | "json5" | "toml" | "yaml" | "xml" | "text" | "md",
+    ): Promise<string>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
-     * This function does not resolve imports.
+     * This function does not resolve imports, except to load a macro that the code calls.
+     *
+     * With a data loader (`"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"`,
+     * `"xml"`, `"text"` or `"md"`), this function prints an ES module. The
+     * default export is the parsed value, the text, or the HTML of the
+     * Markdown. Each top-level key of a parsed object, other than `default`,
+     * is also a named export. A key that is a reserved word, such as `new`,
+     * makes a module that does not parse.
      * @param code The code to transpile
      */
-    transformSync(code: Bun.StringOrBuffer, loader: TranspilerLoader, ctx: object): string;
+    transformSync(
+      code: Bun.StringOrBuffer,
+      loader: JavaScriptLoader | "json" | "jsonc" | "json5" | "toml" | "yaml" | "xml" | "text" | "md",
+      ctx: object,
+    ): string;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
-     * This function does not resolve imports.
+     * This function does not resolve imports, except to load a macro that the code calls.
      * @param code The code to transpile
      * @param ctx An object to pass to macros
      */
@@ -3175,10 +3177,20 @@ declare module "bun" {
 
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
-     * This function does not resolve imports.
+     * This function does not resolve imports, except to load a macro that the code calls.
+     *
+     * With a data loader (`"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"`,
+     * `"xml"`, `"text"` or `"md"`), this function prints an ES module. The
+     * default export is the parsed value, the text, or the HTML of the
+     * Markdown. Each top-level key of a parsed object, other than `default`,
+     * is also a named export. A key that is a reserved word, such as `new`,
+     * makes a module that does not parse.
      * @param code The code to transpile
      */
-    transformSync(code: Bun.StringOrBuffer, loader?: TranspilerLoader): string;
+    transformSync(
+      code: Bun.StringOrBuffer,
+      loader?: JavaScriptLoader | "json" | "jsonc" | "json5" | "toml" | "yaml" | "xml" | "text" | "md",
+    ): string;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.

@@ -6393,6 +6393,7 @@ it.concurrent("macro: false throws where the code calls a macro and does not loa
       const macro = join(import.meta.dir, "macro.ts");
       const importMacro = "import { answer } from " + JSON.stringify(macro) + ' with { type: "macro" };\\n';
       const call = importMacro + "export const a = answer();\\n";
+      const template = importMacro + "export const a = answer\`x\`;\\n";
       const unused = importMacro + "export const a = 1;\\n";
       const loaded = () => existsSync(join(import.meta.dir, "loaded.txt"));
       const message = async run => {
@@ -6405,10 +6406,14 @@ it.concurrent("macro: false throws where the code calls a macro and does not loa
       };
 
       const off = new Bun.Transpiler({ loader: "ts", macro: false });
+      const messages = async code => [
+        await message(() => off.transformSync(code)),
+        await message(() => off.transform(code)),
+        await message(() => off.scan(code)),
+      ];
       const withFalse = {
-        transformSync: await message(() => off.transformSync(call)),
-        transform: await message(() => off.transform(call)),
-        scan: await message(() => off.scan(call)),
+        call: await messages(call),
+        template: await messages(template),
         scanImports: off.scanImports(call).map(entry => entry.path === macro),
         unusedImport: off.transformSync(unused),
         loaded: loaded(),
@@ -6434,9 +6439,8 @@ it.concurrent("macro: false throws where the code calls a macro and does not loa
   expect({ result: stdout.trim().split("\n").at(-1), stderr: stderr.trim() }).toEqual({
     result: JSON.stringify({
       withFalse: {
-        transformSync: "Macros are disabled",
-        transform: "Macros are disabled",
-        scan: "Macros are disabled",
+        call: ["Macros are disabled", "Macros are disabled", "Macros are disabled"],
+        template: ["Macros are disabled", "Macros are disabled", "Macros are disabled"],
         scanImports: [true],
         unusedImport: "export const a = 1;\n",
         loaded: false,
@@ -6497,6 +6501,16 @@ describe("minify option", () => {
       offThenTrue: minified,
       offThenWhitespaceTrue: whitespace,
     });
+  });
+
+  it('target: "bun" minifies syntax for every value of minify', () => {
+    const syntax = "function add(first, second) {\n  return first + second;\n}\nconsole.log(add(1, 2) === void 0);\n";
+    expect({
+      noOption: transform({ target: "bun" }),
+      false: transform({ target: "bun", minify: false }),
+      syntaxFalse: transform({ target: "bun", minify: { syntax: false } }),
+      otherTarget: transform({ target: "node", minify: { syntax: false } }),
+    }).toEqual({ noOption: syntax, false: syntax, syntaxFalse: syntax, otherTarget: plain });
   });
 });
 

@@ -3,7 +3,7 @@ import { expectType } from "./utilities";
 // `minify` is a boolean, or an object with a flag for each kind of minification.
 {
   expectType<NonNullable<Bun.TranspilerOptions["minify"]>>().is<
-    boolean | { whitespace?: boolean; syntax?: boolean; identifiers?: boolean }
+    boolean | { whitespace?: boolean | undefined; syntax?: boolean | undefined; identifiers?: boolean | undefined }
   >();
 
   new Bun.Transpiler({ minify: true });
@@ -42,9 +42,12 @@ import { expectType } from "./utilities";
 
 // `transform()` and `transformSync()` take a JavaScript loader or a data loader for one call.
 {
-  expectType<Bun.TranspilerLoader>().is<
+  type TransformLoader = NonNullable<Parameters<Bun.Transpiler["transform"]>[1]>;
+  expectType<TransformLoader>().is<
     "jsx" | "js" | "ts" | "tsx" | "json" | "jsonc" | "json5" | "toml" | "yaml" | "xml" | "text" | "md"
   >();
+  // `Parameters` reads the last overload of transformSync(), the one with (code, loader?).
+  expectType<NonNullable<Parameters<Bun.Transpiler["transformSync"]>[1]>>().is<TransformLoader>();
 
   const transpiler = new Bun.Transpiler({ loader: "tsx" });
 
@@ -63,8 +66,8 @@ import { expectType } from "./utilities";
   expectType(transpiler.transform("# Hello", "md")).is<Promise<string>>();
   expectType(transpiler.transform("const a: number = 1;", "ts")).is<Promise<string>>();
 
-  // A wrapper names the type of its `loader` parameter.
-  const transformWith = (code: string, loader: Bun.TranspilerLoader) => transpiler.transformSync(code, loader);
+  // A wrapper takes the type of its `loader` parameter from the method.
+  const transformWith = (code: string, loader: TransformLoader) => transpiler.transformSync(code, loader);
   expectType(transformWith("name: bun", "yaml")).is<string>();
 
   // A variable of the narrower type is still a loader for one call.
@@ -81,6 +84,9 @@ import { expectType } from "./utilities";
 
 // `scan()` and `scanImports()` take a JavaScript loader for one call.
 {
+  expectType<Parameters<Bun.Transpiler["scan"]>[1]>().is<Bun.JavaScriptLoader | undefined>();
+  expectType<Parameters<Bun.Transpiler["scanImports"]>[1]>().is<Bun.JavaScriptLoader | undefined>();
+
   const transpiler = new Bun.Transpiler({ loader: "js" });
 
   expectType(transpiler.scan("const a: number = 1;", "ts")).is<{ exports: string[]; imports: Bun.Import[] }>();

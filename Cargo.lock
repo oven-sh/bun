@@ -1738,6 +1738,7 @@ dependencies = [
  "bun_ptr",
  "bun_semver",
  "bun_sys",
+ "bun_url",
  "bun_zstd",
  "smallvec",
  "thiserror",

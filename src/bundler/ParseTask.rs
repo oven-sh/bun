@@ -209,6 +209,11 @@ pub(crate) struct Success {
 
     /// The package name from package.json, used for barrel optimization.
     pub(crate) package_name: ast::StoreStr,
+
+    /// See `InputFile::input_source_map`, where this moves on completion.
+    pub(crate) input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
+    /// The sidecar map file the source names, loaded or not, for `--watch`.
+    pub(crate) input_source_map_sidecar: Option<Box<[u8]>>,
 }
 
 pub(crate) struct ResultError {
@@ -835,6 +840,7 @@ pub mod parse_worker {
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
+        source_mapping_url: &mut Option<bun_ast::Span>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
 
@@ -860,7 +866,10 @@ pub mod parse_worker {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
-                        bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
+                        bun_js_parser::Result::Ast(ast) => {
+                            *source_mapping_url = ast.source_mapping_url;
+                            Ok(JSAst::init(*ast))
+                        }
                         bun_js_parser::Result::Cached
                         | bun_js_parser::Result::AlreadyBundled(_) => {
                             unreachable!("bundler parse never yields Cached/AlreadyBundled")
@@ -2714,8 +2723,12 @@ pub mod parse_worker {
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
         let task_ctx = unsafe { task.ctx() };
         let module_type = opts.module_type;
+        // The dev server's `SourceMapStore` assumes one `sources` entry per file: no input maps there.
+        let use_input_source_maps =
+            topts.source_map != options::SourceMapOption::None && !topts.has_dev_server();
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
+        let mut source_mapping_url: Option<bun_ast::Span> = None;
         let ast_result: core::result::Result<JSAst, AnyError> =
             if let Some(message) = unsupported_directive {
                 log.add_range_error(Some(source), UseDirective::range(entry_contents), message);
@@ -2732,6 +2745,7 @@ pub mod parse_worker {
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
                     &task_ctx.linker.has_any_css_locals,
+                    &mut source_mapping_url,
                 )
             } else if loader.is_css() {
                 get_empty_css_ast(log, transpiler, opts, bump, source)
@@ -2777,6 +2791,13 @@ pub mod parse_worker {
 
         *step = Step::Resolve;
 
+        let input_source_map = match source_mapping_url {
+            Some(comment) if use_input_source_maps => {
+                crate::input_source_map::load(log, source, comment)
+            }
+            _ => crate::input_source_map::Loaded::default(),
+        };
+
         Ok(Success {
             ast,
             source: source.clone(),
@@ -2789,6 +2810,9 @@ pub mod parse_worker {
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
+
+            input_source_map: input_source_map.map,
+            input_source_map_sidecar: input_source_map.sidecar,
         })
     }
 

@@ -10213,6 +10213,15 @@ declare module "bun" {
    * - An object mapping paths to file contents (string, Blob, TypedArray, or ArrayBuffer)
    * - A Blob containing existing archive data
    * - A TypedArray or ArrayBuffer containing existing archive data
+   *
+   * A Blob can be a `Bun.file()` with a path. Bun reads the file off the main
+   * thread when the archive is first used, not when it is created, and the
+   * archive keeps those bytes. If the file cannot be read, the method that
+   * uses the archive rejects. As file contents, only the bytes are archived:
+   * the entry is a regular file with mode `0644`.
+   *
+   * A `Bun.file()` of a file descriptor, `Bun.stdin`, or an S3 file as file
+   * contents throws a `TypeError`: pass `await file.bytes()`.
    */
   type ArchiveInput = Record<string, BlobPart> | Blob | ArrayBufferView | ArrayBufferLike;
 
@@ -10391,8 +10400,8 @@ declare module "bun" {
     /**
      * Create an archive and write it to disk in one operation.
      *
-     * The data streams directly to disk, which is more efficient than creating an
-     * archive and then writing it separately.
+     * Bun builds the archive in memory and then writes it. It reads `Bun.file()`
+     * contents, compresses, and writes off the main thread.
      *
      * @param path - The file path to write the archive to
      * @param data - The input data for the archive (same as `new Archive()`)

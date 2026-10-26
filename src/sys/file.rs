@@ -89,6 +89,17 @@ impl File {
         let dir = dir.as_fd();
         Self::openat(dir, path, flags, mode)
     }
+    /// Open `path` to read it, with no wait for the writer of a FIFO, and `fstat` it.
+    pub fn open_for_read(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, Stat)> {
+        // On Windows `O_NONBLOCK` opens an overlapped handle, and a synchronous read of it fails.
+        #[cfg(unix)]
+        let flags = O::RDONLY | O::NOCTTY | O::NONBLOCK;
+        #[cfg(not(unix))]
+        let flags = O::RDONLY | O::NOCTTY;
+        let file = Self::openat(dir, path, flags, 0)?;
+        let stat = file.stat()?;
+        Ok((file, stat))
+    }
     /// `openat` against cwd, auto-creating parent
     /// directories on the first failure (mkdir -p of `dirname(path)`, then
     /// retry once).

@@ -118,8 +118,7 @@ impl DevServer {
             .then_some(route)
     }
 
-    /// Sets in `bits` the routes whose page or layout, as a browser copy, is or imports a file of
-    /// `queue`: no trace of the client graph lists a framework route.
+    /// Sets in `bits` the routes whose page or layout browser copy is or imports a file of `queue`.
     pub(super) fn mark_client_page_routes_above(
         &self,
         mut queue: Vec<incremental_graph::ClientFileIndex>,

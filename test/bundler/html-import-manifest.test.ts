@@ -631,13 +631,11 @@ console.log("About manifest:", aboutHtml);
           plugins: [findLast(held)],
           ...options,
         });
-        const outputs = build.outputs.map(
-          async (output): Promise<[string, string, string]> => [
-            basename(output.path),
-            output.kind,
-            await output.text(),
-          ],
-        );
+        const outputs = build.outputs.map(async (output): Promise<[string, string, string]> => [
+          basename(output.path),
+          output.kind,
+          await output.text(),
+        ]);
         builds.push(await Promise.all(outputs));
       }
       expect(builds[1]).toEqual(builds[0]);

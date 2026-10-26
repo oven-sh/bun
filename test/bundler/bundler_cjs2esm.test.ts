@@ -1472,6 +1472,34 @@ describe("bundler", () => {
     },
     run: { stdout: "FA GB" },
   });
+  // `export * from` a file that stays CommonJS reads each name at run time, as
+  // in any other package. The import of such a name is not `undefined`.
+  for (const [name, pkg, commonjs] of [
+    ["Chained", "react", `exports.a = exports.b = () => "f";`],
+    // tsc writes `exports.b = exports.a = void 0;` at the top of a CommonJS file.
+    [
+      "TscPrelude",
+      "react",
+      `"use strict"; exports.b = exports.a = void 0; exports.a = () => "f"; exports.b = () => "f";`,
+    ],
+    ["Scheduler", "scheduler", `exports.a = exports.b = () => "f";`],
+    // This file converts to an ES module, so the bundler sees each name.
+    ["Converted", "react", `exports.a = () => "f"; exports.b = () => "f";`],
+  ] as const) {
+    itBundled(`cjs2esm/ESModuleInUnwrappedPackageExportStarOfCommonJS${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { a } from "${pkg}/bar.js";
+          console.log(a());
+        `,
+        [`/node_modules/${pkg}/package.json`]: `{ "name": "${pkg}", "type": "module" }`,
+        [`/node_modules/${pkg}/bar.js`]: `export * from "./rt.cjs";`,
+        [`/node_modules/${pkg}/rt.cjs`]: commonjs,
+      },
+      target: "node",
+      run: { stdout: "f" },
+    });
+  }
   // `import` next to `exports.x = ...` links the same way in and out of the list.
   itBundled("cjs2esm/ImportAndExportsAssignmentInUnwrappedPackage", {
     files: {

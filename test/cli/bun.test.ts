@@ -452,12 +452,25 @@ describe("bun", () => {
       }
 
       const project = {
-        "package.json": JSON.stringify({ scripts: { "dev": "echo dev", "test:unit": "echo unit" } }, null, 2),
+        "package.json": JSON.stringify(
+          {
+            scripts: {
+              "dev": "echo dev",
+              "test:unit": "echo unit",
+              "build:nightly": "echo nightly",
+              "build:release": "echo release",
+              "reinstall": "echo reinstall",
+            },
+          },
+          null,
+          2,
+        ),
         "myscript.ts": "",
         "foo.txt": "",
         "src/index.ts": "",
         "src/other.ts": "",
         "test/a.test.ts": "",
+        "sub/package.json": JSON.stringify({ scripts: { "lint:fix": "echo fix" } }),
         // bun.fish asks `bun getcompletes` for the scripts and bins. This one has no answer.
         "bin/bun": "#!/bin/sh\n",
       };
@@ -485,6 +498,21 @@ describe("bun", () => {
         return replies;
       }
 
+      // The command line for one <TAB> press: `words` is what readline made of the line.
+      const defaultWordbreaks = ` \t\n"'><=;|&(:`;
+      function bash(line: string, words: string[], wordbreaks: string) {
+        return [
+          "bash",
+          "--norc",
+          "--noprofile",
+          "-c",
+          `source ./bun.bash; COMP_WORDBREAKS="$1"; COMP_LINE="$2"; COMP_WORDS=(${words.map(word => `"${word}"`).join(" ")}); COMP_CWORD=${words.length - 1}; _bun_completions; printf '%s\\n' "\${COMPREPLY[@]}"`,
+          "bash",
+          wordbreaks,
+          line,
+        ];
+      }
+
       // The script needs associative arrays. macOS has bash 3.2.
       const bashVersion = Bun.which("bash")
         ? Number(spawnSync({ cmd: ["bash", "-c", "echo ${BASH_VERSINFO[0]}"], env: bunEnv }).stdout.toString())
@@ -505,23 +533,53 @@ describe("bun", () => {
           "bun myscript.ts fo": ["foo.txt"],
           "bun tw": ["two words.ts"],
           "bun --silent add --p": ["--peer", "--production"],
+          // readline replaces only the piece after the last ':'. Before, `bun run build:r<TAB>`
+          // completed `reinstall` (the scripts that start with `r`) and `bun run build:<TAB>` nothing.
+          "bun run build:r": ["release"],
+          "bun run build:": ["nightly", "release"],
+          "bun build:r": ["release"],
+          "bun --loader .ts:j": ["js", "json", "jsx"],
+          "bun --inspect=localhost:6499 run d": ["dev"],
+          "bun --cwd=sub run li": ["lint:fix"],
+          // A blank ends the word, so `host:` and `te` stay apart.
+          "bun run dev -- host: te": ["test/", "test:unit"],
           // As before.
           "bun add --p": ["--peer", "--production"],
-          "bun r": ["remove", "repl", "run"],
-          "bun te": ["test"],
+          "bun r": ["reinstall", "remove", "repl", "run"],
+          "bun te": ["test", "test:unit"],
         };
-        const replies = await offered(String(dir), Object.keys(expected), line => {
-          const words = line.split(" ");
-          return [
-            "bash",
-            "--norc",
-            "--noprofile",
-            "-c",
-            `source ./bun.bash; COMP_WORDS=(${words.join(" ")}); COMP_CWORD=${words.length - 1}; _bun_completions; printf '%s\\n' "\${COMPREPLY[@]}"`,
-          ];
-        });
+        // Every flag, subcommand, script and file. `--hot` is a candidate too, and it is also the
+        // previous word. That must not hide the scripts.
+        const everything = "bun --watch --hot ";
+        // bash's default COMP_WORDBREAKS has ':' and '=', so readline makes them words of their own.
+        const replies = await offered(String(dir), [...Object.keys(expected), everything], line =>
+          bash(
+            line,
+            line.split(" ").flatMap(word => (word === "" ? [""] : word.split(/([:=])/).filter(Boolean))),
+            defaultWordbreaks,
+          ),
+        );
+        expect(replies[everything]).toEqual(expect.arrayContaining(["--hot", "run", "build:release", "src/"]));
+        delete replies[everything];
         expect(replies).toEqual(expected);
       });
+
+      // A .bashrc can take ':' out of COMP_WORDBREAKS. Then the words arrive whole and stay whole.
+      test.concurrent.skipIf(bashVersion < 4)(
+        "bash completes a script name with ':' when ':' is not a word break",
+        async () => {
+          using dir = tempDir("completions-bash-colon", { ...project, "bun.bash": await script("bash") });
+          const expected = {
+            "bun run build:r": ["build:release"],
+            "bun run build:": ["build:nightly", "build:release"],
+            "bun run te": ["test/", "test:unit"],
+          };
+          const replies = await offered(String(dir), Object.keys(expected), line =>
+            bash(line, line.split(" "), defaultWordbreaks.replace(":", "")),
+          );
+          expect(replies).toEqual(expected);
+        },
+      );
 
       test.concurrent.skipIf(!Bun.which("fish"))("fish offers files, also after a flag or a script", async () => {
         using dir = tempDir("completions-fish-tab", { ...project, "bun.fish": await script("fish") });

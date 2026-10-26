@@ -597,10 +597,6 @@ impl ServerConfig {
             } else {
                 DevelopmentOption::Development
             },
-
-            // If this is a node:cluster child, let's default to SO_REUSEPORT.
-            // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.
-            reuse_port: env.get(b"NODE_UNIQUE_ID").is_some(),
             ..ServerConfig::default()
         };
         let mut hostname: Option<ZBox> = None;
@@ -643,6 +639,9 @@ impl ServerConfig {
             return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
         }
 
+        // The mode that the `development` option asks for. `NODE_ENV=production` is not the option.
+        let mut requested_development: Option<DevelopmentOption> = None;
+
         // "development" impacts other settings like bake.
         if let Some(dev) = arg.get(global, "development")? {
             if dev.is_object() {
@@ -672,7 +671,7 @@ impl ServerConfig {
                     DevelopmentOption::Production
                 };
             }
-            args.reuse_port = args.development == DevelopmentOption::Production;
+            requested_development = Some(args.development);
         }
 
         if let Some(static_) = get_routes_object(global, arg)? {
@@ -1104,9 +1103,18 @@ impl ServerConfig {
             }
         }
 
-        if let Some(dev) = arg.get(global, "reusePort")? {
-            args.reuse_port = dev.to_boolean();
-        }
+        args.reuse_port = match arg.get(global, "reusePort")? {
+            Some(reuse_port) => reuse_port.to_boolean(),
+            None => match requested_development {
+                Some(DevelopmentOption::Production) => true,
+                // Dev servers answer only for their own bundles, so one that asks for `development`
+                // keeps its port.
+                Some(_) if args.bake.is_some() => false,
+                // A node:cluster worker shares the port, so that a framework that does not expose
+                // `reusePort` works in a cluster.
+                _ => env.get(b"NODE_UNIQUE_ID").is_some(),
+            },
+        };
 
         if let Some(dev) = arg.get(global, "ipv6Only")? {
             args.ipv6_only = dev.to_boolean();

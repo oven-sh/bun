@@ -914,6 +914,9 @@ declare module "bun" {
        *
        * This allows multiple processes to bind to the same port, which is useful for load balancing.
        *
+       * In a `node:cluster` worker, Bun turns `reusePort` on when you do not pass it, so that the
+       * workers share one port.
+       *
        * @default false
        */
       reusePort?: boolean;

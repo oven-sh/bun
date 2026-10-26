@@ -1,9 +1,9 @@
 // For each way of consuming a native rejection below, prints the names of the
 // error's `at async` frames: before and after process.argv[2] takes JSC off its
 // promise fast paths, each with and without an AsyncLocalStorage context.
-const { AsyncLocalStorage } = require("node:async_hooks");
-const { readFile } = require("node:fs/promises");
-const vm = require("node:vm");
+import { AsyncLocalStorage } from "node:async_hooks";
+import { readFile } from "node:fs/promises";
+import vm from "node:vm";
 
 const missing = "/nonexistent-path/does-not-exist.txt";
 
@@ -14,23 +14,24 @@ const native = () => Bun.file(missing).stat();
 // Each of these fires a promise watchpoint of the realm, for good. From then on
 // JSC resolves a promise with another promise through then(resolve, reject), and
 // after the freeze then() also keeps its result in a capability record.
-const leaveFastPaths = {
+const triggers: Record<string, () => void> = {
   "defining Object.prototype.then"() {
     Object.defineProperty(Object.prototype, "then", { configurable: true, get() {} });
-    delete Object.prototype.then;
+    delete (Object.prototype as any).then;
   },
   "replacing Promise.prototype.then"() {
     const then = Promise.prototype.then;
     Promise.prototype.then = function (onFulfilled, onRejected) {
       return then.call(this, onFulfilled, onRejected);
-    };
+    } as typeof then;
   },
   "freezing Promise.prototype"() {
     Object.freeze(Promise.prototype);
   },
-}[process.argv[2]];
+};
+const leaveFastPaths = triggers[process.argv[2]];
 
-class MyPromise extends Promise {}
+class MyPromise<T> extends Promise<T> {}
 
 // fs.promises.readFile is an async function that returns the native promise.
 async function fsPromises() {
@@ -64,7 +65,7 @@ async function promiseSubclass() {
 
 async function forwardingThenable() {
   await {
-    then(onFulfilled, onRejected) {
+    then(onFulfilled: (value: unknown) => void, onRejected: (reason: unknown) => void) {
       native().then(onFulfilled, onRejected);
     },
   };
@@ -173,8 +174,8 @@ const shapes = [
 ];
 
 // The names of the leading `at async` frames, down to this helper.
-async function asyncFramesOf(fn) {
-  let error;
+async function asyncFramesOf(fn: () => Promise<unknown>) {
+  let error: any;
   try {
     error = await fn();
   } catch (e) {
@@ -190,14 +191,14 @@ async function asyncFramesOf(fn) {
 }
 
 async function collect() {
-  const frames = {};
+  const frames: Record<string, string[]> = {};
   for (const fn of shapes) frames[fn.name] = await asyncFramesOf(fn);
   return frames;
 }
 
 async function main() {
   const storage = new AsyncLocalStorage();
-  const result = {};
+  const result: Record<string, Record<string, string[]>> = {};
   result["before"] = await collect();
   result["before, in AsyncLocalStorage.run()"] = await storage.run({}, collect);
   leaveFastPaths();

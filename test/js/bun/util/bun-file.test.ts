@@ -118,7 +118,7 @@ test.concurrent.each([
   "freezing Promise.prototype",
 ])("native rejections keep their async stack after %s", async trigger => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "native-rejection-async-stack-fixture.js"), trigger],
+    cmd: [bunExe(), join(import.meta.dir, "native-rejection-async-stack-fixture.ts"), trigger],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

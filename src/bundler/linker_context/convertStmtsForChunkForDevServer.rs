@@ -65,6 +65,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
             && loaders[record.source_index.get() as usize] == Loader::Css
         {
             record.path.is_disabled = true;
+            // No `IS_DEV_SERVER_STYLESHEET` here: `bun build` also runs this loop, and its output has a module for the stylesheet.
             continue;
         }
         // Make sure the printer gets the resolved path

@@ -108,8 +108,8 @@ bitflags::bitflags! {
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
 
-        /// The dev server gives this target, a stylesheet, no module in its registry.
-        const IS_DEV_SERVER_STYLESHEET = 1 << 19;
+        /// The dev server set `path.is_disabled` because the target is a stylesheet, which it serves apart from the module registry.
+        const IS_DEV_SERVER_STYLESHEET = 1 << 21;
     }
 }
 

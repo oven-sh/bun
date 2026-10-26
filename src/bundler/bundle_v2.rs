@@ -7273,10 +7273,9 @@ pub mod bv2_impl {
                                     || entry.kind == bake_types::CacheKind::Css
                                 {
                                     import_record.path.is_disabled = true;
-                                }
-                                if entry.kind == bake_types::CacheKind::Css {
-                                    import_record.flags.insert(
+                                    import_record.flags.set(
                                         bun_ast::ImportRecordFlags::IS_DEV_SERVER_STYLESHEET,
+                                        entry.kind == bake_types::CacheKind::Css,
                                     );
                                 }
                             }

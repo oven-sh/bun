@@ -3651,7 +3651,7 @@ pub mod bv2_impl {
                 // `enqueue_entry_item` found the file in the graph and left `resolved` as it was.
                 if let Some(path) = resolved.path_const() {
                     return Ok(ScannedEntryPoint {
-                        source_index: self.path_to_source_index_map(target).get_path(path),
+                        source_index: self.path_to_source_index_map(target).get(path.text),
                         is_duplicate: true,
                     });
                 }

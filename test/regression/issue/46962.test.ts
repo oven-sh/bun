@@ -79,7 +79,8 @@ test.concurrent("global commands skip the empty dependency name that bun 1.4.3 w
     expect(stdout).toContain("installed mypkg@");
     expect(exitCode).toBe(0);
   }
-  expect((await file(join(globalDir, "package.json")).json()).dependencies).toMatchObject({
+  // The write drops the row from both files.
+  expect((await file(join(globalDir, "package.json")).json()).dependencies).toEqual({
     mypkg: posix(join(home, "pkg")),
     other: otherPath,
   });
@@ -87,12 +88,14 @@ test.concurrent("global commands skip the empty dependency name that bun 1.4.3 w
 
   {
     const { stdout, stderr, exitCode } = await run(home, env, "remove", "-g", "other");
-    expect(stderr).not.toContain("empty dependency name");
+    expect(stderr).not.toContain("skipping unnamed dependency");
     expect(stderr).not.toContain("Lockfile is malformed");
     expect(stdout).toContain("other");
     expect(exitCode).toBe(0);
   }
-  expect((await file(join(globalDir, "package.json")).json()).dependencies.other).toBeUndefined();
+  expect((await file(join(globalDir, "package.json")).json()).dependencies).toEqual({
+    mypkg: posix(join(home, "pkg")),
+  });
 });
 
 test.concurrent("bun install reads a bun.lock with the empty dependency name that bun 1.4.3 wrote", async () => {

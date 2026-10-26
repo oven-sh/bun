@@ -4125,13 +4125,11 @@ describe("bundler", () => {
 // that moves every later entry. The results of the calls below all stay unused
 // until the `<div>` reads them, so N calls took N^2 steps. The pass is a small
 // part of a build, so the test reads the time of the pass itself. Only a debug
-// or ASAN build records it.
-test.skipIf(!isDebug && !isASAN)(
+// or ASAN build records it, and on a debug build one round takes 3 seconds.
+test.skipIf(isDebug || !isASAN)(
   "react-compiler ValidateUseMemo time does not grow with the square of the number of useMemo calls",
   async () => {
-    // Without the fix the ratio below grows with the number of calls, and
-    // optimized code needs twice as many of them as a debug build.
-    const calls = isDebug ? 3000 : 6000;
+    const calls = 6000;
     const perComponent = 20;
     const call = "{useMemo(() => 1, [])}";
     const source = (components: number, callsEach: number) =>
@@ -4168,27 +4166,25 @@ test.skipIf(!isDebug && !isASAN)(
     };
 
     // Both builds hold the same calls, so a linear pass takes about as long in
-    // one as in the other: the ratio is 0.5 with the fix. Without it the pass
-    // takes 7 times as long in the large component on a debug build, and 5 to 7
-    // times on an ASAN build. The times are wall time. Other load on the machine
-    // only adds to a time, so the best time of up to five rounds counts, and the
-    // two builds of a round run together.
+    // one as in the other: the ratio is 0.5 with the fix, and 5 to 6 without
+    // it. The times are wall time. Other load on the machine only adds to a
+    // time, so the best time of each build counts, and the two builds of a
+    // round run together. A round takes 1 second. The rounds stop once the
+    // ratio is under 1: load on the control build alone can put a ratio of 5
+    // under the limit for one round.
     let control = Infinity;
     let large = Infinity;
-    for (let round = 0; round < 5; round++) {
+    for (let round = 0; round < 3; round++) {
       const [largeTime, controlTime] = await Promise.all([
         passTime("large.jsx", 1),
         passTime("control.jsx", calls / perComponent),
       ]);
       large = Math.min(large, largeTime);
       control = Math.min(control, controlTime);
-      if (large / control < 3) break;
+      if (large / control < 1) break;
     }
     expect(large / control).toBeLessThan(3);
   },
-  // `bun test` allows 5 seconds by default. On a debug build a round takes 3
-  // seconds, and a test that fails takes five rounds.
-  60_000,
 );
 
 // Three passes kept one copy of their work per basic block or per nesting

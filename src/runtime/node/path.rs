@@ -790,8 +790,7 @@ fn resolve_js_t<T: PathCharCwd>(
     let buf_len = resolve_buf_len(is_windows, paths);
     let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
-    // `not_a_string` is the argument of `path.win32.resolve` before `paths`. Node validates an
-    // argument when its walk reads it.
+    // Node validates an argument of `path.win32.resolve` only when its walk reads it.
     if let Some((index, value)) = not_a_string
         && !resolve_windows_stops_in_paths_t(paths, buf2)
     {
@@ -833,8 +832,7 @@ fn resolve(
         let path = args[i as usize];
         if !path.is_string() {
             if is_windows {
-                // Node validates this argument only when the walk of `path.win32.resolve`
-                // reads it. The walk over the arguments after it tells.
+                // The walk over the arguments after this one tells if Node reads it.
                 not_a_string = Some((i, path));
                 break;
             }

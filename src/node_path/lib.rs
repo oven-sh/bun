@@ -2172,10 +2172,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     resolve_windows_walk_t::<T, false>(paths, buf, buf2)
 }
 
-/// Whether the walk of [`resolve_windows_t`] stops inside `paths`: they give it a root and a
-/// device, so it does not read the working directory. When it does not stop there,
-/// `path.win32.resolve` reads the argument before `paths`. Node validates that argument only
-/// in this case, so `node:path` calls this only for an argument that is not a string.
+/// Whether the walk of `path.win32.resolve` stops inside `paths`, so that it reads nothing else.
 #[cold]
 pub fn resolve_windows_stops_in_paths_t<T: PathCharCwd>(paths: &[&[T]], buf2: &mut [T]) -> bool {
     !matches!(
@@ -2184,11 +2181,7 @@ pub fn resolve_windows_stops_in_paths_t<T: PathCharCwd>(paths: &[&[T]], buf2: &m
     )
 }
 
-/// The walk of [`resolve_windows_t`]. With `IN_PATHS`, it resolves no path and does not read the
-/// working directory. It returns an empty path when it has read every path, and a path that is
-/// not empty when it stops inside them.
-///
-/// `IN_PATHS` is a const so that `resolve_windows_t` is the walk without these tests.
+/// With `IN_PATHS`, the walk resolves no path: it returns an empty one only if it read them all.
 fn resolve_windows_walk_t<'a, T: PathCharCwd, const IN_PATHS: bool>(
     paths: &[&[T]],
     buf: &'a mut [T],

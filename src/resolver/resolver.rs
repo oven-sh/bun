@@ -330,6 +330,7 @@ pub struct Bufs {
     pub(crate) tsconfig_match_full_buf: PathBuffer,
     pub(crate) tsconfig_match_full_buf3: PathBuffer,
 
+    pub(crate) esm_subpath: [u8; 512],
     pub(crate) esm_absolute_package_path: PathBuffer,
     pub(crate) esm_absolute_package_path_joined: PathBuffer,
 
@@ -2567,9 +2568,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Pooled, not `bufs!`: a "browser" remap can re-enter this function while `esm` is in use.
-        let mut esm_subpath_buf = bun_paths::path_buffer_pool::get();
-        let esm_ = crate::package_json::Package::parse(import_path, &mut **esm_subpath_buf);
+        let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
@@ -5171,11 +5170,15 @@ impl<'a> Resolver<'a> {
         };
 
         if self.browser_remap_depth < MAX_BROWSER_REMAP_DEPTH {
+            // A package-path target re-enters `load_node_modules`, which parses into the
+            // scratch the caller's `esm.subpath` points at.
+            let caller_esm_subpath = *bufs!(esm_subpath);
             self.browser_remap_depth += 1;
             let resolved = self
                 .resolve_without_remapping(browser_scope, remap, kind, global_cache, out)
                 .is_success();
             self.browser_remap_depth -= 1;
+            *bufs!(esm_subpath) = caller_esm_subpath;
             if resolved {
                 return BrowserMapSubpath::Found;
             }

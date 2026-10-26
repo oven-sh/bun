@@ -285,13 +285,14 @@ describe("bundler", () => {
   // A remap to a package that does not exist falls back to the subpath's own
   // file. When that is missing too, the lookup moves on to the parent
   // node_modules, where the other copy of the package resolves the subpath
-  // through "exports".
+  // through "exports". The target has a subpath of its own, so the lookup of
+  // the target must leave the subpath of the import it interrupts intact.
   itBundled("extra/BrowserFieldSubpathRemapToMissingPackage", {
     files: {
       "src/entry.js": `require('pkg/foo'); require('pkg2/bar')`,
-      "src/node_modules/pkg/package.json": `{ "browser": { "./foo": "missing-pkg" } }`,
+      "src/node_modules/pkg/package.json": `{ "browser": { "./foo": "missing-pkg/some/other/subpath" } }`,
       "src/node_modules/pkg/foo.js": `console.log('fallback')`,
-      "src/node_modules/pkg2/package.json": `{ "browser": { "./bar": "missing-pkg" } }`,
+      "src/node_modules/pkg2/package.json": `{ "browser": { "./bar": "missing-pkg/some/other/subpath" } }`,
       "node_modules/pkg2/package.json": `{ "exports": { "./bar": "./bar.js" } }`,
       "node_modules/pkg2/bar.js": `console.log('parent')`,
     },

@@ -8393,11 +8393,25 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
       '@keyframes k { from { opacity: 0; @import "x.css"; top: 0 } to { opacity: 1 } }',
       "@keyframes k{0%{opacity:0;top:0}to{opacity:1}}",
     );
-    // A style rule is not an item of this block: the invalid declaration runs
-    // to the next semicolon.
+    // A style rule is not an item of this block: the invalid item runs to the
+    // next semicolon, past its `{}` block, and takes the declaration behind
+    // the block with it. Chrome 153 parses these rows the same way. CSS Syntax 3
+    // ("consume a block's contents") ends the item at the block instead.
     minify_test(
       "@keyframes k { from { color: red; .a { color: blue } left: 0 } to { opacity: 1 } }",
       "@keyframes k{0%{color:red}to{opacity:1}}",
+    );
+    minify_test(
+      "@keyframes k { from { 123: x { top: 9px } opacity: 0 } to { opacity: 1 } }",
+      "@keyframes k{0%{}to{opacity:1}}",
+    );
+    minify_test(
+      "@keyframes k { from { opacity: 0; &:hover { top: 9px } left: 0 } to { opacity: 1 } }",
+      "@keyframes k{0%{opacity:0}to{opacity:1}}",
+    );
+    minify_test(
+      "@keyframes k { from { opacity: 0; .a { top: 9px } left: 0; right: 0 } to { opacity: 1 } }",
+      "@keyframes k{0%{opacity:0;right:0}to{opacity:1}}",
     );
     minify_test("@keyframes k { from { 123: x } to { opacity: 1 } }", "@keyframes k{0%{}to{opacity:1}}");
     minify_test(

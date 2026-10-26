@@ -40,9 +40,49 @@ impl Default for RequestedExports {
 pub struct TrackedBarrels {
     /// By `bake_types::Side`: the server and SSR copies of a file share one graph record.
     by_side: [StringArrayHashMap<RequestedExports>; 2],
-    /// By side, the requests of a file that no later build repeats: what a build requested from a copy
-    /// that it did not bundle, and every export of a file that the router reads. It forces no parse.
-    kept: [StringArrayHashMap<RequestedExports>; 2],
+    /// By side, the requests for a file that no entry has: what a build requested from a copy that it
+    /// did not bundle, and every export of a file that the router reads. It forces no parse.
+    kept: [StringArrayHashMap<Kept>; 2],
+    /// The number of `Kept::by_importer` items on both sides.
+    importers: u32,
+}
+
+/// The kept requests of one file on one side.
+#[derive(Default)]
+struct Kept {
+    /// The requests that no build takes back: those of the router, and those that a build could not
+    /// give to one importer.
+    fixed: RequestedExports,
+    by_importer: Vec<KeptImporter>,
+}
+
+/// What one importer requested from a file in the last build that bundled the importer and not that
+/// file. A build that bundles the importer again records what it requests then.
+struct KeptImporter {
+    path: Box<[u8]>,
+    /// The graph of this copy of the importer.
+    target: bun_ast::Target,
+    requested: RequestedExports,
+}
+
+impl KeptImporter {
+    /// True if this build has bundled the importer again, and has recorded what it requests from `path`.
+    fn is_bundled_again(&self, this: &BundleV2, path: &[u8]) -> bool {
+        let sources = &this.graph.build_graphs[self.target];
+        let Some(index) = sources.get(&self.path) else {
+            return false;
+        };
+        // A copy that did not parse has no parts: it requested nothing in this build.
+        if this.graph.ast.items_parts()[index as usize].len() == 0 {
+            return false;
+        }
+        // `path` has no index if this build took the file from the cache: it then recorded no request
+        // of an importer that still imports the file.
+        sources.get(path).is_some()
+            || !this.graph.ast.items_import_records()[index as usize]
+                .iter()
+                .any(|record| record.path.text == path)
+    }
 }
 
 impl TrackedBarrels {
@@ -68,7 +108,7 @@ impl TrackedBarrels {
         side: bake_types::Side,
         path: &'a [u8],
         use_directive: UseDirective,
-    ) -> impl Iterator<Item = &'a RequestedExports> {
+    ) -> impl Iterator<Item = &'a Kept> {
         // The record of a "use client" file is for the graph of its importer, which can be server code.
         let importer = (side == bake_types::Side::Client && use_directive == UseDirective::Client)
             .then_some(bake_types::Side::Server);
@@ -80,8 +120,47 @@ impl TrackedBarrels {
 
     /// The router reads every export of this file itself, and no build records that request.
     pub fn keep_all(&mut self, side: bake_types::Side, path: &[u8]) -> Result<(), AllocError> {
-        *self.kept[side as usize].get_or_put(path)?.value_ptr = RequestedExports::All;
+        self.kept[side as usize].get_or_put(path)?.value_ptr.fixed = RequestedExports::All;
         Ok(())
+    }
+
+    /// Keeps what `importer` requested from `path` in this build, in place of what it requested before.
+    fn keep_for_importer(
+        &mut self,
+        side: bake_types::Side,
+        path: &[u8],
+        importer: KeptImporter,
+    ) -> Result<(), AllocError> {
+        let by_importer = &mut self.kept[side as usize]
+            .get_or_put(path)?
+            .value_ptr
+            .by_importer;
+        match by_importer
+            .iter_mut()
+            .find(|kept| kept.target == importer.target && kept.path == importer.path)
+        {
+            Some(kept) => *kept = importer,
+            None => {
+                by_importer.push(importer);
+                self.importers += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// Takes back what an importer requested, if this build bundled the importer again.
+    fn drop_importers_bundled_again(&mut self, this: &BundleV2) {
+        if self.importers == 0 {
+            return;
+        }
+        for kept_of_side in &mut self.kept {
+            for entry in kept_of_side.iterator() {
+                let by_importer = &mut entry.value_ptr.by_importer;
+                let before = by_importer.len();
+                by_importer.retain(|importer| !importer.is_bundled_again(this, entry.key_ptr));
+                self.importers -= (before - by_importer.len()) as u32;
+            }
+        }
     }
 
     /// True if the copy of this file on `side` has an entry.
@@ -97,15 +176,29 @@ impl TrackedBarrels {
     }
 
     pub fn memory_cost(&self) -> usize {
+        fn names_cost(requested: &RequestedExports) -> usize {
+            let RequestedExports::Partial(names) = requested else {
+                return 0;
+            };
+            names.capacity() * (size_of::<Box<[u8]>>() + size_of::<u32>())
+                + names.keys().iter().map(|name| name.len()).sum::<usize>()
+        }
         let mut cost = 0;
-        for barrels in self.by_side.iter().chain(&self.kept) {
+        for barrels in &self.by_side {
             cost += barrels.capacity()
                 * (size_of::<Box<[u8]>>() + size_of::<RequestedExports>() + size_of::<u32>());
             for (path, requested) in barrels.iter() {
-                cost += path.len();
-                if let RequestedExports::Partial(names) = requested {
-                    cost += names.capacity() * (size_of::<Box<[u8]>>() + size_of::<u32>());
-                    cost += names.keys().iter().map(|name| name.len()).sum::<usize>();
+                cost += path.len() + names_cost(requested);
+            }
+        }
+        for kept_of_side in &self.kept {
+            cost += kept_of_side.capacity()
+                * (size_of::<Box<[u8]>>() + size_of::<Kept>() + size_of::<u32>());
+            for (path, kept) in kept_of_side.iter() {
+                cost += path.len() + names_cost(&kept.fixed);
+                cost += kept.by_importer.capacity() * size_of::<KeptImporter>();
+                for importer in &kept.by_importer {
+                    cost += importer.path.len() + names_cost(&importer.requested);
                 }
             }
         }
@@ -179,6 +272,33 @@ impl RequestedExports {
     #[inline]
     fn lookup(map: &[Option<Self>], idx: u32) -> Option<&Self> {
         map.get(idx as usize).and_then(Option::as_ref)
+    }
+
+    fn has(&self, name: &[u8]) -> bool {
+        match self {
+            RequestedExports::All => true,
+            RequestedExports::Partial(names) => names.contains(name),
+        }
+    }
+
+    /// What both `self` and `other` request.
+    fn common(&self, other: &Self) -> Result<Self, AllocError> {
+        Ok(match (self, other) {
+            (RequestedExports::All, RequestedExports::All) => RequestedExports::All,
+            (RequestedExports::All, RequestedExports::Partial(names))
+            | (RequestedExports::Partial(names), RequestedExports::All) => {
+                RequestedExports::Partial(names.clone()?)
+            }
+            (RequestedExports::Partial(names), RequestedExports::Partial(other)) => {
+                let mut common = StringArrayHashMap::default();
+                for name in names.keys() {
+                    if other.contains(name) {
+                        common.put(name, ())?;
+                    }
+                }
+                RequestedExports::Partial(common)
+            }
+        })
     }
 
     /// Adds what `other` requests. Returns the number of names that are new.
@@ -407,7 +527,19 @@ fn apply_barrel_optimization_impl(
         let is_tracked = entry.is_some();
         let mut every_export = false;
         if tracked.any_kept() {
-            for kept in tracked.kept_for(side, path, result.use_directive) {
+            let kept_requests =
+                tracked
+                    .kept_for(side, path, result.use_directive)
+                    .flat_map(|kept| {
+                        let of_importers = kept
+                            .by_importer
+                            .iter()
+                            // This build has recorded what such an importer requests now.
+                            .filter(|importer| !importer.is_bundled_again(this, path))
+                            .map(|importer| &importer.requested);
+                        core::iter::once(&kept.fixed).chain(of_importers)
+                    });
+            for kept in kept_requests {
                 if !count(kept)? {
                     every_export = true;
                     break;
@@ -417,11 +549,15 @@ fn apply_barrel_optimization_impl(
         if every_export {
             // With an entry, each later build parses this path. The server and the SSR copy share one
             // graph record, and it can call a copy bundled that no build made.
-            if side == bake_types::Side::Server && this.has_ssr_graph() {
+            if side == bake_types::Side::Server && this.has_ssr_graph() && !is_tracked {
+                let bundled = dev.has_file(result.source.path.key_for_incremental_graph(), side);
                 // SAFETY: see above. No reference from the read above is used after this write.
-                *unsafe { &mut *dev.tracked_barrels() }.by_side[side as usize]
-                    .get_or_put(path)?
-                    .value_ptr = RequestedExports::All;
+                let entry = unsafe { &mut *dev.tracked_barrels() }.by_side[side as usize]
+                    .get_or_put(path)?;
+                // A bundled copy with no entry never defers: no build recorded the requests for it.
+                if bundled {
+                    *entry.value_ptr = RequestedExports::All;
+                }
             }
             return Ok(());
         }
@@ -538,26 +674,210 @@ pub(crate) fn copy_side(this: &BundleV2, source_index: u32) -> Option<bake_types
         })
 }
 
-/// Dev server: keeps what this build requested from a copy that it did not bundle. The importers of the
-/// copy are bundled, so no later build repeats these requests.
-fn keep_requests_of_copy(
+/// A copy that this build did not bundle, with the files of this build that import it.
+struct UnbundledCopy<'a> {
+    side: bake_types::Side,
+    path: &'a [u8],
+    requested: &'a RequestedExports,
+    /// By source index, in the order of the index: what the import records of a file can request
+    /// from this copy.
+    importers: Vec<(u32, RequestedExports)>,
+    /// A file reached this copy by an import of another path, or by an import record that is not
+    /// resolved: `importers` does not have its requests.
+    has_other_importer: bool,
+}
+
+impl UnbundledCopy<'_> {
+    fn importer(&mut self, importer: u32) -> &mut RequestedExports {
+        let at = match self.importers.last() {
+            Some((last, _)) if *last == importer => self.importers.len() - 1,
+            _ => {
+                self.importers.push((importer, RequestedExports::default()));
+                self.importers.len() - 1
+            }
+        };
+        &mut self.importers[at].1
+    }
+}
+
+/// Dev server: keeps what this build requested from each copy that it did not bundle. The importers of
+/// such a copy are bundled, so no later build repeats these requests.
+fn keep_requests_of_copies(
     this: &BundleV2,
     tracked: &mut TrackedBarrels,
-    index: u32,
-    side: bake_types::Side,
+    copies: &[(u32, bake_types::Side)],
 ) -> Result<(), AllocError> {
-    let requested = RequestedExports::lookup(&this.requested_exports, index);
-    // A saved file that no file of this build imports has no new importer.
-    if requested.is_none() && this.graph.entry_points.iter().any(|ep| ep.get() == index) {
+    let sources = this.graph.input_files.items_source();
+    let side_effects = this.graph.input_files.items_side_effects();
+    let boundaries = this.graph.server_component_boundaries.slice();
+    let mut unbundled: ArrayHashMap<u32, UnbundledCopy> = ArrayHashMap::default();
+    for &(index, side) in copies {
+        let path = sources[index as usize].path.text;
+        // A request under the generated copy of a client component boundary is for the original file.
+        for (&original, &generated) in boundaries
+            .list
+            .items_source_index()
+            .iter()
+            .zip(boundaries.list.items_reference_source_index())
+        {
+            if original == index
+                && let Some(requested) =
+                    RequestedExports::lookup(&this.requested_exports, generated)
+            {
+                tracked.kept[side as usize]
+                    .get_or_put(path)?
+                    .value_ptr
+                    .fixed
+                    .add(requested)?;
+            }
+        }
+        let requested = RequestedExports::lookup(&this.requested_exports, index);
+        // A saved file that no file of this build imports has no new importer.
+        if requested.is_none() && this.graph.entry_points.iter().any(|ep| ep.get() == index) {
+            continue;
+        }
+        // Also with no name requested: a saved barrel defers only if it has a record.
+        let kept = tracked.kept[side as usize].get_or_put(path)?.value_ptr;
+        let Some(requested) = requested else {
+            continue;
+        };
+        // Only a barrel defers a record. The requests for another file need no importer.
+        let can_be_barrel = side_effects[index as usize]
+            == bun_ast::SideEffects::NoSideEffectsPackageJson
+            || this.transpiler().options.optimize_imports.is_some();
+        if !can_be_barrel {
+            kept.fixed.add(requested)?;
+            continue;
+        }
+        unbundled.put(
+            index,
+            UnbundledCopy {
+                side,
+                path,
+                requested,
+                importers: Vec::new(),
+                has_other_importer: false,
+            },
+        )?;
+    }
+    if unbundled.is_empty() {
         return Ok(());
     }
-    // Also with no name requested: a saved barrel defers only if it has a record.
-    let path = this.graph.input_files.items_source()[index as usize]
-        .path
-        .text;
-    let kept = tracked.kept[side as usize].get_or_put(path)?.value_ptr;
-    if let Some(requested) = requested {
-        kept.add(requested)?;
+
+    let targets = this.graph.ast.items_target();
+    let star_records = this.graph.ast.items_export_star_import_records();
+    // The import records of one file that have the path of a copy, with the slot of that copy.
+    let mut found: Vec<(u32, usize)> = Vec::new();
+    for (importer, parts) in this.graph.ast.items_parts().iter().enumerate() {
+        if parts.len() == 0 {
+            continue;
+        }
+        let records = this.graph.ast.items_import_records()[importer].as_slice();
+        let by_path = &this.graph.build_graphs[targets[importer]];
+        found.clear();
+        for (record_index, record) in records.iter().enumerate() {
+            if record.flags.contains(import_record::Flags::IS_INTERNAL) {
+                continue;
+            }
+            // As `schedule_barrel_deferred_imports` finds the file that a record requests from.
+            let target = if record.source_index.is_valid() {
+                Some(record.source_index.get())
+            } else {
+                by_path.get(record.path.text)
+            };
+            let Some(slot) = target.and_then(|target| unbundled.get_index(&target)) else {
+                continue;
+            };
+            let copy = &mut unbundled.values_mut()[slot];
+            if record.path.text != copy.path {
+                copy.has_other_importer = true;
+                continue;
+            }
+            found.push((record_index as u32, slot));
+            if matches!(record.kind, ImportKind::Require | ImportKind::Dynamic)
+                || star_records[importer].contains(&(record_index as u32))
+            {
+                *copy.importer(importer as u32) = RequestedExports::All;
+            }
+        }
+        if found.is_empty() {
+            continue;
+        }
+        // HMR lowering merges the statements of one import path. The names of a merged statement
+        // stay on its own record, and that record is not resolved.
+        for record in records {
+            if !record.flags.contains(import_record::Flags::IS_UNUSED) {
+                continue;
+            }
+            for &(found_record, slot) in &found {
+                if records[found_record as usize].original_path == record.path.text {
+                    unbundled.values_mut()[slot].has_other_importer = true;
+                }
+            }
+        }
+        for named in this.graph.ast.items_named_imports()[importer].values() {
+            let Some(&(_, slot)) = found
+                .iter()
+                .find(|(record, _)| *record == named.import_record_index)
+            else {
+                continue;
+            };
+            let can_request = unbundled.values_mut()[slot].importer(importer as u32);
+            if named.alias_is_star {
+                *can_request = RequestedExports::All;
+            } else if let (Some(alias), RequestedExports::Partial(names)) =
+                (named.alias, can_request)
+            {
+                names.put(alias.slice(), ())?;
+            }
+        }
+    }
+
+    for copy in unbundled.values() {
+        let kept = tracked.kept[copy.side as usize]
+            .get_or_put(copy.path)?
+            .value_ptr;
+        if copy.has_other_importer {
+            kept.fixed.add(copy.requested)?;
+            continue;
+        }
+        // A request that no file of `importers` can have made is not taken back.
+        if !copy
+            .importers
+            .iter()
+            .any(|(_, can_request)| matches!(can_request, RequestedExports::All))
+        {
+            match copy.requested {
+                RequestedExports::All => kept.fixed = RequestedExports::All,
+                RequestedExports::Partial(names) => {
+                    for name in names.keys() {
+                        if !copy
+                            .importers
+                            .iter()
+                            .any(|(_, can_request)| can_request.has(name))
+                            && let RequestedExports::Partial(fixed) = &mut kept.fixed
+                        {
+                            fixed.put(name, ())?;
+                        }
+                    }
+                }
+            }
+        }
+        for (importer, can_request) in &copy.importers {
+            let requested = can_request.common(copy.requested)?;
+            if matches!(&requested, RequestedExports::Partial(names) if names.is_empty()) {
+                continue;
+            }
+            tracked.keep_for_importer(
+                copy.side,
+                copy.path,
+                KeptImporter {
+                    path: Box::from(sources[*importer as usize].path.text),
+                    target: targets[*importer as usize],
+                    requested,
+                },
+            )?;
+        }
     }
     Ok(())
 }
@@ -572,28 +892,7 @@ pub fn keep_requests_of_unprinted_copy(
     let side = this.graph.ast.items_target()[index as usize]
         .bake_graph()
         .side();
-    keep_requests_of_copy(this, tracked, index, side)?;
-    // A request under the generated copy of a client component boundary is for the original file.
-    let boundaries = this.graph.server_component_boundaries.slice();
-    for (&original, &generated) in boundaries
-        .list
-        .items_source_index()
-        .iter()
-        .zip(boundaries.list.items_reference_source_index())
-    {
-        if original == index
-            && let Some(requested) = RequestedExports::lookup(&this.requested_exports, generated)
-        {
-            let path = this.graph.input_files.items_source()[index as usize]
-                .path
-                .text;
-            tracked.kept[side as usize]
-                .get_or_put(path)?
-                .value_ptr
-                .add(requested)?;
-        }
-    }
-    Ok(())
+    keep_requests_of_copies(this, tracked, &[(index, side)])
 }
 
 /// Dev server, once per build: adds the requests of this build to `TrackedBarrels`.
@@ -603,12 +902,18 @@ pub(crate) fn persist_requests_of_tracked_barrels(
 ) -> Result<(), AllocError> {
     // SAFETY: see the read of `tracked_barrels` in `apply_barrel_optimization_impl`.
     let tracked = unsafe { &mut *dev.tracked_barrels() };
-    for &(index, side) in &this.unbundled_copies {
-        keep_requests_of_copy(this, tracked, index, side)?;
+    tracked.drop_importers_bundled_again(this);
+    if !this.unbundled_copies.is_empty() {
+        keep_requests_of_copies(this, tracked, &this.unbundled_copies)?;
     }
     if tracked.by_side.iter().all(|barrels| barrels.is_empty()) {
         return Ok(());
     }
+    // An entry has the requests of the builds that bundled its file. Those of a copy that this build
+    // did not bundle are kept for their importers, above.
+    let any_unbundled = !this.unbundled_copies.is_empty();
+    let is_unbundled =
+        |index: u32| any_unbundled && this.unbundled_copies.iter().any(|&(copy, _)| copy == index);
     let sources = this.graph.input_files.items_source();
     let mut lookups: usize = 0;
     let mut names_added: usize = 0;
@@ -617,6 +922,9 @@ pub(crate) fn persist_requests_of_tracked_barrels(
         let Some(requested) = requested else {
             continue;
         };
+        if is_unbundled(index as u32) {
+            continue;
+        }
         let side = copy_side(this, index as u32);
         for (barrels_side, barrels) in tracked.by_side.iter_mut().enumerate() {
             if barrels.is_empty() || side.is_some_and(|side| side as usize != barrels_side) {
@@ -749,6 +1057,19 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
     });
 
     this.graph.input_files.items_source_mut()[idx] = source;
+
+    // Dev server: a record that the barrel had deferred does not resolve, so this build does not
+    // bundle the barrel.
+    if resolve_result.last_error.is_some()
+        && this.dev_server.is_some()
+        && !this
+            .unbundled_copies
+            .iter()
+            .any(|&(copy, _)| copy == barrel_idx)
+    {
+        this.unbundled_copies
+            .push((barrel_idx, target.bake_graph().side()));
+    }
 
     let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
 
@@ -1354,9 +1675,10 @@ pub(crate) fn schedule_barrel_deferred_imports(
 
 #[cfg(test)]
 mod tests {
-    use super::{RequestedExports, SourcesByPath, TrackedBarrels};
+    use super::{KeptImporter, RequestedExports, SourcesByPath, TrackedBarrels};
     use crate::UseDirective;
     use crate::bake_types::Side;
+    use bun_ast::Target;
     use bun_collections::StringArrayHashMap;
 
     const BARREL: &[u8] = b"/node_modules/lib/index.js";
@@ -1377,27 +1699,31 @@ mod tests {
     ) -> Vec<Option<Vec<&[u8]>>> {
         tracked
             .kept_for(side, BARREL, use_directive)
-            .map(|requested| match requested {
-                RequestedExports::All => None,
-                RequestedExports::Partial(map) => {
-                    Some(map.keys().iter().map(|name| &**name).collect())
-                }
-            })
+            .map(|kept| names_of(&kept.fixed))
             .collect()
+    }
+
+    fn names_of(requested: &RequestedExports) -> Option<Vec<&[u8]>> {
+        match requested {
+            RequestedExports::All => None,
+            RequestedExports::Partial(map) => Some(map.keys().iter().map(|name| &**name).collect()),
+        }
     }
 
     #[test]
     fn only_a_use_client_copy_in_the_client_graph_reads_the_record_of_the_other_side() {
         let mut tracked = TrackedBarrels::default();
         assert!(!tracked.any_kept());
-        *tracked.kept[Side::Client as usize]
+        tracked.kept[Side::Client as usize]
             .get_or_put(BARREL)
             .unwrap()
-            .value_ptr = names(&[b"c"]);
-        *tracked.kept[Side::Server as usize]
+            .value_ptr
+            .fixed = names(&[b"c"]);
+        tracked.kept[Side::Server as usize]
             .get_or_put(BARREL)
             .unwrap()
-            .value_ptr = names(&[b"s"]);
+            .value_ptr
+            .fixed = names(&[b"s"]);
         assert!(tracked.any_kept());
 
         let client: Vec<&[u8]> = vec![b"c"];
@@ -1427,14 +1753,77 @@ mod tests {
     #[test]
     fn keep_all_is_for_one_side_and_replaces_the_names_of_its_record() {
         let mut tracked = TrackedBarrels::default();
-        *tracked.kept[Side::Server as usize]
+        tracked.kept[Side::Server as usize]
             .get_or_put(BARREL)
             .unwrap()
-            .value_ptr = names(&[b"s"]);
+            .value_ptr
+            .fixed = names(&[b"s"]);
         tracked.keep_all(Side::Server, BARREL).unwrap();
         assert_eq!(kept(&tracked, Side::Server, UseDirective::None), [None]);
         assert_eq!(kept(&tracked, Side::Client, UseDirective::None), []);
         assert!(!tracked.must_reparse(BARREL));
+    }
+
+    #[test]
+    fn a_request_of_one_copy_of_an_importer_replaces_its_earlier_request() {
+        let importer = |target, requested| KeptImporter {
+            path: Box::from(&b"/app/page.ts"[..]),
+            target,
+            requested,
+        };
+        let mut tracked = TrackedBarrels::default();
+        let server = Side::Server;
+        tracked
+            .keep_for_importer(server, BARREL, importer(Target::Bun, names(&[b"a", b"b"])))
+            .unwrap();
+        tracked
+            .keep_for_importer(
+                server,
+                BARREL,
+                importer(Target::Browser, RequestedExports::All),
+            )
+            .unwrap();
+        tracked
+            .keep_for_importer(server, BARREL, importer(Target::Bun, names(&[b"c"])))
+            .unwrap();
+        assert_eq!(tracked.importers, 2);
+
+        let kept = tracked.kept[server as usize].get(BARREL).unwrap();
+        let requested: Vec<_> = kept
+            .by_importer
+            .iter()
+            .map(|importer| (importer.target, names_of(&importer.requested)))
+            .collect();
+        let c: Vec<&[u8]> = vec![b"c"];
+        assert_eq!(requested, [(Target::Bun, Some(c)), (Target::Browser, None)]);
+        assert_eq!(names_of(&kept.fixed), Some(vec![]));
+        assert!(!tracked.must_reparse(BARREL));
+    }
+
+    #[test]
+    fn an_importer_keeps_only_what_the_build_requested() {
+        let requested = names(&[b"a", b"b"]);
+        let a: Vec<&[u8]> = vec![b"a"];
+        let both: Vec<&[u8]> = vec![b"a", b"b"];
+        let common = |can_request: &RequestedExports, requested: &RequestedExports| {
+            can_request.common(requested).unwrap()
+        };
+        assert_eq!(
+            names_of(&common(&names(&[b"a", b"z"]), &requested)),
+            Some(a.clone())
+        );
+        assert_eq!(
+            names_of(&common(&RequestedExports::All, &requested)),
+            Some(both)
+        );
+        assert_eq!(
+            names_of(&common(&names(&[b"a"]), &RequestedExports::All)),
+            Some(a)
+        );
+        assert_eq!(
+            names_of(&common(&RequestedExports::All, &RequestedExports::All)),
+            None
+        );
     }
 
     fn sources(paths: &[&'static [u8]]) -> Vec<bun_ast::Source> {

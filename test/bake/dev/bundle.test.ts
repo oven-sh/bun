@@ -2832,6 +2832,340 @@ devTest("barrel optimization: a kept record makes no later build parse a file th
     await dev.fetch("/first").equals("first: AAA");
   },
 });
+
+// A request that a build made of a barrel that it did not bundle belongs to the importer that made it. The
+// barrel counts it until a build bundles that importer again. gone.ts is not there: a barrel that is asked
+// for `gone` fails.
+const goneBarrel = `export { a } from './a'; export { b } from './b'; export { gone } from './gone';`;
+const uiBarrel = (index: string, dir = "ui") => ({
+  [`${dir}/package.json`]: JSON.stringify({ name: dir, sideEffects: false }),
+  [`${dir}/index.ts`]: index,
+  [`${dir}/a.ts`]: `export const a = "A";`,
+  [`${dir}/b.ts`]: `export function b() {}`,
+});
+const readsGone = serverPage(`import { gone } from '../ui';`, `'gone: ' + typeof gone`);
+const readsA = (label: string) => serverPage(`import { a } from '../ui';`, `'${label}: ' + a`);
+devTest("barrel optimization: an importer that drops a name takes its request back", {
+  framework: minimalFramework,
+  pluginFile: countLoads("ui.index[.]ts$"),
+  files: {
+    "routes/index.ts": readsGone,
+    "routes/loads.ts": `export default () => Response.json(globalThis.loads);`,
+    ...uiBarrel(`${goneBarrel} <<<ERROR>>>`),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    // This save builds the barrel and not the route file: the barrel still counts `gone`, and fails.
+    await dev.write("ui/index.ts", goneBarrel);
+    await dev.write("routes/index.ts", readsA("saved"));
+    await dev.fetch("/").equals("saved: A");
+    // Each build loaded the barrel once: the build of the last save did not fail, so no request had to
+    // build the route again.
+    expect(await dev.fetch("/loads").json()).toEqual({ "index.ts": 3 });
+    // This save builds only the barrel. The request that the route file took back does not return.
+    await dev.write("ui/index.ts", `${goneBarrel} // saved`);
+    await dev.fetch("/").equals("saved: A");
+    expect(await dev.fetch("/loads").json()).toEqual({ "index.ts": 4 });
+  },
+});
+
+devTest("barrel optimization: a client importer that drops a name takes its request back", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { gone } from './ui';
+      console.log('gone: ' + typeof gone);
+    `,
+    ...uiBarrel(`${goneBarrel} <<<ERROR>>>`),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("ui/index.ts", goneBarrel, { errors: null });
+    await dev.write(
+      "index.ts",
+      `
+        import { a } from './ui';
+        console.log('saved: ' + a);
+      `,
+    );
+    await expectPage(dev, "/", "saved: A");
+  },
+});
+
+devTest("barrel optimization: a request is taken back while the barrel still fails to parse", {
+  framework: minimalFramework,
+  files: {
+    "routes/first.ts": readsGone,
+    "routes/second.ts": readsGone,
+    ...uiBarrel(`${goneBarrel} <<<ERROR>>>`),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/first")).status).toBe(500);
+    expect((await dev.fetch("/second")).status).toBe(500);
+    // The build of this save parses the barrel, and the barrel fails again.
+    await dev.write("routes/first.ts", readsA("saved"));
+    // second.ts does not import the barrel now, so the build of this save does not parse the barrel.
+    await dev.write("routes/second.ts", serverPage("", `'second: none'`));
+    await dev.write("ui/index.ts", goneBarrel);
+    await dev.fetch("/first").equals("saved: A");
+    await dev.fetch("/second").equals("second: none");
+  },
+});
+
+// The entry of a barrel has the requests of the builds that bundled it, and not of a build that failed on it.
+devTest("barrel optimization: a request that makes a bundled barrel fail is taken back", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": readsA("first"),
+    ...uiBarrel(goneBarrel),
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("first: A");
+    await dev.write("routes/index.ts", readsGone);
+    // A request for a route with a failed file builds every file of that route again.
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("routes/index.ts", readsA("saved"));
+    await dev.fetch("/").equals("saved: A");
+  },
+});
+
+devTest("barrel optimization: an importer that drops a name leaves the requests of the other importers", {
+  framework: minimalFramework,
+  files: {
+    "routes/first.ts": readsGone,
+    "routes/second.ts": serverPage(`import { b } from '../ui';`, `'second: ' + typeof b`),
+    ...uiBarrel(`${goneBarrel} <<<ERROR>>>`),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/first")).status).toBe(500);
+    expect((await dev.fetch("/second")).status).toBe(500);
+    await dev.write("ui/index.ts", goneBarrel);
+    // This save builds first.ts and the barrel, and not second.ts.
+    await dev.write("routes/first.ts", readsA("first"));
+    await dev.fetch("/first").equals("first: A");
+    await dev.fetch("/second").equals("second: function");
+  },
+});
+
+const notInstalled = `export { a } from './a.js'; export { b } from './b.js'; export { c } from 'not-installed';`;
+// Four ways to request every export of a barrel.
+const everyExport = ["by-namespace", "by-export-star", "by-import", "by-require"];
+devTest("barrel optimization: an importer that drops its request for every export takes it back", {
+  framework: minimalFramework,
+  files: {
+    "routes/whole.ts": `
+      import * as lib from 'by-namespace';
+      import { c } from '../export-star';
+      const read = (lib: any) => lib.c;
+      export default async function () {
+        const imported = await import('by-import');
+        return new Response('whole: ' + [read(lib), c, read(imported), read(require('by-require'))].join(' '));
+      }
+    `,
+    "export-star.ts": `export * from 'by-export-star';`,
+    "routes/named.ts": serverPage(
+      everyExport.map((name, i) => `import { a as a${i} } from '${name}';`).join("\n"),
+      `'named: ' + [${everyExport.map((_, i) => `a${i}`).join(", ")}].join(' ')`,
+    ),
+    ...Object.assign({}, ...everyExport.map(name => abPackage(name, notInstalled))),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/whole")).status).toBe(500);
+    // This request builds named.ts and the barrels, and not whole.ts or export-star.ts.
+    await dev.fetch("/named");
+    // These two files still read every export of each barrel, and one export does not build.
+    expect((await dev.fetch("/whole")).status).toBe(500);
+    {
+      await using batch = await dev.batchChanges({ errors: null });
+      await dev.write("export-star.ts", `export { a } from 'by-export-star';`);
+      await dev.write("routes/whole.ts", serverPage(`import { a } from '../export-star';`, `'whole: ' + a`));
+    }
+    await dev.fetch("/whole").equals("whole: A");
+    await dev.fetch("/named").equals("named: A A A A");
+  },
+});
+
+// The same with a separate SSR graph, for a barrel that no build has bundled and for one with an entry.
+for (const bundledFirst of [false, true]) {
+  const barrel = bundledFirst ? "a bundled barrel" : "a barrel that no build has bundled";
+  devTest(`barrel optimization: an SSR importer takes back its request for every export of ${barrel}`, {
+    framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+    files: {
+      "routes/whole.ts": ssrPage("whole", "whole"),
+      "routes/named.ts": ssrPage("named", "a"),
+      ...ssrReads,
+      ...abPackage("lib", notInstalled),
+    },
+    async test(dev) {
+      if (bundledFirst) await dev.fetch("/named").equals("named: A");
+      expect((await dev.fetch("/whole")).status).toBe(500);
+      // This request builds ssr-a.ts and the barrel, and not ssr-whole.ts.
+      await dev.fetch("/named");
+      await dev.write("ssr-whole.ts", ssrReads["ssr-b.ts"]);
+      await dev.fetch("/whole").equals("whole: function");
+      await dev.fetch("/named").equals("named: A");
+    },
+  });
+}
+
+// A barrel that a build bundled in full has no entry: no build recorded what its importers request.
+devTest("barrel optimization: a barrel bundled in full stays so when a request for every export is taken back", {
+  framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+  files: {
+    "routes/full.ts": serverPage(`import { a, b } from 'lib';`, `'full: ' + a + ' ' + typeof b`),
+    "routes/whole.ts": ssrPage("whole", "whole"),
+    "routes/second.ts": serverPage(`import { a } from 'lib';`, `'second: ' + a`),
+    "routes/third.ts": serverPage(`import { a } from 'lib';`, `'third: ' + a`),
+    ...ssrReads,
+    ...abPackage("lib", abBarrel),
+  },
+  async test(dev) {
+    await dev.fetch("/full").equals("full: A function");
+    await Bun.write(dev.join("node_modules/lib/index.js"), brokenBarrel);
+    expect((await dev.fetch("/whole")).status).toBe(500);
+    await Bun.write(dev.join("node_modules/lib/index.js"), abBarrel);
+    await dev.fetch("/second").equals("second: A");
+    await dev.write("ssr-whole.ts", ssrReads["ssr-a.ts"]);
+    // This build parses the server copy of the barrel again, and not full.ts.
+    await dev.fetch("/third").equals("third: A");
+    await dev.fetch("/full").equals("full: A function");
+  },
+});
+
+devTest("barrel optimization: a request that reaches a barrel after it deferred is taken back", {
+  files: {
+    ...loadsLateAfter("a\\.js"),
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    // lib defers its record of not-installed, and then late.ts asks it for c.
+    "index.ts": `
+      import { a } from 'lib';
+      import { late } from './late';
+      console.log('index: ' + a + ' ' + late);
+    `,
+    "late.ts": `
+      import { c } from 'lib';
+      export const late = typeof c;
+    `,
+    ...abPackage("lib", notInstalled),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write(
+      "late.ts",
+      `
+        import { b } from 'lib';
+        export const late = typeof b;
+      `,
+    );
+    await expectPage(dev, "/", "index: A function");
+  },
+});
+
+devTest("barrel optimization: an importer that fails to parse keeps its request", {
+  framework: minimalFramework,
+  pluginFile: countLoads("ui.[ab][.]ts$"),
+  files: {
+    "routes/index.ts": serverPage(`import { label } from '../label';`, `label`),
+    "routes/loads.ts": `export default () => Response.json(globalThis.loads ?? {});`,
+    "label.ts": `import { b } from './ui'; export const label = 'label: ' + typeof b;`,
+    ...uiBarrel(`${goneBarrel} <<<ERROR>>>`),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("label.ts", `export const label = <<<ERROR>>>;`);
+    // This save builds the barrel and not label.ts. No build has bundled label.ts again.
+    await dev.write("ui/index.ts", goneBarrel);
+    expect(await dev.fetch("/loads").json()).toEqual({ "b.ts": 1 });
+    await dev.write("label.ts", `import { b } from './ui'; export const label = 'saved: ' + typeof b;`);
+    await dev.fetch("/").equals("saved: function");
+  },
+});
+
+// One build can parse the barrel before the importer: it then counts the old request of the importer once more.
+devTest("barrel optimization: a barrel and its importer that are saved together count the new requests", {
+  framework: minimalFramework,
+  files: {
+    "routes/keeps.ts": serverPage(`import { b } from '../ui';`, `'first: ' + typeof b`),
+    "routes/drops.ts": serverPage(`import { gone } from '../ui2';`, `'first: ' + typeof gone`),
+    ...uiBarrel(`${goneBarrel} <<<ERROR>>>`),
+    ...uiBarrel(`${goneBarrel} <<<ERROR>>>`, "ui2"),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/keeps")).status).toBe(500);
+    expect((await dev.fetch("/drops")).status).toBe(500);
+    {
+      await using batch = await dev.batchChanges({ errors: null });
+      await dev.write("ui/index.ts", goneBarrel);
+      await dev.write("routes/keeps.ts", serverPage(`import { b } from '../ui';`, `'saved: ' + typeof b`));
+    }
+    await dev.fetch("/keeps").equals("saved: function");
+    {
+      await using batch = await dev.batchChanges({ errors: null });
+      await dev.write("ui2/index.ts", goneBarrel);
+      await dev.write("routes/drops.ts", serverPage(`import { a } from '../ui2';`, `'saved: ' + a`));
+    }
+    await dev.fetch("/drops").equals("saved: A");
+  },
+});
+
+// Four importers whose request the bundler does not record for an import of the path of the barrel, or
+// records for another file. Each still reads `b` after the plain importer of its barrel drops `b`.
+const otherImporters = {
+  "redirect": `import { b } from 'redirect'; export const read = () => typeof b;`,
+  "plugin": `import { b } from 'resolved-by-plugin'; export const read = () => typeof b;`,
+  "twice": `import { a } from 'lib-twice'; import { b } from 'lib-twice'; export const read = () => a && typeof b;`,
+  "outer": `import { b } from 'outer'; export const read = () => typeof b;`,
+};
+const otherWays = Object.keys(otherImporters) as (keyof typeof otherImporters)[];
+devTest("barrel optimization: a request that the bundler cannot give to one importer is not taken back", {
+  framework: minimalFramework,
+  pluginFile: `
+    import path from "node:path";
+    export default [
+      {
+        name: "resolves-to-a-barrel",
+        setup(build) {
+          build.onResolve({ filter: /^resolved-by-plugin$/ }, () => ({
+            path: path.join(import.meta.dir, "node_modules/lib-plugin/index.js"),
+          }));
+        },
+      },
+    ];
+  `,
+  files: {
+    "routes/index.ts": serverPage(
+      ["other", "plain"]
+        .flatMap(kind => otherWays.map(way => `import { read as ${kind}_${way} } from '../${kind}-${way}';`))
+        .join("\n"),
+      `[${otherWays.map(way => `other_${way}(), plain_${way}()`).join(", ")}].join(' ')`,
+    ),
+    ...Object.assign(
+      {},
+      ...otherWays.map(way => ({
+        [`other-${way}.ts`]: otherImporters[way],
+        [`plain-${way}.ts`]: `import { b } from 'lib-${way}'; export const read = () => typeof b;`,
+        ...abPackage(`lib-${way}`, brokenBarrel),
+      })),
+    ),
+    "node_modules/redirect/package.json": JSON.stringify({ name: "redirect", main: "./index.js" }),
+    "node_modules/redirect/index.js": `module.exports = require('lib-redirect');`,
+    ...abPackage("outer", `export { b } from 'lib-outer'; export { a } from './a.js';`),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    for (const way of otherWays) {
+      await Bun.write(dev.join(`node_modules/lib-${way}/index.js`), abBarrel);
+    }
+    // This build parses the four plain importers and the four barrels, and none of the other importers.
+    {
+      await using batch = await dev.batchChanges({ errors: null });
+      for (const way of otherWays) {
+        await dev.write(`plain-${way}.ts`, `import { a } from 'lib-${way}'; export const read = () => a;`);
+      }
+    }
+    await dev.fetch("/").equals(otherWays.map(() => "function A").join(" "));
+  },
+});
 // The dev server's runtime threw `$ERR_SSR_RESPONSE_EXPECTED(...)`, a name only src/js resolves: what the
 // user saw was "ReferenceError: $ERR_SSR_RESPONSE_EXPECTED is not defined".
 devTest("a render() that does not return a Response is reported as that", {

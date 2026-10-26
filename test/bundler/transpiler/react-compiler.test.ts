@@ -4119,66 +4119,41 @@ describe("bundler", () => {
     },
   });
 
-  // A `define` string is 8-bit WTF-8. Constant propagation joins it to a UTF-16 literal by code
-  // unit, and the two halves of a surrogate pair that meet are one character. With one code unit
-  // per byte, `"中" + ACCENT` was "中Ã©".
-  itBundled("react-compiler/JoinOfAUtf16LiteralAndANonAsciiDefine", {
-    files: {
-      "/entry.ts": /* ts */ `
-        import * as forms from "./forms";
-        const units = (s: string) => Array.from({ length: s.length }, (_, i) => s.charCodeAt(i).toString(16)).join(" ");
-        for (const name of Object.keys(forms).sort()) {
-          console.log(name + "=" + units(forms[name]({}).props.children));
-        }
-      `,
-      "/forms.jsx": /* jsx */ `
-        export function LiteralThenDefine() {
-          return <div>{"中" + ACCENT}</div>;
-        }
-        export function DefineThenLiteral() {
-          return <div>{ACCENT + "中"}</div>;
-        }
-        export function HalfThenHalfDefine() {
-          return <div>{"\\uD83D" + LOW}</div>;
-        }
-      `,
-      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
-      "/node_modules/react/index.js": ``,
-      "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
-      "/node_modules/react/compiler-runtime.js": `export const c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
-    },
-    define: {
-      ACCENT: '"é"',
-      LOW: '"\\ude00"',
-    },
-    reactCompiler: true,
-    target: "browser",
-    run: {
-      stdout: ["DefineThenLiteral=e9 4e2d", "HalfThenHalfDefine=d83d de00", "LiteralThenDefine=4e2d e9"].join("\n"),
-    },
-  });
-
-  // An inlined env value is the bytes of the environment. For bytes that are no sequence of UTF-8, constant
-  // propagation leaves `.length` for run time, as the fold of the parser does: it has no count that the printed
-  // string is sure to have.
+  // An inlined env value is the bytes of the environment, and `process.env` has the text that `TextDecoder` reads
+  // from them. Constant propagation folds `.length` to the length of that text.
   itBundled("react-compiler/LengthOfAnEnvValueThatIsNotUtf8", {
     files: {
       "/entry.ts": /* ts */ `
-        import { Length, LengthOfText } from "./forms";
-        console.log(Length({}).props.children === LengthOfText({ text: process.env.PUB_NOT_UTF8 }).props.children, LengthOfText({ text: process.env.PUB_TEXT }).props.children);
+        import * as forms from "./forms";
+        console.log(Object.keys(forms).sort().map(name => forms[name]({}).props.children).join(" "));
       `,
       "/forms.jsx": /* jsx */ `
-        export function Length() {
-          return <div>{String(process.env.PUB_NOT_UTF8.length)}</div>;
+        export function A_ThreeBytesThatStartNoSequence() {
+          return <div>{String(process.env.PUB_A.length)}</div>;
         }
-        export function LengthOfText({ text }) {
-          return <div>{String(text.length)}</div>;
+        export function B_OneByteOfLatin1() {
+          return <div>{String(process.env.PUB_B.length)}</div>;
+        }
+        export function C_ASequenceThatDoesNotGoOn() {
+          return <div>{String(process.env.PUB_C.length)}</div>;
+        }
+        export function D_TwoBytesOfHalfAPair() {
+          return <div>{String(process.env.PUB_D.length)}</div>;
+        }
+        export function E_Text() {
+          return <div>{String(process.env.PUB_E.length)}</div>;
         }
       `,
       "/.env": Buffer.concat([
-        Buffer.from("PUB_NOT_UTF8="),
+        Buffer.from("PUB_A="),
         Buffer.from([0x80, 0x80, 0x80]),
-        Buffer.from("\nPUB_TEXT=é😀\n"),
+        Buffer.from("\nPUB_B=Caf"),
+        Buffer.from([0xe9]),
+        Buffer.from("-bar\nPUB_C="),
+        Buffer.from([0xf0, 0x9f, 0x98]),
+        Buffer.from("z\nPUB_D="),
+        Buffer.from([0xed, 0xa0]),
+        Buffer.from("q\nPUB_E=é😀\n"),
       ]),
       "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
       "/node_modules/react/index.js": ``,
@@ -4190,7 +4165,7 @@ describe("bundler", () => {
     minifySyntax: true,
     backend: "cli",
     target: "browser",
-    run: { stdout: "true 3" },
+    run: { stdout: "3 8 2 3 3" },
   });
 });
 

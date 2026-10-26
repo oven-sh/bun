@@ -252,32 +252,43 @@ test("Bun.build inlines the env values from when it was called", async () => {
   expect(exitCode).toBe(0);
 });
 
-// A .env file is read as bytes. A value that is WTF-8 folds per UTF-16 code unit. Bytes that are no sequence of UTF-8
-// make a fold leave the expression for run time, so what a fold reads is what the same read gives for a value that the
-// bundler cannot see through.
-test("bun build --env folds a non-ASCII .env value by code unit and leaves ill-formed bytes for run time", async () => {
+// A .env file is read as bytes, and `process.env` has the text that `TextDecoder` reads from them: what is no sequence
+// of UTF-8 is U+FFFD. A fold of an inlined value has to compute what that text gives.
+test("bun build --env folds a .env value as the text that process.env has for its bytes", async () => {
   using dir = tempDir("bun-build-env-bytes", {
     ".env": Buffer.concat([
       Buffer.from("PUB_L=é\nPUB_BAD=a"),
       Buffer.from([0xff]),
-      Buffer.from("b\nPUB_LEAD="),
-      Buffer.from([0xe2, 0x41, 0x42]),
-      Buffer.from("\nPUB_LEAD2="),
-      Buffer.from([0xe2, 0x41, 0x43]),
+      Buffer.from("b\nPUB_NAME=Caf"),
+      Buffer.from([0xe9]),
+      Buffer.from("-bar\nPUB_CUT=x"),
+      Buffer.from([0xe2, 0x82]),
+      Buffer.from("y\nPUB_HEAD=caf"),
+      Buffer.from([0xc3]),
+      Buffer.from("\nPUB_TAIL="),
+      Buffer.from([0xa9]),
+      Buffer.from("!\nPUB_FF=k"),
+      Buffer.from([0xff]),
+      Buffer.from("\nPUB_FE=k"),
+      Buffer.from([0xfe]),
       Buffer.from("\n"),
     ]),
     "entry.mjs": /* js */ `
-      const id = x => x;
-      const same = (folded, opaque) => JSON.stringify(folded) === JSON.stringify(opaque);
       console.log(JSON.stringify([process.env.PUB_L.length, process.env.PUB_L[0], process.env.PUB_L.charCodeAt(0), (process.env.PUB_L + "x")[1], \`\${process.env.PUB_L}x\`.length]));
-      console.log(same(
-        [process.env.PUB_BAD.length, process.env.PUB_BAD[0], process.env.PUB_BAD[1], process.env.PUB_BAD[2], process.env.PUB_BAD.charCodeAt(2), +process.env.PUB_BAD, process.env.PUB_BAD < "b", (process.env.PUB_BAD + "!").length, (process.env.PUB_BAD + "!")[1], (process.env.PUB_BAD + "!!")[4]],
-        [id(process.env.PUB_BAD).length, id(process.env.PUB_BAD)[0], id(process.env.PUB_BAD)[1], id(process.env.PUB_BAD)[2], id(process.env.PUB_BAD).charCodeAt(2), +id(process.env.PUB_BAD), id(process.env.PUB_BAD) < "b", (id(process.env.PUB_BAD) + "!").length, (id(process.env.PUB_BAD) + "!")[1], (id(process.env.PUB_BAD) + "!!")[4]],
-      ));
-      console.log(same(
-        [process.env.PUB_LEAD.length, process.env.PUB_LEAD[1], process.env.PUB_LEAD.charCodeAt(2), process.env.PUB_LEAD < "z", process.env.PUB_LEAD < process.env.PUB_LEAD2],
-        [id(process.env.PUB_LEAD).length, id(process.env.PUB_LEAD)[1], id(process.env.PUB_LEAD).charCodeAt(2), id(process.env.PUB_LEAD) < "z", id(process.env.PUB_LEAD) < id(process.env.PUB_LEAD2)],
-      ));
+      // "a\\uFFFDb"
+      console.log(JSON.stringify([process.env.PUB_BAD.length, process.env.PUB_BAD.charCodeAt(1), process.env.PUB_BAD[2], +process.env.PUB_BAD, process.env.PUB_BAD < "b", (process.env.PUB_BAD + "!").length, (process.env.PUB_BAD + "!!")[4]]));
+      // "Caf\\uFFFD-bar": one byte that is no sequence is one code unit.
+      console.log(JSON.stringify([process.env.PUB_NAME[5], process.env.PUB_NAME.charCodeAt(5), (process.env.PUB_NAME + "/x").length, process.env.PUB_NAME < "D", process.env.PUB_NAME.length]));
+      // "x\\uFFFDy": the start of a sequence that does not go on is one U+FFFD, however many bytes it has.
+      console.log(JSON.stringify([process.env.PUB_CUT.length, process.env.PUB_CUT[2], process.env.PUB_CUT.charCodeAt(1)]));
+      // "caf\\uFFFD" and "\\uFFFD!": the second value does not go on with the sequence that the first one cuts off.
+      console.log(JSON.stringify([(process.env.PUB_HEAD + process.env.PUB_TAIL).length, (process.env.PUB_HEAD + process.env.PUB_TAIL)[5], process.env.PUB_HEAD + process.env.PUB_TAIL === "caf\\uFFFD\\uFFFD!"]));
+      // Two bytes that start no sequence are the same text, and no name of a property after a dot.
+      console.log(JSON.stringify([process.env.PUB_FF === process.env.PUB_FE, process.env.PUB_FF === "k\\uFFFD"]));
+      globalThis.byKey = {};
+      byKey[process.env.PUB_FF] = 1;
+      if (process.env.PUB_NAME[5] === "b" && process.env.PUB_CUT.length === 3) console.log("folded");
+      else require("./missing.js");
     `,
   });
   await using build = Bun.spawn({
@@ -299,8 +310,11 @@ test("bun build --env folds a non-ASCII .env value by code unit and leaves ill-f
   expect({ buildStderr, buildExitCode, stdout, stderr }).toEqual({
     buildStderr: "",
     buildExitCode: 0,
-    stdout: '[1,"é",233,"x",2]\ntrue\ntrue\n',
+    stdout:
+      '[1,"é",233,"x",2]\n[3,65533,"b",null,true,4,"!"]\n["b",98,10,true,8]\n[3,"y",65533]\n[6,"!",true]\n[true,true]\nfolded\n',
     stderr: "",
   });
   expect(exitCode).toBe(0);
+  // The key with a byte that starts no sequence stays in brackets.
+  expect(await Bun.file(`${dir}/out.mjs`).text()).toContain('byKey["k');
 });

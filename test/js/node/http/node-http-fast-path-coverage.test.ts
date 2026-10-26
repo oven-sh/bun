@@ -8,7 +8,7 @@ import { type Coverage, fixture, measure, stacks } from "./node-http-fast-path-c
 // of those they stand in for, so the fixture tells them apart by the place of the onNodeHTTPRequest frame, the kOutHeaders
 // symbol and the number of arguments of the emitResponseFinished tick: changing one means updating it.
 //
-// The compact form is for an executable built with --aot, which
+// The compact form is for an executable that is compiled ahead of time, which
 // test/aot/node-http-requests-on-a-keep-alive-connection-take-the-fast-path.test.ts measures with the same fixture.
 // Under `bun run` a response has its headers in the map under kOutHeaders from the first one that is stored.
 

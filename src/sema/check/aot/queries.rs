@@ -505,16 +505,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.ask_expression(expression, |queries| {
             let file = queries.file;
             let ty = queries.c.type_of_expr(file, expression);
-            let is_flow_too_deep = queries.c.is_error_type(ty)
-                && queries
-                    .c
-                    .p
-                    .flows_too_deep
-                    .get(&queries.c.task, &(file, expression))
-                    .is_some();
-            if is_flow_too_deep {
-                return Err(GaveUp::FlowAnalysisDisabled);
-            }
             queries.resolved(ty)
         })
     }

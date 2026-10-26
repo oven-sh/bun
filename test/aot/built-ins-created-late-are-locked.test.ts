@@ -89,8 +89,9 @@ const openBecauseTheProgramWritesThem = [
   "process.hrtime",
 ];
 
-test("a write is refused before the program's first use of a built-in object as it is after it", async () => {
-  using dir = tempDir("built-ins-created-late", { "main.mjs": program });
+// Builds the program and runs it twice: as it is, and with its uses of the built-in objects in front of its writes. Both runs print the same lines.
+async function linesOfBothOrders(source: string) {
+  using dir = tempDir("built-ins-created-late", { "main.mjs": source });
   const cwd = String(dir);
   const { stderr, exitCode: buildExitCode } = await runCommand(
     [bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "program"],
@@ -105,6 +106,11 @@ test("a write is refused before the program's first use of a built-in object as 
   };
   const writesFirst = await run();
   expect(writesFirst).toEqual(await run("use-first"));
+  return writesFirst;
+}
+
+test("a write is refused before the program's first use of a built-in object as it is after it", async () => {
+  const writesFirst = await linesOfBothOrders(program);
   expect(writesFirst).toEqual(expect.arrayContaining(createdAtFirstRead.map(path => `${path} TypeError TypeError`)));
   expect(writesFirst).toEqual(
     expect.arrayContaining(openBecauseTheProgramWritesThem.map(path => `${path} assigned defined`)),
@@ -112,4 +118,49 @@ test("a write is refused before the program's first use of a built-in object as 
   expect(writesFirst.at(-1)).toBe(
     "true 1 1 false 1 true 1 36 false bigint 0 0 1 1 bigint 1 1.5 1 true A a true en 1 /b 1 A",
   );
+}, 120_000);
+
+// The holder and the key are known only to the run, and no statement hands the holder to code that the compiler does not see.
+const programWithEachKindOfWrite = `
+function relies() {
+  return [new Intl.DateTimeFormat("en").resolvedOptions().locale, new Intl.NumberFormat("en").format(1)].join(" ");
+}
+function attempt(label, change) {
+  try {
+    console.log(label, change());
+  } catch (error) {
+    console.log(label, error.name);
+  }
+}
+if (process.argv[2] === "use-first") relies();
+for (const path of ["Intl.DateTimeFormat.prototype.resolvedOptions", "Intl.NumberFormat.prototype.format"]) {
+  const names = path.split(".");
+  const last = names.pop();
+  let holder = globalThis;
+  for (const name of names) holder = holder[name];
+  const replacement = { value: () => "replaced", configurable: true, writable: true };
+  attempt("assigned", () => typeof (holder[last] = replacement.value));
+  attempt("defined", () => typeof Object.defineProperty(holder, last, replacement));
+  attempt("deleted", () => delete holder[last]);
+  attempt("copied", () => typeof Object.assign(holder, { [last]: replacement.value }));
+  attempt("defined by a map", () => typeof Object.defineProperties(holder, { [last]: replacement }));
+  attempt("Reflect.set", () => Reflect.set(holder, last, replacement.value));
+  attempt("Reflect.defineProperty", () => Reflect.defineProperty(holder, last, replacement));
+  attempt("Reflect.deleteProperty", () => Reflect.deleteProperty(holder, last));
+}
+console.log(relies());
+`;
+
+test("an assignment, a definition and a deletion of one member get the same answer", async () => {
+  const refused = [
+    "assigned TypeError",
+    "defined TypeError",
+    "deleted TypeError",
+    "copied TypeError",
+    "defined by a map TypeError",
+    "Reflect.set false",
+    "Reflect.defineProperty false",
+    "Reflect.deleteProperty false",
+  ];
+  expect(await linesOfBothOrders(programWithEachKindOfWrite)).toEqual([...refused, ...refused, "en 1"]);
 }, 120_000);

@@ -128,6 +128,12 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// No variable or property gives an anonymous function its name behind the `export default` at `position`: it has the name from the start.
+    pub(crate) fn is_default_export_name_its_own(&self, position: u32) -> bool {
+        self.find_bundled_name(position)
+            .is_none_or(|name| name.is_own_name)
+    }
+
     /// The function whose own name is written at `position` is an anonymous one in a variable in the text that `bun run` evaluates.
     pub(crate) fn is_anonymous_in_bundle(&self, position: u32) -> bool {
         let name = self.find_bundled_name(position);

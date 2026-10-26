@@ -297,6 +297,8 @@ const removeDetailsOfErrors = (output: string) =>
     .replace(/[ \t]*\d+ \| .*\n(?:\s*\d+ \| .*\n|[\^~ ]+\n)*/g, " ")
     .split("\n")
     .filter(line => !/^\s*(\d+ \| |[\^~ ]+$|at )/.test(line))
+    // Members of an error, printed as those of an object: where the file is, and the place in the text that `bun run` makes of the file.
+    .filter(line => !/^\s*(originalLine|originalColumn|sourceURL|stack): /.test(line))
     .map(line =>
       line
         .replace(/^\s+(?=\w*Error\b)/, "")

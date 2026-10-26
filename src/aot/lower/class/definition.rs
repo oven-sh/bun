@@ -113,7 +113,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         if !plan.static_elements.is_empty() {
             let initializer = fields::declare_initializer(self.file, class, true);
+            // JSC reports the static members where the class starts, behind an `export`.
+            self.set_position(node.text_start);
             self.emit_call_on(initializer, class_object);
+            self.set_position(node.start);
         }
         let value = self.emit_class_result(&plan, &evaluation, decoration, outer);
 

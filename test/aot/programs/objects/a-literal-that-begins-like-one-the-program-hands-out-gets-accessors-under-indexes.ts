@@ -1,4 +1,4 @@
-// An object literal begins with the key of a literal that the program hands out, and then gets accessors and values under indexes, another prototype, heirs, a level of integrity, or stores by built-in functions. Each form runs as the program's own code and once more as evaluated text.
+// An object literal begins with the key of a literal that the program hands out, and then gets accessors and values under indexes, the properties of other values by a spread, another prototype, heirs, a level of integrity, or stores by built-in functions. Each form runs as the program's own code and once more as evaluated text.
 const base = { inherited: "from base" };
 
 function describe(value: any): string {
@@ -58,6 +58,14 @@ const literals: Literal[] = [
   () => ({ first: 1, get 42() { return 1; }, [42]: 5 }),
   // @ts-ignore
   key => ({ first: 1, [key]: 2, get 42() { return 1; }, set 42(value: any) {}, get 42() { return 2; } }),
+  () => ({ first: 1, ...{ more: 1, other: "text" } }),
+  // @ts-ignore
+  (key, spread, base) => ({ first: 1, ...base, ...{ first: "text" }, ...base }),
+  () => ({ first: 1, ...(null as any), ...(undefined as any), ...("text" as any), ...(5 as any) }),
+  () => ({ first: 1, ...{ get more() { return "read"; } }, ...new Proxy({ behind: 1 }, {}) }),
+  () => ({ first: 1, ...JSON.parse('{"__proto__":5,"first":1.5}'), ...{ [Symbol.iterator]: 1 } }),
+  () => ({ first: 1, ...Object.fromEntries(Array.from({ length: 40 }, (unused, index) => [`key${index}`, index])) }),
+  (key, spread) => { const { first, ...rest } = { first: 1, ...spread, [key]: 2 }; return { first, ...rest }; },
 ];
 
 type Step = (made: any, show: (label: string, object: any) => void, base: any) => void;

@@ -13,5 +13,5 @@ export function withTurnsNobodyKnows(text: string): string {
     )
     .replace(/ of (\[[^\[\]\n]{1,60}\])\)/g, (_, list) => ((isChanged = true), ` of ${list}.slice(extraTurns()))`));
   if (!isChanged || /\bextraTurns\b/.test(text)) return text;
-  return `${changed}\nfunction extraTurns() {\n  return Reflect.get(globalThis, "process").argv.length > 99 ? 1 : 0;\n}\n`;
+  return `${changed}\nfunction extraTurns() {\n  return Date.now() < 99 ? 1 : 0;\n}\n`;
 }

@@ -243,6 +243,10 @@ struct FlowRuns {
     /// For each assignment and declaration: the `root_key` of its target, the target's first
     /// property as in `TestSubjects::chains`, and the node. Sorted.
     assignments: Vec<(u32, u32, u32)>,
+    /// Indexed like `assignments`. For `x += 1` or `x++`: the first of the assignments like it that
+    /// lead up to it in its run, with no shared node and nothing else that concerns `x` in between,
+    /// calls aside. For any other entry: the entry itself. See `skip_compound_assignments`.
+    first_compound_assignment: Vec<u32>,
     /// The assignments at which a walk resolves the name of a key, in ascending order.
     computed_key_nodes: Vec<u32>,
     /// Indexed like `Bound::flow_edges`: where the stretch of edges from this one on ends, in which
@@ -6480,8 +6484,9 @@ impl<'p, 's> Checker<'p, 's> {
         // The invocations waiting for the type at their antecedent, outermost first, each with its
         // `sharedFlow`. They resume afterwards, innermost first.
         let mut pending: SmallVec<[(Pending, FlowId); 8]> = SmallVec::new();
-        // Number of invocations for a condition that doesn't apply to the reference and that have
-        // no `sharedFlow`. They return their input unchanged.
+        // Number of invocations that have no `sharedFlow` and return their input unchanged: for a
+        // condition that doesn't apply to the reference, or for a compound assignment that a later
+        // one follows.
         let mut passed = 0;
         let mut flow = start;
         // `sharedFlow` of the innermost invocation.
@@ -6559,7 +6564,19 @@ impl<'p, 's> Checker<'p, 's> {
                     match self.type_at_assignment(walk, flow, target) {
                         AtAssignment::Type(t) => break t,
                         AtAssignment::Antecedent(then) => {
+                            let is_compound = matches!(then, Pending::Compound);
                             pending.push((then, std::mem::take(&mut shared_flow)));
+                            if is_compound
+                                && walk.steps > LONG_WALK
+                                && let Some((arrived_at, assignments, nodes)) =
+                                    self.skip_compound_assignments(walk, flow)
+                                && walk.steps.saturating_add(nodes) < MAX_STEPS
+                            {
+                                passed += assignments;
+                                walk.steps += nodes;
+                                flow = arrived_at;
+                                continue;
+                            }
                         }
                         AtAssignment::Unaffected => {}
                     }
@@ -7909,6 +7926,57 @@ impl<'p, 's> Checker<'p, 's> {
         Some((antecedent(first.flow)?, last_shared))
     }
 
+    /// FOR SPEED. Follows a walk for a name from `flow`, a compound assignment to it, through the
+    /// earlier ones in its run and what leaves the name alone in between. Returns where it ends up,
+    /// how many compound assignments it passed, and how many nodes. Each of them takes the base
+    /// type of a literal type, as the one at `flow` does afterwards, so only the depth of the walk
+    /// depends on them. Without this, n references between n assignments `x += 1` take n * n steps.
+    #[inline(never)]
+    fn skip_compound_assignments(
+        &mut self,
+        walk: &Walk,
+        flow: FlowId,
+    ) -> Option<(FlowId, u32, u32)> {
+        let reference = &walk.reference;
+        let file = reference.file;
+        let root = root_key(reference.root);
+        if root == 0
+            || !reference.path.is_empty()
+            || reference.unkeyed != usize::MAX
+            || self.task.file != Some(file)
+            || self.is_automatic_type(walk.declared)
+        {
+            return None;
+        }
+        if self.flow_memo.runs.file != Some(file) {
+            self.index_flow_runs(file);
+        }
+        let runs = &self.flow_memo.runs;
+        let here = (root, TestSubjects::NO_PROPERTY, flow.0);
+        let here = runs.assignments.binary_search(&here).ok()?;
+        let mut first = runs.first_compound_assignment[here] as usize;
+        if first == here {
+            return None;
+        }
+        let position = runs.position[flow.idx()];
+        let start = runs.nodes[position as usize].run_start;
+        let busy_call = self.find_last_busy_call(file, start, position);
+        let runs = &self.flow_memo.runs;
+        if let Some(call) = busy_call {
+            let call = runs.nodes[call as usize].flow;
+            first += runs.assignments[first..here].partition_point(|it| it.2 < call);
+        }
+        let first_passed = runs.assignments[first].2;
+        match self.bound(file).flow[first_passed as usize] {
+            Flow::Assign { before, .. } if first < here => Some((
+                before,
+                (here - first) as u32,
+                position - runs.position[first_passed as usize],
+            )),
+            _ => None,
+        }
+    }
+
     /// FOR SPEED. `at..end` are antecedents of one label, as indices of `Bound::flow_edges`. Returns
     /// how many of those after the first are reached from it through nodes that leave the reference
     /// alone, so the reference has the same type at them. Each statement of a `try` block is an
@@ -8094,6 +8162,34 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             };
         }
+        let mut first_compound_assignment: Vec<u32> = (0..assignments.len() as u32).collect();
+        let mut follows_compound_assignment = false;
+        for at in 0..assignments.len() {
+            let (root, first, node) = assignments[at];
+            let is_compound = first == TestSubjects::NO_PROPERTY
+                && matches!(
+                    bound.flow[node as usize],
+                    Flow::Assign { target: FlowTarget::Expr(e), .. }
+                        if matches!(hir[e].kind, ExprKind::Ident(_))
+                            && bound.get_assignment_target_kind(hir, e) == AssignmentKind::Compound
+                );
+            if is_compound && follows_compound_assignment {
+                let earlier = assignments[at - 1];
+                let (from, to) = (position[earlier.2 as usize], position[node as usize]);
+                let count_up_to = |node| assignments.partition_point(|&it| it <= (root, 0, node));
+                let count_keys_up_to = |node| computed_key_nodes.partition_point(|&it| it <= node);
+                if earlier.0 == root
+                    && from < to
+                    && nodes[from as usize].run_start == nodes[to as usize].run_start
+                    && nodes[from as usize].next_shared >= to
+                    && count_up_to(earlier.2) == count_up_to(node)
+                    && count_keys_up_to(earlier.2) == count_keys_up_to(node)
+                {
+                    first_compound_assignment[at] = first_compound_assignment[at - 1];
+                }
+            }
+            follows_compound_assignment = is_compound;
+        }
         let edges = &bound.flow_edges;
         let mut ascending_edges_end = vec![0; edges.len()];
         for at in (0..edges.len()).rev() {
@@ -8116,6 +8212,7 @@ impl<'p, 's> Checker<'p, 's> {
             last_busy_call: (0..end).collect(),
             nodes,
             assignments,
+            first_compound_assignment,
             computed_key_nodes,
         };
     }

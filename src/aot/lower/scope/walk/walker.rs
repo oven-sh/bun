@@ -1,7 +1,7 @@
 use bun_sema::bind::{Binding, Decl, ScopeId, ScopeKind, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::{TreeNode, push_children};
-use bun_sema::hir::{ExprId, FnId, StmtId, is_moved_to_file_start};
+use bun_sema::hir::{ExprId, ExprKind, FnId, StmtId, is_moved_to_file_start};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -28,6 +28,7 @@ pub(in crate::lower::scope) fn walk_file(
     sort_unique(&mut walk.function_references);
     sort_unique(&mut walk.eval_uses);
     sort_unique(&mut walk.stored_slots);
+    sort_unique(&mut walk.symbols_read_by_enums);
     walk.symbol_stores
         .sort_unstable_by_key(|store| (store.0, store.1));
     sort_unique(&mut walk.function_of_field);
@@ -94,6 +95,7 @@ impl<'x, 's> Walker<'x, 's> {
                 symbol_initializations: vec![None; bound.symbols.len()],
                 last_store_times: vec![0; bound.symbols.len()],
                 use_counts: vec![0; bound.symbols.len()],
+                symbols_read_by_enums: Vec::new(),
                 is_initialized_conditionally: vec![false; bound.symbols.len()],
                 is_switch_scope: vec![false; bound.scopes.len()],
                 is_repeated_scope: vec![false; bound.scopes.len()],
@@ -238,6 +240,22 @@ impl<'x, 's> Walker<'x, 's> {
             }
         }
         self.children = children;
+    }
+
+    pub(super) fn record_symbols_read_by_enum(&mut self, initializer: ExprId) {
+        if initializer.is_none() {
+            return;
+        }
+        let mut nodes = vec![TreeNode::Expr(initializer)];
+        while let Some(node) = nodes.pop() {
+            if let TreeNode::Expr(expression) = node
+                && matches!(self.hir[expression].kind, ExprKind::Ident(_))
+                && let Binding::Symbol(symbol) = self.bound.binding(expression)
+            {
+                self.walk.symbols_read_by_enums.push(symbol);
+            }
+            push_children(self.hir, node, &mut nodes);
+        }
     }
 
     // The code of a function, of a field initializer or of the file, whose top scope is `scope`. The file alone runs once.

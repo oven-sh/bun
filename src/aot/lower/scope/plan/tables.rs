@@ -52,6 +52,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         arguments_objects: parts.arguments_objects,
         initialized_holders,
         use_counts: walk.use_counts.clone(),
+        symbols_read_by_enums: walk.symbols_read_by_enums.clone(),
         has_wrapper_parameters: walk.has_wrapper_parameters,
     }
 }

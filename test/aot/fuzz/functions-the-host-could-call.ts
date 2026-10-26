@@ -1,6 +1,7 @@
-// A function that only the program calls is known together with all its callers. `withFunctionsTheHostCouldCall` stores every function and class that a file declares at its top on the global
-// object, where code that nobody sees at build time could find and call it, and beside them a function that asks of a value whether it is an instance of each. Nobody calls any of them: the
-// program prints what it printed before.
+// A function that only the program calls is known together with all its callers. `withFunctionsTheHostCouldCall` hands every function and class that a file declares at its top to the host: in
+// turns it stores one on the global object, where code that nobody sees at build time could find and call it, and makes the next a listener of `process` for an event that never comes. Beside
+// them it stores a function that asks of a value whether it is an instance of each. Nobody calls any of them: the program prints what it printed before. The lines are written so that the
+// build still knows every module that the program can load (the-world-is-open.ts).
 const declaration = /^[ \t]*(?:export )?(?:default )?(?:async )?(?:function\*?|class) ([\w$]+)/gm;
 
 export function withFunctionsTheHostCouldCall(text: string, loader: "ts" | "js"): string {
@@ -19,7 +20,13 @@ export function withFunctionsTheHostCouldCall(text: string, loader: "ts" | "js")
     ),
   );
   if (names.size === 0) return text;
-  const kept = Array.from(names, name => `Reflect.set(globalThis, "keptForTheHost ${name}", ${name});`);
-  const asked = Array.from(names, name => `value instanceof ${loader === "ts" ? `(${name} as any)` : name}`);
-  return `${text}\n${kept.join("\n")}\nReflect.set(globalThis, "keptForTheHost asks", (value${loader === "ts" ? ": unknown" : ""}) => [${asked.join(", ")}]);\n`;
+  const untyped = (name: string) => (loader === "ts" ? `(${name} as any)` : name);
+  const kept = Array.from(names, (name, index) =>
+    index % 2
+      ? `${untyped("process")}.on("keptForTheHost ${name}", ${name});`
+      : `${untyped("globalThis")}["keptForTheHost ${name}"] = ${name};`,
+  );
+  const asked = Array.from(names, name => `value instanceof ${untyped(name)}`);
+  // The semicolon in front: a line may begin with a parenthesis.
+  return `${text}\n;${kept.join("\n")}\n${untyped("globalThis")}["keptForTheHost asks"] = (value${loader === "ts" ? ": unknown" : ""}) => [${asked.join(", ")}];\n`;
 }

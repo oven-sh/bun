@@ -365,6 +365,111 @@ describe.concurrent("modules that do not run", () => {
     1_800_000,
   );
 
+  // The module that calls import() waits for it, so no code of the program runs while the graph is loaded, whether that module is the entry point or was itself imported on demand.
+  test.skipIf(!perf)(
+    "an import() that a module imported on demand waits for costs what it costs in the entry point",
+    async () => {
+      const best: number[] = [];
+      const numbers = [20, 420];
+      const roots = 5;
+      for (const n of numbers) {
+        for (const entry of ["direct.mjs", "nested.mjs"]) {
+          await slot(async () => {
+            const files: Record<string, string> = {};
+            for (let root = 0; root < roots; root++) {
+              for (let i = 0; i < n; i++)
+                files[`r${root}m${i}.mjs`] = i ? `import * as a from "./r${root}m${i - 1}.mjs";\n` + esRest : esLeaf;
+            }
+            const calls = Array.from(
+              { length: roots },
+              (_, root) => `sum += (await import("./r${root}m${n - 1}.mjs")).c;\n`,
+            ).join("");
+            files["direct.mjs"] = `let sum = 0;\n${calls}console.log("end");\n`;
+            files["calls.mjs"] = `export let sum = 0;\n${calls}`;
+            files["nested.mjs"] = `await import("./calls.mjs");\nconsole.log("end");\n`;
+            using directory = tempDir("aot-static-modules-nested", files);
+            using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+            const { executable } = await build(String(directory), entry);
+            let least = Infinity;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const counted = await run(
+                [perf as string, "stat", "-x,", "-e", "instructions:u", executable],
+                String(elsewhere),
+                bunEnv,
+              );
+              expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({ stdout: "end\n", exitCode: 0 });
+              least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+            }
+            best.push(least);
+          });
+        }
+      }
+      const [fewDirect, fewNested, manyDirect, manyNested] = best;
+      const perModule = (manyNested - manyDirect - (fewNested - fewDirect)) / ((numbers[1] - numbers[0]) * roots);
+      console.log(
+        `static-modules-slope: ${perModule.toFixed(1)} instructions more a module below an import() in a module imported on demand`,
+      );
+      expect(perModule).toBeLessThanOrEqual(100);
+    },
+    1_800_000,
+  );
+
+  // The steps in which such a graph is loaded show, so the loader takes them: down one way to the lowest level, and not through every module. Earlier loads have come to a module with nothing to run and to a CommonJS file that the graph imports too.
+  test.skipIf(!perf)(
+    "a graph that a module imported on demand imports without waiting is not loaded module by module",
+    async () => {
+      const best: number[] = [];
+      const numbers = [100, 1300];
+      const turns = `for (let i = 0; i < 12; i++) turns = turns.then(() => {});\n`;
+      const lowest = `import { idle } from "./idle.mjs";\nimport { one } from "./file.cjs";\n`;
+      for (const n of numbers) {
+        for (const entry of ["direct.mjs", "fired.mjs"]) {
+          await slot(async () => {
+            const files: Record<string, string> = {
+              "idle.mjs": "export function idle(x) { return x + 1; }\n",
+              "file.cjs": '"use strict";\nexports.one = 1;\n',
+              "first.mjs": `${lowest}export const c = idle(one);\n`,
+              "boot.mjs": `${lowest}export const c = idle(one);\nexport const loaded = import("./t0.mjs");\n`,
+              "direct.mjs": `await import("./first.mjs");\nawait import("./t0.mjs");\nconsole.log("end");\n`,
+              "fired.mjs":
+                `let turns = Promise.resolve();\n${turns}await import("./first.mjs");\n${turns}` +
+                `await (await import("./boot.mjs")).loaded;\nconsole.log("end");\n`,
+            };
+            for (let i = 0; i < n; i++) {
+              const below = [3 * i + 1, 3 * i + 2, 3 * i + 3].filter(j => j < n);
+              files[`t${i}.mjs`] =
+                (i === 4 ? lowest : "") +
+                below.map(j => `import { c as c${j} } from "./t${j}.mjs";\n`).join("") +
+                `export const c = ${["1", ...(i === 4 ? ["idle(one)"] : []), ...below.map(j => `c${j}`)].join(" + ")};\n` +
+                `globalThis.ran = (globalThis.ran ?? 0) + 1;\n`;
+            }
+            using directory = tempDir("aot-static-modules-fired", files);
+            using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+            const { executable } = await build(String(directory), entry);
+            let least = Infinity;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const counted = await run(
+                [perf as string, "stat", "-x,", "-e", "instructions:u", executable],
+                String(elsewhere),
+                bunEnv,
+              );
+              expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({ stdout: "end\n", exitCode: 0 });
+              least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+            }
+            best.push(least);
+          });
+        }
+      }
+      const [fewDirect, fewFired, manyDirect, manyFired] = best;
+      const perModule = (manyFired - manyDirect - (fewFired - fewDirect)) / (numbers[1] - numbers[0]);
+      console.log(
+        `static-modules-slope: ${perModule.toFixed(1)} instructions more a module below an import() that nobody waits for`,
+      );
+      expect(perModule).toBeLessThanOrEqual(1000);
+    },
+    1_800_000,
+  );
+
   // The first import() of a module walks the CommonJS files below it that ran with an earlier graph once, and runs none of them.
   test.skipIf(!perf)(
     "a file that has run costs a later import() over it next to nothing",

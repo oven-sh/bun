@@ -209,7 +209,7 @@ show(() => {
   const make = () => () => () => fail("deep");
   make()()();
 });
-show(() => {
+await showAsync(() => {
   return new Promise(() => {
     fail("executor");
   });

@@ -106,6 +106,8 @@ pub(super) struct ScopeWalk {
     pub(super) last_store_times: Vec<u32>,
     // How often each symbol is named, up to two.
     pub(super) use_counts: Vec<u8>,
+    // What the members of enums read.
+    pub(super) symbols_read_by_enums: Vec<SymbolId>,
     pub(super) is_switch_scope: Vec<bool>,
     pub(super) is_repeated_scope: Vec<bool>,
     pub(super) eval_variable_scopes: Vec<ScopeId>,

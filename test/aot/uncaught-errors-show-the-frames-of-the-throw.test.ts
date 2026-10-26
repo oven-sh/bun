@@ -1,6 +1,8 @@
 // An error that nobody catches is printed with the frames of the `throw` that let it go when it leaves a callback of a timer,
-// process.nextTick, queueMicrotask or a listener. Its own `stack` stays the frames of the place that made it, and that is also
-// what is printed for a rejected promise, for a module's top level and for a Worker.
+// process.nextTick, queueMicrotask or a listener. They are the frames of the first `throw`, whatever `finally` blocks and `using`
+// declarations it passes, and the frames of the call where a built-in function throws an error that it was given. Its own
+// `stack` stays the frames of the place that made it, and that is also what is printed for a rejected promise, for a module's
+// top level and for a Worker.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
@@ -31,6 +33,116 @@ function throwAgain() {
     throw error;
   }
 }
+function makeByFailing() {
+  try {
+    null.missing;
+  } catch (error) {
+    return error;
+  }
+}
+function throwAgainAtOnce(value) {
+  try {
+    throw value;
+  } catch (error) {
+    throw error;
+  }
+}
+function throwAgainWhatCalleeThrew(value) {
+  try {
+    throwGiven(value);
+  } catch (error) {
+    throw error;
+  }
+}
+function throwInTry(value) {
+  try {
+    throw value;
+  } finally {
+    console.log("finally");
+  }
+}
+function throwOneOfTwo(value, first) {
+  try {
+    if (first) throw value;
+    console.log("second");
+    throw value;
+  } finally {
+    console.log("finally");
+  }
+}
+function callInTry(callee, value) {
+  try {
+    callee(value);
+  } finally {
+    console.log("finally");
+  }
+}
+function callInTwoTries(callee, value) {
+  try {
+    callInTry(callee, value);
+  } finally {
+    console.log("outer finally");
+  }
+}
+function throwAgainInTry(value) {
+  try {
+    try {
+      throwGiven(value);
+    } catch (error) {
+      console.log("caught", error.message);
+      throw error;
+    }
+  } finally {
+    console.log("finally");
+  }
+}
+function swallow(value) {
+  try {
+    throwGiven(value);
+  } finally {
+    return 1;
+  }
+}
+function throwAndCatchOthers() {
+  try {
+    callInTry(throwGiven, new Error("other"));
+  } catch {}
+  try {
+    JSON.parse("{");
+  } catch {}
+  try {
+    [1].forEach(function each() { callInTry(throwGiven, new Error("third")); });
+  } catch {}
+  swallow(new Error("fourth"));
+}
+function callInBusyTry(value) {
+  try {
+    throwGiven(value);
+  } finally {
+    throwAndCatchOthers();
+  }
+}
+function callInLoop(value) {
+  for (const turn of new Set([0, 1, 2])) {
+    try {
+      if (turn === 0) continue;
+      if (turn === 2) throwGiven(value);
+    } finally {
+      console.log("finally", turn);
+    }
+  }
+}
+function callBesideResource(value) {
+  using resource = { [Symbol.dispose]() { console.log("disposed"); } };
+  throwGiven(value);
+}
+function throwBesideResource(value) {
+  using resource = { [Symbol.dispose]() { console.log("disposed"); } };
+  throw value;
+}
+function check(signal) {
+  signal.throwIfAborted();
+}
 class Failure extends Error {
   constructor(message) {
     super(message, { cause: make() });
@@ -44,6 +156,11 @@ const forms = {
   "thrown by another function": () => setTimeout(function onTimer() { throwGiven(new Error("deep")); }, 1),
   "thrown by a callee of a callee": () => setTimeout(function onTimer() { throwThroughCallee(make()); }, 1),
   "thrown again in a catch": () => setTimeout(function onTimer() { throwAgain(); }, 1),
+  "thrown again in a catch that does nothing else": () => setTimeout(function onTimer() { throwAgainAtOnce(make()); }, 1),
+  "thrown by a callee and again in a catch that does nothing else": () =>
+    setTimeout(function onTimer() { throwAgainWhatCalleeThrew(make()); }, 1),
+  "caught and returned by one function, thrown by another": () =>
+    setTimeout(function onTimer() { throwGiven(makeByFailing()); }, 1),
   "thrown in a later turn": () => setTimeout(function onTimer() { throwGiven(madeEarly); }, 1),
   "thrown behind a read of its stack": () =>
     setTimeout(function onTimer() {
@@ -62,6 +179,31 @@ const forms = {
       const error = make();
       [1].forEach(function each() { throwGiven(error); });
     }, 1),
+  "thrown in a try with a finally": () => setTimeout(function onTimer() { throwInTry(make()); }, 1),
+  "the first of two throws in a try with a finally": () => setTimeout(function onTimer() { throwOneOfTwo(make(), true); }, 1),
+  "the second of two throws in a try with a finally": () => setTimeout(function onTimer() { throwOneOfTwo(make(), false); }, 1),
+  "thrown by a callee through a finally": () => setTimeout(function onTimer() { callInTry(throwGiven, make()); }, 1),
+  "thrown where it is made, through a finally": () => setTimeout(function onTimer() { callInTry(throwNew); }, 1),
+  "thrown through two finally blocks": () => setTimeout(function onTimer() { callInTwoTries(throwThroughCallee, make()); }, 1),
+  "thrown again in a catch below a finally": () => setTimeout(function onTimer() { throwAgainInTry(make()); }, 1),
+  "thrown through a finally that throws and catches": () => setTimeout(function onTimer() { callInBusyTry(make()); }, 1),
+  "thrown through a finally in a loop over an iterator": () => setTimeout(function onTimer() { callInLoop(make()); }, 1),
+  "thrown by a callee beside a using declaration": () => setTimeout(function onTimer() { callBesideResource(make()); }, 1),
+  "thrown beside a using declaration": () => setTimeout(function onTimer() { throwBesideResource(make()); }, 1),
+  "an object through a finally": () => setTimeout(function onTimer() { callInTry(throwGiven, { a: 1 }); }, 1),
+  "an error of a built-in function through a finally": () => setTimeout(function onTimer() { callInTry(JSON.parse, "{"); }, 1),
+  "thrown by a built-in function that was given it": () =>
+    setTimeout(function onTimer() {
+      const controller = new AbortController();
+      controller.abort(make());
+      check(controller.signal);
+    }, 1),
+  "thrown by a built-in function that was given it, through a finally": () =>
+    setTimeout(function onTimer() {
+      const controller = new AbortController();
+      controller.abort(make());
+      callInTry(check, controller.signal);
+    }, 1),
   "an error of a subclass with a cause": () => setTimeout(function onTimer() { throwGiven(new Failure("deep")); }, 1),
   "an object": () => setTimeout(function onTimer() { throwGiven({ a: 1 }); }, 1),
   "a string": () => setTimeout(function onTimer() { throwGiven("text"); }, 1),
@@ -77,6 +219,28 @@ const forms = {
     const target = new EventTarget();
     target.addEventListener("asked", function onAsked() { throwGiven(make()); });
     setTimeout(function onTimer() { target.dispatchEvent(new Event("asked")); }, 1);
+  },
+  "a listener of an EventTarget below a catch": () => {
+    const target = new EventTarget();
+    target.addEventListener("asked", function onAsked() { throwGiven(madeEarly); });
+    setTimeout(function onTimer() {
+      try {
+        target.dispatchEvent(new Event("asked"));
+      } catch {
+        console.log("caught");
+      }
+    }, 1);
+  },
+  "a listener of an AbortSignal below a catch": () => {
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", function onAbort() { callInTry(throwGiven, madeEarly); });
+    setTimeout(function onTimer() {
+      try {
+        controller.abort();
+      } catch {
+        console.log("caught");
+      }
+    }, 1);
   },
   "a promise that nobody handles": () => Promise.resolve().then(function onFulfilled() { throwGiven(make()); }),
   "an async function that nobody awaits": () =>
@@ -164,6 +328,26 @@ describe("an error that nobody catches", () => {
         .map(line => line.split(" ")[1]);
     expect(framesOf("thrown by a callee of a callee")).toEqual(["throwGiven", "throwThroughCallee", "onTimer"]);
     expect(framesOf("thrown again in a catch")).toEqual(["throwAgain", "onTimer"]);
+    expect(framesOf("thrown by a callee and again in a catch that does nothing else")).toEqual([
+      "throwAgainWhatCalleeThrew",
+      "onTimer",
+    ]);
+    expect(framesOf("caught and returned by one function, thrown by another")).toEqual(["throwGiven", "onTimer"]);
+    expect(framesOf("thrown in a try with a finally")).toEqual(["throwInTry", "onTimer"]);
+    expect(framesOf("thrown through two finally blocks")).toEqual([
+      "throwGiven",
+      "throwThroughCallee",
+      "callInTry",
+      "callInTwoTries",
+      "onTimer",
+    ]);
+    expect(framesOf("thrown by a callee beside a using declaration")).toEqual([
+      "throwGiven",
+      "callBesideResource",
+      "onTimer",
+    ]);
+    expect(framesOf("thrown by a built-in function that was given it")).toEqual(["check", "onTimer"]);
+    expect(framesOf("a listener of an EventTarget below a catch")).toEqual(["throwGiven", "onAsked", "onTimer"]);
     expect(framesOf("caught by the program")).toEqual(["make", "onTimer"]);
   }, 240_000);
 });

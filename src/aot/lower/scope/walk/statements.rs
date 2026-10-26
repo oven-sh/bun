@@ -49,6 +49,7 @@ impl Walker<'_, '_> {
                 for member in hir[id].members.iter() {
                     let member = hir[member];
                     self.push_expressions([member.computed_name, member.init], context);
+                    self.record_symbols_read_by_enum(member.init);
                 }
             }
             StmtKind::Module(id) => {

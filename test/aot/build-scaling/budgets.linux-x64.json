@@ -208,10 +208,10 @@
     }
   },
   "steps of a chain of calls that each add a class to one array, whose elements are read under many names": {
-    "millionInstructions": 7979,
-    "megabytes": 233,
+    "millionInstructions": 6258,
+    "megabytes": 138,
     "growth": {
-      "instructions": 4.8
+      "instructions": 3.64
     }
   },
   "a declaration where an expression belongs, nested in itself": {

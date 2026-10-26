@@ -98,7 +98,8 @@ interface Scope {
 // `isWide` adds what an executable shows otherwise than `bun run` today: members of enums that call, parameters of async functions that call, and async
 // generators that another async function steps.
 // `isCommonJs` writes a CommonJS file of sloppy code.
-export function generate(random: Random, isTyped = false, isWide = false, isCommonJs = false): string {
+// `isBroad` adds proxies, accessors on prototypes, constructor functions, tagged templates of classes, generators that are spread, and callbacks of more built-ins.
+export function generate(random: Random, isTyped = false, isWide = false, isCommonJs = false, isBroad = false): string {
   const width = random.pick([60, 80, 80, 100, 120]);
   const typed = (text: string) => (isTyped ? text : "");
   const semi = random.chance(0.8) ? ";" : "";
@@ -612,6 +613,58 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
         [1, () => ["Units.Inner.twice", list("(", [number(next)], ")")]],
         [1, () => ["same<number>", list("(", [number(next)], ")")]],
       );
+    }
+    if (isBroad) {
+      const one = () => list("(", [number(next)], ")");
+      const two = () => list("(", [number(next), number(next)], ")");
+      const either = (test: Doc) =>
+        parenthesized(group(test, indent(line, "? ", number(next), line, ": ", number(next))));
+      choices.push(
+        [1, () => "guarded.size"],
+        [1, () => 'guarded["size"]'],
+        [1, () => parenthesized(["guarded.size = ", number(next)])],
+        [1, () => either('"size" in guarded')],
+        [1, () => either("delete guarded.other")],
+        [1, () => "Object.keys(guarded).length"],
+        [1, () => "({ ...guarded }).size"],
+        [1, () => 'Reflect.get(guarded, "size")'],
+        [1, () => ["wrapped", one()]],
+        [1, () => ["wrapped.call", list("(", ["null", number(next)], ")")]],
+        [1, () => ["new Built().add", one(), ".total"]],
+        [1, () => "gauge.twice"],
+        [1, () => parenthesized(["gauge.twice = ", number(next)])],
+        [1, () => parenthesized(["gauge.twice += ", number(next)])],
+        [1, () => "gauge.twice++"],
+        [1, () => "gauge.reading()"],
+        [1, () => ["Texts.tag`a${", number(next), "}b${", number(next), "}`"]],
+        [1, () => ["new Texts().label`${", number(next), "}`"]],
+        [1, () => ["texts.label`", random.pick(["", "a", "\\n"]), "${", number(next), "}`"]],
+        [1, () => ['holder.inner.deep["read"]?.', one()]],
+        [1, () => ['holder?.["inner"]?.deep.read?.', one()]],
+        [1, () => parenthesized(["holder.missing?.deep?.read?.", one(), " ?? ", number(next)])],
+        [1, () => ["sum", list("(", [["[...range", two(), "]"]], ")")]],
+        [1, () => ["sum", list("(", [["[...both", one(), "]"]], ")")]],
+        [1, () => ["Math.max", list("(", [number(next), ["...range", two()]], ")")]],
+        [1, () => ["Array.from", list("(", [["range", two()]], ")"), ".length"]],
+        [1, () => parenthesized(["range", two(), ".next().value ?? ", number(next)])],
+        [1, () => "sum([...new Bag()])"],
+        [1, () => ["Array.from", list("(", ["new Bag()", arrow(next, ["item"], [": number"])], ")"), ".length"]],
+        [1, () => ["JSON.stringify", list("(", [["{ toJSON: ", arrow(next, [], []), " }"]], ")"), ".length"]],
+        [1, () => ['JSON.parse("[1, 2]", ', arrow(next, ["_key", "_value"], [": string", ": unknown"]), ")"]],
+        [1, () => ["[3, 1, 2].sort(", arrow(next, ["left", "right"], [": number", ": number"]), ").length"]],
+        [1, () => ["[1, 2].flatMap(", arrowToList(next), ").length"]],
+        [1, () => parenthesized(["[1, 2].find(", arrow(next, ["item"], [": number"]), ") ?? ", number(next)])],
+        [1, () => either(["[1, 2].some(", arrow(next, ["item"], [": number"]), ")"])],
+        [1, () => either(["[1, 2].every(", arrow(next, ["item"], [": number"]), ")"])],
+        [1, () => ["+{ [Symbol.toPrimitive]: ", arrow(next, [], []), " }"]],
+        [1, () => ["visited", one()]],
+      );
+      if (!isTyped)
+        choices.push(
+          [1, () => ["new Legacy", one(), ".read()"]],
+          [1, () => ["Legacy.of", one(), ".half"]],
+          [1, () => ["new Legacy", one(), ".chainTo", one(), ".value"]],
+        );
     }
     return random.weighted(choices)();
   }
@@ -1438,6 +1491,121 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
     ["nothing.missing;", `const nothing${any} = null;\n`],
     ["nothing();", `const nothing${any} = undefined;\n`],
   ]);
+  const more = `const guarded${typed(": Record<string, number>")} = new Proxy(
+  { size: 1 }${typed(" as Record<string, number>")},
+  {
+    get(target, key, receiver) {
+      return step(Reflect.get(target, key, receiver));
+    },
+    set(target, key, value, receiver) {
+      return Reflect.set(target, key, step(value), receiver);
+    },
+    has(target, key) {
+      return step(key in target);
+    },
+    ownKeys(target) {
+      return step(Reflect.ownKeys(target));
+    },
+    getOwnPropertyDescriptor(target, key) {
+      return step(Reflect.getOwnPropertyDescriptor(target, key));
+    },
+    deleteProperty(target, key) {
+      return step(Reflect.deleteProperty(target, key));
+    },
+  },
+);
+const wrapped = new Proxy(
+  function (value${typed(": number")}) {
+    return step(value);
+  },
+  {
+    apply(target, self, given) {
+      return step(Reflect.apply(target, self, given));
+    },
+  },
+);
+const Built = new Proxy(Chain, {
+  construct(target, given, newTarget) {
+    step(given.length);
+    return Reflect.construct(target, given, newTarget);
+  },
+});
+const gauge${typed(": { level: number; twice: number; reading(): number }")} = Object.create(
+  Object.defineProperties(
+    {},
+    {
+      twice: {
+        get(${typed("this: { level: number }")}) {
+          return step(this.level) * 2;
+        },
+        set(${typed("this: { level: number }, ")}value${typed(": number")}) {
+          this.level = step(value) % 7;
+        },
+      },
+      reading: {
+        value(${typed("this: { level: number }")}) {
+          return step(this.level);
+        },
+      },
+    },
+  ),
+);
+gauge.level = 1;
+class Texts {
+  static tag(_texts${typed(": TemplateStringsArray")}, ...values${typed(": number[]")}) {
+    return step(values.length);
+  }
+  label(texts${typed(": TemplateStringsArray")}, ...values${typed(": number[]")}) {
+    return step(texts.raw.length + values.length);
+  }
+}
+const texts = new Texts();
+function* range(from${typed(": number")}, to${typed(": number")})${typed(": Generator<number, undefined>")} {
+  for (let value = from % 5; value < (from % 5) + (to % 3); value++) yield step(value);
+}
+function* both(value${typed(": number")})${typed(": Generator<number, number>")} {
+  yield* range(value, 2);
+  return step(value);
+}
+class Bag {
+  items = [1, 2];
+  *[Symbol.iterator]() {
+    for (const item of this.items) yield step(item);
+  }
+}
+function visited(value${typed(": number")}) {
+  let result = 0;
+  new Map([[1, value]]).forEach(entry => {
+    result += step(entry);
+  });
+  new Set([value]).forEach(entry => {
+    result += step(entry);
+  });
+  return result;
+}
+${
+  isTyped
+    ? ""
+    : `function Legacy(value) {
+  this.value = step(value);
+}
+Legacy.prototype.read = function () {
+  return step(this.value);
+};
+Legacy.prototype.chainTo = function (value) {
+  this.value += step(value);
+  return this;
+};
+Object.defineProperty(Legacy.prototype, "half", {
+  get: function () {
+    return step(this.value) / 2;
+  },
+});
+Legacy.of = function (value) {
+  return new Legacy(step(value));
+};
+`
+}`;
   const prelude = `${isCommonJs ? 'const { EventEmitter } = require("node:events");' : 'import { EventEmitter } from "node:events";'}
 
 let calls = 0;
@@ -1496,7 +1664,7 @@ const holder${typed(": { inner: { deep: { read(value: number): number } }; missi
     },
   },
 };
-async function* stream(value${typed(": number")}) {
+${isBroad ? more : ""}async function* stream(value${typed(": number")}) {
   yield step(value);
   yield await later(step(value));
 }

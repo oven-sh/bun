@@ -84,6 +84,7 @@ arrays/the-strings-of-a-tagged-template-are-sliced
 arrays/the-strings-of-a-tagged-template-are-walked-by-for-each
 arrays/typed-array-accesses-outside
 arrays/typed-array-iterator-methods
+arrays/what-filter-and-map-make-of-numbers-that-are-handed-in-is-read-as-numbers
 async-and-generators/a-generator-delegates-to-a-list-that-holds-the-answer-of-a-push-twice
 async-and-generators/a-generator-delegates-to-undefined-or-null-beside-loops-over-lists
 async-and-generators/a-generator-is-stepped-by-hand-at-several-places
@@ -222,6 +223,7 @@ bundler-features/names-the-build-replaces-read-in-brackets
 bundler-features/namespace-import-of-primitive-module
 calls-fast-paths/a-callee-taken-in-makes-an-object-of-the-shape-that-the-caller-has-tested
 calls-fast-paths/a-function-bound-at-module-level-is-entered-directly
+calls-fast-paths/an-own-function-under-the-name-of-a-method-is-called-on-the-road-behind-a-failed-prediction
 calls-fast-paths/class-as-value
 calls-fast-paths/class-members-created-on-first-inspection
 calls-fast-paths/constructors-inlined-inside-try
@@ -537,6 +539,7 @@ collector/collector-runs-beside-every-kind-of-allocation
 collector/eval-constants-at-heap-limit
 collector/flags-kept-out-of-line-are-read-by-the-last-holder-of-their-object-in-a-loop-that-makes-texts
 collector/function-objects-named-while-the-program-runs-are-collected-after-their-calls
+collector/function-objects-named-while-the-program-runs-outlive-the-collections-inside-their-calls
 collector/large-constants-at-heap-limit
 collector/members-of-live-objects-a-list-read-in-part-behind-an-await-holds-its-registry
 collector/members-of-live-objects-a-literal-read-in-part-behind-an-await-holds-its-registry
@@ -554,6 +557,7 @@ collector/objects-held-only-by-places-nobody-reads-stay-alive
 collector/objects-with-many-new-names-are-made-while-a-collection-marks
 collector/text-made-at-run-time-adds-properties-behind-full-collections
 collector/weak-maps-that-grew-old-keep-what-is-added-between-young-collections
+collector/what-a-function-nobody-reads-holds-beside-the-names-of-its-scope
 collector/what-a-member-nobody-reads-holds-through-instances
 collector/what-a-member-nobody-reads-holds-through-other-records
 collector/what-a-member-nobody-reads-holds-through-prototypes
@@ -763,6 +767,7 @@ descriptions-of-own-properties/self-stored-by-a-class-linked-to-the-global-objec
 descriptions-of-own-properties/self-stored-by-a-constructor-below-the-global-object
 descriptions-of-own-properties/self-stored-on-an-object-that-inherits-from-the-global-object
 descriptions-of-own-properties/what-a-description-of-a-global-holds-is-used-afterwards
+destructuring-defaults/a-default-takes-undefined-out-of-the-type-of-a-binding
 destructuring-defaults/binding-read-between-steps
 effects/a-built-in-that-constructs-its-receiver-is-handed-a-constructor-or-a-method
 effects/a-built-in-that-constructs-its-receiver-is-handed-a-method
@@ -839,6 +844,7 @@ errors/stack-frames-of-default-constructors
 errors/stack-frames-of-functions-called-through-an-await
 errors/stack-frames-of-functions-called-through-an-await-beside-entry-points-that-change-globalthis
 errors/stack-frames-of-functions-given-a-display-name-far-from-where-they-are-written
+errors/stack-frames-of-functions-given-a-display-name-once-they-come-back-out-of-code-made-at-run-time
 errors/stack-frames-of-functions-in-evaluated-text-that-return-a-new-error
 errors/stack-frames-of-functions-named-by-copies-and-under-computed-keys-beside-an-import-named-at-run-time
 errors/stack-frames-of-functions-of-node-modules-that-one-place-makes-under-many-names
@@ -1111,6 +1117,7 @@ initializers-run-at-the-first-read/a-static-method-under-a-computed-key-that-spe
 initializers-run-at-the-first-read/a-static-setter-under-a-computed-key-that-spells-prototype
 initializers-run-at-the-first-read/a-store-to-a-property-of-a-function-that-a-descriptor-made-read-only
 initializers-run-at-the-first-read/objects-filled-under-another-name
+initializers-run-at-the-first-read/static-members-under-a-key-that-can-only-spell-prototype-stop-modules-whose-classes-nobody-reads
 initializers-run-at-the-first-read/stores-to-new-functions-that-the-objects-above-them-refuse
 inner-objects/a-collection-meets-the-outer-object-before-its-booleans-are-written
 inner-objects/many-hold-one-inner-object-while-several-threads-mark
@@ -1175,6 +1182,8 @@ language/assignments-that-are-not-to-members-of-star-imports
 language/assignments-to-constants-stop-the-build
 language/assignments-to-imports-stop-the-build
 language/assignments-to-members-of-star-imports-stop-the-build
+language/await-in-a-computed-name-of-a-typed-file-without-imports-or-exports
+language/await-in-computed-names-at-the-top-of-a-typed-module
 language/await-yield-and-super-where-only-the-operators-may-stand
 language/baseline-cpu
 language/bit-operations-whose-result-is-tested-at-once
@@ -1307,6 +1316,7 @@ modules/a-file-without-an-extension-lies-beside-a-computed-path
 modules/a-folder-and-a-file-of-one-name-are-loaded-under-computed-names
 modules/a-folder-whose-package-json-names-its-main-file-is-loaded-under-a-computed-name
 modules/a-function-of-a-commonjs-file-that-ignores-its-this-is-called-through-the-namespace
+modules/a-graph-that-a-module-imported-on-demand-imports-without-waiting-runs-behind-the-await-of-that-module
 modules/a-helper-that-defines-getters-on-the-exports-of-a-commonjs-file-also-defines-the-flag-of-es-modules
 modules/a-late-module-reaches-what-is-not-installed-through-a-module-that-the-entry-point-imports
 modules/a-member-of-a-cycle-that-another-member-requires-stays-evaluated-when-the-cycle-throws
@@ -1476,6 +1486,7 @@ node-http-probes/replaced-methods-of-server
 node-http-probes/replaced-methods-of-socket
 node-http-probes/state-of-a-response-through-a-proxy-and-an-heir
 node-http-probes/the-head-is-decided-at-the-first-write
+nothing-throws-because-of-a-type/a-boolean-out-of-a-map-of-numbers-is-held-in-a-field-and-rounded
 nothing-throws-because-of-a-type/a-test-that-only-null-and-undefined-should-fail-is-failed-by-other-values
 nothing-throws-because-of-a-type/tests-that-a-declared-type-would-decide-are-met-by-other-values
 null-where-the-type-says-none/a-field-declared-and-never-made-is-read-in-a-callback-of-a-function-called-twice
@@ -1856,6 +1867,7 @@ tree-shaking/the-module-field-of-a-package-stands-beside-main
 tree-shaking/what-the-program-is-started-as-decides-a-branch
 type-parameters/a-result-that-never-has-its-declared-layout-is-read-by-name
 type-predicates/instanceof-asks-a-method-defined-by-a-descriptor-on-what-a-bound-function-was-made-of
+type-rules/a-default-whose-type-holds-undefined-leaves-it-in-the-binding
 type-rules/a-generic-type-has-the-names-of-a-type-with-an-int32-member
 type-rules/a-literal-with-the-names-of-a-type-with-int32-members-holds-fractions
 type-rules/an-object-with-a-number-member-is-taken-for-a-type-with-an-int32-member

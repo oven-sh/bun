@@ -127,18 +127,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_appended_spread(&mut self, array: ValueId, iterable: ExprId) {
         let hir = self.file.hir;
+        // JSC reports and records the iteration at the end of `...`.
+        let position = self.file.first_position(iterable);
         if !ends_in_list_literal(self.file, iterable) {
-            // JSC reports the iteration at the end of `...`.
-            let position = self.file.first_position(iterable);
             let iterable = self.lower_expression(iterable);
             self.set_position(position);
             self.builder.append_spread(array, iterable);
+            self.builder.record_position(position);
             return;
         }
         match hir[iterable].kind {
+            // Bun's transpiler prints the elements of a list in place of its spread, unless it has none.
             ExprKind::Array(elements) => {
                 for element in hir.ids(elements) {
                     self.lower_appended_element(array, element);
+                }
+                if elements.is_empty() {
+                    self.builder.record_position(position);
                 }
             }
             ExprKind::Cond { test, branches } => {
@@ -153,6 +158,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     self.jump(join);
                 }
                 self.continue_in(join);
+                self.builder.record_position(position);
             }
             _ => unreachable!("ends_in_list_literal has looked"),
         }

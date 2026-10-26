@@ -2445,7 +2445,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 // The native parser's `parsePropertyName` restores `statementHasAwaitIdentifier`, so an `await` in a
                 // name doesn't cause the statement to be reparsed. See `top_level_statement`.
                 if self.has_await_identifier
-                    && !self.options.dialect.typescript_5
+                    && !self.names_are_in_context_of_module()
                     && !self.is_ecmascript
                     && !self.recovers()
                 {
@@ -2516,11 +2516,17 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn await_context_of_module(&self) -> u32 {
         match self.recovers() && self.has_context(ctx::TOP_LEVEL) {
-            true if !self.options.dialect.typescript_5 && !self.names_are_in_await_context => {
+            true if !self.names_are_in_context_of_module() && !self.names_are_in_await_context => {
                 ctx::AWAIT
             }
             _ => 0,
         }
+    }
+
+    /// True if an `await` in a name at the top level of a module is the operator, as in TypeScript 5 and `bun run`.
+    #[inline(always)]
+    fn names_are_in_context_of_module(&self) -> bool {
+        self.options.dialect.typescript_5 || self.options.compiles
     }
 
     /// Call after the computed name that starts at `open`, which was parsed outside that context. See

@@ -2,6 +2,7 @@
 #include "RemovableFeatures.h"
 #include "ErrorCode.h"
 #include "BunCompiledModules.h"
+#include "CodeGenerationFromStrings.h"
 #include <JavaScriptCore/AOTBuiltinTable.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/IteratorOperations.h>
@@ -258,7 +259,8 @@ extern "C" JSC::EncodedJSValue Bun__createModuleNotCompiledInError(JSC::JSGlobal
 {
     WTF::String name = specifier->toWTFString(BunString::ZeroCopy);
     bool isPath = name.startsWith('/') || (name.length() > 2 && name[1] == ':' && (name[2] == '/' || name[2] == '\\'));
-    if (isPath)
+    // Neither a file nor a text is a module that --trim could have kept.
+    if (isPath || Bun::isDataOrBlobURL(name))
         return JSC::JSValue::encode(Bun::createNotInExecutableError(globalObject, code, name));
     return JSC::JSValue::encode(Bun::createError(globalObject, code, Bun::moduleNotCompiledInMessage(name)));
 }

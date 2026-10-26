@@ -132,7 +132,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // JSC records a position for the operator of `x += v` only where `x` lives in a scope object. Elsewhere the operator is reported at the last position recorded before it.
     // Nor does it record one for the read of `x` there, or for the test of `o` in `o[k] += v`, which follows a `k` that is no literal.
     // JSC keeps a variable in a register unless a closure or `eval` sees it, it belongs to the top of an ES module, or it is a parameter of a generator,
-    // whose body is a function of its own.
+    // whose body is a function of its own. Bun's transpiler prints an enum as a function, which sees what the members read.
     pub(in crate::lower) fn is_kept_in_register(&self, binding: Binding) -> bool {
         let Binding::Symbol(symbol) = binding else {
             return false;
@@ -146,6 +146,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let is_parameter = declarations.any(|declaration| matches!(declaration, Decl::Param(_)));
         let flags = self.builder.function().flags;
         !placement.is_shared
+            && !file.scopes.is_read_by_enum(symbol)
             && (!is_at_top_of_file || file.is_commonjs_module())
             && !(is_parameter && flags.contains(FunctionFlags::IS_GENERATOR))
     }

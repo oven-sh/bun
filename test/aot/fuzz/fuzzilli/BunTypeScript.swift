@@ -332,9 +332,12 @@ final class TypeScriptPlan {
     private var helpersOfTheScenes = Set<String>()
     private var variablesOfTheScenes = [String]()
     private var isScenesAlone = false
+    /// The interfaces of a program can name its classes, which a program that is its scenes alone doesn't have.
+    private var interfacesCanBeDeclared: Bool { !isScenesAlone || !nameOfGroup.values.contains { $0.hasPrefix("C") } }
     private var moduleVariables = [String]()
     private var sceneIsAsync = false
     private var isWithoutCasts = false
+    private var depthOfSample = 0
     private var functionsAtTheTop = [String]()
     private var classesSoFar = [String]()
     private var usesInt32 = false
@@ -444,6 +447,7 @@ final class TypeScriptPlan {
     /// One of the declared types. Which one it is doesn't change when others are removed.
     private func pickNamedType(where isCandidate: (String) -> Bool = { _ in true }) -> String? {
         let salt = choices.next()
+        guard interfacesCanBeDeclared else { return nil }
         return interfaceOrder.filter(isCandidate).max { mix(salt, placeOfName[$0] ?? 0) < mix(salt, placeOfName[$1] ?? 0) }
     }
 
@@ -2526,7 +2530,8 @@ final class TypeScriptPlan {
         if isScenesAlone {
             lines = scenesOfTheProgram.map { Substring($0) }
             (helpers, moduleVariables) = (helpersOfTheScenes, variablesOfTheScenes)
-            (writtenHelpers, enumMembers, textMembers) = ([:], [:], [:])
+            writtenHelpers = [:]
+            if !interfacesCanBeDeclared { (enumMembers, textMembers) = ([:], [:]) }
         }
         // The time of the run is in what these print.
         let unsteady = Set(inferred.filter { $0.value.group == "Date" }.map { "v\($0.key.number)" })
@@ -2568,7 +2573,8 @@ final class TypeScriptPlan {
 
         if helpers.contains("passThroughList") { helpers.insert("Same") }
         var library = helpers.sorted().map { Self.helperDeclarations[$0]! } + writtenHelpers.sorted { $0.key < $1.key }.map(\.value)
-        let declarations = isScenesAlone ? [] : declarationOrder.map(declaration(of:)) + helpersThatNameTypes.sorted { $0.key < $1.key }.map(\.value)
+        let declarations =
+            (interfacesCanBeDeclared ? declarationOrder.map(declaration(of:)) : []) + (isScenesAlone ? [] : helpersThatNameTypes.sorted { $0.key < $1.key }.map(\.value))
         if enumMembers.isEmpty, (body + declarations).contains(where: { $0.contains("Numbers") }) { enumMembers["N0"] = "0" }
         for (name, members) in [("Numbers", enumMembers), ("Texts", textMembers)] where !members.isEmpty {
             let list = members.sorted(by: { $0.key < $1.key }).map { "    \($0.key) = \($0.value)," }
@@ -2631,7 +2637,9 @@ final class TypeScriptPlan {
             head.append("const printValue = console.log;")
             head += library + declarations
         }
-        head += moduleVariables
+        // Two scenes can follow one variable, at its declaration and at a store to it.
+        var declaredVariables = Set<String>()
+        head += moduleVariables.filter { declaredVariables.insert($0).inserted }
         if importsCommonFiles {
             let made = makeCommonFiles()
             head += made.head
@@ -3431,7 +3439,7 @@ extension TypeScriptPlan {
                 sitesWithTests += 1
                 let (helpersOfTheRest, variablesOfTheRest) = (helpers, moduleVariables)
                 (helpers, moduleVariables) = (helpersOfTheScenes, variablesOfTheScenes)
-                scenesOfTheProgram += sceneWithoutCasts(of: v, named: name)
+                scenesOfTheProgram += withTwin(choices.percent(settings.withoutCasts) ? sceneWithoutCasts(of: v, named: name) : sceneBehindDeclaration(of: v, named: name, at: index), site: v.number)
                 (helpersOfTheScenes, variablesOfTheScenes) = (helpers, moduleVariables)
                 (helpers, moduleVariables) = (helpersOfTheRest, variablesOfTheRest)
             }
@@ -3439,7 +3447,7 @@ extension TypeScriptPlan {
         }
         guard choices.percent(settings.tested) else { return [] }
         sitesWithTests += 1
-        if choices.percent(settings.withoutCasts) { return sceneWithoutCasts(of: v, named: name) }
+        if choices.percent(settings.withoutCasts) { return withTwin(sceneWithoutCasts(of: v, named: name), site: v.number) }
         if choices.percent(30), let lines = disturb(v, named: name) { return lines }
         if !isStore, let type = annotations[v], type != .int32, !type.arms.contains(.int32), choices.percent(60) {
             var isExact = type.arms.count == 1 && type.plain != .boolean && !type.isLiterals && !type.mentionsEnumeration
@@ -3451,7 +3459,7 @@ extension TypeScriptPlan {
                 return enclose(writeStatements(on: Subject(text: name, type: type, isConstant: !reassigned.contains(v), index: index)))
             }
         }
-        if choices.percent(50) { return sceneBehindDeclaration(of: v, named: name, at: index) }
+        if choices.percent(50) { return withTwin(sceneBehindDeclaration(of: v, named: name, at: index), site: v.number) }
         let type = drawType()
         let function = "test\(v.number)"
         var given = [name]
@@ -3615,6 +3623,30 @@ extension TypeScriptPlan {
             let samples = elements.map(sample(of:))
             return samples.contains(nil) ? nil : "[\(samples.map { $0! }.joined(separator: ", "))]"
         case .union(let arms): return arms.first.flatMap(sample(of:))
+        case .int32: return "1"
+        case .object: return "{}"
+        case .alias(_, let aliased): return sample(of: aliased)
+        case .function(_, let result): return result == .void ? "(() => {})" : sample(of: result).map { "(() => (\($0)))" }
+        case .named(let name):
+            guard depthOfSample < 2, interfaceOrder.contains(name) else { return nil }
+            depthOfSample += 1
+            defer { depthOfSample -= 1 }
+            var parts = [String]()
+            for (key, member) in allMembers(of: name) where !member.isOptional || choices.percent(50) {
+                if member.isMethod, case .function(_, let result) = member.type, let value = result == .void ? "undefined" : sample(of: result) {
+                    parts.append("\(propertyKey(key))() { return \(value); }")
+                } else if let value = sample(of: member.type) {
+                    parts.append("\(propertyKey(key)): \(value)")
+                } else if !member.isOptional {
+                    return nil
+                }
+            }
+            var owner: String? = name
+            while let current = owner {
+                parts += (methods[current] ?? [:]).keys.sorted().map { "\(propertyKey($0))(...values: any[]) { return values.length; }" }
+                owner = baseOf[current]
+            }
+            return "{ \(parts.joined(separator: ", ")) }"
         default: return nil
         }
     }
@@ -4047,7 +4079,7 @@ extension TypeScriptPlan {
     }
 
     /// Variables of the function that have nothing to do with the value `s`, changed between the statements and printed at the end.
-    private func addBystanders(to statements: [String], beside s: String) -> (declarations: [String], statements: [String], end: String) {
+    private func addBystanders(to statements: [String], beside s: String) -> (declarations: [String], statements: [String], end: String, parts: [String]) {
         var lines = statements
         let all = ["tally", "share", "letters", "trail", "ledger", "raise"]
         var present = Set(["tally"])
@@ -4078,7 +4110,25 @@ extension TypeScriptPlan {
         ]
         let printed = ["tally": "tally", "share": "share", "letters": "letters", "trail": "trail.join()", "ledger": "ledger.turns"]
         let parts = all.filter(present.contains).compactMap { printed[$0] }
-        return (all.filter(present.contains).map { declarations[$0]! }, lines, parts.count == 1 ? parts[0] : "[\(parts.joined(separator: ", "))].join(\" \")")
+        return (all.filter(present.contains).map { declarations[$0]! }, lines, parts.count == 1 ? parts[0] : "[\(parts.joined(separator: ", "))].join(\" \")", parts)
+    }
+
+    /// Beside a scene: a function that makes an object with a key that the journeys use, which holds another type there.
+    private func withTwin(_ scene: [String], site: Int) -> [String] {
+        guard choices.percent(35), scene.count > 2 else { return scene }
+        let type = drawPlainType()
+        guard let value = sample(of: type) else { return scene }
+        let (key, t, function) = (choices.pick(["held", "held", "held", "value", "first"]), type.text, "twin\(site)")
+        var twin = [
+            choices.pick([
+                "function \(function)(): void { const shelf: { \(key): \(t) } = { \(key): \(value) }; note(typeof shelf.\(key)); }",
+                "function \(function)(given: \(t) = \(value)): { \(key): \(t) } { return { \(key): given }; }",
+                "function \(function)(): void { const shelf = { \(key): \(value) }; note(Object.keys(shelf).length); }",
+            ])
+        ]
+        if choices.percent(75) { twin.append("\(function)();") }
+        helpers.insert("note")
+        return choices.percent(50) ? [scene[0]] + indented(twin) + scene.dropFirst() : scene.dropLast() + indented(twin) + [scene[scene.count - 1]]
     }
 
     /// Another value of the type, computed from the value.
@@ -4096,8 +4146,7 @@ extension TypeScriptPlan {
     /// A function of its own that the checker accepts as it stands, in which a value is where another type is declared, and travels on from there.
     fileprivate func sceneWithoutCasts(of v: Variable, named name: String) -> [String] {
         let site = v.number
-        var declared = drawPlainType()
-        while isScenesAlone, case .named = declared { declared = drawPlainType() }
+        let declared = drawPlainType()
         sceneIsAsync = false
         var arrived: (lines: [String], text: String)
         var canBeStoredTo = true
@@ -4123,16 +4172,47 @@ extension TypeScriptPlan {
         let bystanders = addBystanders(to: journey, beside: "arrived")
         let body = arrived.lines + [choices.percent(70) ? "const arrived: \(declared.text) = \(arrived.text);" : "const arrived = \(arrived.text);"] + bystanders.statements
         let function = "accepted\(site)"
-        let (isGuardedInside, returnsTheEnd) = (choices.percent(70), choices.percent(40))
+        let isGuardedInside = choices.percent(70)
         let caught = ["} catch (error) {", "    note((error as any)?.name);", "    \(Self.messageToStderr)", "}"]
-        var inner = bystanders.declarations
+        // The counter starts at what the caller gives.
+        let (parameters, arguments, start) = choices.pick([
+            ("", "", "0"), ("", "", "0"), ("", "", "0"), ("start: number", "0", "start"), ("start: number, unused: string[]", "0, []", "start"), ("start = 0", "", "start"),
+            ("...starts: number[]", "0", "starts[0]"), ("from: { start: number }", "{ start: 0 }", "from.start"), ("unused: [], start: number", "[], 0", "start"),
+        ])
+        var inner = bystanders.declarations.map { $0 == "let tally = 0;" ? "let tally = \(start);" : $0 }
         inner += isGuardedInside ? ["try {"] + indented(body) + caught : body
-        inner.append(returnsTheEnd ? "return \(bystanders.end);" : "note(\(bystanders.end));")
         let turns = choices.pick([1, 1, 2, 3])
-        let once = returnsTheEnd ? "note(\(function)());" : "\(function)();"
-        let call = turns == 1 && choices.percent(50) ? once : "for (let turn = 0; turn < \(turns); turn++) \(once)"
-        var lines = ["function \(function)() {"] + indented(inner) + ["}"]
-        lines += isGuardedInside ? [call] : ["try {", "    \(call)"] + caught
+        let called = "\(function)(\(arguments))"
+        let once: String
+        // The function prints the bystanders, or the caller prints what it gets: a value, or what it reads out of a new list or a new object.
+        switch choices.below(8) {
+        case 0, 1:
+            inner.append("return \(bystanders.end);")
+            once = "note(\(called));"
+        case 2:
+            inner.append("return [\(bystanders.parts.joined(separator: ", "))];")
+            once = choices.pick(["note(\(called)[0]);", "{ const got = \(called); note(got[got.length - 1]); note(got.length); }", "{ const [first, ...others] = \(called); note(first); note(others.length); }"])
+        case 3:
+            inner.append("return { first: \(bystanders.parts[0]), last: \(bystanders.parts[bystanders.parts.count - 1]), all: [\(bystanders.parts.joined(separator: ", "))] };")
+            once = choices.pick(["note(\(called).last);", "{ const got = \(called); note(got.first); note(got.all[got.all.length - 1]); }", "{ const { first, all } = \(called); note(first); note(all.length); }"])
+        case 4:
+            inner.append("return [\(bystanders.parts[0]) + 0.5];")
+            once = "note(\(called)[0]);"
+        default:
+            inner.append("note(\(bystanders.end));")
+            once = "\(called);"
+        }
+        // How often the compiler expects the function to run follows from where its calls stand and how many there are.
+        var calls = ["for (let turn = 0; turn < \(turns); turn++) \(once)"]
+        switch choices.below(10) {
+        case 0, 1: if turns == 1 { calls = [once] }
+        case 2: calls = ["for (let turn = 0; turn < \(turns); turn++) for (let again = 0; again < 2; again++) \(once)"]
+        case 3: calls = Array(repeating: once, count: 4)
+        case 4: calls = ["[\(Array(repeating: "0", count: turns).joined(separator: ", "))].forEach(() => { \(once) });"]
+        default: break
+        }
+        var lines = ["function \(function)(\(parameters)) {"] + indented(inner) + ["}"]
+        lines += isGuardedInside ? calls : ["try {"] + indented(calls) + caught
         helpers.insert("note")
         return ["{"] + indented(lines) + ["}"]
     }
@@ -4147,7 +4227,7 @@ extension TypeScriptPlan {
         var body = [String]()
         let kind = choices.below(6)
         sceneIsAsync = kind == 2
-        switch choices.below(hasSecond ? 5 : 4) {
+        switch choices.below(hasSecond && !isScenesAlone ? 5 : 4) {
         case 0, 1: body = writeJourney(of: "value", first, site: site)
         case 2: body = writeLateArrival(of: "value", first) ?? writeJourney(of: "value", first, site: site)
         case 3:
@@ -4178,10 +4258,15 @@ extension TypeScriptPlan {
         lines += body.map { "\(guarded ? "            " : "        ")\($0)" }
         if guarded { lines += ["        } catch (error) {", "            note((error as any)?.name);", "            \(Self.messageToStderr)", "        }"] }
         lines.append(kind == 4 ? "    };" : "    }")
-        var given = [name]
+        var given = isScenesAlone ? [] : [name]
         for _ in 0..<(1 + choices.below(4)) { given.append(choices.pick(takesFunction && choices.percent(70) ? Self.functionsOfEveryKind : Self.valuesOfEveryKind)) }
         if let right = sample(of: first), choices.percent(60) { given.insert(right, at: 0) }
         let others = given.reversed().map { $0 }
+        if guarded, !hasSecond, kind != 2, kind != 3, choices.percent(40) {
+            lines += ["    for (const given of [\(given.joined(separator: ", "))] as any[]) \(function)(given);", "}"]
+            helpers.insert("note")
+            return lines
+        }
         for (i, value) in given.enumerated() {
             let call = "\(function)((\(value)) as any\(hasSecond ? ", (\(others[i])) as any" : ""))"
             switch kind {

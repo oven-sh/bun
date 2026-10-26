@@ -179,7 +179,9 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **What a generator writes and is only compiled shares executables** (`isOnlyCompiled` in `generated/run-generated.ts`): up to 32
   programs with the same flags are the entry points of one build, and each runs in a Worker, in a process of its own. A new
   executable is dear on some machines, whatever its program. The log of a file says `BUILT: <n> executables for <m> programs`, and
-  `AOT_GENERATED_IN_ONE_EXECUTABLE=1` builds each program alone.
+  `AOT_GENERATED_IN_ONE_EXECUTABLE=1` builds each program alone. To the compiler each entry point of such a build is a program of
+  its own, unless one of them opens the world (`fuzz/the-world-is-open.ts`): then all are one program. So the programs that open
+  it share executables among themselves, and the log says `SHARED:` and how many programs were built in either way.
 - **Shards.** `test/expected-durations.json` has no entry for `aot/` until the scheduled job that writes it has seen these files, and
   until then the runner takes each for an average file. `aot` is not among the directories of `test/parallel-allowlist.json`, so
   each file runs by itself.

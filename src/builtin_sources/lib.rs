@@ -437,7 +437,7 @@ mod tests {
     #[test]
     fn rejects_malformed_manifests() {
         assert_eq!(error_line(b""), Some(1));
-        assert_eq!(error_line(b"bun-builtins-manifest\t3\n"), Some(1));
+        assert_eq!(error_line(b"bun-builtins-manifest\t4\n"), Some(1));
         for record in [
             "trigger\tprocess.stdout\t3",
             "native\t0\tcpp\tA.cpp\tf",
@@ -452,14 +452,14 @@ mod tests {
             "function\t-1\tbuiltins/Fifo.ts\tcreateFIFO",
             "function\t1\tbuiltins/Fifo.ts",
         ] {
-            let text = format!("bun-builtins-manifest\t4\n\n{record}\n");
+            let text = format!("bun-builtins-manifest\t5\n\n{record}\n");
             assert_eq!(error_line(text.as_bytes()), Some(3), "{record}");
         }
     }
 
     #[test]
     fn rejects_unlisted_function_file() {
-        let text = b"bun-builtins-manifest\t4\n\
+        let text = b"bun-builtins-manifest\t5\n\
             functions\tbuiltins/Fifo.ts\n\
             function\t1\tbuiltins/Fifo.ts\tcreateFIFO\n\
             function\t2\tbuiltins/Other.ts\tother\n";

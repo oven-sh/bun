@@ -12,14 +12,16 @@
 //   AOT_GENERATED_COLLECTS=all bun test ..                   every program collects inside its calls (../fuzz/collections-inside-calls.ts), not every third
 //   AOT_GENERATED_HANDS=all bun test ..                      every program hands its functions to the host (../fuzz/functions-the-host-could-call.ts), not every third
 //   AOT_GENERATED_INSIDE=all bun test ..                     the text of every program stands inside something (../fuzz/the-whole-file-inside-something.ts), not of every third
+//   AOT_GENERATED_OPENS=all bun test ..                      every program opens the world (../fuzz/the-world-is-open.ts), not every sixth
 //   AOT_GENERATED_IN_ONE_EXECUTABLE=1 bun test ..            an executable for each program, also where programs share one
 import { afterAll, describe, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { dirname, join, sep } from "path";
 import { withCollectionsInsideCalls } from "../fuzz/collections-inside-calls";
 import { withFunctionsTheHostCouldCall } from "../fuzz/functions-the-host-could-call";
 import { places, withTheWholeFileInside } from "../fuzz/the-whole-file-inside-something";
+import { opensTheWorld, withTheWorldOpen } from "../fuzz/the-world-is-open";
 import { withTurnsNobodyKnows } from "../fuzz/turns-nobody-knows";
 import {
   built,
@@ -111,7 +113,8 @@ function stderrOfFailure(run: { stderr: string; signal: unknown; exitCode: numbe
 
 // A build writes an executable the size of Bun however small the program is, and a system may look at a new executable before it starts it for the first time. So the programs that are
 // only compiled share executables. Each is an entry point behind ../programs/run-each-in-a-worker.ts: an entry point begins a program of its own, so the compiler makes of it what it makes
-// of it alone. It runs in a Worker, a global of its own, in a process of its own, and so it does in plain Bun. What is not built together with the others is built alone, and so is
+// of it alone, unless one of them opens the world (../fuzz/the-world-is-open.ts): then all are one program. So the programs that open it share executables among themselves. A program
+// runs in a Worker, a global of its own, in a process of its own, and so it does in plain Bun. What is not built together with the others is built alone, and so is
 // what once went wrong, wherever a run takes all of that. A debug or ASAN build of Bun takes too few programs to share anything.
 const programsInOneExecutable = Number(process.env.AOT_GENERATED_IN_ONE_EXECUTABLE) || 32;
 // A build of large programs is mostly their own work, and several small builds use the cores better than one large build.
@@ -200,30 +203,39 @@ export function generated(title: string, given: Generated[]) {
     !wanted && !isToldWhatToTake && !(program.wasOnceWrong && takesWhatIsFixed);
   let leftOut = 0;
   let executables = 0;
+  const shares = { "a program each": 0, "one program": 0 };
   afterAll(() => {
     if (leftOut)
       console.error(
         `SHARE: ${leftOut} of the ${chosen.length} programs that this run drew were not run: the file had run for 200 seconds`,
       );
     if (executables) console.error(`BUILT: ${executables} executables for ${chosen.length} programs`);
+    if (shares["a program each"] + shares["one program"])
+      console.error(
+        `SHARED: ${shares["a program each"]} programs are a program each in their executables, ${shares["one program"]} are one program with the others`,
+      );
   });
+
+  // A program that is here for what it once showed stays as it is.
+  const staysAsItIs = (program: Generated) => !!program.wasOnceWrong || !!program.linesDepartToday || !!program.written;
+  const isDrawnToOpenTheWorld = (program: Generated) =>
+    !staysAsItIs(program) &&
+    (process.env.AOT_GENERATED_OPENS === "all" || Bun.hash.crc32(`${program.name} : ${title}`) % 6 === 0);
 
   function write(program: Generated, folder: string) {
     const { file, text, files, entryPoints = [] } = program.make();
-    // Every second program keeps its short loops as loops, every third collects inside its calls, every third stores its functions where the host could find them, and the text of
-    // every third stands inside a function, a try, a loop or the like.
-    // A program that is here for what it once showed stays as it is.
-    const staysAsItIs = !!program.wasOnceWrong || !!program.linesDepartToday || !!program.written;
-    const keepsItsLoops = !staysAsItIs && Bun.hash.crc32(`${title} ${program.name}`) % 2 === 1;
+    // Every second program keeps its short loops as loops, every third collects inside its calls, every third hands its functions to the host, the text of every third stands inside a
+    // function, a try, a loop or the like, and every sixth opens the world.
+    const isChanged = !staysAsItIs(program);
+    const keepsItsLoops = isChanged && Bun.hash.crc32(`${title} ${program.name}`) % 2 === 1;
     const collectsInsideCalls =
-      !staysAsItIs &&
+      isChanged &&
       !program.mayStopOutOfMemory &&
       (process.env.AOT_GENERATED_COLLECTS === "all" || Bun.hash.crc32(`${program.name} ${title}`) % 3 === 0);
     const handsItsFunctionsOn =
-      !staysAsItIs &&
-      (process.env.AOT_GENERATED_HANDS === "all" || Bun.hash.crc32(`${program.name}, ${title}`) % 3 === 0);
+      isChanged && (process.env.AOT_GENERATED_HANDS === "all" || Bun.hash.crc32(`${program.name}, ${title}`) % 3 === 0);
     const standsInside =
-      !staysAsItIs &&
+      isChanged &&
       // What the analysis follows at the top of a file is what such a program is about.
       !program.flags?.some(flag => flag.startsWith("--aot-limit=MaxValueFlowEdgesLogged")) &&
       (process.env.AOT_GENERATED_INSIDE === "all" || Bun.hash.crc32(`${program.name}; ${title}`) % 3 === 0);
@@ -236,6 +248,7 @@ export function generated(title: string, given: Generated[]) {
         if (keepsItsLoops) written = withTurnsNobodyKnows(written);
         if (collectsInsideCalls) written = withCollectionsInsideCalls(written, loader);
         if (handsItsFunctionsOn) written = withFunctionsTheHostCouldCall(written, loader);
+        if (name === file && isDrawnToOpenTheWorld(program)) written = withTheWorldOpen(written);
         if (standsInside && name === file) written = withTheWholeFileInside(written, loader, place);
       }
       writeFileSync(join(folder, name), written);
@@ -295,6 +308,7 @@ export function generated(title: string, given: Generated[]) {
       });
     }
     const executable = join(folder, isWindows ? "programs.exe" : "programs");
+    const report = join(folder, "report.json");
     const build = () =>
       slot(() =>
         spawned(
@@ -305,6 +319,7 @@ export function generated(title: string, given: Generated[]) {
             "--aot",
             ...moreFlags,
             ...(members[0].program.flags ?? []),
+            "--aot-report=" + report,
             "./" + runner,
             ...together.map(({ index, file }) => `./${index}/${file}`),
             "--outfile",
@@ -333,7 +348,12 @@ export function generated(title: string, given: Generated[]) {
         for (const { program } of together) shared.set(program, "alone");
         return shared;
       }
-      if (result) executables++;
+      if (result) {
+        executables++;
+        // The compiler runs once for each program of a build.
+        const { EngineRuns } = JSON.parse(readFileSync(report, "utf8")).statistics;
+        shares[EngineRuns > together.length ? "a program each" : "one program"] += together.length;
+      }
       await Promise.all(
         together.map(async member => {
           const compiled = await start([executable], member, { ...bunEnv, BUN_AOT_VERBOSE: "1" });
@@ -381,8 +401,10 @@ export function generated(title: string, given: Generated[]) {
         }
         for (const member of mine) started!.set(member.program, run);
       };
-      // A flag holds for a whole build.
-      for (const alike of Map.groupBy(sharing, ({ program }) => (program.flags ?? []).join(" ")).values()) {
+      // A flag holds for a whole build, and so does an open world.
+      const kindOf = ({ program }: (typeof sharing)[number]) =>
+        `${(program.flags ?? []).join(" ")} ${isDrawnToOpenTheWorld(program) || opensTheWorld(program.make().text)}`;
+      for (const alike of Map.groupBy(sharing, kindOf).values()) {
         for (const member of alike) {
           const size = member.program.make().text.length;
           if (members.length === programsInOneExecutable || (members.length && bytes + size > bytesInOneExecutable))

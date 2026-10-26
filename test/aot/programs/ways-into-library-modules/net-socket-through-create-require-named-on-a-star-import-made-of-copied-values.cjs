@@ -4,6 +4,7 @@ function _getRequireWildcardCache(e) {
   if ("function" != typeof WeakMap) return null;
   var r = new WeakMap(),
     t = new WeakMap();
+  // eslint-disable-next-line no-func-assign
   return (_getRequireWildcardCache = function (e) {
     return e ? t : r;
   })(e);
@@ -18,6 +19,7 @@ function _interopRequireWildcard(e, r) {
   for (var u in e)
     if ("default" !== u && {}.hasOwnProperty.call(e, u)) {
       var i = a ? Object.getOwnPropertyDescriptor(e, u) : null;
+      // eslint-disable-next-line no-unused-expressions
       i && (i.get || i.set) ? Object.defineProperty(n, u, i) : (n[u] = e[u]);
     }
   return ((n.default = e), t && t.set(e, n), n);

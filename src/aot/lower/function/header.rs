@@ -242,7 +242,12 @@ fn create_source_header(
     header.name = match name {
         Some(name) => Some(name),
         None if func.name.is_some() => Some(file.intern_own_name(function)),
-        None if func.flags.contains(Flags::DEFAULT) => file.default_export_name(func.start),
+        None if func.flags.contains(Flags::DEFAULT) => {
+            if file.is_default_export_name_its_own(func.start) {
+                header.flags |= FunctionFlags::HAS_EXPLICIT_NAME;
+            }
+            file.default_export_name(func.start)
+        }
         None => None,
     };
     header.text = file.compute_text_range(function);

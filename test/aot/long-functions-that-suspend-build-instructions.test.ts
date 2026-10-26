@@ -52,7 +52,7 @@ ${run}
 test.skipIf(isSlowBuild || isWindows).each(Object.entries(kinds))(
   "the instructions of a build follow the number of suspensions of %s that keeps many locals",
   async (_, kind) => {
-    await expectLinearInstructionCount(250, writeLocalsKeptOverSuspensions(kind), 8);
+    await expectLinearInstructionCount(250, writeLocalsKeptOverSuspensions(kind), 7.5);
   },
   240_000,
 );

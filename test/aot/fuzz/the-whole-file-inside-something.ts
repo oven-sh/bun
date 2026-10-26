@@ -23,13 +23,7 @@ const around: Record<(typeof places)[number], readonly (readonly [string, string
   ],
   "a try": [["try {\n", "\n} finally {\n}\n", true]],
   "a catch": [["try {\nthrow 0;\n} catch {\n", "\n}\n", true]],
-  "a loop": [
-    [
-      'for (let turn = 0; turn < (Reflect.get(globalThis, "process").argv.length > 99 ? 2 : 1); turn++) {\n',
-      "\n}\n",
-      true,
-    ],
-  ],
+  "a loop": [["for (let turn = 0; turn < (Date.now() < 99 ? 2 : 1); turn++) {\n", "\n}\n", true]],
   "a generator": [
     ["for (const step of (function* () {\nyield 0;\n", "\n})());\n", false],
     ["for await (const step of (async function* () {\nyield 0;\n", "\n})());\n", true],

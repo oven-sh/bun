@@ -143,6 +143,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) field_initializers: Vec<(MemberId, FunctionKey)>,
     pub(super) initialized_holders: Vec<(FunctionKey, SymbolId)>,
     pub(super) use_counts: Vec<u8>,
+    pub(super) symbols_read_by_enums: Vec<SymbolId>,
     pub(super) has_wrapper_parameters: bool,
 }
 
@@ -164,6 +165,10 @@ impl ScopeAnalysis {
 
     pub(in crate::lower) fn is_used_once(&self, symbol: SymbolId) -> bool {
         self.use_counts.get(symbol.idx()) == Some(&1)
+    }
+
+    pub(in crate::lower) fn is_read_by_enum(&self, symbol: SymbolId) -> bool {
+        self.symbols_read_by_enums.binary_search(&symbol).is_ok()
     }
 
     pub(in crate::lower) fn placement(&self, binding: BindingRef) -> Option<Placement> {

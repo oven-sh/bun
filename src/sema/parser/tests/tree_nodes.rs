@@ -130,6 +130,23 @@ const TOP_LEVEL_AWAITS: &[(&str, bool)] = &[
     ("1;", false),
 ];
 
+const AWAITS_IN_COMPUTED_NAMES: &[&str] = &[
+    "x = { [await (a)]: 1 };",
+    "x = { [(await (a)())]: 1 };",
+    "x = { [`k${await (a)}`]: 1 };",
+    "x = { [await [a][0]]: 1 };",
+    "x = { [await -a]: 1 };",
+    "x = { b: { [await (a)]: 1 } };",
+    "x = { [await (a)]() {} };",
+    "x = { get [await (a)]() { return 1; } };",
+    "class A { [await (a)]() {} }",
+    "x = class { static [await (a)]() {} };",
+    "const { [await (a)]: b } = c;",
+    "({ [await (a)]: b } = c);",
+    "for (const b of [{ [await (a)]: 1 }]);",
+    "try { x = { [await (a)]: 1 }; } catch {}",
+];
+
 const PROLOGUE_AND_STATEMENT: &str = r#"function f() { "use strict"; 'a'; x; }"#;
 
 const LITERAL_KINDS: &[(&str, Kind)] = &[
@@ -569,6 +586,20 @@ fn top_level_await() {
     for &(text, expected) in TOP_LEVEL_AWAITS {
         parsed("a.mjs", text, |_, hir| {
             assert_eq!(hir.has_top_level_await(), expected, "{text}");
+        });
+    }
+}
+
+#[test]
+fn await_in_computed_name() {
+    let is_await = |kind: &ExprKind| matches!(kind, ExprKind::Await(_));
+    for &text in AWAITS_IN_COMPUTED_NAMES {
+        parsed("a.mts", text, |w, hir| {
+            assert!(hir.diagnostics.is_empty(), "{text}: {:?}", hir.diagnostics);
+            assert!(hir.has_top_level_await(), "{text}");
+            only_expr(hir, is_await);
+            let checked = w.parse_for_check("a.mts", text.as_bytes());
+            assert!(find_exprs(&checked, is_await).is_empty(), "{text}");
         });
     }
 }

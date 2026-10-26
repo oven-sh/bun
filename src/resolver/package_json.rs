@@ -2241,6 +2241,7 @@ impl<'a> ESModule<'a> {
                         || result.status == Status::Null
                     {
                         last_exception = result.status;
+                        continue;
                     }
 
                     if result.status.is_undefined() {

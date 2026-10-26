@@ -1853,6 +1853,57 @@ describe("bundler", () => {
       ],
     },
   });
+  // As in Node and esbuild, the next alternative is tried after a null entry or
+  // an invalid target. When no alternative resolves, the path is not exported.
+  itBundled("packagejson/ExportsAlternativesSkipNullAndInvalid", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import 'pkg/null-first'
+        import 'pkg/invalid-first'
+        import 'pkg/pattern/q'
+      `,
+      "/Users/user/project/node_modules/pkg/package.json": /* json */ `
+        {
+          "exports": {
+            "./null-first": [null, "./a.js"],
+            "./invalid-first": ["../outside.js", "builtin:x", "./b.js"],
+            "./pattern/*": [[], null, {}, "./dir/*.js"]
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/pkg/a.js": `console.log('a')`,
+      "/Users/user/project/node_modules/pkg/b.js": `console.log('b')`,
+      "/Users/user/project/node_modules/pkg/dir/q.js": `console.log('q')`,
+    },
+    run: {
+      stdout: `a\nb\nq`,
+    },
+  });
+  itBundled("packagejson/ExportsAlternativesOnlyNullAndInvalid", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import 'pkg/only-null'
+        import 'pkg/invalid-then-null'
+        import 'pkg/null-then-invalid'
+      `,
+      "/Users/user/project/node_modules/pkg/package.json": /* json */ `
+        {
+          "exports": {
+            "./only-null": [null],
+            "./invalid-then-null": ["../outside.js", null],
+            "./null-then-invalid": [null, "../outside.js"]
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg/only-null". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg/invalid-then-null". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg/null-then-invalid". Maybe you need to "bun install"?`,
+      ],
+    },
+  });
   // Bun-specific: `pkg/name.js` is looked up again as `pkg/name` when its
   // lookup gives no file, but not when the lookup ends at a null target.
   itBundled("packagejson/ExportsNullTargetNotRetriedWithoutJs", {

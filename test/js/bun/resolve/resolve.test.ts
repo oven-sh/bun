@@ -1905,7 +1905,7 @@ describe("TypeScript extension rewrite matrix", () => {
 // `pkg/name.js` also finds the key "./name": after an "exports" lookup that gives
 // no file, the resolver looks the subpath up again without ".js". Node does one
 // lookup. A null target excludes the subpath, so the second lookup does not run.
-describe.concurrent('the ".js" retry of a package "exports" lookup', () => {
+describe.concurrent('null targets in package.json "exports"', () => {
   const node = nodeExeAtLeast("20.11.0");
   const NOT_FOUND = "not found";
   // A file of the package, or NOT_FOUND.
@@ -1935,7 +1935,8 @@ describe.concurrent('the ".js" retry of a package "exports" lookup', () => {
         const require = createRequire(import.meta.url);
         const specifiers = process.argv.slice(2);
         const seen = Object.fromEntries(specifiers.map(s => [s, { require: new Set(), import: new Set() }]));
-        const notFound = /^(ERR_)?MODULE_NOT_FOUND$|^ERR_PACKAGE_PATH_NOT_EXPORTED$|^ERR_INVALID_PACKAGE_TARGET$/;
+        const notFound =
+          /^(ERR_)?MODULE_NOT_FOUND$|^ERR_PACKAGE_(PATH_NOT_EXPORTED|IMPORT_NOT_DEFINED)$|^ERR_INVALID_PACKAGE_TARGET$/;
         const attempt = async (results, load) => {
           try {
             results.add(await load());
@@ -2027,6 +2028,11 @@ describe.concurrent('the ".js" retry of a package "exports" lookup', () => {
       { "name.js": { require: NOT_FOUND, import: "name.js" } },
     ],
     "empty-array": [{ "./name.js": [], "./name": "./name.js" }, ["name.js"], { "name.js": NOT_FOUND }],
+    "null-array": [
+      { "./name.js": ["../outside.js", null], "./name": "./name.js" },
+      ["name.js"],
+      { "name.js": NOT_FOUND },
+    ],
     "null-catch-all": [
       { "./name": "./name.js", "./*": null },
       ["name.js"],
@@ -2100,16 +2106,72 @@ describe.concurrent('the ".js" retry of a package "exports" lookup', () => {
     ],
   };
 
-  test("does not run for a subpath with a null target", async () => {
+  // An array target goes on to the next entry after a null entry or an invalid
+  // target, as in Node and esbuild. When no entry resolves, the last of those decides.
+  const arrays: Packages = {
+    "arr": [
+      {
+        "./null-first": [null, "./alt.js"],
+        "./invalid-first": ["../outside.js", "./alt.js"],
+        // "./fallbackfile" of Node's `pkgexports` fixture
+        "./node-fixture": [[], null, {}, "builtin:x", "./alt.js"],
+        "./pattern/*": [null, "./dir/*.js"],
+        "./only-null": [null],
+        "./invalid-then-null": ["../outside.js", null],
+        "./null-then-invalid": [null, "../outside.js"],
+        "./no-condition": [{ nope: "./alt.js" }],
+        // A valid target is the answer, also when its file is missing.
+        "./missing-file": ["./missing.js", "./alt.js"],
+      },
+      ["alt.js", "dir/q.js"],
+      {
+        "null-first": "alt.js",
+        "invalid-first": "alt.js",
+        "node-fixture": "alt.js",
+        "pattern/q": "dir/q.js",
+        "only-null": NOT_FOUND,
+        "invalid-then-null": NOT_FOUND,
+        "null-then-invalid": NOT_FOUND,
+        "no-condition": NOT_FOUND,
+        "missing-file": NOT_FOUND,
+      },
+    ],
+    // The lookup ends at alt.js, not at the null entry and not at "./name".
+    "arr-beside-key": [
+      { "./name.js": [null, "./alt.js"], "./name": "./name.js" },
+      ["name.js", "alt.js"],
+      { "name.js": "alt.js" },
+    ],
+  };
+  const arraysProject: Project = {
+    files: {
+      "package.json": JSON.stringify({
+        name: "project",
+        imports: { "#null-first": [null, "./alt.js"], "#only-null": [null] },
+      }),
+      ...namedFiles("", ["alt.js"]),
+    },
+    loads: { "#null-first": "alt.js", "#only-null": NOT_FOUND },
+  };
+
+  test('the ".js" retry does not run for a subpath with a null target', async () => {
     await expectToLoad("bun", excluded, excludedProject);
   });
 
-  test("still runs when the lookup does not end at a null target", async () => {
+  test('the ".js" retry still runs when the lookup does not end at a null target', async () => {
     await expectToLoad("bun", retried);
   });
 
+  test("an array target goes on after a null or invalid entry", async () => {
+    await expectToLoad("bun", arrays, arraysProject);
+  });
+
   test.skipIf(!node)("Node.js loads the same files, except where a row says what Node.js loads", async () => {
-    await Promise.all([expectToLoad("node", excluded, excludedProject), expectToLoad("node", retried)]);
+    await Promise.all([
+      expectToLoad("node", excluded, excludedProject),
+      expectToLoad("node", retried),
+      expectToLoad("node", arrays, arraysProject),
+    ]);
   });
 
   test("require.resolve() with `paths` goes on to the next root", () => {

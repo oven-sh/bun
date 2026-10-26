@@ -372,6 +372,12 @@ impl<'a> Transpiler<'a> {
         first
     }
 
+    /// `resolve_entry_point` with one lookup and no message in the log.
+    pub fn resolve_entry_point_quiet(&mut self, entry_point: &[u8]) -> Option<resolver::Result> {
+        let resolved = self._resolve_entry_point(entry_point).ok()?;
+        (!resolved.flags.is_external() && resolved.path_const().is_some()).then_some(resolved)
+    }
+
     /// Resolve an entry-point specifier, busting the directory cache and
     /// retrying once on failure before reporting the error to the log.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {

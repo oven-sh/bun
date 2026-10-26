@@ -336,10 +336,10 @@ impl DevServer {
             // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
-                    self.server_graph.on_file_deleted(abs_path, bv2)?
+                    self.on_file_deleted(abs_path, graph, bv2)?
                 }
                 bake::Graph::Client => {
-                    self.client_graph.on_file_deleted(abs_path, bv2)?;
+                    self.on_file_deleted(abs_path, graph, bv2)?;
                     // The html file of a route has no importer.
                     if let Some(file) = self
                         .client_graph
@@ -378,6 +378,52 @@ impl DevServer {
             )?;
         }
         Ok(file_is_missing)
+    }
+
+    /// Builds the importers of a deleted file again. An importer that the resolver does not find is handled like the file.
+    fn on_file_deleted(
+        &mut self,
+        abs_path: &[u8],
+        graph: bake::Graph,
+        bv2: &mut BundleV2,
+    ) -> Result<(), AllocError> {
+        let mut walk = incremental_graph::DeletedFileWalk::default();
+        let in_graph = match graph {
+            bake::Graph::Server | bake::Graph::Ssr => self
+                .server_graph
+                .on_file_deleted(abs_path, bv2, &mut walk)?,
+            bake::Graph::Client => {
+                let in_graph = self
+                    .client_graph
+                    .on_file_deleted(abs_path, bv2, &mut walk)?;
+                // The importers of a client component are in the server graph.
+                if self
+                    .client_graph
+                    .bundled_files
+                    .get(abs_path)
+                    .is_some_and(|file| file.is_hmr_root)
+                {
+                    self.server_graph
+                        .on_file_deleted(abs_path, bv2, &mut walk)?;
+                }
+                in_graph
+            }
+        };
+        // A loop and not a recursion: a step frees edges of the dependency lists of other files.
+        let mut handled = 0;
+        while let Some(path) = walk.unresolved.keys().get(handled).cloned() {
+            handled += 1;
+            // The file is gone for both graphs.
+            self.client_graph.on_file_deleted(&path, bv2, &mut walk)?;
+            self.server_graph.on_file_deleted(&path, bv2, &mut walk)?;
+        }
+
+        if in_graph {
+            // Bust the resolution cache of the dir containing this file.
+            let dirname = paths::dirname(abs_path).unwrap_or(abs_path);
+            let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);
+        }
+        Ok(())
     }
 
     /// Return a log to write resolution failures into.

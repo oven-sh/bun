@@ -11,16 +11,23 @@ use crate::options::Target;
 use crate::options_impl::TargetExt as _;
 use crate::{Index, IndexInt};
 
-pub(crate) struct MissingSource {
-    index: IndexInt,
-    /// The target of the parse task. The row of a failed task in `graph.ast` keeps the default target.
-    target: Target,
+pub(crate) enum MissingSource {
+    /// A parse task did not find the file of this source.
+    Source {
+        index: IndexInt,
+        /// The target of the parse task. The row of a failed task in `graph.ast` keeps the default target.
+        target: Target,
+    },
+    /// The resolver does not find this file, so no task read it.
+    File(Box<[u8]>),
 }
 
 /// The client graph and the server graphs each keep their own module of a file.
 fn side(target: Target) -> u8 {
     if target == Target::Browser { 1 } else { 2 }
 }
+
+const BOTH_SIDES: u8 = 3;
 
 /// A later resolve of the path of `source_index` starts a new parse task.
 #[cold]
@@ -35,10 +42,17 @@ pub(crate) fn note(this: &mut BundleV2, source_index: IndexInt, target: Target) 
             map.remove(path);
         }
     }
-    this.missing_sources.push(MissingSource {
+    this.missing_sources.push(MissingSource::Source {
         index: source_index,
         target,
     });
+}
+
+/// See `BundleV2::note_missing_file`.
+#[cold]
+#[inline(never)]
+pub(crate) fn note_file(this: &mut BundleV2, path: &[u8]) {
+    this.missing_sources.push(MissingSource::File(path.into()));
 }
 
 /// The noted sources by index, and the sides that did not find each path.
@@ -78,11 +92,15 @@ pub(crate) fn report(this: &mut BundleV2, dev: DevServerHandle) {
         by_path: StringHashMap::new(),
     };
     for missing in &this.missing_sources {
-        let path = this.graph.input_files.items_source()[missing.index as usize]
-            .path
-            .text;
-        bun_core::handle_oom(noted.by_index.put(missing.index, ()));
-        *bun_core::handle_oom(noted.by_path.get_or_put(path)).value_ptr |= side(missing.target);
+        let (path, sides): (&[u8], u8) = match missing {
+            &MissingSource::Source { index, target } => {
+                bun_core::handle_oom(noted.by_index.put(index, ()));
+                let source = &this.graph.input_files.items_source()[index as usize];
+                (source.path.text, side(target))
+            }
+            MissingSource::File(path) => (path, BOTH_SIDES),
+        };
+        *bun_core::handle_oom(noted.by_path.get_or_put(path)).value_ptr |= sides;
     }
 
     let mut bound: Vec<u32> = Vec::new();

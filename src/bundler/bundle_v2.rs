@@ -20,7 +20,10 @@ pub use bv2_impl::{
     EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
     target_from_hashbang,
 };
-pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
+pub use bv2_impl::{
+    DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus,
+    InvalidationOutcome,
+};
 // Flatten the impl-body module into this file's namespace so external callers
 // (`bun_runtime::cli::*`, `linker_context::*`) reference items as
 // `bundle_v2::Foo` rather than naming the implementation submodule.
@@ -3058,13 +3061,18 @@ pub mod bv2_impl {
             }
         }
 
-        /// `loader`: see `requested_file_loader`.
+        /// Dev server: the resolver does not find `path`, so no parse task of this build read it.
+        pub fn note_missing_file(&mut self, path: &[u8]) {
+            missing_sources::note_file(self, path);
+        }
+
+        /// `loader`: see `requested_file_loader`. An `Err` is out of memory.
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
             target: options::Target,
             loader: Option<Loader>,
-        ) -> Result<(), Error> {
+        ) -> Result<InvalidationOutcome, Error> {
             // TODO: plugins with non-file namespaces
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span the resolver / `&mut self` calls below.
@@ -3073,14 +3081,18 @@ pub mod bv2_impl {
                 .get(path_slice)
                 .is_some()
             {
-                return Ok(());
+                return Ok(InvalidationOutcome::AlreadyInBundle);
             }
-            let mut result = match self
+            // `resolve_entry_point` would print its message as an error of this build.
+            let Some(mut result) = self
                 .transpiler_for_target(target)
-                .resolve_entry_point(path_slice)
-            {
-                Ok(r) => r,
-                Err(_) => return Ok(()),
+                .resolve_entry_point_quiet(path_slice)
+            else {
+                return Ok(if bun_paths::is_absolute(path_slice) {
+                    InvalidationOutcome::Unresolved
+                } else {
+                    InvalidationOutcome::NotAFilePath
+                });
             };
             let mut path = result.path_pair.primary;
             self.increment_scan_counter();
@@ -3136,7 +3148,7 @@ pub mod bv2_impl {
 
                 self.graph.pool().schedule(task);
             }
-            Ok(())
+            Ok(InvalidationOutcome::Queued)
         }
 
         /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
@@ -8493,6 +8505,19 @@ pub mod bv2_impl {
         pub chunks: &'a mut [Chunk],
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub html_files: ArrayHashMap<Index, ()>,
+    }
+
+    /// What `enqueue_file_from_dev_server_incremental_graph_invalidation` did with a file.
+    #[must_use]
+    pub enum InvalidationOutcome {
+        /// A parse task for the file is queued.
+        Queued,
+        /// This bundle already has the file. Nothing is queued.
+        AlreadyInBundle,
+        /// The resolver does not find the file. Nothing is queued.
+        Unresolved,
+        /// The key is not an absolute path and did not resolve: a plugin namespace keys its files by their pretty path.
+        NotAFilePath,
     }
 
     pub(crate) fn generate_unique_key() -> u64 {

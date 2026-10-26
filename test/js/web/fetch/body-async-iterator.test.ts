@@ -450,9 +450,10 @@ describe("next() returns a promise with its own then()", () => {
         `,
       ],
       env: bunEnv,
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ text: "chunk0chunk1", returned: 3, callsOnReturned: 3, callsOnOthers: 0 });
     expect(exitCode).toBe(0);
   });

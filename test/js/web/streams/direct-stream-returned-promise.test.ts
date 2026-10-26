@@ -398,6 +398,7 @@ describe("what cancel() returns after the sink closed", () => {
             socket.on("connect", () => socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"));
             socket.on("data", data => (raw += data.toString("latin1")).includes("first") && resolve());
             socket.on("error", reject);
+            socket.on("close", () => reject(new Error("the response ended before its first chunk")));
           });
           socket.destroy();
           await cancelled.promise;
@@ -410,9 +411,10 @@ describe("what cancel() returns after the sink closed", () => {
         `,
       ],
       env: bunEnv,
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       "throws": ["uncaughtException: cancel threw"],
       "returns a rejected promise": [],

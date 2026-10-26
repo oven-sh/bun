@@ -561,7 +561,12 @@ export function add(a, b) {}
       example(["```sh", "npm install", "", "", "```"]),
       example(["  ```sh", "  npm install", "  ```"]),
     ],
-    ["code that doesn't parse, with keepUnparsableExampleIndent", keep, example(["if (", "  x"]), example(["  if (", "    x"])],
+    [
+      "code that doesn't parse, with keepUnparsableExampleIndent",
+      keep,
+      example(["if (", "  x"]),
+      example(["  if (", "    x"]),
+    ],
     // oxfmt trims the first line and prints `  if (` / `      x`, then moves the second line right on each pass.
     [
       "indented code that doesn't parse, with keepUnparsableExampleIndent",

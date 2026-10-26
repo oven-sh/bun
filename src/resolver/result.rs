@@ -371,6 +371,8 @@ pub struct MatchResult {
     pub(crate) dir_info: Option<DirInfoRef>,
     pub(crate) module_type: options::ModuleType,
     pub(crate) is_external: bool,
+    /// A "browser" map lookup picked `path_pair.primary`.
+    pub(crate) browser_remapped: bool,
 }
 
 impl Default for MatchResult {
@@ -384,6 +386,7 @@ impl Default for MatchResult {
             dir_info: None,
             module_type: options::ModuleType::Unknown,
             is_external: false,
+            browser_remapped: false,
         }
     }
 }

@@ -1107,23 +1107,27 @@ describe("parseArgs extra tests", () => {
       expect(Object.keys(result.values)).toHaveLength(1000);
     });
 
+    const mixedArgs = count =>
+      ""
+        .padStart(count)
+        .split("")
+        .map((_, i) => {
+          if (i % 17 === 0) return `-abc`;
+          if (i % 7 === 0) return `-${String.fromCharCode(97) + ((i / 10) | 0)}`;
+          return `--arg${i}`;
+        });
+
+    test("100 mixed", () => {
+      const result = parseArgs({ allowPositionals: true, strict: false, args: mixedArgs(100) });
+      expect(Object.keys(result.values)).toHaveLength(93);
+    });
+
     test("48 mixed several times, with a garbage collection pending at each call", () => {
       // Bun.gc() only requests a collection, which starts at the next allocation slow path. The config is built once,
       // so nothing allocates between the request and parseArgs, and the collection runs inside parseArgs.
-      // bun 1.0.14-canary.20231201.1 kept its tokens where the GC cannot see them. This loop crashes it in 296 of 300
+      // bun 1.0.14-canary.20231201.1 kept its tokens where the GC cannot see them. This loop crashes it in 298 of 300
       // runs. Do not build the args in the loop (6 of 100 runs) or use more than 65 distinct keys (2 of 40 runs).
-      const config = {
-        allowPositionals: true,
-        strict: false,
-        args: ""
-          .padStart(48)
-          .split("")
-          .map((_, i) => {
-            if (i % 17 === 0) return `-abc`;
-            if (i % 7 === 0) return `-${String.fromCharCode(97) + ((i / 10) | 0)}`;
-            return `--arg${i}`;
-          }),
-      };
+      const config = { allowPositionals: true, strict: false, args: mixedArgs(48) };
       let result;
       for (let i = 0; i < 500; ++i) {
         result = parseArgs(config);

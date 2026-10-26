@@ -501,10 +501,13 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
-// A router that is made takes its routes from the resolver's cache, and opens no file that the cache has
-// the path of. That holds after reload() left out the file's route, and after a failed resolve, another
-// router's reload() or a second Bun.build() had the directory read again. reload() opens each file, and
-// leaves out the route of one that does not open.
+// A router that is made takes its routes from the resolver's cache, and opens no file that was found or
+// opened since the last bust of its directory. reload() busts each directory, so it opens each file, and
+// leaves out the route of one that does not open: a router that is made after that throws for the file
+// until it opens or the resolver finds it, also when a router for other files walked the directory in
+// between. A failed resolve in the directory and another router's reload() bust it too. The second
+// Bun.build() reads a directory again with no bust, so no file is opened after it, not the one behind a
+// link either.
 // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
 it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer opens", async () => {
   using dir = tempDir("fsr-unreadable-route", {
@@ -588,20 +591,20 @@ it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer op
       "made: / /a /sub/b",
       "made again: / /a /sub/b",
       "after reload(): / /sub/b",
-      "made after reload(): / /a /sub/b",
+      "made after reload(): EACCES opening route: <pages>/a.tsx",
       "made for .md files: /notes",
-      "made after that: / /a /sub/b",
+      "made after that: EACCES opening route: <pages>/a.tsx",
       "made once Bun.resolveSync() found the file: / /a /sub/b",
       "made once the file opens: / /a /sub/b",
       "after reload() once the file opens: / /a /sub/b",
       "made again: / /a /sub/b",
-      "made after a failed Bun.resolveSync(): / /a /sub/b",
+      "made after a failed Bun.resolveSync(): EACCES opening route: <pages>/a.tsx",
       "made once the file opens: / /a /sub/b",
       "made again: / /a /sub/b",
-      "made after a failed require(): / /a /sub/b",
+      "made after a failed require(): EACCES opening route: <pages>/a.tsx",
       "made once the file opens: / /a /sub/b",
       "made again: / /a /sub/b",
-      "made after reload() of a router for .md files: / /a /sub/b",
+      "made after reload() of a router for .md files: EACCES opening route: <pages>/a.tsx",
       "made once the file opens: / /a /sub/b",
       "made with a link to a.tsx: / /a /to-a",
       "made after Bun.build() read the directory again: / /a /to-a",

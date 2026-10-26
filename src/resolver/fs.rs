@@ -251,6 +251,32 @@ impl Entry {
         p
     }
 
+    /// A new `Entry` for the same name that has no path filled. This one is left as it is.
+    fn without_paths(&self) -> *mut Entry {
+        let slot = bun_core::handle_oom(dir_entry::EntryStore::append_uninit());
+        // Every rewrite of `cache` and `need_stat` takes the mutex.
+        let _guard = self.mutex.lock_guard();
+        let fresh = Entry {
+            cache: core::cell::Cell::new(EntryCache {
+                fd: Fd::INVALID,
+                ..self.cache()
+            }),
+            dir: self.dir,
+            base_: self.base_,
+            base_lowercase_: self.base_lowercase_,
+            mutex: Mutex::new(),
+            need_stat: AtomicBool::new(self.need_stat.load(Ordering::Relaxed)),
+            abs_path: OnceInterned::new(),
+            walked_paths: AtomicPtr::new(core::ptr::null_mut()),
+        };
+        // SAFETY: `append_uninit` reserved the slot for this caller, and nothing else has seen it.
+        unsafe {
+            let stored = (*slot).as_mut_ptr();
+            stored.write(fresh);
+            stored
+        }
+    }
+
     /// The paths that `walked_path_or_try_fill` filled.
     fn walked_paths(&self) -> impl Iterator<Item = &'static WalkedPath> {
         // SAFETY: a node is never freed, and is not written once it is stored.
@@ -536,6 +562,17 @@ impl DirEntry {
 
     /// Replaces the listing with `fresh`, a new read of the same directory, and keeps its keys.
     pub(crate) fn refill(&mut self, mut fresh: DirEntry) {
+        // A bust made this read: a name whose `Entry` has a path gets a new `Entry` with none.
+        if self.generation == crate::fs::GENERATION_STALE {
+            for entry in fresh.data.values_mut() {
+                let kept: *mut Entry = *entry;
+                // SAFETY: EntryStore-owned pointer, valid for lifetime of store
+                let kept = unsafe { &*kept };
+                if !kept.abs_path().is_empty() {
+                    *entry = kept.without_paths();
+                }
+            }
+        }
         fresh.owners = self.owners.take();
         *self = fresh;
     }

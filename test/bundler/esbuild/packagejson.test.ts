@@ -2625,8 +2625,7 @@ describe("bundler", () => {
         import mainField from 'main-field'
         import builtin from 'builtin'
         import scopedBuiltin from '@scope/builtin'
-        import otherPackage from 'other-package'
-        console.log(mainField, builtin, scopedBuiltin, otherPackage)
+        console.log(mainField, builtin, scopedBuiltin)
       `,
       "/Users/user/project/node_modules/main-field/package.json": `{"main":"./main.js","browser":{"./main.js":"./a.js","./a.js":false}}`,
       "/Users/user/project/node_modules/main-field/main.js": `module.exports = 'main'`,
@@ -2637,14 +2636,10 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/@scope/builtin/package.json": `{"main":"./main.js","browser":{"fs":"./shim.js","./shim.js":false}}`,
       "/Users/user/project/node_modules/@scope/builtin/main.js": `module.exports = require('fs')`,
       "/Users/user/project/node_modules/@scope/builtin/shim.js": `module.exports = 'shim'`,
-      "/Users/user/project/node_modules/other-package/package.json": `{"main":"./main.js","browser":{"dep":"../target/a.js"}}`,
-      "/Users/user/project/node_modules/other-package/main.js": `module.exports = require('dep')`,
-      "/Users/user/project/node_modules/target/package.json": `{"browser":{"./a.js":false}}`,
-      "/Users/user/project/node_modules/target/a.js": `module.exports = 'a'`,
     },
     target: "browser",
     run: {
-      stdout: "a shim shim a",
+      stdout: "a shim shim",
     },
   });
   // When the map sends the entry file to a directory, the lookup after
@@ -2679,11 +2674,13 @@ describe("bundler", () => {
       stdout: "dir dir b",
     },
   });
-  // A specifier that the map sends to a relative path is final too, also when
-  // that path is a file that the map of another package.json names (the last
-  // three imports). A specifier that the map sends to a bare package specifier
-  // is resolved in that package, which applies its own map ("to-package"). The
-  // scoped package is a control: its answer is the same before and after.
+  // The map that sends a specifier to a relative path does not apply to that
+  // path again. The other imports are controls. The scoped package gives the
+  // same answer before and after. A specifier that the map sends to a bare
+  // package specifier is resolved as a package, and a map applies to the
+  // resolved file ("to-package", "bare"). When the relative path is a file that
+  // the map of another package.json names, that map still applies once (the
+  // last three imports).
   itBundled("packagejson/BrowserMapSpecifierAppliedOnce", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -2691,12 +2688,25 @@ describe("bundler", () => {
         import scopedToFile from '@scope/to-file'
         import builtin from 'builtin'
         import toPackage from 'to-package'
+        import bare from 'bare'
         import app from 'dep'
         import nested from 'nested'
         import sibling from 'sibling'
-        console.log(toFile, scopedToFile, builtin, toPackage, app, nested, sibling)
+        console.log(toFile, scopedToFile, builtin, toPackage, bare, app, nested, sibling)
       `,
-      "/Users/user/project/package.json": `{"name":"app","browser":{"dep":"./node_modules/readable/readable.js"}}`,
+      "/Users/user/project/package.json": /* json */ `
+        {
+          "name": "app",
+          "browser": {
+            "bare": "plain/a.js",
+            "./node_modules/plain/a.js": "./app-shim.js",
+            "dep": "./node_modules/readable/readable.js"
+          }
+        }
+      `,
+      "/Users/user/project/app-shim.js": `module.exports = 'app-shim'`,
+      "/Users/user/project/node_modules/plain/package.json": `{"main":"./main.js"}`,
+      "/Users/user/project/node_modules/plain/a.js": `module.exports = 'a'`,
       "/Users/user/project/node_modules/to-file/package.json": `{"main":"./main.js","browser":{"dep":"./local.js","./local.js":"./other.js"}}`,
       "/Users/user/project/node_modules/to-file/main.js": `module.exports = require('dep')`,
       "/Users/user/project/node_modules/to-file/local.js": `module.exports = 'local'`,
@@ -2727,7 +2737,7 @@ describe("bundler", () => {
     },
     target: "browser",
     run: {
-      stdout: "local local shim b readable lib a",
+      stdout: "local local shim b app-shim readable-browser lib.browser b",
     },
   });
   // A package with "module" and "main" that is imported and required in one

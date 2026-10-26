@@ -2277,7 +2277,7 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        let mut remapped_to_relative_path = false;
+        let mut relative_remap_scope: Option<DirInfo::Index> = None;
         if self.care_about_browser_field {
             // Support remapping one package path to another via the "browser" field
             if let Some(browser_scope) = source_dir_info.get_enclosing_browser_scope() {
@@ -2332,9 +2332,11 @@ impl<'a> Resolver<'a> {
                             }
                         }
 
+                        if !is_package_path(remapped) {
+                            relative_remap_scope = Some(source_dir_info.enclosing_browser_scope);
+                        }
                         import_path = remapped;
                         source_dir_info = browser_scope;
-                        remapped_to_relative_path = !is_package_path(remapped);
                     }
                 }
             }
@@ -2377,11 +2379,10 @@ impl<'a> Resolver<'a> {
                     return ResultUnion::Success(result);
                 }
 
-                // A path that a "browser" map lookup picked is final.
+                // A path that a main-field or index lookup picked is final.
                 if res.package_json.is_some()
                     && self.care_about_browser_field
                     && !res.browser_remapped
-                    && !remapped_to_relative_path
                 {
                     let base_dir_info = match res.dir_info {
                         Some(d) => d,
@@ -2390,7 +2391,10 @@ impl<'a> Resolver<'a> {
                             _ => return ResultUnion::Success(result),
                         },
                     };
-                    if let Some(browser_scope) = base_dir_info.get_enclosing_browser_scope() {
+                    // The map that sent the specifier to a relative path does not apply to it again.
+                    if relative_remap_scope != Some(base_dir_info.enclosing_browser_scope)
+                        && let Some(browser_scope) = base_dir_info.get_enclosing_browser_scope()
+                    {
                         if let Some(remap) = self
                             .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                                 &browser_scope,

@@ -417,13 +417,16 @@ if (isBun) {
         const path = require("node:path");
         const resolved = require.resolve("no-deps", { paths: ["../..", "./plugins"] });
         console.log(path.relative(process.cwd(), resolved).split(path.sep).join("/"));
-        // On POSIX this entry names a directory that does not exist. The search goes on above
-        // it, and a miss there installs nothing.
+        // On POSIX the first entry names a directory that does not exist. The search goes on
+        // above it, and a miss there installs nothing. "plugins" has a node_modules directory,
+        // so a miss there installs nothing either.
         if (process.platform !== "win32") {
-          try {
-            require.resolve("no-deps-2", { paths: ["plugins\\\\"] });
-          } catch (error) {
-            console.log(error.code);
+          for (const paths of [["plugins\\\\"], ["plugins\\\\", "plugins"]]) {
+            try {
+              require.resolve("no-deps-2", { paths });
+            } catch (error) {
+              console.log(error.code);
+            }
           }
         }
       `,
@@ -439,7 +442,9 @@ if (isBun) {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, requests }).toEqual({
-        stdout: "plugins/node_modules/no-deps/index.js\n" + (process.platform === "win32" ? "" : "MODULE_NOT_FOUND\n"),
+        stdout:
+          "plugins/node_modules/no-deps/index.js\n" +
+          (process.platform === "win32" ? "" : "MODULE_NOT_FOUND\nMODULE_NOT_FOUND\n"),
         stderr: "",
         requests: [],
       });

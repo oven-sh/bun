@@ -2104,30 +2104,33 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
-        // No entry installs a package before every entry was searched for it.
-        for cache in [GlobalCache::disable, global_cache] {
+        // With several entries, none installs a package before all of them were searched.
+        let passes: &[GlobalCache] =
+            if custom_paths.len() > 1 && global_cache != GlobalCache::disable {
+                &[GlobalCache::disable, global_cache]
+            } else {
+                &[global_cache]
+            };
+        for (pass, &cache) in passes.iter().enumerate() {
             for custom_path in custom_paths {
                 let custom_utf8 = custom_path.to_utf8();
                 let entry = custom_utf8.slice();
                 let mut buf;
-                let dir = if bun_paths::is_absolute(entry) {
-                    entry
+                let (dir, cache) = if bun_paths::is_absolute(entry) {
+                    (entry, cache)
                 } else {
                     buf = bun_paths::path_buffer_pool::get();
                     match self.custom_dir(entry, &mut buf) {
+                        Some((dir, false)) => (dir, cache),
                         // Nothing below the cut was searched, so a miss there installs nothing.
-                        Some((_, true)) if cache != GlobalCache::disable => continue,
-                        Some((dir, _)) => dir,
-                        None => continue,
+                        Some((dir, true)) if pass == 0 => (dir, GlobalCache::disable),
+                        _ => continue,
                     }
                 };
                 match self.check_package_path(dir, import_path, kind, cache) {
                     ResultUnion::NotFound => {}
                     found => return found,
                 }
-            }
-            if global_cache == GlobalCache::disable {
-                break;
             }
         }
         ResultUnion::NotFound

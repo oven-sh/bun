@@ -124,12 +124,26 @@ impl ProgramContext {
         //   generateUid("_c") → strips to "c" → generates "_c", "_c2", "_c3", ...
         //   generateUid("foo") → generates "_foo", "_foo2", "_foo3", ...
         let base = name.trim_start_matches('_');
-        let mut uid = format!("_{}", base);
-        let mut i = 2;
-        while self.known_referenced_names.contains(&uid) {
-            uid = format!("_{}{}", base, i);
-            i += 1;
-        }
+        self.generate_uid(base)
+    }
+
+    /// Babel's `generateUid` search: the first free name of `_<base>`, `_<base>2`, `_<base>3`, ...
+    fn generate_uid(&mut self, base: &str) -> String {
+        let next_suffix = self
+            .next_uid_suffix
+            .entry(base.to_owned())
+            .or_insert_with(|| 1);
+        let uid = loop {
+            let uid = if *next_suffix > 1 {
+                format!("_{base}{next_suffix}")
+            } else {
+                format!("_{base}")
+            };
+            *next_suffix += 1;
+            if !self.known_referenced_names.contains(&uid) {
+                break uid;
+            }
+        };
         self.known_referenced_names.insert(uid.clone());
         uid
     }
@@ -174,26 +188,7 @@ impl ProgramContext {
             stripped
         };
 
-        // Babel's generateUid loop: `_<name>`, `_<name>2`, `_<name>3`, ... until a name is free.
-        let next_suffix = self
-            .next_uid_suffix
-            .entry(uid_base.to_owned())
-            .or_insert_with(|| 1);
-        let uid = loop {
-            let uid = if *next_suffix > 1 {
-                format!("_{uid_base}{next_suffix}")
-            } else {
-                format!("_{uid_base}")
-            };
-            *next_suffix += 1;
-            if !self.known_referenced_names.contains(&uid) {
-                break uid;
-            }
-        };
-
-        let result = arena_str(uid.as_bytes());
-        self.known_referenced_names.insert(uid);
-        result
+        arena_str(self.generate_uid(uid_base).as_bytes())
     }
 
     /// Add the memo cache import (the `c` function from the compiler runtime).

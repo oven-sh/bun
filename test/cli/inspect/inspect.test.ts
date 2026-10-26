@@ -1080,6 +1080,69 @@ describe.concurrent("bun test --isolate", () => {
     timeout,
   );
 
+  test(
+    "node:inspector: the server that the first file opened is the inspector of the later files",
+    async () => {
+      const imports = `import inspector from "node:inspector";`;
+      using dir = tempDir("inspect-isolate-node-inspector", {
+        "a.test.ts": waitingTestFile("A", { imports, before: `inspector.open(0, "127.0.0.1");` }),
+        "b.test.ts": waitingTestFile("B", {
+          imports,
+          before: `
+            let again;
+            try {
+              inspector.open(0, "127.0.0.1");
+              again = "opened a second server";
+            } catch (error) {
+              again = error.code;
+            }
+            process.stderr.write("IN B " + JSON.stringify({ url: String(inspector.url()), again }) + "\\n");
+          `,
+          after: `
+            inspector.close();
+            process.stderr.write("CLOSED IN B " + JSON.stringify({ url: String(inspector.url()) }) + "\\n");
+          `,
+        }),
+        "c.test.ts": `
+          import { test } from "bun:test";
+          ${imports}
+          test("C", () => {
+            const before = String(inspector.url());
+            inspector.open(0, "127.0.0.1");
+            process.stderr.write("IN C " + JSON.stringify({ before, opened: inspector.url() !== undefined }) + "\\n");
+            inspector.close();
+          });
+        `,
+      });
+      await using run = new InspectedTestRun(String(dir), ["--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"]);
+      const report = async (label: string) =>
+        JSON.parse((await run.stderrMatch(new RegExp(`^${label} (.*)$`, "m")))[1]);
+      const [, url] = await run.stderrMatch(/^Debugger listening on (ws:\/\/\S+)$/m);
+      await run.reached("A");
+      // This server speaks the Chrome DevTools Protocol.
+      using client = await InspectorClient.connect(url);
+      const marker = async () => (await client.send("Runtime.evaluate", { expression: "globalThis.marker" })).result;
+      await client.send("Runtime.enable");
+      await client.send("Debugger.enable");
+      expect(await marker()).toEqual({ type: "string", value: "A" });
+      release(client);
+
+      await run.reached("B");
+      expect(await report("IN B")).toEqual({ url, again: "ERR_INSPECTOR_ALREADY_ACTIVATED" });
+      // The client is told that its one execution context is a new one.
+      await client.next("Runtime.executionContextsCleared");
+      await client.next("Runtime.executionContextCreated");
+      expect((await client.next("Runtime.executionContextCreated")).context.name).toBe("Bun");
+      expect(await marker()).toEqual({ type: "string", value: "B" });
+      release(client);
+
+      expect(await report("CLOSED IN B")).toEqual({ url: "undefined" });
+      expect(await report("IN C")).toEqual({ before: "undefined", opened: true });
+      expect(await run.finished()).toEqual(passed(3));
+    },
+    timeout,
+  );
+
   // Lets the event loop run, then collects: the global of a file that finished is destroyed here.
   const collectingTestFile = (name: string) => `
     import { test } from "bun:test";

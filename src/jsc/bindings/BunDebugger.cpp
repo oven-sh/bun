@@ -804,6 +804,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
     return JSValue::encode(jsUndefined());
 }
 
+// node:inspector's inspector.url(): the URL of the server that listens, or undefined. The server belongs to the
+// process, so each global of a `bun test --isolate` run sees the one that an earlier file opened.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_nodeInspectorUrl, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& state = nodeInspectorState();
+    String url;
+    {
+        Locker<Lock> locker(state.lock);
+        if (state.serverStarted)
+            url = state.url.isolatedCopy();
+    }
+    if (url.isEmpty())
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsString(JSC::getVM(globalObject), url));
+}
+
 extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, const BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
 {
     if (!debuggerScriptExecutionContext)

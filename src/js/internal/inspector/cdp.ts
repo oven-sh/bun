@@ -101,6 +101,7 @@ class InspectorCDPAdapter {
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
   >();
   #scripts = new Map<string, { cdpUrl: string; endLine: number; endColumn: number }>();
+  #runtimeEnabled = false;
 
   constructor(writeToBackend: (message: string) => void, writeToClient: (message: string) => void) {
     this.#writeToBackend = writeToBackend;
@@ -166,6 +167,19 @@ class InspectorCDPAdapter {
     this.#writeToClient(JSON.stringify({ method, params }));
   }
 
+  // JSGlobalObject inspection has a single execution context; CDP clients
+  // need at least one announced for the console and evaluation to work.
+  #announceExecutionContext(): void {
+    this.#emitToClient("Runtime.executionContextCreated", {
+      context: {
+        id: EXECUTION_CONTEXT_ID,
+        origin: "",
+        name: "Bun",
+        uniqueId: String(EXECUTION_CONTEXT_ID),
+      },
+    });
+  }
+
   // `clientId` undefined/null marks an adapter-internal command whose response
   // is dropped instead of being forwarded to the client. `onResult` intercepts
   // the response for adapter-side chaining (e.g. Runtime.evaluate awaitPromise).
@@ -185,16 +199,8 @@ class InspectorCDPAdapter {
     switch (method) {
       // ── Runtime ──────────────────────────────────────────────────────────
       case "Runtime.enable":
-        // JSGlobalObject inspection has a single execution context; CDP clients
-        // need at least one announced for the console and evaluation to work.
-        this.#emitToClient("Runtime.executionContextCreated", {
-          context: {
-            id: EXECUTION_CONTEXT_ID,
-            origin: "",
-            name: "Bun",
-            uniqueId: String(EXECUTION_CONTEXT_ID),
-          },
-        });
+        this.#runtimeEnabled = true;
+        this.#announceExecutionContext();
         this.#sendToBackend("Runtime.enable");
         // Console output arrives as Console.messageAdded and is re-emitted as
         // Runtime.consoleAPICalled. Answer the client from this one for the
@@ -204,6 +210,7 @@ class InspectorCDPAdapter {
         return;
 
       case "Runtime.disable":
+        this.#runtimeEnabled = false;
         this.#sendToBackend("Runtime.disable");
         // Runtime.enable also enabled the Console domain; mirror it here so a
         // client that disables Runtime stops receiving consoleAPICalled.
@@ -633,7 +640,11 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.globalObjectCleared":
+        // `bun test --isolate` moved to the global of the next test file. The scripts of the
+        // one before are gone, and the one context that CDP clients evaluate in is a new one.
+        this.#scripts.$clear();
         this.#emitToClient("Runtime.executionContextsCleared", {});
+        if (this.#runtimeEnabled) this.#announceExecutionContext();
         return;
 
       case "Console.messageAdded":

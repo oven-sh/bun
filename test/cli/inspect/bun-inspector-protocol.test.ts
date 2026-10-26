@@ -214,6 +214,12 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
       send("Debugger.setPauseOnDebuggerStatements", { enabled: true }),
     ]);
 
+    // Audit and ScriptProfiler have no `enable`: a command of each checks their agents.
+    await send("Audit.setup");
+    await send("Audit.teardown");
+    await send("ScriptProfiler.startTracking");
+    await send("ScriptProfiler.stopTracking");
+
     // Conversely, these domains are left out of the snapshot by generate-protocol.ts because bun has
     // no agent for them. Once bun answers, remove the domain from the generator's list and regenerate.
     for (const domain of ["File", "Process"]) {

@@ -4544,7 +4544,8 @@ describe("react-compiler PropagateScopeDependenciesHIR finds the functions that 
         // A component that the compiler leaves as written has no memo cache.
         expect(stdout.match(/\b_c\(\d+\)/g)).toHaveLength(compiled);
         // The nested arrows are memoized. The path is `props.a` where the compiler does not know that the innermost
-        // arrow is invoked.
+        // arrow is invoked. A chain is called and what it returns is dropped, so no memo block depends on it: the test
+        // below holds the path of a chain.
         if (shape === "nested") expect(stdout.match(/\$\[0\] !== props\.a\.b\b/g)).toHaveLength(compiled);
         return cpuTime;
       };
@@ -4562,22 +4563,30 @@ describe("react-compiler PropagateScopeDependenciesHIR finds the functions that 
       expect(smallTime).toBeGreaterThan(0);
       expect(largeTime / smallTime).toBeLessThan(limit);
     },
-    60_000,
   );
 
   // The compiler memoizes by `props.a.b` only where it knows that the arrow that reads it is invoked. It follows the
-  // calls from `a` to `c` where `a` itself is assumed to be invoked, and nowhere else.
+  // calls from `a` to `c` where `a` itself is assumed to be invoked, and nowhere else. `InvokedThroughManyCalls` has a
+  // chain as long as that of a debug row above, and renders what it returns: its path is `props.a` if the compiler
+  // stops on the way.
   test("a chain of calls is followed from a function that is assumed to be invoked, and from no other", async () => {
     const chain = `
       const c = () => props.a.b;
       const b = () => c();
       const a = () => b();
     `;
+    const links = 400;
     using dir = tempDir("react-compiler-assumed-invoked-chains", {
       "entry.jsx": `
         export function Invoked(props) {
           ${chain}
           return <div onClick={a} />;
+        }
+        export function InvokedThroughManyCalls(props) {
+          const f0 = () => props.a.b;
+          ${Array.from({ length: links - 1 }, (_, i) => `const f${i + 1} = () => f${i}();`).join("\n")}
+          const v = f${links - 1}();
+          return <div>{v}</div>;
         }
         export function NotInvoked(props) {
           ${chain}
@@ -4609,6 +4618,7 @@ describe("react-compiler PropagateScopeDependenciesHIR finds the functions that 
     const dependencies = [...out.matchAll(/^function (\w+)\(props\) \{[^]*?\$\[0\] !== ([\w.]+)/gm)];
     expect(Object.fromEntries(dependencies.map(([, name, path]) => [name, path]))).toEqual({
       Invoked: "props.a.b",
+      InvokedThroughManyCalls: "props.a.b",
       NotInvoked: "props.a",
       NestedInvoked: "props.a.b",
       NestedNotInvoked: "props.a",

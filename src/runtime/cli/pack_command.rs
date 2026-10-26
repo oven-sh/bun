@@ -101,12 +101,48 @@ impl<'a> Context<'a> {
         }
     }
 
-    pub(crate) fn print_tarball_path(path: impl fmt::Display, log_level: LogLevel) {
+    fn begin_tarball_path(log_level: LogLevel) {
         // Quiet/silent output must be only the tarball path so `$(bun pm pack --quiet)` works.
         if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
             bun_core::pretty!("\n");
         }
-        bun_core::pretty!("{}\n", bun_fmt::EscapeControlChars(path));
+    }
+
+    pub(crate) fn print_tarball_path(name: TarballNameFormatter<'_>, log_level: LogLevel) {
+        Self::begin_tarball_path(log_level);
+        bun_core::pretty!("{}\n", bun_fmt::EscapeControlChars(name));
+    }
+
+    /// `path` is the bytes that the kernel got, and a script gives this line back to the kernel.
+    /// Through `Display` a byte that is not UTF-8 becomes U+FFFD, and the line names another file.
+    pub(crate) fn print_tarball_abs_path(path: &[u8], log_level: LogLevel) {
+        Self::begin_tarball_path(log_level);
+        match strings::str_utf8(path) {
+            Some(path) => bun_core::pretty!("{}\n", bun_fmt::EscapeControlChars(path)),
+            // Some terminals run a byte that is not UTF-8 as a control character. So a terminal
+            // gets U+FFFD for it, as in `bun pm diff`.
+            None if Output::is_stdout_tty() => {
+                bun_core::pretty!("{}\n", bun_fmt::escape_control_chars(path));
+            }
+            None => {
+                for (i, name) in strings::split(path, SEP_STR.as_bytes()).enumerate() {
+                    if i > 0 {
+                        Output::print_bytes(SEP_STR.as_bytes());
+                    }
+                    // A name that is not UTF-8 is bytes in an encoding that we do not know. Only
+                    // its ASCII bytes can be control characters.
+                    let is_text = strings::str_utf8(name).is_some();
+                    for part in name.chunk_by(|a, b| is_text || a.is_ascii() == b.is_ascii()) {
+                        if is_text || part.is_ascii() {
+                            bun_core::pretty!("{}", bun_fmt::escape_control_chars(part));
+                        } else {
+                            Output::print_bytes(part);
+                        }
+                    }
+                }
+                Output::print_bytes(b"\n");
+            }
+        }
     }
 }
 
@@ -1848,10 +1884,7 @@ pub(crate) fn pack(
                     bare_filename,
                     &mut dest_buf[..],
                 );
-                Context::print_tarball_path(
-                    bstr::BStr::new(abs_tarball_dest.as_bytes()),
-                    log_level,
-                );
+                Context::print_tarball_abs_path(abs_tarball_dest.as_bytes(), log_level);
             }
         }
 
@@ -2129,7 +2162,7 @@ pub(crate) fn pack(
         if prints_bare_filename {
             Context::print_tarball_path(bare_filename, log_level);
         } else {
-            Context::print_tarball_path(bstr::BStr::new(abs_tarball_dest.as_bytes()), log_level);
+            Context::print_tarball_abs_path(abs_tarball_dest.as_bytes(), log_level);
         }
     }
 

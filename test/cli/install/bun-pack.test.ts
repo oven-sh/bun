@@ -5449,6 +5449,147 @@ test.concurrent.skipIf(!isLinux)("filenames that are not valid UTF-8 are stored 
   ]);
 });
 
+// A script passes `$(bun pm pack --quiet --destination dir)` on as a path, and a path is bytes, not
+// text. `printf` makes each name in `sh`, because a JavaScript string cannot hold a lone 0xFF byte.
+// One character of a string in these tests is one byte. A Windows argument is UTF-16, so it cannot
+// hold such a byte.
+describe.concurrent.skipIf(isWindows)("a tarball path that is not UTF-8", () => {
+  const packageJson = JSON.stringify({ name: "pack-path-bytes", version: "1.0.0" });
+  const tarball = "pack-path-bytes-1.0.0.tgz";
+  const bytes = (text: string) => Buffer.from(text).toString("latin1");
+  const arg = (name: string) =>
+    `"$(printf '${Array.from(name, byte => "\\" + byte.charCodeAt(0).toString(8).padStart(3, "0")).join("")}')"`;
+
+  // Runs `script` with `sh` in `dir`. `$0` is bun.
+  async function run(dir: string, script: string) {
+    await using proc = spawn({
+      cmd: ["sh", "-c", script, bunExe()],
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    return { stdout: Buffer.from(stdout).toString("latin1"), stderr, exitCode };
+  }
+
+  // Only Linux lets a directory have such a name.
+  describe.skipIf(!isLinux)("a script finds the tarball at the path that it captured", () => {
+    test.each([
+      ["0xFF", "d-\xff"],
+      ["é in Latin-1", "caf\xe9"],
+      ["a lone 0x9B", "d-\x9b"],
+      ["a UTF-8 sequence that is cut off", "d-\xe3\x81-d"],
+      ["日本 in EUC-JP", "\xc6\xfc\xcb\xdc"],
+      ["テ in Shift-JIS", "\x83\x65"],
+      // The second byte of つ and the first byte of く are C2 82, which is U+0082 in UTF-8.
+      ["つくる in Shift-JIS", "\x82\xc2\x82\xad\x82\xe9"],
+      ["聯合國 in GBK", "\xc2\x93\xba\xcf\x87\xf8"],
+    ])("in a directory named %s", async (_, name) => {
+      using dir = tempDir("pack-path-bytes", { "package.json": packageJson });
+      const script = `tarball="$("$0" pm pack --quiet --destination ${arg(name)})" && test -f "$tarball" && printf '%s\\n' "$tarball"`;
+      expect(await run(String(dir), script)).toEqual({
+        stdout: `${bytes(String(dir))}/${name}/${tarball}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("in a working directory that holds the byte", async () => {
+      using dir = tempDir("pack-path-bytes-cwd", { "package.json": packageJson });
+      const project = arg("project-\xff");
+      const script = `mkdir ${project} && cp package.json ${project} && cd ${project} && tarball="$("$0" pm pack --quiet --destination dist)" && test -f "$tarball" && printf '%s\\n' "$tarball"`;
+      expect(await run(String(dir), script)).toEqual({
+        stdout: `${bytes(String(dir))}/project-\xff/dist/${tarball}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  test("--filename that ends with the byte", async () => {
+    using dir = tempDir("pack-path-bytes-filename", { "package.json": packageJson });
+    const script = `exec "$0" pm pack --quiet --dry-run --filename ${arg("f-\xff")}`;
+    expect(await run(String(dir), script)).toEqual({
+      stdout: `${bytes(String(dir))}/f-\xff\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("--silent and the default log level", async () => {
+    using dir = tempDir("pack-path-bytes-levels", { "package.json": packageJson });
+    const path = `${bytes(String(dir))}/d-\xff/${tarball}`;
+    const [silent, normal] = await Promise.all(
+      ["--silent", ""].map(level =>
+        run(String(dir), `exec "$0" pm pack ${level} --dry-run --destination ${arg("d-\xff")}`),
+      ),
+    );
+    expect(silent).toEqual({ stdout: `${path}\n`, stderr: "", exitCode: 0 });
+    expect(normal.stdout).toContain(`\n\n${path}\n\nTotal files: 1\n`);
+    expect(normal.exitCode).toBe(0);
+  });
+
+  // ESC is a control character in every encoding. C2 9B is U+009B only in a name that is UTF-8: the
+  // name of the tarball is, and a directory name that holds the 0xFF byte is not.
+  test("control characters are still spelled out", async () => {
+    using dir = tempDir("pack-path-bytes-control", {
+      "package.json": JSON.stringify({ name: "pack\u009bbytes", version: "1.0.0" }),
+    });
+    const [text, mixed] = await Promise.all(
+      ["d-\x1b[2K-\xc2\x9b", "d-\x1b[2K-\xc2\x9b-\xff"].map(name =>
+        run(String(dir), `exec "$0" pm pack --quiet --dry-run --destination ${arg(name)}`),
+      ),
+    );
+    // A path that is UTF-8 is printed as before.
+    expect(text).toEqual({
+      stdout: `${bytes(String(dir))}/d-\\x1b[2K-\\u009b/pack\\u009bbytes-1.0.0.tgz\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(mixed).toEqual({
+      stdout: `${bytes(String(dir))}/d-\\x1b[2K-\xc2\x9b-\xff/pack\\u009bbytes-1.0.0.tgz\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A lone 0x9B is a control character for some terminals. A terminal gets U+FFFD for it, as before.
+  test("a terminal gets text, and a pipe gets the bytes", async () => {
+    using dir = tempDir("pack-path-bytes-terminal", { "package.json": packageJson });
+    const script = `exec "$0" pm pack --quiet --dry-run --destination ${arg("d-\x9b2K")}`;
+    let terminal = "";
+    const closed = Promise.withResolvers<void>();
+    await using proc = spawn({
+      cmd: ["sh", "-c", script, bunExe()],
+      cwd: String(dir),
+      env: bunEnv,
+      terminal: {
+        cols: 120,
+        rows: 50,
+        data(_, chunk) {
+          terminal += Buffer.from(chunk).toString("latin1");
+        },
+        // The terminal is closed once the process has exited and the rest of its output was delivered.
+        exit() {
+          closed.resolve();
+        },
+      },
+    });
+    const [exitCode] = await Promise.all([proc.exited, closed.promise]);
+    expect(terminal).toContain(`${bytes(String(dir))}/d-\xef\xbf\xbd2K/${tarball}\r\n`);
+    expect(terminal).not.toMatch(/[\x80-\x9f]/);
+    expect(exitCode).toBe(0);
+
+    expect(await run(String(dir), script)).toEqual({
+      stdout: `${bytes(String(dir))}/d-\x9b2K/${tarball}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test.concurrent("$npm_command is accurate", async () => {
   using dir = tempDir("pack-command", {
     "package.json": JSON.stringify({

@@ -1,12 +1,12 @@
 use core::ptr::NonNull;
 
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
 
-use crate::generated_bindgen::node_fs_binding::{RmOptions, TimeOrClock};
+use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
@@ -379,16 +379,6 @@ pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
         }),
     }
     .into_js(&cx.heap)
-}
-
-/// What `fs._toUnixTimestamp` reads: no JavaScript runs, so nothing that user code replaced is called.
-pub(crate) fn time_value_or_now(heap: &JsHeap<'_>, time: TimeOrClock<'_>) -> Option<f64> {
-    match time {
-        // SAFETY: it only reads the clock.
-        TimeOrClock::Clock => Some(unsafe { heap.global() }.js_date_now()),
-        TimeOrClock::Time(ms) => Some(ms),
-        TimeOrClock::Ignored(_) => None,
-    }
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the

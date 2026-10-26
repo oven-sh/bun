@@ -11,6 +11,8 @@ const {
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
+const isDate = types.isDate;
+
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
 
@@ -999,9 +1001,6 @@ function cp(src, dest, options, callback) {
   settleCallbackWithNull(require("node:fs/promises").cp(src, dest, options), callback);
 }
 
-// Reads the clock and a Date's time value natively. Made at the first call: node:fs reads nothing from Date at load.
-let timeValueOrNow;
-
 function _toUnixTimestamp(time: any, name = "time") {
   // @ts-ignore
   if (typeof time === "string" && +time == time) {
@@ -1011,14 +1010,13 @@ function _toUnixTimestamp(time: any, name = "time") {
   // @ts-ignore
   if (typeof time === "number" && $isFinite(time)) {
     if (time < 0) {
-      return (timeValueOrNow ??= $bindgen("node_fs_binding.bind.ts", "timeValueOrNow"))() / 1000;
+      return Date.now() / 1000;
     }
     return time;
   }
-  if (typeof time === "object") {
+  if (isDate(time)) {
     // Convert to 123.456 UNIX timestamp
-    const ms = (timeValueOrNow ??= $bindgen("node_fs_binding.bind.ts", "timeValueOrNow"))(time);
-    if (ms !== undefined) return ms / 1000;
+    return time.getTime() / 1000;
   }
   throw $ERR_INVALID_ARG_TYPE(name, "number or Date", time);
 }

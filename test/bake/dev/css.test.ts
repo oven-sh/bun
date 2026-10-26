@@ -286,6 +286,12 @@ devTest("css import with an initial syntax error comes back in the stylesheet th
     });
     await c.style("h1").color.expect.toBe("#00f");
     await c.style("body").color.expect.toBe("red");
+    // Two saves: a root that loses its edge in the rebuild of the first save still shows that save.
+    for (const color of ["purple", "orange"]) {
+      await dev.write("second.css", `h1 { color: ${color}; }`);
+      await c.style("h1").color.expect.toBe(color);
+    }
+    await c.style("body").color.expect.toBe("red");
   },
 });
 devTest("css file that the page links and another linked stylesheet imports comes back in both", {
@@ -307,12 +313,14 @@ devTest("css file that the page links and another linked stylesheet imports come
     `,
   },
   async test(dev) {
-    const stylesheets = async () => {
+    // The class selectors in each stylesheet that the page links.
+    const classSelectors = async () => {
       const html = await (await dev.fetch("/")).text();
       const hrefs = [...html.matchAll(/<link rel="stylesheet"[^>]*href="([^"]+)"/g)].map(m => m[1]);
-      return Promise.all(hrefs.map(async href => (await dev.fetch(href)).text()));
+      const stylesheets = await Promise.all(hrefs.map(async href => (await dev.fetch(href)).text()));
+      return stylesheets.map(css => Array.from(css.matchAll(/\.(one|two)\b/g), m => m[1]));
     };
-    expect((await stylesheets()).map(css => css.includes(".one"))).toEqual([true, true]);
+    expect(await classSelectors()).toEqual([["one"], ["one"]]);
 
     await dev.write(
       "shared.css",
@@ -322,7 +330,10 @@ devTest("css file that the page links and another linked stylesheet imports come
           background-color
         }
       `,
+      { errors: null },
     );
+    // Not a page request: on a release build that bundles the whole route again.
+    await dev.output.waitForLine(/Unexpected end of input/);
     // `shared.css` is a root of its own and a part of `styles.css`. The repair
     // must bundle both.
     await dev.write(
@@ -333,7 +344,7 @@ devTest("css file that the page links and another linked stylesheet imports come
         }
       `,
     );
-    expect((await stylesheets()).map(css => css.includes(".two"))).toEqual([true, true]);
+    expect(await classSelectors()).toEqual([["two"], ["two"]]);
   },
 });
 devTest("css import repaired after a failed build follows every later edit", {
@@ -380,8 +391,9 @@ devTest("css import repaired after a failed build follows every later edit", {
     await dev.write("third.css", `h2 { color: green; }`);
     await c.style("h2").color.expect.toBe("green");
     await c.style("h1").color.expect.toBe("#00f");
-    // The root keeps its edge to the repaired file: more than one later save reaches the page.
-    for (const color of ["purple", "orange", "teal"]) {
+    // The root keeps its edge to the repaired file. Two saves: a root that loses
+    // the edge in the rebuild of the first save still shows that save.
+    for (const color of ["purple", "teal"]) {
       await dev.write("third.css", `h2 { color: ${color}; }`);
       await c.style("h2").color.expect.toBe(color);
     }
@@ -403,7 +415,7 @@ devTest("css import repaired after a failed build follows every later edit", {
     await dev.write("second.css", `@import "./third.css"; h1 { color: green; }`);
     await c.style("h1").color.expect.toBe("green");
     await c.style("h2").color.expect.toBe("teal");
-    for (const color of ["purple", "orange", "teal"]) {
+    for (const color of ["purple", "teal"]) {
       await dev.write("second.css", `@import "./third.css"; h1 { color: ${color}; }`);
       await c.style("h1").color.expect.toBe(color);
     }

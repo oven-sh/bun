@@ -1,11 +1,10 @@
-use crate::jsc::JSValue;
 use bun_boringssl_sys::OwnedSslCtx;
-use bun_collections::{OffsetByteList, StringHashMap, VecExt};
+use bun_collections::{OffsetByteList, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket};
 
 use bun_sql::mysql::Capabilities;
 use bun_sql::mysql::MySQLQueryResult;
-use bun_sql::mysql::auth_method::AuthMethod;
+use bun_sql::mysql::auth_method::{AuthMethod, AuthResponse, Transport};
 use bun_sql::mysql::capabilities::MariaDBCapabilities;
 use bun_sql::mysql::connection_state::ConnectionState;
 use bun_sql::mysql::mysql_request;
@@ -13,40 +12,38 @@ use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, Error as AnyMySQLError};
 use bun_sql::mysql::protocol::auth as Auth;
 use bun_sql::mysql::protocol::auth_switch_request::AuthSwitchRequest;
-use bun_sql::mysql::protocol::auth_switch_response::AuthSwitchResponse;
 use bun_sql::mysql::protocol::character_set::CharacterSet;
 use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
-use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::eof_packet::EOFPacket;
 use bun_sql::mysql::protocol::handshake_response41::HandshakeResponse41;
 use bun_sql::mysql::protocol::handshake_v10::HandshakeV10;
-use bun_sql::mysql::protocol::local_infile_request::LocalInfileRequest;
 use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use bun_sql::mysql::protocol::new_writer::{NewWriterWrap as NewWriter, WriterContext};
 use bun_sql::mysql::protocol::ok_packet::OKPacket;
 use bun_sql::mysql::protocol::packet_header::PacketHeader;
 use bun_sql::mysql::protocol::packet_type::PacketType;
+use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 use bun_sql::mysql::protocol::result_set_header::ResultSetHeader;
 use bun_sql::mysql::protocol::ssl_request::SSLRequest;
-use bun_sql::mysql::protocol::stack_reader::StackReader;
+use bun_sql::mysql::protocol::stack_reader::{PacketReader, StackReader};
 use bun_sql::mysql::protocol::stmt_prepare_ok_packet::StmtPrepareOKPacket;
-use bun_sql::mysql::ssl_mode::SSLMode;
 use bun_sql::mysql::status_flags::{StatusFlag, StatusFlags};
 use bun_sql::mysql::tls_status::TLSStatus;
 use bun_sql::postgres::socket_monitor as SocketMonitor;
+use bun_sql::shared::SSLMode;
 use bun_sql::shared::connection_flags::ConnectionFlags;
 use bun_sql::shared::data::Data;
 
-use crate::mysql::js_mysql_connection::JSMySQLConnection;
-use crate::mysql::js_mysql_query::JSMySQLQuery;
+use crate::mysql::js_my_sql_connection::JSMySQLConnection;
+use crate::mysql::js_my_sql_query::JSMySQLQuery;
 use crate::mysql::my_sql_request_queue::MySQLRequestQueue;
-use crate::mysql::my_sql_statement::{self as mysql_statement, MySQLStatement, Param};
+use crate::mysql::my_sql_statement::{self as mysql_statement, MySQLStatement, StatementCache};
+use crate::shared::start_tls::{StartTlsError, start_tls, verifies_certificate};
+use bun_jsc::rare_data::SocketGroups;
 use bun_ptr::RefPtr;
 
-pub use bun_sql::mysql::protocol::error_packet::ErrorPacket;
-// Re-export so callers can write `my_sql_connection::Status::Connected`
-// without naming `bun_sql`.
 pub use bun_sql::mysql::connection_state::ConnectionState as Status;
+pub use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 
 use crate::jsc::api::server_config::SSLConfig;
 
@@ -58,13 +55,18 @@ pub struct MySQLConnection {
 
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
-    last_message_start: u32,
+    last_message_start: usize,
+    /// The one behind the last packet that was read.
     sequence_id: u8,
+    /// The reply to the head of the queue has begun: its next packet has `sequence_id`. The first
+    /// one has no id to expect: it counts on from the packets of the command, not all of which a
+    /// server reads before it refuses them, and an ERR that nobody asked for has 0.
+    in_reply: bool,
 
     // TODO: move it to JSMySQLConnection
     pub(crate) queue: MySQLRequestQueue,
     // TODO: move it to JSMySQLConnection
-    pub(crate) statements: PreparedStatementsMap,
+    statements: StatementCache,
 
     server_version: Vec<u8>,
     connection_id: u32,
@@ -77,7 +79,7 @@ pub struct MySQLConnection {
     auth_switch_count: u8,
     full_auth_requested: bool,
 
-    auth_data: Vec<u8>,
+    auth_data: Auth::Nonce,
     database: Box<[u8]>,
     user: Box<[u8]>,
     password: Box<[u8]>,
@@ -86,6 +88,7 @@ pub struct MySQLConnection {
     tls_status: TLSStatus,
     ssl_mode: SSLMode,
     allow_public_key_retrieval: bool,
+    unix_socket: bool,
     flags: ConnectionFlags,
 }
 
@@ -93,13 +96,14 @@ impl Default for MySQLConnection {
     fn default() -> Self {
         Self {
             socket: Socket::SocketTcp(uws::SocketTCP::detached()),
-            status: ConnectionState::Disconnected,
+            status: ConnectionState::Connecting,
             write_buffer: OffsetByteList::default(),
             read_buffer: OffsetByteList::default(),
             last_message_start: 0,
             sequence_id: 0,
+            in_reply: false,
             queue: MySQLRequestQueue::init(),
-            statements: PreparedStatementsMap::default(),
+            statements: StatementCache::default(),
             server_version: Vec::<u8>::default(),
             connection_id: 0,
             capabilities: Capabilities::default(),
@@ -109,7 +113,7 @@ impl Default for MySQLConnection {
             auth_plugin: None,
             auth_switch_count: 0,
             full_auth_requested: false,
-            auth_data: Vec::new(),
+            auth_data: [0; Auth::NONCE_LENGTH],
             database: Box::default(),
             user: Box::default(),
             password: Box::default(),
@@ -118,6 +122,7 @@ impl Default for MySQLConnection {
             tls_status: TLSStatus::None,
             ssl_mode: SSLMode::Disable,
             allow_public_key_retrieval: false,
+            unix_socket: false,
             flags: ConnectionFlags::default(),
         }
     }
@@ -125,7 +130,7 @@ impl Default for MySQLConnection {
 
 // SAFETY: `MySQLConnection` is the `connection` field embedded inside
 // `JSMySQLConnection`; never constructed standalone.
-bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn mut get_js_connection; }
+bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn mut get_js_connection; fn shared js_connection; }
 
 impl MySQLConnection {
     pub(crate) fn init(
@@ -136,58 +141,37 @@ impl MySQLConnection {
         secure: Option<OwnedSslCtx>,
         ssl_mode: SSLMode,
         allow_public_key_retrieval: bool,
+        unix_socket: bool,
+        found_rows: bool,
     ) -> Self {
         Self {
+            capabilities: Capabilities::get_default_capabilities(
+                ssl_mode != SSLMode::Disable,
+                !database.is_empty(),
+                found_rows,
+            ),
             database,
             user: username,
             password,
-            socket: Socket::SocketTcp(uws::SocketTCP::detached()),
-            queue: MySQLRequestQueue::init(),
-            statements: PreparedStatementsMap::default(),
             tls_config,
             secure,
             ssl_mode,
             allow_public_key_retrieval,
+            unix_socket,
             tls_status: if ssl_mode != SSLMode::Disable {
                 TLSStatus::Pending
             } else {
                 TLSStatus::None
             },
-            character_set: CharacterSet::default(),
             ..Default::default()
         }
-    }
-
-    pub(crate) fn can_pipeline(&mut self) -> bool {
-        let js_connection = self.js_connection_ref();
-        js_connection
-            .connection
-            .get()
-            .queue
-            .can_pipeline(js_connection)
-    }
-    pub(crate) fn can_prepare_query(&mut self) -> bool {
-        let js_connection = self.js_connection_ref();
-        js_connection
-            .connection
-            .get()
-            .queue
-            .can_prepare_query(js_connection)
-    }
-    pub(crate) fn can_execute_query(&mut self) -> bool {
-        let js_connection = self.js_connection_ref();
-        js_connection
-            .connection
-            .get()
-            .queue
-            .can_execute_query(js_connection)
     }
 
     #[inline]
     pub(crate) fn is_able_to_write(&self) -> bool {
         self.status == ConnectionState::Connected
             && !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
-            && (self.write_buffer.len() as usize) < MAX_PIPELINE_SIZE
+            && self.write_buffer.len() < MAX_PIPELINE_SIZE
     }
 
     #[inline]
@@ -208,11 +192,7 @@ impl MySQLConnection {
         !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // if has backpressure we need to wait for onWritable event
             && self.status == ConnectionState::Connected // and we need to be connected
             // we need data to send
-            && (self.write_buffer.len() > 0
-                || self
-                    .queue
-                    .current()
-                    .is_some_and(|r| r.is_pending() && !r.is_being_prepared()))
+            && (self.write_buffer.len() > 0 || self.queue.is_waiting_to_write())
     }
 
     #[inline]
@@ -220,39 +200,50 @@ impl MySQLConnection {
         self.queue.current().is_none() && self.write_buffer.len() == 0
     }
 
+    /// As of the last reply that said so: an ERR packet has no status.
     #[inline]
-    pub(crate) fn enqueue_request(&mut self, request: RefPtr<JSMySQLQuery>) {
-        self.queue.add(request);
+    pub(crate) fn is_in_transaction(&self) -> bool {
+        self.status_flags.has(StatusFlag::SERVER_STATUS_IN_TRANS)
+    }
+
+    #[inline]
+    pub(crate) fn take_on_connect_pending(&mut self) -> bool {
+        let pending = self.flags.contains(ConnectionFlags::ON_CONNECT_PENDING);
+        self.flags.remove(ConnectionFlags::ON_CONNECT_PENDING);
+        pending
+    }
+
+    #[inline]
+    pub(crate) fn is_unix_socket(&self) -> bool {
+        self.unix_socket
+    }
+
+    fn transport(&self) -> Transport {
+        if self.tls_status == TLSStatus::SslOk {
+            Transport::Tls
+        } else if self.unix_socket {
+            Transport::UnixSocket
+        } else {
+            Transport::Tcp
+        }
     }
 
     pub(crate) fn flush_queue(&mut self) -> Result<(), FlushQueueError> {
         self.flush_data();
-        if !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {
-            if self.tls_status == TLSStatus::MessageSent {
+        if self.tls_status == TLSStatus::MessageSent {
+            if !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) {
                 self.upgrade_to_tls()?;
-            } else {
-                // no backpressure yet so pipeline more if possible and flush again
-                self.advance();
-                self.flush_data();
             }
+            return Ok(());
         }
+        // Under backpressure too: the next reply is for the request behind the one that just ended.
+        self.advance();
+        self.flush_data();
         Ok(())
     }
 
-    /// reshaped for borrowck — `self.queue.advance(js_connection)`
-    /// would alias `&mut self.queue` with `&mut JSMySQLConnection` (which
-    /// embeds `self`). Route through a single raw root:
-    /// `MySQLRequestQueue::advance` takes only `*mut JSMySQLConnection` and
-    /// reaches the queue via `ParentRef`/`JsCell` shared borrows (all queue
-    /// fields are interior-mutable), so no `&mut` to the queue bytes is ever
-    /// materialised concurrently with the connection backref.
     fn advance(&mut self) {
-        let js_connection = self.get_js_connection();
-        // `js_connection` is the `@fieldParentPtr` of `self` — non-null, live,
-        // full-allocation provenance. advance() only forms shared borrows of it
-        // (queue mutation goes through `Cell`/`JsCell`); the raw pointer is
-        // wrapped via the safe `ParentRef::from(NonNull)` inside.
-        MySQLRequestQueue::advance(js_connection);
+        MySQLRequestQueue::advance(self.js_connection_ref());
     }
 
     fn flush_data(&mut self) {
@@ -276,108 +267,33 @@ impl MySQLConnection {
         if wrote > 0 {
             let wrote_usize = usize::try_from(wrote).expect("int cast");
             SocketMonitor::write(&chunk[0..wrote_usize]);
-            self.write_buffer
-                .consume(u32::try_from(wrote_usize).expect("int cast"));
+            self.write_buffer.consume(wrote_usize);
         }
     }
 
-    pub(crate) fn close(&mut self) {
-        self.socket.close(uws::CloseKind::Normal);
+    pub(crate) fn socket(&self) -> Socket {
+        self.socket
+    }
+
+    pub(crate) fn discard_write_buffer(&mut self) {
         self.write_buffer = OffsetByteList::default();
     }
 
-    pub(crate) fn clean_queue_and_close(
-        &mut self,
-        js_reason: Option<JSValue>,
-        js_queries_array: JSValue,
-    ) {
-        // cleanup requests
-        self.queue.clean(
-            js_reason,
-            if !js_queries_array.is_empty() {
-                js_queries_array
-            } else {
-                JSValue::UNDEFINED
-            },
-        );
-
-        self.close();
-    }
-
     pub(crate) fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
-        // Only adopt if we're currently a plain TCP socket.
-        let Socket::SocketTcp(tcp) = &self.socket else {
-            return Ok(());
-        };
-        let uws::InternalSocket::Connected(raw) = tcp.socket else {
-            return Ok(());
-        };
-
-        // SAFETY: `raw` is a live connected socket in its context's MySQL TCP group.
-        let tls_group: &mut bun_uws::SocketGroup = unsafe {
-            bun_jsc::rare_data::SocketGroups::of((*raw).group())
-                .mysql_group::<true>(crate::jsc::VirtualMachine::get().uws_loop())
-        };
-
-        // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
-        // requested.
-        let ssl_ctx = unsafe {
-            &mut *self
-                .secure
-                .as_ref()
-                .expect("secure SSL_CTX must be set before upgradeToTLS")
-                .as_ptr()
-        };
-        let server_name = self.tls_config.server_name();
-        let sni = if server_name.is_null() {
-            None
-        } else {
-            // SAFETY: `server_name` is a NUL-terminated C string owned by
-            // `tls_config` for the connection lifetime.
-            Some(unsafe { bun_core::ffi::cstr(server_name) })
-        };
-        // `Option<NonNull<T>>` is an 8-byte null-niche optional; using
-        // `Option<*mut T>` here would request 16 bytes (separate discriminant)
-        // and desync with the trampoline reader (uws_handlers.rs) which reads
-        // the slot as `Option<NonNull<_>>`.
-        let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<JSMySQLConnection>>>() as i32;
-
-        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
-        // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            tls_group,
-            bun_uws::SocketKind::MysqlTls,
-            ssl_ctx,
-            sni,
-            true,  // is_client
-            false, // request_cert (server-only)
-            false, // reject_unauthorized (server-only; the client policy is set_inline_reject below)
-            ext_size,
-            ext_size,
-        ) else {
-            return Err(FlushQueueError::AuthenticationFailed);
-        };
-
-        let js_connection = self.get_js_connection();
-        let new_socket = new_socket.as_ptr();
-        // SAFETY: `new_socket` is a live us_socket_t freshly returned by
-        // `adopt_tls`; ext storage was sized for
-        // `Option<NonNull<JSMySQLConnection>>` above. One `&mut` reborrow
-        // drives both safe inherent methods (`ext` / `start_tls_handshake`).
-        let sock = unsafe { &mut *new_socket };
-        *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
-            core::ptr::NonNull::new(js_connection);
-        if self.tls_config.reject_unauthorized() != 0
-            && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
-        {
-            sock.set_inline_reject();
+        let started = start_tls(
+            self.get_js_connection(),
+            self.socket,
+            (uws::SocketKind::MysqlTls, SocketGroups::mysql_group::<true>),
+            self.secure.as_ref(),
+            &self.tls_config,
+            self.ssl_mode,
+            |socket| self.socket = socket,
+        );
+        match started {
+            Err(StartTlsError::Failed) => Err(FlushQueueError::AuthenticationFailed),
+            // `NotPlain`: the handshake is under way.
+            _ => Ok(()),
         }
-        self.socket = Socket::SocketTls(uws::SocketTLS {
-            socket: uws::InternalSocket::Connected(new_socket),
-        });
-        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        sock.start_tls_handshake();
-        Ok(())
     }
 
     pub(crate) fn set_socket(&mut self, socket: Socket) {
@@ -385,19 +301,48 @@ impl MySQLConnection {
     }
 
     pub(crate) fn is_active(&self) -> bool {
-        if self.status == ConnectionState::Disconnected || self.status == ConnectionState::Failed {
-            return false;
-        }
-
-        // if is connected or connecting we keep alive until idle timeout is reached
-        true
+        self.status != ConnectionState::Failed
     }
 
+    /// verify-full's name check, asked inside the handshake.
+    pub fn server_identity(
+        &self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        bun_boringssl::server_identity(ssl, self.native_identity_hostname())
+    }
+
+    /// The name verify-full matches, in and after the handshake. Empty (none configured) matches no certificate.
+    /// `tls.checkServerIdentity` replaces the match, as in Node.
+    fn native_identity_hostname(&self) -> Option<&[u8]> {
+        (self.tls_config.reject_unauthorized() != 0
+            && self.ssl_mode == SSLMode::VerifyFull
+            && self
+                .js_connection()
+                .check_server_identity_callback()
+                .is_none())
+        .then(|| self.server_name())
+    }
+
+    pub(crate) fn server_name(&self) -> &[u8] {
+        self.tls_config.server_name_bytes()
+    }
+
+    pub(crate) fn verifies_certificate(&self) -> bool {
+        verifies_certificate(&self.tls_config, self.ssl_mode)
+    }
+
+    /// A server can renegotiate, which ends in another handshake event.
+    pub(crate) fn awaits_tls_handshake(&self) -> bool {
+        self.tls_status == TLSStatus::MessageSent
+    }
+
+    /// Whether `sslmode` accepts what the TLS handshake gave.
     pub(crate) fn do_handshake(
         &mut self,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
-    ) -> Result<bool, AnyMySQLError> {
+    ) -> bool {
         bun_core::scoped_log!(
             MySQLConnection,
             "onHandshake: {} {} {:?}",
@@ -416,59 +361,49 @@ impl MySQLConnection {
                 match self.ssl_mode {
                     SSLMode::VerifyCa | SSLMode::VerifyFull => {
                         if ssl_error.error_no != 0 {
-                            self.tls_status = TLSStatus::SslFailed;
-                            return Ok(false);
+                            self.tls_status = TLSStatus::None;
+                            return false;
                         }
 
                         // VerifyFull additionally requires the certificate identity to
                         // match the intended host. Absence of a configured server name is
                         // not a license to skip the check — fail closed.
-                        if self.ssl_mode == SSLMode::VerifyFull {
-                            let servername = self.tls_config.server_name();
-                            if servername.is_null() {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
+                        let identity_ok = self.native_identity_hostname().is_none_or(|hostname| {
                             // SAFETY: native handle of a connected TLS socket is `SSL*`.
                             let ssl_ptr: *mut bun_boringssl_sys::SSL = self
                                 .socket
                                 .get_native_handle()
                                 .map(|h| h.cast())
                                 .unwrap_or(core::ptr::null_mut());
-                            // SAFETY: `server_name` is a NUL-terminated C string owned by
-                            // `tls_config` for the connection lifetime.
-                            let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                            if ssl_ptr.is_null()
-                                || !bun_boringssl::check_server_identity(
+                            !hostname.is_empty()
+                                && !ssl_ptr.is_null()
+                                && uws::check_server_identity(
                                     // SAFETY: `ssl_ptr` is non-null (checked by the short-circuit above) and live (handshake just succeeded).
                                     unsafe { &mut *ssl_ptr },
                                     hostname,
                                 )
-                            {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
+                        });
+                        if !identity_ok {
+                            self.tls_status = TLSStatus::None;
+                            return false;
                         }
                     }
                     // require is the same as prefer
                     SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
                 }
             }
-            self.send_handshake_response()?;
-            return Ok(true);
+            return true;
         }
-        self.tls_status = TLSStatus::SslFailed;
+        self.tls_status = TLSStatus::None;
         // if we are here is because server rejected us, and the error_no is the cause of this
         // no matter if reject_unauthorized is false because we are disconnected by the server
-        Ok(false)
+        false
     }
 
     pub(crate) fn read_and_process_data(&mut self, data: &[u8]) -> Result<(), AnyMySQLError> {
         self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
         // The flag clear is hand-inlined before every return below
         // (scopeguard would need &mut self.flags).
-        // Clear the timeout.
-        self.socket.set_timeout(0);
 
         SocketMonitor::read(data);
 
@@ -517,9 +452,6 @@ impl MySQLConnection {
             self.read_buffer
                 .write(data)
                 .unwrap_or_else(|_| panic!("failed to write to read buffer"));
-            // reshaped for borrowck — `self.process_packets(self.buffered_reader())`
-            // borrows `&mut self` twice. Construct the reader first; it holds a
-            // `*mut Self` so the second borrow doesn't conflict.
             let reader = self.buffered_reader();
             match self.process_packets(reader) {
                 Ok(()) => {}
@@ -553,6 +485,7 @@ impl MySQLConnection {
         Ok(())
     }
 
+    /// Frames the packets. `ShortRead` (wait for the socket) comes from here and from nowhere else.
     pub(crate) fn process_packets<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -560,73 +493,69 @@ impl MySQLConnection {
         loop {
             reader.mark_message_start();
 
-            // Read packet header
             let header = PacketHeader::decode(reader.peek()).ok_or(AnyMySQLError::ShortRead)?;
-            let header_length = header.length;
-            let packet_length: usize = header_length as usize + PacketHeader::SIZE;
+            let packet_length: usize = header.length as usize + PacketHeader::SIZE;
             debug!(
                 "sequence_id: {} header: {}",
-                self.sequence_id, header_length
+                self.sequence_id, header.length
             );
-            // Ensure we have the full packet
-            reader
-                .ensure_capacity(packet_length)
-                .map_err(|_| AnyMySQLError::ShortRead)?;
-            if header_length as usize == PacketHeader::MAX_PAYLOAD_LENGTH {
+            reader.ensure_capacity(packet_length)?;
+            if header.length as usize == PacketHeader::MAX_PAYLOAD_LENGTH {
                 self.process_split_packet(reader)?;
                 continue;
             }
-            // `NewReader<C>: Copy` so the scopeguard captures by copy; the inner
-            // `C` writes through a raw pointer so the offset update still lands.
-            // Always skip the full packet, we dont care about padding or unread bytes.
-            let _skip_guard = scopeguard::guard(reader, move |r| {
-                r.set_offset_from_start(packet_length);
-            });
-            reader.skip(PacketHeader::SIZE as isize);
-
-            // Update sequence id
-            self.sequence_id = header.sequence_id.wrapping_add(1);
-
-            // Process packet based on connection state
-            match self.status {
-                ConnectionState::Handshaking => {
-                    self.handle_handshake(reader)?;
-                    // If the handshake negotiated TLS, the SSLRequest has been sent and
-                    // everything after this packet must arrive over the encrypted channel.
-                    // Any bytes already buffered behind the handshake packet are plaintext
-                    // a man-in-the-middle could have injected (CVE-2021-23222 class), so
-                    // reject them instead of feeding them to the auth/command handlers.
-                    if self.tls_status == TLSStatus::MessageSent {
-                        reader.set_offset_from_start(packet_length);
-                        if !reader.peek().is_empty() {
-                            return Err(AnyMySQLError::UnexpectedPacket);
-                        }
-                    }
-                }
-                ConnectionState::Authenticating | ConnectionState::AuthenticationAwaitingPk => {
-                    self.handle_auth(reader, header_length)?
-                }
-                ConnectionState::SessionSetup => {
-                    self.handle_session_setup(reader, header_length)?
-                }
-                ConnectionState::Connected => self.handle_command(reader, header_length)?,
-                _ => {
-                    debug!("Unexpected packet in state {}", self.status as u8);
-                    return Err(AnyMySQLError::UnexpectedPacket);
-                }
+            let payload = &reader.peek()[PacketHeader::SIZE..packet_length];
+            reader.set_offset_from_start(packet_length);
+            self.handle_packet(
+                payload,
+                header.sequence_id,
+                header.sequence_id.wrapping_add(1),
+            )?;
+            // After the SSLRequest, bytes already buffered behind this packet are plaintext a
+            // man-in-the-middle could have injected (CVE-2021-23222 class).
+            if self.tls_status == TLSStatus::MessageSent && !reader.peek().is_empty() {
+                return Err(AnyMySQLError::UnexpectedPacket);
             }
         }
     }
 
-    pub(crate) fn handle_handshake<C: ReaderContext>(
+    /// `payload` is one whole packet, so a handler cannot read into the next one.
+    /// It came with `sequence_id`, and `next_sequence_id` is the one behind its last part.
+    fn handle_packet(
         &mut self,
-        reader: NewReader<C>,
+        payload: &[u8],
+        sequence_id: u8,
+        next_sequence_id: u8,
     ) -> Result<(), AnyMySQLError> {
+        let in_step = !self.in_reply || sequence_id == self.sequence_id;
+        self.sequence_id = next_sequence_id;
+        self.in_reply = self.status == ConnectionState::Connected;
+
+        let mut cursor: usize = 0;
+        let mut message_start: usize = 0;
+        let reader: PacketReader<'_> = StackReader::init(payload, &mut cursor, &mut message_start);
+        match self.status {
+            ConnectionState::Handshaking => self.handle_handshake(reader),
+            ConnectionState::Authenticating | ConnectionState::AuthenticationAwaitingPk => {
+                self.handle_auth(reader)
+            }
+            ConnectionState::SessionSetup => self.handle_session_setup(reader),
+            ConnectionState::Connected if in_step => self.handle_command(reader),
+            ConnectionState::Connected => self.handle_unasked(reader),
+            _ => {
+                debug!("Unexpected packet in state {}", self.status as u8);
+                Err(AnyMySQLError::UnexpectedPacket)
+            }
+        }
+    }
+
+    fn handle_handshake(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+        // A server that takes no connection, or none from this host, says so in place of its greeting.
+        if reader.peek().first() == Some(&PacketType::ERROR.0) {
+            return self.handle_unasked(reader);
+        }
         let mut handshake = HandshakeV10::default();
         handshake.decode_internal(reader)?;
-        // handshake dropped at scope exit
-
-        // Store server info
         self.server_version = handshake
             .server_version
             .to_owned()
@@ -637,11 +566,7 @@ impl MySQLConnection {
         // server's advertised capabilities. This ensures features like CLIENT_DEPRECATE_EOF
         // are only used when the server actually supports them (critical for MySQL-compatible
         // databases like StarRocks, TiDB, SingleStore, etc.).
-        self.capabilities = Capabilities::get_default_capabilities(
-            self.ssl_mode != SSLMode::Disable,
-            !self.database.is_empty(),
-        )
-        .intersect(handshake.capability_flags);
+        self.capabilities = self.capabilities.intersect(handshake.capability_flags);
         self.mariadb_capabilities = MariaDBCapabilities::get_default_capabilities()
             .intersect(handshake.mariadb_capability_flags);
 
@@ -663,27 +588,12 @@ impl MySQLConnection {
             self.status_flags
         );
 
-        self.auth_data.clear();
-        self.auth_data.shrink_to_fit();
+        self.auth_data = handshake.auth_plugin_data;
 
-        // Store auth data
-        self.auth_data.reserve(
-            handshake.auth_plugin_data_part_1.len() + handshake.auth_plugin_data_part_2.len(),
-        );
-        self.auth_data
-            .extend_from_slice(&handshake.auth_plugin_data_part_1[..]);
-        self.auth_data
-            .extend_from_slice(&handshake.auth_plugin_data_part_2[..]);
-
-        // Get auth plugin
         if !handshake.auth_plugin_name.slice().is_empty() {
-            self.auth_plugin = Some(
-                AuthMethod::from_string(handshake.auth_plugin_name.slice())
-                    .ok_or(AnyMySQLError::UnsupportedAuthPlugin)?,
-            );
+            self.auth_plugin = Some(self.auth_plugin_named(handshake.auth_plugin_name.slice())?);
         }
 
-        // Update status
         self.set_status(ConnectionState::Authenticating);
 
         // https://dev.mysql.com/doc/dev/mysql-server/8.4.6/page_protocol_connection_phase_packets_protocol_ssl_request.html
@@ -708,7 +618,7 @@ impl MySQLConnection {
             return Ok(());
         }
         if self.tls_status != TLSStatus::None {
-            self.tls_status = TLSStatus::SslNotAvailable;
+            self.tls_status = TLSStatus::None;
 
             match self.ssl_mode {
                 // The server did not advertise CLIENT_SSL. `require` and
@@ -721,13 +631,26 @@ impl MySQLConnection {
                 SSLMode::Prefer | SSLMode::Disable => {}
             }
         }
-        // Send auth response
         self.send_handshake_response()
     }
 
-    fn handle_handshake_decode_public_key<C: ReaderContext>(
+    fn auth_plugin_named(&mut self, name: &[u8]) -> Result<AuthMethod, AnyMySQLError> {
+        AuthMethod::from_string(name).ok_or_else(|| {
+            self.js_connection_ref().fail_fmt(
+                AnyMySQLError::UnsupportedAuthPlugin,
+                format_args!(
+                    "{}: {}",
+                    AnyMySQLError::UnsupportedAuthPlugin,
+                    bstr::BStr::new(name)
+                ),
+            );
+            AnyMySQLError::UnsupportedAuthPlugin
+        })
+    }
+
+    fn handle_handshake_decode_public_key(
         &mut self,
-        reader: NewReader<C>,
+        reader: PacketReader<'_>,
     ) -> Result<(), AnyMySQLError> {
         let mut response = Auth::caching_sha2_password::PublicKeyResponse::default();
         response.decode(reader)?;
@@ -737,7 +660,7 @@ impl MySQLConnection {
         let encrypted_password = Auth::caching_sha2_password::EncryptedPassword {
             password: bun_ptr::RawSlice::new(&self.password),
             public_key: bun_ptr::RawSlice::new(response.data.slice()),
-            nonce: bun_ptr::RawSlice::new(&self.auth_data),
+            nonce: self.auth_data,
             sequence_id: self.sequence_id,
         };
         encrypted_password.write(self.writer())?;
@@ -752,20 +675,12 @@ impl MySQLConnection {
 
         self.status = status;
 
-        match status {
-            ConnectionState::Connected => {
-                // `on_connection_estabilished` spelling is intentional (sic).
-                self.js_connection_ref().on_connection_estabilished();
-            }
-            _ => {}
+        if status == ConnectionState::Connected {
+            self.flags.insert(ConnectionFlags::ON_CONNECT_PENDING);
         }
     }
 
-    pub(crate) fn handle_auth<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-        header_length: u32, // u24 on the wire
-    ) -> Result<(), AnyMySQLError> {
+    fn handle_auth(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         let first_byte = reader.int::<u8>()?;
         reader.skip(-1isize);
 
@@ -773,13 +688,7 @@ impl MySQLConnection {
 
         match first_byte {
             x if x == PacketType::OK.0 => {
-                let mut ok = OKPacket {
-                    header: 0,
-                    affected_rows: 0,
-                    last_insert_id: 0,
-                    status_flags: StatusFlags::default(),
-                    packet_size: header_length,
-                };
+                let mut ok = OKPacket::default();
                 ok.decode_internal(reader)?;
 
                 self.status_flags = ok.status_flags;
@@ -795,7 +704,6 @@ impl MySQLConnection {
             }
 
             x if x == PacketType::MORE_DATA.0 => {
-                // Handle various MORE_DATA cases
                 if let Some(plugin) = self.auth_plugin {
                     match plugin {
                         AuthMethod::Sha256Password | AuthMethod::CachingSha2Password => {
@@ -823,39 +731,7 @@ impl MySQLConnection {
                                     }
                                     self.full_auth_requested = true;
 
-                                    if self.tls_status != TLSStatus::SslOk {
-                                        // Over plain TCP, an on-path attacker can answer the
-                                        // public-key request with their own key and recover the
-                                        // password. Match mysql2 / Connector/J: refuse unless the
-                                        // user explicitly opted in.
-                                        if !self.allow_public_key_retrieval {
-                                            return Err(
-                                                AnyMySQLError::PublicKeyRetrievalNotAllowed,
-                                            );
-                                        }
-                                        // we are in plain TCP so we need to request the public key
-                                        self.set_status(ConnectionState::AuthenticationAwaitingPk);
-                                        bun_core::scoped_log!(
-                                            MySQLConnection,
-                                            "awaiting public key"
-                                        );
-                                        let mut packet = self.writer().start(self.sequence_id)?;
-
-                                        let request = Auth::caching_sha2_password::PublicKeyRequest;
-                                        request.write(self.writer())?;
-                                        packet.end()?;
-                                        self.flush_data();
-                                    } else {
-                                        bun_core::scoped_log!(
-                                            MySQLConnection,
-                                            "sending password TLS enabled"
-                                        );
-                                        // SSL mode is enabled, send password as is
-                                        let mut packet = self.writer().start(self.sequence_id)?;
-                                        self.writer().write_z(&self.password)?;
-                                        packet.end()?;
-                                        self.flush_data();
-                                    }
+                                    self.send_auth_response(plugin, true)?;
                                 }
                                 _ => {
                                     return Err(AnyMySQLError::AuthenticationFailed);
@@ -871,16 +747,6 @@ impl MySQLConnection {
                             return Err(AnyMySQLError::UnexpectedPacket);
                         }
                     }
-                } else if first_byte == PacketType::LOCAL_INFILE.0 {
-                    // Handle LOCAL INFILE request
-                    let mut infile = LocalInfileRequest {
-                        packet_size: header_length,
-                        ..Default::default()
-                    };
-                    infile.decode_internal(reader)?;
-
-                    // We don't support LOCAL INFILE for security reasons
-                    return Err(AnyMySQLError::LocalInfileNotSupported);
                 } else {
                     bun_core::scoped_log!(
                         MySQLConnection,
@@ -891,14 +757,10 @@ impl MySQLConnection {
             }
 
             PacketType::AUTH_SWITCH => {
-                let mut auth_switch = AuthSwitchRequest {
-                    packet_size: header_length,
-                    ..Default::default()
-                };
+                let mut auth_switch = AuthSwitchRequest::default();
                 auth_switch.decode_internal(reader)?;
 
-                let auth_method = AuthMethod::from_string(auth_switch.plugin_name.slice())
-                    .ok_or(AnyMySQLError::UnsupportedAuthPlugin)?;
+                let auth_method = self.auth_plugin_named(auth_switch.plugin_name.slice())?;
 
                 // Bound a hostile server's auth ping-pong.
                 if self.auth_switch_count >= 2
@@ -914,12 +776,10 @@ impl MySQLConnection {
                 }
                 self.auth_switch_count += 1;
 
-                let auth_data = auth_switch.plugin_data.slice();
                 self.auth_plugin = Some(auth_method);
-                self.auth_data.clear();
-                self.auth_data.extend_from_slice(auth_data);
+                self.auth_data = Auth::nonce(auth_switch.plugin_data.slice())?;
 
-                self.send_auth_switch_response(auth_method, auth_data)?;
+                self.send_auth_response(auth_method, false)?;
             }
 
             _ => {
@@ -943,30 +803,18 @@ impl MySQLConnection {
         Ok(())
     }
 
-    fn handle_session_setup<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-        header_length: u32, // u24 on the wire
-    ) -> Result<(), AnyMySQLError> {
+    fn handle_session_setup(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         let first_byte = reader.int::<u8>()?;
         reader.skip(-1isize);
 
         match first_byte {
             x if x == PacketType::OK.0 => {
-                let mut ok = OKPacket {
-                    header: 0,
-                    affected_rows: 0,
-                    last_insert_id: 0,
-                    status_flags: StatusFlags::default(),
-                    packet_size: header_length,
-                };
+                let mut ok = OKPacket::default();
                 ok.decode_internal(reader)?;
 
                 self.set_status(ConnectionState::Connected);
 
                 self.status_flags = ok.status_flags;
-                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
-                self.queue.mark_as_ready_for_query();
                 self.advance();
                 Ok(())
             }
@@ -988,98 +836,45 @@ impl MySQLConnection {
         }
     }
 
-    pub(crate) fn handle_command<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-        header_length: u32, // u24 on the wire
-    ) -> Result<(), AnyMySQLError> {
-        // Get the current request if any
-        let Some(request) = self.queue.current() else {
-            debug!("Received unexpected command response");
-            return Err(AnyMySQLError::UnexpectedPacket);
+    fn handle_command(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+        let Some(request) = self.queue.current().filter(|r| r.is_in_flight()) else {
+            return self.handle_unasked(reader);
         };
-        // Queue holds a ref on every request; bump it for the body's duration so
-        // re-entrant `deref()` cannot free it.
-        let _request_guard = request.ref_guard();
-        // `ThisPtr::get` borrows the local `request` (Copy), not `*self`, so the
-        // shared `&JSMySQLQuery` is sound across the `&mut self` calls below.
-        let request: &JSMySQLQuery = request.get();
-
-        debug!("handleCommand");
-        if request.is_simple() {
-            // Regular query response
-            return self.handle_result_set(reader, header_length);
+        match request.get_statement().map(|statement| statement.status) {
+            Some(mysql_statement::Status::Parsing) => self.handle_prepared_statement(reader),
+            Some(mysql_statement::Status::Prepared) => self.handle_result_set(reader),
+            _ => Err(AnyMySQLError::UnexpectedPacket),
         }
+    }
 
-        // Handle based on request type
-        if let Some(statement) = request.get_statement() {
-            // The match reads `statement.status` (Copy), and the Failed arm
-            // also reads `statement.error_response.*` through this borrow to
-            // build an owned packet copy. The statement borrow ends (NLL)
-            // before any `&mut self` call or re-entrant JS, so `request` /
-            // `&mut self` stay unconstrained where the arms mutate the queue
-            // (no raw-ptr downgrade needed).
-            // MySQLStatement intrusive ref_/deref_ (bun_ptr) is deliberately
-            // skipped here; the queue's ref on `request` keeps the statement
-            // alive for the duration of this call.
-            match statement.status {
-                mysql_statement::Status::Pending => {
-                    return Err(AnyMySQLError::UnexpectedPacket);
-                }
-                mysql_statement::Status::Parsing => {
-                    // We're waiting for prepare response
-                    self.handle_prepared_statement(reader, header_length)?;
-                }
-                mysql_statement::Status::Prepared => {
-                    // We're waiting for execute response
-                    self.handle_result_set(reader, header_length)?;
-                }
-                mysql_statement::Status::Failed => {
-                    // `Data` is not `Clone`, so deep-copy the
-                    // message bytes into an owned packet up front — re-entrant
-                    // JS in `on_error_packet` may release the statement, so
-                    // the packet handed to it must not borrow into it.
-                    let error_response = ErrorPacket {
-                        header: statement.error_response.header,
-                        error_code: statement.error_response.error_code,
-                        sql_state_marker: statement.error_response.sql_state_marker,
-                        sql_state: statement.error_response.sql_state,
-                        error_message: Data::create(statement.error_response.error_message.slice())
-                            .unwrap_or(Data::Empty),
-                    };
-                    // The queue flush is an explicit call after
-                    // `on_error_packet` below.
-                    self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
-                    self.queue.mark_as_ready_for_query();
-                    self.queue.mark_current_request_as_finished(request);
-                    // R-2: `on_error_packet` is `&self`; route through the
-                    // audited `js_connection_ref()` container_of accessor (one
-                    // centralised unsafe). `*self` sits inside the parent's
-                    // `JsCell`, so re-entrant `connection_mut()` does not alias
-                    // this outer shared borrow.
-                    self.js_connection_ref()
-                        .on_error_packet(Some(request), &error_response);
-                    let _ = self.flush_queue();
-                }
-            }
+    /// No request waits for this packet, or it is not the next one of the reply that has begun:
+    /// whose it is cannot be told. Always `Err`, which fails the connection.
+    fn handle_unasked(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+        // The ERR that says why the server drops the connection (KILL, wait_timeout).
+        if reader.peek().first() == Some(&PacketType::ERROR.0) {
+            let mut err = ErrorPacket::default();
+            err.decode_internal(reader)?;
+            self.js_connection_ref().on_error_packet(None, &err);
+            return Err(AnyMySQLError::ConnectionClosed);
         }
-        Ok(())
+        debug!("Received unexpected command response");
+        Err(AnyMySQLError::UnexpectedPacket)
     }
 
     pub(crate) fn send_handshake_response(&mut self) -> Result<(), AnyMySQLError> {
         debug!("sendHandshakeResponse");
-        // Only require password for caching_sha2_password when connecting for the first time
-        if let Some(plugin) = self.auth_plugin {
-            let requires_password = match plugin {
-                AuthMethod::CachingSha2Password => false, // Allow empty password, server will handle auth flow
-                AuthMethod::Sha256Password => true,       // Always requires password
-                AuthMethod::MysqlNativePassword => false, // Allows empty password
-            };
-
-            if requires_password && self.password.is_empty() {
-                return Err(AnyMySQLError::PasswordRequired);
-            }
-        }
+        let writer = self.writer();
+        let mut scrambled_buf = [0u8; 32];
+        let auth_response = match self.auth_plugin {
+            Some(plugin) => plugin.first_response(
+                &self.password,
+                &self.auth_data,
+                self.transport(),
+                &mut scrambled_buf,
+            ),
+            None => AuthResponse::Scramble(&[]),
+        };
+        let awaits_public_key = self.awaits_public_key(&auth_response)?;
 
         let mut response = HandshakeResponse41 {
             capability_flags: self.capabilities,
@@ -1089,17 +884,9 @@ impl MySQLConnection {
             username: Data::Temporary(bun_ptr::RawSlice::new(&self.user)),
             database: Data::Temporary(bun_ptr::RawSlice::new(&self.database)),
             auth_plugin_name: Data::Temporary(bun_ptr::RawSlice::new(
-                if let Some(plugin) = self.auth_plugin {
-                    match plugin {
-                        AuthMethod::MysqlNativePassword => &b"mysql_native_password"[..],
-                        AuthMethod::CachingSha2Password => &b"caching_sha2_password"[..],
-                        AuthMethod::Sha256Password => &b"sha256_password"[..],
-                    }
-                } else {
-                    &b""[..]
-                },
+                self.auth_plugin.map_or(&b""[..], AuthMethod::name),
             )),
-            auth_response: Data::Empty,
+            auth_response,
             sequence_id: self.sequence_id,
             connect_attrs: Default::default(),
         };
@@ -1113,45 +900,49 @@ impl MySQLConnection {
             Box::<[u8]>::from(bun_core::Global::package_json_version_with_revision.as_bytes()),
         );
 
-        // Generate auth response based on plugin
-        let mut scrambled_buf = [0u8; 32];
-        if let Some(plugin) = self.auth_plugin {
-            if self.auth_data.is_empty() {
-                return Err(AnyMySQLError::MissingAuthData);
-            }
-
-            response.auth_response = Data::Temporary(bun_ptr::RawSlice::new(plugin.scramble(
-                &self.password,
-                &self.auth_data,
-                &mut scrambled_buf,
-            )?));
-        }
         response.capability_flags.reject();
-        response.write(self.writer())?;
+        response.write(writer)?;
         self.capabilities = response.capability_flags;
+        if awaits_public_key {
+            self.set_status(ConnectionState::AuthenticationAwaitingPk);
+        }
         self.flush_data();
         Ok(())
     }
 
-    pub(crate) fn send_auth_switch_response(
+    /// An on-path attacker can answer with a key of their own and recover the password: opt-in.
+    fn awaits_public_key(&self, response: &AuthResponse<'_>) -> Result<bool, AnyMySQLError> {
+        let awaits_public_key = matches!(response, AuthResponse::PublicKeyRequest(_));
+        if awaits_public_key && !self.allow_public_key_retrieval {
+            return Err(AnyMySQLError::PublicKeyRetrievalNotAllowed);
+        }
+        Ok(awaits_public_key)
+    }
+
+    fn send_auth_response(
         &mut self,
-        auth_method: AuthMethod,
-        plugin_data: &[u8],
+        plugin: AuthMethod,
+        full_authentication: bool,
     ) -> Result<(), AnyMySQLError> {
-        let mut response = AuthSwitchResponse::default();
-
+        let writer = self.writer();
         let mut scrambled_buf = [0u8; 32];
-
-        response.auth_response = Data::Temporary(bun_ptr::RawSlice::new(auth_method.scramble(
-            &self.password,
-            plugin_data,
-            &mut scrambled_buf,
-        )?));
-
-        let response_writer = self.writer();
-        let mut packet = response_writer.start(self.sequence_id)?;
-        response.write_internal(response_writer)?;
+        let response = if full_authentication {
+            plugin.full_authentication(&self.password, self.transport())
+        } else {
+            plugin.first_response(
+                &self.password,
+                &self.auth_data,
+                self.transport(),
+                &mut scrambled_buf,
+            )
+        };
+        let awaits_public_key = self.awaits_public_key(&response)?;
+        let mut packet = writer.start(self.sequence_id)?;
+        response.write(writer)?;
         packet.end()?;
+        if awaits_public_key {
+            self.set_status(ConnectionState::AuthenticationAwaitingPk);
+        }
         self.flush_data();
         Ok(())
     }
@@ -1180,9 +971,10 @@ impl MySQLConnection {
             return Err(AnyMySQLError::UnexpectedPacket);
         }
         let buffered = reader.peek();
-        let mut sequence_id = PacketHeader::decode(buffered)
+        let first_sequence_id = PacketHeader::decode(buffered)
             .ok_or(AnyMySQLError::ShortRead)?
             .sequence_id;
+        let mut sequence_id = first_sequence_id;
         let mut wire_length: usize = 0;
         let mut payload_length: usize = 0;
         loop {
@@ -1215,23 +1007,64 @@ impl MySQLConnection {
         }
 
         reader.set_offset_from_start(wire_length);
-        self.sequence_id = sequence_id;
-        let payload_length = u32::try_from(payload_length).map_err(|_| AnyMySQLError::Overflow)?;
-        let mut cursor: usize = 0;
-        let mut message_start: usize = 0;
-        let assembled: NewReader<StackReader<'_>> =
-            StackReader::init(&payload, &mut cursor, &mut message_start);
-        self.handle_command(assembled, payload_length)
-            .map_err(|err| {
-                if err == AnyMySQLError::ShortRead {
-                    AnyMySQLError::UnexpectedPacket
-                } else {
-                    err
-                }
-            })
+        self.handle_packet(&payload, first_sequence_id, sequence_id)
     }
 
-    fn check_if_prepared_statement_is_done(&mut self, statement: &mut MySQLStatement) {
+    pub(crate) fn cached_statement<P: ExecuteParam>(
+        &mut self,
+        query: &[u8],
+        params: &[P],
+    ) -> Option<RefPtr<MySQLStatement>> {
+        self.statements.get(query, params)
+    }
+
+    pub(crate) fn prepare_statement<P: ExecuteParam>(
+        &mut self,
+        query: &[u8],
+        params: &[P],
+    ) -> Result<RefPtr<MySQLStatement>, AnyMySQLError> {
+        let statement = self.statements.insert(query, params);
+        if let Some(evicted) = self.statements.evict(StatementCache::MAX_STATEMENTS) {
+            let _ = mysql_request::close_statement(evicted.statement_id, self.writer());
+        }
+        if let Err(err) = mysql_request::prepare_request(query, self.writer()) {
+            self.statements.remove(&statement);
+            return Err(err.into());
+        }
+        Ok(statement)
+    }
+
+    fn close_statement(&mut self, statement: &MySQLStatement) {
+        self.statements.remove(statement);
+        let _ = mysql_request::close_statement(statement.statement_id, self.writer());
+    }
+
+    fn on_statement_prepared(&mut self, request: &JSMySQLQuery) {
+        // Also for a request that was cancelled meanwhile: the next execution with as many values would find it.
+        if let Some(statement) = request
+            .get_statement()
+            .filter(|statement| !statement.parameter_count_matches())
+        {
+            self.close_statement(statement);
+        }
+        self.in_reply = false;
+        request.prepared();
+        self.advance();
+    }
+
+    /// Without a COM_QUIT the server counts an aborted client.
+    pub(crate) fn quit(&mut self) {
+        if self.is_able_to_write()
+            && self.write_buffer.len() == 0
+            && !self.queue.current().is_some_and(|r| r.is_in_flight())
+            && mysql_request::quit(self.writer()).is_ok()
+        {
+            self.flush_data();
+        }
+    }
+
+    /// The caller runs `on_statement_prepared`: it must not read the statement under this `&mut`.
+    fn check_if_prepared_statement_is_done(statement: &mut MySQLStatement) -> bool {
         bun_core::scoped_log!(
             MySQLConnection,
             "checkIfPreparedStatementIsDone: {} {} {} {}",
@@ -1240,25 +1073,21 @@ impl MySQLConnection {
             statement.columns.len(),
             statement.params.len()
         );
-        if statement.columns_received as usize == statement.columns.len()
-            && statement.params_received as usize == statement.params.len()
-        {
+        let is_done = statement.columns_received as usize == statement.columns.len()
+            && statement.params_received as usize == statement.params.len();
+        if is_done {
             statement.status = mysql_statement::Status::Prepared;
-            self.flags.remove(ConnectionFlags::WAITING_TO_PREPARE);
-            self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
-            self.queue.mark_as_ready_for_query();
-            self.queue.mark_as_prepared();
             statement.reset();
-            self.advance();
         }
+        is_done
     }
 
-    pub(crate) fn handle_prepared_statement<C: ReaderContext>(
+    fn handle_prepared_statement(
         &mut self,
-        mut reader: NewReader<C>,
-        header_length: u32, // u24 on the wire
+        mut reader: PacketReader<'_>,
     ) -> Result<(), AnyMySQLError> {
         debug!("handlePreparedStatement");
+        let payload_length = reader.peek().len();
         let first_byte = reader.int::<u8>()?;
         reader.skip(-1isize);
 
@@ -1269,12 +1098,7 @@ impl MySQLConnection {
         // Queue holds a ref on every request; bump it for the body's duration so
         // re-entrant `deref()` cannot free it.
         let _request_guard = request.ref_guard();
-        // `ThisPtr::get` borrows the local `request` (Copy), not `*self`.
         let request: &JSMySQLQuery = request.get();
-        // `get_statement()` derefs the intrusive `*mut MySQLStatement` held by
-        // the request (separate heap allocation, never aliases `*self`); the
-        // returned `&mut` is rooted in the local `ThisPtr`, not `self.queue`,
-        // so `&mut self` calls below do not conflict.
         let Some(statement) = request.get_statement() else {
             debug!("Unexpected prepared statement packet missing statement");
             return Err(AnyMySQLError::UnexpectedPacket);
@@ -1288,64 +1112,53 @@ impl MySQLConnection {
             // the 16 MB max-packet marker (0xFFFFFF) is an EOF. See handleResultSet
             // for the full rationale.
             if !self.capabilities.CLIENT_DEPRECATE_EOF
-                && header_length < 0xFFFFFF
+                && payload_length < PacketHeader::MAX_PAYLOAD_LENGTH
                 && PacketType(first_byte) == PacketType::EOF
             {
                 let mut eof = EOFPacket::default();
                 eof.decode_internal(reader)?;
-                self.check_if_prepared_statement_is_done(statement);
+                if Self::check_if_prepared_statement_is_done(statement) {
+                    self.on_statement_prepared(request);
+                }
                 return Ok(());
             }
             let extended_type_info = self.mariadb_capabilities.MARIADB_CLIENT_EXTENDED_TYPE_INFO;
             if (statement.params_received as usize) < statement.params.len() {
                 let mut column = ColumnDefinition41::default();
                 column.decode(&mut reader, extended_type_info)?;
-                statement.params[statement.params_received as usize] = Param {
-                    r#type: column.column_type,
-                    flags: column.flags,
-                };
+                statement.params[statement.params_received as usize] = column.column_type;
                 statement.params_received += 1;
             } else if (statement.columns_received as usize) < statement.columns.len() {
-                statement.columns[statement.columns_received as usize]
-                    .decode(&mut reader, extended_type_info)?;
+                // Only counted: every execution brings the definitions again.
+                ColumnDefinition41::default().decode(&mut reader, extended_type_info)?;
                 statement.columns_received += 1;
             }
             // In CLIENT_DEPRECATE_EOF mode, there are no trailing EOF packets, so
             // we check completion after each column/param definition. In legacy mode,
             // completion is deferred to the EOF handler above to avoid marking the
             // statement as prepared before the trailing EOF is consumed.
-            if self.capabilities.CLIENT_DEPRECATE_EOF {
-                self.check_if_prepared_statement_is_done(statement);
+            if self.capabilities.CLIENT_DEPRECATE_EOF
+                && Self::check_if_prepared_statement_is_done(statement)
+            {
+                self.on_statement_prepared(request);
             }
             return Ok(());
         }
 
         match PacketType(first_byte) {
             PacketType::OK => {
-                let mut ok = StmtPrepareOKPacket {
-                    packet_length: header_length,
-                    ..Default::default()
-                };
+                let mut ok = StmtPrepareOKPacket::default();
                 ok.decode(reader)?;
-
-                // Get the current request
 
                 statement.statement_id = ok.statement_id;
 
-                // Read parameter definitions if any
                 if ok.num_params > 0 {
                     // Slots are overwritten as param-definition packets
                     // arrive, so the initial value is a placeholder.
-                    statement.params = (0..ok.num_params as usize)
-                        .map(|_| Param {
-                            r#type: FieldType::MYSQL_TYPE_NULL,
-                            flags: ColumnFlags::default(),
-                        })
-                        .collect();
+                    statement.params = vec![FieldType::MYSQL_TYPE_NULL; ok.num_params as usize];
                     statement.params_received = 0;
                 }
 
-                // Read column definitions if any
                 if ok.num_columns > 0 {
                     statement.columns = (0..ok.num_columns as usize)
                         .map(|_| ColumnDefinition41::default())
@@ -1353,46 +1166,18 @@ impl MySQLConnection {
                     statement.columns_received = 0;
                 }
 
-                self.check_if_prepared_statement_is_done(statement);
+                if Self::check_if_prepared_statement_is_done(statement) {
+                    self.on_statement_prepared(request);
+                }
             }
 
             PacketType::ERROR => {
                 debug!("handlePreparedStatement ERROR");
                 let mut err = ErrorPacket::default();
                 err.decode_internal(reader)?;
-                // The queue advance is an explicit call after
-                // `on_error_packet` below.
-                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
-                statement.status = mysql_statement::Status::Failed;
-                // err.error_message is a Data{ .temporary = ... } slice into the socket read
-                // buffer which will be overwritten by the next packet. The statement is cached
-                // in this.statements and its error_response may be read later via
-                // stmt.error_response.toJS(), so we must own a copy of the message bytes.
-                // ErrorPacket lacks Clone in bun_sql (Data is not Clone), so
-                // reconstruct field-by-field with an owned dupe of the message
-                // — the scalar fields (header / error_code / sql_state) are
-                // all Copy.
-                statement.error_response = ErrorPacket {
-                    header: err.header,
-                    error_code: err.error_code,
-                    sql_state_marker: err.sql_state_marker,
-                    sql_state: err.sql_state,
-                    error_message: Data::create(err.error_message.slice())
-                        .map_err(|_| AnyMySQLError::OutOfMemory)?,
-                };
-                self.queue.mark_as_ready_for_query();
-                self.queue.mark_current_request_as_finished(request);
-
-                // R-2: `on_error_packet` is `&self`; `js_connection_ref()` is
-                // the audited container_of accessor (one centralised unsafe).
-                // The `&JSMySQLConnection` it yields lives only for this call —
-                // identical footprint to the prior `(*ptr).on_error_packet()`
-                // temporary — and `*self` sits inside the parent's `JsCell`, so
-                // re-entrant `connection_mut()` does not alias the outer
-                // shared borrow.
-                self.js_connection_ref()
-                    .on_error_packet(Some(request), &err);
-                self.advance();
+                // The cache holds handles the server has. The next use of the text prepares again.
+                self.statements.remove(statement);
+                self.on_request_error(request, &err)?;
             }
 
             _ => {
@@ -1407,13 +1192,21 @@ impl MySQLConnection {
         Ok(())
     }
 
-    // reshaped for borrowck — `request` comes from `self.queue` so
-    // passing `&mut self` alongside `&mut JSMySQLQuery` would alias. `request`
-    // is `&JSMySQLQuery` (R-2: fully interior-mutable, so a shared borrow is
-    // sound across the re-entrant `on_query_result` callback). The statement is
-    // re-fetched via the single-unsafe `request.get_statement()` accessor at
-    // each touch point so no `&mut MySQLStatement` spans the re-entrant
-    // `on_query_result` call (which may itself call `get_statement()`).
+    /// `err` answers `request`. `Err` fails the connection.
+    fn on_request_error(
+        &mut self,
+        request: &JSMySQLQuery,
+        err: &ErrorPacket,
+    ) -> Result<(), AnyMySQLError> {
+        self.in_reply = false;
+        self.js_connection_ref().on_error_packet(Some(request), err);
+        if err.ends_session() {
+            return Err(AnyMySQLError::ConnectionClosed);
+        }
+        let _ = self.flush_queue();
+        Ok(())
+    }
+
     fn handle_result_set_ok(
         &mut self,
         request: &JSMySQLQuery,
@@ -1423,55 +1216,37 @@ impl MySQLConnection {
     ) {
         self.status_flags = status_flags;
         let is_last_result = !status_flags.has(StatusFlag::SERVER_MORE_RESULTS_EXISTS);
+        self.in_reply = !is_last_result;
         debug!(
             "handleResultSetOK: {} {}",
             status_flags.to_int(),
             is_last_result
         );
-        // The queue flush is an explicit tail call.
-        self.flags
-            .set(ConnectionFlags::IS_READY_FOR_QUERY, is_last_result);
-        if is_last_result {
-            self.queue.mark_as_ready_for_query();
-            self.queue.mark_current_request_as_finished(request);
+
+        // Before the result is delivered: the request lets go of its statement at its last one.
+        let mut result_count = 0;
+        let mut has_columns = false;
+        if let Some(statement) = request.get_statement() {
+            result_count = statement.result_count;
+            has_columns = statement
+                .execution_flags
+                .contains(mysql_statement::ExecutionFlags::HEADER_RECEIVED);
+            statement.reset();
         }
+        request.resolve(&MySQLQueryResult {
+            result_count,
+            has_columns,
+            last_insert_id,
+            affected_rows,
+            is_last_result,
+        });
 
-        // Short-lived borrow via the audited accessor; dropped before the
-        // re-entrant `on_query_result` call below.
-        let result_count = request.get_statement().map_or(0, |s| s.result_count);
-        // R-2: `on_query_result` is `&self`; `js_connection_ref()` is the
-        // audited container_of accessor. The `&JSMySQLConnection` lives only for
-        // this call (same footprint as the prior `(*ptr).on_query_result()`
-        // temporary). `*self` sits inside the parent's `JsCell` (`UnsafeCell`),
-        // so re-entrant `connection_mut()` writes through SharedRW provenance
-        // independent of this outer shared borrow.
-        self.js_connection_ref().on_query_result(
-            request,
-            &MySQLQueryResult {
-                result_count,
-                last_insert_id,
-                affected_rows,
-                is_last_result,
-            },
-        );
-
-        // Re-fetch (fresh `&mut`) so no borrow spanned the JS callback above.
-        if let Some(s) = request.get_statement() {
-            s.reset();
-        }
-
-        // Use flushQueue instead of just advance to ensure any data written
-        // by queries added during onQueryResult is actually sent.
-        // This fixes a race condition where the auto flusher may not be
-        // registered if the queue's current item is completed (not pending).
+        // Not only `advance()`: what it writes has to be sent, and the auto flusher may not be registered.
         let _ = self.flush_queue();
     }
 
-    fn handle_result_set<C: ReaderContext>(
-        &mut self,
-        mut reader: NewReader<C>,
-        header_length: u32, // u24 on the wire
-    ) -> Result<(), AnyMySQLError> {
+    fn handle_result_set(&mut self, mut reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+        let payload_length = reader.peek().len();
         let first_byte = reader.int::<u8>()?;
         debug!("handleResultSet: {:02x}", first_byte);
 
@@ -1484,43 +1259,21 @@ impl MySQLConnection {
         // Queue holds a ref on every request; bump it for the body's duration so
         // re-entrant `deref()` cannot free it.
         let _request_guard = request.ref_guard();
-        // `ThisPtr::get` borrows the local `request` (Copy), not `*self`.
         let request: &JSMySQLQuery = request.get();
-        let mut ok = OKPacket {
-            header: 0,
-            affected_rows: 0,
-            last_insert_id: 0,
-            status_flags: StatusFlags::default(),
-            packet_size: header_length,
-        };
+        let mut ok = OKPacket::default();
         match PacketType(first_byte) {
             PacketType::ERROR => {
                 let mut err = ErrorPacket::default();
                 err.decode_internal(reader)?;
-                // The queue flush is an explicit tail call.
                 if let Some(statement) = request.get_statement() {
                     statement.reset();
                 }
-
-                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
-                self.queue.mark_as_ready_for_query();
-                self.queue.mark_current_request_as_finished(request);
-
-                // R-2: `on_error_packet` is `&self`; route through the audited
-                // `js_connection_ref()` container_of accessor. `*self` lives
-                // inside the parent's `JsCell`, so re-entrant `connection_mut()`
-                // does not alias this outer shared borrow.
-                self.js_connection_ref()
-                    .on_error_packet(Some(request), &err);
-                let _ = self.flush_queue();
+                self.on_request_error(request, &err)?;
             }
 
             packet_type => {
-                // `get_statement()` derefs the intrusive `*mut MySQLStatement`
-                // held by the request (separate heap allocation); the `&mut` is
-                // rooted in the local `ThisPtr`, not `self`, so `&mut self`
-                // calls below do not conflict. `handle_result_set_ok` re-fetches
-                // via the same accessor; `on_result_row` reborrows `&mut`.
+                // Script that runs while a row is built can end the request, which drops its ref.
+                let _statement_guard = request.statement_ref();
                 let Some(statement) = request.get_statement() else {
                     debug!("Unexpected result set packet");
                     return Err(AnyMySQLError::UnexpectedPacket);
@@ -1532,8 +1285,6 @@ impl MySQLConnection {
                     if packet_type == PacketType::OK {
                         // if packet type is OK it means the query is done and no results are returned
                         ok.decode_internal(reader)?;
-                        // NLL: caller's `statement` borrow ends here;
-                        // `handle_result_set_ok` re-fetches via the accessor.
                         self.handle_result_set_ok(
                             request,
                             ok.status_flags,
@@ -1541,6 +1292,10 @@ impl MySQLConnection {
                             ok.affected_rows,
                         );
                         return Ok(());
+                    }
+                    // The client never offers CLIENT_LOCAL_FILES.
+                    if packet_type == PacketType::LOCAL_INFILE {
+                        return Err(AnyMySQLError::UnexpectedPacket);
                     }
 
                     let mut header = ResultSetHeader::default();
@@ -1565,9 +1320,6 @@ impl MySQLConnection {
                             header.field_count
                         );
                         if !statement.columns.is_empty() {
-                            // Clear the slice before the fallible alloc below. If the alloc
-                            // fails, MySQLStatement.deinit() would otherwise iterate and free
-                            // the already-freed columns again (use-after-free / double-free).
                             statement.columns = Vec::new();
                         }
                         // Fallible allocation: field_count is server-controlled
@@ -1593,18 +1345,25 @@ impl MySQLConnection {
                         .insert(mysql_statement::ExecutionFlags::HEADER_RECEIVED);
                     return Ok(());
                 } else if (statement.columns_received as usize) < statement.columns.len() {
-                    let changed = statement.columns[statement.columns_received as usize].decode(
+                    use bun_sql::mysql::protocol::column_definition41::Changed;
+                    let index = statement.columns_received as usize;
+                    let changed = statement.columns[index].decode(
                         &mut reader,
                         self.mariadb_capabilities.MARIADB_CLIENT_EXTENDED_TYPE_INFO,
                     )?;
-                    if changed {
-                        statement.cached_structure = Default::default();
-                        statement.fields_flags = Default::default();
-                        statement
-                            .execution_flags
-                            .insert(mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK);
-                    }
                     statement.columns_received += 1;
+                    match changed {
+                        Changed::Nothing => {}
+                        Changed::Description => statement.cached_structure.clear_description(),
+                        Changed::Name => {
+                            statement.cached_structure = Default::default();
+                            statement.fields_flags = Default::default();
+                            statement
+                                .execution_flags
+                                .insert(mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK);
+                            self.js_connection_ref().on_column_name(request, index)?;
+                        }
+                    }
                 } else {
                     // A 0xFE-prefixed packet at this point is either the end-of-result
                     // terminator or a row whose first column is a length-encoded integer
@@ -1613,12 +1372,12 @@ impl MySQLConnection {
                     // Disambiguation per the MySQL protocol spec: a terminator packet's
                     // payload length is always below the 16 MB max-packet marker
                     // (0xFFFFFF); a 0xFE row prefix means the next 8 bytes are a u64
-                    // length, pushing the row payload past that marker. We used to gate
-                    // on `header_length < 9` here, but an OK terminator can carry a
-                    // trailing human-readable `info` string (e.g. ManticoreSearch's
-                    // `szMeta`) that pushes the payload past 9 bytes, causing the
-                    // terminator to be misparsed as a row and the query to hang.
-                    if packet_type == PacketType::EOF && header_length < 0xFFFFFF {
+                    // length, pushing the row payload past that marker. An OK terminator
+                    // has no small bound: it can carry a trailing human-readable `info`
+                    // string (e.g. ManticoreSearch's `szMeta`).
+                    if packet_type == PacketType::EOF
+                        && payload_length < PacketHeader::MAX_PAYLOAD_LENGTH
+                    {
                         if !self.capabilities.CLIENT_DEPRECATE_EOF {
                             // Legacy protocol: EOF packets delimit sections of the result set.
                             // Handle the intermediate EOF (between column defs and rows) and
@@ -1654,12 +1413,6 @@ impl MySQLConnection {
                         return Ok(());
                     }
 
-                    // R-2: `on_result_row` is `&self`; route through the audited
-                    // `js_connection_ref()` container_of accessor. The
-                    // `&JSMySQLConnection` is held only for this call (identical
-                    // footprint to the prior `(*ptr).on_result_row()` temporary);
-                    // `*self` sits inside the parent's `JsCell`, so re-entrant
-                    // `connection_mut()` does not alias this shared borrow.
                     self.js_connection_ref()
                         .on_result_row(request, statement, reader)?;
                 }
@@ -1674,12 +1427,7 @@ pub enum FlushQueueError {
     AuthenticationFailed,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Writer / Reader — protocol-layer adapters wrapping the connection's
-// OffsetByteList buffers. Hold `*mut MySQLConnection` (Copy) so they satisfy
-// `bun_sql::mysql::protocol::new_{reader,writer}::{Reader,Writer}Context: Copy`.
-// ──────────────────────────────────────────────────────────────────────────
-
+// The protocol layer's handles on the connection's two buffers. `Copy`, as its traits ask.
 #[derive(Clone, Copy)]
 pub struct Writer {
     pub(crate) connection: *mut MySQLConnection,
@@ -1712,19 +1460,28 @@ impl WriterContext for Writer {
     }
 
     fn pwrite(self, data: &[u8], index: usize) -> Result<(), AnyMySQLError> {
-        let byte_list = &mut self.write_buffer().byte_list;
-        byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
+        let buffer = self.write_buffer();
+        let head = buffer.head;
+        buffer.byte_list[head + index..][..data.len()].copy_from_slice(data);
         Ok(())
     }
 
     fn offset(self) -> usize {
-        self.write_buffer().len() as usize
+        self.write_buffer().len()
     }
 
     fn truncate(self, offset: usize) {
         let buffer = self.write_buffer();
-        let head = buffer.head as usize;
+        let head = buffer.head;
         buffer.byte_list.truncate(head + offset);
+    }
+
+    fn copy_within(self, src: core::ops::Range<usize>, dest: usize) {
+        let buffer = self.write_buffer();
+        let head = buffer.head;
+        buffer
+            .byte_list
+            .copy_within(head + src.start..head + src.end, head + dest);
     }
 }
 
@@ -1756,7 +1513,7 @@ impl Reader {
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn last_message_start(&self) -> &mut u32 {
+    fn last_message_start(&self) -> &mut usize {
         // SAFETY: same justification as `read_buffer()` — disjoint field
         // projection from a non-null connection pointer that outlives the
         // `Reader`; `process_packets` does not access `last_message_start`
@@ -1771,67 +1528,16 @@ impl ReaderContext for Reader {
     }
 
     fn set_offset_from_start(self, offset: usize) {
-        self.read_buffer().head = *self.last_message_start() + (offset as u32);
+        self.read_buffer().head = *self.last_message_start() + offset;
     }
 
     fn peek(&self) -> &[u8] {
         self.read_buffer().remaining()
     }
 
-    fn skip(self, count: isize) {
-        let rb = self.read_buffer();
-        if count < 0 {
-            let abs_count = count.unsigned_abs();
-            if abs_count > rb.head as usize {
-                rb.head = 0;
-                return;
-            }
-            rb.head -= u32::try_from(abs_count).expect("int cast");
-            return;
-        }
-
-        let ucount: usize = usize::try_from(count).expect("int cast");
-        if rb.head as usize + ucount > rb.byte_list.len() {
-            rb.head = rb.byte_list.len() as u32;
-            return;
-        }
-
-        rb.head += u32::try_from(ucount).expect("int cast");
-    }
-
     fn ensure_capacity(self, count: usize) -> bool {
         self.read_buffer().remaining().len() >= count
     }
-
-    fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
-        let remaining = self.read_buffer().remaining();
-        if remaining.len() < count {
-            return Err(AnyMySQLError::ShortRead);
-        }
-
-        // reshaped for borrowck — capture detached slice before skip().
-        let slice = bun_ptr::RawSlice::new(&remaining[0..count]);
-        self.skip(isize::try_from(count).expect("int cast"));
-        Ok(Data::Temporary(slice))
-    }
-
-    fn read_z(self) -> Result<Data, AnyMySQLError> {
-        let remaining = self.read_buffer().remaining();
-        if let Some(zero) = bun_core::strings::index_of_char(remaining, 0) {
-            let slice = bun_ptr::RawSlice::new(&remaining[0..zero as usize]);
-            self.skip(isize::try_from(zero + 1).expect("int cast"));
-            return Ok(Data::Temporary(slice));
-        }
-
-        Err(AnyMySQLError::ShortRead)
-    }
 }
-
-/// `None` only transiently, inside `get_or_put` before the new statement is stored.
-pub(crate) type PreparedStatementsMap = StringHashMap<Option<RefPtr<MySQLStatement>>>;
-/// Result of `PreparedStatementsMap::get_or_put` — surfaced for
-/// `JSMySQLConnection::get_statement_from_signature_name`.
-pub(crate) type PreparedStatementsMapGetOrPutResult<'a> =
-    bun_collections::hash_map::GetOrPutResult<'a, Option<RefPtr<MySQLStatement>>>;
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection

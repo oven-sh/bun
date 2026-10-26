@@ -5,8 +5,8 @@ const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
 const { kClusterOwner: owner_symbol, kInternalSendOptions } = require("internal/shared");
 
-const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
-const closeRawHandle = $newRustFunction("node_cluster_binding.rs", "clusterCloseHandle", 1);
+const onInternalMessage = $bindgen("node_cluster_binding.bind.ts", "onInternalMessageChild");
+const closeRawHandle = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
 
 const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -72,7 +72,7 @@ cluster._setupWorker = function () {
 
   // make sure the process.once("disconnect") doesn't count as a ref
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
-  $newRustFunction("node_cluster_binding.rs", "channelIgnoreOneDisconnectEventListener", 0)();
+  $bindgen("node_cluster_binding.bind.ts", "channelIgnoreOneDisconnectEventListener")();
   process.once("disconnect", () => {
     (process as { channel: unknown }).channel = null;
     worker.emit("disconnect");

@@ -32,7 +32,6 @@ import {
   getSecret,
   isBuildkite,
   isFork,
-  isGithubAction,
   isMainBranch,
   isMergeQueue,
   isPullRequest,
@@ -57,18 +56,6 @@ function parseGitRepository(url: string | URL): string | undefined {
 function getRepository(): string | undefined {
   const url = getRepositoryUrl();
   return url ? parseGitRepository(url) : undefined;
-}
-
-function getBuildNumber(): number | undefined {
-  if (isBuildkite) {
-    return parseInt(getEnv("BUILDKITE_BUILD_NUMBER"));
-  }
-
-  if (isGithubAction) {
-    return parseInt(getEnv("GITHUB_RUN_ID"));
-  }
-
-  return undefined;
 }
 
 function isBuildManual(): boolean | undefined {
@@ -153,8 +140,6 @@ const emojiMap = {
   ubuntu: ["🐧", "ubuntu"],
   alpine: ["🐧", "alpine"],
   aws: ["☁️", "aws"],
-  amazonlinux: ["🐧", "aws"],
-  nix: ["🐧", "nix"],
   windows: ["🪟", "windows"],
   true: ["✅", "white_check_mark"],
   false: ["❌", "x"],
@@ -166,8 +151,6 @@ const emojiMap = {
   clipboard: ["📋", "clipboard"],
   package: ["📦", "package"],
   rocket: ["🚀", "rocket"],
-  openbsd: ["🐡", "openbsd"],
-  netbsd: ["🚩", "netbsd"],
   freebsd: ["😈", "freebsd"],
 };
 
@@ -186,8 +169,8 @@ function getBuildkiteEmoji(emoji: Emoji): string {
 
 /** A target's abi. glibc is the absence of one, so "gnu" is never spelled here. */
 type Abi = Exclude<HostAbi, "gnu">;
-type Distro = "debian" | "ubuntu" | "alpine" | "amazonlinux";
-type Tier = "latest" | "previous" | "oldest" | "eol" | "beta";
+type Distro = "debian" | "ubuntu" | "alpine";
+type Tier = "latest" | "previous" | "oldest" | "beta";
 type Profile = "release" | "assert" | "debug" | "asan";
 
 interface Target {
@@ -240,7 +223,6 @@ type Platform = Target & {
   distro?: Distro;
   release: string;
   tier?: Tier;
-  features?: string[];
 };
 
 type AzureVmTier = "build" | "test";
@@ -586,19 +568,16 @@ function getTestAgent(platform: Platform): Agent {
  * Steps
  */
 
-/** The `ci-<mode>` profile of scripts/build.ts a build command runs. */
-type BuildMode = "build";
-
 /**
  * Build the scripts/build.ts argument list from a target's properties.
  * Replaces the old getBuildEnv (cmake -D env vars) + getBuildCommand
  * (--target passthrough) with direct build.ts flags.
  */
-function getBuildArgs(target: Target, options: PipelineOptions, mode: BuildMode): string {
+function getBuildArgs(target: Target, options: PipelineOptions): string {
   const { os, arch, abi, baseline, profile } = target;
   const { canary } = options;
 
-  const args = [`--profile=ci-${mode}`];
+  const args = ["--profile=ci-build"];
 
   // All build lanes share a debian-13 arm64 host, so host detection cannot
   // infer the target triple — always pass os/arch (and abi on linux).
@@ -617,7 +596,7 @@ function getBuildArgs(target: Target, options: PipelineOptions, mode: BuildMode)
   return args.join(" ");
 }
 
-function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMode): string {
+function getBuildCommand(target: Target, options: PipelineOptions): string {
   // Windows code signing is handled by a dedicated 'windows-sign' step after
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
@@ -625,11 +604,11 @@ function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMo
   // Literal `node` — ci.ts generates a pipeline that runs on a
   // different agent later, so process.execPath (the generator's path)
   // is wrong. PATH on the agent has node: the image's bake installs it.
-  return `node scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  return `node scripts/build.ts ${getBuildArgs(target, options)}`;
 }
 
 /**
- * deps + C++ + Rust + link on one agent; also uploads libbun-*.a and the dep libs.
+ * deps + C++ + Rust + link on one agent.
  */
 function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandStep {
   const { arch } = platform;
@@ -652,7 +631,7 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
       // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
-    command: [...nasmSetup, getBuildCommand(platform, options, "build")],
+    command: [...nasmSetup, getBuildCommand(platform, options)],
   };
 }
 
@@ -1019,13 +998,6 @@ function getImageSteps(
       {
         ...waitStep,
         label: `${getImageLabel(platform)} - bake-image`,
-        env: {
-          // Packer needs several minutes to delete its temp Azure resources after a cancel;
-          // the agent's default 10s grace SIGKILLs it mid-cleanup and leaks a full
-          // VM/NIC/IP stack per retry. The agent reads this from job env — there's no
-          // step-level property for it.
-          BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
-        },
         // One command, so that a cancel reaches Packer (see bakeWindowsImage).
         command: `node ./scripts/ci-image.ts bake-image --key=${key} --name=${name} --timeout-minutes=${bakeTimeout - 10}`,
       },
@@ -1090,8 +1062,9 @@ function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptio
     }),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
+    // smctl runs signtool.exe, which is only in PATH in a Visual Studio environment.
     command: [
-      `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/sign-windows-artifacts.ps1 ` +
+      `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 pwsh -NoProfile -File .\\.buildkite\\scripts\\sign-windows-artifacts.ps1 ` +
         `-Artifacts ${artifacts.join(",")} ` +
         `-BuildSteps ${buildSteps.join(",")}`,
     ],
@@ -1293,7 +1266,6 @@ interface PipelineOptions {
   skipSizeCheck?: OptionFlag;
   forceBuilds?: OptionFlag;
   signWindows?: OptionFlag;
-  dryRun?: OptionFlag;
   canary?: number;
   buildPlatforms?: Platform[];
   testPlatforms?: Platform[];
@@ -1531,7 +1503,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
             getBuildProfiles().map(profile => ({ ...getSelectedPlatform(testPlatformsMap, key), profile })),
           )
         : Array.from(testPlatformsMap.values()),
-      dryRun: parseBoolean(options["dry-run"]),
     };
   }
 
@@ -1562,7 +1533,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    dryRun: parseOption(/\[(dry run)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1728,7 +1698,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     steps.push({ key: "images", group: getBuildkiteEmoji("aws"), steps: imageSteps });
   }
 
-  const { skipBuilds, forceBuilds, dryRun } = options;
+  const { skipBuilds, forceBuilds } = options;
 
   let buildId: string | undefined;
   if (skipBuilds && !forceBuilds) {

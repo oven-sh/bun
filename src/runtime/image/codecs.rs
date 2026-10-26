@@ -357,21 +357,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         Format::Jpeg => {
             // turbojpeg's header decode is already cheap (no scan data read).
             let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
-            // SAFETY: handle is live; (ptr,len) come from a valid live slice.
-            if unsafe { jpeg::tj3DecompressHeader(handle.as_ptr(), bytes.as_ptr(), bytes.len()) }
-                != 0
-            {
-                return Err(Error::DecodeFailed);
-            }
-            // SAFETY: handle is live and has had a header decoded into it above.
-            let rw = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGWIDTH) };
-            // SAFETY: same handle invariant as above.
-            let rh = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGHEIGHT) };
-            if rw <= 0 || rh <= 0 {
-                return Err(Error::DecodeFailed);
-            }
-            w = u32::try_from(rw).expect("int cast");
-            h = u32::try_from(rh).expect("int cast");
+            (w, h) = handle.read_header(bytes)?;
         }
         Format::Webp => {
             let mut cw: c_int = 0;
@@ -392,16 +378,24 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             w = ih.width;
             h = ih.height;
         }
-        Format::Gif => {
-            // sig(6) · LSD: w(u16le) h(u16le) …
-            if bytes.len() < 10 {
-                return Err(Error::DecodeFailed);
+        // The decoder sizes its output from the first frame, not from the logical screen.
+        Format::Gif => match gif::first_frame(bytes) {
+            Ok(frame) => {
+                w = frame.width;
+                h = frame.height;
             }
-            w = u16::from_le_bytes(bytes[6..8].try_into().expect("infallible: size matches"))
-                as u32;
-            h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
-                as u32;
-        }
+            // No frame to decode, e.g. only the start of a file.
+            Err(_) => {
+                // sig(6) · LSD: w(u16le) h(u16le) …
+                if bytes.len() < 10 {
+                    return Err(Error::DecodeFailed);
+                }
+                w = u16::from_le_bytes(bytes[6..8].try_into().expect("infallible: size matches"))
+                    as u32;
+                h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
+                    as u32;
+            }
+        },
         Format::Tiff | Format::Heic | Format::Avif => {
             // ImageIO reads the dimensions from the container; the codec only runs in decode().
             #[cfg(not(target_os = "macos"))]
@@ -524,7 +518,7 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    #[allow(dead_code)]
+    #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         // SAFETY: Vec data ptr is non-null; len is valid.

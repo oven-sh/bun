@@ -16,7 +16,7 @@ use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
-use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
+use crate::{self as jsc, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);
@@ -203,7 +203,6 @@ impl Debugger {
         // accesses form short-lived `&mut`s under the single-JS-thread
         // invariant via safe `&VirtualMachine` accessors.
         debug_assert!(core::ptr::eq(this, VirtualMachine::get_mut_ptr()));
-        let _ = this; // release: param otherwise unused
         let this: &VirtualMachine = VirtualMachine::get();
         let Some(dbg) = this.debugger_mut() else {
             return;
@@ -437,6 +436,9 @@ impl Debugger {
     /// It would reload the `.env` files and JSON-parse `NODE_ENV`, and its
     /// failure (say a stray `\r` in `NODE_ENV`) would abort the debuggee.
     fn start_js_debugger_thread(env_map: bun_dotenv::Map, init: DebuggerThreadInit) {
+        // This thread serves the inspector up to (and during) `process.exit()`,
+        // so it's never joined and its VM is never torn down.
+        bun_core::asan::disable_leak_checks_on_current_thread();
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Debugger"));
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
@@ -799,14 +801,13 @@ pub enum TestType {
 
 bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
 
-// SAFETY (safe fn): `TestReporterHandle` and `CallFrame` are `opaque_ffi!`
-// ZST handles (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
+// SAFETY (safe fn): `TestReporterHandle` is an `opaque_ffi!`
+// ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
 // in/out-param the C++ side reads/consumes in-place. Remaining args are
 // by-value scalars.
 unsafe extern "C" {
     safe fn Bun__TestReporterAgentReportTestFound(
         agent: &mut TestReporterHandle,
-        call_frame: &CallFrame,
         test_id: c_int,
         name: &BunString,
         item_type: TestType,
@@ -833,15 +834,12 @@ unsafe extern "C" {
 impl TestReporterHandle {
     pub(crate) fn report_test_found(
         &mut self,
-        call_frame: &CallFrame,
         test_id: i32,
         name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {
-        Bun__TestReporterAgentReportTestFound(
-            self, call_frame, test_id, name, item_type, parent_id,
-        );
+        Bun__TestReporterAgentReportTestFound(self, test_id, name, item_type, parent_id);
     }
 
     pub fn report_test_found_with_location(
@@ -913,7 +911,6 @@ impl TestReporterAgent {
     /// `Inspector::TestReporterAgent*` once the agent is enabled. Caller must
     /// ensure `is_enabled()` (handle != null).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> &mut TestReporterHandle {
         debug_assert!(!self.handle.is_null());
         // Caller contract — `is_enabled()` checked; handle is a live C++ heap
@@ -925,9 +922,10 @@ impl TestReporterAgent {
     /// Caller must ensure that it is enabled first.
     ///
     /// Since we may have to call .deinit on the name string.
+    ///
+    /// The test's location is that of the caller of the host function that is running.
     pub fn report_test_found(
         &self,
-        call_frame: &CallFrame,
         test_id: i32,
         name: &BunString,
         item_type: TestType,
@@ -935,7 +933,7 @@ impl TestReporterAgent {
     ) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
         self.handle_mut()
-            .report_test_found(call_frame, test_id, name, item_type, parent_id);
+            .report_test_found(test_id, name, item_type, parent_id);
     }
 
     /// Caller must ensure that it is enabled first.

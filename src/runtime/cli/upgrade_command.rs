@@ -11,7 +11,6 @@ use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
 use bun_paths::{self, SEP_STR};
 use bun_resolver::fs;
@@ -265,6 +264,7 @@ impl UpgradeCommand {
             headers_buf,
             b"",
             http_proxy,
+            HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -656,6 +656,7 @@ impl UpgradeCommand {
                 b"",
                 b"",
                 http_proxy,
+                HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
             ));
             // `progress` is intentionally leaked (process-lifetime), so the
@@ -820,7 +821,7 @@ impl UpgradeCommand {
                     let Some(unzip_exe) = which(
                         &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
-                        filesystem.top_level_dir,
+                        filesystem.top_level_dir(),
                         b"unzip",
                     ) else {
                         let _ = sys::unlinkat(&save_dir, tmpname);
@@ -844,8 +845,6 @@ impl UpgradeCommand {
                         stdin: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stderr: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
-                        windows: spawn_windows_options(),
                         ..Default::default()
                     }) {
                         Ok(Ok(r)) => r,
@@ -947,7 +946,6 @@ impl UpgradeCommand {
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
                         stdin: spawn_sync::SyncStdio::Inherit,
-                        #[cfg(windows)]
                         windows: spawn_windows_options(),
                         ..Default::default()
                     });
@@ -1079,7 +1077,6 @@ impl UpgradeCommand {
             // Keep the `&ZStr` form for Windows `sys::rename` (needs
             // a NUL-terminated path); `destination_executable` (bytes view) is
             // used everywhere else.
-            #[cfg_attr(not(windows), allow(unused_variables))]
             let destination_executable_z: &ZStr = bun_core::self_exe_path()
                 .map_err(|_| crate::Error::UpgradeFailedMissingExecutable)?;
             let destination_executable: &[u8] = destination_executable_z.as_bytes();
@@ -1383,6 +1380,7 @@ impl UpgradeCommand {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) mod upgrade_js_bindings {
+    #[cfg(windows)]
     use super::*;
 
     // Process-global, not threadlocal: if open/close are invoked from different
@@ -1392,46 +1390,9 @@ pub(crate) mod upgrade_js_bindings {
     #[cfg(windows)]
     static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
 
-    pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 2);
-        obj.put(
-            global,
-            b"openTempDirWithoutSharingDelete",
-            jsc::JSFunction::create(
-                global,
-                "openTempDirWithoutSharingDelete",
-                // `#[bun_jsc::host_fn]` emits the C-ABI shim with a
-                // `__jsc_host_` prefix.
-                __jsc_host_js_open_temp_dir_without_sharing_delete,
-                1,
-                Default::default(),
-            ),
-        );
-        obj.put(
-            global,
-            b"closeTempDirHandle",
-            jsc::JSFunction::create(
-                global,
-                "closeTempDirHandle",
-                __jsc_host_js_close_temp_dir_handle,
-                1,
-                Default::default(),
-            ),
-        );
-        obj
-    }
-
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    #[bun_jsc::host_fn]
-    fn js_open_temp_dir_without_sharing_delete(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        #[cfg(not(windows))]
-        {
-            return Ok(JSValue::UNDEFINED);
-        }
+    pub(crate) fn open_temp_dir_without_sharing_delete() {
         #[cfg(windows)]
         {
             use sys::windows as w;
@@ -1441,7 +1402,7 @@ pub(crate) mod upgrade_js_bindings {
             let mut wtmp = bun_paths::w_path_buffer_pool::get();
             let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
-                sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),
+                sys::Result::Err(_) => return,
                 sys::Result::Ok(norm) => norm,
             };
 
@@ -1499,17 +1460,10 @@ pub(crate) mod upgrade_js_bindings {
                 }
                 _ => {}
             }
-
-            Ok(JSValue::UNDEFINED)
         }
     }
 
-    #[bun_jsc::host_fn]
-    fn js_close_temp_dir_handle(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        #[cfg(not(windows))]
-        {
-            return Ok(JSValue::UNDEFINED);
-        }
+    pub(crate) fn close_temp_dir_handle() {
         #[cfg(windows)]
         {
             use bun_sys::FdExt as _;
@@ -1519,8 +1473,6 @@ pub(crate) mod upgrade_js_bindings {
             if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
                 fd.close();
             }
-
-            Ok(JSValue::UNDEFINED)
         }
     }
 }

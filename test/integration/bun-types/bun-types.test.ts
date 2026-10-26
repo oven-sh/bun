@@ -574,6 +574,21 @@ describe("@types/bun integration test", () => {
     expect((await claude.text()).length).toBeGreaterThan(0);
   });
 
+  // The rule pages are generated and embedded in bun for `bun lint --explain` (#46989).
+  test("packed bun-types ships the docs without the generated lint rule pages", async () => {
+    const docsDir = join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "docs");
+    const rulePages = await Array.fromAsync(new Bun.Glob("lint/rules/*/**").scan({ cwd: docsDir }));
+    expect(rulePages).toEqual([]);
+
+    const lintDocs = await Bun.file(join(docsDir, "lint", "index.mdx")).text();
+    expect(lintDocs).toContain("](/docs/lint/rules)");
+    expect(lintDocs).not.toMatch(/\]\(\/lint[/#)]/);
+
+    const ruleIndex = await Bun.file(join(docsDir, "lint", "rules", "index.mdx")).text();
+    expect(ruleIndex).toContain("](https://bun.com/docs/lint/rules/eslint/eqeqeq)");
+    expect(ruleIndex).not.toMatch(/\]\(\/lint\//);
+  });
+
   describe("basic type checks", () => {
     typeTest("checks without lib.dom.d.ts", {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,

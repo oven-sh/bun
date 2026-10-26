@@ -816,8 +816,268 @@ impl PatchTask {
     }
 }
 
+/// How a patched package in a hoisted `node_modules` names its patch: the first key of package.json, or line 2 of `.bun-tag`.
+pub(crate) struct PatchStamp;
+
+/// What an installed copy names, see [`PatchStamp::name`]. Empty when it names nothing.
+pub(crate) type PatchName = bun_core::BoundedArray<u8, { crate::bun_json::PATCH_HASH_MAX_LEN }>;
+
+impl PatchStamp {
+    fn in_bun_tag(tag: ResolutionTag) -> bool {
+        tag.is_git() || tag.is_tarball()
+    }
+
+    /// The file of a package that `PackageInstall::verify` reads.
+    pub(crate) fn file(tag: ResolutionTag) -> &'static ZStr {
+        if Self::in_bun_tag(tag) {
+            bun_core::zstr!(".bun-tag")
+        } else {
+            bun_core::zstr!("package.json")
+        }
+    }
+
+    fn file_path<'a>(
+        buf: &'a mut [u8],
+        spill: &'a mut Vec<u8>,
+        folder: &[u8],
+        tag: ResolutionTag,
+    ) -> &'a ZStr {
+        path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
+            buf,
+            spill,
+            &[folder, Self::file(tag).as_bytes()],
+        )
+    }
+
+    /// The first 8 bytes of the integrity that bun.lock pins, 0 when it pins none. No tarball holds its own integrity, so a key with these bytes is not one that the package was published with.
+    pub(crate) fn pinned(integrity: &Integrity) -> u64 {
+        let [b0, b1, b2, b3, b4, b5, b6, b7, ..] = integrity.value;
+        if integrity.tag.is_supported() {
+            u64::from_be_bytes([b0, b1, b2, b3, b4, b5, b6, b7])
+        } else {
+            0
+        }
+    }
+
+    /// What names `patch` in [`Self::file`]: the digits of the patch hash in the `_patch_hash=` cache folder and, in a package.json, `.` and [`Self::pinned`]. `None` for a copy that gets no name: a folder or a link is the user's own, and the key of a registry package without [`Self::pinned`] can be one that it was published with.
+    pub(crate) fn name(tag: ResolutionTag, patch: Patch) -> Option<PatchName> {
+        let mut hex = [0u8; 16];
+        let mut name = PatchName::default();
+        name.append_slice_assume_capacity(bun_core::fmt::u64_hex_var_lower(
+            &mut hex,
+            patch.contents_hash,
+        ));
+        if Self::in_bun_tag(tag) {
+            return Some(name);
+        }
+        if tag != ResolutionTag::Npm || patch.pinned == 0 {
+            return None;
+        }
+        name.append_assume_capacity(b'.');
+        name.append_slice_assume_capacity(bun_core::fmt::u64_hex_var_lower(&mut hex, patch.pinned));
+        Some(name)
+    }
+
+    /// Whether `bun install` wrote `named` into the copy of the package with `integrity`.
+    pub(crate) fn is_written(tag: ResolutionTag, named: &[u8], integrity: &Integrity) -> bool {
+        if Self::in_bun_tag(tag) {
+            return !named.is_empty();
+        }
+        let pinned = Self::pinned(integrity);
+        let mut hex = [0u8; 16];
+        let pinned_hex = bun_core::fmt::u64_hex_var_lower(&mut hex, pinned);
+        pinned != 0 && matches!(named.strip_suffix(pinned_hex), Some([_, .., b'.']))
+    }
+
+    /// The digits of the patch hash in `named`, as the name of its marker has them.
+    fn patch_hash_digits(named: &[u8]) -> Option<&[u8]> {
+        let digits = strings::split_once_char(named, b'.').map_or(named, |(digits, _)| digits);
+        let is_hash = (1..=16).contains(&digits.len()) && digits.iter().all(u8::is_ascii_hexdigit);
+        is_hash.then_some(digits)
+    }
+
+    /// Whether `named` holds the hash of `patch`, for any integrity.
+    pub(crate) fn names_patch(named: &[u8], patch: Patch) -> bool {
+        let mut hex = [0u8; 16];
+        let wanted = bun_core::fmt::u64_hex_var_lower(&mut hex, patch.contents_hash);
+        Self::patch_hash_digits(named) == Some(wanted)
+    }
+
+    /// Removes the marker of the patch that the copy at `package_subpath` of `dir` names, before a package with `patch` is linked into the folder of that copy. Such a link keeps every file that the new package does not have, and the marker of another patch must not pass for the marker of the new copy. The marker of `patch` itself stays: the link puts it there again, and until then another install must find it.
+    #[cold]
+    pub(crate) fn remove_named_marker(
+        dir: &sys::Dir,
+        package_subpath: &[u8],
+        tag: ResolutionTag,
+        patch: Option<Patch>,
+    ) {
+        use sys::EntryKind;
+        // Behind a link there is a folder that is not this copy.
+        if crate::prune::entry_kind(dir, package_subpath, EntryKind::Unknown)
+            != EntryKind::Directory
+        {
+            return;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut spill = Vec::new();
+        let path = Self::file_path(&mut buf.0, &mut spill, package_subpath, tag);
+        let Ok(contents) = sys::File::read_from(dir.fd(), path.as_bytes()) else {
+            return;
+        };
+        let named = if Self::in_bun_tag(tag) {
+            BunTag::parse(&contents).patch
+        } else {
+            PackageJSONVersionChecker::leading_patch_hash(&contents).unwrap_or(b"")
+        };
+        let Some(digits) = Self::patch_hash_digits(named) else {
+            return;
+        };
+        if patch.is_some_and(|patch| Self::names_patch(named, patch)) {
+            return;
+        }
+        let marker = [crate::bun_hash_tag, digits].concat();
+        let marker =
+            path::resolve_path::join_z::<path::platform::Posix>(&[package_subpath, &marker]);
+        let _ = sys::unlinkat(dir.fd(), marker);
+    }
+
+    /// Whether the patch file that bun.lock lists under `name_and_version_hash` has a section for the file `added` of the package.
+    #[cold]
+    pub(crate) fn patch_file_adds(
+        lockfile: &crate::lockfile::Lockfile,
+        name_and_version_hash: u64,
+        added: &[u8],
+    ) -> bool {
+        let Some(patch) = lockfile.patched_dependencies.get(&name_and_version_hash) else {
+            return false;
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut spill = Vec::new();
+        let path = resolve_patchfile_path(
+            &mut buf.0,
+            &mut spill,
+            FileSystem::instance().top_level_dir(),
+            patch.path.slice(&lockfile.buffers.string_bytes),
+        );
+        let Ok(contents) = sys::File::read_from(Fd::cwd(), path.as_bytes()) else {
+            return false;
+        };
+        let header_end = [b" b/".as_slice(), added].concat();
+        let mut rest = contents.as_slice();
+        while let Some(at) = strings::index_of(rest, &header_end) {
+            let line = strings::last_index_of_char(&rest[..at], b'\n').map_or(0, |end| end + 1);
+            let after = &rest[at + header_end.len()..];
+            if rest[line..at].starts_with(b"diff --git ")
+                && matches!(after.first(), None | Some(b'\n' | b'\r'))
+            {
+                return true;
+            }
+            rest = after;
+        }
+        false
+    }
+
+    /// `contents` of [`Self::file`] with `name` in them. `None` when they hold it already, or are a package.json whose root is no object.
+    fn stamped(tag: ResolutionTag, contents: &[u8], name: &[u8]) -> Option<Vec<u8>> {
+        if Self::in_bun_tag(tag) {
+            let bun_tag = BunTag::parse(contents);
+            return (bun_tag.patch != name).then(|| [bun_tag.resolved, b"\n", name].concat());
+        }
+        if PackageJSONVersionChecker::leading_patch_hash(contents) == Some(name) {
+            return None;
+        }
+        PackageJSONVersionChecker::with_patch_hash(contents, name)
+    }
+
+    /// The contents of a file and its permission bits.
+    fn read(dir: Fd, path: &ZStr) -> sys::Result<(Vec<u8>, sys::Mode)> {
+        let file = sys::File::openat(dir, path.as_bytes(), sys::O::RDONLY, 0)?;
+        let mode = (file.stat()?.st_mode as sys::Mode) & 0o777;
+        Ok((file.read_to_end()?, mode))
+    }
+
+    /// A new file with the permission bits `mode`.
+    pub(crate) fn create_file(dir: Fd, path: &[u8], mode: sys::Mode) -> sys::Result<sys::File> {
+        let flags = sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL;
+        let file = sys::File::openat(dir, path, flags, mode)?;
+        // The umask cut the mode. On Windows `openat` took it, and `fchmod` wants a descriptor of libuv.
+        #[cfg(not(windows))]
+        let _ = sys::fchmod(file.handle(), mode);
+        Ok(file)
+    }
+
+    /// Puts `bytes` in place of the file at `path` of `dir`: a new file in the same folder, renamed over the old one. The old file can be the file of the cache, through a hard link or a symlink, and it stays whole when a step fails. The new file has the prefix of a marker until it is renamed: if a kill leaves it there, `bun patch --commit` does not take it for a file of the package, and the next install links the package again.
+    fn replace_file(dir: Fd, path: &ZStr, bytes: &[u8], mode: sys::Mode) -> sys::Result<()> {
+        let mut random = [0u8; 8];
+        bun_boringssl_sys::rand_bytes(&mut random);
+        let mut hex = [0u8; 16];
+        let random = bun_core::fmt::u64_hex_var_lower(&mut hex, u64::from_ne_bytes(random));
+        let folder = &path.as_bytes()[..path.len() - path::basename(path.as_bytes()).len()];
+        let temp = ZBox::from_vec([folder, crate::bun_hash_tag, random, b".tmp"].concat());
+        let file = Self::create_file(dir, temp.as_bytes(), mode)?;
+        let written = file.write_all(bytes);
+        // Windows renames no open file.
+        drop(file);
+        let replaced = written.and_then(|()| sys::renameat(dir, &temp, dir, path));
+        if replaced.is_err() {
+            let _ = sys::unlinkat(dir, &temp);
+        }
+        replaced
+    }
+
+    /// [`Self::file`] of the copy in `folder` without what `bun install` wrote there to name a patch, and the permission bits of that file. `None` when it wrote nothing.
+    pub(crate) fn without_name(
+        folder: &[u8],
+        unpatched_folder: &[u8],
+        tag: ResolutionTag,
+    ) -> Option<(Vec<u8>, sys::Mode)> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut spill = Vec::new();
+        let path = Self::file_path(&mut buf.0, &mut spill, folder, tag);
+        let (contents, mode) = Self::read(Fd::cwd(), path).ok()?;
+        if Self::in_bun_tag(tag) {
+            let bun_tag = BunTag::parse(&contents);
+            return (!bun_tag.patch.is_empty()).then(|| (bun_tag.resolved.to_vec(), mode));
+        }
+        let path = Self::file_path(&mut buf.0, &mut spill, unpatched_folder, tag);
+        let unpatched = sys::File::read_from(Fd::cwd(), path.as_bytes()).unwrap_or_default();
+        // A key that the unpatched package holds too was published with it.
+        let without_name = PackageJSONVersionChecker::without_patch_hashes(&contents, &unpatched);
+        without_name.map(|without_name| (without_name, mode))
+    }
+
+    /// Names `patch` in the installed copy of a package at `package_subpath` of `dir`. Not for a cache folder: `PatchTask::apply` leaves those without a name. A copy that gets no name here stays installed, and the next install names it: `PackageInstall::name_patch`.
+    #[cold]
+    pub(crate) fn write(dir: Fd, package_subpath: &[u8], tag: ResolutionTag, patch: Patch) {
+        let Some(name) = Self::name(tag, patch) else {
+            return;
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut spill = Vec::new();
+        let path = Self::file_path(&mut buf.0, &mut spill, package_subpath, tag);
+        let written = Self::read(dir, path).and_then(|(contents, mode)| {
+            match Self::stamped(tag, &contents, name.as_slice()) {
+                Some(stamped) => Self::replace_file(dir, path, &stamped, mode),
+                None => Ok(()),
+            }
+        });
+        if let Err(err) = written
+            && PackageManager::verbose_install()
+        {
+            bun_core::warn!(
+                "failed to write the patch hash into {}: {}",
+                BStr::new(path.as_bytes()),
+                err
+            );
+        }
+    }
+}
+
+use crate::Integrity;
 use crate::PreinstallState;
+use crate::ResolutionTag;
+use crate::bun_json::PackageJSONVersionChecker;
 use crate::network_task::Authorization;
-use crate::package_install::{InstallResult, Method as InstallMethod};
+use crate::package_install::{BunTag, InstallResult, Method as InstallMethod, Patch};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager_task::Id as TaskId;

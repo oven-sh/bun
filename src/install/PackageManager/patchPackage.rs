@@ -18,7 +18,7 @@ use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry 
 use crate::isolated_install::{FileCopier, build_whole_store};
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::{self as lockfile, Lockfile, reachable, tree};
-use crate::package_install::{StagingPath, rename_staging_into_place};
+use crate::package_install::{Patch, StagingPath, rename_staging_into_place};
 use crate::package_installer::alias_is_safe_install_target;
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::options::{Do, LogLevel, PatchFeatures};
@@ -27,6 +27,7 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory, is_package_in_cache_at,
 };
 use crate::package_manager_real::populate_package_cache::download_pinned_packages;
+use crate::patch_install::PatchStamp;
 use crate::resolution::append_without_url_credentials;
 use crate::{DependencyID, PackageID, PatchTask, Resolution, ResolutionTag, initialize_store};
 
@@ -524,6 +525,9 @@ pub fn do_patch_commit(
     let old_folder =
         resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
     let new_folder = real_folder(&manager.lockfile, &cache_path, &target.folder, false);
+    let stamp_file: &[u8] = PatchStamp::file(pkg.resolution.tag);
+    let unstamped = PatchStamp::without_name(&new_folder, &old_folder, pkg.resolution.tag)
+        .map(|(contents, mode)| (stamp_file, contents, mode));
     make_bins_executable(
         &manager.lockfile,
         &pkg,
@@ -532,7 +536,8 @@ pub fn do_patch_commit(
         &new_folder,
     );
 
-    let Some(patchfile_contents) = diff_against_cache(manager, &old_folder, &new_folder) else {
+    let Some(patchfile_contents) = diff_against_cache(manager, &old_folder, &new_folder, unstamped)
+    else {
         Global::crash();
     };
 
@@ -702,6 +707,17 @@ fn copy_at_link_position(linker: NodeLinker, folder: Vec<u8>) -> Option<Vec<u8>>
     (linker == NodeLinker::Isolated && is_link_position(&folder)).then_some(folder)
 }
 
+/// `node_modules/.bun/<entry>`, links resolved, when `folder` is inside that entry.
+fn store_entry_of(folder: &[u8]) -> Option<Vec<u8>> {
+    use resolve_path::{ParentEqual, is_parent_or_equal};
+    let store = resolve_links(b"node_modules/.bun").ok()?;
+    if is_parent_or_equal(&store, folder) != ParentEqual::Parent {
+        return None;
+    }
+    let entry = strings::tokenize_any(&folder[store.len()..], b"/\\").next()?;
+    Some(resolve_path::join::<platform::Auto>(&[&store, entry]).to_vec())
+}
+
 /// Applies the patch to a scratch copy of the package, the way an install would. On failure, prints
 /// an error and returns `false`.
 fn patch_applies(
@@ -743,6 +759,7 @@ fn diff_against_cache(
     manager: &mut PackageManager,
     old_folder: &[u8],
     new_folder: &[u8],
+    unstamped: Option<(&[u8], Vec<u8>, sys::Mode)>,
 ) -> Option<Vec<u8>> {
     let mut cwdbuf = bun_paths::path_buffer_pool::get();
     let cwd = match sys::getcwd_z(&mut cwdbuf) {
@@ -765,7 +782,7 @@ fn diff_against_cache(
         return None;
     };
 
-    let _hidden = match HiddenFromDiff::new(old_folder, new_folder) {
+    let hidden = match HiddenFromDiff::new(old_folder, new_folder) {
         Ok(hidden) => hidden,
         Err(e) => {
             Output::err(
@@ -776,15 +793,79 @@ fn diff_against_cache(
             return None;
         }
     };
+    let event_loop = &mut manager.event_loop;
+    let diff = git_diff(event_loop, cwd, git, [old_folder, new_folder], None);
+    drop(hidden);
+    let mut diff = diff?;
 
+    // No file of the copy is written for the diff. The section of the file that names the patch comes from a copy of that file without the name.
+    if let Some((file, contents, mode)) = unstamped {
+        let scratch = TempTree(temp_sibling(new_folder));
+        if let Err(e) = write_scratch_file(&scratch.0, file, &contents, mode) {
+            Output::err(
+                e,
+                "failed to write <b>{s}<r> in <b>{s}<r>",
+                (bstr::BStr::new(file), bstr::BStr::new(&scratch.0)),
+            );
+            return None;
+        }
+        let section = git_diff(event_loop, cwd, git, [old_folder, &scratch.0], Some(file))?;
+        replace_diff_of_file(&mut diff, file, &section);
+    }
+    Some(diff)
+}
+
+/// Makes `folder` and writes `contents` to `file` in it.
+fn write_scratch_file(
+    folder: &[u8],
+    file: &[u8],
+    contents: &[u8],
+    mode: sys::Mode,
+) -> sys::Result<()> {
+    Fd::cwd().make_path(folder)?;
+    let path = resolve_path::join::<platform::Auto>(&[folder, file]);
+    // git compares the executable bit.
+    PatchStamp::create_file(Fd::cwd(), path, mode)?.write_all(contents)
+}
+
+/// Replaces the section of `file` in the output of `git diff` with `section`. The section is found by the new side of its header: git quotes the old side when the path of the cache has a `"` or a control character.
+fn replace_diff_of_file(diff: &mut Vec<u8>, file: &[u8], section: &[u8]) {
+    let new_side = [b" b/".as_slice(), file, b"\n"].concat();
+    let mut from = 0;
+    let (start, header_end) = loop {
+        let Some(found) = strings::index_of(&diff[from..], &new_side) else {
+            return;
+        };
+        let found = from + found;
+        let line = strings::last_index_of_char(&diff[..found], b'\n').map_or(0, |end| end + 1);
+        if diff[line..].starts_with(b"diff --git ") {
+            break (line, found + new_side.len() - 1);
+        }
+        from = found + 1;
+    };
+    let end = strings::index_of(&diff[header_end..], b"\ndiff --git ")
+        .map_or(diff.len(), |next| header_end + next + 1);
+    diff.splice(start..end, section.iter().copied());
+}
+
+/// `git diff --no-index` of two folders, or of `file` in both. `None` after a printed error.
+fn git_diff(
+    event_loop: &mut bun_event_loop::AnyEventLoop,
+    cwd: &ZStr,
+    git: &ZStr,
+    folders: [&[u8]; 2],
+    file: Option<&[u8]>,
+) -> Option<Vec<u8>> {
     // The `./` that `from_cwd` adds puts a `/./` in the folder prefixes that are stripped from the
     // diff afterwards, which no path inside the package can match.
-    let paths = bun_patch::git_diff_preprocess_paths(
-        &from_cwd(cwd.as_bytes(), old_folder),
-        &from_cwd(cwd.as_bytes(), new_folder),
+    let folders = bun_patch::git_diff_preprocess_paths(
+        &from_cwd(cwd.as_bytes(), folders[0]),
+        &from_cwd(cwd.as_bytes(), folders[1]),
     );
-    let (opts, _envp_guard) =
-        bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
+    let files = file
+        .map(|file| (folders.each_ref()).map(|folder| [folder.as_slice(), b"/", file].concat()));
+    let paths = files.as_ref().unwrap_or(&folders);
+    let (opts, _envp_guard) = bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, event_loop);
 
     let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
         Err(e) => {
@@ -798,7 +879,7 @@ fn diff_against_cache(
         }
     };
 
-    match bun_patch::diff_post_process(&mut spawn_result, &paths[0], &paths[1]) {
+    match bun_patch::diff_post_process(&mut spawn_result, &folders[0], &folders[1]) {
         Err(e) => {
             bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
             None
@@ -1026,6 +1107,14 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         &folder,
     );
 
+    // Outside the isolated store a patched copy names its patch, see `PatchStamp`. The cache folder that it is a copy of does not.
+    let names_patch = existing_patchfile_hash
+        .filter(|_| store_entry_of(&folder).is_none())
+        .map(|contents_hash| Patch {
+            contents_hash,
+            pinned: PatchStamp::pinned(&pkg.meta.integrity),
+        });
+
     // The package may be installed using the hard link method,
     // meaning that changes to the folder will also change the package in the cache.
     //
@@ -1035,6 +1124,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         &cache_path,
         cache_result.cache_dir_subpath.as_bytes(),
         &folder,
+        names_patch.map(|patch| (pkg.resolution.tag, patch)),
     ) {
         bun_core::pretty_error!(
             "<r><red>error<r>: error overwriting folder in node_modules: {}\n<r>",
@@ -1411,16 +1501,20 @@ impl Drop for TempTree {
     }
 }
 
-/// `folder` is never left half-written: the copy is created next to it and then renamed into place.
+/// `folder` is never left half-written: the copy is created next to it and then renamed into place. `names_patch`: the patch that the copy is to name.
 fn replace_with_cache_copy(
     cache_dir: Fd,
     cache_path: &[u8],
     cache_dir_subpath: &[u8],
     folder: &[u8],
+    names_patch: Option<(ResolutionTag, Patch)>,
 ) -> Result<(), crate::Error> {
     let cwd = Fd::cwd();
     let staging = TempTree(temp_sibling(folder));
     copy_cache_entry(cache_dir, cache_dir_subpath, &staging.0)?;
+    if let Some((tag, patch)) = names_patch {
+        PatchStamp::write(cwd, &staging.0, tag, patch);
+    }
 
     let old_path = temp_sibling(folder);
     let folder_z = ZBox::from_bytes(folder);

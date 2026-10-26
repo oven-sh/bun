@@ -665,28 +665,38 @@ fn parse_auto_quoted_string(
     }
 }
 
-/// Extracts the top-level `name` and `version` strings from a package.json.
+/// Two `u64` in hex with a `.` between them: the hash of the patch, and the bytes of the integrity that it is written for.
+pub const PATCH_HASH_MAX_LEN: usize = 16 + 1 + 16;
+
+/// Extracts the top-level `name` and `version` strings from a package.json, and the patch hash under its first key.
 pub struct PackageJSONVersionChecker<'a> {
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
 
     pub(crate) found_version_buf: [u8; 1024],
     pub(crate) found_name_buf: [u8; 1024],
+    found_patch_hash_buf: [u8; PATCH_HASH_MAX_LEN],
     found_name_len: usize,
     found_version_len: usize,
+    found_patch_hash_len: usize,
     pub has_found_name: bool,
     pub has_found_version: bool,
 }
 
 impl<'a> PackageJSONVersionChecker<'a> {
+    /// First key of the package.json of a patched package in a hoisted `node_modules`. `bun install` writes under it which patch the copy holds.
+    pub const PATCH_HASH_KEY: &'static [u8] = b"_bunPatchHash";
+
     pub fn init(source: &'a bun_ast::Source, log: &'a mut bun_ast::Log) -> Self {
         Self {
             source,
             log,
             found_version_buf: [0; 1024],
             found_name_buf: [0; 1024],
+            found_patch_hash_buf: [0; PATCH_HASH_MAX_LEN],
             found_name_len: 0,
             found_version_len: 0,
+            found_patch_hash_len: 0,
             has_found_name: false,
             has_found_version: false,
         }
@@ -708,13 +718,28 @@ impl<'a> PackageJSONVersionChecker<'a> {
         &self.found_version_buf[..self.found_version_len]
     }
 
-    /// Parse the document and record its first top-level string-valued `name` and `version`.
+    /// The string under [`Self::PATCH_HASH_KEY`]. Empty unless that is the first key and holds 1 to 33 bytes.
+    #[inline]
+    pub fn found_patch_hash(&self) -> &[u8] {
+        &self.found_patch_hash_buf[..self.found_patch_hash_len]
+    }
+
+    /// Parse the document and record its first top-level string-valued `name` and `version`, and the patch hash under its first key.
     pub fn parse(&mut self) -> crate::Result<()> {
         let parsed = parse_to_rows(self.source, self.log, PKG_JSON_CHECKER_OPTS, false)?;
         let js_ast::expr::Data::EObjectJSON(obj) = &parsed.root.data else {
             return Ok(());
         };
-        for row in obj.get().properties() {
+        let rows = obj.get().properties();
+        if let Some(first) = rows.first()
+            && first.key.slice() == Self::PATCH_HASH_KEY
+            && let Some(patch_hash) = first.value.as_str()
+            && is_patch_hash(patch_hash)
+        {
+            self.found_patch_hash_buf[..patch_hash.len()].copy_from_slice(patch_hash);
+            self.found_patch_hash_len = patch_hash.len();
+        }
+        for row in rows {
             let Some(value) = row.value.as_str() else {
                 continue;
             };
@@ -735,6 +760,112 @@ impl<'a> PackageJSONVersionChecker<'a> {
         }
         Ok(())
     }
+
+    /// `contents` with `hash` under [`Self::PATCH_HASH_KEY`] as the new first key of the root object. `None` when the root is no object.
+    pub fn with_patch_hash(contents: &[u8], hash: &[u8]) -> Option<Vec<u8>> {
+        let open = skip_ws_and_comments(contents, 0)?;
+        if contents[open] != b'{' {
+            return None;
+        }
+        let first = skip_ws_and_comments(contents, open + 1)?;
+        let mut out =
+            Vec::with_capacity(contents.len() + Self::PATCH_HASH_KEY.len() + hash.len() + 6);
+        out.extend_from_slice(&contents[..=open]);
+        out.push(b'"');
+        out.extend_from_slice(Self::PATCH_HASH_KEY);
+        out.extend_from_slice(b"\":\"");
+        out.extend_from_slice(hash);
+        out.push(b'"');
+        if contents[first] != b'}' {
+            out.push(b',');
+        }
+        out.extend_from_slice(&contents[open + 1..]);
+        Some(out)
+    }
+
+    /// [`Self::found_patch_hash`] without a parse of the rest of the file.
+    pub fn leading_patch_hash(contents: &[u8]) -> Option<&[u8]> {
+        root_members(contents).next()?.patch_hash(contents)
+    }
+
+    /// `contents` without each patch hash of the root object that `unpatched` does not hold too. `None` when there is none. A formatter can move the key away from the first position.
+    pub fn without_patch_hashes(contents: &[u8], unpatched: &[u8]) -> Option<Vec<u8>> {
+        let mut out: Option<Vec<u8>> = None;
+        let mut copied = 0;
+        for member in root_members(contents) {
+            let Some(patch_hash) = member.patch_hash(contents) else {
+                continue;
+            };
+            if root_members(unpatched).any(|kept| kept.patch_hash(unpatched) == Some(patch_hash)) {
+                continue;
+            }
+            let out = out.get_or_insert_with(|| Vec::with_capacity(contents.len()));
+            out.extend_from_slice(&contents[copied..member.start]);
+            // The last member has no `,` of its own, so the one before it goes.
+            if member.end == member.value.end && out.last() == Some(&b',') {
+                out.pop();
+            }
+            copied = member.end;
+        }
+        let mut out = out?;
+        out.extend_from_slice(&contents[copied..]);
+        Some(out)
+    }
+}
+
+fn is_patch_hash(value: &[u8]) -> bool {
+    (1..=PATCH_HASH_MAX_LEN).contains(&value.len())
+}
+
+/// A member of the root object of a document.
+struct RootMember {
+    /// After the `{`, or after the `,` of the member before.
+    start: usize,
+    /// Between the quotes.
+    key: core::ops::Range<usize>,
+    value: core::ops::Range<usize>,
+    /// After the `,` of the member. Without one, the end of the value.
+    end: usize,
+}
+
+impl RootMember {
+    /// The string of a [`PackageJSONVersionChecker::PATCH_HASH_KEY`] member that `PackageJSONVersionChecker::parse` takes for a patch hash.
+    fn patch_hash<'a>(&self, contents: &'a [u8]) -> Option<&'a [u8]> {
+        if contents[self.key.clone()] != *PackageJSONVersionChecker::PATCH_HASH_KEY {
+            return None;
+        }
+        let [b'"' | b'\'', patch_hash @ .., _] = &contents[self.value.clone()] else {
+            return None;
+        };
+        is_patch_hash(patch_hash).then_some(patch_hash)
+    }
+}
+
+/// The members of the root object of `contents`, up to the first one that does not parse.
+fn root_members(contents: &[u8]) -> impl Iterator<Item = RootMember> + '_ {
+    let mut next = skip_ws_and_comments(contents, 0)
+        .filter(|&open| contents[open] == b'{')
+        .map(|open| open + 1);
+    core::iter::from_fn(move || {
+        let start = next.take()?;
+        let key = skip_ws_and_comments(contents, start)?;
+        let after_key = skip_string_token(contents, key)?;
+        let colon = skip_ws_and_comments(contents, after_key)?;
+        if contents[colon] != b':' {
+            return None;
+        }
+        let value = skip_ws_and_comments(contents, colon + 1)?;
+        let after_value = skip_json_value(contents, value)?;
+        next = skip_ws_and_comments(contents, after_value)
+            .filter(|&comma| contents[comma] == b',')
+            .map(|comma| comma + 1);
+        Some(RootMember {
+            start,
+            key: key + 1..after_key - 1,
+            value: value..after_value,
+            end: next.unwrap_or(after_value),
+        })
+    })
 }
 
 const PKG_JSON_CHECKER_OPTS: JSONOptions = JSONOptions {
@@ -911,8 +1042,7 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
                     b'}' | b']' => {
                         depth -= 1;
                         if depth == 0 {
-                            debug_assert_eq!(contents[q], close);
-                            return Some(q + 1);
+                            return (contents[q] == close).then_some(q + 1);
                         }
                         q += 1;
                     }

@@ -1370,7 +1370,8 @@ it("names the routes of one directory the same through a link to it, above it an
 
 // Bun.resolveSync leaves the path of a file it finds in the resolver's cache, and a router that is made
 // takes the file of a route from there. It finds three here: a link to a file, a file through a link to
-// `dir`, and a file through a link below `dir`.
+// `dir`, and a file through a link below `dir`. The routers of the paths it went by give the three by
+// where they are, as every other router does, or the three by the paths they were found by.
 it("names the routes and their files the same when Bun.resolveSync found some of the files first", async () => {
   // What a router gives when it is made first.
   const routed = {
@@ -1390,14 +1391,45 @@ it("names the routes and their files the same when Bun.resolveSync found some of
       "/sub/to-a is site/pages/a.tsx",
     ],
   };
-  expect(await runLinkedDirsFixture("resolver first")).toEqual({
+  // The same, with each of the three files by the path it was found by.
+  const asFound = {
+    "site/pages": {
+      matches: [
+        "/a is /a in site/pages/a.tsx, src a.tsx",
+        "/sub/7 is /sub/[id] in site/pages/sub/[id].tsx, src sub/[id].tsx",
+        "/linked/deep/d is /linked/deep/d in shared/deep/d.tsx, src ../../shared/deep/d.tsx",
+        "/sub/to-a is /sub/to-a in site/pages/sub/to-a.tsx, src sub/to-a.tsx",
+      ],
+      routes: [
+        "/ is site/pages/index.tsx",
+        "/a is site/pages/a.tsx",
+        "/linked/c is site/pages/linked/c.tsx",
+        "/linked/deep/d is shared/deep/d.tsx",
+        "/sub/[id] is site/pages/sub/[id].tsx",
+        "/sub/b is site/pages/sub/b.tsx",
+        "/sub/to-a is site/pages/sub/to-a.tsx",
+      ],
+    },
+    p: {
+      matches: routed.matches,
+      routes: [
+        "/ is p/index.tsx",
+        "/a is site/pages/a.tsx",
+        "/linked/c is shared/c.tsx",
+        "/linked/deep/d is shared/deep/d.tsx",
+        "/sub/[id] is site/pages/sub/[id].tsx",
+        "/sub/b is site/pages/sub/b.tsx",
+        "/sub/to-a is site/pages/a.tsx",
+      ],
+    },
+  };
+  const { "site/pages": pages, p, ...rest } = await runLinkedDirsFixture("resolver first");
+  expect(rest).toEqual({
     resolved: [
       "./site/pages/sub/to-a.tsx is site/pages/a.tsx",
       "./p/index.tsx is site/pages/index.tsx",
       "./site/pages/linked/c is shared/c.tsx",
     ],
-    "site/pages": routed,
-    p: routed,
     "pages-by-link": routed,
     "site-by-link/pages": routed,
     "site/pages after reload(), with three files more": [
@@ -1414,6 +1446,7 @@ it("names the routes and their files the same when Bun.resolveSync found some of
     ],
     "site/pages after reload(), with them removed": routed.routes,
   });
+  expect({ "site/pages": pages, p }).toBeOneOf([{ "site/pages": routed, p: routed }, asFound]);
 });
 
 // The directory fits a path buffer, and so does its index.tsx. The other file fits only through the

@@ -672,9 +672,9 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
     });
   });
 
-  test("a reader taken in the tick of pause() reads stdin", async () => {
+  test.each(["pause()", "destroy()"])("a reader taken in the tick of %s reads stdin", async call => {
     const script = `
-      process.stdin.pause();
+      process.stdin.${call};
       const reader = Bun.stdin.stream().getReader();
       console.log("READY");
       (async () => {

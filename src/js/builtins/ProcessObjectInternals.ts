@@ -315,13 +315,20 @@ export function getStdinStream(
     }
   });
 
+  // 'close' comes a tick or more after the call, and so does _destroy() while the stream isn't constructed yet.
+  let wasHeldWhenDestroyed = false;
+  const originalDestroy = stream.destroy;
+  stream.destroy = function (err, callback) {
+    if (!this.destroyed) wasHeldWhenDestroyed = isHeldByAnotherReader();
+    return originalDestroy.$call(this, err, callback);
+  };
+
   stream.on("close", () => {
     if (!stream_destroyed) {
       stream_destroyed = true;
-      const wasHeldByAnotherReader = isHeldByAnotherReader();
       process.nextTick(() => {
         stream.destroy();
-        disown(wasHeldByAnotherReader);
+        disown(wasHeldWhenDestroyed);
       });
     }
   });

@@ -40,6 +40,11 @@ pub struct Options {
     pub(crate) did_override_default_scope: bool,
     /// `--registry` was given, so `publishConfig.registry` is ignored (as in npm).
     pub(crate) registry_from_command_line: bool,
+    /// A config file names a default registry that is not npm's, whatever replaced it later.
+    pub(crate) config_names_another_registry: bool,
+    /// The environment has `NPM_CONFIG_REGISTRY` or `npm_config_registry`, so every child process
+    /// has it too. A `.env` file counts: its keys reach the same children.
+    pub(crate) npm_registry_in_env: bool,
     pub scope: Npm::registry::Scope,
 
     pub(crate) registries: Npm::registry::Map,
@@ -135,6 +140,8 @@ impl Default for Options {
             bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
             registry_from_command_line: false,
+            config_names_another_registry: false,
+            npm_registry_in_env: false,
             // Always assigned in `load()` before read.
             scope: Npm::registry::Scope::default(),
             registries: Npm::registry::Map::default(),
@@ -336,6 +343,22 @@ fn fill_scope_from_url_auth(url_auth: &[Npm::registry::UrlAuth], scope: &mut Npm
     }
 }
 
+/// Holds the value that bun wrote into `npm_config_registry` for a lifecycle script. The variable
+/// is for the other package managers that the script starts: a bun keeps its own configuration.
+const SCRIPT_REGISTRY_MARKER: &[u8] = b"BUN_INTERNAL_NPM_CONFIG_REGISTRY";
+
+/// Removes the `npm_config_registry` that the bun above this one wrote. This runs before an env
+/// file is read, so that the file can name the registry as it does without a bun above.
+pub(crate) fn drop_registry_of_parent(env: &mut DotEnvLoader) {
+    let Some(written) = env.get(SCRIPT_REGISTRY_MARKER) else {
+        return;
+    };
+    if env.get(b"npm_config_registry") == Some(written) {
+        env.map.remove(b"npm_config_registry");
+    }
+    env.map.remove(SCRIPT_REGISTRY_MARKER);
+}
+
 /// Same scheme, host and effective port (some registries spell out `:443` in `dist.tarball`).
 fn same_origin(url: &bun_url::URL, base: &bun_url::URL) -> bool {
     !base.hostname.is_empty()
@@ -359,6 +382,12 @@ impl Options {
         if has_userinfo && scope.has_credentials() {
             return Ok(scope);
         }
+        // A credential for this URL that resolved to nothing is not copied below.
+        scope.credential_written |= core::iter::once(&self.scope)
+            .chain(self.registries.values())
+            .any(|configured| {
+                configured.url_hash == scope.url_hash && configured.credential_written
+            });
         if !scope.has_credentials() {
             let configured = core::iter::once(&self.scope)
                 .chain(self.registries.values())
@@ -466,6 +495,35 @@ impl Options {
         }
 
         Ok(())
+    }
+
+    /// The default registry for the `npm_config_registry` of a lifecycle script. As in npm, npm's
+    /// own registry is written only over another one that a config file names. `None` also for a
+    /// credential or a CA in bun's configuration, which the script's child does not get.
+    fn registry_for_scripts(&self) -> Option<&[u8]> {
+        if self.npm_registry_in_env
+            || !(self.did_override_default_scope || self.config_names_another_registry)
+            || self.scope.has_credentials()
+            || self.scope.credential_written
+            || !self.ca.is_empty()
+            || !self.ca_file_name.is_empty()
+        {
+            return None;
+        }
+        self.scope.href_without_secrets()
+    }
+
+    /// Gives a lifecycle script the default registry, for a package manager that it starts outside
+    /// the project.
+    pub(crate) fn put_registry_for_scripts(
+        &self,
+        script_env: &mut bun_dotenv::Map,
+    ) -> Result<(), AllocError> {
+        let Some(registry) = self.registry_for_scripts() else {
+            return Ok(());
+        };
+        script_env.put(b"npm_config_registry", registry)?;
+        script_env.put(SCRIPT_REGISTRY_MARKER, registry)
     }
 
     /// Returns the name of the setting that turns provenance on, or `None` if provenance is off. As
@@ -934,6 +992,8 @@ impl Options {
         // The default registry from the config files, before the environment or `--registry`
         // replaces it.
         let configured = self.scope.clone();
+        self.config_names_another_registry =
+            configured.url_hash != *Npm::registry::DEFAULT_URL_HASH;
 
         // technically, npm_config is case in-sensitive
         {
@@ -945,6 +1005,13 @@ impl Options {
 
             for registry_key in REGISTRY_KEYS {
                 if let Some(registry_) = env.get(registry_key) {
+                    // Auto-install reads the environment of the script that it runs in, where
+                    // `drop_registry_of_parent` did not run.
+                    if registry_key != REGISTRY_KEYS[0]
+                        && env.get(SCRIPT_REGISTRY_MARKER) == Some(registry_)
+                    {
+                        continue;
+                    }
                     // An unusable value fails when it's used. It never falls through to the next
                     // layer.
                     let registry_ = bun_core::strings::trim(registry_, b" \t\r\n");
@@ -957,6 +1024,12 @@ impl Options {
                 }
             }
         }
+
+        // No other program reads `BUN_CONFIG_REGISTRY`.
+        self.npm_registry_in_env = [b"NPM_CONFIG_REGISTRY".as_slice(), b"npm_config_registry"]
+            .into_iter()
+            .filter_map(|key| env.get(key))
+            .any(|registry| !bun_core::strings::trim(registry, b" \t\r\n").is_empty());
 
         if !cli.registry.is_empty() {
             self.scope =

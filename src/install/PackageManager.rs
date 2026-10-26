@@ -2389,6 +2389,7 @@ pub fn init(
     if !cli.env_files.is_empty() {
         // Load these before the cwd changes, because their paths are relative to it.
         env.load_process()?;
+        package_manager_options::drop_registry_of_parent(env);
         env.load(
             &dot_env::DirEntryKeys(Vec::new()),
             cli.env_files,
@@ -2676,6 +2677,7 @@ pub fn init(
     };
 
     env.load_process()?;
+    package_manager_options::drop_registry_of_parent(env);
     // This is read before the project's `.env` files are loaded, so they cannot set it.
     let env_ignores_scripts = env_ignores_scripts(env);
     if cli.env_files.is_empty() && !cli.no_env_file && !ctx.args.disable_default_env_files {

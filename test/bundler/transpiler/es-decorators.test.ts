@@ -1916,6 +1916,27 @@ describe("ES Decorators", () => {
       expect(stdout).toBe('[["own","p","p2","p3"],["outer","q"],null,1,[0,1]]\n');
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("a direct eval in the class also pins the private field of an undecorated accessor", async () => {
+      // The eval keeps every `#private` name of the class. A field the minifier
+      // renames next to them gets a one letter name, and all of those are taken.
+      const letters = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
+      using dir = tempDir("es-dec-accessor-eval", {
+        "entry.js": `
+          function f() {
+            class A { ${letters.map(letter => `#${letter} = 1;`).join(" ")} accessor #acc = 2; m() { return eval("this.#a") + this.#acc } }
+            return new A().m();
+          }
+          console.log(f());
+        `,
+      });
+      const build = await runIn(String(dir), ["build", "--minify-identifiers", "entry.js", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe("3\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {

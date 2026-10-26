@@ -248,10 +248,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// A new `#private` field that neither the class (`taken`) nor a class around it declares.
     fn accessor_storage_field(
         &mut self,
-        accessor_name: &'a [u8],
+        accessor: Ref,
         is_static: bool,
         taken: &mut BumpVec<'a, &'a [u8]>,
     ) -> Ref {
+        let accessor = &self.symbols[accessor.inner_index() as usize];
+        let accessor_name: &'a [u8] = accessor.original_name.slice();
+        let is_pinned = accessor.must_not_be_renamed();
         let mut name = self.bump_name3(accessor_name, b"_accessor_storage", b"");
         let mut suffix = 1u32;
         while taken.contains(&name) || self.enclosing_scope_declares(name) {
@@ -266,14 +269,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .as_bytes();
         }
         taken.push(name);
-        self.new_sym(
+        let storage = self.new_sym(
             if is_static {
                 js_ast::symbol::Kind::PrivateStaticField
             } else {
                 js_ast::symbol::Kind::PrivateField
             },
             name,
-        )
+        );
+        // A direct `eval` in the class pins its names, and a renamed name can get the spelling of one.
+        self.symbols[storage.inner_index() as usize].set_must_not_be_renamed(is_pinned);
+        storage
     }
 
     fn enclosing_scope_declares(&self, name: &[u8]) -> bool {
@@ -295,9 +301,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) -> [Property; 2] {
         let key = prop.key.expect("a class member has a key");
-        let accessor_name = self.private_key_name(prop).expect("the key is private");
+        let js_ast::ExprData::EPrivateIdentifier(accessor) = key.data else {
+            unreachable!("the key of an `accessor #x` is private");
+        };
+        let accessor_name: &'a [u8] = self.symbols[accessor.ref_.inner_index() as usize]
+            .original_name
+            .slice();
         let is_static = prop.flags.contains(Flags::Property::IsStatic);
-        let storage = self.accessor_storage_field(accessor_name, is_static, taken);
+        let storage = self.accessor_storage_field(accessor.ref_, is_static, taken);
 
         // The field would name an anonymous function after itself.
         let accessor_name = self.new_expr(E::EString::init(accessor_name), loc);
@@ -1733,8 +1744,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         effects
     }
 
-    /// `this.#field`
+    /// recordUsage + `this.#field`
     fn this_private(&mut self, field: Ref, loc: bun_ast::Loc) -> Expr {
+        self.record_usage(field);
         let target = self.new_expr(E::This {}, loc);
         let index = self.new_expr(E::PrivateIdentifier { ref_: field }, loc);
         self.new_expr(

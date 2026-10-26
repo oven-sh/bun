@@ -1409,14 +1409,19 @@ impl Terminal {
         let bytes = string_or_buffer.slice();
         let input_len = bytes.len();
 
-        if input_len == 0 {
-            return Ok(0);
-        }
-
         // The write side is gone, so queuing these bytes would only re-root the
         // wrapper below for a drain that cannot come.
-        if self.flags.get().contains(Flags::WRITER_DONE) {
+        let flags = self.flags.get();
+        if flags.intersects(Flags::CLOSED | Flags::WRITER_DONE) {
+            // Converting `data` can run user code that closes the terminal.
+            if flags.contains(Flags::CLOSED) {
+                return Err(global_object.throw(format_args!("Terminal is closed")));
+            }
             return Ok(input_len);
+        }
+
+        if input_len == 0 {
+            return Ok(0);
         }
 
         // Suppress drain firing from the synchronous on_write calls that

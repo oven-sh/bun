@@ -216,6 +216,106 @@ describe("Bun.Terminal", () => {
 
       expect(() => terminal.write(123 as any)).toThrow();
     });
+
+    // write() tests that the terminal is open, then converts a String object
+    // with ToString. That runs user code, which can close the terminal.
+    describe("String object data", () => {
+      const stringObject = (props: object): any => Object.assign(new String("unused"), props);
+      const closedError = { name: "Error", code: undefined, message: "Terminal is closed" };
+      const outcome = (write: () => number) => {
+        try {
+          return write();
+        } catch (e: any) {
+          return { name: e.name, code: e.code, message: e.message };
+        }
+      };
+      const close = (terminal: Bun.Terminal) => terminal.close();
+      const dispose = (terminal: Bun.Terminal) => void terminal[Symbol.asyncDispose]();
+      const closingData: [string, (terminal: Bun.Terminal) => void, (hook: (result: string) => string) => any][] = [
+        ["toString calls close()", close, hook => stringObject({ toString: () => hook("hello") })],
+        [
+          "toString of a String subclass calls close()",
+          close,
+          hook =>
+            new (class extends String {
+              toString() {
+                return hook("derived");
+              }
+            })("unused"),
+        ],
+        [
+          "toString calls close() and returns an empty string",
+          close,
+          hook => stringObject({ toString: () => hook("") }),
+        ],
+        ["toString calls [Symbol.asyncDispose]()", dispose, hook => stringObject({ toString: () => hook("hello") })],
+      ];
+
+      test.each(closingData)("throws when %s", (_, closeTerminal, makeData) => {
+        const terminal = new Bun.Terminal({});
+        let calls = 0;
+        const data = makeData(result => {
+          calls++;
+          closeTerminal(terminal);
+          return result;
+        });
+
+        const hook = outcome(() => terminal.write(data));
+        const onceClosed = outcome(() => terminal.write("x"));
+        expect({ hook, onceClosed, calls }).toEqual({ hook: closedError, onceClosed: closedError, calls: 1 });
+        expect(terminal.closed).toBe(true);
+      });
+
+      test("an exception from the hook wins over the closed error", () => {
+        const terminal = new Bun.Terminal({});
+        const data = stringObject({
+          toString() {
+            terminal.close();
+            throw new RangeError("from the hook");
+          },
+        });
+
+        expect(() => terminal.write(data)).toThrow(new RangeError("from the hook"));
+        expect(terminal.closed).toBe(true);
+      });
+
+      test("a closed terminal throws before it looks at the data", () => {
+        const terminal = new Bun.Terminal({});
+        terminal.close();
+        let calls = 0;
+        const data = stringObject({ toString: () => (calls++, "hello") });
+
+        for (const value of [data, undefined, 123]) {
+          expect(() => terminal.write(value)).toThrow("Terminal is closed");
+        }
+        expect(calls).toBe(0);
+      });
+
+      test("is written when the hook leaves the terminal open", async () => {
+        await using terminal = new Bun.Terminal({});
+        let calls = 0;
+        const data = stringObject({ toString: () => (calls++, "héllo") });
+
+        expect({ written: terminal.write(data), calls }).toEqual({ written: 6, calls: 1 });
+      });
+
+      // PTY EOF ends the writer but does not close the terminal: write() accepts
+      // the bytes and drops them. Not on Windows: the child's exit leaves the
+      // writer open there, and the first write() fails with EPIPE.
+      test.skipIf(isWindows)("after PTY EOF, only a hook that closes the terminal makes write() throw", async () => {
+        const { promise: ptyClosed, resolve } = Promise.withResolvers<void>();
+        const proc = Bun.spawn(["sh", "-c", "exit 0"], { terminal: { data() {}, exit: () => resolve() } });
+        const terminal = proc.terminal!;
+        await proc.exited;
+        await ptyClosed;
+
+        expect(terminal.closed).toBe(false);
+        const plain = stringObject({ toString: () => "abc" });
+        expect([terminal.write("x"), terminal.write(""), terminal.write(plain)]).toEqual([1, 0, 3]);
+        const closing = stringObject({ toString: () => (terminal.close(), "hello") });
+        expect(() => terminal.write(closing)).toThrow("Terminal is closed");
+      });
+    });
   });
 
   describe("resize", () => {

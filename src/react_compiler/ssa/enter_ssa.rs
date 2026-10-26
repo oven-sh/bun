@@ -683,7 +683,7 @@ fn enter_ssa_impl(
 
             // Map context places for function expressions before other operands
             if let Some(fid) = func_expr_id {
-                let mut context = AstAlloc::take(&mut env.functions[fid.0 as usize].context);
+                let mut context = std::mem::take(&mut env.functions[fid.0 as usize].context);
                 for place in &mut context {
                     place.identifier = builder.get_place(place, env);
                 }

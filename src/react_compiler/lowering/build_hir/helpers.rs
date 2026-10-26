@@ -15,7 +15,7 @@ pub(super) fn arena_str(bytes: &[u8]) -> StoreStr {
     StoreStr::new(ast::data_store_dupe_str(bytes))
 }
 
-struct WriteBytes<'a>(&'a mut HirVec<u8>);
+struct WriteBytes<'a>(&'a mut Vec<u8>);
 impl core::fmt::Write for WriteBytes<'_> {
     #[inline]
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
@@ -286,7 +286,7 @@ pub(super) fn lower_arguments(
     builder: &mut HirBuilder,
     args: &[Expr],
 ) -> Result<HirVec<PlaceOrSpread>, CompilerError> {
-    let mut result = AstAlloc::vec();
+    let mut result = Vec::new();
     for arg in args {
         match &arg.data {
             Data::ESpread(spread) => {
@@ -605,7 +605,7 @@ pub(super) fn lower_assignment(
         }
 
         Data::EArray(pattern) => {
-            let mut items: HirVec<ArrayPatternElement> = AstAlloc::vec();
+            let mut items: HirVec<ArrayPatternElement> = Vec::new();
             let mut followups: Vec<(Place, &Expr)> = Vec::new();
 
             let force_temporaries = if kind == InstructionKind::Reassign {
@@ -752,7 +752,7 @@ pub(super) fn lower_assignment(
         }
 
         Data::EObject(pattern) => {
-            let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
+            let mut properties: HirVec<ObjectPropertyOrSpread> = Vec::new();
             let mut followups: Vec<(Place, &Expr, Option<&Expr>)> = Vec::new();
 
             let config = &builder.environment().config;
@@ -1159,10 +1159,10 @@ pub(super) fn lower_object_property_key(
             Ok(Some(ObjectPropertyKey::String { name }))
         }
         Data::ENumber(n) if !computed => {
-            let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(24);
+            let mut buf: Vec<u8> = Vec::with_capacity(24);
             let _ = core::fmt::write(&mut WriteBytes(&mut buf), format_args!("{}", n.value()));
             Ok(Some(ObjectPropertyKey::Identifier {
-                name: StoreStr::new(buf.leak()),
+                name: arena_str(&buf),
             }))
         }
         _ if computed => {

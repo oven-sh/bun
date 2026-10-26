@@ -259,7 +259,7 @@ fn new_block(id: BlockId, kind: BlockKind) -> WipBlock {
     WipBlock {
         id,
         kind,
-        instructions: AstAlloc::vec(),
+        instructions: Vec::new(),
     }
 }
 
@@ -343,7 +343,7 @@ impl<'h> HirBuilder<'h> {
             targets_with_defaults: host.targets_with_defaults(),
             parentheses: host.parentheses(),
             exception_handler_stack: Vec::new(),
-            instruction_table: AstAlloc::vec(),
+            instruction_table: Vec::new(),
             function_scope,
             component_scope,
             scope_stack: vec![function_scope],
@@ -512,7 +512,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: wip.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
+                phis: Vec::new(),
             },
         );
 
@@ -538,7 +538,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: wip.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
+                phis: Vec::new(),
             },
         );
     }
@@ -564,7 +564,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: completed_wip.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
+                phis: Vec::new(),
             },
         );
         Ok(())
@@ -785,7 +785,7 @@ impl<'h> HirBuilder<'h> {
             entry: self.entry,
         };
 
-        let mut instructions = AstAlloc::take(&mut self.instruction_table);
+        let mut instructions = std::mem::take(&mut self.instruction_table);
 
         let unordered = reverse_postorder_blocks(&mut hir)?;
 

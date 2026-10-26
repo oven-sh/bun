@@ -7,9 +7,9 @@ use crate::hir::environment::Environment;
 use crate::hir::environment_config::ExhaustiveEffectDepsMode;
 use crate::hir::visitors::{lvalues, operands, terminal_operands, value_lvalues};
 use crate::hir::{
-    AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier, IdentifierId,
-    InstructionKind, InstructionValue, ManualMemoDependency, ManualMemoDependencyRoot,
-    NonLocalBinding, Place, PlaceOrSpread, PropertyLiteral, StoreStr, Terminal, Type, hir_vec,
+    BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier, IdentifierId, InstructionKind,
+    InstructionValue, ManualMemoDependency, ManualMemoDependencyRoot, NonLocalBinding, Place,
+    PlaceOrSpread, PropertyLiteral, StoreStr, Terminal, Type, hir_vec,
 };
 use bun_core::BStr;
 use core::fmt::Write as _;
@@ -1007,9 +1007,7 @@ fn collect_dependencies(
                                                                 },
                                                                 constant: false,
                                                             },
-                                                        path: AstAlloc::vec_from_iter(
-                                                            path.iter().cloned(),
-                                                        ),
+                                                        path: path.clone(),
                                                         loc: *loc,
                                                     },
                                                     InferredDependency::Global { binding } => {
@@ -1118,9 +1116,7 @@ fn collect_dependencies(
                                                                 },
                                                                 constant: false,
                                                             },
-                                                        path: AstAlloc::vec_from_iter(
-                                                            path.iter().cloned(),
-                                                        ),
+                                                        path: path.clone(),
                                                         loc: *loc,
                                                     },
                                                     InferredDependency::Global { binding } => {

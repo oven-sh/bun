@@ -18,7 +18,7 @@ use crate::diagnostics::{
 };
 use crate::hir::environment::Environment;
 use crate::hir::{
-    AstAlloc, DeclarationId, DependencyPathEntry, HirVec, Identifier, IdentifierId, IdentifierName,
+    DeclarationId, DependencyPathEntry, HirVec, Identifier, IdentifierId, IdentifierName,
     InstructionKind, InstructionValue, ManualMemoDependency, ManualMemoDependencyRoot, Place,
     ReactiveBlock, ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement,
     ReactiveValue, ScopeId,
@@ -384,7 +384,7 @@ fn record_temporaries(instr: &ReactiveInstruction, state: &mut VisitorState) {
                     value: lvalue.clone(),
                     constant: false,
                 },
-                path: AstAlloc::vec(),
+                path: Vec::new(),
                 loc: lvalue.loc,
             },
         );
@@ -461,7 +461,7 @@ fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
                                     value: lvalue.place.clone(),
                                     constant: false,
                                 },
-                                path: AstAlloc::vec(),
+                                path: Vec::new(),
                                 loc: lvalue.place.loc,
                             },
                         );
@@ -483,7 +483,7 @@ fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
                                         value: place.clone(),
                                         constant: false,
                                     },
-                                    path: AstAlloc::vec(),
+                                    path: Vec::new(),
                                     loc: place.loc,
                                 },
                             );
@@ -707,7 +707,7 @@ fn validate_inferred_dep(
                 },
                 constant: false,
             },
-            path: AstAlloc::vec_from_slice(dep_path),
+            path: dep_path.to_vec(),
             loc: ident.loc,
         }
     };

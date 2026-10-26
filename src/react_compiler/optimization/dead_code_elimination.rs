@@ -18,9 +18,9 @@ use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
-    ArrayPatternElement, AstAlloc, BlockId, BlockKind, HirFunction, HirVec, IdentifierId,
-    IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue,
-    ObjectPropertyOrSpread, Pattern, Terminal,
+    ArrayPatternElement, BlockId, BlockKind, HirFunction, HirVec, IdentifierId, IdentifierName,
+    Instruction, InstructionId, InstructionKind, InstructionValue, ObjectPropertyOrSpread, Pattern,
+    Terminal,
 };
 use crate::optimization::prune_maybe_throws::value_may_throw;
 
@@ -344,7 +344,7 @@ fn rewrite_instruction(instr: &mut Instruction, state: &State, env: &Environment
                             ObjectPropertyOrSpread::Property(p) => {
                                 if is_id_or_name_used(state, &env.identifiers, p.place.identifier) {
                                     next_properties
-                                        .get_or_insert_with(AstAlloc::vec)
+                                        .get_or_insert_with(Vec::new)
                                         .push(prop.clone());
                                 }
                             }

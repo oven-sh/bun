@@ -18,8 +18,8 @@ use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 
 use crate::hir::{
-    AliasingEffect, AstAlloc, BlockId, Effect, EvaluationOrder, FunctionId, HIR, HirFunction,
-    IdentifierId, InstructionValue, Place, ReactFunctionType,
+    AliasingEffect, BlockId, Effect, EvaluationOrder, FunctionId, HIR, HirFunction, IdentifierId,
+    InstructionValue, Place, ReactFunctionType,
 };
 
 /// Analyse all nested function expressions and object methods in `func`.
@@ -180,7 +180,7 @@ where
         }
     }
 
-    func.aliasing_effects = Some(AstAlloc::vec_from_iter(function_effects));
+    func.aliasing_effects = Some(function_effects);
 
     for operand in &mut func.context {
         if captured_or_mutated.contains(operand.identifier) || operand.effect == Effect::Capture {
@@ -205,7 +205,7 @@ fn placeholder_function() -> HirFunction {
         id: None,
         name_hint: None,
         fn_type: ReactFunctionType::Other,
-        params: AstAlloc::vec(),
+        params: Vec::new(),
         return_type_annotation: None,
         returns: Place {
             identifier: IdentifierId(0),
@@ -213,15 +213,15 @@ fn placeholder_function() -> HirFunction {
             reactive: false,
             loc: None,
         },
-        context: AstAlloc::vec(),
+        context: Vec::new(),
         body: HIR {
             entry: BlockId(0),
             blocks: IndexMap::new(),
         },
-        instructions: AstAlloc::vec(),
+        instructions: Vec::new(),
         generator: false,
         is_async: false,
-        directives: AstAlloc::vec(),
+        directives: Vec::new(),
         aliasing_effects: None,
     }
 }

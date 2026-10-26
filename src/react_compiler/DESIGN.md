@@ -169,3 +169,22 @@ overlap in arity, so lowering tells them apart by the callee
 The callee is not an operand of the HIR `JsxExpression`: codegen resolves the
 classic factory again (`Host::jsx_classic_factory`). Lowering rejects a factory
 that is a local of the function, because the compiler would drop it as unused.
+
+## Memory
+
+HIR and pass containers are on the global heap. `HirVec<T>` is the std
+`Vec<T>`, and `IndexMap`, `IndexSet` and `IdMap` use the global allocator. Each
+is freed when its owner drops, so the HIR of a function is freed when its
+compile returns.
+
+A `StoreStr` never points into such a container. It has no lifetime and no
+destructor, so it would dangle when the container grows or drops.
+
+Bytes that the output AST points to are made in the AST arena, which lives as
+long as the AST. A string is copied there with `bun_ast::data_store_dupe_str`.
+A list is an `AstVec`, built in one of the five files that write the output
+AST: `codegen.rs`, `program.rs`, `pipeline.rs`, `imports.rs` and
+`diagnostics/js_string.rs`. Only these files name `AstAlloc` or `AstVec`, or
+call `.leak()`.
+
+`bun lint` runs the same passes (`lint.rs`), so the same rules hold for it.

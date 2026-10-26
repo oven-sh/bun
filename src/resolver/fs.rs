@@ -145,11 +145,10 @@ pub struct Entry {
     walked_paths: AtomicPtr<WalkedPath>,
 }
 
-/// An `Interned` and a mark, stored once and read with no lock, in 16 bytes where `OnceLock` takes 24.
+/// An `Interned` that is stored once and read with no lock, in 16 bytes where `OnceLock` takes 24.
 struct OnceInterned {
     ptr: AtomicPtr<u8>,
     len: AtomicU32,
-    mark: AtomicU32,
 }
 
 impl OnceInterned {
@@ -157,7 +156,6 @@ impl OnceInterned {
         Self {
             ptr: AtomicPtr::new(core::ptr::null_mut()),
             len: AtomicU32::new(0),
-            mark: AtomicU32::new(0),
         }
     }
 
@@ -173,12 +171,11 @@ impl OnceInterned {
     }
 
     /// The caller holds the lock that serializes `set` and saw `get()` give `None` under it.
-    unsafe fn set(&self, value: Interned, mark: u32) {
+    unsafe fn set(&self, value: Interned) {
         let Ok(len) = u32::try_from(value.len()) else {
             return;
         };
         self.len.store(len, Ordering::Relaxed);
-        self.mark.store(mark, Ordering::Relaxed);
         self.ptr.store(value.as_ptr().cast_mut(), Ordering::Release);
     }
 }
@@ -231,7 +228,7 @@ impl Entry {
     }
 
     /// Returns `abs_path`, calling `fill` under `mutex` to compute it the first time.
-    /// Only this and `abs_path_or_try_fill_marked` write `abs_path`, and a failed `fill` publishes nothing.
+    /// Nothing else writes `abs_path`, and a failed `fill` doesn't publish anything.
     pub fn abs_path_or_try_fill<E>(
         &self,
         fill: impl FnOnce() -> Result<Interned, E>,
@@ -245,42 +242,8 @@ impl Entry {
         }
         let p = fill()?;
         // SAFETY: `mutex` is held, and `abs_path` was still empty under it.
-        unsafe { self.abs_path.set(p, 0) };
+        unsafe { self.abs_path.set(p) };
         Ok(p)
-    }
-
-    /// `abs_path_or_try_fill` whose `fill` also gives a mark, which is stored with the path. 0 is none.
-    pub(crate) fn abs_path_or_try_fill_marked<E>(
-        &self,
-        fill: impl FnOnce() -> Result<(Interned, u32), E>,
-    ) -> Result<Interned, E> {
-        if let Some(p) = self.abs_path.get() {
-            return Ok(p);
-        }
-        let _guard = self.mutex.lock_guard();
-        if let Some(p) = self.abs_path.get() {
-            return Ok(p);
-        }
-        let (p, mark) = fill()?;
-        // SAFETY: `mutex` is held, and `abs_path` was still empty under it.
-        unsafe { self.abs_path.set(p, mark) };
-        Ok(p)
-    }
-
-    /// The mark that was stored with `abs_path`, or 0.
-    pub(crate) fn abs_path_mark(&self) -> u32 {
-        if self.abs_path.get().is_none() {
-            return 0;
-        }
-        self.abs_path.mark.load(Ordering::Relaxed)
-    }
-
-    /// Takes the mark of `abs_path` back, if it is `mark`.
-    pub(crate) fn forget_abs_path_mark(&self, mark: u32) {
-        let _ = self
-            .abs_path
-            .mark
-            .compare_exchange(mark, 0, Ordering::Relaxed, Ordering::Relaxed);
     }
 
     pub fn abs_path_or_fill(&self, fill: impl FnOnce() -> Interned) -> Interned {

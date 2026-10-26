@@ -864,7 +864,7 @@ impl Route {
 
             // Unless it is asked, a file whose entry keeps its path is not opened.
             let abs_path_str: &'static [u8] = if !ask_file
-                && let Some(kept) = bun_resolver::Resolver::entry_file_path(entry_r, dir_)
+                && let Some(kept) = bun_resolver::Resolver::entry_file_path(entry_r)
             {
                 kept
             } else {
@@ -939,7 +939,7 @@ impl Route {
                 };
 
                 // An entry that does not give this path by itself is asked again on the next load.
-                match bun_resolver::Resolver::fill_entry_file_path(entry_r, dir_, _abs) {
+                match bun_resolver::Resolver::fill_entry_file_path(entry_r, _abs) {
                     Some(kept) => kept,
                     None => FileSystem::instance()
                         .dirname_store()

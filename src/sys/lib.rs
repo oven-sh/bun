@@ -3183,6 +3183,10 @@ mod posix_impl {
     pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         recv(fd, buf, MSG_DONTWAIT)
     }
+    /// `recv_non_block` that leaves what it reads in the socket's queue.
+    pub fn recv_peek_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+        recv(fd, buf, libc::MSG_PEEK | MSG_DONTWAIT)
+    }
     /// `MSG_DONTWAIT | MSG_NOSIGNAL` so a broken-pipe write
     /// returns EPIPE instead of raising SIGPIPE.
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {

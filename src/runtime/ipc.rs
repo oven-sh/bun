@@ -1247,23 +1247,12 @@ impl SendQueue {
         };
         #[cfg(not(windows))]
         {
-            let mut byte = 0u8;
-            // SAFETY: peeks at most one byte into `byte`.
-            let peeked = unsafe {
-                libc::recv(
-                    socket.fd().native(),
-                    (&raw mut byte).cast(),
-                    1,
-                    libc::MSG_PEEK | libc::MSG_DONTWAIT,
-                )
-            };
-            if peeked >= 0 {
-                return peeked == 0;
+            match bun_sys::recv_peek_non_block(socket.fd(), &mut [0u8]) {
+                Ok(peeked) => peeked == 0,
+                // Any error but "nothing to read yet" ends the stream (ECONNRESET: the peer died
+                // with our data unread).
+                Err(err) => !err.is_retry(),
             }
-            // Any error but "nothing to read yet" ends the stream (ECONNRESET: the peer died with
-            // our data unread).
-            let errno = bun_sys::last_errno();
-            errno != libc::EAGAIN && errno != libc::EWOULDBLOCK && errno != libc::EINTR
         }
         #[cfg(windows)]
         {

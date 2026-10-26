@@ -170,6 +170,31 @@ describe("bundler", async () => {
     },
   });
 
+  // The `type` attribute picks the loader on `export ... from` as it does on `import`.
+  itBundled("bun/loader-type-attribute-on-export-from", {
+    target: "bun",
+    outfile: "",
+    outdir: "/out",
+
+    files: {
+      "/entry.ts": /* js */ `
+    import { notes, answer, greeting } from './barrel.ts';
+    console.write(JSON.stringify({ notes, answer, greeting }));
+  `,
+      "/barrel.ts": /* js */ `
+    export { default as notes } from './notes.md' with {type: "text"};
+    export { answer } from './data.boo' with {type: "json"};
+    export * from './code.boo' with {type: "ts"};
+  `,
+      "/notes.md": "# Title",
+      "/data.boo": `{ "answer": 42 }`,
+      "/code.boo": `export const greeting: string = "hi";`,
+    },
+    run: {
+      stdout: '{"notes":"# Title","answer":42,"greeting":"hi"}',
+    },
+  });
+
   itBundled("bun/loader-json-proto-key-is-own-property", {
     target: "bun",
     files: {

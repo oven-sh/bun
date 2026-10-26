@@ -444,8 +444,7 @@ pub(crate) fn generate_code_for_lazy_export(
         };
         let entry = crate::linker_context_mod::CssModuleScript {
             call: Some(call_ref),
-            resolve_asset_urls: this.options.output_format == crate::options::OutputFormat::Esm
-                && css_references_copied_assets(this, source_index),
+            resolve_asset_urls: css_references_copied_assets(this, source_index),
         };
         *this
             .css_module_scripts
@@ -473,10 +472,12 @@ pub(crate) fn generate_code_for_lazy_export(
     let runtime_functions_called: &[&[u8]] = if calls_runtime_require {
         &[b"__require"]
     } else if let Some(script) = css_module_script {
-        if script.resolve_asset_urls {
+        if !script.resolve_asset_urls {
+            &[b"__cssModule"]
+        } else if this.options.output_format == crate::options::OutputFormat::Esm {
             &[b"__cssModule", b"__cssUrl"]
         } else {
-            &[b"__cssModule"]
+            &[b"__cssModule", b"__cssUrl", b"__scriptUrl"]
         }
     } else {
         &[]

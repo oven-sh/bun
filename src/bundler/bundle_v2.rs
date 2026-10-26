@@ -6832,6 +6832,27 @@ pub mod bv2_impl {
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                 }
 
+                // The dev server serves CSS outside of the module graph, so it
+                // cannot produce the `CSSStyleSheet` a build does. Checked before
+                // plugins run: a plugin that resolves the path changes nothing.
+                if self.dev_server.is_some()
+                    && import_record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::CSS_MODULE_SCRIPT)
+                    && ctx.target.bake_graph() == bake_types::Graph::Client
+                {
+                    self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph())
+                        .add_range_error_fmt(
+                            Some(source),
+                            import_record.range,
+                            format_args!(
+                                "The dev server does not support CSS module scripts (import attribute type: \"css\") yet. Use \"bun build\", or remove the attribute to apply \"{}\" to the page.",
+                                bstr::BStr::new(import_record.path.text),
+                            ),
+                        );
+                    continue;
+                }
+
                 if self.enqueue_on_resolve_plugin_if_needed(
                     source.index.0,
                     import_record,
@@ -7196,26 +7217,6 @@ pub mod bv2_impl {
 
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
-                        // The dev server serves CSS outside of the module graph,
-                        // so it cannot produce the `CSSStyleSheet` a build does.
-                        if import_record
-                            .flags
-                            .contains(bun_ast::ImportRecordFlags::CSS_MODULE_SCRIPT)
-                            && bake_graph == bake_types::Graph::Client
-                        {
-                            let log =
-                                self.log_for_resolution_failures(source.path.text, bake_graph);
-                            log.add_range_error_fmt(
-                                Some(source),
-                                import_record.range,
-                                format_args!(
-                                    "The dev server does not support CSS module scripts (import attribute type: \"css\") yet. Use \"bun build\", or remove the attribute to apply \"{}\" to the page.",
-                                    bstr::BStr::new(import_record.path.text),
-                                ),
-                            );
-                            continue 'outer;
-                        }
-
                         if path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
                             && (import_record.loader.is_none()
                                 || import_record.loader.unwrap() == Loader::Html)

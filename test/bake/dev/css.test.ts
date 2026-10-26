@@ -813,32 +813,55 @@ devTest("css import before create project relative", {
 
 // `bun build` turns this import into a constructed `CSSStyleSheet`. The dev
 // server cannot represent that yet, so it reports it instead of emitting a
-// dangling binding and applying the file to the page.
-devTest("css module script import is reported as unsupported", {
-  files: {
-    "index.html": emptyHtmlFile({
-      styles: [],
-      scripts: ["index.ts"],
-    }),
-    "index.ts": `
-      import sheet from "./widget.css" with { type: "css" };
-      console.log(sheet);
-    `,
-    "widget.css": `body { color: red; }`,
-  },
-  async test(dev) {
-    await using c = await dev.client("/", {
-      errors: [
-        'index.ts:1:19: error: The dev server does not support CSS module scripts (import attribute type: "css") yet. Use "bun build", or remove the attribute to apply "./widget.css" to the page.',
-      ],
-    });
-    await c.expectReload(async () => {
-      await dev.write("index.ts", `import "./widget.css"; console.log("plain");`);
-    });
-    await c.expectMessage("plain");
-    await c.style("body").color.expect.toBe("red");
-  },
-});
+// dangling binding and applying the file to the page. An `onResolve` plugin
+// that resolves the stylesheet does not change that.
+for (const resolvedByPlugin of [false, true]) {
+  devTest(
+    `css module script import is reported as unsupported${resolvedByPlugin ? " when a plugin resolves it" : ""}`,
+    {
+      files: {
+        ...(resolvedByPlugin && {
+          "bunfig.toml": `
+            [serve.static]
+            plugins = ["./css-plugin.ts"]
+          `,
+          "css-plugin.ts": `
+            import path from "node:path";
+            export default {
+              name: "css-plugin",
+              setup(build) {
+                build.onResolve({ filter: /widget\\.css$/ }, args => ({
+                  path: path.join(path.dirname(args.importer), "widget.css"),
+                }));
+              },
+            };
+          `,
+        }),
+        "index.html": emptyHtmlFile({
+          styles: [],
+          scripts: ["index.ts"],
+        }),
+        "index.ts": `
+          import sheet from "./widget.css" with { type: "css" };
+          console.log(sheet);
+        `,
+        "widget.css": `body { color: red; }`,
+      },
+      async test(dev) {
+        await using c = await dev.client("/", {
+          errors: [
+            'index.ts:1:19: error: The dev server does not support CSS module scripts (import attribute type: "css") yet. Use "bun build", or remove the attribute to apply "./widget.css" to the page.',
+          ],
+        });
+        await c.expectReload(async () => {
+          await dev.write("index.ts", `import "./widget.css"; console.log("plain");`);
+        });
+        await c.expectMessage("plain");
+        await c.style("body").color.expect.toBe("red");
+      },
+    },
+  );
+}
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

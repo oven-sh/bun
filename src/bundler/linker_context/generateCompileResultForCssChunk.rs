@@ -88,6 +88,8 @@ pub(crate) fn generate_css_module_script_texts(c: &mut LinkerContext) -> Result<
     }
 
     let url_ref = c.runtime_function(b"__cssUrl");
+    let is_esm = c.options.output_format == crate::options::OutputFormat::Esm;
+    let script_url_ref = c.runtime_function(b"__scriptUrl");
     for ((_, script), css) in entries.into_iter().zip(texts) {
         let mut call = script.call.expect("filtered above");
         let loc = call.args.slice()[0].loc;
@@ -101,7 +103,7 @@ pub(crate) fn generate_css_module_script_texts(c: &mut LinkerContext) -> Result<
             string.prefer_template = !c.options.minify_whitespace;
             Expr::init(string, loc)
         } else {
-            // `head${__cssUrl("<asset placeholder>", import.meta.url)}tail...`
+            // `head${__cssUrl("<asset placeholder>", <chunk URL>)}tail...`
             let mut parts: Vec<E::TemplatePart> = Vec::with_capacity(placeholders.len());
             for (i, &(start, end)) in placeholders.iter().enumerate() {
                 let tail_end = placeholders.get(i + 1).map_or(css.len(), |next| next.0);
@@ -116,15 +118,25 @@ pub(crate) fn generate_css_module_script_texts(c: &mut LinkerContext) -> Result<
                         ),
                         args: ExprNodeList::from_slice(&[
                             Expr::init(E::EString::init(&css[start..end]), loc),
-                            Expr::init(
-                                E::Dot {
-                                    target: Expr::init(E::ImportMeta {}, loc),
-                                    name: b"url".as_slice().into(),
-                                    name_loc: loc,
-                                    ..Default::default()
-                                },
-                                loc,
-                            ),
+                            if is_esm {
+                                Expr::init(
+                                    E::Dot {
+                                        target: Expr::init(E::ImportMeta {}, loc),
+                                        name: b"url".as_slice().into(),
+                                        name_loc: loc,
+                                        ..Default::default()
+                                    },
+                                    loc,
+                                )
+                            } else {
+                                Expr::init(
+                                    E::Identifier {
+                                        ref_: script_url_ref,
+                                        ..Default::default()
+                                    },
+                                    loc,
+                                )
+                            },
                         ]),
                         can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
                         ..Default::default()

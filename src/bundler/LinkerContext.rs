@@ -154,8 +154,8 @@ pub(crate) struct CssModuleScript {
     /// The stub's `__cssModule("")` call; `generate_css_module_script_texts`
     /// replaces the argument with the printed CSS.
     pub(crate) call: Option<bun_ast::StoreRef<E::Call>>,
-    /// ESM output with copied assets: `url()`s print as
-    /// `${__cssUrl(path, import.meta.url)}` so they resolve against the chunk.
+    /// The CSS has `url()`s to copied assets: they print as
+    /// `${__cssUrl(path, <chunk URL>)}` so they resolve against the chunk.
     pub(crate) resolve_asset_urls: bool,
 }
 

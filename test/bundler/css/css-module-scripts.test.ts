@@ -129,34 +129,44 @@ describe("bundler", () => {
     },
   });
 
-  // Without `import.meta` (IIFE), the asset path stays relative to the chunk.
-  itBundled("css-module-script/UrlStaysRelativeInIIFE", {
-    files: {
-      "/entry.js": /* js */ `
-        import sheet from "./widget.css" with { type: "css" };
-        console.log(sheet.cssText);
-      `,
-      "/widget.css": /* css */ `p.w { background: url("./image.png") }`,
-      "/image.png": Buffer.alloc(256 * 1024, 7),
-      "/test.js": /* js */ `
-        ${cssStyleSheetShim}
-        await import("./out/entry.js");
-      `,
-    },
-    entryPoints: ["/entry.js"],
-    format: "iife",
-    outdir: "/out",
-    target: "browser",
-    onAfterBundle(api) {
-      api.expectFile("/out/entry.js").not.toContain("import.meta");
-    },
-    run: {
-      file: "/test.js",
-      validate({ stdout }) {
-        expect(stdout).toMatch(/url\("\.\/image-[a-z0-9]+\.png"\)/);
-      },
-    },
-  });
+  // IIFE and CommonJS output have no `import.meta`: the base is the URL of the
+  // <script> that runs the chunk. Without one the path stays relative.
+  for (const format of ["iife", "cjs"] as const) {
+    for (const scriptUrl of ["https://example.com/static/js/entry.js", undefined]) {
+      itBundled(`css-module-script/Url${format.toUpperCase()}${scriptUrl ? "WithScriptUrl" : "WithoutScriptUrl"}`, {
+        files: {
+          "/entry.js": /* js */ `
+            import sheet from "./widget.css" with { type: "css" };
+            console.log(sheet.cssText);
+          `,
+          "/widget.css": /* css */ `p.w { background: url("./image.png") }`,
+          "/image.png": Buffer.alloc(256 * 1024, 7),
+          "/test.js": /* js */ `
+            ${cssStyleSheetShim}
+            ${scriptUrl ? `globalThis.document = { currentScript: { src: ${JSON.stringify(scriptUrl)} } };` : ""}
+            require("./out/entry.js");
+          `,
+        },
+        entryPoints: ["/entry.js"],
+        format,
+        outdir: "/out",
+        target: "browser",
+        onAfterBundle(api) {
+          api.expectFile("/out/entry.js").not.toContain("import.meta");
+        },
+        run: {
+          file: "/test.js",
+          validate({ stdout }) {
+            expect(stdout).toMatch(
+              scriptUrl
+                ? /url\("https:\/\/example\.com\/static\/js\/image-[a-z0-9]+\.png"\)/
+                : /url\("\.\/image-[a-z0-9]+\.png"\)/,
+            );
+          },
+        },
+      });
+    }
+  }
 
   itBundled("css-module-script/ReExport", {
     files: {

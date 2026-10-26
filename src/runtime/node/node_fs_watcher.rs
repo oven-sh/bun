@@ -91,6 +91,10 @@ impl FSWatcher {
     /// JS thread only (Windows delivers fs events on the loop thread).
     #[cfg(windows)]
     #[inline]
+    #[expect(
+        clippy::mut_from_ref,
+        reason = "`ctx` points at the VM, not into `self`"
+    )]
     fn vm(&self) -> &mut VirtualMachine {
         // SAFETY: `ctx` is the live per-thread VM (set in `init`); every caller
         // is on its JS thread.
@@ -1146,7 +1150,8 @@ impl FSWatcher {
                 // backend dropped the callback parameters — only one valid
                 // value each), so the call is cfg-split.
                 #[cfg(windows)]
-                let r = path_watcher::watch(vm_ref, file_path, args.recursive, ctx as *mut c_void);
+                let r =
+                    path_watcher::watch(vm_ref, file_path, args.recursive, ctx.cast::<c_void>());
                 #[cfg(not(windows))]
                 let r = path_watcher::watch(
                     vm_ref,

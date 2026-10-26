@@ -608,7 +608,7 @@ pub mod dir_iterator {
                             filter_us.Length = len_bytes;
                             filter_us.MaximumLength = len_bytes;
                             filter_us.Buffer = f.as_ptr().cast_mut().cast::<u16>();
-                            &mut filter_us
+                            &raw mut filter_us
                         }
                         None => core::ptr::null_mut(),
                     };
@@ -619,7 +619,7 @@ pub mod dir_iterator {
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
                             core::ptr::null_mut(),
-                            &mut io,
+                            &raw mut io,
                             self.buf.as_mut_ptr().cast(),
                             BUF_SIZE as u32,
                             w::FILE_INFORMATION_CLASS::FileDirectoryInformation,
@@ -3671,7 +3671,7 @@ mod windows_impl {
                     fd.native(),
                     buf.as_mut_ptr(),
                     adjusted_len,
-                    &mut amount_read,
+                    &raw mut amount_read,
                     core::ptr::null_mut(),
                 )
             };
@@ -3701,7 +3701,7 @@ mod windows_impl {
                 fd.native(),
                 buf.as_ptr(),
                 adjusted_len,
-                &mut bytes_written,
+                &raw mut bytes_written,
                 core::ptr::null_mut(),
             )
         };
@@ -3760,7 +3760,7 @@ mod windows_impl {
                     fd.native(),
                     buf.as_mut_ptr(),
                     adjusted_len,
-                    &mut amount_read,
+                    &raw mut amount_read,
                     core::ptr::from_mut(&mut overlapped).cast(),
                 )
             };
@@ -3800,7 +3800,7 @@ mod windows_impl {
                 fd.native(),
                 buf.as_ptr(),
                 adjusted_len,
-                &mut bytes_written,
+                &raw mut bytes_written,
                 core::ptr::from_mut(&mut overlapped).cast(),
             )
         };
@@ -3849,7 +3849,7 @@ mod windows_impl {
         if file_type == w::FILE_TYPE_CHAR {
             let mut mode: w::DWORD = 0;
             // SAFETY: FFI; `handle` is a valid HANDLE, `mode` valid for write.
-            if unsafe { w::kernel32::GetConsoleMode(handle, &mut mode) } != 0 {
+            if unsafe { w::kernel32::GetConsoleMode(handle, &raw mut mode) } != 0 {
                 st.st_mode = S::IFCHR as u64;
                 st.st_nlink = 1;
                 st.st_rdev = (w::FILE_DEVICE_CONSOLE as u64) << 16;
@@ -3869,7 +3869,7 @@ mod windows_impl {
         let rc = unsafe {
             w::ntdll::NtQueryVolumeInformationFile(
                 handle,
-                &mut io,
+                &raw mut io,
                 core::ptr::from_mut(&mut device_info).cast(),
                 core::mem::size_of::<w::FILE_FS_DEVICE_INFORMATION>() as u32,
                 w::FS_INFORMATION_CLASS::FileFsDeviceInformation,
@@ -3894,7 +3894,7 @@ mod windows_impl {
         let rc = unsafe {
             w::ntdll::NtQueryInformationFile(
                 handle,
-                &mut io,
+                &raw mut io,
                 core::ptr::from_mut(&mut file_info).cast(),
                 core::mem::size_of::<w::FILE_ALL_INFORMATION>() as u32,
                 w::FILE_INFORMATION_CLASS::FileAllInformation,
@@ -3909,7 +3909,7 @@ mod windows_impl {
         let rc = unsafe {
             w::ntdll::NtQueryVolumeInformationFile(
                 handle,
-                &mut io,
+                &raw mut io,
                 core::ptr::from_mut(&mut volume_info).cast(),
                 core::mem::size_of::<w::FILE_FS_VOLUME_INFORMATION>() as u32,
                 w::FS_INFORMATION_CLASS::FileFsVolumeInformation,
@@ -4006,7 +4006,7 @@ mod windows_impl {
         let rc = unsafe {
             w::ntdll::NtSetInformationFile(
                 fd.native(),
-                &mut io,
+                &raw mut io,
                 core::ptr::from_mut(&mut eof).cast::<core::ffi::c_void>(),
                 core::mem::size_of::<bun_windows_sys::FILE_END_OF_FILE_INFORMATION>() as u32,
                 w::FILE_INFORMATION_CLASS::FileEndOfFileInformation,
@@ -4030,7 +4030,7 @@ mod windows_impl {
                 0,
                 core::ptr::null_mut(),
                 0,
-                &mut returned,
+                &raw mut returned,
                 core::ptr::null_mut(),
             )
         };
@@ -4059,12 +4059,13 @@ mod windows_impl {
         // DuplicateHandle on the underlying HANDLE.
         let process = w::kernel32::GetCurrentProcess();
         let mut target: w::HANDLE = core::ptr::null_mut();
+        // SAFETY: `target` is a stack out-param; an invalid source handle is reported as an error.
         let out = unsafe {
             w::kernel32::DuplicateHandle(
                 process,
                 fd.native() as w::HANDLE,
                 process,
-                &mut target,
+                &raw mut target,
                 0,
                 w::FALSE,
                 w::DUPLICATE_SAME_ACCESS,
@@ -4079,6 +4080,7 @@ mod windows_impl {
         // GetCurrentDirectoryW + WTF16→UTF8.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let len =
+            // SAFETY: `wbuf` is writable for the length passed.
             unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
         if len == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::getcwd));
@@ -4336,6 +4338,7 @@ mod windows_impl {
         }
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
+        // SAFETY: `wpath` is NUL-terminated and valid for the call.
         let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
         if attrs == w::INVALID_FILE_ATTRIBUTES {
             return Err(
@@ -4365,10 +4368,12 @@ mod windows_impl {
         let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
         let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
         let mut req = uv::fs_t::uninitialized();
+        // SAFETY: no callback, so the call is synchronous: `req` and the arguments only have to
+        // outlive it.
         let rc = unsafe {
             uv::uv_fs_utime(
                 core::ptr::null_mut(),
-                &mut req,
+                &raw mut req,
                 path.as_ptr().cast::<_>(),
                 a,
                 m,
@@ -4415,7 +4420,8 @@ mod windows_impl {
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
         // GetFileSizeEx.
         let mut size: i64 = 0;
-        let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native() as w::HANDLE, &mut size) };
+        // SAFETY: `size` is a stack out-param; an invalid handle is reported as an error.
+        let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native() as w::HANDLE, &raw mut size) };
         if ok == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::fstat).with_fd(fd));
         }
@@ -4434,7 +4440,8 @@ mod windows_impl {
     pub fn pipe() -> Maybe<[Fd; 2]> {
         // uv_pipe(fds, 0, 0).
         let mut fds: [uv::uv_file; 2] = [-1, -1];
-        let rc = unsafe { uv::uv_pipe(&mut fds, 0, 0) };
+        // SAFETY: `fds` is the 2-element out-array libuv writes.
+        let rc = unsafe { uv::uv_pipe(&raw mut fds, 0, 0) };
         if let Some(err) = rc.to_error(Tag::pipe) {
             return Err(err);
         }
@@ -4454,8 +4461,14 @@ mod windows_impl {
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         // SetFilePointerEx.
         let mut new: i64 = 0;
+        // SAFETY: `new` is a stack out-param; an invalid handle is reported as an error.
         let ok = unsafe {
-            w::SetFilePointerEx(fd.native() as w::HANDLE, offset, &mut new, whence as u32)
+            w::SetFilePointerEx(
+                fd.native() as w::HANDLE,
+                offset,
+                &raw mut new,
+                whence as u32,
+            )
         };
         if ok == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
@@ -4467,7 +4480,8 @@ mod windows_impl {
     pub fn set_file_offset_to_end_windows(fd: Fd) -> Maybe<usize> {
         let mut new: i64 = 0;
         // SAFETY: `fd` is a valid kernel handle (caller invariant).
-        let ok = unsafe { w::SetFilePointerEx(fd.native() as w::HANDLE, 0, &mut new, w::FILE_END) };
+        let ok =
+            unsafe { w::SetFilePointerEx(fd.native() as w::HANDLE, 0, &raw mut new, w::FILE_END) };
         if ok == w::FALSE {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
@@ -4479,6 +4493,7 @@ mod windows_impl {
         // as the drive root, not the drive's saved cwd.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_w_dir_path(&mut wbuf, path.as_bytes());
+        // SAFETY: `wpath` is NUL-terminated and valid for the call.
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
             return Err(
                 Error::from_win32(w::Win32Error::get(), Tag::chdir).with_path(path.as_bytes())
@@ -4508,6 +4523,7 @@ mod windows_impl {
         // negative length and Winsock fails with WSAEFAULT.
         let len = buf.len().min(i32::MAX as usize) as i32;
         let rc =
+            // SAFETY: `buf` is writable for `len` bytes, which is at most `buf.len()`.
             unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::recv).with_fd(fd));
@@ -4518,6 +4534,7 @@ mod windows_impl {
         // Winsock `send`. Clamp to `i32::MAX` so the
         // `usize → i32` cast can't wrap to a negative length on huge buffers.
         let len = buf.len().min(i32::MAX as usize) as i32;
+        // SAFETY: `buf` is readable for `len` bytes, which is at most `buf.len()`.
         let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::send).with_fd(fd));
@@ -4979,7 +4996,7 @@ pub fn self_process_peak_memory_usage() -> Option<usize> {
 #[path = "PosixStat.rs"]
 pub mod posix_stat;
 pub use posix_stat::PosixStat;
-pub use posix_stat::{stat_atime, stat_birthtime, stat_ctime, stat_mtime};
+pub use posix_stat::{stat_atime, stat_birthtime, stat_ctime, stat_mtime, stat_size};
 
 /// `std::io::Write` adapter for `Fd` (used by `File::buffered_writer`).
 /// Port of `File.Writer = std.Io.GenericWriter(File, anyerror, stdIoWrite)`.
@@ -6866,7 +6883,7 @@ pub(crate) fn open_dir_at_windows_nt_path(
             Fd::cwd().native()
         },
         Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-        ObjectName: &mut nt_name,
+        ObjectName: &raw mut nt_name,
         SecurityDescriptor: core::ptr::null_mut(),
         SecurityQualityOfService: core::ptr::null_mut(),
     };
@@ -6875,10 +6892,10 @@ pub(crate) fn open_dir_at_windows_nt_path(
     // SAFETY: FFI; all pointer args valid for the call.
     let rc = unsafe {
         w::ntdll::NtCreateFile(
-            &mut fd,
+            &raw mut fd,
             flags,
-            &mut attr,
-            &mut io,
+            &raw mut attr,
+            &raw mut io,
             core::ptr::null_mut(),
             0,
             FILE_SHARE,
@@ -6930,7 +6947,7 @@ pub(crate) fn open_file_at_windows_nt_path(
         // [ObjectName] must be a fully qualified file specification or the
         // name of a device object (`\??\…`, `\Device\…`), unless it is the
         // name of a file relative to the directory specified by RootDirectory.
-        ObjectName: &mut nt_name,
+        ObjectName: &raw mut nt_name,
         RootDirectory: if is_nt_object_name(p) {
             core::ptr::null_mut()
         } else if dir.is_valid() {
@@ -6949,10 +6966,10 @@ pub(crate) fn open_file_at_windows_nt_path(
         // SAFETY: FFI; all pointer args valid for the call.
         let rc = unsafe {
             w::ntdll::NtCreateFile(
-                &mut result,
+                &raw mut result,
                 options.access_mask,
-                &mut attr,
-                &mut io,
+                &raw mut attr,
+                &raw mut io,
                 core::ptr::null_mut(),
                 attributes,
                 options.sharing_mode,
@@ -7220,7 +7237,7 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
             // opaque: the entry exists as-is and following it can fail spuriously.
             let mut fd: w::WIN32_FIND_DATAW = bun_core::ffi::zeroed();
             // SAFETY: path is NUL-terminated UTF-16; fd is valid for write.
-            let find = unsafe { w::FindFirstFileW(path.as_ptr(), &mut fd) };
+            let find = unsafe { w::FindFirstFileW(path.as_ptr(), &raw mut fd) };
             if find != bun_windows_sys::INVALID_HANDLE_VALUE {
                 // SAFETY: valid find handle from FindFirstFileW.
                 unsafe {
@@ -7285,13 +7302,13 @@ fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
             Fd::cwd().native()
         },
         Attributes: 0,
-        ObjectName: &mut nt_name,
+        ObjectName: &raw mut nt_name,
         SecurityDescriptor: core::ptr::null_mut(),
         SecurityQualityOfService: core::ptr::null_mut(),
     };
     let mut basic_info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: FFI; attr/basic_info valid for the call duration.
-    let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
+    let rc = unsafe { w::ntdll::NtQueryAttributesFile(&raw const attr, &raw mut basic_info) };
     if rc != w::NTSTATUS::SUCCESS {
         // `Error::new(NTSTATUS)` maps through the curated table first, so
         // `OBJECT_PATH_NOT_FOUND` is deterministically `ENOENT`, which
@@ -7766,7 +7783,7 @@ pub fn environ() -> &'static [*const c_char] {
         // SAFETY: `*mut c_char` and `*const c_char` have identical layout; the
         // fat-pointer cast preserves the original slice's (ptr, len) metadata
         // exactly instead of re-deriving it.
-        unsafe { &*(s as *const [*mut c_char] as *const [*const c_char]) }
+        unsafe { &*(std::ptr::from_ref::<[*mut c_char]>(s) as *const [*const c_char]) }
     }
 }
 
@@ -8916,7 +8933,8 @@ pub use win_symlink_impl::{mkdir_w, symlink_or_junction, symlink_w, unlink_w};
 /// `link(u16, ...)` Windows arm — `CreateHardLinkW` with errno mapping.
 #[cfg(windows)]
 pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
-    if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) == 0 {
+    // SAFETY: a `WStr` is NUL-terminated.
+    if unsafe { windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) } == 0 {
         return Err(Error::from_win32(windows::Win32Error::get(), Tag::link));
     }
     Ok(())

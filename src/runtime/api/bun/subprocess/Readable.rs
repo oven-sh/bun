@@ -87,6 +87,13 @@ impl Readable {
         }
     }
 
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "android")),
+        expect(
+            clippy::needless_pass_by_value,
+            reason = "the memfd arm, on Linux and Android, takes the fd out of it"
+        )
+    )]
     pub(crate) fn init(
         stdio: Stdio,
         event_loop: NonNull<EventLoop>,

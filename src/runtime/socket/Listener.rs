@@ -329,7 +329,7 @@ impl Listener {
                                 if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
                                     let err = jsc::SystemError {
                                         errno: *uv_errno,
-                                        code: bun_core::String::static_(name).into(),
+                                        code: bun_core::String::static_(name),
                                         message: bun_core::String::clone_utf8(
                                             format!(
                                                 "listen {}: {}",
@@ -337,11 +337,9 @@ impl Listener {
                                                 bstr::BStr::new(&pipe_buf[..pipe_len])
                                             )
                                             .as_bytes(),
-                                        )
-                                        .into(),
-                                        syscall: bun_core::String::static_("listen").into(),
-                                        path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len])
-                                            .into(),
+                                        ),
+                                        syscall: bun_core::String::static_("listen"),
+                                        path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len]),
                                         ..Default::default()
                                     };
                                     return Err(cx
@@ -1093,7 +1091,7 @@ impl Listener {
                         // Free old resources before reassignment to prevent memory leaks
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
-                        prev.local_binding.set(local_binding.clone());
+                        prev.local_binding.set(local_binding);
                         if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
                             prev.protos.set(None);
                         }
@@ -1108,7 +1106,7 @@ impl Listener {
                             handlers: JsCell::new(Some(Rc::clone(&handlers))),
                             socket: Cell::new(uws::NewSocketHandler::<true>::DETACHED),
                             connection: JsCell::new(Some(connection)),
-                            local_binding: JsCell::new(local_binding.clone()),
+                            local_binding: JsCell::new(local_binding),
                             protos: JsCell::new(ssl_taken.as_mut().and_then(|s| s.take_protos())),
                             server_name: JsCell::new(
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
@@ -1194,7 +1192,7 @@ impl Listener {
                         // non-pipe arm below. Previously `.connection = null`
                         // dropped the duped pipe-path bytes on the floor.
                         prev.connection.set(Some(connection));
-                        prev.local_binding.set(local_binding.clone());
+                        prev.local_binding.set(local_binding);
                         debug_assert!(prev.protos.get().is_none());
                         debug_assert!(prev.server_name.get().is_none());
                         prev
@@ -1204,7 +1202,7 @@ impl Listener {
                             handlers: JsCell::new(Some(Rc::clone(&handlers))),
                             socket: Cell::new(uws::NewSocketHandler::<false>::DETACHED),
                             connection: JsCell::new(Some(connection)),
-                            local_binding: JsCell::new(local_binding.clone()),
+                            local_binding: JsCell::new(local_binding),
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: JsCell::new(None),

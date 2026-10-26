@@ -63,7 +63,7 @@
     "test:release": "node scripts/runner.node.ts --exec-path ./build/release/bun",
     "rust:check": "cargo check --workspace --keep-going",
     "rust:check-all": "bun scripts/rust-check-all.ts",
-    "rust:clippy": "cargo clippy --workspace --no-deps --keep-going",
+    "rust:clippy": "bun scripts/rust-clippy.ts",
     "rust:mordant": "bun scripts/rust-mordant.ts",
     "rust:mordant:baseline": "bun scripts/rust-mordant.ts --baseline",
     "rust:miri": "bun scripts/rust-miri.ts",

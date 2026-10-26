@@ -124,6 +124,18 @@ pub fn stat_ctime(s: &Stat) -> Timespec {
         }
     }
 }
+/// `st_size` as a byte count. It is signed on POSIX, where a negative value reads as 0.
+#[inline]
+pub fn stat_size(s: &Stat) -> u64 {
+    #[cfg(unix)]
+    {
+        s.st_size.max(0) as u64
+    }
+    #[cfg(windows)]
+    {
+        s.st_size
+    }
+}
 #[inline]
 pub fn stat_birthtime(s: &Stat) -> Timespec {
     // Linux `struct stat` has no birthtime (only `statx` does), so it gets the

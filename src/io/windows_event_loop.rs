@@ -218,6 +218,7 @@ impl Store {
             // SAFETY: `tail` is a valid slot in the intrusive deferred-free list;
             // raw-ptr access avoids a second `&mut FilePoll` overlapping `poll`/`self`.
             debug_assert!(unsafe { (*tail).next_to_free }.is_null());
+            // SAFETY: as above.
             unsafe { (*tail).next_to_free = poll };
         }
 

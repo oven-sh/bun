@@ -284,16 +284,23 @@ pub use windows_event_loop::{FilePoll, Loop};
 /// thereafter — which we project here so callers needn't open an `unsafe`
 /// block per site just to read a set-once field.
 #[inline]
+#[cfg_attr(
+    windows,
+    expect(
+        clippy::not_unsafe_ptr_arg_deref,
+        reason = "safe on purpose, see above: every `us_loop` pointer in the process is live"
+    )
+)]
 pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
     #[cfg(not(windows))]
     {
         uws
     }
     #[cfg(windows)]
-    // SAFETY: `uws` is the live `us_loop` allocated by `us_create_loop`;
-    // `uv_loop` is initialised in C before any Rust caller can observe the
-    // handle and is never mutated.
     {
+        // SAFETY: `uws` is the live `us_loop` allocated by `us_create_loop`;
+        // `uv_loop` is initialised in C before any Rust caller can observe the
+        // handle and is never mutated.
         unsafe { (*uws).uv_loop }
     }
 }
@@ -2317,6 +2324,10 @@ pub mod closer {
 
     #[cfg(windows)]
     impl Closer {
+        #[expect(
+            clippy::not_unsafe_ptr_arg_deref,
+            reason = "same signature as POSIX, where the loop is `()`; callers pass their thread's live loop"
+        )]
         pub fn close(fd: Fd, loop_: *mut uv::Loop) {
             let io_request: uv::fs_t = bun_core::ffi::zeroed();
             let closer = bun_core::heap::into_raw(Box::new(Closer { io_request }));
@@ -2326,7 +2337,7 @@ pub mod closer {
                 (*closer).io_request.data = closer.cast::<c_void>();
                 if let Some(err) = uv::uv_fs_close(
                     loop_,
-                    &mut (*closer).io_request,
+                    &raw mut (*closer).io_request,
                     fd.uv(),
                     Some(Self::on_close),
                 )

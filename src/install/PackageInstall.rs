@@ -852,6 +852,8 @@ static HARDLINK_QUEUE: bun_core::RacyCell<core::mem::MaybeUninit<HardLinkQueue>>
 #[cfg(windows)]
 impl HardLinkWindowsInstallTask {
     fn init_queue() -> &'static HardLinkQueue {
+        static INITIALIZED: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
         // SAFETY: called once per install batch on the install main thread before any
         // push(). Returns a shared ref so worker threads in run_from_thread_pool() may
         // safely alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take
@@ -867,14 +869,12 @@ impl HardLinkWindowsInstallTask {
         // re-assigning the whole struct: `wait_group`'s counter is already 0 and
         // `thread_pool` points at the process-wide `PackageManager` singleton that
         // never changes, so a fresh write would be a no-op anyway.
-        static INITIALIZED: core::sync::atomic::AtomicBool =
-            core::sync::atomic::AtomicBool::new(false);
         unsafe {
             if INITIALIZED.swap(true, Ordering::Relaxed) {
                 let q = (*HARDLINK_QUEUE.get()).assume_init_ref();
                 *q.errored_task.lock() = None;
                 debug_assert_eq!(
-                    q.thread_pool as *const ThreadPool,
+                    core::ptr::from_ref::<ThreadPool>(q.thread_pool),
                     core::ptr::from_ref(&PackageManager::get().thread_pool),
                     "PackageManager singleton changed between install batches",
                 );
@@ -920,6 +920,7 @@ impl HardLinkWindowsInstallTask {
 
         // SAFETY: self_ is valid until we reclaim the Box below.
         if let Some(err) = unsafe { (*self_).run() } {
+            // SAFETY: as above.
             unsafe { (*self_).err = Some(err) };
             // SAFETY: self_ was heap-allocated in init(); reclaim ownership now.
             let boxed = unsafe { bun_core::heap::take(self_) };
@@ -949,8 +950,8 @@ impl HardLinkWindowsInstallTask {
         let dest_len = dest.len() - 1;
         debug_assert_eq!(dest[dest_len], 0);
 
-        // `windows::CreateHardLinkW` is the safe wrapper (logs + Option<&mut SA>).
-        if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
+        // SAFETY: `self.bytes` holds a NUL right after `src` and at `dest[dest_len]`.
+        if unsafe { windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) } != 0 {
             return None;
         }
 
@@ -968,7 +969,8 @@ impl HardLinkWindowsInstallTask {
                 }
                 // SAFETY: FFI — dest is a valid NUL-terminated u16 buffer.
                 unsafe { windows::DeleteFileW(dest.as_ptr()) };
-                if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
+                // SAFETY: as for the first attempt.
+                if unsafe { windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) } != 0 {
                     return None;
                 }
             }
@@ -981,7 +983,8 @@ impl HardLinkWindowsInstallTask {
         let _ = mkdir_recursive_os_path(dirpath);
         dest[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
 
-        if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) != 0 {
+        // SAFETY: as for the first attempt; the separator is back, so `dest` ends at `dest_len` again.
+        if unsafe { windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) } != 0 {
             return None;
         }
 

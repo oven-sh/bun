@@ -162,6 +162,10 @@ pub mod lib {
         pub pwrite: bool,
     }
 
+    #[cfg_attr(
+        not(unix),
+        expect(clippy::derivable_impls, reason = "`cfg!(unix)` is `true` elsewhere")
+    )]
     impl Default for WriteStrategy {
         fn default() -> Self {
             Self { pwrite: cfg!(unix) }

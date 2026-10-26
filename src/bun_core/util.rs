@@ -743,6 +743,8 @@ impl PathBuffer {
         &self.0
     }
 }
+// SAFETY: a byte array; all-zero is `ZEROED`.
+unsafe impl crate::ffi::Zeroable for PathBuffer {}
 impl core::ops::Deref for PathBuffer {
     type Target = [u8];
     #[inline]
@@ -1506,9 +1508,9 @@ pub mod fd {
         unsafe {
             let pp = (*crate::windows_sys::peb()).ProcessParameters;
             ProcessParametersStdio {
-                hStdInput: (*pp).hStdInput as *mut c_void,
-                hStdOutput: (*pp).hStdOutput as *mut c_void,
-                hStdError: (*pp).hStdError as *mut c_void,
+                hStdInput: (*pp).hStdInput.cast::<c_void>(),
+                hStdOutput: (*pp).hStdOutput.cast::<c_void>(),
+                hStdError: (*pp).hStdError.cast::<c_void>(),
             }
         }
     }
@@ -2782,8 +2784,8 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
             // `process.execPath` is never verbatim-prefixed).
             if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
                 s = format!(r"\\{}", rest);
-            } else if let Some(rest) = s.strip_prefix(r"\\?\") {
-                s = rest.to_owned();
+            } else if s.starts_with(r"\\?\") {
+                s.drain(..r"\\?\".len());
             }
             Ok(ZBox::from_vec_with_nul(s.into_bytes()))
         }

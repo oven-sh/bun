@@ -758,7 +758,7 @@ mod _async_tasks {
                     debug_assert_eq!(core::mem::size_of::<A>(), core::mem::size_of::<$Args>());
                     // SAFETY: identity cast — `A == $Args` for this `F` (see `async_::*`).
                     // `ThreadIsolated<A>` is `repr(transparent)`; deref through it for the inner `A`.
-                    unsafe { &*(&*task.args as *const A as *const $Args) }
+                    unsafe { &*core::ptr::from_ref::<A>(&task.args).cast::<$Args>() }
                 }};
             }
             match F {
@@ -767,7 +767,7 @@ mod _async_tasks {
                     let path = if strings::eql_comptime(args.path.slice(), b"/dev/null") {
                         ZStr::from_static(b"\\\\.\\NUL\0")
                     } else {
-                        // SAFETY (R-2): single-JS-thread `JsCell` projection of the
+                        // SAFETY: (R-2) single-JS-thread `JsCell` projection of the
                         // scratch path buffer; the borrow is held only across the
                         // libuv enqueue below (which copies `path` internally) and
                         // never across a JS re-entry point.
@@ -785,7 +785,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_open(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             path.as_ptr(),
                             flags,
                             mode,
@@ -805,7 +805,7 @@ mod _async_tasks {
                     let fd = args.fd.uv();
                     // SAFETY: libuv async request.
                     let rc = unsafe {
-                        uv::uv_fs_close(loop_, &mut task.req, fd, Some(Self::uv_callback))
+                        uv::uv_fs_close(loop_, &raw mut task.req, fd, Some(Self::uv_callback))
                     };
                     debug_assert!(rc == uv::ReturnCode::ZERO);
                     sys::syslog!("uv close({}) = scheduled", fd);
@@ -823,7 +823,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_read(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             fd,
                             bufs.as_ptr(),
                             1,
@@ -846,7 +846,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_write(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             fd,
                             bufs.as_ptr(),
                             1,
@@ -868,7 +868,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_read(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             fd,
                             bufs.as_ptr().cast(),
                             c_uint::try_from(bufs.len()).expect("int cast"),
@@ -894,7 +894,7 @@ mod _async_tasks {
                         // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
                         unsafe {
                             core::ptr::write(
-                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>,
+                                (&raw mut task.result).cast::<Maybe<ret::Writev>>(),
                                 Ok(ret::Write { bytes_written: 0 }),
                             )
                         };
@@ -911,7 +911,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_write(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             fd,
                             bufs.as_ptr().cast(),
                             c_uint::try_from(bufs.len()).expect("int cast"),
@@ -931,7 +931,7 @@ mod _async_tasks {
                 }
                 NodeFSFunctionEnum::Statfs => {
                     let args: &args::StatFS = args_as!(args::StatFS);
-                    // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
+                    // SAFETY: (R-2) single-JS-thread `JsCell` projection; held only
                     // across the libuv enqueue (copies `path` internally).
                     let path = args
                         .path
@@ -940,7 +940,7 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_statfs(
                             loop_,
-                            &mut task.req,
+                            &raw mut task.req,
                             path.as_ptr(),
                             Some(Self::uv_callbackreq),
                         )
@@ -1015,7 +1015,7 @@ mod _async_tasks {
             unsafe { Self::destroy(this) };
 
             let global_object = global_ref.get();
-            let success = matches!(result, Ok(_));
+            let success = result.is_ok();
             let converted = match result {
                 Err(err) => completion.error_to_js(global_object, &err),
                 Ok(res) => FsReturn::fs_to_js(res, global_object),
@@ -5574,10 +5574,12 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
+            // SAFETY: no callback, so the call is synchronous: `req` and the arguments only have to
+            // outlive it.
             let rc = unsafe {
                 uv::uv_fs_futime(
                     uv::Loop::get(),
-                    &mut *req,
+                    &raw mut *req,
                     args.fd.uv(),
                     args.atime,
                     args.mtime,
@@ -5881,12 +5883,13 @@ impl NodeFS {
                                     {
                                         // is a directory. break.
                                         if !res {
-                                            // SAFETY: `working_mem` is not used after this return; the
-                                            // re-derived &mut PathBuffer is scoped to the call.
                                             return Err(sys::Error {
                                                 errno: E::ENOTDIR as _,
                                                 syscall: sys::Tag::mkdir,
                                                 path: Self::os_path_into_buf(
+                                                    // SAFETY: `working_mem` is not used after this
+                                                    // return; the re-derived &mut PathBuffer is
+                                                    // scoped to the call.
                                                     unsafe { &mut *sync_error_buf_ptr },
                                                     without_nt_prefix(&(&path[..])[..len as usize]),
                                                 )
@@ -6028,10 +6031,12 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
+            // SAFETY: no callback, so the call is synchronous: `req` and the arguments only have to
+            // outlive it. `prefix_buf` is NUL-terminated.
             let rc = unsafe {
                 uv::uv_fs_mkdtemp(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut *req,
                     prefix_buf.as_ptr().cast(),
                     None,
                 )
@@ -7553,6 +7558,7 @@ impl NodeFS {
             // Not all files are seekable (and thus, not all files can be truncated).
             #[cfg(windows)]
             {
+                // SAFETY: `fd` is the open file this function writes to.
                 let _ = unsafe { windows::SetEndOfFile(fd.native()) };
             }
             #[cfg(not(windows))]
@@ -7568,6 +7574,7 @@ impl NodeFS {
         if args.flush {
             #[cfg(windows)]
             {
+                // SAFETY: `fd` is the open file this function writes to.
                 let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) };
             }
             #[cfg(not(windows))]
@@ -7649,10 +7656,12 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
+            // SAFETY: no callback, so the call is synchronous: `req` and the arguments only have to
+            // outlive it.
             let rc = unsafe {
                 uv::uv_fs_realpath(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     None,
                 )
@@ -7673,6 +7682,8 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
+            // SAFETY: non-null, so it is libuv's NUL-terminated result, which lives until `req` is
+            // dropped.
             let buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
             let _ = variant;
             if args.encoding == Encoding::Utf8 {
@@ -8117,10 +8128,12 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
+            // SAFETY: no callback, so the call is synchronous: `req` and the arguments only have to
+            // outlive it.
             let rc = unsafe {
                 uv::uv_fs_utime(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     args.atime,
                     args.mtime,
@@ -8148,10 +8161,12 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
+            // SAFETY: no callback, so the call is synchronous: `req` and the arguments only have to
+            // outlive it.
             let rc = unsafe {
                 uv::uv_fs_lutime(
                     bun_io::Loop::get(),
-                    &mut *req,
+                    &raw mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     args.atime,
                     args.mtime,
@@ -8254,6 +8269,7 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
+            // SAFETY: `src` is NUL-terminated (see above).
             let attributes = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
             if attributes == sys::c::INVALID_FILE_ATTRIBUTES {
                 return Err(sys::Error {
@@ -9018,6 +9034,7 @@ impl NodeFS {
             let stat_ = match reuse_stat {
                 Some(a) => a,
                 None => {
+                    // SAFETY: `src` is a NUL-terminated wide path.
                     let a = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
                     if a == sys::c::INVALID_FILE_ATTRIBUTES {
                         return Err(sys::Error::from_win32(
@@ -9030,6 +9047,7 @@ impl NodeFS {
                 }
             };
             if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+                // SAFETY: `src` and `dest` are NUL-terminated wide paths.
                 if unsafe {
                     sys::c::CopyFileW(
                         src.as_ptr(),
@@ -9044,6 +9062,7 @@ impl NodeFS {
                             &sys::Dir::cwd(),
                             paths::dirname_w(dest.as_slice()),
                         );
+                        // SAFETY: `src` and `dest` are NUL-terminated wide paths.
                         if unsafe {
                             sys::c::CopyFileW(
                                 src.as_ptr(),
@@ -9065,12 +9084,11 @@ impl NodeFS {
                 }
                 return Ok(());
             } else {
-                let handle = match sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0) {
-                    Err(err) => return Err(err),
-                    Ok(fd) => fd,
-                };
+                let handle = sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0)?;
                 let _close = scopeguard::guard(handle, |fd| fd.close());
                 let mut wbuf = paths::os_path_buffer_pool::get();
+                // SAFETY: `handle` is open until `_close` drops, and `wbuf` is writable for the
+                // length passed.
                 let len = unsafe {
                     windows::GetFinalPathNameByHandleW(
                         handle.native(),

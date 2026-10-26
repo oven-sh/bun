@@ -1919,7 +1919,7 @@ impl RunCommand {
                 runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
             // SAFETY: `stored[total] == 0` (written above before the copy);
             // arena-backed slice lives for process lifetime.
-            Ok(ZStr::from_buf(&stored[..], total))
+            Ok(ZStr::from_buf(stored, total))
         }
     }
 
@@ -2713,6 +2713,8 @@ impl RunCommand {
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
+            // SAFETY: the pointer is `root.len()` (4) u16s into `buf`, and the length passed leaves
+            // those 4 out.
             let cwd_len = unsafe {
                 sys::windows::kernel32::GetCurrentDirectoryW(
                     (buf.len() - 4) as u32,
@@ -3586,8 +3588,9 @@ impl RunCommand {
                 // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
                 // is a valid console output HANDLE from GetStdHandle and
                 // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
-                if unsafe { sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
-                    != sys::windows::FALSE
+                if unsafe {
+                    sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &raw mut csbi)
+                } != sys::windows::FALSE
                 {
                     let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
                     if w > 0 {
@@ -4216,7 +4219,7 @@ impl BunXFastPath {
             run_ctx.force_use_bun
         );
 
-        bun_install::windows_shim::bun_shim_impl::try_startup_from_bun_js(run_ctx);
+        bun_install::windows_shim::bun_shim_impl::try_startup_from_bun_js(&run_ctx);
 
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }

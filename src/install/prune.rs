@@ -2940,7 +2940,12 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
         let Ok(shim) = sys::File::read_from(bin.fd(), &file_name) else {
             continue;
         };
-        let Some(target_len) = shim.chunks_exact(2).position(|unit| unit == [b'"', 0]) else {
+        let Some(target_len) = shim
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .position(|unit| *unit == [b'"', 0])
+        else {
             continue;
         };
         let target = strings::to_utf8_alloc_from_le_bytes(&shim[..target_len * 2]);

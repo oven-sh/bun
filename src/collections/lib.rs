@@ -375,15 +375,6 @@ impl<T, const N: usize> SmallList<T, N> {
         self.0.insert(index as usize, item)
     }
     #[inline]
-    pub fn insert_slice(&mut self, index: u32, items: &[T])
-    where
-        T: Clone,
-    {
-        // SmallVec v1 `insert_from_slice` requires `T: Copy`; emulate with
-        // `insert_many` (shifts the tail once, then writes the cloned items).
-        self.0.insert_many(index as usize, items.iter().cloned())
-    }
-    #[inline]
     pub fn pop(&mut self) -> Option<T> {
         self.0.pop()
     }

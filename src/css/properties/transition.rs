@@ -365,13 +365,6 @@ mod transition_handler_body {
             let mut _timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)> =
                 self.timing_functions.take();
 
-            let mut rtl_properties: Option<SmallList<PropertyId, 1>> =
-                if let Some(p) = &mut _properties {
-                    expand_properties(&mut p.0, arena, context)
-                } else {
-                    None
-                };
-
             if let (
                 Some((properties, property_prefixes)),
                 Some((durations, duration_prefixes)),
@@ -389,26 +382,22 @@ mod transition_handler_body {
                 let intersection =
                     *property_prefixes & *duration_prefixes & *delay_prefixes & *timing_prefixes;
                 if !intersection.is_empty() {
-                    let transitions =
-                        get_transitions(arena, properties, durations, delays, timing_functions);
+                    let (transitions, rtl_transitions) = lower_shorthand(
+                        arena,
+                        properties,
+                        durations,
+                        delays,
+                        timing_functions,
+                        context,
+                    );
 
-                    if let Some(rtl_properties2) = &mut rtl_properties {
-                        let rtl_transitions = get_transitions(
-                            arena,
-                            rtl_properties2,
-                            durations,
-                            delays,
-                            timing_functions,
-                        );
+                    if let Some(rtl_transitions) = rtl_transitions {
                         context.add_logical_rule(
                             Property::Transition((transitions, intersection)),
                             Property::Transition((rtl_transitions, intersection)),
                         );
                     } else {
-                        dest.push(Property::Transition((
-                            transitions.deep_clone(arena),
-                            intersection,
-                        )));
+                        dest.push(Property::Transition((transitions, intersection)));
                     }
 
                     property_prefixes.remove(intersection);
@@ -418,12 +407,22 @@ mod transition_handler_body {
                 }
             }
 
-            if let Some((properties, prefix)) = _properties.take() {
+            if let Some((mut properties, prefix)) = _properties.take() {
                 if !prefix.is_empty() {
-                    if let Some(rtl_properties2) = rtl_properties.take() {
+                    let rtl_properties = lower_longhands(
+                        arena,
+                        &mut properties,
+                        ValueLists {
+                            durations: paired(&mut _durations, prefix),
+                            delays: paired(&mut _delays, prefix),
+                            timing_functions: paired(&mut _timing_functions, prefix),
+                        },
+                        context,
+                    );
+                    if let Some(rtl_properties) = rtl_properties {
                         context.add_logical_rule(
                             Property::TransitionProperty((properties, prefix)),
-                            Property::TransitionProperty((rtl_properties2, prefix)),
+                            Property::TransitionProperty((rtl_properties, prefix)),
                         );
                     } else {
                         dest.push(Property::TransitionProperty((properties, prefix)));
@@ -464,156 +463,388 @@ mod transition_handler_body {
         }
     }
 
-    #[inline]
-    fn get_transitions(
-        arena: &bun_alloc::Arena,
-        properties: &mut SmallList<PropertyId, 1>,
-        durations: &mut SmallList<Time, 1>,
-        delays: &mut SmallList<Time, 1>,
-        timing_functions: &mut SmallList<EasingFunction, 1>,
-    ) -> SmallList<Transition, 1> {
-        #[inline]
-        fn cycle_bump(idx: &mut u32, len: u32) {
-            *idx = (*idx + 1) % len;
-        }
-
-        // transition-property determines the number of transitions. The values of other
-        // properties are repeated to match this length.
-        let mut transitions = SmallList::<Transition, 1>::init_capacity(1);
-        let mut durations_idx: u32 = 0;
-        let mut delays_idx: u32 = 0;
-        let mut timing_idx: u32 = 0;
-        for property_id in properties.slice() {
-            let duration = if durations.len() > durations_idx {
-                durations.at(durations_idx).deep_clone(arena)
-            } else {
-                Time::Seconds(0.0)
-            };
-            let delay = if delays.len() > delays_idx {
-                delays.at(delays_idx).deep_clone(arena)
-            } else {
-                Time::Seconds(0.0)
-            };
-            let timing_function = if timing_functions.len() > timing_idx {
-                timing_functions.at(timing_idx).deep_clone(arena)
-            } else {
-                EasingFunction::Ease
-            };
-            cycle_bump(&mut durations_idx, durations.len());
-            cycle_bump(&mut delays_idx, delays.len());
-            cycle_bump(&mut timing_idx, timing_functions.len());
-            let transition = Transition {
-                property: property_id.deep_clone(arena),
-                duration,
-                delay,
-                timing_function,
-            };
-            let prefix_to_iter = property_id.prefix().or_none();
-            // Expand vendor prefixes into multiple transitions.
-            // Cloning for every iteration costs at most one extra clone of a
-            // small value.
-            for &prefix_flag in VendorPrefix::FIELDS {
-                if prefix_to_iter.contains(prefix_flag) {
-                    let mut t = transition.deep_clone(arena);
-                    t.property = property_id.with_prefix(prefix_flag);
-                    transitions.append(t);
-                }
-            }
-        }
-        transitions
+    /// The names that one as-written `transition-property` entry is lowered to for the targets.
+    struct Lowered {
+        ltr: SmallList<PropertyId, 4>,
+        /// The names for right-to-left text, for an inline logical property.
+        rtl: Option<SmallList<PropertyId, 4>>,
     }
 
-    fn expand_properties(
-        properties: &mut SmallList<PropertyId, 1>,
-        arena: &bun_alloc::Arena,
-        context: &mut PropertyHandlerContext,
-    ) -> Option<SmallList<PropertyId, 1>> {
-        #[inline]
-        fn replace(
-            arena: &bun_alloc::Arena,
-            propertiez: &mut SmallList<PropertyId, 1>,
-            props: &[PropertyId],
-            i: u32,
-        ) {
-            propertiez.slice_mut()[i as usize] = props[0].deep_clone(arena);
-            if props.len() > 1 {
-                propertiez.insert_slice(i + 1, &props[1..]);
+    impl Lowered {
+        fn rtl_names(&self) -> &SmallList<PropertyId, 4> {
+            self.rtl.as_ref().unwrap_or(&self.ltr)
+        }
+    }
+
+    /// The as-written entry directly in front of the one that is lowered.
+    #[derive(Default)]
+    struct Preceding {
+        entry: Option<PropertyId>,
+        /// The vendor prefixes of `entry` and of the entries of the same property directly
+        /// in front of it. Empty when one of them is unprefixed.
+        prefixes: VendorPrefix,
+    }
+
+    impl Preceding {
+        /// The vendor prefixes that the entries directly in front of `property_id` already
+        /// list for the same property.
+        fn listed(&self, property_id: &PropertyId) -> VendorPrefix {
+            match self.entry {
+                Some(entry) if !self.prefixes.is_empty() && entry.tag() == property_id.tag() => {
+                    self.prefixes
+                }
+                _ => VendorPrefix::empty(),
             }
         }
+
+        fn advance(&mut self, property_id: &PropertyId) {
+            let prefix = property_id.prefix();
+            self.prefixes = if prefix.is_empty() || prefix.contains(VendorPrefix::NONE) {
+                VendorPrefix::empty()
+            } else {
+                self.listed(property_id) | prefix
+            };
+            self.entry = Some(*property_id);
+        }
+    }
+
+    /// Lowers one as-written `transition-property` entry: a logical property to its physical
+    /// names, and any other property to the vendor prefixes and the `-webkit-` mask name that
+    /// the targets need.
+    ///
+    /// A merged rule and the generated `:lang()` rules are minified again, so the names this
+    /// handler wrote come back as entries. It writes a prefixed name and a `-webkit-` mask
+    /// name directly in front of the entry they belong to, so a name that `preceding` already
+    /// lists is not added a second time.
+    fn lower_entry(
+        property_id: &PropertyId,
+        preceding: &mut Preceding,
+        context: &PropertyHandlerContext,
+    ) -> Lowered {
+        fn for_targets(
+            names: &[PropertyId],
+            context: &PropertyHandlerContext,
+        ) -> SmallList<PropertyId, 4> {
+            let mut names = SmallList::<PropertyId, 4>::init_inlined(names);
+            for name in names.slice_mut() {
+                name.set_prefixes_for_targets(&context.targets);
+            }
+            names
+        }
+
+        let lowered = match get_logical_properties(property_id) {
+            LogicalPropertyId::Block(feature, block) if context.should_compile_logical(feature) => {
+                Lowered {
+                    ltr: for_targets(block, context),
+                    rtl: None,
+                }
+            }
+            LogicalPropertyId::Inline(feature, ltr, rtl)
+                if context.should_compile_logical(feature) =>
+            {
+                Lowered {
+                    ltr: for_targets(ltr, context),
+                    rtl: Some(for_targets(rtl, context)),
+                }
+            }
+            _ => {
+                let mut names = SmallList::<PropertyId, 4>::default();
+                // Expand vendor prefixes for targets.
+                let mut id = *property_id;
+                id.set_prefixes_for_targets(&context.targets);
+                let listed = preceding.listed(property_id);
+                if !listed.is_empty() {
+                    let added = id.prefix().difference(property_id.prefix());
+                    id = id.with_prefix(id.prefix().difference(added & listed));
+                }
+
+                // Expand mask properties, which use different vendor-prefixed names.
+                if let Some(webkit) = masking::get_webkit_mask_property(&id)
+                    && preceding.entry != Some(webkit)
+                    && context
+                        .targets
+                        .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
+                        .contains(VendorPrefix::WEBKIT)
+                {
+                    names.append(webkit);
+                }
+                names.append(id);
+                Lowered {
+                    ltr: names,
+                    rtl: None,
+                }
+            }
+        };
+
+        preceding.advance(property_id);
+        lowered
+    }
+
+    /// The value of `list` for the entry at `index` of `transition-property`. A list that
+    /// is shorter than `transition-property` repeats.
+    fn cycled<T>(list: &SmallList<T, 1>, index: u32) -> Option<&T> {
+        if list.is_empty() {
+            return None;
+        }
+        Some(list.at(index % list.len()))
+    }
+
+    /// Builds the transitions of a `transition` shorthand, and the transitions for
+    /// right-to-left text when an inline logical property is in the list.
+    ///
+    /// Every name an entry is lowered to gets the duration, delay and timing function of
+    /// that entry: CSS Transitions matches the lists up by the index of the entry as
+    /// written, and the longhands of a shorthand use the values at the index of the
+    /// shorthand. lightningcss lengthens `transition-property` first and matches by position
+    /// afterwards, which turns `inset 1s, opacity 2s` into
+    /// `top 1s, bottom 2s, left 1s, right 2s, opacity 1s`.
+    fn lower_shorthand(
+        arena: &bun_alloc::Arena,
+        properties: &SmallList<PropertyId, 1>,
+        durations: &SmallList<Time, 1>,
+        delays: &SmallList<Time, 1>,
+        timing_functions: &SmallList<EasingFunction, 1>,
+        context: &PropertyHandlerContext,
+    ) -> (SmallList<Transition, 1>, Option<SmallList<Transition, 1>>) {
+        fn append(
+            arena: &bun_alloc::Arena,
+            transitions: &mut SmallList<Transition, 1>,
+            names: &SmallList<PropertyId, 4>,
+            entry: &Transition,
+        ) {
+            for name in names.slice() {
+                // Expand vendor prefixes into multiple transitions.
+                let prefixes = name.prefix().or_none();
+                for &prefix in VendorPrefix::FIELDS {
+                    if prefixes.contains(prefix) {
+                        let mut transition = entry.deep_clone(arena);
+                        transition.property = name.with_prefix(prefix);
+                        transitions.append(transition);
+                    }
+                }
+            }
+        }
+
+        let mut transitions = SmallList::<Transition, 1>::init_capacity(properties.len());
+        let mut rtl_transitions: Option<SmallList<Transition, 1>> = None;
+        let mut preceding = Preceding::default();
+        for (index, property_id) in (0u32..).zip(properties.slice()) {
+            let lowered = lower_entry(property_id, &mut preceding, context);
+            let entry = Transition {
+                property: *property_id,
+                duration: cycled(durations, index)
+                    .map_or(Time::Seconds(0.0), |duration| duration.deep_clone(arena)),
+                delay: cycled(delays, index)
+                    .map_or(Time::Seconds(0.0), |delay| delay.deep_clone(arena)),
+                timing_function: cycled(timing_functions, index)
+                    .map_or(EasingFunction::Ease, |timing| timing.deep_clone(arena)),
+            };
+
+            // Clone the transitions to create the RTL version only when needed.
+            if lowered.rtl.is_some() && rtl_transitions.is_none() {
+                rtl_transitions = Some(transitions.deep_clone(arena));
+            }
+            if let Some(rtl_transitions) = &mut rtl_transitions {
+                append(arena, rtl_transitions, lowered.rtl_names(), &entry);
+            }
+            append(arena, &mut transitions, &lowered.ltr, &entry);
+        }
+        (transitions, rtl_transitions)
+    }
+
+    /// The value lists that `flush` writes as longhands under a vendor prefix that the
+    /// `transition-property` longhand is also written under. `lower_longhands` destructures
+    /// it, so a list that is added here has to be handled there.
+    struct ValueLists<'a> {
+        durations: Option<&'a mut SmallList<Time, 1>>,
+        delays: Option<&'a mut SmallList<Time, 1>>,
+        timing_functions: Option<&'a mut SmallList<EasingFunction, 1>>,
+    }
+
+    fn paired<T>(
+        list: &mut Option<(SmallList<T, 1>, VendorPrefix)>,
+        property_prefixes: VendorPrefix,
+    ) -> Option<&mut SmallList<T, 1>> {
+        match list {
+            Some((list, prefixes)) if prefixes.intersects(property_prefixes) => Some(list),
+            _ => None,
+        }
+    }
+
+    /// A list whose values are all equal pairs with any number of names as it is.
+    fn values_differ<T: PartialEq>(list: &SmallList<T, 1>) -> bool {
+        let values = list.slice();
+        values.iter().any(|value| *value != values[0])
+    }
+
+    /// Appends `names` to a `transition-property` list. With `per_name`, a property with
+    /// several vendor prefixes becomes one entry per prefix, in the order it is printed.
+    fn append_names(
+        list: &mut SmallList<PropertyId, 1>,
+        names: &SmallList<PropertyId, 4>,
+        per_name: bool,
+    ) {
+        for name in names.slice() {
+            if !per_name {
+                list.append(*name);
+                continue;
+            }
+            let prefixes = name.prefix().or_none();
+            for &prefix in VendorPrefix::FIELDS {
+                if prefixes.contains(prefix) {
+                    list.append(name.with_prefix(prefix));
+                }
+            }
+        }
+    }
+
+    /// A `transition-property` longhand from the first entry on that is lowered to several
+    /// names. The lists are only ever appended to.
+    struct Lengthened {
+        ltr: SmallList<PropertyId, 1>,
+        rtl: Option<SmallList<PropertyId, 1>>,
+        /// How many names each as-written entry became. Kept when a value list needs it.
+        names_per_entry: SmallList<u32, 8>,
+    }
+
+    impl Lengthened {
+        /// Starts from the first `index` entries, which were lowered in place to one name each.
+        #[cold]
+        fn start(
+            properties: &SmallList<PropertyId, 1>,
+            mut rtl_properties: Option<SmallList<PropertyId, 1>>,
+            index: u32,
+            per_name: bool,
+        ) -> Self {
+            // Room for one logical shorthand that is lowered to four names.
+            let mut ltr = SmallList::<PropertyId, 1>::init_capacity(properties.len() + 3);
+            ltr.append_slice(&properties.slice()[..index as usize]);
+            if let Some(rtl_properties) = &mut rtl_properties {
+                rtl_properties.set_len(index);
+            }
+            let mut names_per_entry = SmallList::<u32, 8>::default();
+            if per_name {
+                names_per_entry.ensure_total_capacity(properties.len());
+                for _ in 0..index {
+                    names_per_entry.append(1);
+                }
+            }
+            Self {
+                ltr,
+                rtl: rtl_properties,
+                names_per_entry,
+            }
+        }
+
+        fn append(&mut self, arena: &bun_alloc::Arena, lowered: &Lowered, per_name: bool) {
+            // Clone properties to create RTL version only when needed.
+            if lowered.rtl.is_some() && self.rtl.is_none() {
+                self.rtl = Some(self.ltr.deep_clone(arena));
+            }
+            if let Some(rtl) = &mut self.rtl {
+                append_names(rtl, lowered.rtl_names(), per_name);
+            }
+            let before = self.ltr.len();
+            append_names(&mut self.ltr, &lowered.ltr, per_name);
+            if per_name {
+                self.names_per_entry.append(self.ltr.len() - before);
+            }
+            // The two names of an inline logical property need the same vendor prefixes.
+            debug_assert!(
+                self.rtl
+                    .as_ref()
+                    .is_none_or(|rtl| rtl.len() == self.ltr.len())
+            );
+        }
+    }
+
+    /// Rewrites `list` so that it is index-parallel with a lengthened `transition-property`:
+    /// the value of each as-written entry is written once per name the entry became.
+    fn repeat_per_name<'bump, T: DeepClone<'bump>>(
+        arena: &'bump bun_alloc::Arena,
+        list: &mut SmallList<T, 1>,
+        names_per_entry: &[u32],
+        names: u32,
+    ) {
+        let mut repeated = SmallList::<T, 1>::init_capacity(names);
+        for (index, &count) in (0u32..).zip(names_per_entry) {
+            let value = list.at(index % list.len());
+            for _ in 0..count {
+                repeated.append(value.deep_clone(arena));
+            }
+        }
+        *list = repeated;
+    }
+
+    /// Lowers a `transition-property` list that `flush` writes as a longhand, and returns
+    /// the list for right-to-left text when an inline logical property is in it.
+    ///
+    /// A browser matches the list up with the value lists by position. So when an entry is
+    /// lowered to several names next to a list of `value_lists` whose values differ, the
+    /// value of the entry is repeated for each of its names. A property with several vendor
+    /// prefixes is then stored as one entry per prefix, so that the lists are still
+    /// index-parallel when they are lowered again.
+    ///
+    /// A value list that this flush does not hold (another rule, the `!important`
+    /// declarations of the same block) cannot be rewritten here. It keeps matching the
+    /// lowered list by position, as in lightningcss.
+    fn lower_longhands(
+        arena: &bun_alloc::Arena,
+        properties: &mut SmallList<PropertyId, 1>,
+        value_lists: ValueLists<'_>,
+        context: &PropertyHandlerContext,
+    ) -> Option<SmallList<PropertyId, 1>> {
+        let ValueLists {
+            durations,
+            delays,
+            timing_functions,
+        } = value_lists;
+        let durations = durations.filter(|list| values_differ(list));
+        let delays = delays.filter(|list| values_differ(list));
+        let timing_functions = timing_functions.filter(|list| values_differ(list));
+        let per_name = durations.is_some() || delays.is_some() || timing_functions.is_some();
 
         let mut rtl_properties: Option<SmallList<PropertyId, 1>> = None;
-        let mut i: u32 = 0;
-
-        // Expand logical properties in place.
-        while i < properties.len() {
-            let result = get_logical_properties(properties.at(i));
-            match result {
-                LogicalPropertyId::Block(feature, block)
-                    if context.should_compile_logical(feature) =>
-                {
-                    replace(arena, properties, block, i);
-                    if let Some(rtl) = &mut rtl_properties {
-                        replace(arena, rtl, block, i);
-                    }
-                    i += 1;
+        let mut lengthened: Option<Lengthened> = None;
+        let mut preceding = Preceding::default();
+        for index in 0..properties.len() {
+            let lowered = lower_entry(properties.at(index), &mut preceding, context);
+            let one_name = lowered.ltr.len() == 1
+                && !(per_name && lowered.ltr.at(0).prefix().bits().count_ones() > 1);
+            if one_name && lengthened.is_none() {
+                // Clone properties to create RTL version only when needed.
+                if lowered.rtl.is_some() && rtl_properties.is_none() {
+                    rtl_properties = Some(properties.deep_clone(arena));
                 }
-                LogicalPropertyId::Inline(feature, ltr, rtl)
-                    if context.should_compile_logical(feature) =>
-                {
-                    // Clone properties to create RTL version only when needed.
-                    if rtl_properties.is_none() {
-                        rtl_properties = Some(properties.deep_clone(arena));
-                    }
-
-                    replace(arena, properties, ltr, i);
-                    if let Some(rtl_props) = &mut rtl_properties {
-                        replace(arena, rtl_props, rtl, i);
-                    }
-
-                    i += u32::try_from(ltr.len()).expect("int cast");
+                if let Some(rtl_properties) = &mut rtl_properties {
+                    *rtl_properties.r#mut(index) = *lowered.rtl_names().at(0);
                 }
-                _ => {
-                    let index = i;
-                    // Expand vendor prefixes for targets.
-                    properties.slice_mut()[index as usize]
-                        .set_prefixes_for_targets(&context.targets);
-
-                    // Expand mask properties, which use different vendor-prefixed names.
-                    if let Some(property_id) =
-                        masking::get_webkit_mask_property(properties.at(index))
-                    {
-                        if context
-                            .targets
-                            .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
-                            .contains(VendorPrefix::WEBKIT)
-                        {
-                            properties.insert(index, property_id);
-                            i += 1;
-                        }
-                    }
-
-                    if let Some(rtl_props) = &mut rtl_properties {
-                        rtl_props.slice_mut()[index as usize]
-                            .set_prefixes_for_targets(&context.targets);
-
-                        if let Some(property_id) =
-                            masking::get_webkit_mask_property(rtl_props.at(index))
-                        {
-                            if context
-                                .targets
-                                .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
-                                .contains(VendorPrefix::WEBKIT)
-                            {
-                                rtl_props.insert(index, property_id);
-                            }
-                        }
-                    }
-                    i += 1;
-                }
+                *properties.r#mut(index) = *lowered.ltr.at(0);
+                continue;
             }
+            lengthened
+                .get_or_insert_with(|| {
+                    Lengthened::start(properties, rtl_properties.take(), index, per_name)
+                })
+                .append(arena, &lowered, per_name);
         }
 
-        rtl_properties
+        let Some(lengthened) = lengthened else {
+            return rtl_properties;
+        };
+        let names = lengthened.ltr.len();
+        let names_per_entry = lengthened.names_per_entry.slice();
+        if let Some(durations) = durations {
+            repeat_per_name(arena, durations, names_per_entry, names);
+        }
+        if let Some(delays) = delays {
+            repeat_per_name(arena, delays, names_per_entry, names);
+        }
+        if let Some(timing_functions) = timing_functions {
+            repeat_per_name(arena, timing_functions, names_per_entry, names);
+        }
+        *properties = lengthened.ltr;
+        lengthened.rtl
     }
 
     enum LogicalPropertyId {

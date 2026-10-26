@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -7159,6 +7160,477 @@ describe("css tests", () => {
         chrome: Some(95 << 16),
       },
     );
+
+    // A `transition-property` entry can be lowered to several names: a logical shorthand to its physical
+    // longhands, `mask-border` to itself plus `-webkit-mask-box-image`, a property to one name per vendor
+    // prefix. Every such name keeps the duration, delay and timing function of the entry it came from.
+    const safari = (version: number) => ({ safari: Some(version << 16) });
+    const bunBuildDefaults = {
+      chrome: Some(87 << 16),
+      edge: Some(88 << 16),
+      firefox: Some(78 << 16),
+      safari: Some(14 << 16),
+    };
+    const rtlLangs = "ae ar arc bcc bqi ckb dv fa glk he ku mzn nqo pnb ps sd ug ur yi"
+      .split(" ")
+      .map(lang => `:lang(${lang})`)
+      .join(", ");
+    // The rules that one rule with an inline logical property becomes for Safari 6 and 8.
+    const directionRules = (ltr: string, rtl: string) => `
+      .foo:not(:-webkit-any(${rtlLangs})) { ${ltr} }
+      .foo:not(:is(${rtlLangs})) { ${ltr} }
+      .foo:-webkit-any(${rtlLangs}) { ${rtl} }
+      .foo:is(${rtlLangs}) { ${rtl} }
+    `;
+
+    describe("a lowered entry keeps its values in the shorthand", () => {
+      prefix_test(
+        `.foo { transition: mask-border 1s, opacity 2s }`,
+        `.foo { transition: -webkit-mask-box-image 1s, mask-border 1s, opacity 2s; }`,
+        safari(15),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, opacity 2s }`,
+        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: margin-block 1s, opacity 2s, color 3s }`,
+        `.foo { transition: margin-top 1s, margin-bottom 1s, opacity 2s, color 3s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: border-block-color 1s, border-inline-width 2s, opacity 3s }`,
+        `.foo { transition: border-top-color 1s, border-bottom-color 1s, border-left-width 2s, border-right-width 2s, opacity 3s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: mask-composite 1s, mask-mode 2s, opacity 3s }`,
+        `.foo { transition: -webkit-mask-composite 1s, mask-composite 1s, -webkit-mask-source-type 2s, mask-mode 2s, opacity 3s; }`,
+        safari(15),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s linear 3s, opacity 2s ease-in 4s }`,
+        `.foo { transition: top 1s linear 3s, bottom 1s linear 3s, left 1s linear 3s, right 1s linear 3s, opacity 2s ease-in 4s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo {
+          transition-property: inset, opacity;
+          transition-duration: 1s, 2s;
+          transition-delay: 3s, 4s;
+          transition-timing-function: linear, ease-in;
+        }`,
+        `.foo { transition: top 1s linear 3s, bottom 1s linear 3s, left 1s linear 3s, right 1s linear 3s, opacity 2s ease-in 4s; }`,
+        safari(8),
+      );
+      // A shorter list repeats over the entries as written, and a value past the last entry is not used.
+      prefix_test(
+        `.foo {
+          transition-property: inset, opacity, color;
+          transition-duration: 1s, 2s;
+          transition-delay: 0s;
+          transition-timing-function: ease;
+        }`,
+        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s, color 1s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo {
+          transition-property: inset;
+          transition-duration: 1s, 2s;
+          transition-delay: 0s;
+          transition-timing-function: ease;
+        }`,
+        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s; }`,
+        safari(8),
+      );
+      // The order as written stays, so the last entry for a property still decides.
+      prefix_test(
+        `.foo { transition: top 5s, inset 1s, left 7s }`,
+        `.foo { transition: top 5s, top 1s, bottom 1s, left 1s, right 1s, left 7s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: all 1s, inset 2s }`,
+        `.foo { transition: all 1s, top 2s, bottom 2s, left 2s, right 2s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, opacity 2s; transition-duration: 3s, 4s }`,
+        `.foo { transition: top 3s, bottom 3s, left 3s, right 3s, opacity 4s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition-duration: 3s, 4s; transition: inset 1s, opacity 2s }`,
+        `.foo { transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s; }`,
+        safari(8),
+      );
+      // The handler writes what it holds when a prefixed value differs or a longhand is not parsed.
+      prefix_test(
+        `.foo { -webkit-transition: inset 1s, opacity 2s; transition: inset 3s, opacity 4s }`,
+        `.foo {
+          -webkit-transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s;
+          transition: top 3s, bottom 3s, left 3s, right 3s, opacity 4s;
+        }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, opacity 2s; transition-timing-function: var(--ease) }`,
+        `.foo {
+          transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s;
+          transition-timing-function: var(--ease);
+        }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, opacity 2s, transform 3s }`,
+        `.foo {
+          -webkit-transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s, -webkit-transform 3s, transform 3s;
+          transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s, -webkit-transform 3s, transform 3s;
+        }`,
+        safari(6),
+      );
+      // Both direction rules.
+      prefix_test(
+        `.foo { transition: margin-inline-start 1s, inset 2s, opacity 3s }`,
+        directionRules(
+          `transition: margin-left 1s, top 2s, bottom 2s, left 2s, right 2s, opacity 3s;`,
+          `transition: margin-right 1s, top 2s, bottom 2s, left 2s, right 2s, opacity 3s;`,
+        ),
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: margin-inline-start 1s, mask-border 2s, opacity 3s }`,
+        directionRules(
+          `transition: margin-left 1s, -webkit-mask-box-image 2s, mask-border 2s, opacity 3s;`,
+          `transition: margin-right 1s, -webkit-mask-box-image 2s, mask-border 2s, opacity 3s;`,
+        ),
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition: margin-inline-start 1s, transform 2s, opacity 3s }`,
+        directionRules(
+          `-webkit-transition: margin-left 1s, -webkit-transform 2s, transform 2s, opacity 3s;
+           transition: margin-left 1s, -webkit-transform 2s, transform 2s, opacity 3s;`,
+          `-webkit-transition: margin-right 1s, -webkit-transform 2s, transform 2s, opacity 3s;
+           transition: margin-right 1s, -webkit-transform 2s, transform 2s, opacity 3s;`,
+        ),
+        safari(6),
+      );
+      prefix_test(
+        `.foo { transition: border-start-start-radius 1s, opacity 2s }`,
+        `
+        .foo:not(:is(${rtlLangs})) {
+          -webkit-transition: -webkit-border-top-left-radius 1s, border-top-left-radius 1s, opacity 2s;
+          transition: -webkit-border-top-left-radius 1s, border-top-left-radius 1s, opacity 2s;
+        }
+        .foo:is(${rtlLangs}) {
+          -webkit-transition: -webkit-border-top-right-radius 1s, border-top-right-radius 1s, opacity 2s;
+          transition: -webkit-border-top-right-radius 1s, border-top-right-radius 1s, opacity 2s;
+        }
+        `,
+        safari(4),
+      );
+      // Nothing is lowered without targets, or for targets that need nothing.
+      minify_test(
+        ".foo { transition: inset 1s, mask-border 2s, transform 3s }",
+        ".foo{transition:inset 1s,mask-border 2s,transform 3s}",
+      );
+      prefix_test(
+        `.foo { transition: inset 1s, mask-border 2s, transform 3s, opacity 4s }`,
+        `.foo { transition: inset 1s, mask-border 2s, transform 3s, opacity 4s; }`,
+        { chrome: Some(130 << 16) },
+      );
+
+      test("a long list of entries that are lowered", () => {
+        const durations = Array.from({ length: 3000 }, (_, i) => `${(i % 9) + 1}s`);
+        const source = `.foo{transition:${durations.map(duration => `inset ${duration}`).join(",")}}`;
+        const expected = `.foo{transition:${durations
+          .map(duration => ["top", "bottom", "left", "right"].map(name => `${name} ${duration}`).join(","))
+          .join(",")}}`;
+        expect(cssInternals.minifyTest(source, "", safari(8))).toBe(expected);
+      });
+    });
+
+    describe("a lowered entry keeps its values in the longhands", () => {
+      prefix_test(
+        `.foo { transition-property: inset, opacity; transition-duration: 1s, 2s }`,
+        `.foo { transition-property: top, bottom, left, right, opacity; transition-duration: 1s, 1s, 1s, 1s, 2s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition-property: mask-border, opacity; transition-duration: 1s, 2s }`,
+        `.foo { transition-property: -webkit-mask-box-image, mask-border, opacity; transition-duration: 1s, 1s, 2s; }`,
+        safari(15),
+      );
+      prefix_test(
+        `.foo { transition-property: transform, opacity; transition-duration: 1s, 2s }`,
+        `.foo {
+          -webkit-transition-property: -webkit-transform, transform, opacity;
+          transition-property: -webkit-transform, transform, opacity;
+          -webkit-transition-duration: 1s, 1s, 2s;
+          transition-duration: 1s, 1s, 2s;
+        }`,
+        safari(6),
+      );
+      prefix_test(
+        `.foo { transition-property: mask-size, opacity; transition-duration: 1s, 2s }`,
+        `.foo { transition-property: -webkit-mask-size, mask-size, opacity; transition-duration: 1s, 1s, 2s; }`,
+        bunBuildDefaults,
+      );
+      prefix_test(
+        `.foo {
+          transition-property: inset, opacity;
+          transition-delay: 1s, 2s;
+          transition-timing-function: linear, ease-in;
+        }`,
+        `.foo {
+          transition-property: top, bottom, left, right, opacity;
+          transition-delay: 1s, 1s, 1s, 1s, 2s;
+          transition-timing-function: linear, linear, linear, linear, ease-in;
+        }`,
+        safari(8),
+      );
+      // A shorter list repeats over the entries as written, and a value past the last entry is not used.
+      prefix_test(
+        `.foo { transition-property: inset, opacity, color; transition-duration: 1s, 2s }`,
+        `.foo { transition-property: top, bottom, left, right, opacity, color; transition-duration: 1s, 1s, 1s, 1s, 2s, 1s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition-property: inset, opacity; transition-duration: 1s, 2s, 3s }`,
+        `.foo { transition-property: top, bottom, left, right, opacity; transition-duration: 1s, 1s, 1s, 1s, 2s; }`,
+        safari(8),
+      );
+      // A list with one value, or with equal values, already pairs with every name.
+      prefix_test(
+        `.foo { transition-property: inset, opacity; transition-duration: 1s }`,
+        `.foo { transition-property: top, bottom, left, right, opacity; transition-duration: 1s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition-property: inset, opacity; transition-duration: 1s, 1s; transition-delay: 3s, 4s }`,
+        `.foo {
+          transition-property: top, bottom, left, right, opacity;
+          transition-duration: 1s, 1s;
+          transition-delay: 3s, 3s, 3s, 3s, 4s;
+        }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition-property: transform, opacity; transition-duration: 1s }`,
+        `.foo {
+          -webkit-transition-property: -webkit-transform, transform, opacity;
+          transition-property: -webkit-transform, transform, opacity;
+          -webkit-transition-duration: 1s;
+          transition-duration: 1s;
+        }`,
+        safari(6),
+      );
+      // A list that is written under another prefix than the property list stays as written.
+      prefix_test(
+        `.foo { transition-property: inset, opacity; -webkit-transition-duration: 1s, 2s }`,
+        `.foo { transition-property: top, bottom, left, right, opacity; -webkit-transition-duration: 1s, 2s; }`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { -webkit-transition-property: inset, opacity; transition-duration: 1s, 2s }`,
+        `.foo {
+          -webkit-transition-property: top, bottom, left, right, opacity;
+          -webkit-transition-duration: 1s, 1s, 1s, 1s, 2s;
+          transition-duration: 1s, 1s, 1s, 1s, 2s;
+        }`,
+        safari(6),
+      );
+      // One flush writes a shorthand and longhands from the same property list.
+      prefix_test(
+        `.foo {
+          -webkit-transition: inset 1s, opacity 2s;
+          -moz-transition-property: inset, opacity;
+          -moz-transition-duration: 1s, 2s;
+        }`,
+        `.foo {
+          -webkit-transition: top 1s, bottom 1s, left 1s, right 1s, opacity 2s;
+          -moz-transition-property: top, bottom, left, right, opacity;
+          -moz-transition-duration: 1s, 1s, 1s, 1s, 2s;
+        }`,
+        safari(8),
+      );
+      // The value lists stay in the rule, and both direction rules get a list of the same length.
+      prefix_test(
+        `.foo { transition-property: margin-inline-start, inset, opacity; transition-duration: 1s, 2s, 3s }`,
+        `.foo { transition-duration: 1s, 2s, 2s, 2s, 2s, 3s; }
+        ${directionRules(
+          `transition-property: margin-left, top, bottom, left, right, opacity;`,
+          `transition-property: margin-right, top, bottom, left, right, opacity;`,
+        )}`,
+        safari(8),
+      );
+      prefix_test(
+        `.foo { transition-property: margin-inline-start, transform, opacity; transition-duration: 1s, 2s, 3s }`,
+        `.foo { -webkit-transition-duration: 1s, 2s, 2s, 3s; transition-duration: 1s, 2s, 2s, 3s; }
+        ${directionRules(
+          `-webkit-transition-property: margin-left, -webkit-transform, transform, opacity;
+           transition-property: margin-left, -webkit-transform, transform, opacity;`,
+          `-webkit-transition-property: margin-right, -webkit-transform, transform, opacity;
+           transition-property: margin-right, -webkit-transform, transform, opacity;`,
+        )}`,
+        safari(6),
+      );
+      prefix_test(
+        `.foo { transition-property: border-start-start-radius, opacity; transition-duration: 1s, 2s }`,
+        `
+        .foo { -webkit-transition-duration: 1s, 1s, 2s; transition-duration: 1s, 1s, 2s; }
+        .foo:not(:is(${rtlLangs})) {
+          -webkit-transition-property: -webkit-border-top-left-radius, border-top-left-radius, opacity;
+          transition-property: -webkit-border-top-left-radius, border-top-left-radius, opacity;
+        }
+        .foo:is(${rtlLangs}) {
+          -webkit-transition-property: -webkit-border-top-right-radius, border-top-right-radius, opacity;
+          transition-property: -webkit-border-top-right-radius, border-top-right-radius, opacity;
+        }
+        `,
+        safari(4),
+      );
+      // Without a value list in the same declaration block there is nothing to pair.
+      prefix_test(
+        `.foo { transition-property: inset, transform, mask-border }`,
+        `.foo {
+          -webkit-transition-property: top, bottom, left, right, -webkit-transform, transform, -webkit-mask-box-image, mask-border;
+          transition-property: top, bottom, left, right, -webkit-transform, transform, -webkit-mask-box-image, mask-border;
+        }`,
+        safari(6),
+      );
+      prefix_test(
+        `.foo { transition-property: margin-inline-start, opacity; transition-duration: 1s, 2s }`,
+        `.foo { transition-duration: 1s, 2s; }
+        ${directionRules(`transition-property: margin-left, opacity;`, `transition-property: margin-right, opacity;`)}`,
+        safari(8),
+      );
+    });
+
+    // A merged rule and the direction rules are minified again, so the handler reads its own output.
+    describe("a declaration that is lowered again does not change", () => {
+      prefix_test(
+        `.foo { transition: mask-border 1s, opacity 2s } .foo { color: red }`,
+        `.foo { color: red; transition: -webkit-mask-box-image 1s, mask-border 1s, opacity 2s; }`,
+        safari(15),
+      );
+      prefix_test(
+        `.foo { transition: transform 1s, opacity 2s } .foo { color: red }`,
+        `.foo {
+          color: red;
+          -webkit-transition: -webkit-transform 1s, transform 1s, opacity 2s;
+          transition: -webkit-transform 1s, transform 1s, opacity 2s;
+        }`,
+        safari(6),
+      );
+      prefix_test(
+        `.foo { transition-property: transform, opacity; transition-duration: 1s, 2s } .foo { color: red }`,
+        `.foo {
+          color: red;
+          -webkit-transition-property: -webkit-transform, transform, opacity;
+          transition-property: -webkit-transform, transform, opacity;
+          -webkit-transition-duration: 1s, 1s, 2s;
+          transition-duration: 1s, 1s, 2s;
+        }`,
+        safari(6),
+      );
+      prefix_test(
+        `.foo { transition-property: mask-border, opacity; transition-duration: 1s, 2s } .foo { color: red }`,
+        `.foo {
+          color: red;
+          transition-property: -webkit-mask-box-image, mask-border, opacity;
+          transition-duration: 1s, 1s, 2s;
+        }`,
+        safari(15),
+      );
+      for (const rules of [1, 2, 4, 8]) {
+        const others = Array.from({ length: rules - 1 }, (_, i) => `@media (x: 1) { .other${i} { color: red } }`);
+        const merged = Array.from({ length: rules - 1 }, (_, i) => `.other${i}`);
+        prefix_test(
+          `@media (x: 1) { .foo { transition: mask-size 1s, opacity 2s } } ${others.join(" ")}`,
+          `@media (x: 1) {
+            .foo { transition: -webkit-mask-size 1s, mask-size 1s, opacity 2s; }
+            ${merged.length ? `${merged.join(", ")} { color: red; }` : ""}
+          }`,
+          bunBuildDefaults,
+        );
+        prefix_test(
+          `@media (x: 1) { .foo { transition-property: mask-size, opacity; transition-duration: 1s, 2s } } ${others.join(" ")}`,
+          `@media (x: 1) {
+            .foo { transition-property: -webkit-mask-size, mask-size, opacity; transition-duration: 1s, 1s, 2s; }
+            ${merged.length ? `${merged.join(", ")} { color: red; }` : ""}
+          }`,
+          bunBuildDefaults,
+        );
+      }
+      // Every prefixed name that is written in front of the entry counts, not only the nearest one.
+      {
+        const transitions =
+          "-webkit-transform 1s, -moz-transform 1s, -ms-transform 1s, -o-transform 1s, transform 1s, opacity 2s";
+        prefix_test(
+          `.foo { transition: transform 1s, opacity 2s; } .foo { color: blue }`,
+          `.foo {
+            color: #00f;
+            -webkit-transition: ${transitions};
+            -moz-transition: ${transitions};
+            -o-transition: ${transitions};
+            transition: ${transitions};
+          }`,
+          { chrome: Some(4 << 16), firefox: Some(4 << 16), ie: Some(9 << 16), opera: Some(12 << 16) },
+        );
+      }
+      // A prefixed name, or the `-webkit-` name of a mask property, that is written directly in front of an
+      // entry is the form the handler writes, so it is not added again.
+      prefix_test(
+        `.foo { transition: -webkit-transform .3s, transform .3s }`,
+        `.foo {
+          -webkit-transition: -webkit-transform .3s, transform .3s;
+          transition: -webkit-transform .3s, transform .3s;
+        }`,
+        safari(6),
+      );
+      prefix_test(
+        `.foo { transition: -webkit-transform 1s, transform 2s, opacity 3s }`,
+        `.foo {
+          -webkit-transition: -webkit-transform 1s, transform 2s, opacity 3s;
+          transition: -webkit-transform 1s, transform 2s, opacity 3s;
+        }`,
+        safari(6),
+      );
+      prefix_test(
+        `.foo { transition: -webkit-mask-box-image 1s, mask-border 2s }`,
+        `.foo { transition: -webkit-mask-box-image 1s, mask-border 2s; }`,
+        safari(15),
+      );
+      prefix_test(
+        `.foo { transition: transform 1s, transform 2s }`,
+        `.foo {
+          -webkit-transition: -webkit-transform 1s, transform 1s, -webkit-transform 2s, transform 2s;
+          transition: -webkit-transform 1s, transform 1s, -webkit-transform 2s, transform 2s;
+        }`,
+        safari(6),
+      );
+      // A property list that gets its value lists from a later rule with the same selector.
+      prefix_test(
+        `.foo { transition-property: mask-size, opacity }
+         .foo { transition-duration: 1s, 2s; transition-delay: 0s; transition-timing-function: ease }`,
+        `.foo { transition: -webkit-mask-size 1s, mask-size 1s, opacity 2s; }`,
+        bunBuildDefaults,
+      );
+      prefix_test(
+        `.foo { transition-property: transform, opacity } .foo { transition-duration: 1s, 2s }`,
+        `.foo {
+          -webkit-transition-property: -webkit-transform, transform, opacity;
+          transition-property: -webkit-transform, transform, opacity;
+          -webkit-transition-duration: 1s, 1s, 2s;
+          transition-duration: 1s, 1s, 2s;
+        }`,
+        safari(6),
+      );
+    });
   });
 
   describe("animation", () => {

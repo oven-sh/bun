@@ -13,7 +13,7 @@ const Id = b.i64.validateInteger(-1, 2 ** 32 - 1);
  * `other` is not a path: each function reports it in its own words.
  */
 export const PathLike = b.union({
-  string: b.string.allowStringObject,
+  string: b.stringLike,
   buffer: b.bufferSource.allowShared,
   url: b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" }),
   other: b.opaque,
@@ -165,16 +165,15 @@ type Operation = (Signature | { overloads: readonly (Signature & { rustName: str
 };
 
 const fd = { fd: Fd };
-const path = { path: PathLike.deferred };
-const paths = (from: string, to: string) => ({ [from]: PathLike.deferred, [to]: PathLike.deferred });
+const path = { path: PathLike };
+const paths = (from: string, to: string) => ({ [from]: PathLike, [to]: PathLike });
 const times = { atime: TimeLike, mtime: TimeLike };
-const writeFile = {
-  path: PathOrFileDescriptor.deferred,
-  data: WriteFileData,
-  options: EncodingOrWriteFileOptions.deferred,
-};
+const writeFile = { path: PathOrFileDescriptor, data: WriteFileData, options: EncodingOrWriteFileOptions };
 
-/** What can throw or run code after a path is converted once the path is checked, so the first argument that is wrong is the one reported. */
+/**
+ * An argument after a path that can throw or run code is `.deferred`: the body converts it once it has checked the path,
+ * so the first argument that is wrong is the one reported.
+ */
 const operations: Record<string, Operation> = {
   access: { args: { ...path, mode: accessMode.deferred }, expected: { mode: accessModeExpected }, length: [3, 2] },
   appendFile: { args: writeFile, length: [4, 3] },
@@ -200,7 +199,7 @@ const operations: Record<string, Operation> = {
   lstat: { args: { ...path, options: StatOptions.default({}).deferred }, length: [1, 1] },
   lutimes: { args: { ...path, ...times }, length: [4, 3] },
   mkdir: { args: { ...path, options: MkdirOptionsOrMode.deferred }, length: [3, 2] },
-  mkdtemp: { args: { prefix: PathLike.deferred, options: EncodingOrOptions.deferred }, length: [3, 2] },
+  mkdtemp: { args: { prefix: PathLike, options: EncodingOrOptions.deferred }, length: [3, 2] },
   open: {
     args: { ...path, flags: FileFlags.nullable.deferred, mode: FileMode.nullable.deferred },
     expected: { mode: ["number"] },
@@ -218,11 +217,8 @@ const operations: Record<string, Operation> = {
     expected: { buffer: ["Buffer", "TypedArray", "DataView"], position: ["number", "bigint"] },
     length: [6, 5],
   },
-  readdir: { args: { ...path, options: EncodingOrReaddirOptions.deferred }, length: [3, 2] },
-  readFile: {
-    args: { path: PathOrFileDescriptor.deferred, options: EncodingOrReadFileOptions.deferred },
-    length: [3, 2],
-  },
+  readdir: { args: { ...path, options: EncodingOrReaddirOptions }, length: [3, 2] },
+  readFile: { args: { path: PathOrFileDescriptor, options: EncodingOrReadFileOptions }, length: [3, 2] },
   readlink: { args: { ...path, options: EncodingOrOptions.deferred }, length: [3, 2] },
   readv: {
     args: { ...fd, buffers: b.jsArray, position },
@@ -237,10 +233,7 @@ const operations: Record<string, Operation> = {
   stat: { args: { ...path, options: StatOptions.default({}).deferred }, length: [1, 1] },
   statfs: { args: { ...path, options: BigIntOptions.default({}).deferred }, length: [2, 2] },
   symlink: { args: { ...paths("target", "path"), type: SymlinkType.deferred }, length: [4, 3] },
-  truncate: {
-    args: { path: PathOrFileDescriptor.deferred, len: b.i64.validateInteger().default(0).deferred },
-    length: [3, 2],
-  },
+  truncate: { args: { path: PathOrFileDescriptor, len: b.i64.validateInteger().default(0).deferred }, length: [3, 2] },
   unlink: { args: path, length: [2, 1] },
   utimes: { args: { ...path, ...times }, length: [4, 3] },
   write: {

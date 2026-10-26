@@ -1022,6 +1022,7 @@ impl PathLikeExt for PathLike<'_> {
             }
 
             generated::PathLike::String(str) => {
+                let str = bun_core::String::from_js(str.to_js(), ctx)?;
                 path_like_from_string(ctx, str, parsing.flavor == Flavor::Async)?
             }
             generated::PathLike::Url(domurl) => {

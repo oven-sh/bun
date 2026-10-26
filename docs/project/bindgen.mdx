@@ -66,6 +66,9 @@ must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the sa
 place of the list is the whole message: Node's C++ writes its own out that way, and so do the Bun APIs
 that have a message of their own. A dictionary named in `expected` reports what is not an object as the
 argument, and not under the dictionary's name. A range has its own errors, so it is not named in `expected`.
+Either form is a `TypeError` with `code: "ERR_INVALID_ARG_TYPE"`. `construct` takes `expected` as a function does, and a
+member of a dictionary is written `{ type, expected }`. For a `.deferred` argument or a member of a `deferred` dictionary
+it is what `convert()` or the member's reader throws.
 
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
 includes the generated file, the crate root declares `mod generated_bindgen`, and a
@@ -251,7 +254,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.wrapped(class, header, options)`      | `&'a T`                          | what an instance of a hand-written C++ wrapper wraps          |
 | `b.opaque`                               | `JsLocal<'a>`                    | anything; see [Opaque values](#opaque-values)                 |
 | `b.rest(T)`                              | `bindgen::Rest<'a, T>`           | this argument and every one after it; only the last argument  |
-| `b.null`                                 | `()`                             | `null` or `undefined`, in a union                             |
+| `b.null`                                 | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.undefined`                            | `()`                             | `undefined`; only in a union                                  |
 | `b.ignored`                              | `()`                             | anything; only the last alternative of a union                |
 | `b.promisePtr("crate::T")`               | `*mut T`                         | the context of a promise reaction; see below                  |
@@ -277,7 +280,7 @@ throws: nothing would release the pointer. A generic `T` is written as its insta
 
 `b.cell("JSC::RegExpObject", "JavaScriptCore/RegExpObject.h", { rustPath: "bun_jsc::RegExp" })` names the C++ class, its
 header and the Rust type that marks the handle. `reportedAs` is what an error calls it, if not the class without its `JS`,
-and `tsType` what the generated `.d.ts` does, if not `object` for an argument and `any` for a result, as for `b.object`.
+and `tsType` is its type in the generated `.d.ts`: without it an argument is `object` and a result `any`, like `b.object`.
 `b.dataView` is one.
 `b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" })` gives what `wrapped()`
 of the instance returns. The argument keeps it alive, so it is an argument or an alternative of one; `.shared` is a
@@ -377,14 +380,15 @@ pub fn send<'a>(&self, cx: &mut JsScope<'a>, command: Deferred<'a, bun_core::Str
 A conversion can run JavaScript, so like everything else that can it takes the `&JSGlobalObject` and returns a
 `JsResult`. `undefined` for a type with a default, or one that is `.optional`, is answered without a call into C++.
 
-A union that tells kinds apart and ends in `b.ignored` or `b.opaque` runs nothing and refuses nothing, so no order asks
-for `.deferred`. The size of the binary can. Each function converts its own arguments, so a union that every method of a
-class takes is converted in every one. Where they all hand it to one helper, as the commands of `RedisClient` and the
-paths of `node:fs` do, `.deferred` leaves one call in each.
+A union whose alternatives are handles (`b.stringLike`, `b.bufferSource`, a `deferred` dictionary) and that ends in
+`b.ignored` or `b.opaque` only tells kinds apart: it runs nothing and refuses nothing, so it is not `.deferred`. It is also
+`Copy`, where a union that owns a string is dropped at every early return of every body that takes it. A union that many
+functions hand to one helper takes handles and the helper converts them, as for the commands of `RedisClient` and the
+paths of `node:fs`.
 
 `.deferred` is written last, on an argument, and takes `capability: "js"`. The conversion returns before the body goes on, so
-the type cannot borrow from it: a UTF-8 string is `.owned`, and in place of `b.bytes` there is `b.bufferSource`. An
-argument that needs neither is not deferred: that is one call into C++ fewer.
+the type cannot borrow from it: a UTF-8 string is `.owned`, and in place of `b.bytes` there is `b.bufferSource`. Each
+conversion is one more call into C++, so an argument that nothing has to come before is not deferred.
 
 It is also an alternative of a union, for a kind whose conversion JavaScript can see. The union is chosen with the other
 arguments and the body converts that one alternative:

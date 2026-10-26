@@ -2219,6 +2219,8 @@ async function raceWithTimeoutAndSignal(
         throw signal.reason;
       }
       addAbortListener ??= require("internal/abort_listener").addAbortListener;
+      // The hook can abort this signal and then throw, before `untilStopped()` gives `stop` a reaction.
+      $pokePromiseAsHandled(stop);
       abortListener = addAbortListener(signal, () => reject(signal.reason));
     }
     await untilStopped(stop, Promise.$resolve(run()));

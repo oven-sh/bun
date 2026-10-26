@@ -344,6 +344,14 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
   return { exitCode, stdout, stderr };
 }
 
+// The first line of each error, each printed promise and the verdict of each test, in the order of the output.
+function report(stderr: string) {
+  return stderr
+    .split("\n")
+    .filter(line => /^(?:\((?:pass|fail)\) |error(?::|$)|AssertionError: |Promise \{|# )/.test(line))
+    .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+}
+
 describe("node:test mock", () => {
   const { mock } = require("node:test");
 
@@ -523,13 +531,6 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
 });
 
 describe("node:test and a failure that is a thenable", () => {
-  // The first line of each error, each printed promise and the verdict of each test, in the order of the output.
-  const report = (stderr: string) =>
-    stderr
-      .split("\n")
-      .filter(line => /^(?:\((?:pass|fail)\) |error(?::|$)|AssertionError: |Promise \{|# )/.test(line))
-      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
-
   test("should fail a test whose error is a promise, another thenable, or has a then() method", async () => {
     const { exitCode, stderr } = await runTests(["30-thenable-failures.js"]);
     expect(report(stderr)).toEqual([
@@ -876,12 +877,30 @@ stream.resume();
     });
   });
 
-  test("should keep the order of subtests, inline suites and late before hooks", async () => {
+  test("should keep the order and the failures of subtests, inline suites and hooks", async () => {
     const { exitCode, stderr } = await runTests(["33-subtest-chain.js"]);
-    expect(stderr).toContain("14 pass");
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 0,
-      stderr: expect.stringContaining("0 fail"),
-    });
+    expect(report(stderr)).toEqual([
+      "(pass) a before hook added while a subtest runs",
+      "(pass) does not let the test end before that subtest",
+      "(pass) a before hook added while a subtest runs keeps the later subtests behind it",
+      "(pass) a before hook that starts 5 microtasks is done with them when the next subtest starts",
+      "(pass) a child of an inline suite that starts 10 microtasks is done with them when the suite is",
+      "(pass) a subtest that a describe() callback adds to the outer test starts before the children of the suite",
+      "(pass) a child of an inline suite waits for a before hook that the async callback adds late",
+      "(pass) a subtest of the outer test can await a child of an inline suite with an async callback",
+      "(pass) a subtest of the outer test can await a child of an inline suite that returns a thenable",
+      "(pass) a thenable from a describe() callback has then() called once",
+      "error: 1 subtest failed",
+      "(fail) an async describe() callback that rejects with a pending promise fails the suite",
+      "error: 1 subtest failed",
+      "error: then() threw",
+      "(fail) a thenable from a describe() callback whose then() throws fails the suite",
+      "(pass) a hook that aborts its own signal and then throws fails its test only",
+      "(pass) the subtests that wait for a subtest are not in its stack",
+      "(pass) an abort after a hook ended does not fail the hook",
+    ]);
+    // The failure of the first of the two suites is the promise that its callback threw.
+    expect(stderr).toContain("cause: Promise { <pending> }");
+    expect(exitCode).toBe(1);
   });
 });

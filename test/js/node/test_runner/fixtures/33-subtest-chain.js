@@ -1,5 +1,5 @@
 // The order in which the runner runs subtests, inline suites and late before
-// hooks of one test. Node v26.3.0 passes each test as it is.
+// hooks of one test. Node v26.3.0 gives the same verdict for each test.
 const assert = require("node:assert");
 const { test, describe, it, before } = require("node:test");
 
@@ -135,19 +135,32 @@ test("a thenable from a describe() callback has then() called once", async () =>
   assert.strictEqual(calls, 1);
 });
 
-// `todo` keeps the failure of each suite below away from its test.
+// The two tests below fail, because their suite fails.
 test("an async describe() callback that rejects with a pending promise fails the suite", async () => {
-  await describe("suite", { todo: true }, async () => {
+  await describe("suite", async () => {
     throw new Promise(() => {});
   });
 });
 
 test("a thenable from a describe() callback whose then() throws fails the suite", async () => {
-  await describe("suite", { todo: true }, () => ({
+  await describe("suite", () => ({
     then() {
       throw new Error("then() threw");
     },
   }));
+});
+
+// The failure of the hook fails the todo subtest only. The abort is not one more error.
+test("a hook that aborts its own signal and then throws fails its test only", async t => {
+  const controller = new AbortController();
+  t.beforeEach(
+    () => {
+      controller.abort();
+      throw new Error("the error of the hook");
+    },
+    { signal: controller.signal },
+  );
+  await t.test("subtest", { todo: true }, () => {});
 });
 
 function frames(stack) {

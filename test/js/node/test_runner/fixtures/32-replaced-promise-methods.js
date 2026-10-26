@@ -1,6 +1,8 @@
 // The runner must not call a Promise method that the test file can replace.
 // Node v26.3.0 passes each test as it is. The tests only `await` native
-// promises, and that calls none of these methods.
+// promises, and that calls none of these methods. A replaced
+// Promise.prototype.constructor is not covered: `await` then calls the public
+// then(), in this runner and in the runner of Node.
 const assert = require("node:assert");
 const { test, it, describe, suite, before, after, beforeEach, afterEach } = require("node:test");
 const timers = require("node:timers/promises");

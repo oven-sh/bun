@@ -604,7 +604,7 @@ describe("process.stdin of a worker without { stdin: true }", () => {
   // Resolves with the worker's first message and its exit code. Rejects when the worker
   // fails, or exits without a message.
   async function run(source: string) {
-    const worker = new Worker(source, { eval: true });
+    await using worker = new Worker(source, { eval: true });
     const exited = once(worker, "exit");
     const [message] = await Promise.race([
       once(worker, "message"),
@@ -737,21 +737,36 @@ describe("process.stdin of a worker without { stdin: true }", () => {
 // The worker's stream takes what the parent writes even if the worker never reads it,
 // and that is what completes the parent's write (node's flow control, as for stdout above).
 test.concurrent("a write to worker.stdin completes when the worker never reads process.stdin", async () => {
-  const worker = new Worker(`require("node:worker_threads").parentPort.once("message", () => process.exit(0));`, {
-    eval: true,
-    stdin: true,
+  const script = `
+    const { Worker } = require("node:worker_threads");
+    const { once } = require("node:events");
+    const w = new Worker('require("node:worker_threads").parentPort.once("message", () => process.exit(0));', {
+      eval: true,
+      stdin: true,
+    });
+    // A lost ack has no event: the write stays pending and the worker stays alive. The
+    // watchdog turns that hang into a fast, distinguishable failure.
+    w.on("online", () => setTimeout(() => process.exit(42), ${isDebug ? 20_000 : 5_000}).unref());
+    w.stdin.write("never read", error => {
+      console.log(error ? "write failed: " + error : "written");
+      w.postMessage("written");
+    });
+    const [code] = await once(w, "exit");
+    console.log("exit " + code);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  const exited = once(worker, "exit");
-  const { promise: written, resolve, reject } = Promise.withResolvers<void>();
-  worker.stdin!.write("never read", error => (error ? reject(error) : resolve()));
-  await Promise.race([
-    written,
-    exited.then(([code]) => {
-      throw new Error(`the worker exited with code ${code} before the write completed`);
-    }),
-  ]);
-  worker.postMessage("written");
-  expect(await exited).toEqual([0]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout,
+    stderr: exitCode === 0 ? "" : stderr,
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "written\nexit 0\n", stderr: "", exitCode: 0, signalCode: null });
 });
 
 describe("worker event", () => {

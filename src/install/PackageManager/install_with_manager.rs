@@ -1059,7 +1059,8 @@ pub fn install_with_manager(
                 || !manager.update_requests.is_empty()
                 || (matches!(load_result, lockfile::LoadResult::Ok { .. })
                     && (load_result.ok().serializer_result.packages_need_update
-                        || load_result.ok().serializer_result.migrated_from_lockb_v2))
+                        || load_result.ok().serializer_result.migrated_from_lockb_v2
+                        || load_result.ok().serializer_result.dropped_unnamed_rows))
                 || manager.lockfile.is_empty()
                 || manager.options.enable.force_save_lockfile()));
 

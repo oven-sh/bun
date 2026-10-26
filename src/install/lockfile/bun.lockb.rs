@@ -291,6 +291,9 @@ pub(crate) fn save(
 pub struct SerializerLoadResult {
     pub packages_need_update: bool,
     pub(crate) migrated_from_lockb_v2: bool,
+    /// A text lockfile had a dependency row with an empty name. The loader skipped the row, and
+    /// the next save writes the lockfile without it.
+    pub(crate) dropped_unnamed_rows: bool,
 }
 
 /// Consumes the next 8 bytes if they're `tag`, which marks a section that older versions neither

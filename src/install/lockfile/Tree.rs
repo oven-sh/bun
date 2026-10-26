@@ -1730,7 +1730,6 @@ impl Tree {
                         .name
                         .slice(lockfile.buffers.string_bytes.as_slice());
                     if pkg_id != invalid_package_id
-                        && !dependency_name.is_empty()
                         && !crate::package_installer::alias_is_safe_install_target(dependency_name)
                     {
                         builder.log.add_error_fmt(

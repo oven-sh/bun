@@ -790,6 +790,21 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(stdout).not.toMatch(/\.css\s+0 /);
   });
 
+  test.each(["base64", "dataurl"])("the %s loader is an error", async loader => {
+    using dir = tempDir("no-bundle-" + loader, { "entry.bin": "ABC" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--loader", ".bin:" + loader, "./entry.bin"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`error: loader "${loader}" is not supported with --no-bundle`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   test("does not escape --outdir when an entry point is outside --root", async () => {
     using dir = tempDir("no-bundle-outdir-escape", {
       "src/a.ts": `export const a = 1;\n`,

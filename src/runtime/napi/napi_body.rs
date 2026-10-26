@@ -14,8 +14,8 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
-    JsResult, StrongOptional, Task,
+    self as jsc, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
+    StrongOptional, Task,
 };
 use bun_threading::Condition as Condvar;
 use bun_threading::Mutex;
@@ -105,11 +105,13 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
-    fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
     /// Returns the previous value.
     fn NapiEnv__setCompletingForStoppedContext(env: *mut NapiEnv, value: bool) -> bool;
-    /// `NapiStatus::ok`, or the status Node's `NAPI_PREAMBLE` returns when `can_call_into_js()` is false.
-    fn NapiEnv__checkCanCallIntoJS(env: *mut NapiEnv) -> napi_status;
+    /// `NapiStatus::ok`, or the status Node's `NAPI_PREAMBLE` returns at entry (`NapiEnv::entryStatus`).
+    fn NapiEnv__entryStatus(env: *mut NapiEnv) -> napi_status;
+    /// `NapiEnv::cleanup` runs no finalizer until each of these has its `NapiEnv__asyncWorkLeftThreadPool`.
+    fn NapiEnv__asyncWorkEnteredThreadPool(env: *mut NapiEnv);
+    fn NapiEnv__asyncWorkLeftThreadPool(env: *mut NapiEnv);
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
@@ -191,17 +193,11 @@ impl NapiEnv {
         unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), previous) };
     }
 
-    /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
-    /// VM exception slot. This is the gate Node.js's `NAPI_PREAMBLE` enforces.
-    pub(crate) fn has_pending_exception(&self) -> bool {
+    /// Node's `NAPI_PREAMBLE` entry check (napi.h `NapiEnv::entryStatus`). `Err` is the status Node
+    /// returns, set as the last error.
+    pub(crate) fn entry_status(&self) -> Result<(), napi_status> {
         // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
-    }
-
-    /// Node's `can_call_into_js()` gate. `Err` is the status Node returns, set as the last error.
-    pub(crate) fn check_can_call_into_js(&self) -> Result<(), napi_status> {
-        // SAFETY: env is non-null; C++ side is read-only here.
-        let status = unsafe { NapiEnv__checkCanCallIntoJS(self.as_mut_ptr()) };
+        let status = unsafe { NapiEnv__entryStatus(self.as_mut_ptr()) };
         if status == NapiStatus::ok as napi_status {
             return Ok(());
         }
@@ -370,7 +366,7 @@ impl Drop for NapiHandleScopeGuard<'_> {
 
 type napi_handle_scope = *mut NapiHandleScope;
 type napi_escapable_handle_scope = *mut NapiHandleScope;
-pub(super) type napi_callback_info = *mut CallFrame;
+pub(super) type napi_callback_info = *mut c_void;
 /// What `napi_create_promise` hands the addon.
 pub(crate) struct Deferred {
     promise: JSPromiseStrong,
@@ -539,15 +535,11 @@ macro_rules! get_env {
     };
 }
 
-/// Node's `NAPI_PREAMBLE`: `get_env!`, then `napi_pending_exception` if a JS
-/// exception is pending, then the `can_call_into_js()` gate.
+/// Node's `NAPI_PREAMBLE`: `get_env!`, then [`NapiEnv::entry_status`].
 macro_rules! preamble {
     ($env:expr) => {{
         let env = get_env!($env);
-        if env.has_pending_exception() {
-            return env.pending_exception();
-        }
-        if let Err(status) = env.check_can_call_into_js() {
+        if let Err(status) = env.entry_status() {
             return status;
         }
         env
@@ -1692,7 +1684,7 @@ extern "C" fn napi_create_promise(
     let promise = get_out!(env, promise_);
     let strong = Box::new(Deferred {
         promise: JSPromiseStrong::init(env.to_js()),
-        context: env.to_js().bun_vm().context_of_caller_no_frame().id(),
+        context: env.to_js().bun_vm().context_of_caller().id(),
     });
     let strong_ptr = bun_core::heap::into_raw(strong);
     *deferred = strong_ptr;
@@ -1709,10 +1701,10 @@ fn conclude_deferred(
     deferred: napi_deferred,
     settle: impl FnOnce(&mut jsc::JSPromise, &JSGlobalObject) -> JsResult<()>,
 ) -> napi_status {
-    if env.has_pending_exception() {
-        return env.pending_exception();
+    if deferred.is_null() {
+        return env.invalid_arg();
     }
-    // SAFETY: deferred was created by heap::alloc in napi_create_promise.
+    // SAFETY: deferred is non-null and was created by heap::alloc in napi_create_promise.
     let context = unsafe { (*deferred).context };
     if !env.to_js().bun_vm().is_context_live(context) {
         // Of a Bun.ModuleGraph that has been disposed: released, and nothing is settled.
@@ -1722,7 +1714,7 @@ fn conclude_deferred(
     }
     let mut status = env.ok();
     env.complete_in_context(context, || {
-        if let Err(refused) = env.check_can_call_into_js() {
+        if let Err(refused) = env.entry_status() {
             status = refused;
             return;
         }
@@ -1956,7 +1948,7 @@ impl napi_async_work {
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
             scheduled: false,
             poll_ref: KeepAlive::default(),
-            context: global.bun_vm().context_of_caller_no_frame().id(),
+            context: global.bun_vm().context_of_caller().id(),
         }))
     }
 
@@ -1982,6 +1974,8 @@ impl napi_async_work {
         // env, so the VM waits for it (Node likewise settles its threadpool
         // requests before an environment is freed).
         self.ticket = Some(vm.ticket());
+        // SAFETY: `self.env` keeps the env alive.
+        unsafe { NapiEnv__asyncWorkEnteredThreadPool(self.env.get()) };
         WorkPool::schedule(&raw mut self.task);
         true
     }
@@ -2018,6 +2012,8 @@ impl napi_async_work {
         } else {
             let _ = self.cancel();
         }
+        // SAFETY: `self.env` keeps the env alive, and `self` is live until it is posted back.
+        unsafe { NapiEnv__asyncWorkLeftThreadPool(self.env.get()) };
         self.post_to_js_thread(self_ptr, &ticket);
     }
 
@@ -2464,6 +2460,24 @@ extern "C" fn Bun__napi_register_cleanup_zig(env_: napi_env) {
 }
 
 #[unsafe(no_mangle)]
+extern "C" fn Bun__napi_run_finalizers_after_teardown_wait(env_: napi_env) {
+    unsafe extern "C" {
+        safe fn NapiEnv__runFinalizers(env: *mut c_void);
+    }
+    // SAFETY: caller guarantees env_ is non-null.
+    let env = unsafe { &*env_ };
+    env.to_js()
+        .bun_vm()
+        .as_mut()
+        .rare_data()
+        .push_cleanup_hook_after_teardown_wait(
+            env.to_js(),
+            env_.cast::<c_void>(),
+            NapiEnv__runFinalizers,
+        );
+}
+
+#[unsafe(no_mangle)]
 extern "C" fn Bun__napi_suppress_crash_on_abort_if_desired() {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT
         .get()
@@ -2666,14 +2680,8 @@ static THREADSAFE_FUNCTION_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Exposed via `bun:internal-for-testing` so tests can assert a threadsafe
 /// function orphaned by a dead worker is freed rather than leaked.
-#[bun_jsc::host_fn]
-pub(crate) fn js_threadsafe_function_live_count(
-    _global: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    Ok(JSValue::js_number(
-        THREADSAFE_FUNCTION_LIVE_COUNT.load(Ordering::SeqCst) as f64,
-    ))
+pub(crate) fn threadsafe_function_live_count() -> usize {
+    THREADSAFE_FUNCTION_LIVE_COUNT.load(Ordering::SeqCst)
 }
 
 impl Drop for ThreadSafeFunction {
@@ -3210,7 +3218,7 @@ impl ThreadSafeFunction {
 
     /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn ref_(&mut self) {
-        let caller = VirtualMachine::get().context_of_caller_no_frame();
+        let caller = VirtualMachine::get().context_of_caller();
         // Nothing of a context that has stopped holds the loop: not the function's own call_js
         // once its maker has stopped (that is where it runs), not a disposed graph's leftover
         // script. Accepted, and holds nothing.
@@ -3373,7 +3381,7 @@ extern "C" fn napi_create_threadsafe_function(
         thread_count: AtomicI64::new(i64::try_from(initial_thread_count).expect("int cast")),
         poll_ref: KeepAlive::init(),
         tracker: Debugger::AsyncTaskTracker::init(vm),
-        context: vm.context_of_caller_no_frame().id(),
+        context: vm.context_of_caller().id(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<ThreadSafeFunction>(),
         finalizer_fun: thread_finalize_cb,
         finalizer_data: thread_finalize_data,
@@ -3406,7 +3414,7 @@ extern "C" fn napi_create_threadsafe_function(
     unsafe { (*function).ref_() };
     // (Unless the context whose script is creating it stops first.)
     // SAFETY: a heap allocation that leaves its context on this thread before it is freed.
-    unsafe { bun_jsc::AbortHandle::arm_owner(function, vm.context_of_caller_no_frame()) };
+    unsafe { bun_jsc::AbortHandle::arm_owner(function, vm.context_of_caller()) };
     // SAFETY: as above.
     unsafe { (*function).tracker.did_schedule(vm.global()) };
 

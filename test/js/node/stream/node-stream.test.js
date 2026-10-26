@@ -1803,12 +1803,12 @@ describe("node v26 stream semantics", () => {
     const composed = compose(new PassThrough(), tail);
     const resumed = new Promise(resolve => composed.once("resume", resolve));
     composed.on("data", chunk => log.push("data:" + chunk));
-    const ended = new Promise(resolve => composed.on("end", resolve));
+    const done = finishedP(composed);
     // Until a Readable has resumed, push() buffers the chunk instead of emitting 'data' in the same call.
     await resumed;
     composed.write("x");
     composed.end("y");
-    await ended;
+    await done;
     expect(log).toEqual(["transform:x", "data:x", "pushed:x", "transform:y", "data:y", "pushed:y"]);
   });
 
@@ -1846,12 +1846,12 @@ describe("node v26 stream semantics", () => {
     const composed = source.compose(tail);
     const resumed = new Promise(resolve => composed.once("resume", resolve));
     composed.on("data", chunk => log.push("data:" + chunk));
-    const ended = new Promise(resolve => composed.on("end", resolve));
+    const done = finishedP(composed);
     await resumed;
     source.push("x");
     source.push("y");
     source.push(null);
-    await ended;
+    await done;
     expect(log).toEqual(["transform:x", "data:x", "pushed:x", "transform:y", "data:y", "pushed:y"]);
   });
 
@@ -1876,11 +1876,11 @@ describe("node v26 stream semantics", () => {
     const composed = compose(new PassThrough(), tail);
     const chunks = [];
     composed.on("data", chunk => chunks.push(chunk.toString()));
-    const ended = new Promise(resolve => composed.on("end", resolve));
+    const done = finishedP(composed);
     composed.write("a");
     composed.write("b");
     composed.end("c");
-    await ended;
+    await done;
     expect(chunks).toEqual(["a", "b", "c"]);
   });
 

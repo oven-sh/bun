@@ -576,6 +576,12 @@ export function add(a, b) {}
       example(["```ts", "foo()", "  ```"]),
       example(["  ```ts", "  foo();", "  ```"]),
     ],
+    [
+      "a closing fence that is indented by three blanks more than the opening fence",
+      "jsdoc = true",
+      example(["```ts", "foo()", "   ```"]),
+      example(["  ```ts", "  foo();", "  ```"]),
+    ],
     // Indented by more than three blanks, the line is not a closing fence, as in Markdown: the block is code, as in
     // oxfmt, and stays so.
     [
@@ -589,6 +595,13 @@ export function add(a, b) {}
       "jsdoc = true",
       example(["````md", "```js", "x", "```", "````"]),
       example(["  ````md", "  ```js", "  x", "  ```", "  ````"]),
+    ],
+    // oxfmt takes the last line that starts with three backticks for the closing fence, whatever follows them.
+    [
+      "a fence with a language inside a fence of the same backticks",
+      "jsdoc = true",
+      example(["```md", "```js", "x", "```"]),
+      example(["  ```md", "  ```js", "  x", "  ```"]),
     ],
     // oxfmt takes the last line of three backticks for the closing fence, whatever the opening fence has.
     [

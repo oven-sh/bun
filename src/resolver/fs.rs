@@ -206,9 +206,7 @@ impl Entry {
         p
     }
 
-    /// Whether a new read of the directory that finds `name` keeps this entry. `base_` and
-    /// `abs_path` are never rewritten, so both have to fit `name` byte for byte: the lookup
-    /// that leads here ignores case, and `abs_path` ends in the name its first reader asked for.
+    /// Kept by a re-read for `name` if that is `base_` and ends a filled `abs_path`, byte for byte.
     fn is_kept_as(&self, name: &[u8]) -> bool {
         let path = self.abs_path().as_bytes();
         self.base() == name && (path.is_empty() || path.ends_with(name))
@@ -516,8 +514,7 @@ impl DirEntry {
             if let Some(map) = prev_map {
                 // `data` keys are the lowercased basenames, so an exact match on
                 // `name_lc` is the case-insensitive match — and reuses
-                // `name_hash` instead of re-hashing. A file renamed to another case
-                // gets a new entry, see `Entry::is_kept_as`.
+                // `name_hash` instead of re-hashing.
                 if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc)
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     && unsafe { (*existing_ptr).is_kept_as(name_slice) }
@@ -542,13 +539,12 @@ impl DirEntry {
                     // fresh cache; a reader that raced the flag sees the old
                     // cache, stale but untorn.
                     // Relaxed load: writes are serialized on the per-entry
-                    // mutex held above. What was a link is read again too: the
-                    // file or directory that replaced it can be of the kind the
-                    // link led to, and the cache would keep the link's target.
+                    // mutex held above.
                     existing.need_stat.store(
                         existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
                             || Some(existing.cache().kind) != found_kind
+                            // What replaced a link can be of the kind the link led to.
                             || !existing.cache().symlink.as_bytes().is_empty(),
                         Ordering::Release,
                     );

@@ -1164,9 +1164,7 @@ pub mod fs {
             Ok(slot)
         }
 
-        /// Unmaps the key of `slot` from the listing there, which another path names, and
-        /// takes it out of that listing's owners, so that a bust of the listing leaves the
-        /// `DirInfo` under the key alone. The caller holds `entries_mutex`.
+        /// Unmaps the key of `slot` from the listing there, and takes it out of its owners.
         pub(crate) fn unmap_from_listing(&mut self, slot: &bun_alloc::Result) {
             if let Some(EntriesOption::Entries(listing)) = self.entries.at_index(slot.index) {
                 listing.remove_alias(slot.hash);

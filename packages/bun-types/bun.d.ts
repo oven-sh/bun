@@ -3013,13 +3013,23 @@ declare module "bun" {
       eliminate?: string[];
       /**
        * Replace exported declarations of the file. Each key is the name of an
-       * exported declaration, and its value is the replacement.
+       * exported `const`, `let`, `var`, `function` or `class` declaration, or
+       * `default` for `export default`. Its value is the replacement.
        *
        * - A string, number, boolean, `null` or `undefined` becomes the value
        *   of the declaration. The declaration keeps its name.
        * - `[name, value]` replaces the declaration with an export called
        *   `name`. The export has the value `value`, which is a string,
        *   number, boolean, `null` or `undefined`.
+       *
+       * Bun leaves these exports as they are:
+       * - `export function` and `export class`, when `deadCodeElimination`
+       *   is `false`. The default is `true`.
+       * - A name that a destructuring pattern declares, such as `a` in
+       *   `export const { a } = value`.
+       * - `export default class`, when the value for `default` is not a pair.
+       * - `export { local as name }` with no `from`, when the key is `name`.
+       *   The key for that list is `local`.
        *
        * For a pair or a map that you keep in a variable, write `as const`:
        * `const pair = ["__N_SSG", true] as const`. Without a type, TypeScript

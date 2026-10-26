@@ -72,6 +72,10 @@ fn esm_package_name(specifier: &[u8]) -> &[u8] {
     &specifier[..end]
 }
 
+/// Start of the hint `fmt` appends when a file differs from the specifier
+/// only in case.
+const CASE_HINT_PREFIX: &[u8] = b". Did you mean '";
+
 impl ResolveMessage {
     pub fn get_code(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         match &self.msg.metadata {
@@ -173,6 +177,16 @@ impl ResolveMessage {
                         BStr::new(specifier),
                         BStr::new(referrer),
                     );
+                    if let Some(actual) = bun_paths::dirname(referrer)
+                        .and_then(|dir| bun_resolver::case_near_miss(specifier, dir))
+                    {
+                        let _ = write!(
+                            &mut out,
+                            "{}{}'? File names are case-sensitive on this filesystem",
+                            BStr::new(CASE_HINT_PREFIX),
+                            BStr::new(&actual),
+                        );
+                    }
                 }
                 return out;
             }
@@ -327,10 +341,27 @@ impl ResolveMessage {
     fn node_message(&self) -> Option<Vec<u8>> {
         use bstr::BStr;
         let (kind, specifier, referrer) = self.node_error_shape()?;
+        // The case hint `fmt` appended after `Cannot find module '<specifier>'
+        // from '<referrer>'`, if any.
+        let text: &[u8] = &self.msg.data.text;
+        let hint_start = b"Cannot find module '".len()
+            + specifier.len()
+            + b"' from '".len()
+            + self.referrer.as_deref().map_or(0, <[u8]>::len)
+            + b"'".len();
+        let hint = text
+            .get(hint_start..)
+            .filter(|tail| tail.starts_with(CASE_HINT_PREFIX))
+            .unwrap_or(&b""[..]);
         let mut out = Vec::new();
         match kind {
             ImportKind::Require | ImportKind::RequireResolve => {
-                let _ = write!(&mut out, "Cannot find module '{}'", BStr::new(specifier));
+                let _ = write!(
+                    &mut out,
+                    "Cannot find module '{}'{}",
+                    BStr::new(specifier),
+                    BStr::new(hint)
+                );
                 if let Some(referrer) = referrer {
                     let _ = write!(&mut out, "\nRequire stack:\n- {}", BStr::new(referrer));
                 }
@@ -347,9 +378,10 @@ impl ResolveMessage {
                 } else {
                     let _ = write!(
                         &mut out,
-                        "Cannot find module '{}' imported from {}",
+                        "Cannot find module '{}' imported from {}{}",
                         BStr::new(specifier),
                         BStr::new(referrer),
+                        BStr::new(hint),
                     );
                 }
             }

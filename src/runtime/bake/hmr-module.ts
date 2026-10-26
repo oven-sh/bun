@@ -615,17 +615,12 @@ type HMREvent =
   | "bun:ws:disconnect"
   | "bun:ws:connect";
 
-/**
- * Called when modules are replaced. `reprintedBarrels` names the barrels of `modules` that the
- * dev server printed again as they were, with no save.
- */
+/** Called when modules are replaced. */
 export async function replaceModules(
   modules: Record<Id, UnloadedModule>,
   sourceMapId?: SourceMapURL,
   reprintedBarrels?: Id[] | null,
 ) {
-  // A barrel of this map stays as it is: it is not a changed module, and no importer has to accept
-  // it.
   const kept = side === "client" && reprintedBarrels ? keptBarrels(modules, reprintedBarrels) : undefined;
   Object.assign(unloadedModuleRegistry, modules);
 
@@ -848,12 +843,7 @@ function keptBarrels(modules: Record<Id, UnloadedModule>, reprintedBarrels: Id[]
   return kept;
 }
 
-/**
- * For a barrel that the dev server printed again as it was. Returns null if `mod` has to load
- * `definition` as a changed module. If not, `mod` stays as it is: it is loaded from a definition
- * with the same lists, and `definition` evaluates to the exports that it has. The result is then
- * true if `mod` holds a copy of an export (each re-export of a barrel in node_modules is one).
- */
+/** Null if `mod` has to load `definition` as a changed module. If not, true if `mod` holds a copy of an export. */
 function keepsBarrel(mod: HMRModule, definition: UnloadedModule): boolean | null {
   const current = unloadedModuleRegistry[mod.id];
   const deps = mod.imports as HMRModule[] | null;
@@ -873,9 +863,7 @@ function keepsBarrel(mod: HMRModule, definition: UnloadedModule): boolean | null
   }
   let copies = false;
   try {
-    // Two evaluations on modules that are not in the registry. A value that is the same in both
-    // is a copy of an export. The other values are objects that the definition makes: the
-    // namespace of a re-export that the bundler deferred.
+    // A value that is the same in two evaluations is a copy of an export. Any other is an object of the definition.
     const [first, second] = [0, 1].map(() => {
       const evaluated = new HMRModule(mod.id, false);
       evaluated.imports = deps.map(getEsmExports);

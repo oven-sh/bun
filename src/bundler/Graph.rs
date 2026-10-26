@@ -152,8 +152,7 @@ bitflags::bitflags! {
         const IS_EXPORT_STAR_TARGET = 1 << 1;
         /// `source.contents` is what an `onLoad` plugin returned, not what is in the file.
         const IS_LOADED_BY_PLUGIN = 1 << 2;
-        /// Dev server: a file of re-exports with `Ast::hmr_stable_reexports`, see
-        /// `apply_barrel_optimization`. Not a sign that a re-export is deferred.
+        /// Dev server: a barrel with `Ast::hmr_stable_reexports`. Never set for an entry point.
         const IS_BARREL = 1 << 3;
     }
 }

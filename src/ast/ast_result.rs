@@ -102,9 +102,7 @@ pub struct Ast<'a> {
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
-    /// Set by the HMR lowering: the module function has only imports, and a file outside
-    /// node_modules has a getter for each export. A file in node_modules has a copy of each
-    /// export, which no save changes if it is of a file in node_modules.
+    /// HMR lowering: the body has imports only, and outside node_modules each export is a getter.
     pub hmr_stable_reexports: bool,
 }
 

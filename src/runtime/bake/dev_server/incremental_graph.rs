@@ -186,8 +186,7 @@ pub(crate) struct CurrentChunkSourceMapData {
 // Method-argument types (formerly re-exported from `incremental_graph_body`)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A module of the current client chunk with the text and the live import records of the last
-/// print of the file: see `barrel_print`.
+/// A barrel of the current client chunk for which `barrel_print` returned true.
 pub(crate) struct ReprintedBarrel<const SIDE: bake::Side> {
     pub(crate) file: FileIndex<SIDE>,
     /// The key of the module in the chunk.
@@ -468,12 +467,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             .any(|barrel| barrel.file == file)
     }
 
-    /// True if the file is a barrel that a page can keep (`InputFileFlags::IS_BARREL`), and its
-    /// last print had the same text and the same live import records. The hash of the two is
-    /// stored for the next print. Any other print of the file forgets it. A saved file is an
-    /// entry point of its build and no barrel there, so the print of a save is never the same.
-    /// The file of a live record is not in the hash: the caller looks at the import edges, and a
-    /// page at the module ids.
+    /// True if this print of a barrel has the text and the live import records of its last print.
     fn barrel_print(
         &mut self,
         ctx: &HotUpdateContext<'_>,

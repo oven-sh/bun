@@ -90,8 +90,6 @@ fn resolve_barrel_export(
 /// 1. It has `sideEffects: false` or is in `optimize_imports`, AND
 /// 2. All named exports are re-exports (no local definitions), AND
 /// 3. It is not an export star target of another barrel.
-/// `InputFileFlags::IS_BARREL` (dev server) is 1 and 2 for a file with `Ast::hmr_stable_reexports`
-/// that is not an entry point.
 ///
 /// Export * records are never deferred (always resolved) to avoid circular races.
 pub(crate) fn apply_barrel_optimization(

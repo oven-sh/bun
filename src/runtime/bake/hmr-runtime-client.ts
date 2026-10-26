@@ -84,10 +84,7 @@ const scriptTags: Map<string, PendingHmrQueue> =
   new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
 
-/**
- * True when a server-side update of the route of this page had JavaScript for the browser. The page did not run it, or
- * the framework did not load the page again for it, so the page can be out of date until it loads again.
- */
+/** A server-side update of the route of this page had JavaScript. The page can be out of date until it loads again. */
 let routeUpdateHadModules = false;
 
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string, reprintedBarrels?: string[]) => {
@@ -110,8 +107,7 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string, reprintedBarrels?
   };
   addMapping(url, map);
   script.remove();
-  // A page that is out of date, or that lacks a stylesheet, is right again when it loads again. Each barrel of the list
-  // is a changed module for that page, as before, so that this update can make it load again.
+  // A page that is out of date or lacks a stylesheet keeps no barrel: a changed module can make it load again.
   const keeps = reprintedBarrels && !routeUpdateHadModules && !lacksStylesheet();
   replaceModules(modules, map, keeps ? reprintedBarrels : null).catch(e => {
     console.error(e);

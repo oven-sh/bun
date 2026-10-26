@@ -2203,6 +2203,13 @@ export default class {
         expect(out).toEndWith(`export const b = [7 /* A */, "b" /* B */]`);
       });
 
+      it("a negative enum member left of ** is in parentheses", () => {
+        const code =
+          "namespace F { export function fn() {} export namespace fn { export enum E { A = -3 } } }\nnamespace G { export const f = (n: number) => F.fn.E.A ** n }";
+        expect(ts.parsed(code)).toContain("G.f = (n) => (-3) /* A */ ** n;");
+        expect(run(code, "G.f(2)")).toBe(9);
+      });
+
       it("a later block reads a member of the first block when bun runs the file", async () => {
         await using proc = Bun.spawn({
           cmd: [
@@ -3404,6 +3411,14 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("!x ** 0", "Unexpected **");
       expectParseError("await x ** 0", "Unexpected **");
       expectParseError("await -x ** 0", "Unexpected **");
+    });
+
+    it("exponentiation of an inlined enum member", () => {
+      ts.expectPrinted_(
+        "enum E { A = -1, B = 2 }\nx = [E.A ** 2, E['A'] ** 2, E.B ** 2];",
+        'var E;\n((E) => {\n  E[E["A"] = -1] = "A";\n  E[E["B"] = 2] = "B";\n})(E ||= {});\n' +
+          "x = [(-1) /* A */ ** 2, (-1) /* A */ ** 2, 2 /* B */ ** 2];\n",
+      );
     });
 
     it("for-of loop variable named async", () => {

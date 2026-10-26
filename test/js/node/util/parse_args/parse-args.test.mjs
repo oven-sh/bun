@@ -1123,10 +1123,7 @@ describe("parseArgs extra tests", () => {
     });
 
     test("48 mixed several times, with a garbage collection pending at each call", () => {
-      // Bun.gc() only requests a collection, which starts at the next allocation slow path. The config is built once,
-      // so nothing allocates between the request and parseArgs, and the collection runs inside parseArgs.
-      // bun 1.0.14-canary.20231201.1 kept its tokens where the GC cannot see them. This loop crashes it in 298 of 300
-      // runs. Do not build the args in the loop (6 of 100 runs) or use more than 65 distinct keys (2 of 40 runs).
+      // Built outside the loop so that the collection Bun.gc() requests starts inside parseArgs. See #7310 and #46964.
       const config = { allowPositionals: true, strict: false, args: mixedArgs(48) };
       let result;
       for (let i = 0; i < 500; ++i) {

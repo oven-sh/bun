@@ -4392,13 +4392,11 @@ test("react-compiler keeps one copy of each dependency of a phi", async () => {
 // The time of a whole build depends on every other pass too, so the test reads
 // the time of this pass from BUN_REACT_COMPILER_TIMING. Only debug and ASAN
 // builds have that report, and the test needs a debug build: optimized code
-// needs several times as many pairs for the same ratio, and other passes
-// recurse once per block, which overflows the stack at 1750 pairs on a debug
-// build and at 8000 on a release build.
+// needs several times as many pairs for the same ratio.
 test.skipIf(!isDebug)(
   "react-compiler MergeReactiveScopesThatInvalidateTogether time does not grow with the square of the scopes it merges into one",
   async () => {
-    const pairs = 800;
+    const pairs = 1600;
     const perComponent = 10;
     const pair = "<i><b id={props.x} /></i>";
     const source = (components: number, pairsEach: number) =>
@@ -4435,10 +4433,10 @@ test.skipIf(!isDebug)(
     };
 
     // Both builds merge the same scopes, so the pass takes about as long in one
-    // as in the other. Without the fix the large component takes 5 to 7 times
-    // as long. The times are wall time. The two builds of a round run at the
-    // same time, under the same load, and the test takes the best of up to
-    // three rounds.
+    // as in the other. Without the fix the large component takes 6 times as
+    // long. The times are wall time. The two builds of a round run at the same
+    // time, under the same load, and the test takes the best of up to three
+    // rounds.
     let control = Infinity;
     let large = Infinity;
     for (let round = 0; round < 3; round++) {

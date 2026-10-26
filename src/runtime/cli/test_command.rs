@@ -374,9 +374,9 @@ impl TestFailure {
 
     /// VirtualMachine::on_print_error_zig_exception thunk.
     pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
-        // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
-        // `on_uncaught_exception` for the duration of a single
-        // `run_error_handler` call; single-threaded, no other borrow live.
+        // SAFETY: `on_uncaught_exception` points `ctx` at an Option<TestFailure>
+        // for one synchronous `run_error_handler` call, then clears the callback.
+        // The slot is either the reporter's test failure or a local file failure.
         let slot = unsafe { &mut *ctx.cast::<Option<TestFailure>>() };
         TestFailure::record(slot, exception);
     }
@@ -1254,6 +1254,30 @@ impl CommandLineReporter {
         &mut self.jest.summary
     }
 
+    /// The uncaught hook already counted this error. Attach it to its file
+    /// without turning the last completed test into a failure.
+    pub(crate) fn handle_unhandled_file_error(
+        &mut self,
+        file_id: jest::FileId,
+        failure: Option<TestFailure>,
+    ) {
+        let report = TestCaseReport {
+            file: junit_file_name(self.jest.files.items_source()[file_id as usize].path.text),
+            scopes: Vec::new(),
+            name: b"(unhandled error)",
+            status: bun_test::Execution::Result::Fail,
+            assertions: 0,
+            elapsed_ns: 0,
+            line_number: 0,
+            failure,
+        };
+        if let Some(idx) = self.worker_ipc_file_idx {
+            ParallelRunner::worker_emit_test_done(idx, b"", Some(&report));
+        } else if let Some(junit) = self.reporters.junit.as_mut() {
+            junit.record_test_case(&report).expect("oom");
+        }
+    }
+
     pub(crate) fn handle_test_completed(
         buntest: &mut bun_test::BunTest,
         sequence: &mut bun_test::Execution::ExecutionSequence,
@@ -1757,6 +1781,12 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     }
 
     true
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileIsolation {
+    KeepGlobal,
+    SwapGlobal,
 }
 
 pub(crate) struct TestCommand;
@@ -2813,6 +2843,11 @@ impl TestCommand {
                                 first: isolate || i == 0,
                                 last: isolate,
                             },
+                            if isolate {
+                                FileIsolation::SwapGlobal
+                            } else {
+                                FileIsolation::KeepGlobal
+                            },
                         ) {
                             handle_top_level_test_error_before_javascript_start(&err);
                         }
@@ -2821,14 +2856,6 @@ impl TestCommand {
                         }
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
-                        if isolate {
-                            crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                            vm.swap_global_for_test_isolation();
-                            reporter
-                                .jest
-                                .bun_test_root
-                                .reset_hook_scope_for_test_isolation();
-                        }
                     }
                 }
 
@@ -2842,6 +2869,7 @@ impl TestCommand {
                         first: isolate || files.len() == 1,
                         last: true,
                     },
+                    FileIsolation::KeepGlobal,
                 ) {
                     handle_top_level_test_error_before_javascript_start(&err);
                 }
@@ -2873,6 +2901,7 @@ impl TestCommand {
         vm: &mut VirtualMachine,
         file_name: &[u8],
         first_last: bun_test::FirstLast,
+        isolation: FileIsolation,
     ) -> crate::Result<()> {
         // Capture the raw log pointer (Copy) so the guard does not borrow `vm`.
         let vm_log = vm.log;
@@ -2926,6 +2955,13 @@ impl TestCommand {
 
         let repeat_count = reporter.repeat_count;
         let mut repeat_index: u32 = 0;
+        scopeguard::defer! {
+            // SAFETY: the caller-owned reporter outlives the run and every
+            // per-repeat cleanup guard below. Teardown errors are recorded first.
+            if let Some(junit) = unsafe { &mut *reporter_ptr }.reporters.junit.as_mut() {
+                let _ = junit.end_file(None);
+            }
+        }
         vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
 
@@ -2946,13 +2982,45 @@ impl TestCommand {
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             let global = vm.global();
+            let vm_ptr: *mut VirtualMachine = vm;
+            // An early return also finalizes the file; successful intermediate
+            // reruns only release their BunTest, retaining the current global.
+            let finalize_file = core::cell::Cell::new(true);
             scopeguard::defer! {
+                let swap = finalize_file.get() && isolation == FileIsolation::SwapGlobal;
+                if swap {
+                    // SAFETY: the root and active file remain live through this guard.
+                    // End collection/execution before callbacks can re-enter the scheduler.
+                    if let Some(active) = unsafe { (*bun_test_root_ptr).clone_active_file() } {
+                        active.get().begin_file_teardown();
+                    }
+                }
+                // A pending patch must be forgotten before its global is retired.
+                bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
+                if swap {
+                    // SAFETY: the caller's VM remains live on this JS thread.
+                    // Keep the active file and reporter through the existing close
+                    // callbacks so uncaught teardown errors belong to this file.
+                    let vm = unsafe { &mut *vm_ptr };
+                    crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
+                    vm.swap_global_for_test_isolation();
+                }
                 // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
                 // raw-ptr escape so the closure does not hold a borrowck lock on
                 // it for the loop body.
                 unsafe { (*bun_test_root_ptr).exit_file(); }
-                // A mock.module() patch still pending must not hold up the next file.
-                bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
+                if swap {
+                    // SAFETY: exit_file and the loop's local Rc releases precede
+                    // dropping the old preload scopes those BunTests referenced.
+                    unsafe { (*bun_test_root_ptr).reset_hook_scope_for_test_isolation(); }
+                }
+                if Output::is_github_action()
+                    // SAFETY: reporter is caller-owned and remains live through this guard.
+                    && unsafe { (*reporter_ptr).worker_ipc_file_idx.is_none() }
+                {
+                    pretty_errorln!("<r>\n::endgroup::\n");
+                    Output::flush();
+                }
             }
 
             // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
@@ -3074,11 +3142,6 @@ impl TestCommand {
 
             let _ = vm.global().handle_rejected_promises();
 
-            if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
-                pretty_errorln!("<r>\n::endgroup::\n");
-                Output::flush();
-            }
-
             if !vm.test_isolation_enabled {
                 // Ensure these never linger across files. Under --isolate this
                 // is done by swapGlobalForTestIsolation() (kill+clear) and we
@@ -3088,9 +3151,7 @@ impl TestCommand {
             }
 
             repeat_index += 1;
-        }
-        if let Some(junit) = reporter.reporters.junit.as_mut() {
-            let _ = junit.end_file(None);
+            finalize_file.set(repeat_index == repeat_count);
         }
         Ok(())
     }

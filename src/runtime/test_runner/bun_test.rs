@@ -903,6 +903,17 @@ impl BunTest {
         let _ = self.result_queue.write_item(result); // OOM/capacity: fire-and-forget
     }
 
+    /// Retain error attribution while closing a file, including one whose load
+    /// failed before execution. Close callbacks must not resume its tests or hooks.
+    pub(crate) fn begin_file_teardown(&mut self) {
+        debug_assert!(!self.in_run_loop);
+        self.phase = Phase::Done;
+        self.wants_wakeup = false;
+        if self.timer.state == EventLoopTimerState::ACTIVE {
+            vm_timer().remove(&raw mut self.timer);
+        }
+    }
+
     pub(crate) fn run(this_strong: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
         // `Collection::step` / `Execution::step` re-enter and call `.get()` on
@@ -1285,17 +1296,20 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
+        let mut file_failure = None;
+        let is_file_error = self.phase == Phase::Done;
         let failure_ctx: *mut core::ffi::c_void = 'ctx: {
-            if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
-                break 'ctx core::ptr::null_mut();
-            }
             let Some(reporter) = self.reporter else {
                 break 'ctx core::ptr::null_mut();
             };
             // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
             // `&mut`; single-threaded test runner, no other borrow live here.
             let reporter = unsafe { &mut *reporter.as_ptr() };
-            if reporter.jest.test_options.reporters.junit {
+            if !reporter.jest.test_options.reporters.junit {
+                core::ptr::null_mut()
+            } else if is_file_error {
+                core::ptr::from_mut(&mut file_failure).cast()
+            } else if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
                 core::ptr::from_mut(&mut reporter.test_failure).cast()
             } else {
                 core::ptr::null_mut()
@@ -1341,6 +1355,14 @@ impl BunTest {
         }
 
         Output::flush();
+        if is_file_error && !failure_ctx.is_null() {
+            // SAFETY: the active file retains the caller-owned reporter through
+            // teardown. The formatter callback was cleared before moving its slot.
+            unsafe {
+                (*self.reporter.unwrap().as_ptr())
+                    .handle_unhandled_file_error(self.file_id, file_failure);
+            }
+        }
     }
 }
 

@@ -62,6 +62,7 @@ const ESPREE: &[u8] = b"\
     Literal:value,raw,bigint,regex;LogicalExpression:left,operator,right;\
     MethodDefinition:static,computed,key,kind,value;Program:body,sourceType,comments,tokens;\
     Property:method,shorthand,computed,key,value,kind;PropertyDefinition:static,computed,key,value;\
+    SvelteReactiveStatement:body,label;\
     SwitchCase:consequent,test;TemplateElement:value,tail;TemplateLiteral:expressions,quasis;\
     UnaryExpression:operator,prefix,argument;UpdateExpression:operator,prefix,argument;\
     YieldExpression:delegate,argument;\
@@ -103,6 +104,38 @@ const OXLINT: &[u8] = b"\
     TSTypePredicate:parameterName,asserts,typeAnnotation;TemplateElement:value,tail;\
     UnaryExpression:operator,argument,prefix;UpdateExpression:operator,prefix,argument;\
     VariableDeclaration:kind,declarations,declare;YieldExpression:delegate,argument;\
+";
+
+/// svelte-eslint-parser 1.9's component nodes, with all their properties, regardless of the scripts' parser: the same
+/// in every layout, in this order only.
+const SVELTE: &[u8] = b"\
+    SvelteScriptElement:type,name,startTag,body,endTag,parent,range,loc;\
+    SvelteStyleElement:type,name,startTag,children,endTag,parent,range,loc;\
+    SvelteElement:type,kind,name,startTag,children,endTag,parent,range,loc;\
+    SvelteStartTag:type,attributes,selfClosing,parent,range,loc;SvelteEndTag:type,parent,range,loc;\
+    SvelteName:type,name,parent,range,loc;SvelteMemberExpressionName:type,object,property,parent,range,loc;\
+    SvelteLiteral:type,value,parent,range,loc;SvelteMustacheTag:type,kind,expression,parent,range,loc;\
+    SvelteDebugTag:type,identifiers,parent,range,loc;SvelteConstTag:type,declarations,parent,range,loc;\
+    SvelteDeclarationTag:type,declaration,parent,range,loc;SvelteRenderTag:type,expression,parent,range,loc;\
+    SvelteIfBlock:type,elseif,expression,children,else,parent,range,loc;\
+    SvelteElseBlock:type,elseif,children,parent,range,loc;\
+    SvelteEachBlock:type,expression,context,index,key,children,else,parent,range,loc;\
+    SvelteAwaitBlock:type,expression,kind,pending,then,catch,parent,range,loc;\
+    SvelteAwaitPendingBlock:type,children,parent,range,loc;\
+    SvelteAwaitThenBlock:type,awaitThen,value,children,parent,range,loc;\
+    SvelteAwaitCatchBlock:type,awaitCatch,error,children,parent,range,loc;\
+    SvelteKeyBlock:type,expression,children,parent,range,loc;\
+    SvelteSnippetBlock:type,id,params,children,parent,range,loc;\
+    SvelteAttribute:type,boolean,key,value,parent,range,loc;\
+    SvelteShorthandAttribute:type,key,value,parent,loc,range;\
+    SvelteSpreadAttribute:type,argument,parent,range,loc;SvelteAttachTag:type,expression,parent,range,loc;\
+    SvelteDirective:type,kind,intro,outro,key,shorthand,expression,parent,range,loc;\
+    SvelteStyleDirective:type,key,shorthand,value,parent,range,loc;\
+    SvelteSpecialDirective:type,kind,key,expression,parent,range,loc;\
+    SvelteGenericsDirective:type,key,parent,range,loc,params;\
+    SvelteDirectiveKey:type,name,modifiers,parent,range,loc;SvelteSpecialDirectiveKey:type,parent,range,loc;\
+    SvelteText:type,value,parent,range,loc;SvelteHTMLComment:type,value,parent,range,loc;\
+    SvelteFunctionBindingsExpression:type,expressions,range,loc,parent;\
 ";
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -177,6 +210,14 @@ fn can_be_omitted(node_type: NodeType, field: Field, is_espree: bool) -> bool {
         (NodeType::Literal, Field::Regex | Field::Bigint)
             | (NodeType::JSXText, Field::Bigint)
             | (NodeType::TSModuleDeclaration, Field::Body)
+            | (
+                NodeType::Identifier | NodeType::ObjectPattern | NodeType::ArrayPattern,
+                Field::TypeAnnotation
+            )
+            | (
+                NodeType::SvelteDirective,
+                Field::Intro | Field::Outro | Field::Shorthand
+            )
     ) || (is_espree && field == Field::Directive)
 }
 
@@ -226,17 +267,24 @@ const NAME_AND_ARGUMENTS: u32 = 4;
 /// The types in the order of `sourceCode.visitorKeys`, each with its number. eslint-visitor-keys sorts its types by
 /// name. typescript-eslint appends its own, sorted by name case-insensitively. Both still have two types that no parser
 /// produces anymore.
-fn visitor_key_order(layout: Layout) -> Vec<(&'static [u8], u32)> {
+///
+/// With `with_svelte`, svelte-eslint-parser's types are included, which it adds after ESLint's, in its own order.
+fn visitor_key_order(layout: Layout, with_svelte: bool) -> Vec<(&'static [u8], u32)> {
     let all = (NodeType::ALL.iter().enumerate()).map(|(i, it)| (it.name().as_bytes(), i as u32));
+    let (svelte, all): (Vec<_>, Vec<_>) =
+        all.partition(|(_, i)| crate::estree::is_svelte_type(NodeType::ALL[*i as usize]));
     if layout == Layout::Oxlint {
-        return oxlint_visitor_key_order(all.collect());
+        return oxlint_visitor_key_order(all);
     }
-    let (mut typescript, mut espree): (Vec<_>, Vec<_>) = all.partition(|(name, _)| {
+    let (mut typescript, mut espree): (Vec<_>, Vec<_>) = all.into_iter().partition(|(name, _)| {
         name.starts_with(b"TS") || *name == b"AccessorProperty" || *name == b"Decorator"
     });
     espree.push((b"ExperimentalRestProperty", u32::MAX - ARGUMENT));
     espree.push((b"ExperimentalSpreadProperty", u32::MAX - ARGUMENT));
     espree.sort_unstable();
+    if with_svelte {
+        espree.extend(svelte);
+    }
     if layout == Layout::TypeScript {
         sort::sort_by_cached_key(&mut typescript, |(name, _)| name.to_ascii_lowercase());
         espree.append(&mut typescript);
@@ -294,9 +342,10 @@ fn oxlint_visitor_key_order(mut all: Vec<(&'static [u8], u32)>) -> Vec<(&'static
 /// and the number of words [`visitor_key_order`] takes. Then each type's name, and for each layout: the number of
 /// fields `ast.rs` writes for a node, a bit for each field that's a visitor key, a bit for each field that can be
 /// omitted, the number of properties, the number of properties in the other order that [`alternates`] is about, then
-/// each property's name and content, in both orders. Then [`STRINGS`]. Then, for each of the first three layouts, the
-/// result of [`visitor_key_order`] prefixed with its length. Then the names' bytes. A name is its start offset in those
-/// bytes `<< 8`, with its length in the low 8 bits.
+/// each property's name and content, in both orders. Then [`STRINGS`]. Then, for each of the first three layouts, and
+/// then with svelte-eslint-parser for typescript-eslint's and espree's, the result of [`visitor_key_order`] prefixed
+/// with its length. Then the names' bytes. A name is its start offset in those bytes `<< 8`, with its length in the
+/// low 8 bits.
 pub(super) fn write(out: &mut Vec<u8>) {
     let mut names = Names::default();
     let mut words = vec![
@@ -311,6 +360,9 @@ pub(super) fn write(out: &mut Vec<u8>) {
         all.filter_map(|it| strings::split_once_char(it, b':'))
             .collect()
     });
+    let svelte_properties: FxHashMap<&[u8], &[u8]> = strings::split(SVELTE, b";")
+        .filter_map(|it| strings::split_once_char(it, b':'))
+        .collect();
     for &node_type in NodeType::ALL {
         words.push(names.add(node_type.name().as_bytes()));
         for (layout, exceptions) in Layout::ALL.into_iter().zip(&exceptions) {
@@ -369,9 +421,27 @@ pub(super) fn write(out: &mut Vec<u8>) {
                     ],
                 ),
             };
-            let properties: Vec<Property> =
-                [outer_properties.0, &middle[..], outer_properties.1].concat();
+            let svelte = svelte_properties.get(node_type.name().as_bytes()).copied();
+            let properties: Vec<Property> = match svelte {
+                Some(order) => strings::split(order, b",")
+                    .map(|name| match name {
+                        b"type" => TYPE_PROPERTY,
+                        b"parent" => PARENT_PROPERTY,
+                        b"range" => RANGE_PROPERTY,
+                        b"loc" => LOC_PROPERTY,
+                        _ => (
+                            name,
+                            fields
+                                .iter()
+                                .position(|it| *it == name)
+                                .map_or(UNDEFINED, |it| it as u32),
+                        ),
+                    })
+                    .collect(),
+                None => [outer_properties.0, &middle[..], outer_properties.1].concat(),
+            };
             let alternate: Vec<Property> = match (layout, node_type) {
+                _ if svelte.is_some() => Vec::new(),
                 (Layout::TypeScript, NodeType::TSModuleDeclaration) => {
                     let order = b"kind,body,declare,global,id";
                     let middle = fields_in_order(layout, Some(order), &fields, &hidden, &shown);
@@ -409,8 +479,15 @@ pub(super) fn write(out: &mut Vec<u8>) {
     }
     words.extend(STRINGS.iter().map(|it| names.add(it.as_bytes())));
     let before = words.len();
-    for layout in [Layout::TypeScript, Layout::Espree, Layout::Oxlint] {
-        let order = visitor_key_order(layout);
+    let orders = [
+        (Layout::TypeScript, false),
+        (Layout::Espree, false),
+        (Layout::Oxlint, false),
+        (Layout::TypeScript, true),
+        (Layout::Espree, true),
+    ];
+    for (layout, with_svelte) in orders {
+        let order = visitor_key_order(layout, with_svelte);
         words.push(order.len() as u32);
         for (name, node_type) in order {
             words.extend_from_slice(&[names.add(name), node_type]);

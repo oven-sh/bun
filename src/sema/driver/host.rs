@@ -273,6 +273,8 @@ pub struct Disk {
     pub(crate) script_kinds: Vec<(Vec<u8>, ScriptKind)>,
     /// `Request::script_kinds_by_extension`
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
+    /// `PlanOptions::script_kinds_only_set_languages`
+    pub(crate) script_kinds_only_set_languages: bool,
     pub(crate) before_read: Option<BeforeRead>,
     /// `Host::extended_config`. The projects of a build often extend the same file.
     extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, CachedConfig>>,
@@ -520,6 +522,7 @@ impl Disk {
             bundled_libs: None,
             script_kinds: Vec::new(),
             script_kinds_by_extension: Vec::new(),
+            script_kinds_only_set_languages: false,
             before_read: None,
             scripts_of_page: None,
         }
@@ -1451,6 +1454,9 @@ impl Host for Disk {
     }
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         &self.script_kinds_by_extension
+    }
+    fn imports_script_kinds_by_name(&self) -> bool {
+        !self.script_kinds_only_set_languages
     }
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
         if self.script_kinds.is_empty() && self.script_kinds_by_extension.is_empty() {

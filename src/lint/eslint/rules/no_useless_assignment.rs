@@ -1,3 +1,4 @@
+use bun_lint::ast::view::View;
 use bun_lint::code_path::{CurrentSegments, Event, Step, starts_code_path, steps_of_code_path};
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
@@ -245,9 +246,87 @@ impl<'a> Binding<'a> {
                 && oxlint_ignores_declarator(symbol, reference.ident().start()))
     }
 
-    fn references(self) -> impl Iterator<Item = Reference<'a>> {
-        self.symbol.references().filter(move |&it| self.has(it))
+    /// In a component, each `$x` of the store `x` is a read of `x`, replacing the read in the code the lowering
+    /// appends: [`store_of`].
+    fn references(self) -> impl Iterator<Item = Use<'a>> {
+        let store = self.class.is_none().then(|| store_of(self.symbol)).flatten();
+        let is_made_up = move |it: &Reference<'a>| {
+            store.is_some_and(|(_, view)| view.hides(it.span().start))
+        };
+        let uses_of_store = store.into_iter().flat_map(move |(store, _)| {
+            (store.references())
+                .filter(move |it| !is_made_up(it))
+                .map(Use::from_store)
+        });
+        (self.symbol.references())
+            .filter(move |&it| self.has(it) && !is_made_up(&it))
+            .map(Use::of)
+            .chain(uses_of_store)
     }
+}
+
+/// A reference as the rule counts it.
+#[derive(Copy, Clone)]
+struct Use<'a> {
+    reference: Reference<'a>,
+    /// True for a `$x` of the store `x`: svelte-eslint-parser makes each one a read-only reference to `x`
+    /// (`analyzeStoreScope`), even where it assigns to `$x`.
+    is_store_access: bool,
+}
+
+impl<'a> Use<'a> {
+    fn of(reference: Reference<'a>) -> Use<'a> {
+        Use {
+            reference,
+            is_store_access: false,
+        }
+    }
+
+    fn from_store(reference: Reference<'a>) -> Use<'a> {
+        Use {
+            reference,
+            is_store_access: true,
+        }
+    }
+
+    fn is_read(self) -> bool {
+        self.is_store_access || self.reference.is_read()
+    }
+
+    fn is_write(self) -> bool {
+        !self.is_store_access && self.reference.is_write()
+    }
+}
+
+impl<'a> std::ops::Deref for Use<'a> {
+    type Target = Reference<'a>;
+
+    fn deref(&self) -> &Reference<'a> {
+        &self.reference
+    }
+}
+
+/// The store `x` for a component's `$x`, with the program's view. The program has a variable `$x`, and reads `x` once:
+/// the lowering declares `$x` and calls a helper with both at the end, which rules don't see.
+fn store_of<'a>(symbol: Symbol<'a>) -> Option<(Symbol<'a>, &'a View)> {
+    let file = symbol.file();
+    let view = file.view()?;
+    if symbol.scope() != file.top_level_scope()
+        || !(symbol.references()).any(|it| it.is_read() && view.hides(it.span().start))
+    {
+        return None;
+    }
+    let store = (symbol.scope()).get_bytes(&[b"$", symbol.name().bytes()].concat())?;
+    is_synthetic_store_variable(store).then_some((store, view))
+}
+
+/// True if `symbol` is a `$x` that only a component's lowering declares, which isn't a svelte-eslint-parser variable.
+fn is_synthetic_store_variable(symbol: Symbol<'_>) -> bool {
+    let Some(view) = symbol.file().view() else {
+        return false;
+    };
+    symbol.name().bytes().starts_with(b"$")
+        && (symbol.declarations()).all(|it| it.name_span().is_some_and(|it| view.hides(it.start)))
 }
 
 const NONE: u32 = u32::MAX;
@@ -615,13 +694,12 @@ fn is_read_after_declarator<'a>(
         return false;
     }
     let (end, scope) = (declarator.span().end, variable.scope());
-    let read = variable.references().find(|&it| {
+    let read = Binding::outer(variable).references().find(|&it| {
         it.is_read()
             && start_of(&it) >= end
             && (it.scope() == scope || it.scope().variable_scope() == scope.variable_scope())
-            && Binding::outer(variable).has(it)
     });
-    let Some(identifier) = read.and_then(Reference::expr) else {
+    let Some(identifier) = read.and_then(|it| it.expr()) else {
         return false;
     };
     // The statement is usually only a few levels up.
@@ -685,7 +763,7 @@ fn code_path_root(scope: Scope<'_>) -> Option<Node<'_>> {
 #[derive(Default)]
 struct Uses<'a> {
     /// In source order.
-    all: Vec<Reference<'a>>,
+    all: Vec<Use<'a>>,
     /// Shared by all variables: maps a node to the innermost `a ? b : c` in its statement that has the node in its `b`.
     conditions: AncestorMemo<'a, Option<Expr<'a>>>,
     /// Shared by all variables: the memo for `write_site_of`.
@@ -700,35 +778,35 @@ struct Uses<'a> {
 
 impl<'a> Uses<'a> {
     /// `references` are the references to `variable` in its code path.
-    fn load(&mut self, variable: Binding<'a>, references: impl Iterator<Item = Reference<'a>>) {
+    fn load(&mut self, variable: Binding<'a>, references: impl Iterator<Item = Use<'a>>) {
         self.all.clear();
         self.all.extend(references);
-        if !self.all.is_sorted_by_key(start_of) {
-            utils::sort::sort_unstable_by_key(&mut self.all, start_of);
+        if !self.all.is_sorted_by_key(|it| start_of(it)) {
+            utils::sort::sort_unstable_by_key(&mut self.all, |it| start_of(it));
         }
         self.is_in_module_scope = variable.scope().kind() == ScopeKind::Module;
     }
 
     /// Returns how many of `uses`, which are in source order, start before `offset`. Most variables have few uses.
     #[inline]
-    fn count_before(uses: &[Reference<'a>], offset: u32) -> usize {
+    fn count_before(uses: &[Use<'a>], offset: u32) -> usize {
         match uses.len() {
             0..=8 => uses.iter().take_while(|it| start_of(it) < offset).count(),
             _ => uses.partition_point(|it| start_of(it) < offset),
         }
     }
 
-    fn within(&self, span: Span) -> &[Reference<'a>] {
+    fn within(&self, span: Span) -> &[Use<'a>] {
         let from = &self.all[Self::count_before(&self.all, span.start)..];
         &from[..Self::count_before(from, span.end)]
     }
 
     /// Returns the first use at or after `offset`.
-    fn first_from(&self, offset: u32) -> Option<Reference<'a>> {
+    fn first_from(&self, offset: u32) -> Option<Use<'a>> {
         self.all.get(Self::count_before(&self.all, offset)).copied()
     }
 
-    fn first_within(&self, span: Span) -> Option<Reference<'a>> {
+    fn first_within(&self, span: Span) -> Option<Use<'a>> {
         self.first_from(span.start)
             .filter(|it| start_of(it) < span.end)
     }
@@ -791,7 +869,7 @@ impl<'a> Uses<'a> {
             if next.is_read() {
                 let is_in_type = next
                     .symbol()
-                    .is_some_and(|it| is_type_only_reference(it, next));
+                    .is_some_and(|it| is_type_only_reference(it, *next));
                 return if is_in_type && !counts_in_type(start_of(&next)) {
                     Flow::Unknown
                 } else {
@@ -799,7 +877,7 @@ impl<'a> Uses<'a> {
                 };
             }
             // `x = f(x)`
-            let evaluated_first = write_site_of(next, &mut self.writers).and_then(|it| it.expression);
+            let evaluated_first = write_site_of(*next, &mut self.writers).and_then(|it| it.expression);
             if evaluated_first
                 .and_then(|it| self.first_within(it))
                 .is_some_and(|it| it.is_read())
@@ -1446,6 +1524,7 @@ impl NoUselessAssignment {
             || !variable.has_reads()
             || oxlint_skips(variable)
             || oxlint_treats_as_exported(variable, &mut cx.state.exported)
+            || is_synthetic_store_variable(variable)
         {
             return;
         }
@@ -1511,15 +1590,12 @@ impl NoUselessAssignment {
             return;
         }
         // A function can run at any time, so anything it reads may be read.
-        if writes == 0
-            || (variable.symbol.references())
-                .any(|it| it.is_read() && is_in_other_code_path(it) && variable.has(it))
-        {
+        if writes == 0 || variable.references().any(|it| it.is_read() && is_in_other_code_path(*it)) {
             return;
         }
         uses.load(
             variable,
-            variable.references().filter(|&it| !is_in_other_code_path(it)),
+            variable.references().filter(|it| !is_in_other_code_path(**it)),
         );
         // The variable's code path scope, computed on first use.
         let mut scope = None;
@@ -1533,7 +1609,7 @@ impl NoUselessAssignment {
             };
             at += 1;
             if reference.is_write()
-                && write_site_of(reference, &mut uses.writers).is_some_and(|write| {
+                && write_site_of(*reference, &mut uses.writers).is_some_and(|write| {
                     let is_in_another = write.node.span().end <= end;
                     end = end.max(write.node.span().end);
                     is_in_another || !uses.is_known_to_be_read(&write)
@@ -1594,7 +1670,8 @@ impl NoUselessAssignment {
         }
     }
 
-    fn verify<'a>(mut target: ScopeStack<'a>, cx: &mut Cx<'a, Self>) {
+    /// `is_program` is true when the program's code path ends, after every `Program:exit` listener.
+    fn verify<'a>(mut target: ScopeStack<'a>, is_program: bool, cx: &mut Cx<'a, Self>) {
         // Raise each block's end to the largest end so far. Then an identifier is inside some block if the last block
         // that starts before it ends after it.
         for blocks in [
@@ -1658,7 +1735,7 @@ impl NoUselessAssignment {
                 let start =
                     get_code_path_start_scope(reference.scope(), &cx.state.code_path_start_scopes);
                 if start != Some(target.scope)
-                    || is_in_decorator_of_parameter(reference, target.scope)
+                    || is_in_decorator_of_parameter(*reference, target.scope)
                 {
                     continue 'variables;
                 }
@@ -1687,7 +1764,7 @@ impl NoUselessAssignment {
                         debug_assert!(
                             variable
                                 .references()
-                                .any(|it| is_type_only_reference(variable.symbol, it))
+                                .any(|it| is_type_only_reference(variable.symbol, *it))
                         );
                         continue 'variables;
                     }
@@ -1699,7 +1776,13 @@ impl NoUselessAssignment {
                             .min(identifier.start + name.bytes().len() as u32),
                         false => identifier.end,
                     };
-                    cx.report(Span::new(identifier.start, end), UNNECESSARY_ASSIGNMENT)
+                    let report =
+                        cx.report(Span::new(identifier.start, end), UNNECESSARY_ASSIGNMENT);
+                    let report = match is_program {
+                        true => report.after_the_end(),
+                        false => report,
+                    };
+                    report
                         .data("name", name)
                         .hint_with(|| uses.hint(index, next, cx.file()));
                 }
@@ -1724,6 +1807,7 @@ impl NoUselessAssignment {
                 let is_ignored = !cfg!(debug_assertions) && !state.unknown.contains(&variable)
                     || oxlint_skips(variable.symbol)
                     || oxlint_treats_as_exported(variable.symbol, &mut state.exported)
+                    || is_synthetic_store_variable(variable.symbol)
                     || get_code_path_start_scope(scope, &state.code_path_start_scopes)
                         != Some(top.scope)
                     || variable.class.is_none() && variable.symbol.is_marked_used()
@@ -1753,10 +1837,10 @@ impl NoUselessAssignment {
         cx.state.code_path_start_scopes.insert(scope);
     }
 
-    fn on_code_path_end<'a>(&self, _: CodePath<'a>, _: Node<'a>, cx: &mut Cx<'a, Self>) {
+    fn on_code_path_end<'a>(&self, _: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         cx.state.current_segments.code_path_end();
         if let Some(target) = cx.state.stack.pop() {
-            Self::verify(target, cx);
+            Self::verify(target, matches!(node, Node::File(_)), cx);
         }
     }
 

@@ -338,6 +338,9 @@ struct ConfigObject {
     source: Option<Json>,
     /// `$parser`
     parser_location: Option<Json>,
+    /// `$parsers`: what `parserMetadata` in `evaluate-eslint.js` reports about the parsers by `lang`, before the
+    /// objects are merged. See [`ResolvedConfig::parser_names`].
+    parser_names: Option<Json>,
     /// `$changesLinter`: see [`ResolvedConfig::changes_linter`].
     changes_linter: bool,
     /// `$framework`: skip this object unless the project uses this framework. Empty means it always applies.
@@ -412,6 +415,7 @@ impl Default for ConfigObject {
             processor_location: None,
             source: None,
             parser_location: None,
+            parser_names: None,
             changes_linter: false,
             required_framework: Frameworks::empty(),
             override_plugin_sets: None,
@@ -1646,6 +1650,21 @@ impl Config {
         config.parser_name = (language_options.get(b"parser"))
             .and_then(Json::as_str)
             .map(Box::from);
+        config.parser_module = (parser_location.and_then(|it| it.get(b"module")))
+            .and_then(Json::as_str)
+            .map(Box::from);
+        // By `lang`, as the options merge them, then each one's id from ESLint's `getObjectId`.
+        let mut parsers = Vec::new();
+        for &index in indices {
+            if let Some(object) = self.objects.get(index as usize)
+                && let Some(Json::Object(by_lang)) = &object.parser_names
+            {
+                merge::deep_merge(&mut parsers, by_lang);
+            }
+        }
+        config.parser_names = (parsers.iter())
+            .filter_map(|(lang, parser)| Some((Box::from(&lang[..]), parser_id(parser)?)))
+            .collect();
         config.changes_linter = (indices.iter())
             .any(|index| (self.objects.get(*index as usize)).is_some_and(|it| it.changes_linter));
         if config.may_route_to_eslint() && !config.changes_linter {
@@ -1921,4 +1940,24 @@ impl Config {
         let language = registry.language(Plugin::from_prefix(prefix)?, name)?;
         is_built_in.then_some((language, name))
     }
+}
+
+/// ESLint's `getObjectId` for a parser that the merged `$parsers` describe this way: `name@version`, or the name. A
+/// string is the name.
+fn parser_id(parser: &Json) -> Option<Box<[u8]>> {
+    let Json::Object(_) = parser else {
+        return parser.as_str().map(Box::from);
+    };
+    // `object.name ?? object.meta?.name`
+    let of = |key: &[u8]| {
+        (parser.get(key))
+            .filter(|it| !matches!(it, Json::Null))
+            .or_else(|| parser.get(b"meta")?.get(key))
+            .and_then(Json::as_str)
+    };
+    let name = of(b"name").filter(|it| !it.is_empty())?;
+    Some(match of(b"version").filter(|it| !it.is_empty()) {
+        Some(version) => [name, b"@", version].concat().into_boxed_slice(),
+        None => Box::from(name),
+    })
 }

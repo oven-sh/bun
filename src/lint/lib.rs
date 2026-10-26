@@ -11,7 +11,7 @@
 //! - [`languages`]: languages other than JavaScript.
 //!
 //! The rules are in the crates `bun_lint_eslint`, `bun_lint_typescript`, `bun_lint_plugins`, `bun_lint_unicorn`,
-//! `bun_lint_react`, `bun_lint_jest`, `bun_lint_json` and `bun_lint_markdown`.
+//! `bun_lint_react`, `bun_lint_jest`, `bun_lint_json`, `bun_lint_markdown` and `bun_lint_svelte`.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
@@ -49,6 +49,7 @@ pub mod selector;
 pub mod semantic;
 pub mod source;
 pub mod span;
+pub mod svelte_compiler;
 pub mod tokens;
 pub mod types;
 pub mod utils;
@@ -69,7 +70,7 @@ pub mod prelude {
         Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind, Symbol,
         Variable, VariableKind,
     };
-    pub use crate::span::{Position, Span, Spanned};
+    pub use crate::span::{Domain, Position, Span, Spanned};
     pub use crate::tokens::{Token, TokenKind, Tokens, skip_trivia, skip_trivia_back};
     pub use crate::utils::{self, ast_utils, eslint_utils, text, ts_utils};
 }

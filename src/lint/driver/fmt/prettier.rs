@@ -39,7 +39,7 @@ impl<'e> Prettier<'e> {
         threads: usize,
     ) -> Prettier<'e> {
         let host = Host::with_engine(environment.js_engine, &environment.cwd);
-        host.expect(files, size, threads);
+        host.expect(files, size, 0, threads);
         // A string flag's value has no quotes, so it isn't valid JSON.
         let value = |text: &[u8]| match bun_lint::json::parse(text) {
             Some(value @ (Json::Bool(_) | Json::Number(_))) => value,

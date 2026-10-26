@@ -32,6 +32,7 @@ members = [
   "src/lint/unicorn",
   "src/lint/react",
   "src/lint/jest",
+  "src/lint/svelte",
   "src/lint/json",
   "src/lint/markdown",
   "src/lint/graph",
@@ -399,6 +400,7 @@ bun_lint_oxlint = { path = "src/lint/oxlint" }
 bun_lint_unicorn = { path = "src/lint/unicorn" }
 bun_lint_react = { path = "src/lint/react" }
 bun_lint_jest = { path = "src/lint/jest" }
+bun_lint_svelte = { path = "src/lint/svelte" }
 bun_lint_json = { path = "src/lint/json" }
 bun_lint_markdown = { path = "src/lint/markdown" }
 bun_lint_graph = { path = "src/lint/graph" }

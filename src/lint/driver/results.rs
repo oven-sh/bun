@@ -1,5 +1,6 @@
 //! The report for one file: ESLint's `LintResult`.
 
+use crate::configs::Loaded;
 use bun_lint::context::Severity;
 use bun_lint::linter::{LintMessage, ResolvedConfig};
 use bun_lint::source::LineStarts;
@@ -46,6 +47,9 @@ pub(crate) struct Linted {
     pub(crate) config: Arc<ResolvedConfig>,
     /// [`FileResult::text`] is ESLint's `source`.
     pub(crate) has_source: bool,
+    /// For a natively linted component, the source its config was loaded from, so it can be linted again the same way
+    /// as the first time if ESLint lints it.
+    pub(crate) loaded: Option<Arc<Loaded>>,
 }
 
 pub(crate) struct FileResult {
@@ -65,6 +69,8 @@ pub(crate) struct FileResult {
     pub(crate) line_starts: Option<Vec<u32>>,
     /// [`LintResult::run_keys`](bun_lint::linter::LintResult::run_keys), for when the file is linted again.
     pub(crate) run_keys: Vec<(u64, u128)>,
+    /// [`LintResult::processed`](bun_lint::linter::LintResult::processed), for when the file is linted again.
+    pub(crate) processed: Vec<LintMessage>,
     /// Fixes changed the text, so `text` is ESLint's `output`.
     pub(crate) is_fixed: bool,
     /// Number of fixes applied.
@@ -129,6 +135,7 @@ impl FileResult {
             text: None,
             line_starts: None,
             run_keys: Vec::new(),
+            processed: Vec::new(),
             is_fixed: false,
             fixes: 0,
             fixed_text: None,

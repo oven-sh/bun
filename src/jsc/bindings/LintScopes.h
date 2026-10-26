@@ -23,9 +23,9 @@ enum class LintScopeFlavor : uint8_t {
 // How the objects of `eslint-scope`, or of `@typescript-eslint/scope-manager`, are laid out. It's the same for all files. A template is
 // made when the first object needs it.
 struct LintScopeLayout {
-    // 18 kinds of scopes, 16 shapes of variables, 11 kinds of definitions, 2 shapes of references, `globalScope.implicit`, and
+    // 18 kinds of scopes, 16 shapes of variables, 12 kinds of definitions, 2 shapes of references, `globalScope.implicit`, and
     // `reference.maybeImplicitGlobal`.
-    static constexpr size_t templateCount = 18 + 16 + 11 + 2 + 1 + 1;
+    static constexpr size_t templateCount = 18 + 16 + 12 + 2 + 1 + 1;
 
     // From src/lint/js_plugin/worker/scope.js: see `scopes` in LintScopes.cpp.
     JSC::WriteBarrier<JSC::JSArray> classes;

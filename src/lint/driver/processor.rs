@@ -7,10 +7,11 @@ use crate::configs::{Flavor, Loaded};
 use crate::lint::{Context, Fixes};
 use crate::paths;
 use crate::results::FileResult;
+use crate::svelte::{NeedsServices, Residual};
 use bun_lint::js_plugin::{
     self, Block, EslintFailure, Processor, Route, read_messages, write_messages,
 };
-use bun_lint::linter::{FileConfig, LintResult, ResolvedConfig, RuleId};
+use bun_lint::linter::{Again, FileConfig, LintMessage, LintResult, ResolvedConfig, RuleId};
 use std::sync::Arc;
 
 #[derive(Copy, Clone)]
@@ -21,6 +22,8 @@ struct Text<'t> {
     physical_path_len: usize,
     text: &'t [u8],
     fixes: Fixes,
+    /// Only these rules run. See [`js_plugin::Text::only`].
+    only: Option<&'t Residual>,
 }
 
 fn thrown(message: Vec<u8>) -> LintResult {
@@ -83,7 +86,7 @@ impl Context<'_, '_> {
         }
         let (len, fixes) = (file.physical_path_len, file.fixes);
         // Text that only the config's parser can parse goes to ESLint's own `Linter`, which has that parser.
-        self.verify_block_if_read(path, len, text, config, fixes)
+        self.verify_block_if_read(path, len, text, config, (fixes, None))
             .unwrap_or_else(|| match loaded.for_eslint {
                 Some(_) => {
                     let it = Text { path, text, ..file };
@@ -243,6 +246,8 @@ impl Context<'_, '_> {
             physical_path_len: it.physical_path_len,
             text: it.text,
             without_fixes: it.fixes == Fixes::Disabled,
+            only: it.only.map(Residual::names),
+            without_types: it.only.is_some_and(|it| !it.is_typed),
         };
         let configuration = config.for_eslint.as_deref().unwrap_or(&for_eslint.whole);
         match (self.js_plugins).lint_with_eslint(configuration, &for_eslint.run, text, &|id| {
@@ -257,7 +262,131 @@ impl Context<'_, '_> {
                 Some(linted.deprecated),
             ),
             Err(EslintFailure::NotInstalled) => (needs_eslint(), None),
-            Err(EslintFailure::Thrown(message)) => (thrown(message), None),
+            Err(EslintFailure::Thrown(message, thrown_while)) => (
+                LintResult {
+                    thrown: Some(message),
+                    thrown_while,
+                    ..LintResult::default()
+                },
+                None,
+            ),
+        }
+    }
+
+    /// Lints `text` as the component at `path`, the way ESLint does with svelte-eslint-parser: the native rules on the
+    /// program it's lowered to, and `residual` in ESLint's own `Linter`, merged before the file's comments are applied.
+    /// eslint-plugin-svelte's processor runs natively ([`crate::svelte::processes_here`]); a component with any other
+    /// `processor` isn't linted here ([`crate::svelte::route`]). If the component isn't read here the way Svelte reads
+    /// it, ESLint lints it with all its rules, through the configured processor. For `again`, see
+    /// [`LintOptions::again`]. If a hosted rule [needs services](crate::svelte::NeedsServices) on the component, ESLint
+    /// lints it again with all of them.
+    ///
+    /// [`LintOptions::again`]: bun_lint::linter::LintOptions::again
+    pub(crate) fn verify_component_with(
+        &self,
+        loaded: &Loaded,
+        path: &[u8],
+        text: &[u8],
+        config: &Arc<ResolvedConfig>,
+        residual: Option<&Residual>,
+        again: Option<Again<'_>>,
+    ) -> LintResult {
+        // `only` holds the rules that run. `None` means all of them.
+        let lint_with = |fixes: Fixes, only: Option<&Residual>, text: &[u8]| {
+            let it = Text {
+                path,
+                physical_path_len: path.len(),
+                text,
+                fixes,
+                only,
+            };
+            self.verify_with_eslint(loaded, it, config).0
+        };
+        let processor = (config.processor_location.as_deref())
+            .filter(|_| crate::svelte::processes_here(config));
+        let hand_off = |text: &[u8]| match processor {
+            Some(processor) => {
+                self.verify_in_processor(processor, path, text, config, &|fixes, text| {
+                    lint_with(fixes, None, text)
+                })
+            }
+            None => lint_with(Fixes::IfRead, None, text),
+        };
+        let hand_off =
+            (loaded.for_eslint.as_ref()).map(|_| &hand_off as &dyn Fn(&[u8]) -> LintResult);
+        // A hosted rule that needs services asks before ESLint has run anything on `text`, which is then linted again,
+        // with all of them in ESLint.
+        let verify = |residual: Option<&Residual>| {
+            let lint = |text: &[u8]| lint_with(Fixes::IfRead, residual, text);
+            let residual = residual.map(|it| (it, &lint as &dyn Fn(&[u8]) -> LintResult));
+            self.verify_component(path, text, config, again, residual, hand_off)
+        };
+        let mut result = match crate::svelte::is_reproduced(text) {
+            true => verify(residual).unwrap_or_else(|NeedsServices| {
+                let residual = Residual::with_hosted(residual, config);
+                // With a residual no rule runs in the host, so none asks for services there.
+                verify(Some(&residual)).unwrap_or_default()
+            }),
+            // A fix can turn it into a component that isn't read the same way here, which ESLint then lints, like it
+            // lints the file.
+            false => match hand_off {
+                Some(hand_off) => hand_off(text),
+                None => needs_eslint(),
+            },
+        };
+        // ESLint and a processor produce fixes even if nothing reads them, so they're dropped here when unwanted.
+        if !self.lint_options().wants_fixes {
+            for message in result.messages.iter_mut().chain(&mut result.suppressed) {
+                message.fix = None;
+                message.suggestions = Vec::new();
+            }
+        }
+        result
+    }
+
+    /// Passes the component `text` at `path` to `processor` in JavaScript, and lints the blocks it finds with `verify`,
+    /// which is told whether fixes are applied.
+    fn verify_in_processor(
+        &self,
+        processor: &Processor,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        verify: &(dyn Fn(Fixes, &[u8]) -> LintResult + Sync),
+    ) -> LintResult {
+        let shown = paths::to_native(path.to_vec());
+        let mut lint = |supports_autofix: bool, blocks: Vec<Block>| {
+            let fixes = match supports_autofix {
+                true => Fixes::ForProcessor,
+                false => Fixes::Disabled,
+            };
+            let mut lists = vec![b'['];
+            for (i, block) in blocks.iter().enumerate() {
+                if i > 0 {
+                    lists.push(b',');
+                }
+                // The processor returns the component itself.
+                let (Block::Unnamed(text) | Block::Named { text, .. }) = block;
+                let result = verify(fixes, text);
+                if let Some(thrown) = result.thrown {
+                    return Err(thrown);
+                }
+                write_messages(&mut lists, &result.messages, &result.suppressed, text);
+            }
+            lists.push(b']');
+            Ok(lists)
+        };
+        match self.js_plugins.process(processor, &shown, text, &mut lint) {
+            Ok(messages) => {
+                let (messages, suppressed) =
+                    read_messages(&messages, text, &|id| self.find_rule(config, id));
+                LintResult {
+                    messages,
+                    suppressed,
+                    ..LintResult::default()
+                }
+            }
+            Err(message) => thrown(message),
         }
     }
 
@@ -287,6 +416,40 @@ impl Context<'_, '_> {
             // Same as for a file of that kind.
             (Route::Unsupported | Route::Eslint, _) => LintResult::default(),
         }
+    }
+
+    /// `text` of the `.svelte.js` or `.svelte.ts` file at `path`: see [`Context::lint_script`]. ESLint lints all of it
+    /// if the native program may be misread.
+    pub(crate) fn verify_script_with(
+        &self,
+        loaded: &Loaded,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        residual: &Residual,
+    ) -> LintResult {
+        let it = Text {
+            path,
+            physical_path_len: path.len(),
+            text,
+            fixes: Fixes::IfRead,
+            only: Some(residual),
+        };
+        let linted = self.verify_with_eslint(loaded, it, config).0;
+        // ESLint reports nothing else for a file its parser rejects.
+        if linted.thrown.is_some() || linted.messages.iter().any(|it| it.is_fatal) {
+            return linted;
+        }
+        // Comments about the rules that only ESLint runs are applied by the native rules.
+        let reported: Vec<LintMessage> = (linted.messages.iter().chain(&linted.suppressed))
+            .filter(|it| it.rule_id.is_some())
+            .cloned()
+            .collect();
+        let how = (Fixes::IfRead, Some(&reported[..]));
+        (self.verify_block_if_read(path, path.len(), text, config, how)).unwrap_or_else(|| {
+            let it = Text { only: None, ..it };
+            self.verify_with_eslint(loaded, it, config).0
+        })
     }
 
     /// [`Context::verify_text`] for a file with a processor. `loaded` is where `config` came from. `None` if the file
@@ -323,6 +486,7 @@ impl Context<'_, '_> {
                 physical_path_len: path_to_verify.len(),
                 text,
                 fixes: Fixes::IfRead,
+                only: None,
             };
             let mut result = match loaded.routes(config, path_to_verify) {
                 Route::Eslint => {

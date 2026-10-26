@@ -3,10 +3,10 @@
 //! Each is six words: its index among the file's comments, a number for its label, and the start and end of its value
 //! and of its justification.
 
+use super::units::Units;
 use super::wire;
 use crate::ast::File;
 use crate::linter::Label;
-use bun_core::strings::Utf16OffsetTable;
 
 /// src/jsc/bindings/LintSourceCode.cpp has the same numbers.
 fn number_of(label: Label) -> u32 {
@@ -19,7 +19,7 @@ fn number_of(label: Label) -> u32 {
     }
 }
 
-pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Utf16OffsetTable, out: &mut Vec<u8>) {
+pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Units, out: &mut Vec<u8>) {
     let mut comments = file.comments().zip(0u32..).peekable();
     for it in file.config_comments() {
         // ESLint ignores `// eslint-disable` and `oxlint-disable`.
@@ -34,8 +34,12 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Utf16OffsetTable, out: &mu
         let Some(&(_, index)) = comments.peek() else {
             break;
         };
-        let [value, justification] = [it.value, it.justification]
-            .map(|span| [offsets.to_utf16(span.start), offsets.to_utf16(span.end)]);
+        let [value, justification] = [it.value, it.justification].map(|span| {
+            [
+                offsets.to_utf16(span.start),
+                offsets.end_to_utf16(span.start, span.end),
+            ]
+        });
         wire::words(
             out,
             &[

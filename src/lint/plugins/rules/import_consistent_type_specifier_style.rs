@@ -133,7 +133,7 @@ fn move_types_out<'a>(fixer: Fixer<'a>, import: Import<'a>) -> Option<Fix> {
         }
     }
     fixes.push(fixer.insert_after(stmt, new_import));
-    fixes.into_fix(file)
+    fixes.into_fix(file, Domain::Linted)
 }
 
 /// oxlint's fix: reprints the statement as one import for the values and one for the types.

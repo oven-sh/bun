@@ -6,9 +6,11 @@
 //   bun test/cli/lint/conformance/sync.ts --more <name> <directory>   # replaces `more/<name>/` with `<directory>`
 //   bun test/cli/lint/conformance/sync.ts --oxlint <directory>        # replaces `oxlint/` with `<directory>`
 //   bun test/cli/lint/conformance/sync.ts --plugin <name> <fixtures>  # replaces `<name>/` with `<fixtures>/<name>/<rule>.json`
+//   bun test/cli/lint/conformance/sync.ts --svelte <directory>        # the rules in `<directory>/svelte/`, from `extract-svelte.ts`,
+//                                                                     # with ESLINT_PLUGIN_SVELTE_DIR=<its checkout>
 //   bun test/cli/lint/conformance/sync.ts --extract <part of a path, or ""> <directory>
 //
-// Each of the first four leaves the rest of the bundle untouched.
+// Each of the first five leaves the rest of the bundle untouched.
 //
 // The eslint-plugin-import, -react and -prettier suites are recorded with the published packages. A rule's suite is
 // added to the bundle once the rule here passes all of it. Only `--plugin` replaces them. See `RECORDED`.
@@ -42,7 +44,17 @@ const PACKAGES = [
 ] as const;
 
 /** The suites that are added to the bundle rule by rule, and the projects their cases are linted in. */
-const RECORDED = ["import/", "import-project/", "react/", "prettier/", "prettier-project/", "json/", "markdown/"];
+const RECORDED = [
+  "import/",
+  "import-project/",
+  "react/",
+  "prettier/",
+  "prettier-project/",
+  "json/",
+  "markdown/",
+  "svelte/",
+  "svelte-project/",
+];
 
 function directoryOf(variable: string): string {
   const directory = process.env[variable];
@@ -110,6 +122,28 @@ if (first === "--extract" && rest.length === 2) {
     files.set(path.startsWith("import-project/") ? `oxlint-${path}` : `oxlint/${path}`, bytes);
   writeBundle(bundle, files);
   console.log(`oxlint: ${summary(found)}. In all: ${summary(files)}`);
+} else if (first === "--svelte" && rest.length === 1) {
+  const [directory] = rest;
+  const checkout = directoryOf("ESLINT_PLUGIN_SVELTE_DIR");
+  const found = new Map<string, Uint8Array>();
+  collect(directory, "svelte", found, () => false);
+  if (existsSync(join(directory, "svelte-project"))) collect(directory, "svelte-project", found, () => false);
+  clean(found, [directory, checkout]);
+  // A rule's fixture replaces the bundle's entry for it, and the others stay.
+  const files = kept(path => !found.has(path));
+  for (const [path, bytes] of found) files.set(path, bytes);
+  writeBundle(bundle, files);
+  const version = JSON.parse(readFileSync(join(here, "version.json"), "utf8"));
+  writeFileSync(join(here, "licenses", "eslint-plugin-svelte.txt"), readFileSync(join(checkout, "LICENSE")));
+  version["eslint-plugin-svelte"] = {
+    version: JSON.parse(readFileSync(join(checkout, "packages/eslint-plugin-svelte/package.json"), "utf8")).version,
+    // A checkout from a tag archive has no `.git`, so `ESLINT_PLUGIN_SVELTE_COMMIT` names its commit.
+    commit: existsSync(join(checkout, ".git"))
+      ? (await $`git rev-parse HEAD`.cwd(checkout).text()).trim()
+      : directoryOf("ESLINT_PLUGIN_SVELTE_COMMIT"),
+  };
+  writeFileSync(join(here, "version.json"), JSON.stringify(version, null, 2) + "\n");
+  console.log(`svelte: ${summary(found)}. In all: ${summary(files)}`);
 } else if (first === "--plugin" && rest.length === 2 && RECORDED.includes(`${rest[0]}/`)) {
   const [name, fixtures] = rest;
   const files = kept(path => !path.startsWith(`${name}/`));
@@ -121,7 +155,7 @@ if (first === "--extract" && rest.length === 2) {
   console.log(`${name}: ${summary(found)}. In all: ${summary(files)}`);
 } else if (first?.startsWith("--")) {
   console.error(
-    "usage: bun sync.ts [<fixtures>] | --more <name> <directory> | --oxlint <directory> | --plugin <name> <fixtures> | --extract <part of a path> <directory>",
+    "usage: bun sync.ts [<fixtures>] | --more <name> <directory> | --oxlint <directory> | --plugin <name> <fixtures> | --svelte <directory> | --extract <part of a path> <directory>",
   );
   process.exit(1);
 } else {

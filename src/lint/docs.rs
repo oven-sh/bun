@@ -24,6 +24,7 @@ impl Plugin {
             Plugin::Bun => "bun",
             Plugin::BunTest => "bun-test",
             Plugin::Prettier => "prettier",
+            Plugin::Svelte => "svelte",
             Plugin::Json => "json",
             Plugin::Markdown => "markdown",
         }

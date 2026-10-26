@@ -155,6 +155,15 @@ pub enum TokenKind {
     Block,
     /// `#!..` on the first line
     Shebang,
+    /// In a Svelte component's markup, as svelte-eslint-parser has them: a word of text, an attribute value, the
+    /// contents of `<style>`.
+    HtmlText,
+    /// An element's or attribute's name.
+    HtmlIdentifier,
+    /// `<!-- .. -->`, which is a token, not a comment.
+    HtmlComment,
+    /// `#if`, `:else`, `/each`, `@html`, `then`.
+    MustacheKeyword,
 }
 
 impl TokenKind {
@@ -186,6 +195,8 @@ impl RawToken {
 pub(crate) struct TokenStore {
     tokens: OnceCell<Vec<RawToken>>,
     comments: OnceCell<Vec<RawToken>>,
+    /// The tokens of the code copies a view hides: [`File::copied_tokens_in`].
+    copies: OnceCell<Vec<RawToken>>,
 }
 
 /// A token or a comment.
@@ -457,9 +468,33 @@ impl<'a> File<'a> {
         store.tokens.get_or_init(|| {
             let (tokens, comments) = scan::scan(self);
             // Already set if the comments were requested first.
-            let _ = store.comments.set(comments);
-            tokens
+            let _ = store.comments.get_or_init(|| match self.view() {
+                Some(view) => view.comments(comments),
+                None => comments,
+            });
+            match self.view() {
+                Some(view) => {
+                    let _ = store.copies.set(view.copies(&tokens));
+                    view.tokens(tokens)
+                }
+                None => tokens,
+            }
         })
+    }
+
+    /// The program tokens at `span` in the code copies its view hides, which rules don't see, as they are in the code
+    /// they copy, for the component's tree.
+    pub(crate) fn copied_tokens_in(&'a self, span: Span) -> Tokens<'a> {
+        self.raw_tokens();
+        let store = self.lazy.tokens.get();
+        let copies = store.and_then(|it| it.copies.get());
+        Tokens {
+            file: self,
+            tokens: within(copies.map_or(&[], Vec::as_slice), span),
+            comments: &[],
+            within: span,
+            is_reversed: false,
+        }
     }
 
     fn raw_comments(&'a self) -> &'a [RawToken] {
@@ -468,7 +503,10 @@ impl<'a> File<'a> {
             return comments;
         }
         if let Some(comments) = scan::comments(self) {
-            return store.comments.get_or_init(|| comments);
+            return store.comments.get_or_init(|| match self.view() {
+                Some(view) => view.comments(comments),
+                None => comments,
+            });
         }
         self.raw_tokens();
         store.comments.get().map_or(&[], |comments| comments)

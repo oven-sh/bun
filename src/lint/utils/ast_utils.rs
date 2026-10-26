@@ -50,12 +50,21 @@ pub fn matches_comments_ignore_pattern(value: &[u8]) -> bool {
     .any(|after| strings::wtf8_first_codepoint(after).is_some_and(strings::is_js_whitespace))
 }
 
+/// ESLint's `node.type === "Program"`. In a Svelte component, whose program has a [view](crate::ast::File::view), the
+/// file is the parent of nodes that svelte-eslint-parser puts in other nodes: a script's statements in a
+/// `SvelteScriptElement`, the markup's code in elements, blocks and tags. So no node rules see there has the `Program`
+/// as its parent, and none of them is in ESLint's `Program.body`.
+pub fn is_program(node: Node<'_>) -> bool {
+    matches!(node, Node::File(file) if file.view().is_none())
+}
+
 /// ESLint's `STATEMENT_LIST_PARENTS.has(node.type)`, for a statement's parent: a `Program`, a `BlockStatement`, a
 /// `StaticBlock` or a `SwitchCase`. A function's body is a `BlockStatement`, and the parent of a statement in it is the
 /// `Func`.
 pub fn is_statement_list_parent(parent: Node<'_>) -> bool {
     match parent {
-        Node::File(_) | Node::Func(_) | Node::Case(_) => true,
+        Node::File(_) => is_program(parent),
+        Node::Func(_) | Node::Case(_) => true,
         Node::Stmt(statement) => matches!(
             statement.kind(),
             StmtKind::Block(_) | StmtKind::Switch { .. }
@@ -1238,7 +1247,7 @@ pub fn get_modifying_references<'a>(
     references.into_iter().filter(move |reference| {
         let span = reference.span();
         let is_other_identifier = previous.replace(span) != Some(span);
-        !reference.is_init() && reference.is_write() && is_other_identifier
+        reference.is_modifying() && is_other_identifier
     })
 }
 

@@ -17,10 +17,15 @@
 //! A type's name is followed by the kinds of [`crate::ast`] nodes that a node of this type can be made from. See
 //! [`NodeType::listens_to`].
 
+use super::svelte::{
+    child, children, flag_of, generic_constraint, generic_default, generic_has, svelte_node,
+    text_value,
+};
 use super::value::{Emit, Nodes, Object, Sink, Value};
 use super::views::*;
 use super::vnode::{Leaf, Part, VNode};
 use super::{Dialect, Field};
+use crate::ast::svelte::{Role, SvelteFlags, SvelteKind};
 use crate::ast::{
     ExprKind, ExprTag, Flags, FnBody, FnKind, MappedModifier, MemberKind, ModuleName, Node,
     PatKind, PropKind, StmtKind, StmtTag, TypeKind, TypeTag, UnOp, VarDecl, VarKind,
@@ -76,6 +81,11 @@ macro_rules! estree_schema {
 
             pub(crate) const fn name(self) -> &'static str {
                 match self { $(NodeType::$name => stringify!($name)),* }
+            }
+
+            /// The key of a listener ESLint calls when leaving such a node.
+            pub(crate) const fn exit_name(self) -> &'static str {
+                match self { $(NodeType::$name => concat!(stringify!($name), ":exit")),* }
             }
 
             /// Returns its fields, except `type`, `range`, `loc` and `parent`. The fields that a traversal visits come
@@ -170,7 +180,10 @@ estree_schema! {
     // ───────────────────────────── statements ─────────────────────────────
 
     Program [NodeTags::FILE] (v) {
-        node Body = Nodes::stmts(v.file().body());
+        node Body = match v.part {
+            Part::Svelte(_) => children(v, Role::Body),
+            _ => Nodes::stmts(v.file().body()),
+        };
         data SourceType = source_type(v.file());
     }
     ExpressionStatement [StmtTag::Expr] (v) {
@@ -978,11 +991,26 @@ estree_schema! {
     }
     TSTypeParameter [NodeTags::TYPE_PARAM] (v) {
         part Name = v.with(Part::Name);
-        node Constraint = VNode::from_type(type_param(v)?.constraint()?);
-        node Default = VNode::from_type(type_param(v)?.default()?);
-        data Const = type_param(v)?.flags().contains(Flags::CONST);
-        data In = type_param(v)?.flags().contains(Flags::IN);
-        data Out = type_param(v)?.flags().contains(Flags::OUT);
+        node Constraint = match v.part {
+            Part::Generic => generic_constraint(v)?,
+            _ => VNode::from_type(type_param(v)?.constraint()?),
+        };
+        node Default = match v.part {
+            Part::Generic => generic_default(v)?,
+            _ => VNode::from_type(type_param(v)?.default()?),
+        };
+        data Const = match v.part {
+            Part::Generic => generic_has(v, b"const"),
+            _ => type_param(v)?.flags().contains(Flags::CONST),
+        };
+        data In = match v.part {
+            Part::Generic => generic_has(v, b"in"),
+            _ => type_param(v)?.flags().contains(Flags::IN),
+        };
+        data Out = match v.part {
+            Part::Generic => generic_has(v, b"out"),
+            _ => type_param(v)?.flags().contains(Flags::OUT),
+        };
     }
     TSAnyKeyword [TypeTag::Keyword, TypeTag::Error, TypeTag::JSDoc, TypeTag::Heritage] (v) {}
     TSUnknownKeyword [TypeTag::Keyword] (v) {}
@@ -1219,4 +1247,159 @@ estree_schema! {
     TSPublicKeyword [] (v) {}
     TSReadonlyKeyword [] (v) {}
     TSStaticKeyword [] (v) {}
+
+    // ───────────────────────────── svelte-eslint-parser's: see `svelte.rs` ─────────────────────────────
+
+    SvelteScriptElement [] (v) {
+        node Name = child(v, Role::Name);
+        node StartTag = child(v, Role::StartTag);
+        node Body = children(v, Role::Body);
+        node EndTag = child(v, Role::EndTag);
+    }
+    SvelteStyleElement [] (v) {
+        node Name = child(v, Role::Name);
+        node StartTag = child(v, Role::StartTag);
+        node Children = children(v, Role::Children);
+        node EndTag = child(v, Role::EndTag);
+    }
+    SvelteElement [] (v) {
+        node Name = child(v, Role::Name);
+        node StartTag = child(v, Role::StartTag);
+        node Children = children(v, Role::Children);
+        node EndTag = child(v, Role::EndTag);
+        data Kind = svelte_node(v)?.kind().name();
+    }
+    SvelteStartTag [] (v) {
+        node Attributes = children(v, Role::Attributes);
+        data SelfClosing = svelte_node(v)?.has(SvelteFlags::SELF_CLOSING);
+    }
+    SvelteEndTag [] (v) {}
+    SvelteName [] (v) {
+        data Name = svelte_node(v)?.text();
+    }
+    SvelteMemberExpressionName [] (v) {
+        node Object = child(v, Role::Object);
+        node Property = child(v, Role::Property);
+    }
+    SvelteLiteral [] (v) {
+        data Value = text_value(v)?;
+    }
+    SvelteMustacheTag [] (v) {
+        node Expression = child(v, Role::Expression);
+        data Kind = svelte_node(v)?.kind().name();
+    }
+    SvelteDebugTag [] (v) {
+        node Identifiers = children(v, Role::Identifiers);
+    }
+    SvelteConstTag [] (v) {
+        node Declarations = children(v, Role::Declarations);
+    }
+    SvelteDeclarationTag [] (v) {
+        node Declaration = child(v, Role::Declaration);
+    }
+    SvelteRenderTag [] (v) {
+        node Expression = child(v, Role::Expression);
+    }
+    SvelteIfBlock [] (v) {
+        node Expression = child(v, Role::Expression);
+        node Children = children(v, Role::Children);
+        node Else = child(v, Role::Else);
+        data Elseif = svelte_node(v)?.has(SvelteFlags::ELSE_IF);
+    }
+    SvelteElseBlock [] (v) {
+        node Children = children(v, Role::Children);
+        data Elseif = svelte_node(v)?.has(SvelteFlags::ELSE_IF);
+    }
+    SvelteEachBlock [] (v) {
+        node Expression = child(v, Role::Expression);
+        node Context = child(v, Role::Context);
+        node Index = child(v, Role::Index);
+        node Key = child(v, Role::Key);
+        node Children = children(v, Role::Children);
+        node Else = child(v, Role::Else);
+    }
+    SvelteAwaitBlock [] (v) {
+        node Expression = child(v, Role::Expression);
+        node Pending = child(v, Role::Pending);
+        node Then = child(v, Role::Then);
+        node Catch = child(v, Role::Catch);
+        data Kind = svelte_node(v)?.kind().name();
+    }
+    SvelteAwaitPendingBlock [] (v) {
+        node Children = children(v, Role::Children);
+    }
+    SvelteAwaitThenBlock [] (v) {
+        node Value = child(v, Role::Value);
+        node Children = children(v, Role::Children);
+        data AwaitThen = svelte_node(v)?.has(SvelteFlags::AWAIT_THEN);
+    }
+    SvelteAwaitCatchBlock [] (v) {
+        node Error = child(v, Role::Error);
+        node Children = children(v, Role::Children);
+        data AwaitCatch = svelte_node(v)?.has(SvelteFlags::AWAIT_CATCH);
+    }
+    SvelteKeyBlock [] (v) {
+        node Expression = child(v, Role::Expression);
+        node Children = children(v, Role::Children);
+    }
+    SvelteSnippetBlock [] (v) {
+        node Id = child(v, Role::Id);
+        node Params = children(v, Role::Params);
+        node Children = children(v, Role::Children);
+    }
+    SvelteAttribute [] (v) {
+        node Key = child(v, Role::Key);
+        node Value = children(v, Role::Value);
+        data Boolean = svelte_node(v)?.has(SvelteFlags::BOOLEAN);
+    }
+    SvelteShorthandAttribute [] (v) {
+        node Key = Some(child(v, Role::Value)?.with(Part::SvelteKey));
+        node Value = child(v, Role::Value);
+    }
+    SvelteSpreadAttribute [] (v) {
+        node Argument = child(v, Role::Argument);
+    }
+    SvelteAttachTag [] (v) {
+        node Expression = child(v, Role::Expression);
+    }
+    SvelteDirective [] (v) {
+        node Key = child(v, Role::Key);
+        node Expression = child(v, Role::Expression);
+        data Kind = svelte_node(v)?.kind().name();
+        data Intro = flag_of(v, &[SvelteKind::Transition], SvelteFlags::INTRO)?;
+        data Outro = flag_of(v, &[SvelteKind::Transition], SvelteFlags::OUTRO)?;
+        data Shorthand = flag_of(v, &[SvelteKind::Binding, SvelteKind::Class], SvelteFlags::SHORTHAND)?;
+    }
+    SvelteStyleDirective [] (v) {
+        node Key = child(v, Role::Key);
+        node Value = children(v, Role::Value);
+        data Shorthand = svelte_node(v)?.has(SvelteFlags::SHORTHAND);
+    }
+    SvelteSpecialDirective [] (v) {
+        node Key = child(v, Role::Key);
+        node Expression = child(v, Role::Expression);
+        data Kind = svelte_node(v)?.kind().name();
+    }
+    SvelteGenericsDirective [] (v) {
+        node Key = child(v, Role::Key);
+        node Params = children(v, Role::Params);
+    }
+    SvelteDirectiveKey [] (v) {
+        node Name = child(v, Role::Name);
+        data Modifiers = Value::Object(Object::Modifiers(svelte_node(v)?));
+    }
+    SvelteSpecialDirectiveKey [] (v) {}
+    SvelteText [] (v) {
+        data Value = text_value(v)?;
+    }
+    SvelteHTMLComment [] (v) {
+        data Value = text_value(v)?;
+    }
+    SvelteReactiveStatement [StmtTag::Labeled] (v) {
+        part Label = v.with(Part::Name);
+        node Body = VNode::from_stmt(of!(stmt v, StmtKind::Labeled { body, .. } => body));
+    }
+    SvelteFunctionBindingsExpression [] (v) {
+        node Expressions = children(v, Role::Expressions);
+    }
 }

@@ -1220,6 +1220,22 @@ describe.concurrent("bun lint", () => {
       return [...raw.matchAll(/\ba\.cjs:(\d+:\d+):/g)].map(it => it[1]);
     };
 
+    // ESLint ends the program's code path after every `Program:exit` listener, where `no-unused-vars` reports, and a
+    // function's code path when it leaves the function.
+    test("what it reports at one position with no-unused-vars", async () => {
+      const files = {
+        "eslint.config.js": config({ "no-useless-assignment": "error", "no-unused-vars": "error" }),
+        "a.cjs": "let m = 0;\nm = m + 1;\nfunction f() {\n  let n = 0;\n  n = n + 1;\n}\nf();\n",
+      };
+      const { raw } = await lint(files, ["-f", "unix", "a.cjs"]);
+      expect([...raw.matchAll(/\ba\.cjs:(\d+:\d+):.*\[Error\/(.+)\]/g)].map(it => `${it[1]} ${it[2]}`)).toEqual([
+        "2:1 no-unused-vars",
+        "2:1 no-useless-assignment",
+        "5:3 no-useless-assignment",
+        "5:3 no-unused-vars",
+      ]);
+    });
+
     test("a function's `arguments` is treated as a variable", async () => {
       expect(
         await positions([
@@ -3795,21 +3811,22 @@ describe.concurrent("bun lint", () => {
       });
 
       // oxlint 1.87 with tsgolint 7.0 changes nothing.
-      test("no fix flag applies a suggestion that typescript-eslint's rule has and oxlint's doesn't", async () => {
-        const rules = { "typescript/strict-boolean-expressions": "error", "typescript/strict-void-return": "error" };
-        const text =
-          "declare const a: string | null;\nif (a) {}\ndeclare function f(cb: () => void): void;\nf(async () => {});\nexport {};\n";
-        const files = {
-          ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules }),
-          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
-          "a.ts": text,
-        };
-        for (const flags of [["--fix"], ["--fix-suggestions"], ["--fix", "--fix-suggestions"], ["--fix-dangerously"]]) {
+      test.each([[["--fix"]], [["--fix-suggestions"]], [["--fix", "--fix-suggestions"]], [["--fix-dangerously"]]])(
+        "no fix flag applies a suggestion that typescript-eslint's rule has and oxlint's doesn't: %j",
+        async flags => {
+          const rules = { "typescript/strict-boolean-expressions": "error", "typescript/strict-void-return": "error" };
+          const text =
+            "declare const a: string | null;\nif (a) {}\ndeclare function f(cb: () => void): void;\nf(async () => {});\nexport {};\n";
+          const files = {
+            ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules }),
+            "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
+            "a.ts": text,
+          };
           const result = await lint(files, ["--type-aware", ...flags, "a.ts"], { reads: ["a.ts"] });
           expect(result.files).toEqual({ "a.ts": text });
           expect(result.exitCode).toBe(1);
-        }
-      });
+        },
+      );
 
       // This is what oxlint 1.87 writes.
       test('only --fix-dangerously applies a fix that oxlint marks as dangerous: operator-assignment with "never"', async () => {
@@ -5359,9 +5376,10 @@ maybe(() => { return f; });
       // messages.json has the messages of oxlint 1.87.0 with tsgolint 7.0.2003.
       test("rules that oxlint shares with ESLint and typescript-eslint print oxlint's messages", async () => {
         const { raw } = await lint(filesOfMessages(messages), ["-f", "json", "--type-aware"]);
-        const printed = messagesOf(raw, messages).map((it, index) => `${messages[index].rule} ${it.join(" | ")}`);
+        const reported = messagesOf(raw, messages);
+        const printed = reported.map((it, index) => `${messages[index].rule} ${it.join(" | ")}`);
         // If the code gets several reports, the entry is about the last one.
-        const before = (index: number) => messagesOf(raw, messages)[index].slice(0, messages[index].index ?? 0);
+        const before = (index: number) => reported[index].slice(0, messages[index].index ?? 0);
         expect(printed).toEqual(
           messages.map((it, index) => `${it.rule} ${[...before(index), it.message].join(" | ")}`),
         );
@@ -9298,23 +9316,35 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
       "b.ts": `export async function later() {}\nexport const text: string = "";\n`,
     };
 
-    test("a run that fails prints a note if the installed typescript is older than the version bun lint emulates", async () => {
-      const notes = async (version: string, more: Record<string, string> = {}, ...flags: string[]) => {
-        const installed = { "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }) };
-        const { stderr } = await lint({ ...files, ...installed, ...more }, ["-f", "stylish", ...flags]);
-        return stderr.split("\n").filter(it => it.startsWith("note: "));
-      };
-      expect(await notes("5.8.3")).toEqual([
-        "note: typescript 5.8.3 is installed, but bun lint checks types like TypeScript 7",
-      ]);
-      expect(await notes("7.0.2")).toEqual([]);
-      expect(await notes("5.8.3", {}, "--quiet")).toEqual([]);
+    describe("a run that fails prints a note if the installed typescript is older than the version bun lint emulates", () => {
+      const note = "note: typescript 5.8.3 is installed, but bun lint checks types like TypeScript 7";
       // The run passes, because there are only warnings.
       const warns = files["eslint.config.js"].replaceAll(`"error"`, `"warn"`);
-      expect(await notes("5.8.3", { "eslint.config.js": warns })).toEqual([]);
       // No rule needs types.
       const untyped = files["eslint.config.js"].replace(/rules: \{.*\}/, `rules: { "no-debugger": "error" }`);
-      expect(await notes("5.8.3", { "eslint.config.js": untyped, "a.ts": "debugger;\n" })).toEqual([]);
+      test.each([
+        { name: "older TypeScript", version: "5.8.3", more: {}, flags: [], notes: [note] },
+        { name: "current TypeScript", version: "7.0.2", more: {}, flags: [], notes: [] },
+        { name: "--quiet", version: "5.8.3", more: {}, flags: ["--quiet"], notes: [] },
+        { name: "only warnings", version: "5.8.3", more: { "eslint.config.js": warns }, flags: [], notes: [] },
+        {
+          name: "no rule needs types",
+          version: "5.8.3",
+          more: { "eslint.config.js": untyped, "a.ts": "debugger;\n" },
+          flags: [],
+          notes: [],
+        },
+      ])("$name", async ({ version, more, flags, notes }) => {
+        const { stderr } = await lint(
+          {
+            ...files,
+            ...more,
+            "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }),
+          },
+          ["-f", "stylish", ...flags],
+        );
+        expect(stderr.split("\n").filter(it => it.startsWith("note: "))).toEqual([...notes]);
+      });
     });
 
     // `Element.textContent` is `string | null` up to TypeScript 5.8 and `string` after that. Removing a `!` that's
@@ -9509,20 +9539,21 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
 
         // The file search has already seen the tsconfig files under the directories it started from. The others are
         // looked up on disk.
-        test("finds the same project whether a file is found in a directory or passed as an argument", async () => {
-          const all = {
-            "tsconfig.json": tsconfig({ lib: ["es2022"], types: [] }),
-            "sub/deep/a.js": "void [document, typo];\n",
-            "sub/web/tsconfig.json": tsconfig({ lib: ["es2022", "dom"], types: [] }),
-            "sub/web/src/b.js": "void [document, typo];\n",
-            ".gitignore": "sub/web/tsconfig.json\n",
-          };
-          const expected = ["sub/deep/a.js document", "sub/deep/a.js typo", "sub/web/src/b.js typo"];
-          for (const paths of [["."], ["sub"], ["sub/deep", "sub/web/src"], ["sub/deep/a.js", "sub/web/src/b.js"]]) {
+        test.each([[["."]], [["sub"]], [["sub/deep", "sub/web/src"]], [["sub/deep/a.js", "sub/web/src/b.js"]]])(
+          "finds the same project whether a file is found in a directory or passed as an argument: %j",
+          async paths => {
+            const all = {
+              "tsconfig.json": tsconfig({ lib: ["es2022"], types: [] }),
+              "sub/deep/a.js": "void [document, typo];\n",
+              "sub/web/tsconfig.json": tsconfig({ lib: ["es2022", "dom"], types: [] }),
+              "sub/web/src/b.js": "void [document, typo];\n",
+              ".gitignore": "sub/web/tsconfig.json\n",
+            };
+            const expected = ["sub/deep/a.js document", "sub/deep/a.js typo", "sub/web/src/b.js typo"];
             const { stdout } = await lint(all, ["-f", "unix", "--infer-globals=fast", ...paths]);
             expect(reported(stdout, "no-undef").sort()).toEqual(expected);
-          }
-        });
+          },
+        );
 
         test("`files`, `include`, `exclude` and `references` decide which project a file belongs to", async () => {
           const text = "void [document, typo];\n";

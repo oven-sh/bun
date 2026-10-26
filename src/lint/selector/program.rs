@@ -39,9 +39,9 @@ impl Run {
 
 /// A set of node types.
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
-pub(super) struct TypeSet([u64; 3]);
+pub(super) struct TypeSet([u64; 4]);
 
-const _: () = assert!(NodeType::ALL.len() <= 3 * 64);
+const _: () = assert!(NodeType::ALL.len() <= 4 * 64);
 
 impl TypeSet {
     pub(super) fn of(types: &[NodeType]) -> TypeSet {

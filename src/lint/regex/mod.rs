@@ -76,7 +76,7 @@ pub use validator::{
     Handler, Ignore, Mode, Options, Oxc, SyntaxError, validate_flags, validate_literal,
     validate_pattern,
 };
-pub use wtf8::utf16_index;
+pub use wtf8::{offset_of_utf16_index, utf16_index};
 
 use bun_core::strings;
 use bun_yarr::{Compiled, NO_MATCH as NONE};
@@ -241,6 +241,12 @@ impl Regex {
     #[inline]
     pub fn source(&self) -> &[u8] {
         &self.source
+    }
+
+    /// `regex.flags`, `regex.global`, ..
+    #[inline]
+    pub fn flags(&self) -> Flags {
+        self.flags
     }
 
     /// True if a character is a code point, i.e. with the `u` or `v` flag.

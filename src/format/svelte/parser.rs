@@ -357,8 +357,23 @@ struct Parser<'a, 'j> {
     last_auto_closed_tag: Option<(&'a [u8], usize)>,
     /// `ts`
     is_typescript: bool,
+    read_for: ReadFor,
     js: &'j mut dyn Js,
 }
+
+/// What a component is read for, which decides what its tree has and what its errors say.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum ReadFor {
+    /// `bun fmt`: an error says in our words what's wrong, and for something unclosed it points at where it opens
+    /// ("Syntax errors" in `../CLAUDE.md`). A type annotation in a JavaScript component is an error that says so.
+    Formatting,
+    /// `bun lint`: an error is what Svelte throws, where it throws it. The tree also has what only the linter reads:
+    /// block tags, end tags and clauses, and [`Expression::has_type_info`](super::ast::Expression::has_type_info).
+    Linting,
+}
+
+/// What Svelte inserts before a type annotation so acorn reads it as one: `_ as T`.
+const ACORN_INSERT: &[u8] = b"_ as ";
 
 impl<'a> Parser<'a, '_> {
     fn template(&self) -> &'a [u8] {
@@ -597,15 +612,15 @@ impl<'a> Parser<'a, '_> {
             } else if is_close {
                 let floor = floors.last().copied().unwrap_or(0);
                 let popped = (open.len() > floor).then(|| open.pop()).flatten();
-                let expected = match popped {
-                    Some(b'{') => b'}',
-                    Some(b'(') => b')',
-                    Some(b'[') => b']',
-                    Some(b'<') => b'>',
-                    _ => 0,
+                let (expected, message) = match popped {
+                    Some(b'{') => (b'}', Message::ExpectedClosingBrace),
+                    Some(b'(') => (b')', Message::ExpectedClosingParenthesis),
+                    Some(b'[') => (b']', Message::ExpectedClosingBracket),
+                    Some(b'<') => (b'>', Message::ExpectedEndOfTag),
+                    _ => (0, Message::UnexpectedToken),
                 };
                 if char != expected {
-                    return fail(Message::UnexpectedToken, i - 1);
+                    return fail(message, i - 1);
                 }
                 if open.len() == floor {
                     if floors.len() == 1 {
@@ -658,8 +673,14 @@ impl<'a> Parser<'a, '_> {
             self.index = start;
             return Ok(None);
         }
-        if !self.is_typescript {
+        if !self.is_typescript && self.read_for == ReadFor::Formatting {
             return fail(Message::TypeScriptInJavaScript, self.index - 1);
+        }
+        // Without TypeScript, acorn reads only the insert's `_`, which ends where the `:` was, and Svelte continues
+        // after it in the source text.
+        if !self.is_typescript {
+            self.index = (self.index + 1).saturating_sub(ACORN_INSERT.len());
+            return Ok(None);
         }
         let (template, index) = (self.template(), self.index);
         match self.js.type_at(template, index) {
@@ -766,6 +787,7 @@ impl<'a> Parser<'a, '_> {
         }
         if let Some(parent) = self.current() {
             self.tree[parent].end = self.index as u32;
+            self.end_tag(parent, Span::new(start, self.index));
         }
         self.pop();
         // Svelte's stack also counts the root.
@@ -870,7 +892,7 @@ impl<'a> Parser<'a, '_> {
             attributes.push(attribute);
             self.allow_whitespace();
         }
-        let (mut this, mut multipart_this_attribute) = (None, None);
+        let (mut this, mut multipart_this_attribute, mut this_definition) = (None, None, None);
         if matches!(
             kind,
             ElementKind::SvelteComponent | ElementKind::SvelteElement
@@ -883,6 +905,7 @@ impl<'a> Parser<'a, '_> {
                 return fail(Message::MissingThis, start);
             };
             let definition = attributes.remove(index);
+            this_definition = Some(definition);
             let at = self.tree[definition].start as usize;
             let Kind::Attribute { value, .. } = &self.tree[definition].kind else {
                 return fail(Message::MissingThis, at);
@@ -943,7 +966,9 @@ impl<'a> Parser<'a, '_> {
             fragment,
             this,
             multipart_this_attribute,
+            this_definition,
             start_tag_end: self.index as u32,
+            is_self_closing: self.matches(b"/"),
         };
         let id = self
             .tree
@@ -956,7 +981,10 @@ impl<'a> Parser<'a, '_> {
         } else if name == b"textarea" {
             let nodes = self.read_sequence(SequenceEnd::Textarea)?;
             self.tree.fragments[fragment as usize] = nodes;
-            self.index += self.closing_textarea_tag_len().unwrap_or(0);
+            if let Some(len) = self.closing_textarea_tag_len() {
+                self.end_tag(id, Span::new(self.index, self.index + len));
+                self.index += len;
+            }
         } else if matches!(name, b"script" | b"style") {
             let close_tag = [b"</", name, b">"].concat();
             let text_start = self.index;
@@ -965,7 +993,20 @@ impl<'a> Parser<'a, '_> {
             self.index += raw.len();
             let text = self.add_text(text_start, self.index);
             self.tree.fragments[fragment as usize].push(text);
-            self.expect_end(&close_tag, Message::UnclosedElement, start)?;
+            // Svelte has read everything that's left, and looks for the end tag after it.
+            let end_tag_start = self.index;
+            match (self.read_for, name) {
+                (ReadFor::Formatting, _) => {
+                    self.expect_end(&close_tag, Message::UnclosedElement, start)?
+                }
+                (ReadFor::Linting, b"script") => {
+                    self.expect_end(&close_tag, Message::ExpectedScriptEndTag, self.len)?
+                }
+                (ReadFor::Linting, _) => {
+                    self.expect_end(&close_tag, Message::ExpectedStyleEndTag, self.len)?
+                }
+            }
+            self.end_tag(id, Span::new(end_tag_start, self.index));
         } else {
             self.push(id, fragment);
             return Ok(());
@@ -1250,11 +1291,24 @@ impl<'a> Parser<'a, '_> {
                 self.index += 1;
                 continue;
             }
+            let is_in_textarea = matches!(done, SequenceEnd::Textarea);
             if self.matches(b"#") {
-                return fail(Message::MisplacedBlock, index);
+                return fail(
+                    match is_in_textarea {
+                        true => Message::MisplacedBlockInTextarea,
+                        false => Message::MisplacedBlock,
+                    },
+                    index,
+                );
             }
             if self.matches(b"@") {
-                return fail(Message::MisplacedTag, index);
+                return fail(
+                    match is_in_textarea {
+                        true => Message::MisplacedTagInTextarea,
+                        false => Message::MisplacedTag,
+                    },
+                    index,
+                );
             }
             if index > chunk_start {
                 chunks.push(self.add_text(chunk_start, index));
@@ -1286,7 +1340,7 @@ impl<'a> Parser<'a, '_> {
     }
 
     /// Moves past the first `/<\/script\s*>/` at or after `search`, or the same for `</style`. Returns the span of
-    /// the content before it. `start` is the element's start.
+    /// the content before it. Without one, Svelte has read everything that's left. `start` is the element's start.
     fn read_raw_content(
         &mut self,
         end_tag: &[u8],
@@ -1296,7 +1350,11 @@ impl<'a> Parser<'a, '_> {
         let from = self.index;
         loop {
             let Some(found) = strings::index_of(&self.text[search..self.len], end_tag) else {
-                return fail(Message::UnclosedElement, start);
+                return match (self.read_for, end_tag) {
+                    (ReadFor::Formatting, _) => fail(Message::UnclosedElement, start),
+                    (ReadFor::Linting, b"</script") => fail(Message::UnclosedScript, self.len),
+                    (ReadFor::Linting, _) => fail(Message::UnclosedStyle, self.len),
+                };
             };
             let content_end = search + found;
             search = content_end + end_tag.len();
@@ -1520,7 +1578,7 @@ impl<'a> Parser<'a, '_> {
         }
         if self.matches(b"/") && !self.matches(b"/*") && !self.matches(b"//") {
             self.index += 1;
-            return self.close();
+            return self.close(start);
         }
         if let Some(declaration) = self.read_declaration()? {
             let tag = (self.tree).add(Kind::DeclarationTag(declaration), start, self.index);
@@ -1551,6 +1609,18 @@ impl<'a> Parser<'a, '_> {
             return Ok(None);
         }
         let template = self.template();
+        // acorn's `isLet`: a `let` not followed by a name or pattern is a name, which strict code reserves.
+        if self.matches_word(b"let") {
+            let next = template.get(skip_trivia(template, start + 3)).copied();
+            let is_declaration = next.is_some_and(|it| {
+                matches!(it, b'[' | b'{' | b'\\' | b'_' | b'$')
+                    || it.is_ascii_alphabetic()
+                    || !it.is_ascii()
+            });
+            if !is_declaration {
+                return fail(Message::LetAsName, start);
+            }
+        }
         let end = match self.js.statement_at(template, start) {
             Ok(Statement::Declaration(end)) => end as usize,
             Ok(Statement::Expression) => return Ok(None),
@@ -1574,6 +1644,9 @@ impl<'a> Parser<'a, '_> {
 
     fn add_block(&mut self, kind: Kind<'a>, start: usize, fragment: FragmentId) -> Result<()> {
         let block = self.tree.add(kind, start, start);
+        if self.read_for == ReadFor::Linting {
+            (self.tree.open_tags).push((block, Span::new(start, self.index)));
+        }
         self.append(block);
         self.push(block, fragment);
         Ok(())
@@ -1813,12 +1886,15 @@ impl<'a> Parser<'a, '_> {
                 }
                 if !self.eat(b"if") {
                     self.allow_whitespace();
-                    return self.expect(b"}");
+                    self.expect(b"}")?;
+                    self.clause_tag(fragment, Span::new(brace, self.index));
+                    return Ok(());
                 }
                 self.require_whitespace()?;
                 let test = self.read_expression()?;
                 self.allow_whitespace();
                 self.expect(b"}")?;
+                self.clause_tag(fragment, Span::new(brace, self.index));
                 let consequent = self.tree.add_fragment();
                 let kind = Kind::IfBlock {
                     is_else_if: true,
@@ -1842,6 +1918,7 @@ impl<'a> Parser<'a, '_> {
                 self.allow_whitespace();
                 self.expect(b"}")?;
                 let fragment = self.next_fragment();
+                self.clause_tag(fragment, Span::new(brace, self.index));
                 if let Kind::EachBlock { fallback, .. } = &mut self.tree[block].kind {
                     *fallback = Some(fragment);
                 }
@@ -1863,6 +1940,7 @@ impl<'a> Parser<'a, '_> {
                     self.expect(b"}")?;
                 }
                 let fragment = self.next_fragment();
+                self.clause_tag(fragment, Span::new(brace, self.index));
                 if let Kind::AwaitBlock {
                     value,
                     error,
@@ -1882,8 +1960,8 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// `close`
-    fn close(&mut self) -> Result<()> {
+    /// `close`. `brace` is the position of the `{`.
+    fn close(&mut self, brace: usize) -> Result<()> {
         let start = self.index - 1;
         let Some(mut block) = self.current() else {
             return fail(Message::UnexpectedEndOfBlock, start);
@@ -1916,8 +1994,23 @@ impl<'a> Parser<'a, '_> {
             }
         }
         self.tree[block].end = self.index as u32;
+        self.end_tag(block, Span::new(brace, self.index));
         self.pop();
         Ok(())
+    }
+
+    /// [`Tree::end_tags`], when the linter reads the tree.
+    fn end_tag(&mut self, id: Id, span: Span) {
+        if self.read_for == ReadFor::Linting {
+            self.tree.end_tags.push((id, span));
+        }
+    }
+
+    /// [`Tree::clause_tags`], when the linter reads the tree.
+    fn clause_tag(&mut self, fragment: FragmentId, span: Span) {
+        if self.read_for == ReadFor::Linting {
+            self.tree.clause_tags.push((fragment, span));
+        }
     }
 
     /// `special`
@@ -1934,15 +2027,18 @@ impl<'a> Parser<'a, '_> {
                 self.allow_whitespace();
                 self.index += 1;
             } else {
-                // Only comma-separated identifiers are allowed, plus comments.
+                // Only comma-separated identifiers are allowed, plus comments. Svelte rejects at the start of the first
+                // one that isn't a name.
                 let span = self.read_whole_expression()?.expression.span;
                 let (after, end) = (self.index, span.end as usize);
                 self.index = span.start as usize;
+                let mut name_start;
                 loop {
                     self.allow_whitespace_and_comments();
+                    name_start = self.index;
                     let name = self.read_identifier()?;
                     if name.end == name.start {
-                        return fail(Message::InvalidDebugTag, self.index);
+                        return fail(Message::InvalidDebugTag, name_start);
                     }
                     identifiers.push(name);
                     self.allow_whitespace_and_comments();
@@ -1951,7 +2047,7 @@ impl<'a> Parser<'a, '_> {
                     }
                 }
                 if self.index < end {
-                    return fail(Message::InvalidDebugTag, self.index);
+                    return fail(Message::InvalidDebugTag, name_start);
                 }
                 self.index = after;
                 self.allow_whitespace();
@@ -2352,8 +2448,13 @@ fn skip_trivia(text: &[u8], mut at: usize) -> usize {
     }
 }
 
-/// `parse(text, { modern: true })`
-pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
+/// `parse(text, { modern: true })`, from byte `start` on: a byte order mark before it isn't passed to Svelte.
+pub(crate) fn parse<'a>(
+    text: &'a [u8],
+    start: usize,
+    read_for: ReadFor,
+    js: &mut dyn Js,
+) -> Result<Tree<'a>> {
     let text = strings::trim_js_whitespace_end(text);
     js.start(is_typescript(text));
     let mut tree = Tree::default();
@@ -2362,8 +2463,9 @@ pub(crate) fn parse<'a>(text: &'a [u8], js: &mut dyn Js) -> Result<Tree<'a>> {
     let mut parser = Parser {
         text,
         len: text.len(),
-        index: 0,
+        index: start.min(text.len()),
         is_typescript: is_typescript(text),
+        read_for,
         tree,
         stack: Vec::new(),
         ancestor_flags: Vec::new(),

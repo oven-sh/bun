@@ -13,10 +13,10 @@ use bun_lint::js_plugin;
 use bun_lint::linter::config::Dotfiles;
 use bun_lint::linter::{
     Config, FileConfig, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LintMessage,
-    Registry, RuleId, write_json,
+    Registry, ResolvedConfig, RuleId, write_json,
 };
 use bun_lint::options::Json;
-use bun_lint_conformance::{Case, Host, LintContext};
+use bun_lint_conformance::{Case, Host, LintContext, Linted};
 use bun_lint_graph::{Graph, Store};
 use bun_sema::atom::Interner;
 use bun_sema::session::Session;
@@ -26,6 +26,8 @@ struct Tester<'e> {
     linter: Linter,
     environment: &'e Environment<'e>,
     js_plugins: js_plugin::Host<'e>,
+    /// `--svelte-plugin=<module>`
+    svelte_plugin: Option<Vec<u8>>,
 }
 
 impl Host for Tester<'_> {
@@ -39,6 +41,41 @@ impl Host for Tester<'_> {
         if case.prepare.is_some() {
             return None;
         }
+        self.in_context(case, &mut |context, config, environment| {
+            self.lint_in(context, case, config, environment)
+        })
+    }
+
+    #[optimize(size)]
+    fn lint_component(&self, case: &Case<'_>) -> Option<Linted> {
+        self.in_context(case, &mut |context, config, _| {
+            let mut verify = |text: &[u8], _: bool| {
+                context
+                    .verify_component(case.path, text, config, None, None, None)
+                    .unwrap_or_default()
+            };
+            let linted = verify(case.code, false);
+            let fixed = bun_lint::linter::verify_and_fix(case.code, &|_| true, &mut verify);
+            Some(Linted {
+                messages: linted.messages,
+                suppressed: linted.suppressed,
+                output: fixed.is_fixed.then_some(fixed.output),
+            })
+        })
+    }
+
+    fn for_each(&self, threads: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        Pool::new(threads).for_each(count, 1, work);
+    }
+}
+
+impl Tester<'_> {
+    /// Calls `then` with the context `bun lint` lints `case` with, once it has found the file and its config.
+    fn in_context<T>(
+        &self,
+        case: &Case<'_>,
+        then: &mut dyn FnMut(&Context, &Arc<ResolvedConfig>, &Environment) -> Option<T>,
+    ) -> Option<T> {
         let directory = match case.lint_context {
             LintContext::Standalone => &self.environment.cwd[..],
             LintContext::Project(project) => project,
@@ -91,8 +128,21 @@ impl Host for Tester<'_> {
             unread: &bun_threading::Guarded::new(Vec::new()),
             needs_eslint: &bun_threading::Guarded::new(Vec::new()),
             invalid_tsconfigs: &bun_threading::Guarded::new(Default::default()),
+            svelte: &crate::svelte::Shared::for_tests(self.svelte_plugin.clone()),
+            environment: &environment,
         };
         let config = Arc::new(case.config.clone());
+        then(&context, &config, &environment)
+    }
+
+    fn lint_in(
+        &self,
+        context: &Context,
+        case: &Case<'_>,
+        config: &Arc<ResolvedConfig>,
+        environment: &Environment,
+    ) -> Option<Vec<LintMessage>> {
+        let config = Arc::clone(config);
         match case.lint_context {
             LintContext::Standalone => Some(match Framework::of(case.path) {
                 _ if let Some(dialect) = &config.dialect => {
@@ -139,16 +189,12 @@ impl Host for Tester<'_> {
                     text: Some(case.code.to_vec()),
                 };
                 Some(
-                    typed::lint(&context, &environment, &[file], &|_| ())
+                    typed::lint(context, environment, &[file], &|_| ())
                         .pop()??
                         .messages,
                 )
             }
         }
-    }
-
-    fn for_each(&self, threads: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
-        Pool::new(threads).for_each(count, 1, work);
     }
 }
 
@@ -160,6 +206,7 @@ fn registry() -> Registry {
         bun_lint_unicorn::RULES,
         bun_lint_react::RULES,
         bun_lint_jest::RULES,
+        bun_lint_svelte::RULES,
         bun_lint_json::RULES,
         bun_lint_markdown::RULES,
     ])
@@ -319,6 +366,9 @@ pub fn run_eslint_tests(args: &[&[u8]], environment: &Environment) -> bool {
                 environment.js_engine,
                 &crate::paths::to_native(environment.cwd.clone()),
             ),
+            svelte_plugin: bun_lint_conformance::Flags::parse(args)
+                .svelte_plugin
+                .map(<[u8]>::to_vec),
         },
     )
 }

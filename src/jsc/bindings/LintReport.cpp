@@ -128,7 +128,7 @@ private:
     bool m_hasFailed { false };
 };
 
-constexpr uint32_t hasId = 1, hasFix = 2, hasData = 4;
+constexpr uint32_t hasId = 1, hasFix = 2, hasData = 4, hasContext = 8;
 
 // `text.slice(from, to)`
 StringView slice(StringView text, double from, double to)
@@ -794,6 +794,8 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
     auto scope = DECLARE_THROW_SCOPE(vm);
     LintHost* host = LintHost::from(globalObject);
     LintReportState& state = host->report;
+    // A copy: a getter or `fix` below can make another report, which sets and then clears `reportContext`.
+    auto context = state.context;
     auto* rule = dynamicDowncast<JSFinalObject>(callFrame->thisValue());
     if (!rule || rule->structure() != state.ruleStructure.get())
         return throwVMTypeError(globalObject, scope, "Expected a rule"_s);
@@ -972,7 +974,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
     size_t before = state.bytes.size();
     Writer writer(state.bytes);
     writer.word(position.isNumber() ? JSC::toUInt32(position.asNumber()) : 0);
-    writer.word((messageId.isString() ? hasId : 0) | (fix.canBeSent() ? hasFix : 0));
+    writer.word((messageId.isString() ? hasId : 0) | (fix.canBeSent() ? hasFix : 0) | (!context.isEmpty() ? hasContext : 0));
     writer.number(line);
     writer.number(column);
     writer.number(endLine ? endLine : jsNull());
@@ -984,6 +986,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintReport, (JSGlobalObject * globalObject, CallFrame
     if (fix.canBeSent())
         fix.write(writer);
     writer.bytes(suggestionBytes.span());
+    writer.bytes(context.span());
     if (writer.hasFailed()) [[unlikely]] {
         state.bytes.shrink(before);
         throwOutOfMemoryError(globalObject, scope);
@@ -1231,6 +1234,26 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintReporter, __attribute__((minsize)
     return JSValue::encode(rule);
 }
 
+// `reportContext(json)` sets the listener provenance of the reports that follow, or clears it if `json` is no string.
+JSC_DEFINE_HOST_FUNCTION(jsLintReportContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& context = LintHost::from(globalObject)->report.context;
+    context.shrink(0);
+    if (auto* text = dynamicDowncast<JSString>(callFrame->argument(0))) {
+        auto view = text->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        Writer writer(context);
+        writer.string(view);
+        if (writer.hasFailed()) {
+            context.shrink(0);
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 // `sendReports()` hands the reports about the file so far to Rust.
 JSC_DEFINE_HOST_FUNCTION(jsLintSendReports, (JSGlobalObject * globalObject, CallFrame*))
 {
@@ -1279,6 +1302,7 @@ __attribute__((minsize)) void LintReportState::finishCreation(VM& vm, JSGlobalOb
 void addLintReportFunctions(JSGlobalObject* globalObject, JSObject* native)
 {
     addLintFunction(globalObject, native, "reporter"_s, 1, jsLintReporter);
+    addLintFunction(globalObject, native, "reportContext"_s, 1, jsLintReportContext);
     addLintFunction(globalObject, native, "sendReports"_s, 0, jsLintSendReports);
 }
 

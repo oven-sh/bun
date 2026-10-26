@@ -260,6 +260,36 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// True if the file's [view](File::view) hides it from rules, and its contents take its place.
+    pub fn is_hidden(self) -> bool {
+        match (self, self.file().view()) {
+            (Node::File(_), _) | (_, None) => false,
+            (_, Some(view)) => view.hides(self.span().start),
+        }
+    }
+
+    /// `parent`, or if the file's view hides that, the nearest ancestor it doesn't hide.
+    #[inline]
+    fn seen(self, parent: Node<'a>) -> Node<'a> {
+        match self.file().view() {
+            Some(_) => parent.seen_from_here(),
+            None => parent,
+        }
+    }
+
+    #[inline(never)]
+    fn seen_from_here(self) -> Node<'a> {
+        let mut at = self;
+        while at.is_hidden() {
+            at = match at {
+                Node::Expr(e) => e.parent_in_program(),
+                Node::Stmt(s) => s.parent_in_program(),
+                _ => at.parent_of_any(),
+            };
+        }
+        at
+    }
+
     /// The node for the binder's `parent`.
     fn from_binder_parent(file: &'a File<'a>, parent: Parent) -> Node<'a> {
         let (hir, bound) = (&file.hir, &file.bound);
@@ -304,10 +334,11 @@ impl<'a> Node<'a> {
     }
 
     pub(super) fn parent_of_other_node(self) -> Node<'a> {
-        match self.file().hides_casts {
+        let parent = match self.file().hides_casts {
             true => self.parent_with_hidden_casts(),
             false => self.parent_of_any(),
-        }
+        };
+        self.seen(parent)
     }
 
     #[inline(never)]
@@ -349,7 +380,7 @@ impl<'a> Node<'a> {
             ),
             Node::Func(f) => f.owner(),
             Node::Class(c) => c.owner(),
-            Node::Param(p) => match p.func() {
+            Node::Param(p) => match p.func_in_program() {
                 Some(func) => Node::Func(func),
                 None => Node::File(file),
             },
@@ -427,6 +458,12 @@ impl<'a> Node<'a> {
 impl<'a> Expr<'a> {
     #[inline]
     pub fn parent(self) -> Node<'a> {
+        Node::Expr(self).seen(self.parent_in_program())
+    }
+
+    /// Same, but including what the file's view hides.
+    #[inline]
+    pub(crate) fn parent_in_program(self) -> Node<'a> {
         let file = self.file;
         // The binder never records an expression as the parent of the `a.b` in the type `typeof a.b`.
         if !file.hides_casts
@@ -505,6 +542,12 @@ impl<'a> Expr<'a> {
 impl<'a> Stmt<'a> {
     #[inline]
     pub fn parent(self) -> Node<'a> {
+        Node::Stmt(self).seen(self.parent_in_program())
+    }
+
+    /// Same, but including what the file's view hides.
+    #[inline]
+    pub(crate) fn parent_in_program(self) -> Node<'a> {
         let file = self.file;
         match file.bound.parent_of_stmt(self.id) {
             Parent::FnBody(f) => Node::Func(Func::new(file, f)),

@@ -866,7 +866,9 @@ fn handle_fixes<'a>(
     };
     match def {
         Declaration::Var(pat) | Declaration::Param(pat) => fixes.fix_binding(pat),
-        Declaration::Fn(func) if func.has_body() => {
+        // A declaring node that the view hides, such as a `{#snippet}`'s function, is reported the way ESLint reports
+        // the name of the `SvelteSnippetBlock` that stands in for it.
+        Declaration::Fn(func) if func.has_body() && !Node::Func(func).is_hidden() => {
             fixes.remove_declaration(estree_span(Node::Func(func)))
         }
         Declaration::Class(class) => fixes.remove_declaration(estree_span(Node::Class(class))),

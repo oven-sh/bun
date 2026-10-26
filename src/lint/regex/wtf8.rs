@@ -101,6 +101,21 @@ pub fn utf16_index(s: &[u8], offset: usize) -> usize {
     units
 }
 
+/// The byte offset that UTF-16 index `index` in `s` corresponds to: the inverse of [`utf16_index`]. Past the end it's
+/// `s`'s length.
+pub fn offset_of_utf16_index(s: &[u8], index: usize) -> usize {
+    let ascii = bun_core::strings::first_non_ascii(s).map_or(s.len(), |i| i as usize);
+    if index <= ascii {
+        return index;
+    }
+    let (mut i, mut units) = (ascii, ascii);
+    while i < s.len() && units < index {
+        units += 1;
+        i += unit_at(s, i).1;
+    }
+    i
+}
+
 /// Speeds up [`utf16_index`] for many offsets in one text.
 #[derive(Debug)]
 pub(crate) struct Utf16Index {

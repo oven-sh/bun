@@ -8,6 +8,7 @@ bun_lint::rule_sets! {
         unicorn: bun_lint_unicorn,
         react: bun_lint_react,
         jest: bun_lint_jest,
+        svelte: bun_lint_svelte,
         json: bun_lint_json,
         markdown: bun_lint_markdown,
     }

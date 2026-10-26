@@ -87,6 +87,8 @@ pub struct Services<'c, 'p, 's> {
     symbol_ids: FxHashMap<Key<'c>, SymbolRef>,
     /// Cached results of `properties_of_type` and `signature_info`.
     properties: FxHashMap<TypeId, &'c [SymbolRef]>,
+    /// Cached answers of `properties_of_type_in_insertion_order`.
+    properties_in_insertion_order: FxHashMap<TypeId, &'c [SymbolRef]>,
     signatures: FxHashMap<SigId, SignatureInfo<'c>>,
     /// Cached results of `type_at_location`. Many rules query the same node, and some query one node from each of its
     /// many children.
@@ -148,6 +150,7 @@ impl<'p, 's> Checker<'p, 's> {
             symbols: Vec::new(),
             symbol_ids: FxHashMap::default(),
             properties: FxHashMap::default(),
+            properties_in_insertion_order: FxHashMap::default(),
             signatures: FxHashMap::default(),
             types_at: FxHashMap::default(),
             ops_on_many: FxHashMap::default(),

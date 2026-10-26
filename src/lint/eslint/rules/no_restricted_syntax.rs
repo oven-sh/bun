@@ -83,7 +83,9 @@ impl Rule for NoRestrictedSyntax {
         }
         for (node, i) in found {
             if let Some(restriction) = self.restrictions.get(i) {
-                cx.report(node, RESTRICTED_SYNTAX).data("message", restriction.message.to_vec());
+                cx.report(node, RESTRICTED_SYNTAX)
+                    .data("message", restriction.message.to_vec())
+                    .listened_as(node, restriction.selector.source());
             }
         }
     }

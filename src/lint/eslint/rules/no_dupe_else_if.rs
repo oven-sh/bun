@@ -9,12 +9,12 @@ const UNEXPECTED: Message = Message::new(
     "This branch can never execute. Its condition is a duplicate or covered by previous conditions in the if-else-if chain.",
 );
 
-type Operands<'a> = SmallVec<[Expr<'a>; 4]>;
+pub type Operands<'a> = SmallVec<[Expr<'a>; 4]>;
 /// The operands of `||`, each split by `&&`.
-type OrOperands<'a> = SmallVec<[Operands<'a>; 2]>;
+pub type OrOperands<'a> = SmallVec<[Operands<'a>; 2]>;
 
 /// ESLint's `splitByLogicalOperator`.
-fn split(operator: BinOp, e: Expr<'_>) -> Operands<'_> {
+pub fn split(operator: BinOp, e: Expr<'_>) -> Operands<'_> {
     let mut operands = Operands::new();
     let mut pending: SmallVec<[Expr<'_>; 8]> = SmallVec::new();
     pending.push(e);
@@ -28,7 +28,7 @@ fn split(operator: BinOp, e: Expr<'_>) -> Operands<'_> {
 }
 
 /// ESLint's `splitByOr(e).map(splitByAnd)`.
-fn split_by_or_and(e: Expr<'_>) -> OrOperands<'_> {
+pub fn split_by_or_and(e: Expr<'_>) -> OrOperands<'_> {
     split(BinOp::Or, e).into_iter().map(|it| split(BinOp::And, it)).collect()
 }
 
@@ -79,7 +79,8 @@ fn equal<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
     can_have_equal_tokens(a, b) && ast_utils::equal_tokens(a.file(), a, b)
 }
 
-fn is_subset<'a>(a: &[Expr<'a>], b: &[Expr<'a>]) -> bool {
+/// ESLint's `isSubset`: true if each of `a` is [equal](equal) to one of `b`.
+pub fn is_subset<'a>(a: &[Expr<'a>], b: &[Expr<'a>]) -> bool {
     a.iter().all(|a| b.iter().any(|b| equal(*a, *b)))
 }
 

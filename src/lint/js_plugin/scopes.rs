@@ -29,8 +29,12 @@
 //!
 //! A name is a number with a tag in its low 2 bits. See [`Name`].
 
+pub(super) mod svelte;
+
 use super::ast::Numbered;
+use super::units::Units;
 use super::wire::{self, push_list};
+use crate::ast::svelte::{RUNES, SVELTE_GLOBALS};
 use crate::ast::{File, Node};
 use crate::estree::{Dialect, Field, NodeType, VNode, Value};
 use crate::language::{Global, SourceType};
@@ -38,7 +42,6 @@ use crate::semantic::{Declaration, DeclarationKind, Reference, ReferenceFlags, S
 use crate::span::Span;
 use crate::utils::estree_compat::normalize;
 use crate::utils::sort;
-use bun_core::strings::Utf16OffsetTable;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
@@ -259,13 +262,15 @@ struct ReferenceRecord<'t> {
     name: &'t [u8],
 }
 
-/// The numbered ESTree.
+/// The numbered ESTree, without the copies after it.
 struct Tree<'t, 'a> {
     nodes: &'t [VNode<'a>],
     types: &'t [u8],
     parents: &'t [u32],
     /// The last node inside each node, or the node itself.
     last: Vec<u32>,
+    /// See [`Numbered::copied`]: each node's first position among them.
+    copied: FxHashMap<u32, u32>,
 }
 
 /// The node types that assign to a name without declaring it.
@@ -290,17 +295,33 @@ const FUNCTION_TYPES: &[NodeType] = &[
 
 impl<'t, 'a> Tree<'t, 'a> {
     fn new(numbered: &'t Numbered<'a>) -> Self {
-        let parents = &numbered.parents[..];
+        let reachable = numbered.reachable;
+        let parents = numbered.parents.get(..reachable).unwrap_or_default();
         let mut last: Vec<u32> = (0..parents.len() as u32).collect();
         for id in (1..parents.len()).rev() {
             let parent = parents[id] as usize;
             last[parent] = last[parent].max(last[id]);
         }
         Tree {
-            nodes: &numbered.nodes,
-            types: &numbered.types,
+            nodes: numbered.nodes.get(..reachable).unwrap_or_default(),
+            types: numbered.types.get(..reachable).unwrap_or_default(),
             parents,
             last,
+            copied: {
+                let mut first: FxHashMap<u32, u32> = FxHashMap::default();
+                for (&id, at) in numbered.copied.iter().zip(0u32..) {
+                    first.entry(id).or_insert(at);
+                }
+                first
+            },
+        }
+    }
+
+    /// The copy of the node `id` after the tree, or `id`.
+    fn copy_of(&self, id: u32) -> u32 {
+        match self.copied.get(&id) {
+            Some(&at) => self.nodes.len() as u32 + at,
+            None => id,
         }
     }
 
@@ -448,8 +469,8 @@ impl<'t, 'a> Tree<'t, 'a> {
         }
     }
 
-    /// Fills in `node`, `parent`, `index` and the flags of a definition from its kind and its name.
-    fn complete(&self, definition: &mut DefinitionRecord, is_espree: bool) {
+    /// Fills in `node`, `parent`, `index` and the flags of a definition from its kind, name and scope.
+    fn complete(&self, definition: &mut DefinitionRecord, is_espree: bool, is_class_scope: bool) {
         let name = definition.name;
         let name_parent = self.parent(name);
         let is = |kind: DeclarationKind| definition.kind == kind as u32;
@@ -473,7 +494,26 @@ impl<'t, 'a> Tree<'t, 'a> {
         } else {
             (name_parent, NONE)
         };
+        definition.node = node;
+        definition.parent = parent;
+        self.complete_metadata(definition, is_espree, is_class_scope);
+    }
+
+    fn complete_metadata(
+        &self,
+        definition: &mut DefinitionRecord,
+        is_espree: bool,
+        is_class_scope: bool,
+    ) {
+        let DefinitionRecord {
+            name, node, parent, ..
+        } = *definition;
+        let name_parent = self.parent(name);
+        let is = |kind: DeclarationKind| definition.kind == kind as u32;
         let is_parameter = is(DeclarationKind::Parameter);
+        if is_espree && is_class_scope && is(DeclarationKind::ClassName) {
+            definition.flags |= LACKS_PARENT;
+        }
         if is_espree && is(DeclarationKind::Variable) {
             definition.index = self.index_in(parent, Field::Declarations, node);
             definition.declaration_kind = match self.field(parent, Field::Kind) {
@@ -499,8 +539,6 @@ impl<'t, 'a> Tree<'t, 'a> {
                 definition.flags |= IS_REST;
             }
         }
-        definition.node = node;
-        definition.parent = parent;
     }
 }
 
@@ -867,6 +905,8 @@ struct Builder<'t, 'a> {
     /// For each scope: the list of the variables in `scope.taints`.
     taints: Vec<u32>,
     lists: Vec<u32>,
+    /// The references from here on are in no scope, only in their variables' references: see `svelte.rs`.
+    virtual_from: u32,
 }
 
 /// typescript-eslint's `scope.isStrict` in a file that isn't a module. `known` caches the results by scope id, so each
@@ -1287,17 +1327,14 @@ impl<'t, 'a> Builder<'t, 'a> {
 
     fn complete_definitions(&mut self) {
         for variable in &self.variables {
-            let lacks_parent =
-                self.is_espree && self.scopes[variable.scope as usize].is(ScopeKind::Class);
+            let is_class_scope = self.scopes[variable.scope as usize].is(ScopeKind::Class);
             for at in variable.first_definition..variable.end_definition {
                 let definition = &mut self.definitions[at as usize];
                 if definition.name == NONE {
                     continue;
                 }
-                self.tree.complete(definition, self.is_espree);
-                if lacks_parent && definition.kind == DeclarationKind::ClassName as u32 {
-                    definition.flags |= LACKS_PARENT;
-                }
+                self.tree
+                    .complete(definition, self.is_espree, is_class_scope);
             }
         }
     }
@@ -1379,6 +1416,8 @@ pub(super) struct ConfiguredGlobals {
     index_of: FxHashMap<Box<[u8]>, usize>,
     /// For each: [`IS_IN_LIB`] with [`IS_TYPE`] and [`IS_VALUE`] if a TypeScript library defines it too.
     lib_flags: Vec<u32>,
+    /// For each one, its index among the globals the program gets, which are the config's, or [`NONE`].
+    original: Vec<u32>,
 }
 
 impl ConfiguredGlobals {
@@ -1397,6 +1436,7 @@ impl ConfiguredGlobals {
             }
         }
         ConfiguredGlobals {
+            original: (0..list.len() as u32).collect(),
             list,
             index_of,
             lib_flags,
@@ -1405,6 +1445,59 @@ impl ConfiguredGlobals {
 
     pub(super) fn iter(&self) -> impl Iterator<Item = &(Box<[u8]>, Global)> {
         self.list.iter()
+    }
+
+    /// With `first` before the others, read-only, unless they're among them: what svelte-eslint-parser adds to a
+    /// component's global scope before ESLint adds the configured globals (`addGlobalVariables`).
+    fn with_first(&self, first: &[&[u8]]) -> ConfiguredGlobals {
+        let mut list: Vec<(Box<[u8]>, Global)> = Vec::new();
+        let (mut lib_flags, mut original) = (Vec::new(), Vec::new());
+        for name in first {
+            let at = self.index_of(name);
+            let setting = at
+                .and_then(|it| self.list.get(it))
+                .map_or(Global::Readonly, |it| it.1);
+            list.push(((*name).into(), setting));
+            lib_flags.push(
+                at.and_then(|it| self.lib_flags.get(it))
+                    .copied()
+                    .unwrap_or(0),
+            );
+            original.push(
+                at.and_then(|it| self.original.get(it))
+                    .copied()
+                    .unwrap_or(NONE),
+            );
+        }
+        let others = (self.list.iter().zip(&self.lib_flags).zip(&self.original))
+            .filter(|((it, _), _)| !first.contains(&&it.0[..]));
+        for ((it, &flags), &at) in others {
+            list.push(it.clone());
+            lib_flags.push(flags);
+            original.push(at);
+        }
+        let index_of = list.iter().map(|it| it.0.clone()).zip(0..).collect();
+        ConfiguredGlobals {
+            list,
+            index_of,
+            lib_flags,
+            original,
+        }
+    }
+
+    /// The name of the global at `index` for the program: its index among the configured globals it gets, or its UTF-16
+    /// code units in `lists` if it's not among them.
+    fn name_of(&self, index: usize, lists: &mut Vec<u32>) -> Name {
+        match self.original.get(index).copied() {
+            Some(at) if at != NONE => Name::Configured(at),
+            _ => {
+                let name = self.list.get(index).map_or(&[][..], |it| &it.0[..]);
+                let units: Vec<u32> = (bun_core::strings::wtf8_to_utf16(name).iter())
+                    .map(|&it| u32::from(it))
+                    .collect();
+                Name::Units(push_list(lists, &units))
+            }
+        }
     }
 
     fn index_of(&self, name: &[u8]) -> Option<usize> {
@@ -1452,8 +1545,9 @@ impl<'t, 'a> Builder<'t, 'a> {
     fn add_globals(
         &mut self,
         file: &'a File<'a>,
-        offsets: &Utf16OffsetTable,
+        offsets: &Units,
         configured: &'t ConfiguredGlobals,
+        parser_globals: &[&[u8]],
         variables: &mut Vec<u32>,
     ) {
         if self.is_oxlint {
@@ -1519,6 +1613,18 @@ impl<'t, 'a> Builder<'t, 'a> {
             }
         }
         let lists = &mut self.lists;
+        // A configured "off" does not remove a variable that the parser already injected.
+        for name in parser_globals {
+            let Some(index) = configured.index_of(name) else {
+                continue;
+            };
+            define(
+                &mut named.by_configured_index[index],
+                &configured.list[index].0,
+                configured.name_of(index, lists),
+                flags_of.by_configured_index[index] | configured.lib_flags[index],
+            );
+        }
         let starts_of = |comments: &[Span]| -> Vec<u32> {
             comments
                 .iter()
@@ -1535,8 +1641,13 @@ impl<'t, 'a> Builder<'t, 'a> {
                 &mut named.by_configured_index[index],
                 flags_of.by_configured_index[index] | configured.lib_flags[index],
             );
+            let variable = define(slot, name, configured.name_of(index, lists), flags);
+            // What svelte-eslint-parser adds isn't an ESLint global, unless the config names it too.
+            if configured.original.get(index) == Some(&NONE) {
+                continue;
+            }
             settings.push(GlobalSetting {
-                variable: define(slot, name, Name::Configured(index as u32), flags),
+                variable,
                 bits: setting_bits(*implicit)
                     | IS_LISTED
                     | (u32::from(setting == Global::Writable) * IS_WRITEABLE)
@@ -1749,7 +1860,8 @@ impl<'t, 'a> Builder<'t, 'a> {
         let (mut keys, mut values) = (Vec::new(), Vec::new());
         // The references that leave a `with` statement, where a name's meaning can't be known.
         let mut tainted = Vec::new();
-        for (reference, index) in self.references.iter().zip(0..) {
+        let real = &self.references[..(self.virtual_from as usize).min(self.references.len())];
+        for (reference, index) in real.iter().zip(0..) {
             let is_to_global = reference.flags & TO_GLOBAL != 0;
             // The scope where it resolves. It passes through every scope from its own up to that one.
             let home = match is_to_global {
@@ -1806,7 +1918,8 @@ impl<'t, 'a> Builder<'t, 'a> {
             true => self.declared_end(),
             false => 0,
         };
-        let to_globals = (0..self.references.len() as u32)
+        let real = (self.references.len() as u32).min(self.virtual_from);
+        let to_globals = (0..real)
             .filter(|&it| {
                 let reference = &self.references[it as usize];
                 reference.flags & TO_GLOBAL != 0 && reference.variable >= declared_end
@@ -1984,9 +2097,35 @@ impl Builder<'_, '_> {
 /// Appends the message. `configured` is ESLint's `configGlobals`, in key order.
 pub(super) fn write<'t, 'a>(
     file: &'a File<'a>,
-    offsets: &Utf16OffsetTable,
+    offsets: &Units,
     numbered: &'t Numbered<'a>,
     configured: &'t ConfiguredGlobals,
+    out: &mut Vec<u8>,
+) {
+    if !offsets.is_in_component() {
+        return write_with(file, offsets, numbered, configured, &[], out);
+    }
+    // `getGlobalsForSvelte` runs before the parser infers runes from the finished AST.
+    let runes: &[&str] = match file.svelte_context().and_then(|it| it.runes) {
+        Some(false) => &[],
+        _ => &RUNES,
+    };
+    let first: Vec<&[u8]> = SVELTE_GLOBALS
+        .iter()
+        .chain(runes)
+        .map(|it| it.as_bytes())
+        .collect();
+    let configured = configured.with_first(&first);
+    write_with(file, offsets, numbered, &configured, &first, out);
+}
+
+/// `svelte_globals` holds what svelte-eslint-parser adds to a component's global scope, in its order.
+fn write_with<'t, 'a>(
+    file: &'a File<'a>,
+    offsets: &Units,
+    numbered: &'t Numbered<'a>,
+    configured: &'t ConfiguredGlobals,
+    svelte_globals: &[&[u8]],
     out: &mut Vec<u8>,
 ) {
     // oxlint's own rules see oxc's scopes.
@@ -2004,18 +2143,42 @@ pub(super) fn write<'t, 'a>(
         inner_class_names: FxHashMap::default(),
         taints: Vec::new(),
         lists: vec![0],
+        virtual_from: u32::MAX,
     };
-    builder.collect(file);
-    let listed = builder.order_as_visited();
-    builder.add_inner_class_names();
-    builder.complete_definitions();
+    let mut svelte = None;
+    let listed = match offsets.is_in_component() {
+        true => {
+            let mut collected = builder.collect_svelte(file);
+            let listed = std::mem::take(&mut collected.listed);
+            svelte = Some(collected);
+            listed
+        }
+        false => {
+            builder.collect(file);
+            let listed = builder.order_as_visited();
+            builder.add_inner_class_names();
+            builder.complete_definitions();
+            listed
+        }
+    };
 
-    let end_of_global = builder
-        .scopes
-        .get(1)
-        .map_or(builder.declared, |it| it.first_variable);
-    let mut global_variables: Vec<u32> = (0..end_of_global).collect();
-    builder.add_globals(file, offsets, configured, &mut global_variables);
+    let mut global_variables: Vec<u32> = match &svelte {
+        Some(svelte) => svelte.variables.first().cloned().unwrap_or_default(),
+        None => {
+            let end_of_global = builder
+                .scopes
+                .get(1)
+                .map_or(builder.declared, |it| it.first_variable);
+            (0..end_of_global).collect()
+        }
+    };
+    builder.add_globals(
+        file,
+        offsets,
+        configured,
+        svelte_globals,
+        &mut global_variables,
+    );
     builder.set_stack();
     if builder.is_espree {
         builder.find_this_and_arguments();
@@ -2026,19 +2189,40 @@ pub(super) fn write<'t, 'a>(
         .collect();
     let scope_count = builder.scopes.len();
     let child_scopes = group(&uppers, &listed, scope_count, &mut builder.lists);
-    let from: Vec<u32> = builder.references.iter().map(|it| it.from).collect();
+    let virtual_from = builder.virtual_from;
+    let from: Vec<u32> = (builder.references.iter().zip(0u32..))
+        .map(|(it, at)| if at < virtual_from { it.from } else { NONE })
+        .collect();
     let indices: Vec<u32> = (0..from.len() as u32).collect();
-    let references_by_scope = group(&from, &indices, scope_count, &mut builder.lists);
-    let references_by_variable = builder.references_by_variable();
-    let through = builder.through();
+    let mut references_by_scope = group(&from, &indices, scope_count, &mut builder.lists);
+    if svelte.is_some() && !builder.is_espree && file.svelte_runes() != Some(false) {
+        builder.put_back_derived(file, &mut references_by_scope);
+    }
+    let mut references_by_variable = builder.references_by_variable();
+    if let Some(svelte) = &svelte {
+        for (variable, references) in svelte.references.iter().enumerate() {
+            if let Some(slot) = references_by_variable.get_mut(variable) {
+                *slot = push_list(&mut builder.lists, references);
+            }
+        }
+    }
+    let mut through = builder.through();
+    if svelte.is_some() && !builder.is_espree {
+        builder.put_back_into_through(file, &mut through, svelte_globals);
+    }
     let implicit = builder.implicit_globals(through.first().copied().unwrap_or(0));
 
     // The list being built.
     let mut list = global_variables;
     let variables_by_scope: Vec<u32> = (0..scope_count as u32)
         .map(|scope| {
-            if scope != 0 {
-                builder.variables_of(scope, &mut list);
+            match &svelte {
+                Some(svelte) if scope != 0 => {
+                    list.clear();
+                    list.extend(svelte.variables.get(scope as usize).into_iter().flatten());
+                }
+                None if scope != 0 => builder.variables_of(scope, &mut list),
+                _ => {}
             }
             push_list(&mut builder.lists, &list)
         })
@@ -2138,6 +2322,20 @@ pub(super) fn mark_used<'a>(file: &'a File<'a>, indices: impl Iterator<Item = u3
     }
     let _scopes = file.with_eslint_scopes();
     let mut index = 0u32;
+    // A component's variables are the variable view's, in `svelte.rs` order.
+    if file.svelte().is_some() {
+        for scope in file.scopes() {
+            for variable in file.svelte_variables_of(scope) {
+                if indices.next_if_eq(&index).is_some()
+                    && let Some(symbol) = variable.symbol()
+                {
+                    symbol.mark_used();
+                }
+                index += 1;
+            }
+        }
+        return;
+    }
     for scope in file.scopes() {
         // It's counted, but it isn't a symbol.
         if has_file_level_arguments(file, scope) {

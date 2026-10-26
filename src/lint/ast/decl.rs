@@ -421,8 +421,20 @@ impl<'a> Param<'a> {
         Span::new(start, whole.end)
     }
 
+    /// The function it's a parameter of. `None` if the file's view hides that function, because a `{#snippet}`'s
+    /// parameter or an `{#each}`'s context isn't a function parameter.
     #[inline]
     pub fn func(self) -> Option<Func<'a>> {
+        let func = self.func_in_program()?;
+        match self.file.view().is_some() && Node::Func(func).is_hidden() {
+            true => None,
+            false => Some(func),
+        }
+    }
+
+    /// Same, but including what the view hides.
+    #[inline]
+    pub(crate) fn func_in_program(self) -> Option<Func<'a>> {
         Func::some(self.file, *self.file.bound.param_fn.get(self.id.idx())?)
     }
 }

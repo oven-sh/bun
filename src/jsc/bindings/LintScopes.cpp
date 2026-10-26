@@ -242,7 +242,8 @@ constexpr uint32_t implicitGlobalVariable = 10;
 constexpr ASCIILiteral fieldNames = "$id set taints block through variables references variableScope upper isStrict thisFound childScopes __declaredVariables implicit name identifiers defs stack scope eslintUsed eslintExported eslintImplicitGlobalSetting eslintExplicitGlobal writeable isTypeVariable isValueVariable node parent index kind rest identifier from resolved flag writeExpr partial init tainted maybeImplicitGlobal pattern"_s;
 // In the order of `ScopeKind` and `DeclarationKind` in src/lint/js_plugin/scopes.rs.
 constexpr ASCIILiteral scopeTypes = "global module function function-expression-name block switch catch with for class class-field-initializer class-static-block tsModule tsEnum type conditionalType functionType mappedType"_s;
-constexpr ASCIILiteral definitionTypes = "Variable Parameter FunctionName ClassName CatchClause ImportBinding TSEnumName TSEnumMemberName TSModuleName Type ImplicitGlobalVariable"_s;
+// The last is svelte-eslint-parser's, of what `$: x = ..` assigns: `COMPUTED_VARIABLE` in src/lint/js_plugin/scopes/svelte.rs.
+constexpr ASCIILiteral definitionTypes = "Variable Parameter FunctionName ClassName CatchClause ImportBinding TSEnumName TSEnumMemberName TSModuleName Type ImplicitGlobalVariable ComputedVariable"_s;
 
 enum Group : uint8_t {
     Scopes,
@@ -252,8 +253,8 @@ enum Group : uint8_t {
     Implicit,
     MaybeImplicit,
 };
-constexpr std::array<uint32_t, 6> templatesIn { 18, 16, 11, 2, 1, 1 };
-constexpr std::array<uint32_t, 6> firstTemplateIn { 0, 18, 34, 45, 47, 48 };
+constexpr std::array<uint32_t, 6> templatesIn { 18, 16, 12, 2, 1, 1 };
+constexpr std::array<uint32_t, 6> firstTemplateIn { 0, 18, 34, 46, 48, 49 };
 
 StringView wordAt(ASCIILiteral words, uint32_t index)
 {
@@ -765,7 +766,8 @@ private:
                 value = jsNumber(it[1] & 3);
                 break;
             case Field::WriteExpr:
-                value = writes ? nodeOrNull(it[2]) : jsUndefined();
+                // svelte-eslint-parser keeps what is written to a store, `$a = 1`, in the reference of `a`, which only reads.
+                value = writes || it[2] != none ? nodeOrNull(it[2]) : jsUndefined();
                 break;
             case Field::Partial:
                 value = jsBoolean(it[1] & isPartial);

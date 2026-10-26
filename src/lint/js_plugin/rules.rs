@@ -54,6 +54,9 @@ pub struct Plugin {
     /// `{ module, export }`: the file it's in, with the path as Node.js writes it, and where it is in that file's
     /// exports. `None` for a plugin that was found in a config.
     pub location: Option<Json>,
+    /// The file of the module it's found in, with the path as Node.js writes it, if there is one, including for a
+    /// module a config has imported.
+    pub module: Option<Box<[u8]>>,
     /// `meta.name@meta.version`, as ESLint prints a plugin.
     pub id: Option<Box<[u8]>>,
     /// It has none of a plugin's properties: no `meta`, no `rules`.
@@ -168,19 +171,19 @@ impl FileSettings {
         });
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let string = |text: &[u8]| Json::String(text.to_vec());
-        // oxlint only puts the entries of `globals` itself there.
-        let config_globals = match language.is_oxlint {
-            true => &language.own_globals,
-            false => &language.globals,
-        };
-        let globals = config_globals.iter().map(|(name, setting)| {
+        let global = |(name, setting): &(Box<[u8]>, Global)| {
             let setting: &[u8] = match setting {
                 Global::Readonly => b"readonly",
                 Global::Writable => b"writable",
                 Global::Off => b"off",
             };
             (name.to_vec(), string(setting))
-        });
+        };
+        // oxlint only adds the `globals` entries themselves there.
+        let globals = match language.is_oxlint {
+            true => language.own_globals.iter().map(global).collect(),
+            false => language.globals_in_order().map(global).collect(),
+        };
         let source_type: &[u8] = match language.source_type {
             SourceType::Module => b"module",
             SourceType::Script => b"script",
@@ -192,7 +195,7 @@ impl FileSettings {
                 Json::Number(f64::from(language.ecma_version)),
             ),
             (b"sourceType".to_vec(), string(source_type)),
-            (b"globals".to_vec(), Json::Object(globals.collect())),
+            (b"globals".to_vec(), Json::Object(globals)),
             (
                 b"parserOptions".to_vec(),
                 match &language.parser_options {

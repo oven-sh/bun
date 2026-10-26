@@ -8,6 +8,7 @@ use super::scopes::{self, Cursor, NONE, ScopeTree, Step};
 use super::variables::{DeepPatterns, TYPE, VALUE, Variables};
 use super::{ReferenceFlags, ScopeKind};
 use crate::ast::File;
+use crate::ast::view::{Adjustment, View};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Parent, PatParent};
 use bun_sema::hir::{self, ExprId, ExprKind, PatKind, PropKind, StmtKind, TypeNodeKind, UnOp};
@@ -35,6 +36,8 @@ pub(crate) enum ReferenceSite {
     JsxName(ExprId),
     /// The name in the first declaration of the variable at this index, for JSX's implicit use of `React`.
     Declaration(u32),
+    /// Same, for a use that a file in another language adds with no source text: [`Adjustment::Add`].
+    Restored(u32),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -382,11 +385,7 @@ impl<'t> Resolver<'t> {
 
     #[inline(always)]
     fn count(&mut self, it: &RawReference) {
-        let is_modifying =
-            it.flags.contains(ReferenceFlags::WRITE) && !it.flags.contains(ReferenceFlags::INIT);
-        let marks = (u32::from(it.flags.contains(ReferenceFlags::READ)) * HAS_READ)
-            | (u32::from(it.flags.contains(ReferenceFlags::WRITE)) * HAS_WRITE)
-            | (u32::from(is_modifying) * HAS_MODIFYING_WRITE);
+        let marks = marks_of(it);
         let count = &mut self.counts[(it.variable as usize).min(self.variables.list.len()) + 1];
         *count = (*count + 1) | marks;
     }
@@ -404,7 +403,10 @@ impl<'t> Resolver<'t> {
         }
         if it.from == it.pos {
             self.is_visiting_order &= it.pos >= self.last_moved_to;
-        } else if matches!(it.site, ReferenceSite::Declaration(_)) {
+        } else if matches!(
+            it.site,
+            ReferenceSite::Declaration(_) | ReferenceSite::Restored(_)
+        ) {
             self.is_visiting_order &= it.pos >= self.last_moved_to;
             self.moved_on_demand.push((self.all.len() as u32, it.from));
         } else {
@@ -426,6 +428,13 @@ impl<'t> Resolver<'t> {
                     .resolve(self.visible.tree, it.from, it.name, it.pos, wanted_flags)
                     .unwrap_or(NONE)
             }
+            ReferenceSite::Restored(index) => match self.variables.list.get(index as usize) {
+                Some(variable) => {
+                    it.from = variable.scope;
+                    index
+                }
+                None => NONE,
+            },
             _ => self.visible.resolve(it.name, it.pos, wanted_flags),
         };
         if let ReferenceSite::Expr(e) = it.site
@@ -1298,6 +1307,43 @@ impl<'f> Collector<'f, '_> {
         }
     }
 
+    /// svelte-eslint-parser's virtual references: see [`Adjustment::Add`].
+    fn restorations(&mut self, view: &View, variables: &Variables) {
+        let visited = self.file.text().len() as u32;
+        let adds = view.adjustments().iter().filter_map(|it| match *it {
+            Adjustment::Add { at, read, write } => Some((at, read, write)),
+            _ => None,
+        });
+        // The first variable declared at each position.
+        let mut first_at: Vec<(u32, u32)> = Vec::new();
+        if view
+            .adjustments()
+            .iter()
+            .any(|it| matches!(it, Adjustment::Add { .. }))
+        {
+            first_at.extend(
+                (variables.list.iter().zip(0u32..))
+                    .filter(|(it, _)| it.count > 0)
+                    .map(|(it, at)| (it.first_pos, at)),
+            );
+            crate::utils::sort::sort_by_key(&mut first_at, |it| it.0);
+        }
+        for (at, read, write) in adds {
+            let found = first_at.partition_point(|it| it.0 < at);
+            let Some(&(_, index)) = first_at.get(found).filter(|it| it.0 == at) else {
+                continue;
+            };
+            let Some(variable) = variables.list.get(index as usize) else {
+                continue;
+            };
+            let mut flags = ReferenceFlags::empty();
+            flags.set(ReferenceFlags::READ, read);
+            flags.set(ReferenceFlags::WRITE | ReferenceFlags::INIT_UNSET, write);
+            let site = ReferenceSite::Restored(index);
+            self.push_write(site, (at, visited), variable.name, flags, ExprId::NONE);
+        }
+    }
+
     /// `Referencer.referenceJsxPragma`, `referenceJsxFragment`: "Searches for a variable named
     /// "name" in the upper scopes and adds a pseudo-reference from itself to itself".
     fn jsx_pragmas(&mut self, tree: &ScopeTree, variables: &Variables) {
@@ -1417,6 +1463,68 @@ fn is_component_name(name: &[u8]) -> bool {
     }
 }
 
+/// `HAS_READ`, `HAS_WRITE`, `HAS_MODIFYING_WRITE`, as far as `it` sets them.
+#[inline(always)]
+fn marks_of(it: &RawReference) -> u32 {
+    (u32::from(it.flags.contains(ReferenceFlags::READ)) * HAS_READ)
+        | (u32::from(it.flags.contains(ReferenceFlags::WRITE)) * HAS_WRITE)
+        | (u32::from(it.flags.is_modifying()) * HAS_MODIFYING_WRITE)
+}
+
+/// Removes the references at the [`Adjustment::Hide`] positions from their variables' groups, and recomputes those
+/// variables' marks. `places` are sorted. `groups` and `starts` are `group_by`'s, and `marks` has one entry per
+/// variable.
+fn hide(
+    all: &[RawReference],
+    places: &[u32],
+    groups: &mut Vec<u32>,
+    starts: &mut Vec<u32>,
+    marks: &mut [u32],
+) {
+    let is_hidden = |i: u32| {
+        (all.get(i as usize))
+            .is_some_and(|it| it.variable != NONE && places.binary_search(&it.pos).is_ok())
+    };
+    let mut kept = Vec::with_capacity(groups.len());
+    let mut kept_starts = Vec::with_capacity(starts.len());
+    let ranges = starts.iter().zip(starts.iter().skip(1));
+    for (variable, (&start, &end)) in ranges.enumerate() {
+        kept_starts.push(kept.len() as u32);
+        let group = groups.get(start as usize..end as usize);
+        let (mut marked, mut is_changed) = (0, false);
+        for &i in group.unwrap_or_default() {
+            if is_hidden(i) {
+                is_changed = true;
+                continue;
+            }
+            kept.push(i);
+            marked |= all.get(i as usize).map_or(0, marks_of);
+        }
+        if let Some(mark) = marks.get_mut(variable).filter(|_| is_changed) {
+            *mark = marked;
+        }
+    }
+    kept_starts.push(kept.len() as u32);
+    *groups = kept;
+    *starts = kept_starts;
+}
+
+/// Makes the references at `at` in `all`, which is in source order, write as well as read, as svelte-eslint-parser does
+/// for `bind:`: [`Adjustment::ReadWrite`]. `marks` has one entry per variable.
+fn read_and_write(all: &mut [RawReference], at: u32, marks: &mut [u32]) {
+    let first = all.partition_point(|it| it.pos < at);
+    for it in all.get_mut(first..).unwrap_or_default() {
+        if it.pos != at {
+            break;
+        }
+        it.flags |= ReferenceFlags::READ | ReferenceFlags::WRITE | ReferenceFlags::INIT_UNSET;
+        let mark = marks_of(it);
+        if let Some(marked) = marks.get_mut(it.variable as usize) {
+            *marked |= mark;
+        }
+    }
+}
+
 /// The key that `group_by` groups by.
 #[derive(Copy, Clone)]
 enum Key {
@@ -1484,6 +1592,9 @@ impl References {
                 collector.jsx_pragmas(tree, variables);
             }
         }
+        if let Some(view) = file.view() {
+            collector.restorations(view, variables);
+        }
         // Each part is already nearly sorted. References at the same position keep their order.
         sort_by_pos(&mut collector.found);
         // More wouldn't fit next to the marks in `Resolver::counts`.
@@ -1493,7 +1604,7 @@ impl References {
             collector.type_names.clear();
         }
         let Resolver {
-            all,
+            mut all,
             expr_variables,
             mut counts,
             mut moved,
@@ -1501,7 +1612,7 @@ impl References {
             moved_on_demand,
             ..
         } = collector.merge(tree, variables);
-        let marks = counts.iter().skip(1).map(|it| it & !COUNT).collect();
+        let mut marks: Vec<u32> = counts.iter().skip(1).map(|it| it & !COUNT).collect();
         counts.iter_mut().for_each(|it| *it &= COUNT);
         let mut visiting_order: Vec<u32> = Vec::new();
         if !is_visiting_order {
@@ -1517,8 +1628,32 @@ impl References {
 
         moved.extend(moved_on_demand);
 
+        let adjustments = file.view().map(View::adjustments).unwrap_or_default();
+        for adjustment in adjustments {
+            if let Adjustment::ReadWrite { at } = *adjustment {
+                read_and_write(&mut all, at, &mut marks);
+            }
+        }
         let key = Key::Variable(variables.list.len());
-        let (by_variable, variable_starts) = group_by(&all, &visiting_order, counts, key);
+        let (mut by_variable, mut variable_starts) = group_by(&all, &visiting_order, counts, key);
+        let mut hidden: Vec<u32> = (adjustments.iter())
+            .filter_map(|it| match *it {
+                Adjustment::Hide { at } => Some(at),
+                Adjustment::Add { .. }
+                | Adjustment::ReadWrite { .. }
+                | Adjustment::Undeclare { .. } => None,
+            })
+            .collect();
+        hidden.sort_unstable();
+        if !hidden.is_empty() {
+            hide(
+                &all,
+                &hidden,
+                &mut by_variable,
+                &mut variable_starts,
+                &mut marks,
+            );
+        }
         References {
             all,
             visiting_order,

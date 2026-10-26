@@ -90,7 +90,8 @@ impl IframeMissingSandbox {
         let Some(first) = first else {
             // oxlint reports the tag name.
             let at = if is_oxlint { identifier.span() } else { jsx.opening_span() };
-            cx.report(at, if is_oxlint { MISSING_SANDBOX_PROP } else { ATTRIBUTE_MISSING }).by_selector();
+            let message = if is_oxlint { MISSING_SANDBOX_PROP } else { ATTRIBUTE_MISSING };
+            cx.report(at, message).by_selector(r#"JSXOpeningElement[name.name="iframe"]"#);
             return;
         };
         // oxlint only checks the first one.

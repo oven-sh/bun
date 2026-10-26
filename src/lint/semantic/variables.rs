@@ -355,6 +355,7 @@ fn entries_in_order(
     let mut add_named = |decl: Decl, owner: u32, name: Atom, pos: u32| {
         if !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos))
             && !unvisited.iter().any(|it| (it.0..it.1).contains(&pos))
+            && !file.view().is_some_and(|view| view.undeclares(pos))
         {
             in_order.push(u64::from(pos) << 32 | entries.len() as u64);
             entries.push(Entry {

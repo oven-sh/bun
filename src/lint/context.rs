@@ -1,11 +1,12 @@
 //! The context passed to a rule's listeners along with the node: the file, the rule's state, and the reporting API.
 
+use crate::ast::identifiers::Identifier;
 use crate::ast::{File, Ident, Name, Node, Packed};
 use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
 use crate::oxlint_help::{self, Edits, Found, Help, Part};
 use crate::oxlint_messages;
 use crate::rule::{Message, Meta, Plugin, Rule, When};
-use crate::span::{Position, Span, Spanned};
+use crate::span::{Domain, Position, Span, Spanned};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::{Cell, OnceCell, RefCell};
@@ -34,12 +35,22 @@ pub struct Diagnostic {
     /// True if ESLint was given a position instead of a range, so it reports no `endLine` or `endColumn`.
     pub has_no_end: bool,
     pub when: When,
+    /// For the node ESLint's listener was called with: how many of its ancestors have its range, which ESLint enters
+    /// before it. `None` if unknown.
+    pub nesting: Option<u8>,
+    /// For that node: how many of its parent's children that ESLint visits before it have its range, like the key of
+    /// `{a}` for the value.
+    pub twin: u8,
+    /// What the reporting listener was called with. Only merging with another linter's reports reads it.
+    pub listener: Listener,
     pub details: Option<Box<Details>>,
     /// oxlint's extra texts (help, label, note), unless `details` already has them. The ones with placeholders are
     /// filled in and written to `details` once the report is complete.
     pub constant_help: Option<Help>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
+    /// The text that `span`, the fix, the suggestions and the labels are in.
+    pub domain: Domain,
 }
 
 /// Fields that few diagnostics need: what an oxlint diagnostic has besides its message and position (an empty text
@@ -56,6 +67,10 @@ pub struct Details {
     pub(crate) claim: Option<Claim>,
     /// [`Report::listened_on`]
     pub listened_on: Option<Span>,
+    /// [`Report::by_selector`]
+    pub selector: Option<&'static str>,
+    /// [`Report::listened_as`]
+    pub listener_key: Option<Box<[u8]>>,
     /// The label at the reported position.
     pub first_label: Cow<'static, str>,
     /// The other labeled spans, each with its text.
@@ -73,6 +88,50 @@ impl Details {
     /// Adds another labeled span.
     pub fn push(&mut self, at: impl Spanned, text: impl Into<Cow<'static, str>>) {
         self.labels.push((at.span(), text.into()));
+    }
+}
+
+/// What ESLint calls the listener a report stands for with, and when: the position of its traversal when the report is
+/// created. The linter sets it when it calls a listener (the node of `On`, `enter`, `exit`, `svelte_node`), when a rule
+/// steps through a code path, and in [`Report::listened_on`]. It orders another linter's reports at one position among
+/// these ([`runner::listener_key`](crate::runner::listener_key)).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Listener {
+    pub(crate) node: Listened,
+    pub(crate) phase: Phase,
+}
+
+/// The node a listener is called with.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Listened {
+    /// In `finish`, or with something that isn't a node: a symbol, a literal.
+    #[default]
+    Unknown,
+    /// The ESTree node ESLint has at this program node's position, a function for a `Func`.
+    Node(Packed),
+    /// A node of the ESTree built from the program node: [`EsNode`](crate::selector::EsNode).
+    Es(crate::estree::PackedVNode),
+    /// The `Identifier` in that ESTree that an [`Identifier`](crate::ast::identifiers::Identifier) is: its node, its
+    /// range, and how many before it have that range.
+    Identifier(Packed, Span, u8),
+    Svelte(crate::ast::svelte::SvelteId),
+}
+
+/// When a listener is called.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Phase {
+    /// As the report says: [`Diagnostic::when`].
+    #[default]
+    AsReported,
+    Entering,
+    Leaving,
+    /// A code path event listener, which has no selector: when ESLint emits the event.
+    Event(When),
+}
+
+impl Listener {
+    pub(crate) const fn new(node: Listened, phase: Phase) -> Listener {
+        Listener { node, phase }
     }
 }
 
@@ -104,6 +163,11 @@ pub(crate) struct Sink {
     pub(crate) thrown: RefCell<Option<Thrown>>,
     /// [`File::jest_calls_in_oxlint_order`]
     pub(crate) jest_calls_in_oxlint_order: OnceCell<Box<[(Span, u32)]>>,
+    /// The listener being called, which a report gets as its [`Diagnostic::listener`].
+    pub(crate) listening: Cell<Listener>,
+    /// True if the runner records [`Sink::listening`] for each listener it calls: only where reports are merged with
+    /// another linter's reports, or with earlier reports.
+    pub(crate) notes_listeners: Cell<bool>,
     /// True if a rule has requested [`File::modules`], so the file may be linted again.
     pub(crate) has_requested_modules: Cell<bool>,
     /// The rules of the [pairs](crate::rule_set::Pairs) active on the file. Each entry is the rule's [`CxBase::rule`],
@@ -124,6 +188,15 @@ pub struct Claim {
 }
 
 impl Claim {
+    /// The same claim with its node at other positions: the ones in the file the linted text was built from.
+    pub fn moved(self, place: impl Fn(u32) -> u32) -> Claim {
+        Claim {
+            start: place(self.start),
+            end: place(self.end),
+            ..self
+        }
+    }
+
     /// The claim that the type-aware rule's report has for the same node.
     pub(crate) fn with_types(self) -> Claim {
         Claim {
@@ -169,6 +242,8 @@ pub(crate) struct Thrown {
     pub(crate) rule: u16,
     /// `None` if it's thrown before ESLint reaches any node, outside the rule's code.
     pub(crate) at: Option<u32>,
+    /// True while ESLint creates the rule (`create`): see [`Cx::throw_on_creation`].
+    pub(crate) on_creation: bool,
     /// `error.name`
     pub(crate) name: &'static str,
     /// `error.message`
@@ -217,7 +292,13 @@ impl<'a, R: Rule> Cx<'a, R> {
     /// ```
     #[inline]
     pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
-        self.base.report(at.span(), at.packed_node(), message)
+        let mut report = self
+            .base
+            .report(at.span(), at.packed_node(), at.domain(), message);
+        if let Some(diagnostic) = &mut report.diagnostic {
+            diagnostic.nesting = at.nesting();
+        }
+        report
     }
 
     /// Does what `throw new Error(message)` does in a JavaScript rule. It's for a rule that can't do its job, for
@@ -257,9 +338,27 @@ impl<'a, R: Rule> Cx<'a, R> {
         *self.base.file.sink.thrown.borrow_mut() = Some(Thrown {
             rule: self.base.rule,
             at: None,
+            on_creation: false,
             name: "Error",
             message: error.message().to_vec(),
         });
+    }
+
+    /// Does what `throw new Error(message)` does in a JavaScript rule's `create`, which ESLint calls before it visits
+    /// any node: with an ESLint config the run ends with `Error while loading rule '<id>': message`. A rule whose
+    /// `start` finds such a problem keeps it in its state and calls this from its first listener or `finish`.
+    #[cold]
+    pub fn throw_on_creation(&self, message: impl Into<Vec<u8>>) {
+        let mut thrown = self.base.file.sink.thrown.borrow_mut();
+        if thrown.as_ref().is_none_or(|it| !it.on_creation) {
+            *thrown = Some(Thrown {
+                rule: self.base.rule,
+                at: None,
+                on_creation: true,
+                name: "Error",
+                message: message.into(),
+            });
+        }
     }
 
     /// True if [`Cx::throw_for_selector`] has been called for this file, so none of its findings are reported.
@@ -291,7 +390,13 @@ impl<'a, R: Rule> Cx<'a, R> {
 impl<'a> CxBase<'a> {
     #[cold]
     #[inline(never)]
-    fn report(&self, span: Span, node: Option<Packed>, message: Message) -> Report<'a> {
+    fn report(
+        &self,
+        span: Span,
+        node: Option<Packed>,
+        domain: Domain,
+        message: Message,
+    ) -> Report<'a> {
         let (language, sink) = (self.file.language(), &self.file.sink);
         // The `bun:test` rules use oxlint's texts whatever the configuration.
         let has_help =
@@ -325,10 +430,14 @@ impl<'a> CxBase<'a> {
             has_explicit_node: false,
             has_no_end: false,
             when: self.meta.reports,
+            nesting: None,
+            twin: 0,
+            listener: sink.listening.get(),
             details: None,
             constant_help: help,
             fix: None,
             suggestions: Vec::new(),
+            domain,
         };
         Report {
             file: self.file,
@@ -369,6 +478,7 @@ impl<'a> CxBase<'a> {
             *thrown = Some(Thrown {
                 rule,
                 at,
+                on_creation: false,
                 name,
                 message,
             });
@@ -378,7 +488,7 @@ impl<'a> CxBase<'a> {
     #[cold]
     #[inline(never)]
     fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
-        let mut report = self.report(Span::empty(offset), None, message);
+        let mut report = self.report(Span::empty(offset), None, Domain::Linted, message);
         if let Some(diagnostic) = &mut report.diagnostic {
             diagnostic.has_no_end = true;
         }
@@ -414,6 +524,14 @@ impl<'a> Report<'a> {
         if self.reads_data {
             self.data.push((name, value));
         }
+    }
+
+    /// Reports only the start: ESLint's `loc` is a `{ line, column }` instead of a range.
+    pub fn without_end(mut self) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.has_no_end = true;
+        }
+        self
     }
 
     /// Reports `start` as the start, for the rare rule whose `loc.start` is a line and column that aren't in the text.
@@ -476,6 +594,84 @@ impl<'a> Report<'a> {
         if let Some(diagnostic) = &mut self.diagnostic {
             diagnostic.node = node.packed_node();
             diagnostic.has_explicit_node = true;
+            diagnostic.nesting = node.nesting();
+            match (node.packed_node(), node.svelte_id()) {
+                (Some(node), _) => diagnostic.listener.node = Listened::Node(node),
+                (None, Some(id)) => diagnostic.listener.node = Listened::Svelte(id),
+                (None, None) => {}
+            }
+        }
+        self
+    }
+
+    /// The original reports this from its listener for `node`'s type, on leaving it if `on_exit`, where this rule
+    /// listens to another node. It only affects where this report goes among another linter's reports. The order of
+    /// this rule's own reports stays.
+    pub fn listened_by(mut self, node: impl Spanned, on_exit: bool) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic
+            && let Some(node) = node.packed_node()
+        {
+            let phase = match on_exit {
+                true => Phase::Leaving,
+                false => Phase::Entering,
+            };
+            diagnostic.listener = Listener::new(Listened::Node(node), phase);
+        }
+        self
+    }
+
+    /// The original reports this from its listener for `key`, an esquery selector, which ESLint calls with `node`. It
+    /// only affects where this report goes among another linter's reports.
+    pub fn listened_as(mut self, node: crate::selector::EsNode<'_>, key: &[u8]) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            let phase = match key.ends_with(b":exit") {
+                true => Phase::Leaving,
+                false => Phase::Entering,
+            };
+            diagnostic.listener = Listener::new(Listened::Es(node.packed()), phase);
+            diagnostic.twin = node.twin();
+        }
+        if let Some(details) = self.details() {
+            details.listener_key = Some(key.into());
+        }
+        self
+    }
+
+    /// [`Report::listened_as`] with the ESLint tree node that `identifier` is, which is only looked up when reports at
+    /// one position are ordered or merged.
+    pub fn listened_as_identifier(mut self, identifier: Identifier<'_>, key: &[u8]) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            let phase = match key.ends_with(b":exit") {
+                true => Phase::Leaving,
+                false => Phase::Entering,
+            };
+            let node = identifier.node.packed();
+            let listened = Listened::Identifier(node, identifier.span, identifier.twin);
+            diagnostic.listener = Listener::new(listened, phase);
+        }
+        if self.file.sink.notes_listeners.get()
+            && let Some(details) = self.details()
+        {
+            details.listener_key = Some(key.into());
+        }
+        self
+    }
+
+    /// The original reports this from its listener for `key`, which ESLint calls with `node`: a node in its component
+    /// tree that's neither a program node nor in [`crate::ast::svelte`], like a `generics` type parameter's name. It
+    /// only affects where this report goes among another linter's reports.
+    pub fn listened_in_component(mut self, node: impl Spanned, key: &[u8]) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            let phase = match key.ends_with(b":exit") {
+                true => Phase::Leaving,
+                false => Phase::Entering,
+            };
+            diagnostic.listener = Listener::new(Listened::Unknown, phase);
+            diagnostic.nesting = node.nesting();
+        }
+        if let Some(details) = self.details() {
+            details.listened_on = Some(node.span());
+            details.listener_key = Some(key.into());
         }
         self
     }
@@ -526,11 +722,25 @@ impl<'a> Report<'a> {
         self
     }
 
-    /// The original rule listens with a selector that's more specific than a node kind. For a given node, ESLint calls
-    /// such a listener after the ones for the bare kind, regardless of rule order.
-    pub fn by_selector(mut self) -> Self {
+    /// The original reports this when the program's code path ends, which ESLint does after every `Program:exit`
+    /// listener.
+    pub fn after_the_end(mut self) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
-            diagnostic.when = When::EnteringBySelector;
+            diagnostic.when = When::AfterTheEnd;
+        }
+        self
+    }
+
+    /// The original rule reports this on entering a node, from a listener of `selector`, upstream's listener key, which
+    /// is more specific than a node kind. For a given node, ESLint calls the listeners with less specific selectors
+    /// first, by esquery's `attributeCount`, then its `identifierCount`, then by their text, regardless of rule order:
+    /// `*` before a kind, a kind before `Parent > Kind`, and that before `Kind[attribute]`.
+    pub fn by_selector(mut self, selector: &'static str) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.when = When::Entering;
+        }
+        if let Some(details) = self.details() {
+            details.selector = Some(selector);
         }
         self
     }
@@ -692,11 +902,15 @@ impl<'a> Report<'a> {
     /// [`IntoFix::into_fix`], plus the help that oxlint derives from the fix.
     #[inline(never)]
     fn merged<F: IntoFix>(&mut self, fix: F) -> Option<Fix> {
+        let domain = self
+            .diagnostic
+            .as_ref()
+            .map_or(Domain::Linted, |it| it.domain);
         if !self.derives_help_from_fix() {
-            return fix.into_fix(self.file);
+            return fix.into_fix(self.file, domain);
         }
         self.set_help_from_fix(fix.first_fix(), Edits::First);
-        let fix = fix.into_fix(self.file);
+        let fix = fix.into_fix(self.file, domain);
         self.set_help_from_fix(fix.as_ref(), Edits::All);
         fix
     }
@@ -722,7 +936,14 @@ impl<'a> Report<'a> {
             let end = characters.nth(256).map_or(text.len(), |it| it.0);
             [text.get(..end).unwrap_or(text), b"..."].concat()
         };
-        let (before, after) = (truncated(self.file.slice(fix.span)), truncated(&fix.text));
+        let domain = self
+            .diagnostic
+            .as_ref()
+            .map_or(Domain::Linted, |it| it.domain);
+        let (before, after) = (
+            truncated(self.file.slice_in(domain, fix.span)),
+            truncated(&fix.text),
+        );
         let help = match (fix.span.is_empty(), fix.text.is_empty()) {
             (true, _) => [b"Insert `", &after[..], b"`"].concat(),
             (false, true) if removes => [b"Remove `", &before[..], b"`."].concat(),

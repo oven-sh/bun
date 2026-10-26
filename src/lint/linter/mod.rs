@@ -46,6 +46,7 @@ pub use config::{
     LoadLegacy, LoadLocatedPlugin, LoadPlugin, NamedPlugin, ShadowedBuiltinPlugin,
     is_oxlint_plugin, oxlint_category,
 };
+pub use directives::{rules_configured_in_comments, rules_turned_on_in_comments};
 pub use fixer::{
     FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, breaks_syntax, is_parse_error,
     is_redeclaration, verify_and_fix,
@@ -56,8 +57,8 @@ pub use levn::parse_object as parse_levn_object;
 pub use levn::parse_rules as parse_levn_rules;
 pub(crate) use message::write_json_with;
 pub use message::{
-    Data, Details, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind,
-    Utf16Offsets, write_json, write_json_indented,
+    Data, Details, LintMessage, NotNumbers, ReportedOn, RuleId, Suggestion, Suppression,
+    SuppressionKind, Utf16Offsets, write_json, write_json_indented,
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
@@ -73,8 +74,9 @@ pub use resolved::{
 use resolved::{Prepared, Skipped, Slot};
 pub use schema::{OptionMistake, Step, mistake_in_options, schema_and_defaults};
 pub use syntax::{
-    Rejection, TypesInJavaScript, is_flow_file, may_be_misread, oxfmt_rejection, parse_error,
-    parse_errors, prettier_rejection, redeclarations, rejected_by_prettier_with,
+    Rejection, TypesInJavaScript, acorn_stops_at_typescript, is_flow_file, may_be_misread,
+    oxfmt_rejection, parse_error, parse_errors, prettier_rejection, redeclarations,
+    rejected_by_prettier_with,
 };
 
 use crate::ast::File;
@@ -85,11 +87,11 @@ use crate::oxlint_order::Ran as InOxlint;
 use crate::rule::{Meta, When};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::runner::{Enabled, Listeners, RuleEntry, each_bit};
-use crate::span::Span;
+use crate::span::{Domain, Span};
 use directives::ConfigComment;
 pub(crate) use directives::Label;
 use instances::Instances;
-use message::Locator;
+use message::{Locator, Positions};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -125,7 +127,8 @@ pub struct LintOptions<'o> {
     pub js_plugins: Option<&'o js_plugin::Host<'o>>,
     /// For [`Host::run_on_block`](js_plugin::Host::run_on_block).
     pub parse_again: Option<&'o js_plugin::ParseAgain<'o>>,
-    /// The file is being linted a second time, only for the rules that look at several files.
+    /// Set if the file is being linted a second time, only for the rules that look at several files, and the ones that
+    /// feed a plugin's processor ([`Meta::runs_again`](crate::rule::Meta::runs_again)).
     pub again: Option<Again<'o>>,
     /// The length of the prefix of the file's path that is ESLint's `physicalFilename`, if that isn't the whole path.
     /// In that case this is a block that a processor extracted from that file.
@@ -133,6 +136,19 @@ pub struct LintOptions<'o> {
     /// `false` if `options.respectEslintDisableDirectives` in an `.oxlintrc.json` is `false`. Then only comments that
     /// start with `oxlint` count.
     pub respects_eslint_comments: bool,
+    /// Set if the file is a program built from another file, a Svelte component. It says which reports are about
+    /// synthesized code rather than source text. Those are dropped before the file's comments are applied, so they're
+    /// neither shown nor use up an `eslint-disable`.
+    pub is_synthetic: Option<&'o (dyn Fn(Span) -> bool + Sync)>,
+    /// The reports of the rules that don't run natively on the file but ran in ESLint's own `Linter`, before comments
+    /// were applied. They're merged with the native rules' reports before the file's comments are applied to all of
+    /// them, so the JavaScript plugin rules and the rules that need types count as having run.
+    ///
+    /// This is the one place where messages of every origin meet: the native rules' messages in the linted text, a
+    /// component's rules' messages in the component ([`Domain::Original`](crate::span::Domain::Original)), and these,
+    /// each in its own domain, where the ones in the component have their [anchor](LintMessage::anchor). The comments
+    /// are applied to all of them at once, and only then is a comment that applies to none of them reported.
+    pub residual: Option<&'o [LintMessage]>,
 }
 
 /// See [`LintOptions::again`]. Only the rules with [`Meta::needs_modules`](crate::rule::Meta::needs_modules) run. The
@@ -163,6 +179,8 @@ impl Default for LintOptions<'_> {
             again: None,
             physical_path_len: None,
             respects_eslint_comments: true,
+            is_synthetic: None,
+            residual: None,
         }
     }
 }
@@ -186,14 +204,29 @@ pub struct LintResult {
     /// that its schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a JavaScript plugin's rule throws.
     /// The rest of the result is then empty.
     pub thrown: Option<Vec<u8>>,
+    /// When ESLint's own `Linter` threw [`thrown`](Self::thrown), if its worker knows.
+    pub thrown_while: Option<ThrownWhile>,
     /// [`File::known_line_starts`], for the caller to keep.
     pub line_starts: Option<Vec<u32>>,
     /// With an oxlint config that has a rule for which the file may be linted again: each rule message's position in
     /// oxlint's run, indexed by [`LintMessage::reported`] minus 1.
     pub run_keys: Vec<(u64, u128)>,
+    /// The reports the file's plugin processor removed. If the file is linted again for the rules that need modules
+    /// ([`Again`]), they're reported again so the processor removes them from the complete set.
+    pub processed: Vec<LintMessage>,
     /// Number of syntax errors in the file that didn't prevent linting. [`verify_and_fix`] reverts fixes that add one.
     /// The code that applies fixes adds the [`redeclarations`] to it.
     pub tolerated_errors: usize,
+}
+
+/// When ESLint threw while linting a file with a subset of the rules.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ThrownWhile {
+    /// It was setting up the rule with this id: creating it, or reading the listeners it returned. It creates the rules
+    /// in config order, so the ones after it weren't created.
+    SettingUp(Box<[u8]>),
+    /// Every rule was set up: ESLint was parsing the listener keys as selectors, or calling the listeners.
+    AfterSetUp,
 }
 
 /// `S` is its set of rules.
@@ -530,6 +563,7 @@ impl<S: RuleSet> Linter<S> {
         let is_plain = !has_fatal_error
             && options.rule_filter.is_none()
             && options.again.is_none()
+            && !file.has_types_elsewhere()
             && (config.linter.no_inline_config
                 || !configures_in_comments
                 || !(comments.iter().filter(is_understood)).any(|it| it.label == Label::Rules));
@@ -717,8 +751,9 @@ impl<S: RuleSet> Linter<S> {
                 ..LintResult::default()
             };
         }
-        // Rules that need types are skipped when there are none.
-        let skips_typed_rules = file.types.is_none() && ignores_skipped_rules;
+        // Rules that need types are skipped when there are none, unless they ran in ESLint.
+        let skips_typed_rules =
+            file.types.is_none() && ignores_skipped_rules && options.residual.is_none();
         if skips_typed_rules && is_plain {
             if has_directives {
                 rules_to_ignore.extend(prepared.typed.iter().copied().map(RuleId::Known));
@@ -729,19 +764,30 @@ impl<S: RuleSet> Linter<S> {
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
             rules_to_ignore.extend(without_types.map(|it| RuleId::Known(it.entry.meta)));
         }
-        if options.js_plugins.is_none() {
+        if options.js_plugins.is_none() && options.residual.is_none() {
             let skipped = running_js.iter();
             rules_to_ignore.extend(skipped.map(|it| RuleId::Js(Arc::clone(&it.configured.rule))));
         }
         let before_previous = problems.len();
         if let Some(again) = options.again {
-            running.retain(|it| it.entry.meta.needs_modules);
-            let is_of_another_rule = |it: &&LintMessage| {
-                (it.message_id.is_some() || is_thrown_error(it))
-                    && !matches!(&it.rule_id, Some(RuleId::Known(meta)) if meta.needs_modules)
+            running.retain(|it| it.entry.meta.runs_again());
+            let runs_again = |it: &LintMessage| match &it.rule_id {
+                Some(RuleId::Known(meta) | RuleId::Named(meta, _)) => meta.runs_again(),
+                _ => false,
             };
-            let previous = (again.previous.messages.iter()).chain(&again.previous.suppressed);
+            let is_of_another_rule = |it: &&LintMessage| {
+                (it.message_id.is_some() || is_thrown_error(it)) && !runs_again(it)
+            };
+            let previous = (again.previous.messages.iter())
+                .chain(&again.previous.suppressed)
+                .chain(&again.previous.processed);
             problems.extend(previous.filter(is_of_another_rule).map(|it| LintMessage {
+                suppressions: Vec::new(),
+                ..it.clone()
+            }));
+        }
+        if let Some(residual) = options.residual {
+            problems.extend(residual.iter().map(|it| LintMessage {
                 suppressions: Vec::new(),
                 ..it.clone()
             }));
@@ -815,12 +861,19 @@ impl<S: RuleSet> Linter<S> {
         }
         // A rule that has nothing to listen for in the file isn't started.
         if !is_plain {
+            // They ran in the typed program, and count as having run here.
+            let runs_elsewhere = |it: &Running<S>| {
+                file.has_types_elsewhere() && it.entry.meta.runs_where_types_are()
+            };
             enabled.extend(running.iter().zip(0..).map(|(it, place)| Enabled {
                 rule: match &it.rule {
                     RuleRef::Shared(rule) => *rule,
                     RuleRef::Own(rule) => &**rule,
                 },
-                severity: it.severity,
+                severity: match runs_elsewhere(it) {
+                    true => Severity::Off,
+                    false => it.severity,
+                },
                 place,
             }));
             let mut on = RuleBits::EMPTY;
@@ -871,6 +924,10 @@ impl<S: RuleSet> Linter<S> {
         file.sink.wants_help.set(options.wants_help);
         file.sink.drops_messages.set(!options.wants_messages);
         (file.sink.drops_fix_texts).set(!options.wants_fix_texts);
+        // What `merges` and `keeps_keys` below read.
+        let notes_listeners =
+            options.residual.is_some() || options.again.is_some() || prepared.needs_modules;
+        file.sink.notes_listeners.set(notes_listeners);
         let ran = |index: usize| -> Option<Ran> {
             if !is_plain {
                 return running.get(index).map(Running::ran);
@@ -894,10 +951,11 @@ impl<S: RuleSet> Linter<S> {
             let error = ThrownError {
                 error_text: &error_text,
                 at: match thrown.at {
+                    _ if thrown.on_creation => js_plugin::ThrownAt::Create,
                     Some(at) => js_plugin::ThrownAt::Line(file.line_of(at)),
                     None => js_plugin::ThrownAt::Unknown,
                 },
-                rule: thrown.at.map(|_| &id[..]),
+                rule: (thrown.at.is_some() || thrown.on_creation).then_some(&id[..]),
             };
             match error.outcome(file.path(), config) {
                 Ok(problem) => {
@@ -919,6 +977,11 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
+        // A component's rules report in the component, where nothing is synthesized.
+        if let Some(is_synthetic) = options.is_synthetic {
+            diagnostics.retain(|it| it.domain == Domain::Original || !is_synthetic(it.span));
+        }
+        let in_program = |offset: u32| file.view().map_or(offset, |it| it.in_program(offset));
         problems.reserve(diagnostics.len());
         if wants_positions {
             file.expect_positions(diagnostics.len());
@@ -970,7 +1033,7 @@ impl<S: RuleSet> Linter<S> {
                     0
                 };
                 let when: Vec<When> = rules.map_while(|it| Some(in_oxlint(it)?.when)).collect();
-                crate::runner::sorted(&diagnostics, &when)
+                crate::runner::sorted(file, &diagnostics, &when, &in_program)
             }
             false => (0..diagnostics.len() as u32).collect(),
         };
@@ -985,6 +1048,16 @@ impl<S: RuleSet> Linter<S> {
             }
         }
         let optional_locator = wants_positions.then_some(&locator);
+        let component = std::cell::OnceCell::new();
+        // Where ESLint has the native rules' reports among the reports at the same position from the rules that only it
+        // runs, and among the reports from before the file is linted again.
+        let merges = (options.residual.is_some() || options.again.is_some())
+            && wants_positions
+            && !in_run_order;
+        // The reports the file is linted again for are ordered among the current ones.
+        let keeps_keys = wants_positions && !in_run_order && prepared.needs_modules;
+        let before_native = problems.len();
+        let mut native_keys = Vec::new();
         // Caches `config::oxlint_changes` for the last rule and `messageId` that had a fix or a suggestion.
         let mut changes = (None, config::OxlintChanges::default());
         for (at, step) in order.into_iter().zip(1..) {
@@ -995,6 +1068,30 @@ impl<S: RuleSet> Linter<S> {
                 continue;
             };
             let claim = diagnostic.details.as_deref().and_then(|it| it.claim);
+            let native_key = (merges || keeps_keys).then(|| {
+                let (visit, key) = crate::runner::listener_key(diagnostic, file);
+                let rank = rule.configured.map_or(config.rules.len(), |it| {
+                    let at = config.rules.iter().position(|of| std::ptr::eq(of, it));
+                    at.unwrap_or(config.rules.len())
+                });
+                (visit, key, 2 * rank as u64 + 1)
+            });
+            let reported_on = native_key
+                .as_ref()
+                .filter(|_| keeps_keys)
+                .map(|it| ReportedOn {
+                    when: it.0.when,
+                    is_outer: it.0.is_outer,
+                    end: it.0.end,
+                    nesting: it.0.nesting,
+                    twin: it.0.twin,
+                    selector: it.1.as_deref().map(Box::from),
+                    stage: it.0.stage,
+                    rank: Some(it.2),
+                });
+            if let Some(native_key) = native_key.filter(|_| merges) {
+                native_keys.push(native_key);
+            }
             let changes_something = diagnostic.fix.is_some() || !diagnostic.suggestions.is_empty();
             let follows_oxlint = changes_something && file.language().is_oxlint;
             let key = Some((diagnostic.rule, diagnostic.message_id));
@@ -1004,13 +1101,27 @@ impl<S: RuleSet> Linter<S> {
                     config::oxlint_changes(rule.reported_as(), diagnostic.message_id),
                 );
             }
+            let message = match diagnostic.domain {
+                Domain::Linted => to_message(diagnostic, rule.reported_as(), optional_locator),
+                Domain::Original => {
+                    let places_in_component =
+                        component.get_or_init(|| file.svelte().map(|it| it.places()));
+                    let in_component = places_in_component.as_ref().filter(|_| wants_positions);
+                    LintMessage {
+                        anchor: optional_locator
+                            .map(|it| it.position(in_program(diagnostic.span.start))),
+                        ..to_message(diagnostic, rule.reported_as(), in_component)
+                    }
+                }
+            };
             problems.push(LintMessage {
                 reported: match in_run_order {
                     true => step + before_in_run(step),
                     false => ranks.get(at as usize).copied().unwrap_or(0),
                 },
                 claim,
-                ..to_message(diagnostic, rule.reported_as(), optional_locator)
+                reported_on,
+                ..message
             });
             let Some(message) =
                 (problems.last_mut()).filter(|_| changes_something || rule.name().is_some())
@@ -1100,13 +1211,24 @@ impl<S: RuleSet> Linter<S> {
                 problems.retain(|it| !it.rule_id.as_ref().is_some_and(runs_as_js_rule_in_oxlint));
             }
         }
+        // The earlier reports are in ESLint's order, including the reports of the rules that only it runs.
+        if merges && before_previous < before_js {
+            let native = before_native..before_native + native_keys.len();
+            merge_with_residual(
+                &mut problems,
+                before_previous..before_js,
+                native,
+                &native_keys,
+                config,
+            );
+        }
         // This has to happen before the comments are applied, because they're compared with the position where a report
         // is shown.
         if file.language().has_no_foreign_config {
             problems.iter_mut().for_each(LintMessage::clamp_to_file);
         }
         if wants_positions && !in_run_order {
-            LintMessage::sort(&mut problems);
+            LintMessage::sort_in_linted(&mut problems);
         }
 
         let report_unused = (options.report_unused_disable_directives)
@@ -1187,6 +1309,116 @@ impl<S: RuleSet> Linter<S> {
     }
 }
 
+/// Merges the messages at `residual` in `problems`, from the rules that only ESLint runs, into the ones at `native`,
+/// from the native rules, which are in [`runner::sorted`](crate::runner::sorted)'s order. ESLint sorts a file's
+/// messages by line and column only, which leaves messages that start at one position in traversal order, whichever
+/// rule reported them: on entering a node before on leaving it, the outer node first on entering and last on leaving,
+/// and one node's listeners in selector order and then config rule order. So at one position each residual message
+/// comes after the native ones ESLint would have reported before it by [`Order`](crate::runner::Order), based on what
+/// it was [reported on](LintMessage::reported_on) and its rule's position in the config, and what each native one was
+/// reported on ([`listener_key`](crate::runner::listener_key)), both in file positions. A message without that
+/// information comes first, as before. Each origin keeps its own order. The messages end up at the end of `native`.
+fn merge_with_residual(
+    problems: &mut Vec<LintMessage>,
+    residual: std::ops::Range<usize>,
+    native: std::ops::Range<usize>,
+    native_keys: &[NativeKey],
+    config: &ResolvedConfig,
+) {
+    use crate::runner::{Order, Visit};
+    // The shown messages, then the ones comments suppress.
+    if let Some(residual_messages) = problems.get_mut(residual.clone()) {
+        LintMessage::sort_in_linted(residual_messages);
+    }
+    let (Some(residual_messages), Some(native_messages)) =
+        (problems.get(residual.clone()), problems.get(native.clone()))
+    else {
+        return;
+    };
+    let unconfigured = 2 * config.rules.len() as u64 + 2;
+    // For the residual message at index `r`.
+    let visit_of = |r: usize| {
+        let it = residual_messages.get(r)?;
+        let reported_on = it.reported_on.as_ref()?;
+        let rank = reported_on.rank.unwrap_or_else(|| match &it.rule_id {
+            Some(RuleId::Js(rule)) => config
+                .js_rule(rule)
+                .map_or(unconfigured, |it| 2 * it.position as u64),
+            _ => unconfigured,
+        });
+        let visit = Visit {
+            when: reported_on.when,
+            is_outer: reported_on.is_outer,
+            end: reported_on.end,
+            nesting: reported_on.nesting,
+            twin: reported_on.twin,
+            selector: reported_on.selector.as_deref(),
+            stage: reported_on.stage,
+        };
+        Some((visit, rank))
+    };
+    // If only one side knows how the nodes nest, neither uses it. Likewise, the listener key's text only decides if
+    // both sides have a key.
+    let comes_before = |(a, a_rank): (Visit<'_>, u64), (b, b_rank): (Visit<'_>, u64)| {
+        let knows = a.nesting.is_some() && b.nesting.is_some();
+        let a = Visit {
+            nesting: a.nesting.filter(|_| knows),
+            ..a
+        };
+        let b = Visit {
+            nesting: b.nesting.filter(|_| knows),
+            ..b
+        };
+        let by_text = a.selector.is_some() && b.selector.is_some();
+        Order::of(a, a_rank)
+            .cmp_by(&Order::of(b, b_rank), by_text)
+            .is_lt()
+    };
+    let mut merged = Vec::with_capacity(residual.len() + native.len());
+    let (mut r, mut n) = (0, 0);
+    while r < residual_messages.len() || n < native_messages.len() {
+        let takes_residual = match (residual_messages.get(r), native_messages.get(n)) {
+            (Some(a), Some(b)) => match a.place_in_linted().cmp(&b.place_in_linted()) {
+                std::cmp::Ordering::Equal => visit_of(r).is_none_or(|key| {
+                    native_keys.get(n).is_none_or(|(visit, selector, rank)| {
+                        let visit = Visit {
+                            selector: selector.as_deref(),
+                            ..*visit
+                        };
+                        comes_before(key, (visit, *rank))
+                    })
+                }),
+                order => order.is_lt(),
+            },
+            (a, _) => a.is_some(),
+        };
+        if takes_residual {
+            merged.push(residual.start + r);
+            r += 1;
+        } else {
+            merged.push(native.start + n);
+            n += 1;
+        }
+    }
+    let start = residual.start;
+    let mut taken: Vec<Option<LintMessage>> =
+        (problems.drain(start..native.end)).map(Some).collect();
+    // The messages between the two stay before them.
+    let order = (residual.end..native.start).chain(merged);
+    let placed: Vec<LintMessage> = order
+        .filter_map(|at| taken.get_mut(at - start)?.take())
+        .collect();
+    problems.splice(start..start, placed);
+}
+
+/// What [`merge_with_residual`] knows about a native rule's message: what it was reported on, the listener's key, and
+/// the rule's position in the config.
+type NativeKey = (
+    crate::runner::Visit<'static>,
+    Option<Cow<'static, [u8]>>,
+    u64,
+);
+
 /// A fix that becomes a suggestion uses the report's message as its description.
 fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
     if changes.are_dropped {
@@ -1218,7 +1450,7 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
 fn to_message(
     diagnostic: &mut Diagnostic,
     rule: &'static Meta,
-    locator: Option<&Locator>,
+    locator: Option<&impl Positions>,
 ) -> LintMessage {
     let position = |offset: u32| locator.map_or((0, 0), |it| it.position(offset));
     let details = diagnostic.details.take();
@@ -1265,6 +1497,9 @@ fn to_message(
         }),
         constant_help: diagnostic.constant_help,
         reported: 0,
+        domain: diagnostic.domain,
+        anchor: None,
+        reported_on: None,
     }
 }
 
@@ -1294,6 +1529,9 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
         details: None,
         constant_help: None,
         reported: 0,
+        domain: Domain::Linted,
+        anchor: None,
+        reported_on: None,
     }
 }
 
@@ -1305,10 +1543,26 @@ fn js_failure(
     path: &[u8],
     config: &ResolvedConfig,
 ) -> Result<LintMessage, Vec<u8>> {
+    js_plugin_failure(
+        failure,
+        rule.map(|it| &it.configured.rule.id[..]),
+        path,
+        config,
+    )
+}
+
+/// What happens to `failure`, from a JavaScript plugin rule that ran on `path` outside the linter, as `rule`: see
+/// [`js_failure`].
+pub fn js_plugin_failure(
+    failure: &js_plugin::Failure,
+    rule: Option<&[u8]>,
+    path: &[u8],
+    config: &ResolvedConfig,
+) -> Result<LintMessage, Vec<u8>> {
     let error = ThrownError {
         error_text: &failure.message,
         at: failure.at,
-        rule: rule.map(|it| &it.configured.rule.id[..]),
+        rule,
     };
     error.outcome(path, config)
 }
@@ -1382,6 +1636,9 @@ impl ThrownError<'_> {
             details: None,
             constant_help: None,
             reported: 0,
+            domain: Domain::Linted,
+            anchor: None,
+            reported_on: None,
         })
     }
 }
@@ -1634,7 +1891,9 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             };
             let existing = match rule {
                 Named::Native(entry) => self.config.rule(entry).map(Existing::Native),
-                Named::Instance(rule, _) => Some(Existing::Native(rule)),
+                Named::Instance(rule, _) => {
+                    (!rule.is_unconfigured).then_some(Existing::Native(rule))
+                }
                 Named::Js(rule) => self.config.js_rule(rule).map(Existing::Js),
             };
             // A comment that only has a severity keeps the config's options.

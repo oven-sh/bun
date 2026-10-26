@@ -16,7 +16,10 @@
 //! So a file where no rule returns a listener only costs its text. This side keeps no per-realm state: a realm that's
 //! missing a plugin, a rule's options or a selector's number asks for it.
 //!
-//! All offsets the program sees are UTF-16 code units and don't count the byte order mark.
+//! All offsets the program sees are UTF-16 code units and don't count the byte order mark (`units.rs`).
+//!
+//! Rules don't see a Svelte component's program: they see svelte-eslint-parser's tree, with the component's text and
+//! positions, which `crate::estree` builds from the program and the component together, and its scopes (`scopes.rs`).
 
 mod ast;
 mod calls;
@@ -31,10 +34,12 @@ mod reports;
 mod rules;
 mod schema;
 mod scopes;
+mod svelte;
 mod tokens;
+mod units;
 pub(crate) mod wire;
 
-pub use engine::{Demand, Engine, HEAVY, Serve, Vm, Work};
+pub use engine::{Demand, Engine, HEAVY, Lanes, Serve, Vm, Work};
 pub use eslint::{Configuration, EslintFailure, Linted, Text};
 pub use host::{Failure, Host, Loading, ParseAgain, Report, Suggested, ThrownAt};
 pub use prettier::Unformatted;

@@ -460,7 +460,7 @@ fn failure_string_start(file: &File<'_>, other: Option<Span>) -> String {
         }
         Some(other) => format!(
             "This overload and the one on line {} can be combined into one signature",
-            file.line_of(other.start)
+            file.display_position(other.start).line
         ),
     }
 }
@@ -682,6 +682,9 @@ impl Rule for UnifiedSignatures {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if !ast_utils::is_program(Node::File(cx.file())) {
+            return;
+        }
         self.check_scope(
             cx.file().body().iter().filter_map(overload_of_statement),
             None,

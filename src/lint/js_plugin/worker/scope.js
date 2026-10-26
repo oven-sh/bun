@@ -82,9 +82,10 @@ const eslintScopeLayout = once(() => {
 
   class Definition {}
   class ParameterDefinition extends Definition {}
-  // By the `DeclarationKind`.
+  // Indexed by `DeclarationKind`, then svelte-eslint-parser's `ComputedVariable`, which is a plain object.
   const definitionClasses = new Array(11).fill(Definition);
   definitionClasses[1] = ParameterDefinition;
+  definitionClasses.push(Object);
 
   class Reference {
     isStatic() {
@@ -273,6 +274,8 @@ const typescriptLayout = once(() => {
     class TSModuleNameDefinition extends DefinitionBase {},
     class TypeDefinition extends DefinitionBase {},
     class ImplicitGlobalVariableDefinition extends DefinitionBase {},
+    // svelte-eslint-parser's `ComputedVariable`, which is a plain object.
+    Object,
   ];
 
   // The flags of a reference, which the real one has in private fields, are in the message.

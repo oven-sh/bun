@@ -10,10 +10,12 @@ use super::wire::{self, result};
 use crate::context::Severity;
 use crate::fix::{Fix, SuggestionKind};
 use crate::linter::{
-    Data, LintMessage, NotNumbers, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
-    write_json,
+    Data, LintMessage, NotNumbers, ReportedOn, RuleId, Suggestion, Suppression, SuppressionKind,
+    Utf16Offsets, write_json,
 };
 use crate::options::Json;
+use crate::rule::When;
+use crate::runner::Stage;
 use crate::span::Span;
 use bun_core::strings::Utf16OffsetTable;
 use std::borrow::Cow;
@@ -59,6 +61,8 @@ pub enum Route {
 pub struct Processor {
     /// No module exports it, so a realm has to run the whole config file to get it.
     pub needs_config_file: bool,
+    /// Set if it's named `plugin/name`: the file of the module that exports the plugin, if any, and the name.
+    pub named_plugin: Option<(Option<Box<[u8]>>, Box<[u8]>)>,
     id: u32,
     /// `[id, location]`
     json: Box<[u8]>,
@@ -73,9 +77,13 @@ impl Processor {
         write_json(&mut json, location);
         json.push(b']');
         let is_in_configuration = |it: &Json| it.get(b"config").is_some();
+        let plugin = location.get(b"plugin");
+        let module = plugin.and_then(|it| it.get(b"module")?.as_str());
+        let name = location.get(b"name").and_then(Json::as_str);
         Arc::new(Processor {
             needs_config_file: is_in_configuration(location)
-                || location.get(b"plugin").is_some_and(is_in_configuration),
+                || plugin.is_some_and(is_in_configuration),
+            named_plugin: name.map(|name| (module.map(Box::from), Box::from(name))),
             id,
             json: json.into(),
         })
@@ -173,8 +181,40 @@ fn message_of(json: &Json, offsets: &Utf16OffsetTable, find_rule: &FindRule) -> 
             line: matches!(json.get(b"line"), Some(Json::Null)),
             column: matches!(json.get(b"column"), Some(Json::Null)),
         },
+        reported_on: reported_on(json.get(b"reportedOn"), |it| offsets.to_bytes(it)),
         ..LintMessage::default()
     }
+}
+
+/// `reportedOn`, which the rules that only ESLint runs on a file add: `[when, isOuter, end, nesting, selector, stage,
+/// twin]` (`worker/eslint.js`).
+pub(super) fn reported_on(
+    json: Option<&Json>,
+    to_bytes: impl Fn(u32) -> u32,
+) -> Option<ReportedOn> {
+    let [when, is_outer, end, nesting, selector, stage, twin] = json?.as_array()? else {
+        return None;
+    };
+    Some(ReportedOn {
+        when: match number(Some(when))? {
+            0 => When::Entering,
+            1 => When::Leaving,
+            2 => When::LeavingCodePath,
+            3 => When::AtTheEnd,
+            _ => When::AfterTheEnd,
+        },
+        is_outer: number(Some(is_outer))? == 1,
+        end: to_bytes(number(Some(end))?),
+        nesting: Some(u8::try_from(number(Some(nesting))?).unwrap_or(u8::MAX)),
+        twin: u8::try_from(number(Some(twin))?).unwrap_or(u8::MAX),
+        selector: selector.as_str().map(Box::from),
+        stage: match number(Some(stage))? {
+            0 => Stage::Event,
+            1 => Stage::Selector,
+            _ => Stage::Ending,
+        },
+        rank: None,
+    })
 }
 
 /// ESLint's `_distinguishSuppressedMessages` for `messages`, an array of its messages about `text`. Returns the shown

@@ -84,7 +84,7 @@ fn check<'a>(block: Stmt<'a>, body: List<'a, Stmt<'a>>, cx: &mut Cx<'a, NoLoneBl
             None => return,
         },
         Node::Func(func) => (true, func.body_statements().is_some_and(has_one)),
-        Node::File(_) => (false, false),
+        parent @ Node::File(_) if ast_utils::is_program(parent) => (false, false),
         Node::Case(case) if !has_one(case.body()) => (false, false),
         _ => return,
     };

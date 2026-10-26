@@ -18,6 +18,7 @@ struct LintReportState {
     void endFile()
     {
         bytes.shrink(0);
+        context.shrink(0);
         fixer.clear();
     }
 
@@ -100,9 +101,11 @@ struct LintReportState {
 
     // The reports about the current file that Rust hasn't been given yet: see src/lint/js_plugin/reports.rs.
     WTF::Vector<uint8_t> bytes;
+    // Encoded listener provenance for the next report of a hosted component rule.
+    WTF::Vector<uint8_t> context;
 };
 
-// Adds `reporter` and `sendReports` to the `native` object of the program in src/lint/js_plugin/worker.
+// Adds `reporter`, `reportContext` and `sendReports` to the `native` object of the program in src/lint/js_plugin/worker.
 void addLintReportFunctions(JSC::JSGlobalObject*, JSC::JSObject* native);
 
 } // namespace Bun

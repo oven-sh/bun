@@ -41,6 +41,89 @@ beforeAll(async () => {
 
 afterAll(() => dir?.[Symbol.dispose]());
 
+// A component case whose message a comment suppresses, as `extract-svelte.ts` records it, and the same case with one
+// field of that message changed, which fails.
+const suppressed = {
+  severity: 2,
+  messageId: "unexpected",
+  message: "Unexpected `{@debug}`.",
+  line: 1,
+  column: 80,
+  endLine: 1,
+  endColumn: 90,
+  fix: null,
+  suggestions: [
+    {
+      messageId: "suggestRemove",
+      desc: "Remove `{@debug}` from the source",
+      fix: { range: [79, 89], text: "" },
+      output: "<script>/* eslint-disable svelte/no-at-debug-tags -- probe */ let a=1;</script>",
+    },
+  ],
+  suppressions: [{ kind: "directive", justification: "probe" }],
+};
+test.skipIf(!hasRunner).concurrent.each([
+  ["as recorded", {}, "1 cases passed, 0 failed"],
+  ["of another rule", { ruleId: "svelte/no-at-html-tags" }, "0 cases passed, 1 failed"],
+  ["with another message id", { messageId: "other" }, "0 cases passed, 1 failed"],
+  ["ending elsewhere", { endColumn: 91 }, "0 cases passed, 1 failed"],
+  [
+    "with another suggestion",
+    { suggestions: [{ ...suppressed.suggestions[0], fix: { range: [0, 1], text: "" } }] },
+    "0 cases passed, 1 failed",
+  ],
+  ["with a fix", { fix: { range: [79, 89], text: "" } }, "0 cases passed, 1 failed"],
+])("a suppressed message of a component %s", async (_, changed, outcome) => {
+  const code = "<script>/* eslint-disable svelte/no-at-debug-tags -- probe */ let a=1;</script>{@debug a}";
+  const fixture = {
+    plugin: "svelte",
+    rule: "no-at-debug-tags",
+    meta: {
+      type: "problem",
+      fixable: null,
+      hasSuggestions: true,
+      deprecated: false,
+      recommended: true,
+      requiresTypeChecking: false,
+      extendsBaseRule: null,
+      messages: { unexpected: "Unexpected `{@debug}`.", suggestRemove: "Remove `{@debug}` from the source" },
+      schema: [],
+      defaultOptions: null,
+    },
+    cases: [
+      {
+        valid: true,
+        name: "suppressed",
+        code,
+        filename: "a.svelte",
+        options: [],
+        languageOptions: { parser: "svelte-eslint-parser" },
+        settings: null,
+        typeAware: false,
+        tsconfig: null,
+        skip: null,
+        messages: [],
+        suppressed: [{ ...suppressed, ...changed }],
+        output: null,
+      },
+    ],
+  };
+  const body = JSON.stringify(fixture);
+  using dir = tempDir("lint-conformance-suppressed", {
+    "bundle.txt": `=== /svelte/no-at-debug-tags.json ${Buffer.byteLength(body)}\n${body}\n`,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "lint", "--run-eslint-tests", join(String(dir), "bundle.txt"), "--plugin=svelte", "--threads=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain(outcome);
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(!hasRunner).each(suites)(
   "the $suite suite has no new failures",
   async ({ suite, expected: file, every }) => {

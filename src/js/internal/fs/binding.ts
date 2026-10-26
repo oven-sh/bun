@@ -72,16 +72,7 @@ type PathPromiseMethod =
   | "writeFile";
 
 type FdPromiseMethod =
-  | "close"
-  | "exists"
-  | "fchmod"
-  | "fchown"
-  | "fdatasync"
-  | "fstat"
-  | "fsync"
-  | "ftruncate"
-  | "futimes"
-  | "open";
+  "close" | "exists" | "fchmod" | "fchown" | "fdatasync" | "fstat" | "fsync" | "ftruncate" | "futimes" | "open";
 
 type Promisified = { [K in FdPromiseMethod]: NodeFS[K]["__promisify__"] };
 
@@ -89,9 +80,7 @@ type WatchListener = (eventType: string, filename: string | Buffer | undefined) 
 type WatchFileListener = (curr: import("node:fs").Stats, prev: import("node:fs").Stats) => void;
 
 interface FsBinding
-  extends Pick<NodeFS, SyncMethod | "Dirent" | "Stats">,
-    Pick<NodeFSPromises, PathPromiseMethod>,
-    Promisified {
+  extends Pick<NodeFS, SyncMethod | "Dirent" | "Stats">, Pick<NodeFSPromises, PathPromiseMethod>, Promisified {
   cp(src: string, dest: string, recursive: boolean, errorOnExist: boolean, force: boolean, mode: number): Promise<void>;
   cpSync(src: string, dest: string, recursive: boolean, errorOnExist: boolean, force: boolean, mode: number): void;
   read(
@@ -106,12 +95,12 @@ interface FsBinding
   realpathNativeSync: NodeFS["realpathSync"]["native"];
   rmdir(path: import("node:fs").PathLike, options?: import("node:fs").RmOptions): Promise<void>;
   rmdirSync(path: import("node:fs").PathLike, options?: import("node:fs").RmOptions): void;
-  watch(path: string, options: import("node:fs").WatchOptions, listener: WatchListener): $ZigGeneratedClasses.FSWatcher;
+  watch(path: string, options: import("node:fs").WatchOptions, listener: WatchListener): $Bindgen.FSWatcher;
   watchFile(
     path: string,
     options: import("node:fs").WatchFileOptions | undefined,
     listener: WatchFileListener,
-  ): $ZigGeneratedClasses.StatWatcher;
+  ): $Bindgen.StatWatcher;
   write(
     fd: number,
     buffer: NodeJS.ArrayBufferView,
@@ -131,4 +120,4 @@ type FsCallbackArm<T> = {
   ) => void;
 };
 
-export default $rust("node_fs_binding.rs", "createBinding") as FsBinding & FsCallbackArm<FsBinding>;
+export default $bindgen("node_fs_binding.bind.ts", "binding") as FsBinding & FsCallbackArm<FsBinding>;

@@ -137,7 +137,11 @@ export class SharedSession {
   }
 }
 
-export type H2Result = { status: number; headers: http2.IncomingHttpHeaders; body: Buffer };
+export type H2Result = {
+  status: number;
+  headers: http2.IncomingHttpHeaders & http2.IncomingHttpStatusHeader;
+  body: Buffer;
+};
 export function request(
   session: http2.ClientHttp2Session,
   headers: http2.OutgoingHttpHeaders,
@@ -149,7 +153,7 @@ export function request(
     const chunks: Buffer[] = [];
     let responseHeaders: http2.IncomingHttpHeaders = {};
     req.on("response", h => (responseHeaders = h));
-    req.on("data", c => chunks.push(c));
+    req.on("data", c => chunks.push(c as Buffer));
     req.on("end", () =>
       resolve({ status: Number(responseHeaders[":status"]), headers: responseHeaders, body: Buffer.concat(chunks) }),
     );

@@ -1,0 +1,39 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = import.source(/* a */ "x");
+const b = import.source(/* a */ "x");
+const c = import.source(/* a */ "x");
+d = import.defer(
+  // a
+  "y"
+);
+e = import.defer(
+  // a
+  "y"
+);
+f = import.defer(
+  // a
+  "y"
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = import.source(/* a */ "x");
+const b = import.source(/* a */ "x");
+const c = import.source(/* a */ "x");
+d = import.defer(
+  // a
+  "y"
+);
+e = import.defer(
+  // a
+  "y"
+);
+f = import.defer(
+  // a
+  "y"
+);
+
+===================== End =====================

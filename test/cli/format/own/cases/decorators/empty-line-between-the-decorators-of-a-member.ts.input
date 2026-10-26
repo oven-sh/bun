@@ -1,0 +1,16 @@
+class A {
+  @a
+
+  @b
+  c = 4;
+
+  @a
+
+  @b
+  d() {}
+
+  @a
+
+  @b
+  accessor e = 1;
+}

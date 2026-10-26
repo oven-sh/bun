@@ -7,7 +7,6 @@ use bun_collections::OffsetByteList;
 use bun_core::UnwrapOrOom;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_ptr::RefPtr;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
@@ -16,14 +15,6 @@ use super::js_valkey_body::JSValkeyClient;
 use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
 use super::valkey_command_body as command;
 use super::valkey_command_body::{Args, Command};
-
-/// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
-/// `generate-classes.ts` resolves the native backing struct to
-/// `crate::valkey_jsc::valkey::RedisClient` and emits ~200
-/// `RedisClient::method(…)` thunks against it. The actual host type is
-/// `JSValkeyClient` (sibling `js_valkey.rs`); re-export it under the codegen
-/// spelling here so the generated `pub use` and prototype thunks resolve.
-pub(crate) use super::js_valkey_body::JSValkeyClient as RedisClient;
 
 bun_output::define_scoped_log!(debug, Redis, visible);
 
@@ -133,6 +124,16 @@ impl TLS {
             TLS::Custom(ssl_config) => ssl_config.reject_unauthorized != 0,
             TLS::Enabled => vm.get_tls_reject_unauthorized(),
             _ => false,
+        }
+    }
+
+    /// `tls.serverName`: replaces the URL host as SNI and as the name the certificate must match.
+    pub(crate) fn server_name(&self) -> Option<&[u8]> {
+        match self {
+            TLS::Custom(ssl_config) => ssl_config
+                .server_name_bytes()
+                .filter(|name| !name.is_empty()),
+            _ => None,
         }
     }
 }
@@ -533,6 +534,22 @@ impl ValkeyClient {
         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
     }
 
+    /// The open socket's TLS session broke, and uSockets closes it next: what was sent over it
+    /// hears why, and the rest is `on_close`'s, like any lost connection. The caller enters no
+    /// event loop scope, so the rejections are only observed once `on_close` has run.
+    pub(crate) fn on_tls_session_error(
+        &mut self,
+        ssl_error: &uws::us_bun_verify_error_t,
+    ) -> JsResult<()> {
+        if self.in_flight.is_empty() {
+            return Ok(());
+        }
+        let global_this = self.global_object();
+        let jsvalue = crate::socket::uws_jsc::verify_error_to_js(ssl_error, &global_this);
+        let mut entries = command::entry::Queue::new();
+        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+    }
+
     /// Flush pending data to the socket
     pub(crate) fn flush_data(&mut self) -> bool {
         let chunk = self.write_buffer.remaining();
@@ -542,7 +559,7 @@ impl ValkeyClient {
         let wrote = self.socket.write(chunk);
         if wrote > 0 {
             self.write_buffer
-                .consume(u32::try_from(wrote).expect("int cast"));
+                .consume(usize::try_from(wrote).expect("int cast"));
         }
         self.write_buffer.len() > 0
     }
@@ -613,8 +630,7 @@ impl ValkeyClient {
     /// stopped reading never lets it through. Either way the close callback
     /// has run when this returns.
     ///
-    /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
-    /// runs by hand here, whatever that left.
+    /// `Err` when the close event left a termination pending.
     pub(crate) fn close(&mut self, code: uws::CloseCode) -> JsResult<()> {
         if self.socket.is_closed() {
             return Ok(());
@@ -624,16 +640,6 @@ impl ValkeyClient {
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
-        // usockets does not dispatch `on_close`/`on_connect_error` when an
-        // application explicitly closes a `us_socket_t` whose TCP connect
-        // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
-        // synchronously so `connect()` got a real `us_socket_t*` rather than
-        // a `us_connecting_socket_t*`). See `us_internal_socket_close_raw`.
-        // The close event is what releases the keep-alive ref `connect()`
-        // took, so detect a SEMI_SOCKET before closing and run the close
-        // event by hand afterwards.
-        let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
-            && !socket.is_established();
         // TODO: make socket.close() return a JsResult.
         socket.close(code);
         // Still open means usockets parked the fast shutdown behind its
@@ -643,22 +649,11 @@ impl ValkeyClient {
         if code == uws::CloseCode::FastShutdown && !socket.is_closed() {
             socket.close(uws::CloseCode::Failure);
         }
-        let thrown = if global.has_exception() {
+        if global.has_exception() {
             Err(bun_jsc::JsError::Thrown)
         } else {
             Ok(())
-        };
-        if !is_semi_socket {
-            return thrown;
         }
-        // SAFETY: takes over the keep-alive ref `connect()` handed to this
-        // socket, as `SocketHandler::on_close` does for one uSockets closes.
-        // Every caller of `close()` holds a scoped ref of its own, so the
-        // client outlives this scope.
-        let _socket_ref = unsafe { RefPtr::from_raw(self.parent_ptr()) };
-        self.status = Status::Disconnected;
-        let closed = self.on_close();
-        thrown.and(closed)
     }
 
     /// Handle connection closed event
@@ -823,8 +818,7 @@ impl ValkeyClient {
                     return Ok(());
                 }
 
-                self.read_buffer
-                    .consume(u32::try_from(bytes_consumed).expect("int cast"));
+                self.read_buffer.consume(bytes_consumed);
                 self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer

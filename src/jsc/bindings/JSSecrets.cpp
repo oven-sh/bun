@@ -75,9 +75,9 @@ struct SecretsJobOptions {
     };
 
     Operation op;
-    CString service; // UTF-8 encoded, thread-safe
-    CString name; // UTF-8 encoded, thread-safe
-    CString password; // UTF-8 encoded, thread-safe (only for SET)
+    UTF8CString service; // thread-safe
+    UTF8CString name; // thread-safe
+    UTF8CString password; // thread-safe (only for SET)
     bool allowUnrestrictedAccess = false; // Controls security vs headless access (only for SET)
     Secrets::Persist persist; // Windows only (only for SET)
 
@@ -86,7 +86,7 @@ struct SecretsJobOptions {
     std::optional<WTF::Vector<uint8_t>> resultPassword;
     bool deleted = false;
 
-    SecretsJobOptions(Operation op, CString&& service, CString&& name, CString&& password, bool allowUnrestrictedAccess, Secrets::Persist persist)
+    SecretsJobOptions(Operation op, UTF8CString&& service, UTF8CString&& name, UTF8CString&& password, bool allowUnrestrictedAccess, Secrets::Persist persist)
         : op(op)
         , service(service)
         , name(name)
@@ -345,7 +345,7 @@ void Bun__SecretsJobOptions__deinit(SecretsJobOptions* opts)
 }
 
 // Native binding exports
-void Bun__Secrets__scheduleJob(JSGlobalObject* global, CallFrame* callFrame, SecretsJobOptions* opts, EncodedJSValue promise);
+void Bun__Secrets__scheduleJob(JSGlobalObject* global, SecretsJobOptions* opts, EncodedJSValue promise);
 
 } // extern "C"
 
@@ -364,7 +364,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsGet, (JSGlobalObject * globalObject, CallFrame* 
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }
@@ -379,7 +379,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsSet, (JSGlobalObject * globalObject, CallFrame* 
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }
@@ -399,7 +399,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsDelete, (JSGlobalObject * globalObject, CallFram
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }

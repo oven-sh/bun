@@ -21,11 +21,11 @@ use bun_dns::{
 #[cfg(not(windows))]
 use bun_io::FilePoll;
 use bun_io::{self as Async, KeepAlive};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
-    SystemError, host_fn,
+    self as jsc, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult, SystemError,
 };
 use bun_ptr::RefPtr;
 #[cfg(windows)]
@@ -36,6 +36,8 @@ use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
 use super::cares_jsc::error_to_deferred;
+use crate::generated_bindgen::dns::LookupOptions;
+use crate::generated_bindgen::dns_internals::ResolverOptions;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -74,7 +76,7 @@ type Sockaddr = netc::sockaddr;
 /// `Cell` / `JsCell` fields, so a shared borrow is sufficient and avoids the
 /// `noalias` hazard when c-ares callbacks re-enter on the same global resolver.
 #[inline]
-fn global_resolver(global_this: &JSGlobalObject) -> &Resolver {
+fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
     let gd = crate::jsc_hooks::global_dns_data().get_or_init(|| {
         let gd = GlobalData::init(global_this.bun_vm());
         gd.resolver.ref_(); // pin for the VM's lifetime
@@ -118,7 +120,7 @@ bun_output::declare_scope!(DNSResolver, visible);
 const IANA_DNS_PORT: i32 = 53;
 
 // ──────────────────────────────────────────────────────────────────────────
-// dns_sd (macOS): DNSServiceGetAddrInfo over one shared mDNSResponder connection, no per-lookup threads.
+// dns_sd (macOS): DNSServiceQueryRecord over one shared mDNSResponder connection, no per-lookup threads.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -463,7 +465,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
             resolver_for_caching: resolver,
             pending_slot: None,
             head: CAresLookup {
-                // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
@@ -599,7 +601,7 @@ impl GetHostByAddrInfoRequest {
             resolver_for_caching: resolver,
             pending_slot: None,
             head: CAresReverse {
-                // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
@@ -1181,7 +1183,7 @@ impl GetAddrInfoRequest {
             resolver_for_caching: resolver,
             pending_slot: None,
             head: DNSLookup {
-                // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
@@ -1209,36 +1211,8 @@ impl GetAddrInfoRequest {
         request
     }
 
-    /// Reply callback (inside `DNSServiceProcessResult`): records state; completion happens in `on_readable`.
-    /// # Safety
-    /// `context` is the registered `*mut GetAddrInfoRequest`; `address`, if non-null, is a valid sockaddr.
-    #[cfg(target_os = "macos")]
-    pub(crate) unsafe extern "C" fn dns_sd_reply(
-        _sd_ref: dns_sd::DNSServiceRef,
-        flags: u32,
-        _interface_index: u32,
-        error_code: i32,
-        _hostname: *const c_char,
-        address: *const Sockaddr,
-        ttl: u32,
-        context: *mut c_void,
-    ) {
-        dns_sd::SharedConnection::note_reply(context);
-        // SAFETY: context is the *mut GetAddrInfoRequest passed to start().
-        let this: *mut Self = context.cast();
-        // SAFETY: `this` is the live heap request (JS thread); `address` is valid per dns_sd.h.
-        unsafe {
-            (*this)
-                .backend
-                .as_dns_sd_mut()
-                .query
-                .record_reply(flags, error_code, address, ttl);
-        }
-    }
-
     /// Complete a dns_sd-backed request; `this` is the live heap request, consumed on every path.
     #[cfg(target_os = "macos")]
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn complete_dns_sd(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and exclusively owned here.
         unsafe {
@@ -1291,7 +1265,6 @@ impl GetAddrInfoRequest {
     // `this` is reclaimed via `heap::take` (Box::from_raw) inside; forming
     // `&mut *this` at entry would invalidate the pointer's allocation
     // provenance, so the param must stay `*mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn then(this: *mut Self, _global: &JSGlobalObject) {
         bun_output::scoped_log!(GetAddrInfoRequest, "then");
         // SAFETY: called on the JS thread with the heap request the lookup was
@@ -1356,7 +1329,6 @@ impl GetAddrInfoRequest {
     // `this` is reclaimed via `heap::take` (Box::from_raw) inside; forming
     // `&mut *this` at entry would invalidate the pointer's allocation
     // provenance, so the param must stay `*mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_cares_complete(
         this: *mut Self,
         err_: Option<c_ares::Error>,
@@ -1388,7 +1360,6 @@ impl GetAddrInfoRequest {
             let retcode = (*uv_info).retcode.int();
             bun_output::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);
             let this: *mut Self = (*uv_info).data.cast();
-            #[cfg(windows)]
             debug_assert!(uv_info == core::ptr::from_mut((*this).backend.as_libc_uv_mut()));
 
             // On Windows, libuv's `uv_getaddrinfo` calls `GetAddrInfoW` then
@@ -1490,7 +1461,7 @@ impl CAresReverse {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
             context,
@@ -1614,7 +1585,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         Self::new(Self {
-            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
             resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
             context,
@@ -1760,7 +1731,7 @@ impl DNSLookup {
         poll_ref.ref_(js_event_loop_ctx());
 
         bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
             resolver: Some(unsafe { RefPtr::init_ref(resolver) }),
             global_this: bun_ptr::BackRef::new(global_this),
             poll_ref,
@@ -2051,6 +2022,7 @@ impl Resolver {
 
 pub(crate) mod internal {
     use super::*;
+    use crate::generated_bindgen::dns::DNSCacheStats;
 
     // PORTING.md §Global mutable state: lazy env-var memo — an `OnceLock<u32>`
     // (idempotent init, safe concurrent read).
@@ -2223,7 +2195,6 @@ pub(crate) mod internal {
         // `this` is reclaimed via `heap::take` (Box::from_raw); forming
         // `&mut *this` at entry would invalidate the pointer's allocation
         // provenance, so the param must stay `*mut`.
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn deinit(this: *mut Self) {
             // SAFETY: this is a heap-allocated Request with refcount==0
             unsafe {
@@ -2289,8 +2260,10 @@ pub(crate) mod internal {
         // To preserve memory, we use a 32 bit timestamp
         // However, we're almost out of time to use 32 bit timestamps for anything
         // So we set the epoch to January 1st, 2024 instead.
+        //
+        // Every VM's JS thread and the HTTP thread share the cache, so ignore fake timers.
         fn get_cache_timestamp() -> u32 {
-            (bun::Timespec::now(bun::TimespecMockMode::AllowMockedTime).ms_unsigned() / 1000) as u32
+            (bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ms_unsigned() / 1000) as u32
         }
 
         fn is_nearly_full(&self) -> bool {
@@ -2480,9 +2453,6 @@ pub(crate) mod internal {
         /// # Safety
         /// `req` must be a live cache `Request` with a populated `result`; the
         /// callee may take ownership and free it.
-        // Forwards `req` to C++ without dereferencing; not_unsafe_ptr_arg_deref
-        // is a false positive on opaque-token forwarding.
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn notify_threadsafe(&self, req: *mut Request) {
             match self {
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
@@ -2499,9 +2469,6 @@ pub(crate) mod internal {
         /// # Safety
         /// `req` must be a live cache `Request` with a populated `result`; the
         /// callee may take ownership and free it.
-        // Forwards `req` to C++ without dereferencing; not_unsafe_ptr_arg_deref
-        // is a false positive on opaque-token forwarding.
-        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn notify(&self, req: *mut Request) {
             match self {
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
@@ -2528,7 +2495,6 @@ pub(crate) mod internal {
     // `request` is forwarded to `owner.notify`, which may free it inline
     // (see fn doc); forming `&mut *request` at entry would be unsound across
     // that hand-off, so the param must stay `*mut`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
         let guard = global_cache().lock();
         let owner = DNSRequestOwner::Quic(pc);
@@ -2791,39 +2757,7 @@ pub(crate) mod internal {
                 query: dns_sd::QueryState::new(protocol),
             };
         }
-        let Some(_) = shared.start(
-            dns_sd::Inflight::Internal(req),
-            protocol,
-            host,
-            dns_sd_reply,
-            req.cast::<c_void>(),
-        ) else {
-            return false;
-        };
-
-        true
-    }
-
-    #[cfg(target_os = "macos")]
-    unsafe extern "C" fn dns_sd_reply(
-        _sd_ref: dns_sd::DNSServiceRef,
-        flags: u32,
-        _interface_index: u32,
-        error_code: i32,
-        _hostname: *const c_char,
-        address: *const Sockaddr,
-        ttl: u32,
-        context: *mut c_void,
-    ) {
-        dns_sd::SharedConnection::note_reply(context);
-        let req: *mut Request = context.cast();
-        // SAFETY: `context` is the registered `req` (event-loop thread); `address` is valid per dns_sd.h.
-        unsafe {
-            (*req)
-                .dns_sd
-                .query
-                .record_reply(flags, error_code, address, ttl)
-        };
+        shared.start(dns_sd::Inflight::Internal(req), protocol, host)
     }
 
     /// Complete an internal request: build an addrinfo chain and reuse `process_results` (happy-eyeballs order).
@@ -2870,44 +2804,18 @@ pub(crate) mod internal {
     static DNS_CACHE_ERRORS: AtomicUsize = AtomicUsize::new(0);
     static GETADDRINFO_CALLS: AtomicUsize = AtomicUsize::new(0);
 
-    #[host_fn]
-    pub(crate) fn get_dns_cache_stats(
-        global_object: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let object = JSValue::create_empty_object(global_object, 6);
-        object.put(
-            global_object,
-            b"cacheHitsCompleted",
-            JSValue::js_number(DNS_CACHE_HITS_COMPLETED.load(Ordering::Relaxed) as f64),
-        );
-        object.put(
-            global_object,
-            b"cacheHitsInflight",
-            JSValue::js_number(DNS_CACHE_HITS_INFLIGHT.load(Ordering::Relaxed) as f64),
-        );
-        object.put(
-            global_object,
-            b"cacheMisses",
-            JSValue::js_number(DNS_CACHE_MISSES.load(Ordering::Relaxed) as f64),
-        );
-        object.put(
-            global_object,
-            b"size",
-            JSValue::js_number(DNS_CACHE_SIZE.load(Ordering::Relaxed) as f64),
-        );
-        object.put(
-            global_object,
-            b"errors",
-            JSValue::js_number(DNS_CACHE_ERRORS.load(Ordering::Relaxed) as f64),
-        );
-        object.put(
-            global_object,
-            b"totalCount",
-            JSValue::js_number(GETADDRINFO_CALLS.load(Ordering::Relaxed) as f64),
-        );
-        Ok(object)
+    pub(crate) fn get_cache_stats() -> DNSCacheStats {
+        DNSCacheStats {
+            cache_hits_completed: DNS_CACHE_HITS_COMPLETED.load(Ordering::Relaxed),
+            cache_hits_inflight: DNS_CACHE_HITS_INFLIGHT.load(Ordering::Relaxed),
+            cache_misses: DNS_CACHE_MISSES.load(Ordering::Relaxed),
+            size: DNS_CACHE_SIZE.load(Ordering::Relaxed),
+            errors: DNS_CACHE_ERRORS.load(Ordering::Relaxed),
+            total_count: GETADDRINFO_CALLS.load(Ordering::Relaxed),
+        }
     }
+
+    const MAX_ADDRESSES_FOR_TESTING: usize = 64;
 
     /// The `addresses: string[]` argument of the testing hooks below, as sockaddrs.
     fn addresses_for_testing(
@@ -2920,7 +2828,7 @@ pub(crate) mod internal {
             );
         }
         let len = addresses.get_length(global)? as usize;
-        if len > 64 {
+        if len > MAX_ADDRESSES_FOR_TESTING {
             return Err(global
                 .throw_invalid_arguments(format_args!("addresses must have at most 64 entries")));
         }
@@ -2938,60 +2846,47 @@ pub(crate) mod internal {
     }
 
     /// `bun:internal-for-testing`: [`is_localhost_name`] for one hostname.
-    pub(crate) fn is_localhost_name_for_testing(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let hostname = frame.argument(0);
-        if !hostname.is_string() {
-            return Err(global.throw_invalid_arguments(format_args!("expected (hostname: string)")));
-        }
-        let hostname = hostname.to_utf8(global)?;
-        Ok(JSValue::js_boolean(is_localhost_name(hostname.slice())))
+    pub(crate) fn is_localhost_name_for_testing(hostname: &[u8]) -> bool {
+        is_localhost_name(hostname)
     }
 
     /// `bun:internal-for-testing`: [`is_all_loopback_of_one_family`] over `addresses` laid out as a getaddrinfo() answer.
-    pub(crate) fn is_all_loopback_of_one_family_for_testing(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut addrs = addresses_for_testing(global, frame.argument(0))?;
+    pub(crate) fn is_all_loopback_of_one_family_for_testing<'a>(
+        cx: &mut JsScope<'a>,
+        addresses: JsLocal<'a>,
+    ) -> JsResult<bool> {
+        let mut addrs = addresses_for_testing(cx.global(), addresses.to_js())?;
         let chain = addrinfo_chain(&mut addrs);
         let head = chain.first().map_or(ptr::null(), ptr::from_ref);
-        Ok(JSValue::js_boolean(is_all_loopback_of_one_family(head)))
+        Ok(is_all_loopback_of_one_family(head))
     }
 
     /// `bun:internal-for-testing`: seed the connect-path DNS cache for `hostname`
     /// by running `addresses` through the real [`process_results`] interleave and
     /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it.
-    pub(crate) fn seed_cache_for_testing(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = frame.arguments();
-        if args.len() < 2 || !args[0].is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "expected (hostname: string, addresses: string[])"
-            )));
-        }
-        let hostname_slice = args[0].to_utf8(global)?;
-        let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
-        let mut addrs = addresses_for_testing(global, args[1])?;
+    pub(crate) fn seed_cache_for_testing<'a>(
+        cx: &mut JsScope<'a>,
+        hostname: &[u8],
+        addresses: JsLocal<'a>,
+    ) -> JsResult<core::iter::Take<core::array::IntoIter<i32, MAX_ADDRESSES_FOR_TESTING>>> {
+        let global = cx.global();
+        let hostname_z = bun::ZBox::from_bytes(hostname);
+        let mut addrs = addresses_for_testing(global, addresses.to_js())?;
         if addrs.is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
         }
         let mut chain = addrinfo_chain(&mut addrs);
         let results = process_results(chain.as_mut_ptr());
 
-        let out = JSValue::create_empty_array(global, results.len())?;
-        for (i, entry) in (0u32..).zip(results.iter()) {
-            let fam: i32 = if entry.info.ai_family == netc::AF_INET6 {
+        let mut families = [0i32; MAX_ADDRESSES_FOR_TESTING];
+        for (family, entry) in families.iter_mut().zip(results.iter()) {
+            *family = if entry.info.ai_family == netc::AF_INET6 {
                 6
             } else {
                 4
             };
-            out.put_index(global, i, JSValue::js_number_from_int32(fam))?;
         }
+        let families = families.into_iter().take(results.len());
 
         let key = RequestKey::init(Some(hostname_z.as_zstr()), 0);
         let req = Request::new(key.to_owned(), 0, GlobalCache::get_cache_timestamp());
@@ -3013,27 +2908,21 @@ pub(crate) mod internal {
         }
         DNS_CACHE_SIZE.store(guard.len, Ordering::Relaxed);
         drop(guard);
-        Ok(out)
+        Ok(families)
     }
 
     /// `bun:internal-for-testing`: the error a lookup of `hostname` reports
     /// when getaddrinfo(3) returns the `EAI_*` status named `code`.
     pub(crate) fn getaddrinfo_error_for_testing(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        cx: &mut JsScope<'_>,
+        code: &[u8],
+        hostname: &[u8],
     ) -> JsResult<JSValue> {
-        let args = frame.arguments();
-        if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "expected (code: string, hostname: string)"
-            )));
-        }
-        let code = args[0].to_utf8(global)?;
-        let hostname = args[1].to_utf8(global)?;
-        let Some(rc) = c_ares::Error::eai_raw_by_name(code.slice()) else {
+        let global = cx.global();
+        let Some(rc) = c_ares::Error::eai_raw_by_name(code) else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "unknown getaddrinfo status name: {}",
-                bstr::BStr::new(code.slice())
+                bstr::BStr::new(code)
             )));
         };
         match c_ares::Error::init_eai(rc) {
@@ -3041,7 +2930,7 @@ pub(crate) mod internal {
                 err,
                 global,
                 b"getaddrinfo",
-                hostname.slice(),
+                hostname,
             ),
             None => Ok(JSValue::UNDEFINED),
         }
@@ -3187,50 +3076,13 @@ pub(crate) mod internal {
         });
     }
 
-    #[host_fn]
-    pub(crate) fn prefetch_from_js(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-
-        if arguments.len() < 1 {
-            return Err(global_this.throw_not_enough_arguments("prefetch", 1, arguments.len()));
-        }
-
-        let hostname_or_url = arguments[0];
-
-        let hostname_slice = if hostname_or_url.is_string() {
-            hostname_or_url.to_utf8(global_this)?
-        } else {
-            return Err(
-                global_this.throw_invalid_arguments(format_args!("hostname must be a string"))
-            );
-        };
-
-        let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
-
-        let port: u16 = if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
-            global_this.validate_integer_range::<u16>(
-                arguments[1],
-                443,
-                jsc::IntegerRange {
-                    field_name: b"port",
-                    always_allow_zero: true,
-                    ..Default::default()
-                },
-            )?
-        } else {
-            443
-        };
-
-        // SAFETY: `VirtualMachine::get()` returns the live thread-local VM (panics if absent).
+    pub(crate) fn prefetch_from_js(hostname: &[u8], port: u16) {
+        let hostname_z = bun::ZBox::from_bytes(hostname);
         prefetch(
-            VirtualMachine::get().as_mut().uws_loop(),
+            VirtualMachine::get().uws_loop(),
             Some(hostname_z.as_zstr()),
             port,
         );
-        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn prefetch(loop_: *mut Loop, hostname: Option<&ZStr>, port: u16) {
@@ -3246,7 +3098,6 @@ pub(crate) mod internal {
     /// for the duration of the call.
     // `hostname` is null-guarded before the deref; the non-null contract is
     // documented above and on the `bun_dns` extern decl.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[unsafe(no_mangle)]
     fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
         let host = if hostname.is_null() || len == 0 {
@@ -3393,7 +3244,7 @@ pub(crate) mod internal {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Resolver — JSC-exposed `dns.Resolver` (m_ctx payload of JSDNSResolver)
+// Resolver — JSC-exposed `dns.Resolver` (a JSDNSResolver holds a ref)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Field selector for the `pending_*` cache fields on `Resolver` — Rust
@@ -3728,7 +3579,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 // `check_timeouts`; UnsafeCell-backed fields suppress `noalias` so LLVM cannot
 // cache them across re-entrant FFI calls (the proper fix for the
 // PROVEN_CACHED ref_count miscompile previously laundered with `black_box`).
-#[bun_jsc::JsClass(name = "DNSResolver", no_constructor)]
+/// `DNSResolver`, declared in `dns_internals.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
@@ -3786,6 +3637,12 @@ pub(crate) struct UvDnsPoll {
     // `Resolver::deref`, which may write/free `*this`.
     pub parent: *mut Resolver,
     pub socket: c_ares::ares_socket_t,
+    /// Number of `on_dns_poll_uv` calls for this handle on the stack. libuv
+    /// reads `poll` again after each one returns.
+    poll_cb_depth: u32,
+    /// True if a nested `uv_run` called `on_close_uv` while `poll_cb_depth` was
+    /// non-zero. The outermost `on_dns_poll_uv` call then queues the free.
+    closed: bool,
     pub poll: libuv::uv_poll_t,
 }
 
@@ -3795,17 +3652,32 @@ impl UvDnsPoll {
         bun_core::heap::into_raw(Box::new(Self {
             parent,
             socket,
+            poll_cb_depth: 0,
+            closed: false,
             poll: bun_core::ffi::zeroed(),
         }))
     }
 
-    fn destroy(this: *mut Self) {
+    pub(crate) fn destroy(this: *mut Self) {
+        // SAFETY: `this` came from `heap::into_raw` in `new`, and nothing uses it after this call.
         unsafe { drop(bun_core::heap::take(this)) };
     }
 
     fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
         // SAFETY: poll points to UvDnsPoll.poll
         unsafe { bun_core::from_field_ptr!(UvDnsPoll, poll, poll) }
+    }
+}
+
+#[cfg(windows)]
+impl bun_event_loop::Taskable for UvDnsPoll {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::UvDnsPollFree;
+    unsafe fn release_unrun(this: *mut Self) {
+        Self::destroy(this);
+    }
+    /// The task doesn't run JS.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -3973,20 +3845,8 @@ pub(crate) enum ChannelResult<'a> {
 
 // Canonical enum + parser live in `bun_dns` (lower tier so `cli` can parse
 // `--dns-result-order` without depending on the runtime). Re-export for
-// existing `crate::dns_jsc::Order` callers; `to_js` stays here as a tier-6
-// extension since it needs JSC.
+// existing `crate::dns_jsc::Order` callers.
 pub(crate) use bun_dns::Order;
-
-trait OrderJscExt {
-    fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
-}
-
-impl OrderJscExt for Order {
-    fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        use jsc::StringJsc as _;
-        bun::String::static_(<&'static str>::from(self)).to_js(global_this)
-    }
-}
 
 #[repr(C)] // c_int
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -4020,6 +3880,18 @@ bun_core::comptime_string_map! {
 
 impl RecordType {
     pub(crate) const DEFAULT: Self = RecordType::A;
+}
+
+/// Non-NaN, integer-truncated `0..=65535`, else `ERR_SOCKET_BAD_PORT`.
+fn to_port_number(double: f64, global: &JSGlobalObject) -> JsResult<u16> {
+    if double.is_nan() {
+        return Err(jsc::Error::SOCKET_BAD_PORT.throw(global, format_args!("Invalid port number")));
+    }
+    let port = double as i64;
+    if (0..=65535).contains(&port) {
+        return Ok(port as u16);
+    }
+    Err(jsc::Error::SOCKET_BAD_PORT.throw(global, format_args!("Port number out of range: {port}")))
 }
 
 impl Resolver {
@@ -4799,34 +4671,44 @@ impl Resolver {
     ) {
         let poll = UvDnsPoll::from_poll(watcher);
         // SAFETY: `poll` is the live `UvDnsPoll` recovered from libuv's `watcher`
-        // via `from_poll` (libuv guarantees the handle outlives this callback).
+        // via `from_poll`. `on_close_uv` doesn't free it while `poll_cb_depth` is non-zero.
         // `parent` is the heap-allocated Resolver back-ptr (set in
         // `on_dns_socket_state`); it is kept alive across `Channel::process` by the
         // `_guard` below. `channel` is non-null because c-ares
         // must have been initialized for this poll callback to fire.
         unsafe {
+            (*poll).poll_cb_depth += 1;
             let parent: *mut Resolver = (*poll).parent;
             let vm = (*parent).vm.get();
-            let _exit = vm.enter_event_loop_scope();
-            // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
-            let _guard = RefPtr::init_ref(parent);
-            // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
-            let channel = (*parent).channel.get().unwrap();
-            if status < 0 {
-                // an error occurred. just pretend that the socket is both readable and writable.
-                // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
-                (*channel).process((*poll).socket, true, true);
-            } else {
-                (*channel).process(
-                    (*poll).socket,
-                    events & libuv::UV_READABLE != 0,
-                    events & libuv::UV_WRITABLE != 0,
-                );
-            }
+            {
+                // Dropping `_exit` drains microtasks. That JS can run a nested `uv_run`,
+                // which calls `on_close_uv` for a socket c-ares closed below.
+                let _exit = vm.enter_event_loop_scope();
+                // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
+                let _guard = RefPtr::init_ref(parent);
+                // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
+                let channel = (*parent).channel.get().unwrap();
+                if status < 0 {
+                    // an error occurred. just pretend that the socket is both readable and writable.
+                    // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+                    (*channel).process((*poll).socket, true, true);
+                } else {
+                    (*channel).process(
+                        (*poll).socket,
+                        events & libuv::UV_READABLE != 0,
+                        events & libuv::UV_WRITABLE != 0,
+                    );
+                }
 
-            // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
-            if !(*parent).any_requests_pending() {
-                (*parent).remove_timer();
+                // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
+                if !(*parent).any_requests_pending() {
+                    (*parent).remove_timer();
+                }
+            }
+            (*poll).poll_cb_depth -= 1;
+            if (*poll).poll_cb_depth == 0 && (*poll).closed {
+                // The task queue isn't drained until this libuv callback returns.
+                vm.as_mut().enqueue_task(jsc::Task::init(poll));
             }
         }
     }
@@ -4837,6 +4719,13 @@ impl Resolver {
         // to `uv_close`, which was `&mut UvDnsPoll::poll` (a `uv_poll_t` whose
         // header is `uv_handle_t`); `from_poll` recovers the containing struct.
         let poll = UvDnsPoll::from_poll(watcher.cast());
+        // SAFETY: only the code below and the task `on_dns_poll_uv` queues free the struct.
+        unsafe {
+            if (*poll).poll_cb_depth > 0 {
+                (*poll).closed = true;
+                return;
+            }
+        }
         UvDnsPoll::destroy(poll);
     }
 
@@ -5024,65 +4913,37 @@ impl Resolver {
 
     // ───────────── JS host fns: resolve* family ─────────────
 
-    // JSC-ABI shim for this associated fn is emitted by `export_host_fn!` at
-    // module scope; `#[host_fn]` cannot be used here because its Free expansion
-    // calls the function by bare name, which doesn't resolve inside `impl`.
     pub(crate) fn global_resolve(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        name: &[u8],
+        record: Option<&[u8]>,
     ) -> JsResult<JSValue> {
-        global_resolver(global_this).resolve(global_this, callframe)
+        global_resolver(cx.global()).resolve(cx, name, record)
     }
 
-    #[host_fn(method)]
     pub(crate) fn resolve(
         &self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        name: &[u8],
+        record: Option<&[u8]>,
     ) -> JsResult<JSValue> {
-        let context = global_this.bun_vm().context_of_caller(callframe).id();
-        let arguments = callframe.arguments_as_array::<3>();
-        let arguments_len = callframe.arguments_count() as usize;
-        if arguments_len < 1 {
-            return Err(global_this.throw_not_enough_arguments("resolve", 3, arguments_len));
-        }
-
-        let record_type: RecordType = if arguments_len <= 1 {
-            RecordType::DEFAULT
-        } else {
-            'brk: {
-                let record_type_value = arguments[1];
-                if record_type_value.is_empty_or_undefined_or_null()
-                    || !record_type_value.is_string()
-                {
-                    break 'brk RecordType::DEFAULT;
+        let global_this = cx.global();
+        let context = global_this.bun_vm().context_of_caller().id();
+        let record_type: RecordType = match record {
+            None | Some(b"") => RecordType::DEFAULT,
+            Some(label) => match RECORD_TYPE_MAP.get(label) {
+                Some(r) => *r,
+                None => {
+                    return Err(global_this.throw_invalid_argument_property_value(
+                        b"record",
+                        Some("one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT"),
+                        bun_string_jsc::create_utf8_for_js(global_this, label)?,
+                    ));
                 }
-                let record_type_view = record_type_value.to_js_string_view(global_this)?;
-                if record_type_view.is_empty() {
-                    break 'brk RecordType::DEFAULT;
-                }
-                match RECORD_TYPE_MAP.get(record_type_view.to_utf8().slice()) {
-                    Some(r) => *r,
-                    None => {
-                        return Err(global_this.throw_invalid_argument_property_value(
-                            b"record",
-                            Some(
-                                "one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT",
-                            ),
-                            record_type_value,
-                        ));
-                    }
-                }
-            }
+            },
         };
 
-        let name_value = arguments[0];
-        if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-            return Err(global_this.throw_invalid_argument_type("resolve", "name", "string"));
-        }
-        let name_view = name_value.to_js_string_view(global_this)?;
-        let name = name_view.to_utf8();
-        if name.slice().is_empty() {
+        if name.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "resolve",
                 "name",
@@ -5091,87 +4952,45 @@ impl Resolver {
         }
 
         match record_type {
-            RecordType::A => {
-                self.do_resolve_cares::<AHostentWithTtls>(name.slice(), global_this, context)
-            }
+            RecordType::A => self.do_resolve_cares::<AHostentWithTtls>(name, global_this, context),
             RecordType::AAAA => {
-                self.do_resolve_cares::<AaaaHostentWithTtls>(name.slice(), global_this, context)
+                self.do_resolve_cares::<AaaaHostentWithTtls>(name, global_this, context)
             }
-            RecordType::ANY => self.do_resolve_cares::<c_ares::struct_any_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::CAA => self.do_resolve_cares::<c_ares::struct_ares_caa_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::CNAME => {
-                self.do_resolve_cares::<CnameHostent>(name.slice(), global_this, context)
+            RecordType::ANY => {
+                self.do_resolve_cares::<c_ares::struct_any_reply>(name, global_this, context)
             }
-            RecordType::MX => self.do_resolve_cares::<c_ares::struct_ares_mx_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::NAPTR => self.do_resolve_cares::<c_ares::struct_ares_naptr_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::NS => {
-                self.do_resolve_cares::<NsHostent>(name.slice(), global_this, context)
+            RecordType::CAA => {
+                self.do_resolve_cares::<c_ares::struct_ares_caa_reply>(name, global_this, context)
             }
-            RecordType::PTR => {
-                self.do_resolve_cares::<PtrHostent>(name.slice(), global_this, context)
+            RecordType::CNAME => self.do_resolve_cares::<CnameHostent>(name, global_this, context),
+            RecordType::MX => {
+                self.do_resolve_cares::<c_ares::struct_ares_mx_reply>(name, global_this, context)
             }
-            RecordType::SOA => self.do_resolve_cares::<c_ares::struct_ares_soa_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::SRV => self.do_resolve_cares::<c_ares::struct_ares_srv_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
-            RecordType::TXT => self.do_resolve_cares::<c_ares::struct_ares_txt_reply>(
-                name.slice(),
-                global_this,
-                context,
-            ),
+            RecordType::NAPTR => {
+                self.do_resolve_cares::<c_ares::struct_ares_naptr_reply>(name, global_this, context)
+            }
+            RecordType::NS => self.do_resolve_cares::<NsHostent>(name, global_this, context),
+            RecordType::PTR => self.do_resolve_cares::<PtrHostent>(name, global_this, context),
+            RecordType::SOA => {
+                self.do_resolve_cares::<c_ares::struct_ares_soa_reply>(name, global_this, context)
+            }
+            RecordType::SRV => {
+                self.do_resolve_cares::<c_ares::struct_ares_srv_reply>(name, global_this, context)
+            }
+            RecordType::TXT => {
+                self.do_resolve_cares::<c_ares::struct_ares_txt_reply>(name, global_this, context)
+            }
         }
     }
 
-    // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
-    pub(crate) fn global_reverse(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        global_resolver(global_this).reverse(global_this, callframe)
+    pub(crate) fn global_reverse(cx: &mut JsScope<'_>, ip: &[u8]) -> JsResult<JSValue> {
+        global_resolver(cx.global()).reverse(cx, ip)
     }
 
-    #[host_fn(method)]
-    pub(crate) fn reverse(
-        &self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let context = global_this.bun_vm().context_of_caller(callframe).id();
-        let arguments = callframe.arguments_as_array::<2>();
-        let arguments_len = callframe.arguments_count() as usize;
-        if arguments_len < 1 {
-            return Err(global_this.throw_not_enough_arguments("reverse", 1, arguments_len));
-        }
-
-        let ip_value = arguments[0];
-        if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
-            return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
-        }
-        let ip_view = ip_value.to_js_string_view(global_this)?;
-        let ip_slice = ip_view.to_utf8();
-        if ip_slice.slice().is_empty() {
+    pub(crate) fn reverse(&self, cx: &mut JsScope<'_>, ip: &[u8]) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let context = global_this.bun_vm().context_of_caller().id();
+        if ip.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "reverse",
                 "ip",
@@ -5179,7 +4998,6 @@ impl Resolver {
             ));
         }
 
-        let ip = ip_slice.slice();
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
@@ -5229,25 +5047,14 @@ impl Resolver {
         Ok(promise)
     }
 
-    // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
     pub(crate) fn global_lookup(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        name: &[u8],
+        options_object: &LookupOptions<'_>,
     ) -> JsResult<JSValue> {
-        let context = global_this.bun_vm().context_of_caller(callframe).id();
-        let arguments = callframe.arguments_as_array::<2>();
-        let arguments_len = callframe.arguments_count() as usize;
-        if arguments_len < 1 {
-            return Err(global_this.throw_not_enough_arguments("lookup", 2, arguments_len));
-        }
-
-        let name_value = arguments[0];
-        if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-            return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
-        }
-        let name_view = name_value.to_js_string_view(global_this)?;
-        let name = name_view.to_utf8();
-        if name.slice().is_empty() {
+        let global_this = cx.global();
+        let context = global_this.bun_vm().context_of_caller().id();
+        if name.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookup",
                 "hostname",
@@ -5255,41 +5062,35 @@ impl Resolver {
             ));
         }
 
-        let mut options = GetAddrInfoOptions::default();
         let mut port: u16 = 0;
 
-        if arguments_len > 1 && arguments[1].is_object() {
-            let options_object = arguments[1];
-
-            if let Some(port_value) = options_object.get_truthy(global_this, "port")? {
-                port = port_value.to_port_number(global_this)?;
-            }
-
-            options = match super::options_jsc::options_from_js(options_object, global_this) {
-                Ok(o) => o,
-                Err(err) => {
-                    use bun_dns::OptionsFromJsError as E;
-                    return match err {
-                        E::InvalidFlags => Err(global_this.throw_invalid_argument_value(
-                            b"flags",
-                            options_object
-                                .get_truthy(global_this, "flags")?
-                                .unwrap_or(JSValue::UNDEFINED),
-                        )),
-                        E::JSError => Err(jsc::JsError::Thrown),
-                        // more information with these errors
-                        _ => Err(global_this.throw(format_args!(
-                            "Invalid options passed to lookup(): {}",
-                            <&'static str>::from(&err)
-                        ))),
-                    };
-                }
-            };
+        if let Some(port_value) = options_object.port {
+            port = to_port_number(port_value, global_this)?;
         }
+
+        let options = match super::options_jsc::options_from_js(options_object) {
+            Ok(o) => o,
+            Err(err) => {
+                use bun_dns::OptionsFromJsError as E;
+                return match err {
+                    E::InvalidFlags => Err(global_this.throw_invalid_argument_value(
+                        b"flags",
+                        options_object
+                            .flags
+                            .map_or(JSValue::UNDEFINED, JSValue::js_number),
+                    )),
+                    // more information with these errors
+                    _ => Err(global_this.throw(format_args!(
+                        "Invalid options passed to lookup(): {}",
+                        <&'static str>::from(&err)
+                    ))),
+                };
+            }
+        };
 
         let resolver = global_resolver(global_this);
 
-        resolver.do_lookup(name.slice(), port, options, global_this, context)
+        resolver.do_lookup(name, port, options, global_this, context)
     }
 
     pub(crate) fn do_lookup(
@@ -5360,40 +5161,21 @@ impl Resolver {
 
 macro_rules! resolve_record_fn {
     ($global:ident, $method:ident, $jsname:literal, $ty:ty, $allow_empty:expr) => {
-        // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
-        pub(crate) fn $global(
-            global_this: &JSGlobalObject,
-            callframe: &CallFrame,
-        ) -> JsResult<JSValue> {
-            global_resolver(global_this).$method(global_this, callframe)
+        pub(crate) fn $global(cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
+            global_resolver(cx.global()).$method(cx, name)
         }
 
-        #[host_fn(method)]
-        pub(crate) fn $method(
-            &self,
-            global_this: &JSGlobalObject,
-            callframe: &CallFrame,
-        ) -> JsResult<JSValue> {
-            let context = global_this.bun_vm().context_of_caller(callframe).id();
-            let arguments = callframe.arguments_as_array::<2>();
-            let arguments_len = callframe.arguments_count() as usize;
-            if arguments_len < 1 {
-                return Err(global_this.throw_not_enough_arguments($jsname, 1, arguments_len));
-            }
-            let name_value = arguments[0];
-            if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-                return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
-            }
-            let name_view = name_value.to_js_string_view(global_this)?;
-            let name = name_view.to_utf8();
-            if !$allow_empty && name.slice().is_empty() {
+        pub(crate) fn $method(&self, cx: &mut JsScope<'_>, name: &[u8]) -> JsResult<JSValue> {
+            let global_this = cx.global();
+            let context = global_this.bun_vm().context_of_caller().id();
+            if !$allow_empty && name.is_empty() {
                 return Err(global_this.throw_invalid_argument_type(
                     $jsname,
                     "hostname",
                     "non-empty string",
                 ));
             }
-            self.do_resolve_cares::<$ty>(name.slice(), global_this, context)
+            self.do_resolve_cares::<$ty>(name, global_this, context)
         }
     };
 }
@@ -5621,7 +5403,6 @@ impl Resolver {
     fn get_channel_servers(
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let mut servers: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
         // SAFETY: `channel` is a live handle from `ares_init_options`; `servers` is a stack out-param.
@@ -5720,65 +5501,47 @@ impl Resolver {
         Ok(values)
     }
 
-    // FFI shim emitted by `export_host_fn!` below — `#[host_fn]` (Free) cannot
-    // expand inside an `impl` block (it emits a bare `fn_name(...)` call).
-    pub(crate) fn get_global_servers(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::get_channel_servers(
-            Self::get_channel_from_vm(global_this)?,
-            global_this,
-            callframe,
-        )
+    pub(crate) fn get_global_servers(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        Self::get_channel_servers(Self::get_channel_from_vm(global_this)?, global_this)
     }
 
-    #[host_fn(method)]
-    pub(crate) fn get_servers(
-        &self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::get_channel_servers(
-            self.get_channel_or_error(global_this)?,
-            global_this,
-            callframe,
-        )
+    pub(crate) fn get_servers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        Self::get_channel_servers(self.get_channel_or_error(global_this)?, global_this)
     }
 
-    #[host_fn(method)]
     pub(crate) fn set_local_address(
         &self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        cx: &mut JsScope<'_>,
+        first: &bun_core::String,
+        second: Option<bun_core::String>,
+    ) -> JsResult<()> {
+        let global_this = cx.global();
         Self::set_channel_local_addresses(
             self.get_channel_or_error(global_this)?,
             global_this,
-            callframe,
+            first,
+            second,
         )
     }
 
     fn set_channel_local_addresses(
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        if arguments.is_empty() {
-            return Err(global_this.throw_not_enough_arguments("setLocalAddress", 1, 0));
-        }
+        first: &bun_core::String,
+        second: Option<bun_core::String>,
+    ) -> JsResult<()> {
+        let first_af = Self::set_channel_local_address(channel, global_this, first)?;
 
-        let first_af = Self::set_channel_local_address(channel, global_this, arguments[0])?;
+        let Some(second) = second else {
+            return Ok(());
+        };
 
-        if arguments.len() < 2 || arguments[1].is_undefined() {
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        let second_af = Self::set_channel_local_address(channel, global_this, arguments[1])?;
+        let second_af = Self::set_channel_local_address(channel, global_this, &second)?;
 
         if first_af != second_af {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         match first_af {
@@ -5793,9 +5556,9 @@ impl Resolver {
     fn set_channel_local_address(
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
-        value: JSValue,
+        value: &bun_core::String,
     ) -> JsResult<c_int> {
-        let address = value.to_bun_string(global_this)?.to_owned_slice_z();
+        let address = value.to_owned_slice_z();
 
         let mut addr = [0u8; 16];
 
@@ -5836,8 +5599,8 @@ impl Resolver {
     fn set_channel_servers(
         channel: *mut c_ares::Channel,
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        argument: JSValue,
+    ) -> JsResult<()> {
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
         if channel != Self::get_channel_from_vm(global_this)?
             // SAFETY: `channel` is a live handle returned by `ares_init_options`.
@@ -5851,12 +5614,6 @@ impl Resolver {
                 .throw());
         }
 
-        let arguments = callframe.arguments();
-        if arguments.is_empty() {
-            return Err(global_this.throw_not_enough_arguments("setServers", 1, 0));
-        }
-
-        let argument = arguments[0];
         if !argument.is_array() {
             return Err(global_this.throw_invalid_argument_type("setServers", "servers", "array"));
         }
@@ -5872,7 +5629,7 @@ impl Resolver {
                     format_args!("ares_set_servers_ports error: {}", err.label()),
                 )));
             }
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let mut entries: Vec<c_ares::struct_ares_addr_port_node> =
@@ -5959,114 +5716,74 @@ impl Resolver {
             );
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    // FFI shim emitted by `export_host_fn!` below.
-    pub(crate) fn set_global_servers(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn set_global_servers(cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
+        let global_this = cx.global();
         Self::set_channel_servers(
             Self::get_channel_from_vm(global_this)?,
             global_this,
-            callframe,
+            servers.to_js(),
         )
     }
 
-    #[host_fn(method)]
-    pub(crate) fn set_servers(
-        &self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn set_servers(&self, cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
+        let global_this = cx.global();
         Self::set_channel_servers(
             self.get_channel_or_error(global_this)?,
             global_this,
-            callframe,
+            servers.to_js(),
         )
     }
 
-    // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
-    pub(crate) fn new_resolver(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn new_resolver(cx: &mut JsScope<'_>, options: &ResolverOptions) -> JSValue {
+        let global_this = cx.global();
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         let resolver = Resolver::init(
             global_this.bun_vm(),
-            Some(global_this.bun_vm().context_of_caller(callframe).id()),
+            Some(global_this.bun_vm().context_of_caller().id()),
         );
 
-        let options = callframe.argument(0);
-        if options.is_object() {
-            // SAFETY: `resolver` is the heap allocation from `init`; not yet
-            // wrapped in JS so exclusively owned here.
-            let opts_cell = unsafe { &(*resolver).options };
-            let mut opts = opts_cell.get();
-            if let Some(timeout) = options.get_truthy(global_this, "timeout")? {
-                opts.timeout = Some(timeout.coerce_to_i32(global_this)?);
-            }
-            if let Some(tries) = options.get_truthy(global_this, "tries")? {
-                opts.tries = Some(tries.coerce_to_i32(global_this)?);
-            }
-            opts_cell.set(opts);
-        }
+        // SAFETY: `resolver` is the heap allocation from `init`; not yet
+        // wrapped in JS so exclusively owned here.
+        let opts_cell = unsafe { &(*resolver).options };
+        let mut opts = opts_cell.get();
+        opts.timeout = Some(options.timeout);
+        opts.tries = Some(options.tries);
+        opts_cell.set(opts);
 
         // SAFETY: `resolver` was `heap::alloc`'d in `Resolver::init`; ownership
-        // transfers to the GC wrapper (`DNSResolver__create` → `finalize` →
-        // `Self::deref` → `heap::take`).
-        Ok(unsafe { Resolver::to_js_ptr(resolver, global_this) })
+        // transfers to the JS wrapper, which holds one ref.
+        unsafe { Resolver::to_js_ptr(resolver, global_this) }
     }
 
-    #[host_fn(method)]
-    pub(crate) fn cancel(
-        &self,
-        global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let channel = self.get_channel_or_error(global_this)?;
+    pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
+        let channel = self.get_channel_or_error(cx.global())?;
         // SAFETY: `channel` is a live handle returned by `ares_init_options`.
         c_ares::ares_cancel(unsafe { &mut *channel });
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
     // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
     // If it is not a legal port, a TypeError will be thrown.
-    // FFI shim emitted by `export_host_fn!` below.
     pub(crate) fn global_lookup_service(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        addr_s: &[u8],
+        port_value: f64,
     ) -> JsResult<JSValue> {
-        let context = global_this.bun_vm().context_of_caller(callframe).id();
-        let arguments = callframe.arguments_as_array::<2>();
-        let arguments_len = callframe.arguments_count() as usize;
-        if arguments_len < 2 {
-            return Err(global_this.throw_not_enough_arguments("lookupService", 2, arguments_len));
-        }
-
-        let addr_value = arguments[0];
-        if addr_value.is_empty_or_undefined_or_null() || !addr_value.is_string() {
-            return Err(global_this.throw_invalid_argument_type(
-                "lookupService",
-                "address",
-                "string",
-            ));
-        }
-        let addr_view = addr_value.to_js_string_view(global_this)?;
-        if addr_view.is_empty() {
+        let global_this = cx.global();
+        let context = global_this.bun_vm().context_of_caller().id();
+        if addr_s.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookupService",
                 "address",
                 "non-empty string",
             ));
         }
-        let addr_slice = addr_view.to_utf8();
-        let addr_s = addr_slice.slice();
 
-        let port_value = arguments[1];
-        let port: u16 = port_value.to_port_number(global_this)?;
+        let port: u16 = to_port_number(port_value, global_this)?;
 
         let mut sa: SockaddrStorage = bun_core::ffi::zeroed();
         // SAFETY: sockaddr_storage is large enough to hold any sockaddr family
@@ -6079,7 +5796,10 @@ impl Resolver {
             &mut *(&raw mut sa).cast()
         }) != 0
         {
-            return Err(global_this.throw_invalid_argument_value(b"address", addr_value));
+            return Err(global_this.throw_invalid_argument_value(
+                b"address",
+                bun_string_jsc::create_utf8_for_js(global_this, addr_s)?,
+            ));
         }
 
         let resolver = global_resolver(global_this);
@@ -6136,94 +5856,15 @@ impl Resolver {
         Ok(promise)
     }
 
-    // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
-    pub(crate) fn get_runtime_default_result_order_option(
-        global_this: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+    pub(crate) fn get_runtime_default_result_order_option() -> bun::String {
         // `VirtualMachine.dns_result_order` is stored as a raw `u8` (the jsc
         // crate cannot depend on this crate's `Order`); cast through Order's repr(u8).
-        let raw = global_this.bun_vm().as_mut().dns_result_order;
+        let raw = VirtualMachine::get().dns_result_order;
         let order = match raw {
             4 => Order::Ipv4first,
             6 => Order::Ipv6first,
             _ => Order::Verbatim,
         };
-        order.to_js(global_this)
+        bun::String::static_(<&'static str>::from(order))
     }
 }
-
-// ───────── JS host-fn FFI exports ─────────
-// The #[host_fn] attribute emits the JSC-ABI shim under the Rust function name;
-// re-export each under its `Bun__DNS__*` link name. Mirrors the proc-macro's
-// shim body (see `bun_jsc_macros::host_fn`, `HostFnKind::Free`).
-macro_rules! export_host_fn {
-    ($scope:ident :: $f:ident, $name:literal) => {
-        const _: () = {
-            #[cfg(all(windows, target_arch = "x86_64"))]
-            #[unsafe(export_name = $name)]
-            pub(crate) unsafe extern "sysv64" fn __shim(
-                g: *mut ::bun_jsc::JSGlobalObject,
-                f: *mut ::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JSValue {
-                // SAFETY: JSC guarantees both pointers are live for the call.
-                let (g, f) = unsafe { (&*g, &*f) };
-                ::bun_jsc::__macro_support::host_fn_result(g, || $scope::$f(g, f))
-            }
-            #[cfg(not(all(windows, target_arch = "x86_64")))]
-            #[unsafe(export_name = $name)]
-            pub(crate) unsafe extern "C" fn __shim(
-                g: *mut ::bun_jsc::JSGlobalObject,
-                f: *mut ::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JSValue {
-                // SAFETY: JSC guarantees both pointers are live for the call.
-                let (g, f) = unsafe { (&*g, &*f) };
-                ::bun_jsc::__macro_support::host_fn_result(g, || $scope::$f(g, f))
-            }
-        };
-    };
-}
-export_host_fn!(Resolver::global_resolve, "Bun__DNS__resolve");
-export_host_fn!(Resolver::global_lookup, "Bun__DNS__lookup");
-export_host_fn!(Resolver::global_resolve_txt, "Bun__DNS__resolveTxt");
-export_host_fn!(Resolver::global_resolve_soa, "Bun__DNS__resolveSoa");
-export_host_fn!(Resolver::global_resolve_mx, "Bun__DNS__resolveMx");
-export_host_fn!(Resolver::global_resolve_naptr, "Bun__DNS__resolveNaptr");
-export_host_fn!(Resolver::global_resolve_srv, "Bun__DNS__resolveSrv");
-export_host_fn!(Resolver::global_resolve_caa, "Bun__DNS__resolveCaa");
-export_host_fn!(Resolver::global_resolve_ns, "Bun__DNS__resolveNs");
-export_host_fn!(Resolver::global_resolve_ptr, "Bun__DNS__resolvePtr");
-export_host_fn!(Resolver::global_resolve_cname, "Bun__DNS__resolveCname");
-export_host_fn!(Resolver::global_resolve_any, "Bun__DNS__resolveAny");
-export_host_fn!(Resolver::get_global_servers, "Bun__DNS__getServers");
-export_host_fn!(Resolver::set_global_servers, "Bun__DNS__setServers");
-export_host_fn!(Resolver::global_reverse, "Bun__DNS__reverse");
-export_host_fn!(Resolver::global_lookup_service, "Bun__DNS__lookupService");
-export_host_fn!(internal::prefetch_from_js, "Bun__DNS__prefetch");
-export_host_fn!(internal::get_dns_cache_stats, "Bun__DNS__getCacheStats");
-// JS2Native ($newRustFunction) entry points — see GeneratedJS2Native.h
-export_host_fn!(
-    Resolver::new_resolver,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver"
-);
-export_host_fn!(
-    Resolver::get_runtime_default_result_order_option,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption"
-);
-export_host_fn!(
-    internal::seed_cache_for_testing,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting"
-);
-export_host_fn!(
-    internal::is_localhost_name_for_testing,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isLocalhostNameForTesting"
-);
-export_host_fn!(
-    internal::is_all_loopback_of_one_family_for_testing,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting"
-);
-export_host_fn!(
-    internal::getaddrinfo_error_for_testing,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_getaddrinfoErrorForTesting"
-);

@@ -129,7 +129,7 @@ export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abo
  * The C++ side's `cpuTargetFlags` (flags.ts) spelled as rustflags, derived
  * from that table so the two halves of the binary can't drift apart. They
  * have to agree: the Rust half runs on whatever CPU the C++ baseline admits,
- * and under cross-language LTO (`cfg.crossLangLto`) LLVM only inlines a call
+ * and under LTO (`cfg.lto`, which is cross-language: rustc's bitcode joins the C++ link) LLVM only inlines a call
  * when the callee's CPU feature set is a subset of the caller's (a CPU's own
  * tuning features and the tune CPU count too), so a mismatch turns off
  * inlining across the Rust/C++ boundary in both directions.
@@ -220,7 +220,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
  */
 export interface RustBuildInputs {
   /**
-   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist (`generated_classes.rs`
+   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist (`generated_host_exports.rs`
    * and friends are undeclared side effects of the scripts producing these). Order-only for the crate edges:
    * they must exist before a workspace crate compiles, and from then on rustc's dep-info names exactly the
    * files each crate read, so a changed one rebuilds just its includers.
@@ -325,6 +325,9 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");
+  // The one of `hardeningFlags` (flags.ts) rustc has and does not already do:
+  // its stack probes are inline on this target with or without this.
+  if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
   // Parallel frontend: rustc's default is single-threaded for parse / macro
   // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
   // sits on one core while the rest idle. With this, independent compiler
@@ -416,6 +419,13 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (cfg.socketFaultInjection) {
     rustflags.push("--cfg=socket_fault_injection");
   }
+  // `bun_disallow_code_generation_from_strings`: `bun_core::code_generation_from_strings()` is the
+  // constant `Strict` (BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1 on the C++ side, which then
+  // does not import the Rust symbol).
+  rustflags.push("--check-cfg=cfg(bun_disallow_code_generation_from_strings)");
+  if (!cfg.codeGenerationFromStrings) {
+    rustflags.push("--cfg=bun_disallow_code_generation_from_strings");
+  }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
   // `&'static core::panic::Location` (file/line/col) plus the file-path string
@@ -502,7 +512,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // Thin, not fat: a pre-merged fat module cannot take part in a thin link's importing, and the backends run in
     // parallel. The release profile's `lto = "off"` is what leaves each crate's bitcode with its summary.
     //
-    // The linker has to read rustc's bitcode, which rests on rustc's LLVM and clang's being the same major version.
+    // The linker has to read rustc's bitcode, which it can because rustc's LLVM and clang's are the same major
+    // version (resolveConfig() refuses anything else).
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
@@ -514,7 +525,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // unconditionally above — under LTO it doubles as making rustc's bitcode
     // link go through the LTO-aware linker our final link uses, not BFD
     // `/usr/bin/ld`.)
-    if (cfg.crossLangLto && !cfg.darwin && !cfg.windows) {
+    if (cfg.lto && !cfg.darwin && !cfg.windows) {
       // Rust functions default to carrying the `uwtable(async)` attribute.
       // When the LTO inliner inlines such a callee into one of our C++
       // callers (compiled without unwind tables), the caller inherits the

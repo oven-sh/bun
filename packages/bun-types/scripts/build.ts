@@ -38,13 +38,15 @@ await Bun.$`rm -rf ${docsDir}`;
 // the rules. Links to a rule page point at bun.com instead.
 const isSkippedDoc = (file: string) => file.startsWith("lint/rules/") && file !== "lint/rules/index.mdx";
 
-const sourceDocFiles = Array.from(new Bun.Glob("**/*.{md,mdx}").scanSync({ cwd: sourceDocsDir })).filter(
-  file => !isSkippedDoc(file),
-);
+// Glob paths use the platform separator; the links and the skip list use `/`.
+const sourceDocFiles = Array.from(new Bun.Glob("**/*.{md,mdx}").scanSync({ cwd: sourceDocsDir }))
+  .map(file => file.replaceAll("\\", "/"))
+  .filter(file => !isSkippedDoc(file));
 
 // The top-level sections of the copied docs (`runtime`, `lint`, `installation`, ...). A link to
 // `/<section>...` resolves inside the package, so it is rewritten to `/docs/<section>...`.
-// Other absolute links (images, blog, rule pages) are rewritten to bun.com.
+// Other absolute links (images, blog, rule pages) are rewritten to bun.com first, so a markdown
+// file under docs/images or docs/blog cannot turn them into package paths.
 const copiedSections = new Set(sourceDocFiles.map(file => file.split("/")[0].replace(/\.mdx?$/, "")));
 const copiedSectionPattern = Array.from(copiedSections, section => section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   .sort((a, b) => b.length - a.length)
@@ -58,10 +60,10 @@ for (const file of sourceDocFiles) {
     .replace(/\$BUN_LATEST_VERSION/g, BUN_VERSION)
     // Rule pages are not copied: link to them on bun.com
     .replace(/(!?\[([^\]]*)\])\(\/lint\/rules\/([^)#]+)((?:#[^)]*)?)\)/g, "$1(https://bun.com/docs/lint/rules/$3$4)")
-    // Prefix copied doc paths with /docs/ (handles both links and images)
-    .replace(copiedLinkRegex, "$1(/docs/$3$4)")
     // Convert non-copied content to absolute URLs (images, blog, etc.)
     .replace(/(!?\[([^\]]*)\])\(\/(images|blog)(\/[^)]*)?\)/g, "$1(https://bun.com/$3$4)")
+    // Prefix copied doc paths with /docs/ (handles both links and images)
+    .replace(copiedLinkRegex, "$1(/docs/$3$4)")
     .replace(/https:\/\/bun\.com\/docs\/guides\//g, "https://bun.com/guides/");
 
   await Bun.write(join(docsDir, file), updatedContent);

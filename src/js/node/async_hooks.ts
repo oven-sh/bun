@@ -102,7 +102,17 @@ function get(): Frame | undefined {
 // Until a frame is put in place for the first time, every context that a job could capture is undefined, and the engine captures and restores nothing.
 // Compiled code waits for that frame, which keeps an await short in a program that only creates an AsyncLocalStorage. Under the JIT an await costs
 // the same either way, and a call in set() that is never made again costs every run(): there the constructors turn tracking on.
+// A job that began after the first constructor ran puts back what was in place in front of it either way: compiled code says when that was.
 let isTrackingEnabled = false;
+let hasConstructorRun = false;
+// Compiled code: whether the constructor of AsyncResource has more to do than to fill the fields.
+let hasResourceConstructorMoreToDo = true;
+
+function constructorRunsForFirstTime() {
+  hasConstructorRun = true;
+  hasResourceConstructorMoreToDo = hasEnabledCreateHook;
+  if (!isTrackingEnabled) setAsyncHooksEnabled(false);
+}
 
 function set(frame: Frame | undefined) {
   $assert(assertValidFrame(frame));
@@ -231,6 +241,7 @@ class AsyncLocalStorage<T = any> {
       }
     }
     if (!IS_COMPILED_AHEAD_OF_TIME) setAsyncHooksEnabled(true);
+    else if (!hasConstructorRun) constructorRunsForFirstTime();
 
     // In debug mode assign every AsyncLocalStorage a unique ID
     if (IS_BUN_DEVELOPMENT) {
@@ -384,8 +395,11 @@ class AsyncResource {
     if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
       throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
     }
-    if (hasEnabledCreateHook && type.length === 0) {
-      throw $ERR_ASYNC_TYPE(type);
+    if (IS_COMPILED_AHEAD_OF_TIME ? hasResourceConstructorMoreToDo : hasEnabledCreateHook) {
+      if (hasEnabledCreateHook && type.length === 0) {
+        throw $ERR_ASYNC_TYPE(type);
+      }
+      if (IS_COMPILED_AHEAD_OF_TIME && !hasConstructorRun) constructorRunsForFirstTime();
     }
 
     if (!IS_COMPILED_AHEAD_OF_TIME) setAsyncHooksEnabled(true);
@@ -552,6 +566,7 @@ function createHook(hook: HookCallbacks) {
         createHookNotImpl(hook);
       }
       hasEnabledCreateHook = true;
+      hasResourceConstructorMoreToDo = true;
       if (!this[kHookEnabled]) {
         this[kHookEnabled] = true;
         require("internal/async_hooks").markHookEnabled();

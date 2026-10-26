@@ -93,6 +93,7 @@ impl<'x, 's> Walker<'x, 's> {
                 function_of_fn: vec![None; hir.fns.len()],
                 symbol_initializations: vec![None; bound.symbols.len()],
                 last_store_times: vec![0; bound.symbols.len()],
+                use_counts: vec![0; bound.symbols.len()],
                 is_initialized_conditionally: vec![false; bound.symbols.len()],
                 is_switch_scope: vec![false; bound.scopes.len()],
                 is_repeated_scope: vec![false; bound.scopes.len()],
@@ -260,6 +261,8 @@ impl<'x, 's> Walker<'x, 's> {
     }
 
     pub(super) fn record_symbol_use(&mut self, context: Context, symbol: SymbolId) {
+        let use_count = &mut self.walk.use_counts[symbol.idx()];
+        *use_count = (*use_count + 1).min(2);
         let last_user = &mut self.last_users[symbol.idx()];
         if *last_user == Some(context.function) {
             return;

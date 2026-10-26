@@ -55,11 +55,12 @@ for (let round = 0; round < 3; round++) {
   tell("String", () => String(self));
   tell("template", () => `${self}`);
   tell("plus", () => self + "");
-  tell("store", () => { self.width = 1; return self.width; });
-  tell("store a new name", () => { self.depth = 1; return self.depth; });
-  tell("store by key", () => { self["hei" + "ght"] = 1; return self.height; });
-  tell("delete", () => delete self.width);
-  tell("delete a missing name", () => delete self.missing);
+  const same = self;
+  tell("store", () => { same.width = 1; return self.width; });
+  tell("store a new name", () => { same.depth = 1; return self.depth; });
+  tell("store by key", () => { same["hei" + "ght"] = 1; return self.height; });
+  tell("delete", () => delete same.width);
+  tell("delete a missing name", () => delete same.missing);
   tell("Reflect.set", () => [Reflect.set(self, "width", 1), Reflect.set(self, "depth", 1), self.width]);
   tell("Reflect.get", () => [Reflect.get(self, "width"), Reflect.get(self, "missing")]);
   tell("Reflect.has", () => [Reflect.has(self, "width"), Reflect.has(self, "missing")]);

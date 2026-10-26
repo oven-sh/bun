@@ -2,8 +2,8 @@
 # nothing is recorded. Where the object is handed on, somebody may look.
 # FORM: AsRead
 # RUN: pipeline CallModules
-# STATISTIC: ModulesWithoutState = 0
-# STATISTIC: RequireSitesBound = 0
+# STATISTIC: ModulesWithoutState = 2
+# STATISTIC: RequireSitesBound = 2
 # STATISTIC: RequiresRecorded = 1
 
 variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
@@ -27,9 +27,9 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 }
 # CHECK-LABEL: function f0 name="main"
 # CHECK-NOT: RecordRequire module=m1
-# CHECK: = RequireModule module=m1 referrer=m0
+# CHECK: = CallDirect {{*}}function=f1
 # CHECK: RecordRequire module=m2 referrer=m0
-# CHECK-NEXT: = RequireModule module=m2 referrer=m0
+# CHECK-NEXT: = CallDirect {{*}}function=f2
 # CHECK-NOT: EvaluateModule
 function f1 name="readByName" module=m1 kind=Module results=[{type=anything}] {
   b0():

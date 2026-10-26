@@ -11,20 +11,32 @@ const nothingToCompareWith = new Set<number>([72, 143, 147, 286, 327, 387, 399, 
 
 // Where the lines of the executable are not those of `bun run` today. The programs are built and run all the same.
 const departing: Record<string, number[]> = {
-  "require() of an ES module that awaits throws at once, and `bun run` waits for the module": [75, 284, 576],
-  "an `import()` that nobody awaits runs its target in another turn": [256, 378, 431],
-  "not looked at yet": [124, 564],
+  "require() of an ES module that awaits throws at once, and `bun run` waits for the module": [
+    5, 45, 46, 49, 57, 71, 75, 113, 120, 121, 133, 160, 185, 195, 240, 258, 274, 282, 284, 306, 319, 367, 380, 412, 481,
+    509, 512, 524, 537, 573, 576, 592,
+  ],
+  "the importers above an ES module that an imported CommonJS file requires run behind that file, and under `bun run` inside the require":
+    [16, 166, 234, 263, 264, 310, 423, 478],
+  "an `import()` that nobody awaits runs its target in another turn": [
+    88, 152, 196, 242, 256, 377, 378, 416, 420, 431, 483, 501,
+  ],
+  "a CommonJS file that an imported ES module imports runs ahead of the one that is imported behind that module, and under `bun run` behind it":
+    [141],
+  "an ES module imports a name that a CommonJS entry point has not stored yet, and the executable throws a SyntaxError":
+    [55, 112, 148, 212, 384, 489, 582],
+  "not looked at yet": [
+    35, 61, 77, 89, 91, 124, 131, 208, 213, 246, 260, 269, 276, 289, 364, 368, 376, 382, 391, 410, 499, 507, 522, 564,
+    584,
+  ],
 };
 const howItDeparts = new Map(
   Object.entries(departing).flatMap(([how, seeds]) => seeds.map(seed => [seed, how] as const)),
 );
 
 // An imported CommonJS file requires an ES module that takes the file's default as a whole or hands on all its names.
-// Or a graph is asked for by `import()` or `require()` while another one is loaded or evaluated.
 const onceWrong = new Set<number>([
-  5, 11, 16, 23, 46, 49, 54, 57, 61, 71, 83, 88, 89, 90, 92, 113, 121, 131, 133, 151, 152, 155, 158, 166, 189, 195, 196,
-  197, 213, 233, 234, 242, 246, 260, 264, 274, 282, 289, 323, 355, 367, 376, 377, 380, 386, 410, 416, 420, 423, 428,
-  478, 481, 482, 483, 497, 501, 524, 537, 544, 560, 567, 576, 580,
+  11, 23, 54, 57, 83, 89, 90, 92, 151, 155, 158, 189, 195, 197, 233, 234, 260, 323, 355, 386, 428, 478, 482, 497, 544,
+  560, 567, 576, 580,
 ]);
 
 // An ES module imports two CommonJS files, and the text of the first is made long.

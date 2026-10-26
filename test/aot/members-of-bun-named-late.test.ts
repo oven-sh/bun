@@ -5,7 +5,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { describe, eachRow, gap, test } from "./supported";
+import { describe, eachRow, test } from "./supported";
 
 const bunLeaves = `const functionNobodyKnows = globalThis[process.argv[2] ?? "Boolean"];
 globalThis[process.argv[3] ?? "nothing"] = functionNobodyKnows(1);
@@ -20,7 +20,6 @@ function behindCalls(count: number, first: string, last: string) {
 }
 
 const url = `"postgres://127.0.0.1:1/x"`;
-const notCompiled = "Bun.SQL was not compiled into this executable";
 
 // `open` hands its parameter to a function that nobody knows, and is first called with a value that nobody knows.
 function openAfterUnknownValue(read: string) {
@@ -94,11 +93,29 @@ describe.concurrent.each([6, 14])("the class that a module of Bun makes, behind 
     ["named on what a promise resolves to", "", `async () => new (await Promise.resolve(Bun)).SQL(${url})`],
     ["named on what a reaction takes", "", `() => Promise.resolve(Bun).then(bun => new bun.SQL(${url}))`],
     ["named on a proxy of Bun", "", `() => new (new Proxy(Bun, {}).SQL)(${url})`],
-    gap(notCompiled, [
+    [
       "named on what Promise.all() resolves to",
       "",
       `async () => {\n    const [bun] = await Promise.all([Bun]);\n    return new bun.SQL(${url});\n  }`,
-    ]),
+    ],
+    ["named on what Promise.race() resolves to", "", `async () => new (await Promise.race([Bun])).SQL(${url})`],
+    ["named on what Promise.any() resolves to", "", `async () => new (await Promise.any([Bun])).SQL(${url})`],
+    ["named on the descriptors of Bun", "", `() => new (Object.getOwnPropertyDescriptors(Bun).SQL.value)(${url})`],
+    [
+      "named on an object made of the entries of Bun",
+      "",
+      `() => new (Object.fromEntries(Object.entries(Bun)).SQL)(${url})`,
+    ],
+    [
+      "named on what Promise.allSettled() resolves to",
+      "",
+      `async () => {\n    const [bun] = await Promise.allSettled([Bun]);\n    return new bun.value.SQL(${url});\n  }`,
+    ],
+    [
+      "named on what Promise.withResolvers() is resolved with",
+      "",
+      `async () => {\n    const { promise, resolve } = Promise.withResolvers();\n    resolve(Bun);\n    return new (await promise).SQL(${url});\n  }`,
+    ],
   ])("%s", async (_, first, last) => {
     using dir = tempDir("aot-members-of-bun-named-late", {
       "program.mjs": `${behindCalls(count, first, last)}console.log(typeof (await holder${count}.next()));\n`,
@@ -157,19 +174,13 @@ async function membersUsed(text: string) {
     .map(line => line.slice(prefix.length));
 }
 
-// TODO: the members that let in code from outside the executable are still missed where a built-in reads them late.
-const letInOutsideCode = ["ModuleGraph", "Transpiler", "build", "plugin"];
 test.concurrent.each([
-  ["its name", (name: string) => `Bun.${name}`, []],
-  ["Reflect.get", (name: string) => `Reflect.get(Bun, "${name}")`, letInOutsideCode],
-  [
-    "Reflect.getOwnPropertyDescriptor",
-    (name: string) => `Reflect.getOwnPropertyDescriptor(Bun, "${name}")`,
-    letInOutsideCode,
-  ],
-])("every member of Bun that is read by %s counts as used, early or late", async (_, read, missed) => {
+  ["its name", (name: string) => `Bun.${name}`],
+  ["Reflect.get", (name: string) => `Reflect.get(Bun, "${name}")`],
+  ["Reflect.getOwnPropertyDescriptor", (name: string) => `Reflect.getOwnPropertyDescriptor(Bun, "${name}")`],
+])("every member of Bun that is read by %s counts as used, early or late", async (_, read) => {
   const names = Reflect.ownKeys(Bun).filter(
-    key => typeof key === "string" && /^[A-Za-z_$][\w$]*$/.test(key) && !missed.includes(key),
+    key => typeof key === "string" && /^[A-Za-z_$][\w$]*$/.test(key),
   ) as string[];
   const reads = `() => [\n${names.map(name => `    ${read(name)},`).join("\n")}\n  ]`;
   const [early, late, later] = await Promise.all(

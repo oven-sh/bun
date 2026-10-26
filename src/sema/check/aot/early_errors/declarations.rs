@@ -1,4 +1,5 @@
-use crate::bind::{Binding, Decl, Parent, PatParent};
+use super::expressions::is_reached;
+use crate::bind::{Binding, BindingKind, Decl, Parent, PatParent};
 use crate::check::*;
 
 impl Checker<'_, '_> {
@@ -24,6 +25,86 @@ impl Checker<'_, '_> {
                     self.early_error_at((file, 0, 0), 2528, &[]);
                 }
             }
+        }
+    }
+
+    // `bun build` refuses a file that assigns to a `const` or `using` binding or to an import, wherever the assignment stands.
+    pub(super) fn check_constant_assignment_early_errors(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for store in bound.runtime.stores() {
+            let ExprKind::Ident(name) = hir[store.target].kind else {
+                continue;
+            };
+            let code = match bound.binding_kind(store.symbol) {
+                BindingKind::Const => 2588,
+                BindingKind::Import => 2632,
+                _ => continue,
+            };
+            let at = self.span_of_token(file, hir[store.target].pos);
+            self.early_error_at(at, code, &[Arg::Atom(name)]);
+        }
+    }
+
+    // `bun build` refuses a file that assigns to a member of `import * as star` or deletes one.
+    pub(super) fn check_namespace_member_assignment_early_errors(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if !hir.imports.iter().any(|import| import.namespace.is_some()) {
+            return;
+        }
+        let star_of = |e: ExprId| {
+            let (ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. }) =
+                hir[e].kind
+            else {
+                return None;
+            };
+            let obj = hir.skip_type_assertions(obj);
+            let (ExprKind::Ident(name), Chain::No) = (hir[obj].kind, chain) else {
+                return None;
+            };
+            let Binding::Symbol(symbol) = bound.binding(obj) else {
+                return None;
+            };
+            let is_star = |decl: &Decl| matches!(decl, Decl::ImportNamespace(_));
+            let declarations = bound.symbol(symbol).decls;
+            declarations.iter().any(is_star).then_some((obj, name))
+        };
+        let index = self.exprs_by_kind(file);
+        let members = index
+            .of(ExprTag::Dot)
+            .iter()
+            .chain(index.of(ExprTag::Index));
+        let mut targets: Vec<(ExprId, u32)> = members
+            .filter(|e| is_reached(bound, **e) && bound.get_assignment_target(hir, **e).is_some())
+            .map(|&e| (e, 2540))
+            .collect();
+        for &e in index.of(ExprTag::Unary) {
+            if let ExprKind::Unary {
+                op: UnOp::Delete,
+                operand,
+            } = hir[e].kind
+                && is_reached(bound, e)
+            {
+                targets.push((hir.skip_type_assertions(operand), 2704));
+            }
+        }
+        for (e, code) in targets {
+            let Some((star, star_name)) = star_of(e) else {
+                continue;
+            };
+            let (at, name) = match hir[e].kind {
+                ExprKind::Dot { name, .. } => (hir.name_pos(e), Some(name)),
+                ExprKind::Index { index, .. } => match hir[index].kind {
+                    ExprKind::String(name) => (hir[index].pos, Some(name)),
+                    _ => (hir[star].pos, None),
+                },
+                _ => continue,
+            };
+            let at = self.span_of_token(file, at);
+            match name {
+                Some(name) if code == 2540 => self.early_error_at(at, code, &[Arg::Atom(name)]),
+                Some(_) => self.early_error_at(at, code, &[]),
+                None => self.early_error_at(at, 2632, &[Arg::Atom(star_name)]),
+            };
         }
     }
 

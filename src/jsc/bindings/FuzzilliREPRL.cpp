@@ -266,10 +266,12 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 
     // Install signal handlers to ensure output is flushed before crashes
     // This is important for ASAN output to be captured
-    signal(SIGABRT, fuzzilliSignalHandler);
-    signal(SIGSEGV, fuzzilliSignalHandler);
-    signal(SIGILL, fuzzilliSignalHandler);
-    signal(SIGFPE, fuzzilliSignalHandler);
+    // A handler that the engine installed stays: it turns some faults into exceptions.
+    for (int sig : { SIGABRT, SIGSEGV, SIGILL, SIGFPE }) {
+        struct sigaction current;
+        if (!sigaction(sig, nullptr, &current) && !(current.sa_flags & SA_SIGINFO) && current.sa_handler == SIG_DFL)
+            signal(sig, fuzzilliSignalHandler);
+    }
 
     globalObject->putDirectNativeFunction(
         vm,

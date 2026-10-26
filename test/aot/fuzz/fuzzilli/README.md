@@ -28,6 +28,7 @@ Each run has its own process group and none of Fuzzilli's descriptors. It ends a
 | `bun run` reaches a limit                                                               | exit code 5        | `neither-finished`             |
 | `bun run` ends by a signal                                                              | exit code 6        | `plain-bun-crashed`            |
 | the second compiled run agrees with `bun run`                                           | exit code 7        | `compiled-program-is-unsteady` |
+| `bun run` refuses the file when it loads it                                             | exit code 8        | `plain-bun-refuses-the-file`   |
 | they print something different                                                          | a crash (SIGUSR1)  | `finding-10`                   |
 | they exit with different codes                                                          | a crash (SIGUSR2)  | `finding-12`                   |
 | only the compiled program reaches a limit                                               | a crash (SIGALRM)  | `finding-14`                   |
@@ -72,7 +73,7 @@ The compiler has a table of every built-in: its name, its parameters, the proper
 bun test/aot/fuzz/fuzzilli/list-builtins.ts build/fuzzilli/codegen/aot_builtin_table.json /tmp/fuzzilli/builtins.json
 ```
 
-With `BUN_FUZZILLI_BUILTINS=<that file>`, Fuzzilli knows the globals, `Bun`, `process` and the `node:` and `bun:` modules, with the types of their methods. Four more generators call them: with callbacks that print `this` and their arguments and store through `this`, with options objects whose properties are values, getters or handlers, from subclasses of Bun's classes, and with `await`. A `port` is always 0 and a `hostname` always `127.0.0.1`. The list leaves out what starts a process, sends a signal, loads native code, deletes files, or answers differently each time.
+With `BUN_FUZZILLI_BUILTINS=<that file>`, Fuzzilli knows the globals, `Bun`, `process` and the `node:` and `bun:` modules, with the types of their methods. Four more generators call them: with callbacks that print `this` and their arguments and store through `this`, with options objects whose properties are values, getters or handlers, from subclasses of Bun's classes, and with `await`. `BUN_FUZZILLI_BUILTINS_WEIGHT=<n>` makes the four n times as likely. A `port` is always 0 and a `hostname` always `127.0.0.1`. The list leaves out what starts a process, sends a signal, loads native code, deletes files, or answers differently each time.
 
 ## Run
 
@@ -108,8 +109,11 @@ bun test/aot/fuzz/fuzzilli/run-batch.ts --bun <the Bun to test> --programs /tmp/
 - When the process ends in the middle, the program it was in gets the blame and the rest run in a new process. `stopped-before.txt` holds the programs that the runner had stopped earlier in that process: their threads can outlive them.
 - The programs that differ run a second time, both ways, with twenty times the time. The rules for what counts are those in the table above.
 - They also run in an executable that is built without `--aot`, each as a group of its own. A program that prints and ends there as in the `--aot` executable is counted as "as an executable without --aot" and not kept.
-- A file that `bun run` refuses when it loads it is counted as "bun run refuses the file", and a program whose objects only list a member under a symbol in another place as "symbol keys in another order". Neither is kept.
-- A program that still differs is built alone. If it no longer differs, its neighbors are halved while the difference stays: the programs of a group are analyzed together, so what one does to a built-in can change how another is compiled. `report.txt` says which it was and holds the neighbors.
+- A file that `bun run` refuses when it loads it is counted as "bun run refuses the file" and not kept.
+- A program that still differs is built alone first. If that build warns that the program writes to a built-in, the program is counted as a documented difference: the build of a group gives the warning once.
+- It then runs twice under `bun run`, with a stack of 8 MB and of 2 MB. If what it prints changes, it prints how deep a recursion went, and it is counted as a documented difference.
+- A program that still differs is built alone. If it no longer differs, its neighbors are halved while the difference stays: the programs of a group are analyzed together, so what one does to a built-in can change how another is compiled. `report.txt` says which it was, and `neighbors.txt` holds the neighbors.
+- A program whose second pair of runs agrees is kept as "unsteady", with what the first pair printed in `first-compiled.stdout` and `first-bun-run.stdout`.
 
 What it keeps under `--finds` is laid out as under `BUN_FUZZILLI_FINDS`. It prints a line for each batch: programs a second of processor time, the time and peak memory of the build and of the two runs, and how many programs ended in which way.
 
@@ -137,11 +141,11 @@ Each annotation is one of four kinds.
 
 A type error stops the build, and a program that doesn't build tests nothing. So for each program, one of three things makes the checker accept it.
 
-- **Casts.** A small model follows what the checker knows about each expression. Where it can show that an operation is accepted, the operation is written as it is. Everywhere else the operands are cast to `any`, or the line gets `// @ts-ignore`. A value reaches a declaration of another type through `as any`, `as unknown as T`, `!`, or one of the detours below.
+- **Casts.** A small model follows what the checker knows about each expression. It follows arithmetic and comparisons, the members of the program's interfaces and classes, calls of its functions, methods and constructors, and arrays and strings with their common methods. Where it can show that an operation is accepted, the operation is written as it is. Everywhere else the operands are cast to `any`, or the line gets `// @ts-ignore`. A value reaches a declaration of another type through `as any`, `as unknown as T`, `!`, or one of the detours below.
 - **`// @ts-ignore` above every line.** Nothing is cast.
 - **`// @ts-nocheck`.** Nothing is cast.
 
-A detour is a generic function that returns its argument: through `pass<T>`, a generic class, a `Map<K, V>`, a callback of `Array.prototype.map`, `T[K]`, mapped and conditional types, type parameters with defaults and constraints, a `switch` over a discriminated union, a type predicate that is always true or always false, overloads, or `JSON.parse` declared as the type. There are also enums for whole numbers, tuples for short arrays, `satisfies`, and `int32` for parameters and constants.
+A detour is a generic function that returns its argument: through `pass<T>`, a generic class, a `Map<K, V>`, a callback of `Array.prototype.map`, `T[K]`, mapped and conditional types, type parameters with defaults and constraints, a `switch` over a discriminated union, a type predicate that is always true or always false, overloads, or `JSON.parse` declared as the type. There are also enums for whole numbers, tuples for short arrays, `satisfies`, and `int32` for parameters and constants. A function of the program can get a type parameter of its own, with a bound or a default, for one of its parameters and for what it returns.
 
 `BUN_FUZZILLI_TYPES` is `mixed`, `right`, `wider`, `wrong` or `absent`, or a list such as `right=70,wrong=30,generic=50`.
 
@@ -156,7 +160,7 @@ A detour is a generic function that returns its argument: through `pass<T>`, a g
 | `int32`                             | 10             | percent of `number` annotations that become `int32` where the build allows it |
 | `seed`                              | 0              | changes every choice                                                          |
 
-The choices are drawn from a hash of the program, so a program always becomes the same text, and Fuzzilli can reduce a finding. The profile turns off `with`, which TypeScript doesn't allow.
+The choices are drawn from a hash of the program, so a program always becomes the same text, and Fuzzilli can reduce a finding. The profile turns off `with`, which TypeScript doesn't allow. It starts 15 in 100 instances of Bun with `--aot-erase-types`, which compiles the same text without reading its types.
 
 ## Try one program without Fuzzilli
 

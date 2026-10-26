@@ -1,6 +1,6 @@
 use std::mem::take;
 
-use bun_sema::hir::ExprId;
+use bun_sema::hir::{ExprId, VarDeclId};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::FileLowering;
@@ -15,6 +15,7 @@ use crate::lower::captures;
 use crate::lower::control::ControlState;
 use crate::lower::convert::{self, Int32FlowDescription};
 use crate::lower::generator::CoroutineState;
+use crate::lower::operator::PrintedOperand;
 use crate::lower::scope::ScopeState;
 
 pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
@@ -33,8 +34,12 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) enum_constants: FxHashSet<ValueId>,
     // Where the declarations end that Bun's transpiler prints in one statement with the next one.
     pub(in crate::lower) joined_declarations_end: Option<u32>,
+    // The declaration whose initializer Bun's transpiler prints in the `return` statement behind it, and where that statement starts.
+    pub(in crate::lower) returned_declaration: Option<(VarDeclId, u32)>,
     // Where the operators of a binary expression are reported, for the expressions that have operands with operators of their own.
     pub(in crate::lower) operator_positions: FxHashMap<ExprId, u32>,
+    // What the sums are that stand in parentheses as operands of other sums.
+    pub(in crate::lower) printed_sums: FxHashMap<ExprId, PrintedOperand>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -64,7 +69,9 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             unclaimed_narrowings: FxHashMap::default(),
             enum_constants: FxHashSet::default(),
             joined_declarations_end: None,
+            returned_declaration: None,
             operator_positions: FxHashMap::default(),
+            printed_sums: FxHashMap::default(),
             handler: None,
             position,
             nesting_depth: 0,

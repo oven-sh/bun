@@ -142,6 +142,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) loops: LoopStores,
     pub(super) field_initializers: Vec<(MemberId, FunctionKey)>,
     pub(super) initialized_holders: Vec<(FunctionKey, SymbolId)>,
+    pub(super) use_counts: Vec<u8>,
     pub(super) has_wrapper_parameters: bool,
 }
 
@@ -159,6 +160,10 @@ impl ScopeAnalysis {
     pub(in crate::lower) fn form(&self, symbol: SymbolId) -> BindingForm {
         let form = self.forms.get(symbol.idx());
         form.copied().unwrap_or(BindingForm::NotAValue)
+    }
+
+    pub(in crate::lower) fn is_used_once(&self, symbol: SymbolId) -> bool {
+        self.use_counts.get(symbol.idx()) == Some(&1)
     }
 
     pub(in crate::lower) fn placement(&self, binding: BindingRef) -> Option<Placement> {

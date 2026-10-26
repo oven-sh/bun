@@ -38,7 +38,7 @@
   "require-of-esm-from-cjs": "as bun run",
   "side-effects-false": "as the bundle",
   "star-and-default-of-an-empty-file": "alone: the build fails",
-  "stores-to-imports": "as bun run",
+  "stores-to-imports": "as the bundle",
   "text-and-files-as-modules": "as the bundle",
   "the-entry-point-is-imported-back": "as bun run",
   "the-module-object": "alone: string string true true true object function true false function object exports,require true true false string",

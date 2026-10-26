@@ -1,8 +1,10 @@
 mod declarations;
 mod loops;
 
-use bun_sema::bind::ScopeId;
-use bun_sema::hir::{ExprId, ExprKind, Flags, IdList, PatKind, StmtId, StmtKind};
+use bun_sema::bind::{Binding, ScopeId, SymbolId};
+use bun_sema::hir::{
+    ExprId, ExprKind, Flags, IdList, PatKind, StmtId, StmtKind, VarDeclId, VarKind,
+};
 
 use super::control::BreakTargetKind;
 use super::{FileLowering, FunctionLowering, commonjs, dispose, module};
@@ -12,10 +14,18 @@ use crate::ir::BlockId;
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_statements(&mut self, statements: IdList<StmtId>) {
         let hir = self.file.hir;
+        let mut looked_ahead_to = 0;
         for index in 0..statements.len {
             let statement = hir.id_at(statements, index as usize);
             if self.file.decisions().is_dead_stmt(statement) {
                 continue;
+            }
+            self.returned_declaration = None;
+            if index >= looked_ahead_to {
+                let rest = IdList::new(statements.start + index, statements.len - index);
+                let (returned, count) = self.file.find_returned_declaration(rest);
+                self.returned_declaration = returned;
+                looked_ahead_to = index + count;
             }
             if dispose::find_resource_declarations(hir, statement).is_some() {
                 let rest = IdList::new(statements.start + index, statements.len - index);
@@ -230,6 +240,72 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    // The last variable of a `let` or `const` statement, if Bun's transpiler prints its initializer in place of its only use.
+    fn find_variable_used_once(&self, statement: StmtId) -> Option<(VarDeclId, SymbolId)> {
+        let (hir, bound) = (self.hir, self.bound);
+        let StmtKind::Var(declarations) = hir[statement].kind else {
+            return None;
+        };
+        let declaration = declarations.iter().last()?;
+        let decl = hir[declaration];
+        let is_plain = matches!(hir[decl.pat].kind, PatKind::Ident(_))
+            && matches!(
+                bound.variable_kind(hir, declaration),
+                VarKind::Let | VarKind::Const
+            )
+            && decl.init.is_some()
+            && decl.ty.is_none()
+            && !decl.flags.intersects(Flags::AMBIENT | Flags::EXPORT);
+        let Binding::Symbol(symbol) = bound.initialized_binding(decl.pat) else {
+            return None;
+        };
+        let is_substituted = is_plain
+            && self.scopes.is_used_once(symbol)
+            && !bound.is_visible_to_eval(symbol)
+            && bound.symbol_scope(symbol) != module::file_scope(self);
+        is_substituted.then_some((declaration, symbol))
+    }
+
+    fn reads_variable(&self, expression: ExprId, symbol: SymbolId) -> bool {
+        let name = self.skip_type_syntax(expression);
+        matches!(self.hir[name].kind, ExprKind::Ident(_))
+            && self.bound.binding(name) == Binding::Symbol(symbol)
+    }
+
+    // `const a = f(); const b = a; return b;` is printed `return f();`, which has `f()` in tail position.
+    // The declaration of `a` with the position of the `return`, and how many statements have been looked at.
+    fn find_returned_declaration(
+        &self,
+        statements: IdList<StmtId>,
+    ) -> (Option<(VarDeclId, u32)>, u32) {
+        let hir = self.hir;
+        let Some((first, mut symbol)) = self.find_variable_used_once(hir.id_at(statements, 0))
+        else {
+            return (None, 1);
+        };
+        for index in 1..statements.len {
+            let statement = hir.id_at(statements, index as usize);
+            match hir[statement].kind {
+                StmtKind::Return(value)
+                    if value.is_some() && self.reads_variable(value, symbol) =>
+                {
+                    return (Some((first, hir[statement].start)), index);
+                }
+                StmtKind::Var(declarations) if declarations.len() == 1 => {
+                    let Some((declaration, next)) = self.find_variable_used_once(statement) else {
+                        return (None, index);
+                    };
+                    if !self.reads_variable(hir[declaration].init, symbol) {
+                        return (None, index);
+                    }
+                    symbol = next;
+                }
+                _ => return (None, index),
+            }
+        }
+        (None, statements.len)
+    }
+
     fn declares_pattern(&self, statement: StmtId) -> bool {
         let hir = self.hir;
         let StmtKind::Var(declarations) = hir[statement].kind else {

@@ -57,7 +57,6 @@ function write(random: Random, typed: boolean, withModules: boolean): Files {
   // Runs what is queued before it goes on.
   const drain = (): string => (withModules && random.chance(0.5) ? requires() : `drainMicrotasks(); note(${label()});`);
 
-  let isInGenerator = false;
   // Something that a function does beside its await. It never waits.
   const aside = (): string =>
     random.weighted([
@@ -67,7 +66,7 @@ function write(random: Random, typed: boolean, withModules: boolean): Files {
       [3, () => `settled.then(() => note(${label()}));`],
       [1, () => `setImmediate(() => note(${label()}));`],
       [4, () => `note(${label()}, store.getStore());`],
-      [isInGenerator ? 0 : 2, () => `store.enterWith(${label()});`],
+      [2, () => `store.enterWith(${label()});`],
       [2, () => `note(${label()}, frames());`],
       [1, () => `note(${label()}, capturedFrames());`],
       [1, () => `void Promise.reject(new Error(${label()})).catch(error => note(${label()}, error.message));`],
@@ -189,7 +188,6 @@ function write(random: Random, typed: boolean, withModules: boolean): Files {
 
   for (let level = 0; level < depth; level++) {
     const last = level === depth - 1;
-    isInGenerator = kinds[level] === "generator";
     const lines: string[] = [`note(${label()}, n);`, asides(2)];
     if (random.chance(0.2)) lines.push(otherAwait(), asides(1));
     if (last) {
@@ -245,7 +243,6 @@ function write(random: Random, typed: boolean, withModules: boolean): Files {
     );
   }
 
-  isInGenerator = false;
   // What the callback of the host does with the chain.
   const first = name(0);
   const use = (): string =>

@@ -1,4 +1,5 @@
 use bun_sema::atom::Atom;
+use bun_sema::bind::Binding;
 use bun_sema::fold::Decision;
 use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, IdList, PropId, Span, UnOp};
 
@@ -6,6 +7,8 @@ use super::ResultUsage;
 use super::logical::LogicalOperator;
 use crate::ir::ValueId;
 use crate::lower::member::{KeyConversion, PropertyName};
+use crate::lower::module::file_scope;
+use crate::lower::scope::BindingRef;
 use crate::lower::{FileLowering, FunctionLowering};
 
 #[derive(Copy, Clone, Debug)]
@@ -53,6 +56,18 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // JSC keeps a variable in a register unless a closure or `eval` sees it, or it belongs to the top of an ES module.
+    fn is_kept_in_register(&self, identifier: ExprId) -> bool {
+        let Binding::Symbol(symbol) = self.bound.binding(identifier) else {
+            return false;
+        };
+        let Some(placement) = self.scopes.placement(BindingRef::Symbol(symbol)) else {
+            return false;
+        };
+        let is_at_top_of_file = self.bound.symbol_scope(symbol) == file_scope(self);
+        !placement.is_shared && (!is_at_top_of_file || self.is_commonjs_module())
+    }
+
     // JSC reports a plain store to a member at the end of the object, and every other store at the end of the target.
     fn plain_store_position(&self, expression: ExprId, target: ExprId) -> u32 {
         match self.hir.member_key(self.skip_type_syntax(target)) {
@@ -97,9 +112,11 @@ pub(super) fn lower_assignment(
         ) => {
             let reference = lowering.lower_reference(target, KeyConversion::Once);
             let old = lowering.get_reference(&reference);
+            let read_position = lowering.position();
             let old = lowering.convert_through_assertions(target, old);
             let right = lowering.lower_expression(value);
-            lowering.set_position(lowering.file.hir[expression].pos);
+            let position = lowering.find_update_position(expression, read_position);
+            lowering.set_position(position);
             let updated = lowering.emit_binary(op, old, right);
             lowering.set_position(lowering.file.last_mapped_position(target));
             lowering.put_reference(&reference, updated, Some(expression))
@@ -124,6 +141,24 @@ pub(super) fn lower_assignment(
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    // JSC records a position for the operator of `x += v` only where `x` lives in a scope object. Elsewhere the operator is reported at the last position recorded before it.
+    fn find_update_position(&mut self, expression: ExprId, read_position: u32) -> u32 {
+        let node = self.file.hir[expression];
+        let ExprKind::Assign { target, value, .. } = node.kind else {
+            return node.pos;
+        };
+        let in_front = match self.file.classify_assignment_target(target) {
+            AssignmentTarget::Identifier { identifier, .. } => {
+                if !self.file.is_kept_in_register(identifier) {
+                    return node.pos;
+                }
+                node.pos
+            }
+            _ => read_position,
+        };
+        self.find_last_record(value).unwrap_or(in_front)
+    }
+
     fn lower_plain_assignment(
         &mut self,
         expression: ExprId,

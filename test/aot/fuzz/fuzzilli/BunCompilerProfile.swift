@@ -31,6 +31,8 @@ let bunCompilerProfile = Profile(
         if randomize {
             if probability(0.2) { args.append("--aot-heat=everything-is-hot") }
             else if probability(0.2) { args.append("--aot-heat=everything-is-cold") }
+            // The same text has to print the same when the compiler doesn't read its types.
+            if TypeScriptSettings.fromEnvironment != nil && probability(0.15) { args.append("--aot-erase-types") }
         }
         args.append(entryPoint)
         return args

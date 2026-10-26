@@ -16,8 +16,8 @@ const tsconfig = JSON.stringify({
   },
 });
 
-// A member that the program used before the object was copied or its entries were listed stands further back than in plain Bun.
-const inAnotherOrder = [3, 10, 15, 19, 27, 28, 29, 41, 43, 47, 66, 67, 79, 99, 105, 119, 134, 139, 144, 155];
+// A validating build reads every member it names at start.
+const inAnotherOrder = [3, 15, 19, 43, 47, 67, 99, 119, 139, 155];
 
 // Every run takes these, whatever else it takes.
 const onceWrong = [

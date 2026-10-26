@@ -3157,6 +3157,10 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_rechecking() {
             return self.type_of_literal_prop(file, p);
         }
+        // `getTypeOfAccessors` resolves an accessor once.
+        if matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter) {
+            return self.type_of_literal_prop(file, p);
+        }
         if let Some(&known) = self.rechecked_members.get(&(file, p)) {
             return known;
         }
@@ -5171,7 +5175,14 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return ty;
         }
-        if !self.enter(Query::LiteralProp(file, p)) {
+        // `getTypeOfAccessors` has a re-entrancy guard, whatever is being checked again.
+        let is_accessor = matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter);
+        let outer = is_accessor.then(|| self.suspend_recheck());
+        let entered = self.enter(Query::LiteralProp(file, p));
+        if let Some(outer) = outer {
+            self.end_recheck(outer);
+        }
+        if !entered {
             // `getTypeOfAccessors`
             return if self.found_cycle {
                 TypeId::ERROR

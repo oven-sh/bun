@@ -104,6 +104,8 @@ pub(super) struct ScopeWalk {
     pub(super) symbol_stores: Vec<(SymbolId, ExprId, WalkedFunctionId)>,
     // The time behind which none of those stores runs in the activation that owns the symbol, as long as they all stand in its own function.
     pub(super) last_store_times: Vec<u32>,
+    // How often each symbol is named, up to two.
+    pub(super) use_counts: Vec<u8>,
     pub(super) is_switch_scope: Vec<bool>,
     pub(super) is_repeated_scope: Vec<bool>,
     pub(super) eval_variable_scopes: Vec<ScopeId>,

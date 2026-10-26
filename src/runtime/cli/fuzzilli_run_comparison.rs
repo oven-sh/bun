@@ -25,12 +25,13 @@ pub(crate) enum Verdict {
     NeitherFinished = 5,
     PlainBunCrashed = 6,
     CompiledProgramIsUnsteady = 7,
+    PlainBunRefusesTheFile = 8,
 }
 
 /// An exit code above this one is a finding. The rest of it is the signal that Fuzzilli hears of.
 pub(crate) const FINDING: u8 = 128;
 
-const VERDICT_NAMES: [&str; 8] = [
+const VERDICT_NAMES: [&str; 9] = [
     "same",
     "refused-by-the-build",
     "same-failure",
@@ -39,6 +40,7 @@ const VERDICT_NAMES: [&str; 8] = [
     "neither-finished",
     "plain-bun-crashed",
     "compiled-program-is-unsteady",
+    "plain-bun-refuses-the-file",
 ];
 
 pub(crate) fn name_of_exit_code(code: u8) -> String {
@@ -105,6 +107,15 @@ const DOCUMENTED_NAMES: [&[u8]; 12] = [
     b".raw",
 ];
 
+/// What `bun run` says when it refuses a file that the compiler builds.
+const REFUSALS_OF_BUN_RUN: [&[u8]; 5] = [
+    b"is a constant",
+    b"Left side of assignment is not a reference",
+    b"Unexpected token '...'",
+    b"Unexpected private name",
+    b"Ambiguous unary expression",
+];
+
 impl Program<'_> {
     /// Returns the exit code for the process that compiled this program.
     pub(crate) fn compare_with_plain_bun(&self) -> u8 {
@@ -130,6 +141,13 @@ impl Program<'_> {
         }
         if !matches!(compiled.end, End::Signaled(_)) && self.differs_as_documented(&compiled) {
             return Verdict::DocumentedDifference as u8;
+        }
+        if plain.stdout.is_empty()
+            && REFUSALS_OF_BUN_RUN
+                .iter()
+                .any(|message| strings::contains(&plain.stderr, message))
+        {
+            return Verdict::PlainBunRefusesTheFile as u8;
         }
         if !self.run_plain().agrees_with(&plain) {
             return Verdict::PlainBunIsUnsteady as u8;

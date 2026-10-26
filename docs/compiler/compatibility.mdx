@@ -1089,7 +1089,7 @@ When a function of Bun or Node rejects an argument, the end of the message descr
 
 The class of the error is the same, so test `error instanceof TypeError` or `error.name`, not `error.message`. A service that groups errors by message, such as Sentry, sees new groups.
 
-When `bun run` prints an error, it prints the lines of your file around it first, with a caret under the place. An executable prints the message and the stack trace without those lines. It doesn't hold the text of your files, and it never opens a file to show you one: what lies on the disk under that name may not be what was compiled. The stack trace has the lines and columns of your sources. [`bun run --aot`](/compiler/debugging) runs your files where they are, so it prints the lines.
+When `bun run` prints an error, it prints the lines of your file around it first, with a caret under the place. An executable prints the message and the stack trace without those lines. It doesn't hold the text of your files, and it never opens a file to show you one: what lies on the disk under that name may not be what was compiled. The stack trace has the lines and columns of your sources, and the `originalLine` and `originalColumn` of an error are its `line` and `column`. [`bun run --aot`](/compiler/debugging) runs your files where they are, so it prints the lines.
 
 ## Class names from computed keys
 

@@ -279,6 +279,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if plan.initializer_call == InitializerCall::AtInjectionPoint {
             self.emit_instance_initializer_call(class, plan, this);
         }
+        for &element in &plan.injected_elements {
+            self.emit_class_element(class, element, this);
+        }
     }
 
     fn emit_parameter_property(&mut self, parameter: ParamId, this: ValueId) {
@@ -314,6 +317,7 @@ fn get_constructor_class(bound: &Bound<'_>, constructor: FnId) -> ClassId {
 
 fn has_injected_steps(plan: &ClassPlan) -> bool {
     !plan.parameter_properties.is_empty()
+        || !plan.injected_elements.is_empty()
         || (plan.initializer_call == InitializerCall::AtInjectionPoint
             && !plan.instance_elements.is_empty())
 }

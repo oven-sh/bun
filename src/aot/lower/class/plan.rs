@@ -267,12 +267,21 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
     let is_at_injection_point = plan.field_semantics == FieldSemantics::Assign
         || (transform == ClassTransform::Standard && !has_defined_field);
     if !is_at_injection_point {
+        // The extra initializers of a decorated field run with the field behind it, and those of the last field in the constructor.
+        if let Some(&last @ ClassElement::RunInitializers { .. }) = plan.instance_elements.last() {
+            plan.instance_elements.pop();
+            plan.injected_elements.push(last);
+        }
         return;
     }
     plan.initializer_call = InitializerCall::AtInjectionPoint;
     if plan.instance_elements.first() == Some(&ClassElement::Brand) {
         plan.instance_elements.remove(0);
         plan.this_binding_elements.insert(0, ClassElement::Brand);
+    }
+    if plan.instance_elements.is_empty() {
+        plan.initializer_call = InitializerCall::AtThisBinding;
+        std::mem::swap(&mut plan.instance_elements, &mut plan.this_binding_elements);
     }
 }
 
@@ -305,6 +314,7 @@ pub(super) fn plan_class(
         parameter_properties: SmallVec::new(),
         this_binding_elements: Vec::new(),
         instance_elements: Vec::new(),
+        injected_elements: Vec::new(),
         static_elements: Vec::new(),
         decorations: Vec::new(),
         instance_method_initializers: None,

@@ -1,10 +1,6 @@
 // RUN: lower
-// CHECK-LABEL: function {{*}}kind=Module
-// CHECK: [[error]] = NewRuntimeError runtimeError=ImportAssignment name="a"
-// CHECK-NEXT: Throw [[error]]
-
-// RUN(STORE): lower
-// STORE-NOT: PutModuleVariable
+// DIAGNOSTIC: TS2632 1
+// CHECK-NOT: function
 
 import { a } from "./imports/a.js";
 

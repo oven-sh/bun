@@ -12,5 +12,6 @@ function g() {
 
 export function f() {
   const v = g();
+  type Result = typeof v;
   return v;
 }

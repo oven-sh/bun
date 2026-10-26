@@ -531,6 +531,17 @@ extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes image)
     return reinterpret_cast<const JSC::AOT::ImageHeader*>(bytes.data())->options.omitsFunctionSource;
 }
 
+extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages)
+{
+    JSC::AOT::PagesForNewThread result = JSC::AOT::tryReservePagesForNewThread();
+    *pages = result.pages;
+    return !result.isRefused;
+}
+
+extern "C" void Bun__AOT__releasePagesForNewThread(void* pages) { JSC::AOT::releasePagesForNewThread(pages); }
+extern "C" void Bun__AOT__adoptPagesForNewThread(void* pages) { JSC::AOT::adoptPagesForNewThread(pages); }
+extern "C" void Bun__AOT__releaseUnusedPagesOfThread() { JSC::AOT::releaseUnusedPagesOfThread(); }
+
 extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject* globalObject)
 {
     return JSC::AOT::entryPointIsCommonJS(globalObject);
@@ -582,6 +593,14 @@ void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) {}
 extern "C" bool Bun__refusesCodeOutsideExecutable(JSC::JSGlobalObject*) { return false; }
 extern "C" bool Bun__isCompiledProgramFile(const BunString*) { return false; }
 extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes) { return false; }
+extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages)
+{
+    *pages = nullptr;
+    return true;
+}
+extern "C" void Bun__AOT__releasePagesForNewThread(void*) {}
+extern "C" void Bun__AOT__adoptPagesForNewThread(void*) {}
+extern "C" void Bun__AOT__releaseUnusedPagesOfThread() {}
 extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject*) { return false; }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }

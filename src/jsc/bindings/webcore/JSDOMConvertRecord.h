@@ -200,22 +200,43 @@ private:
 
 #if ENABLE(AOT)
         if (JSC::AOT::PropertyWalk::isCompiledObject(object)) {
+            // As for the ordinary object that would stand in its place: below one of these two prototypes its keys are taken in the order of their creation.
+            JSC::JSValue prototype = object->getPrototypeDirect();
+            bool listsKeysAsCreated = prototype == lexicalGlobalObject.objectPrototype() || prototype.structureOrNull() == lexicalGlobalObject.nullPrototypeObjectStructure();
             Vector<JSC::Identifier, 8> identifiers;
             JSC::MarkedArgumentBuffer fieldValues;
-            auto walkResult = JSC::AOT::PropertyWalk::forEachOwnProperty(vm, object, JSC::AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const JSC::AOT::PropertyWalk::OwnProperty& property) -> WTF::IterationStatus {
+            auto collect = [&](const JSC::AOT::PropertyWalk::OwnProperty& property) -> WTF::IterationStatus {
                 if (property.attributes & JSC::PropertyAttribute::DontEnum)
                     return WTF::IterationStatus::Continue;
-                if (property.value.isObject())
+                if (!listsKeysAsCreated && property.value.isObject())
                     return WTF::IterationStatus::Done;
                 identifiers.append(JSC::Identifier::fromUid(vm, property.name));
                 fieldValues.appendWithCrashOnOverflow(property.value);
                 return WTF::IterationStatus::Continue;
-            });
+            };
+            auto walkResult = listsKeysAsCreated
+                ? JSC::AOT::PropertyWalk::forEachOwnPropertyAsCreated(vm, object, collect)
+                : JSC::AOT::PropertyWalk::forEachOwnProperty(vm, object, JSC::AOT::PropertyWalk::Filter::StringsAndSymbols, collect);
             if (walkResult == JSC::AOT::PropertyWalk::Result::Completed) {
+                // The conversion of an object runs code of the program, which may change the record.
+                bool mayHaveChanged = false;
                 for (size_t i = 0; i < identifiers.size(); ++i) {
+                    JSC::JSValue fieldValue = fieldValues.at(i);
+                    JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+                    if (mayHaveChanged) [[unlikely]] {
+                        bool hasProperty = object->methodTable()->getOwnPropertySlot(object, &lexicalGlobalObject, identifiers[i], slot);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (!hasProperty || (slot.attributes() & JSC::PropertyAttribute::DontEnum))
+                            continue;
+                    }
                     auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, identifiers[i]);
                     RETURN_IF_EXCEPTION(scope, {});
-                    auto typedValue = Converter<V>::convert(lexicalGlobalObject, fieldValues.at(i), args...);
+                    if (mayHaveChanged) [[unlikely]] {
+                        fieldValue = slot.getValue(&lexicalGlobalObject, identifiers[i]);
+                        RETURN_IF_EXCEPTION(scope, {});
+                    }
+                    mayHaveChanged |= fieldValue.isObject();
+                    auto typedValue = Converter<V>::convert(lexicalGlobalObject, fieldValue, args...);
                     RETURN_IF_EXCEPTION(scope, {});
                     if constexpr (std::is_same_v<K, IDLUSVString>) {
                         if (!typedKey.is8Bit()) {

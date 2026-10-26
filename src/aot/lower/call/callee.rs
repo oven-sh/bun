@@ -1,8 +1,9 @@
 use bun_sema::atom::{Atom, known, written_name};
-use bun_sema::bind::Binding;
+use bun_sema::bind::{Binding, FnOwner, Parent};
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, MemberKey, StmtKind, UnOp,
+    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, IdList, MemberKey, StmtKind,
+    UnOp,
 };
 
 use super::Callee;
@@ -10,6 +11,7 @@ use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, StringId, ValueId};
 use crate::lower::member::{self, KeyConversion, PropertyName};
+use crate::lower::operator::needs_parentheses;
 use crate::lower::{FileLowering, FunctionLowering};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -250,6 +252,71 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // JSC records a name where it ends. The source map takes that to a `)` or `]` that is printed right behind the name.
+    pub(in crate::lower) fn name_position(&self, identifier: ExprId) -> u32 {
+        let hir = self.hir;
+        let is_last = |list: IdList<ExprId>, member: ExprId| {
+            hir.ids[list.range()]
+                .last()
+                .is_some_and(|&last| ExprId::from(last) == member)
+        };
+        let mut last = identifier;
+        loop {
+            let parent = match self.bound.parent_of_expr(last) {
+                Parent::Expr(parent) => parent,
+                // The body of an arrow function.
+                Parent::FnBody(function) => match self.bound.fns[function.idx()].owner {
+                    FnOwner::Expr(arrow) => {
+                        last = arrow;
+                        continue;
+                    }
+                    _ => break,
+                },
+                _ => break,
+            };
+            last = match hir[parent].kind {
+                ExprKind::Call(site) | ExprKind::New(site) if is_last(hir[site].args, last) => {
+                    return hir[site].close_pos;
+                }
+                ExprKind::Array(elements) if is_last(elements, last) => {
+                    match self.find_access_printed_as(parent, last) {
+                        Some(access) => access,
+                        None => return self.last_token_position(parent),
+                    }
+                }
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    ..
+                } if !self.is_removed_when_unused(left) => break,
+                ExprKind::Binary { op, left, right } => {
+                    let is_in_parentheses = match hir[self.skip_type_syntax(last)].kind {
+                        ExprKind::Binary { op: inner, .. } => needs_parentheses(op, inner, false),
+                        _ => false,
+                    };
+                    if is_in_parentheses || self.printed_operands(op, left, right).1 != last {
+                        break;
+                    }
+                    parent
+                }
+                _ if hir.type_assertion_operand(parent).is_some() => parent,
+                _ => break,
+            };
+        }
+        hir[identifier].pos
+    }
+
+    // `[n][0]`, of which only `n` is printed.
+    fn find_access_printed_as(&self, list: ExprId, element: ExprId) -> Option<ExprId> {
+        let Parent::Expr(access) = self.bound.parent_of_expr(list) else {
+            return None;
+        };
+        let ExprKind::Index { obj, index, .. } = self.hir[access].kind else {
+            return None;
+        };
+        (obj == list && self.find_printed_element(obj, index) == Some(element)).then_some(access)
+    }
+
     // An expression that no file holds has no end.
     pub(in crate::lower) fn last_token_position(&self, expression: ExprId) -> u32 {
         let node = self.hir[expression];
@@ -275,6 +342,11 @@ impl FileLowering<'_, '_, '_, '_> {
                     true => right,
                     false => left,
                 },
+                ExprKind::Binary { op, left, right }
+                    if let Some(operand) = self.find_printed_logical_operand(op, left, right) =>
+                {
+                    operand
+                }
                 ExprKind::Binary { op, left, right } => {
                     let (printed_left, printed_right) = self.printed_operands(op, left, right);
                     let is_behind_comma = self.skip_unprinted_syntax(printed_left)
@@ -322,7 +394,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         | BinOp::Instanceof
                 ) && self.is_literal_operand(right)
                     && self.is_literal_operand(left)
-                    && (!is_equality(op) || self.have_one_literal_type(left, right))
+                    && self.is_computed(op, left, right)
             }
             ExprKind::Template { exprs } => {
                 let mut substitutions = hir.ids(exprs);
@@ -338,6 +410,10 @@ impl FileLowering<'_, '_, '_, '_> {
         match self.hir[inner].kind {
             ExprKind::Ident(_) => !matches!(self.bound.binding(inner), Binding::Free),
             ExprKind::This | ExprKind::BigInt(_) | ExprKind::Fn(_) => true,
+            ExprKind::Unary {
+                op: UnOp::Typeof,
+                operand,
+            } if matches!(self.hir[operand].kind, ExprKind::Ident(_)) => true,
             _ => self.is_literal_operand(inner),
         }
     }
@@ -352,6 +428,12 @@ impl FileLowering<'_, '_, '_, '_> {
                     left,
                     right,
                 } if self.is_removed_when_unused(left) => right,
+                ExprKind::Binary { op, left, right } => {
+                    match self.find_printed_logical_operand(op, left, right) {
+                        Some(operand) => operand,
+                        None => return printed,
+                    }
+                }
                 ExprKind::Index { obj, index, .. } => match self.find_printed_element(obj, index) {
                     Some(element) => element,
                     None => return printed,
@@ -360,6 +442,57 @@ impl FileLowering<'_, '_, '_, '_> {
             };
             printed = self.skip_type_syntax(inner);
         }
+    }
+
+    // Of `1 && a` Bun's transpiler prints `a`, and of `0 && a` it prints `0`.
+    fn find_printed_logical_operand(
+        &self,
+        op: BinOp,
+        left: ExprId,
+        right: ExprId,
+    ) -> Option<ExprId> {
+        self.ends_logical_chain(op, left).map(|ends| match ends {
+            true => left,
+            false => right,
+        })
+    }
+
+    // Whether a literal decides `literal && ..`, `literal || ..` or `literal ?? ..`, so that the transpiler drops what follows. `None`: not a literal.
+    pub(in crate::lower) fn ends_logical_chain(&self, op: BinOp, operand: ExprId) -> Option<bool> {
+        if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) {
+            return None;
+        }
+        let hir = self.hir;
+        let mut literal = self.skip_type_syntax(operand);
+        while let ExprKind::Binary {
+            op: BinOp::Comma,
+            left,
+            right,
+        } = hir[literal].kind
+            && self.is_removed_when_unused(left)
+        {
+            literal = self.skip_type_syntax(right);
+        }
+        let is_true = match hir[literal].kind {
+            ExprKind::Null if op == BinOp::Nullish => return Some(false),
+            ExprKind::Unary {
+                op: UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof,
+                ..
+            } if op == BinOp::Nullish => return Some(true),
+            ExprKind::Null | ExprKind::False => false,
+            ExprKind::True => true,
+            ExprKind::Number(index) => {
+                let number = hir.numbers[index as usize];
+                number != 0.0 && !number.is_nan()
+            }
+            ExprKind::String(text) => text != known::empty,
+            _ => return None,
+        };
+        Some(match op {
+            BinOp::And => !is_true,
+            BinOp::Or => is_true,
+            _ => true,
+        })
     }
 
     // `[a, b][1]` is printed `b` if evaluating the other elements does nothing.
@@ -383,15 +516,30 @@ impl FileLowering<'_, '_, '_, '_> {
         (index.fract() == 0.0 && index >= 0.0 && hir.ids(elements).all(is_plain)).then_some(element)
     }
 
-    fn have_one_literal_type(&self, left: ExprId, right: ExprId) -> bool {
-        let type_of = |operand| {
+    // Whether Bun's transpiler computes an operator whose operands are these two literals.
+    fn is_computed(&self, op: BinOp, left: ExprId, right: ExprId) -> bool {
+        let value_of = |operand| {
             let operand = self.skip_unprinted_syntax(operand);
             match self.decisions().constant(self.hir, operand) {
-                FoldedValue::Constant(constant) => Some(std::mem::discriminant(&constant)),
+                FoldedValue::Constant(constant) => Some(constant),
                 _ => None,
             }
         };
-        type_of(left).is_some() && type_of(left) == type_of(right)
+        let (Some(left), Some(right)) = (value_of(left), value_of(right)) else {
+            return false;
+        };
+        match (left, right) {
+            (Constant::Number(_), Constant::Number(_)) => true,
+            (Constant::String(_), Constant::String(_)) => {
+                is_equality(op)
+                    || matches!(
+                        op,
+                        BinOp::Add | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                    )
+            }
+            (Constant::String(_), _) | (_, Constant::String(_)) => op == BinOp::Add,
+            _ => is_equality(op) && std::mem::discriminant(&left) == std::mem::discriminant(&right),
+        }
     }
 
     // Bun's transpiler moves a literal on the left of an equality operator to the right.
@@ -568,18 +716,33 @@ impl FileLowering<'_, '_, '_, '_> {
                 path.extend_from_slice(written_name(self.queries.atom_bytes(name)));
             }
             ExprKind::Index { obj, index, chain } => {
-                let ExprKind::Ident(key) = hir[index].kind else {
-                    return false;
-                };
                 if !self.append_written_path(obj, path) {
                     return false;
                 }
-                if chain == Chain::Start {
-                    path.extend_from_slice(b"?.");
+                match hir[index].kind {
+                    ExprKind::Ident(key) => {
+                        if chain == Chain::Start {
+                            path.extend_from_slice(b"?.");
+                        }
+                        path.push(b'[');
+                        self.append_identifier(index, key, path);
+                        path.push(b']');
+                    }
+                    // Plain Bun prints `a["b"]` as `a.b` before it runs the file.
+                    ExprKind::String(key) if is_identifier_name(self.queries.atom_bytes(key)) => {
+                        path.extend_from_slice(if chain == Chain::Start { b"?." } else { b"." });
+                        path.extend_from_slice(self.queries.atom_bytes(key));
+                    }
+                    ExprKind::String(key) if needs_no_escape(self.queries.atom_bytes(key)) => {
+                        if chain == Chain::Start {
+                            path.extend_from_slice(b"?.");
+                        }
+                        path.extend_from_slice(b"[\"");
+                        path.extend_from_slice(self.queries.atom_bytes(key));
+                        path.extend_from_slice(b"\"]");
+                    }
+                    _ => return false,
                 }
-                path.push(b'[');
-                self.append_identifier(index, key, path);
-                path.push(b']');
             }
             _ => return false,
         }
@@ -591,6 +754,21 @@ impl FileLowering<'_, '_, '_, '_> {
             path.extend_from_slice(self.queries.atom_bytes(name));
         }
     }
+}
+
+fn is_identifier_name(text: &[u8]) -> bool {
+    let is_start = |byte: u8| byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$');
+    text.first().is_some_and(|&first| is_start(first))
+        && text
+            .iter()
+            .all(|&byte| is_start(byte) || byte.is_ascii_digit())
+}
+
+fn needs_no_escape(text: &[u8]) -> bool {
+    text.iter().all(|&byte| {
+        (byte == b' ' || byte.is_ascii_graphic())
+            && !matches!(byte, b'"' | b'\'' | b'`' | b'\\' | b'$')
+    })
 }
 
 fn find_locked_builtin(

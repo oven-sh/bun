@@ -58,13 +58,17 @@ export type Callable = {
   label: string;
   callee: string;
   constructs: boolean;
+  /** The operand is stored there: `callee` is a property that may have a setter. */
+  assigns?: true;
   signature: Signature;
   /** An operand for each parameter that the function is likely to take, or null. */
   samples: (string | null)[];
 };
 
-const textOfCall = (callable: Pick<Callable, "callee" | "constructs">, operands: string[]) =>
-  `${callable.constructs ? "new " : ""}${callable.callee}(${operands.join(", ")})`;
+const textOfCall = (callable: Pick<Callable, "callee" | "constructs" | "assigns">, operands: string[]) =>
+  callable.assigns
+    ? `(${callable.callee} = ${operands[0]})`
+    : `${callable.constructs ? "new " : ""}${callable.callee}(${operands.join(", ")})`;
 
 /** It makes calls, to find an instance of each class: whatever call of the list answers one with the samples. */
 export async function listCallables(list: List): Promise<Callable[]> {
@@ -102,7 +106,19 @@ export async function listCallables(list: List): Promise<Callable[]> {
         signature,
       })),
   );
-  return [...statics, ...methods].map(callable => ({
+  const anything = { type: ["anything"], isOptional: false, isCallback: false, members: [], handlers: [] };
+  const properties = [...makers].flatMap(([name, maker]) =>
+    Object.keys(groups.get(name)?.properties ?? {})
+      .filter(isName)
+      .map(property => ({
+        label: `%${name}%.prototype.${property} =`,
+        callee: `(${maker}).${property}`,
+        constructs: false,
+        assigns: true as const,
+        signature: { parameters: [anything], result: ["anything"] },
+      })),
+  );
+  return [...statics, ...methods, ...properties].map(callable => ({
     ...callable,
     samples: callable.signature.parameters.map(parameter => sampleOf(parameter.type, makers)),
   }));
@@ -399,15 +415,17 @@ function writeCase(index: number, callable: Callable, position: number, kind: Ki
 
 // What the built-ins themselves print is not compared: the program starts itself again with nothing to print to, its cases write their lines to the file that AOT_LINES_FILE names, and it prints that file.
 // Whoever sets AOT_LINES_FILE gets the cases at once, from the one whose number is in process.argv[2] on.
-// Plain Bun describes an operand that a native function rejects by running code of the operand, and an executable does not (docs/compiler/compatibility.mdx): a case whose call throws says no more
-// than that, unless AOT_EVERY_LINE is set. Then each case also says what it reads a little later, which hangs on the clock.
+// Plain Bun describes an operand that a native function rejects by running code of the operand, and an executable does not (docs/compiler/compatibility.mdx). With builtins/differential/describe-values-as-an-executable.ts
+// beside the program plain Bun does as an executable does. A case whose call throws says no more than that all the same, unless AOT_EVERY_LINE is set. Then each case also says what it reads a little later, which hangs on the clock.
+export const fileThatDescribes = "describe-values-as-an-executable.ts";
 const epilogue = (count: number) => `
 const fs = require("node:fs");
 if (!process.env.AOT_LINES_FILE) {
   const file = require("node:path").join(require("node:os").tmpdir(), "lines-of-" + process.pid + ".txt");
   const isExecutable = /[$]bunfs|~BUN/.test(process.argv[1]);
+  const describing = require("node:path").join(require("node:path").dirname(process.argv[1]), "${fileThatDescribes}");
   const folder = fs.mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "files-of-the-cases-"));
-  const child = require("node:child_process").spawnSync(process.execPath, isExecutable ? [] : [process.argv[1]], { cwd: folder, env: { ...process.env, AOT_LINES_FILE: file }, stdio: ["ignore", "ignore", "pipe"] });
+  const child = require("node:child_process").spawnSync(process.execPath, isExecutable ? [] : [...(fs.existsSync(describing) ? ["--expose-internals", "--preload", describing] : []), process.argv[1]], { cwd: folder, env: { ...process.env, AOT_LINES_FILE: file }, stdio: ["ignore", "ignore", "pipe"] });
   fs.rmSync(folder, { recursive: true, force: true });
   console.log(fs.readFileSync(file, "utf8"));
   console.log(String(child.stderr).split("\\n").filter(line => line.startsWith("AOT ")).join("\\n"));
@@ -444,7 +462,7 @@ export function programsOf(callables: Callable[], family: Kind["family"], casesI
     texts = [];
   };
   for (const callable of callables)
-    for (let position = 0; position <= callable.signature.parameters.length; position++)
+    for (let position = 0; position <= (callable.assigns ? 0 : callable.signature.parameters.length); position++)
       for (const directive of textsOfDirectives) {
         const ofFamily =
           family === "single"

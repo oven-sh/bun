@@ -11,7 +11,7 @@
 // CHECK-NOT: site=
 
 export function anyResult(untyped) {
-  const n = untyped();
+  var n = untyped();
   return n;
 }
 

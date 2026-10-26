@@ -187,12 +187,15 @@ const numbers = Buffer.alloc(16);
 numbers.writeDoubleLE(1.5, 0); numbers.writeInt32BE(-7, 8); numbers.swap32();
 console.log(numbers.toString("hex"), JSON.stringify(Buffer.from([1, 2])), Buffer.from("aGk", "base64url").toString(), Buffer.from("00ff", "hex")[1]);
 console.log(buffer);
+//// bun-info.json
+{ "fallsBack": ["BunInfo"] }
 //// bun-info.ts
-// a development server answers /bun:info
+// a development server answers /bun:info; a server without that route hands the request to the program's own
 const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") });
 const response = await fetch(`http://127.0.0.1:${server.port}/bun:info`);
-const info = (await response.json()) as Record<string, unknown>;
-console.log(response.status, response.headers.get("content-type"), Object.keys(info).sort().join(" "));
+const text = await response.text();
+const names = text.startsWith("{") ? Object.keys(JSON.parse(text) as Record<string, unknown>).sort().join(" ") : text;
+console.log(response.status, response.headers.get("content-type"), names);
 server.stop(true);
 //// bun-jsc.json
 { "says": { "BunJsc": "Cannot load 'bun:jsc'" } }
@@ -2493,11 +2496,11 @@ try {
   console.log("threw", (error as Error).name, (error as any).code);
 }
 //// road-serve-bun-info.json
-{ "features": ["BunInfo"] }
+{ "features": ["BunInfo"], "fallsBack": ["BunInfo"] }
 //// road-serve-bun-info.ts
 const server = Bun.serve({ port: 0, fetch: () => new Response("x") });
 const answer = await fetch(`http://127.0.0.1:${server.port}/bun:info`);
-console.log(answer.status, (await answer.text()).length > 0);
+console.log(answer.status, answer.headers.get("content-type"), (await answer.text()).length > 0);
 server.stop(true);
 //// road-sql-sqlite-url.json
 { "features": ["Sqlite"] }

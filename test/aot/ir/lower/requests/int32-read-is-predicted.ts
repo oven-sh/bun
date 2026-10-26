@@ -18,6 +18,6 @@ export function member(p: { x: int32 }) {
 }
 
 export function methodResult(p: { width(): int32 }) {
-  const width = p.width();
+  var width = p.width();
   return width;
 }

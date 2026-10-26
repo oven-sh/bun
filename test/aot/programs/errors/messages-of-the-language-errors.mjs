@@ -131,7 +131,7 @@ attempt("let before initialization", () => { const read = () => later; read(); l
 attempt("missing variable", () => missingVariable);
 attempt("typeof missing variable", () => typeof missingVariable);
 attempt("missing variable = 1", () => { "use strict"; missingVariable = 1; });
-attempt("import = 1", () => { self.exported = 2; });
+attempt("import = 1", () => { const same = self; same.exported = 2; });
 attempt("frozen.a = 1", () => { Object.freeze(plain).a = 1; });
 attempt("delete frozen[0]", () => delete Object.freeze([1])[0]);
 

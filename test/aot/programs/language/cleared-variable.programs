@@ -3006,7 +3006,8 @@ function door(name, change, stays) {
   try { change(); said = "silent"; } catch (error) { said = error.constructor.name + ": " + String(error.message).slice(0, 58); }
   console.log(name + " | " + said + " | " + (stays() ? "as it was" : "CHANGED"));
 }
-const push = Array.prototype.push, map = Array.prototype.map, max = Math.max, then = Promise.prototype.then, exec = RegExp.prototype.exec, call = Function.prototype.call, iterator = Array.prototype[Symbol.iterator];
+let push = Array.prototype.push;
+const map = Array.prototype.map, max = Math.max, then = Promise.prototype.then, exec = RegExp.prototype.exec, call = Function.prototype.call, iterator = Array.prototype[Symbol.iterator];
 door("a store by name", () => { Array.prototype.push = f; }, () => Array.prototype.push === push);
 door("a store by a literal key", () => { Array.prototype["push"] = f; }, () => Array.prototype.push === push);
 door("a store by a computed key", () => { Array.prototype[key] = f; }, () => Array.prototype.push === push);

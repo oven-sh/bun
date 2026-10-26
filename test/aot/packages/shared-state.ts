@@ -116,15 +116,15 @@ t("1", () => [n, alias, d, later, fn()]);
 function inner() { return [n, alias, later, fn()]; }
 inc();
 t("2", inner);
-t("assign", () => { n = 5; });
 `,
       "namespace.mjs": `import * as ns from "live";
 ${js}t("0", () => [ns.n, ns.alias, ns.default, ns.later, ns.fn()]);
 ns.inc(); ns.set("set"); ns.swap();
 t("1", () => [ns.n, ns.alias, ns.default, ns.later, ns.fn()]);
-t("assign", () => { ns.n = 5; });
+const same = ns;
+t("assign", () => { same.n = 5; });
 t("define", () => Object.defineProperty(ns, "n", { value: 9 }));
-t("delete", () => delete ns.n);
+t("delete", () => delete same.n);
 t("desc", () => Object.getOwnPropertyDescriptor(ns, "n"));
 t("tag", () => [ns[Symbol.toStringTag], Object.isFrozen(ns), Object.isSealed(ns), Object.isExtensible(ns), Object.getPrototypeOf(ns)]);
 t("in", () => ["n" in ns, "zz" in ns, Reflect.has(ns, "default"), Reflect.ownKeys(ns).map(String).join()]);

@@ -17,5 +17,6 @@ function id<T>(x: T): T {
 
 export function f(z: any) {
   const v = id<number>(z);
+  type Result = typeof v;
   return v;
 }

@@ -25,6 +25,6 @@ export function chain(a: any, b: any): any {
 }
 
 export function single(c: any, f: any, g: any): any {
-  const value = c ? f() : g();
+  var value = c ? f() : g();
   return value;
 }

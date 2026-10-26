@@ -164,7 +164,6 @@ impl RuntimeBindings<'_> {
         self.is_module = is_module;
     }
 
-    #[cfg(any(test, feature = "test_support"))]
     pub fn stores(&self) -> &[SymbolStore] {
         &self.references.stores
     }

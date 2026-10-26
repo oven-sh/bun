@@ -222,7 +222,11 @@ describe("bun test --aot", () => {
     });
     const { stderr, exitCode } = await bun(String(dir), "test", "--aot");
     expect(passed(stderr)).toEqual(["spied"]);
-    expect(stderr).not.toContain("TS100014");
+    // The store of another function is reported. The spies are not, nor is the store of what the member holds.
+    const lines = stderr.split("\n");
+    expect(
+      lines.flatMap((line, index) => (line.includes("TS100014") ? [lines[index + 1].replace(/^.*[\\/]/, "")] : [])),
+    ).toEqual(["one.test.ts:12:34"]);
     expect(exitCode).toBe(0);
   });
   const locked = {

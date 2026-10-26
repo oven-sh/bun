@@ -175,6 +175,12 @@ unsafe extern "C" {
         err: JSValue,
     );
     safe fn WebWorker__postOutOfMemoryError(proxy: *mut c_void);
+    /// The address space a compiled program's thread needs for its tables, taken
+    /// by the thread that starts it. False: there is none. `pages` may be null.
+    fn Bun__AOT__tryReservePagesForNewThread(pages: *mut *mut c_void) -> bool;
+    safe fn Bun__AOT__releasePagesForNewThread(pages: *mut c_void);
+    safe fn Bun__AOT__adoptPagesForNewThread(pages: *mut c_void);
+    safe fn Bun__AOT__releaseUnusedPagesOfThread();
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
     // it with the VM — see the note there.
@@ -498,24 +504,36 @@ impl WebWorker {
         struct ThreadStart {
             worker: bun_ptr::RefPtr<WebWorker>,
             init: WorkerVmInit,
+            table_pages: *mut c_void,
             _parent_ticket: crate::Ticket,
         }
         // SAFETY: `WebWorker` is shared across threads by design (atomics,
         // `Guarded`, thread-confined cells — see the struct doc) and holds no
         // parent-VM state; `init` is an owned copy — byte buffers, scalars and
         // `Arc<RefCountedEnvValue>`s, no JSC or atom strings; the parent VM
-        // itself is kept by `_parent_ticket`.
+        // itself is kept by `_parent_ticket`; `table_pages` is unused address
+        // space that only the new thread touches.
         unsafe impl Send for ThreadStart {}
+        let mut table_pages: *mut c_void = core::ptr::null_mut();
+        // SAFETY: `table_pages` is a live local the callee writes once.
+        if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages) } {
+            worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+            *error_message = BunString::static_("Failed to spawn worker thread");
+            return core::ptr::null_mut();
+        }
         let start = ThreadStart {
             worker: thread_ref,
             init,
+            table_pages,
             _parent_ticket: parent_ticket,
         };
         let spawn = std::thread::Builder::new()
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
                 let start = start;
+                Bun__AOT__adoptPagesForNewThread(start.table_pages);
                 start.worker.thread_main(start.init);
+                Bun__AOT__releaseUnusedPagesOfThread();
                 // The thread's ref (and the parent ticket) drop here.
             });
         match spawn {
@@ -528,6 +546,7 @@ impl WebWorker {
             }
             Err(_) => {
                 // The thread's ref went down with the closure; ours drops on return.
+                Bun__AOT__releasePagesForNewThread(table_pages);
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
                 *error_message = BunString::static_("Failed to spawn worker thread");
                 core::ptr::null_mut()

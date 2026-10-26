@@ -378,12 +378,6 @@ impl ModuleGraph {
         self.plan.has(&self.plan.order.is_half, module)
     }
 
-    /// The loader of the run time loads the module and what it imports one by one, as `bun run` does.
-    pub fn is_loaded_by_loader(&self, module: ModuleRef) -> bool {
-        matches!(module, ModuleRef::File(_))
-            && self.plan.has(&self.plan.order.is_loaded_by_loader, module)
-    }
-
     /// A later site of a module whose body threw throws the same error again.
     pub fn keeps_error(&self, module: ModuleRef) -> bool {
         match module {
@@ -651,10 +645,7 @@ impl ModuleGraph {
             .map(|root| (root, Vec::new()))
             .collect();
         for_each_mut(&mut prefixes, in_parallel, &|(root, prefix)| {
-            // The loader runs the files of such a root where it comes to them.
-            if !self.is_loaded_by_loader(ModuleRef::File(*root)) {
-                *prefix = self.collect_prefix(*root, &linked_files);
-            }
+            *prefix = self.collect_prefix(*root, &linked_files);
         });
         let mut prefixes = prefixes.into_iter();
         for &file in self.record_files() {

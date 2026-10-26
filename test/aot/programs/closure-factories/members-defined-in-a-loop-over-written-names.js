@@ -101,3 +101,22 @@ const sum = ["r", "s"].reduce((all, name) => {
   return all;
 }, {});
 console.log(sum.r(), sum.s());
+
+// The names are held by a constant, which is changed between two loops over it.
+const names = ["u", "v"];
+const held = {};
+for (const name of names) held[name] = () => name;
+names.push("w");
+names[0] = "changed";
+names.forEach(name => {
+  held[name] = () => name + "!";
+});
+console.log(Object.keys(held).join(), held.u(), held.v(), held.w(), held.changed());
+
+// A turn hands its name to a function that defines the member.
+const defined = {};
+function define(target, name, times) {
+  target[name] = () => name.repeat(times);
+}
+for (const name of ["f", "g", "f"]) define(defined, name, Object.keys(defined).length + 1);
+console.log(Object.keys(defined).join(), defined.f(), defined.g());

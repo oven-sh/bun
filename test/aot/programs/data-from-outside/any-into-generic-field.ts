@@ -15,13 +15,13 @@ console.log("a repository:", repository.items[0].name, repository.first().id, re
 class InAPage { id: number = 0; name: string = "made"; }
 interface Page<T> { items: T[]; next?: Page<T> }
 function page<T>(from: any): Page<T> { const made: Page<T> = { items: [] }; made.items = from; return made; }
-console.log("a page:", page<InAPage>(data()).items[1].name, new InAPage().name);
+console.log("a page:", page<InAPage>(data()).items[1].name, page<InAPage>(data()).items[0] instanceof InAPage, new InAPage().name);
 
 class InAMapOfARepository { id: number = 0; name: string = "made"; }
 class Keyed<T> { byName: Map<string, T> = new Map(); fill(from: any) { this.byName = from; } }
 const keyed = new Keyed<InAMapOfARepository>();
 keyed.fill(new Map([["k", data()[0]]]));
-console.log("a Map:", keyed.byName.get("k")!.name, new InAMapOfARepository().name);
+console.log("a Map:", keyed.byName.get("k")!.name, keyed.byName.get("k") instanceof InAMapOfARepository, new InAMapOfARepository().name);
 
 class OnlyTypedValuesEnter { size: number = 3; label: string = "made"; }
 class Shelf<T> { items: T[] = []; fill(from: T[]) { this.items = from; } }

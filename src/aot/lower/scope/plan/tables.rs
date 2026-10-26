@@ -51,6 +51,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         lexical_owners: parts.lexical_owners,
         arguments_objects: parts.arguments_objects,
         initialized_holders,
+        use_counts: walk.use_counts.clone(),
         has_wrapper_parameters: walk.has_wrapper_parameters,
     }
 }

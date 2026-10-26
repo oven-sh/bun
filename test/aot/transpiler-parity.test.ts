@@ -12,7 +12,6 @@ const files: { path: string; mode: CompileMode }[] = [
   { path: "test/bundler/transpiler/decorators.test.ts", mode: "test file" },
   { path: "test/bundler/transpiler/decorator-metadata.test.ts", mode: "test file" },
   { path: "test/cli/run/esm-defineProperty.test.ts", mode: "test file" },
-  { path: "test/js/bun/resolve/esModule.test.ts", mode: "test file" },
   { path: "test/js/bun/resolve/esModule-annotation.test.js", mode: "test file" },
   { path: "test/bundler/transpiler/es-decorators.test.ts", mode: "child processes" },
   { path: "test/bundler/transpiler/jsx-tsconfig-react-jsx.test.ts", mode: "child processes" },
@@ -29,6 +28,8 @@ const files: { path: string; mode: CompileMode }[] = [
 ];
 
 const skipped: Record<string, string> = {
+  "test/js/bun/resolve/esModule.test.ts":
+    "it stores to members of `import * as Self` (:14), and `bun build` stops at such a store, with --aot and without",
   "test/bundler/bundler_decorator_metadata.test.ts":
     "the entry point of each of its two tests holds the text of an untyped polyfill (TS7006 and others), and a type error stops the build",
   "test/bundler/transpiler/jsx-production.test.ts":

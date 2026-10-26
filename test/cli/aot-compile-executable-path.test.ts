@@ -2,6 +2,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { findImages, imageHeader } from "../aot/cli/compiled-image";
 import { run as runCommand } from "../aot/harness/run";
 
 setDefaultTimeout(120_000);
@@ -130,11 +131,7 @@ test.skipIf(!isLinux)("the description of the run time names the version of the 
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
   const out = readFileSync(join(String(dir), "out"));
-  const versionsOfImages: number[] = [];
-  // An image starts on a page. Bun's own code holds the same eight bytes as an immediate.
-  for (let at = out.indexOf("BUNAOT01"); at >= 0; at = out.indexOf("BUNAOT01", at + 1)) {
-    if (at % 4096 === 0) versionsOfImages.push(out.readUInt32LE(at + 0x48));
-  }
+  const versionsOfImages = findImages(out).map(at => out.readUInt32LE(at + imageHeader.formatVersion));
   const named = out.readUInt32LE(findRuntimeDescription(out) + 28);
   expect(named).toBeGreaterThan(0);
   expect(versionsOfImages).toEqual([named]);

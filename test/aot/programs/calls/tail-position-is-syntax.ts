@@ -1,4 +1,4 @@
-// Which calls are tail calls is decided by syntax alone, as stack traces show. Plain Bun's transpiler puts the initializer of a `const` that is used once in the place of its use, which makes `const r = f(n - 1); return r` a tail call there; compiled code goes by the text as written, with or without the types.
+// Which calls are tail calls, as deep recursion and stack traces show. The initializer of a `let` or `const` that is used once, by the `return` right behind it, stands in tail position, with or without the types. A function that returns a new Error stays in the trace, which plain Bun drops.
 
 declare const console: any;
 function attempt(n: string, f: () => unknown): void { try { console.log(n + ": " + JSON.stringify(f())); } catch (e: any) { console.log(n + ": throws " + e.constructor.name); } }

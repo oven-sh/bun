@@ -8,6 +8,6 @@
 // CHECK-NEXT: Return [[last]]
 
 export function sequence(f: any, g: any, h: any): any {
-  const last = (f(), g(), h());
+  var last = (f(), g(), h());
   return last;
 }

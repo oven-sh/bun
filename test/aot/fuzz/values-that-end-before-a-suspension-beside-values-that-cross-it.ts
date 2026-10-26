@@ -301,6 +301,7 @@ class Coroutine {
         ? `if (round === 0) yield round;\nawait Bun.sleep(0);`
         : `await Bun.sleep(0);`;
     return [
+      `await Bun.sleep(0);`,
       `let isCollected = false;`,
       `{`,
       `const watched = { name: "w" + pass(${this.seed()}) };`,

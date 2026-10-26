@@ -245,6 +245,44 @@ struct FlowRuns {
     assignments: Vec<(u32, u32, u32)>,
     /// The assignments at which a walk resolves the name of a key, in ascending order.
     computed_key_nodes: Vec<u32>,
+    /// Indexed like `Bound::flow_edges`: where the stretch of edges from this one on ends, in which
+    /// each edge is a later node of the same run than the edge before it.
+    ascending_edges_end: Vec<u32>,
+}
+
+impl FlowRuns {
+    /// The last node up to `flow` and the first node after it at which a walk for `reference` has
+    /// something to do, calls aside. 0 and `u32::MAX` if there is none.
+    fn nodes_about(&self, root: u32, reference: &Reference, flow: FlowId) -> (u32, u32) {
+        let (mut last, mut next) = (0, u32::MAX);
+        let mut look_at = |first: u32| {
+            let after = (self.assignments).partition_point(|&it| it <= (root, first, flow.0));
+            if let Some(&(its_root, its_first, node)) = self.assignments[..after].last()
+                && (its_root, its_first) == (root, first)
+            {
+                last = last.max(node);
+            }
+            if let Some(&(its_root, its_first, node)) = self.assignments.get(after)
+                && (its_root, its_first) == (root, first)
+            {
+                next = next.min(node);
+            }
+        };
+        look_at(TestSubjects::NO_PROPERTY);
+        look_at(0);
+        if let Some(AccessedName::Some(name)) = reference.path.first().map(|step| step.name.get()) {
+            look_at(name.0.wrapping_add(1));
+        }
+        let keys = &self.computed_key_nodes;
+        let after = keys.partition_point(|&node| node <= flow.0);
+        if let Some(&node) = keys[..after].last() {
+            last = last.max(node);
+        }
+        if let Some(&node) = keys.get(after) {
+            next = next.min(node);
+        }
+        (last, next)
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -494,6 +532,9 @@ const MAX_STEPS: u32 = 2_000_000;
 const LONG_WALK: u32 = 32;
 /// A try to skip costs about as much as this many steps.
 const WORTHWHILE_SKIP: u32 = 8;
+/// A walk that has this many antecedents of a label ahead of it is long. See
+/// `count_antecedents_with_type_of`.
+const MANY_ANTECEDENTS: usize = 16;
 
 /// A key for a name or for `this`, not necessarily unique. 0 for any other root of a reference.
 fn root_key(root: Root) -> u32 {
@@ -808,10 +849,16 @@ fn branch_label_antecedents<'b>(
     flow: FlowId,
     reduced: &[(FlowId, FlowId)],
 ) -> &'b [FlowId] {
+    let (start, len) = branch_label_edges(bound, flow, reduced);
+    bound.edges(start, len)
+}
+
+/// `branch_label_antecedents` as a range of `Bound::flow_edges`: its start and length.
+fn branch_label_edges(bound: &Bound, flow: FlowId, reduced: &[(FlowId, FlowId)]) -> (u32, u32) {
     let reduced = reduced.iter().rev().find(|r| r.0 == flow);
     match bound.flow[reduced.map_or(flow, |r| r.1).idx()] {
-        Flow::Label { start, len } => bound.edges(start, len),
-        _ => &[],
+        Flow::Label { start, len } => (start, len),
+        _ => (0, 0),
     }
 }
 
@@ -6588,7 +6635,8 @@ impl<'p, 's> Checker<'p, 's> {
                     break t.ty;
                 }
                 Flow::Label { .. } => {
-                    let antecedents = branch_label_antecedents(bound, flow, &walk.reduced);
+                    let (first_edge, len) = branch_label_edges(bound, flow, &walk.reduced);
+                    let antecedents = bound.edges(first_edge, len);
                     if let [only] = *antecedents {
                         flow = only;
                         continue;
@@ -6600,7 +6648,9 @@ impl<'p, 's> Checker<'p, 's> {
                     // result, because the computation can re-enter here.
                     let mut bypass = None;
                     let mut settled = false;
-                    for &edge in antecedents {
+                    let mut next = 0;
+                    while let Some(&edge) = antecedents.get(next) {
+                        next += 1;
                         if bypass.is_none()
                             && let Flow::Switch {
                                 stmt,
@@ -6623,6 +6673,10 @@ impl<'p, 's> Checker<'p, 's> {
                             types.push(t.ty);
                         }
                         incomplete |= t.incomplete;
+                        if antecedents.len() - next >= MANY_ANTECEDENTS {
+                            let (at, end) = (first_edge + next as u32 - 1, first_edge + len);
+                            next += self.count_antecedents_with_type_of(walk, at, end);
+                        }
                     }
                     if !settled && let Some((edge, stmt)) = bypass {
                         let t = self.flow_type(walk, edge);
@@ -7830,23 +7884,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.index_flow_runs(file);
         }
         let runs = &self.flow_memo.runs;
-        let last_about = |first: u32| {
-            let after = (runs.assignments).partition_point(|&it| it <= (root, first, flow.0));
-            match runs.assignments[..after].last() {
-                Some(&(its_root, its_first, node)) if (its_root, its_first) == (root, first) => {
-                    node
-                }
-                _ => 0,
-            }
-        };
-        let mut last_related = last_about(TestSubjects::NO_PROPERTY).max(last_about(0));
-        if let Some(AccessedName::Some(name)) = reference.path.first().map(|step| step.name.get()) {
-            last_related = last_related.max(last_about(name.0.wrapping_add(1)));
-        }
-        let keys = &runs.computed_key_nodes;
-        if let Some(&node) = keys[..keys.partition_point(|&node| node <= flow.0)].last() {
-            last_related = last_related.max(node);
-        }
+        let (last_related, _) = runs.nodes_about(root, reference, flow);
         let position = runs.position[flow.idx()];
         let start = runs.nodes[position as usize].run_start;
         let up_to_here = &runs.nodes[start as usize..=position as usize];
@@ -7869,6 +7907,56 @@ impl<'p, 's> Checker<'p, 's> {
         };
         walk.steps = walk.steps.saturating_add(position - first_passed);
         Some((antecedent(first.flow)?, last_shared))
+    }
+
+    /// FOR SPEED. `at..end` are antecedents of one label, as indices of `Bound::flow_edges`. Returns
+    /// how many of those after the first are reached from it through nodes that leave the reference
+    /// alone, so the reference has the same type at them. Each statement of a `try` block is an
+    /// antecedent of the handler's label. Without this, n references in the handler of n statements
+    /// take n * n steps.
+    #[inline(never)]
+    fn count_antecedents_with_type_of(&mut self, walk: &Walk, at: u32, end: u32) -> usize {
+        let reference = &walk.reference;
+        let file = reference.file;
+        let root = root_key(reference.root);
+        if root == 0
+            || reference.unresolved.get() != 0
+            || self.task.file != Some(file)
+            || self.is_automatic_type(walk.declared)
+        {
+            return 0;
+        }
+        if self.flow_memo.runs.file != Some(file) {
+            self.index_flow_runs(file);
+        }
+        let runs = &self.flow_memo.runs;
+        let end = runs.ascending_edges_end[at as usize].min(end);
+        let Some((&edge, later @ [_, ..])) = self.bound(file).edges(at, end - at).split_first()
+        else {
+            return 0;
+        };
+        let (_, next_related) = runs.nodes_about(root, reference, edge);
+        let mut count = later.partition_point(|later| later.0 < next_related);
+        let position = runs.position[edge.idx()];
+        let start = runs.nodes[position as usize].run_start;
+        // No call between `edge` and the last one counted may be busy.
+        let is_clear = |c: &mut Self, count: usize| {
+            let last = c.flow_memo.runs.position[later[count - 1].idx()];
+            (c.find_last_busy_call(file, start, last)).is_none_or(|call| call <= position)
+        };
+        if count > 0 && !is_clear(self, count) {
+            let (mut clear, mut blocked) = (0, count);
+            while blocked - clear > 1 {
+                let middle = clear + (blocked - clear) / 2;
+                if is_clear(self, middle) {
+                    clear = middle;
+                } else {
+                    blocked = middle;
+                }
+            }
+            count = clear;
+        }
+        count
     }
 
     /// Returns the index of the last node in `start..=position` of `FlowRuns::nodes`, which are in
@@ -8006,9 +8094,25 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             };
         }
+        let edges = &bound.flow_edges;
+        let mut ascending_edges_end = vec![0; edges.len()];
+        for at in (0..edges.len()).rev() {
+            let here = position[edges[at].idx()];
+            ascending_edges_end[at] = match edges.get(at + 1).map(|next| position[next.idx()]) {
+                Some(next)
+                    if here < next
+                        && next != u32::MAX
+                        && nodes[here as usize].run_start == nodes[next as usize].run_start =>
+                {
+                    ascending_edges_end[at + 1]
+                }
+                _ => at as u32 + 1,
+            };
+        }
         self.flow_memo.runs = FlowRuns {
             file: Some(file),
             position,
+            ascending_edges_end,
             last_busy_call: (0..end).collect(),
             nodes,
             assignments,

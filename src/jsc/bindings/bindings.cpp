@@ -5558,7 +5558,6 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::Structure* structure = object->structure();
-    bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
     JSValue prototypeObject = value;
 
     struct SnapshottedProperty {
@@ -5570,19 +5569,29 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     WTF::Vector<SnapshottedProperty, 16> propertiesOfCompiledObject;
     MarkedArgumentBuffer valuesOfCompiledObject;
     bool listsCompiledObject = false;
-    if (!nonIndexedOnly && JSC::AOT::PropertyWalk::isCompiledObject(object)) {
+    auto canWalkQuickly = [&](JSC::JSObject* walkedObject) {
+        listsCompiledObject = false;
+        if (!JSC::AOT::PropertyWalk::isCompiledObject(walkedObject))
+            return canPerformFastPropertyEnumerationForIterationBun(walkedObject->structure());
+        propertiesOfCompiledObject.shrink(0);
+        valuesOfCompiledObject.clear();
         bool hasUnderscoreProto = false;
-        auto walked = JSC::AOT::PropertyWalk::forEachOwnPropertyAsCreated(vm, object, [&](const JSC::AOT::PropertyWalk::OwnProperty& own) -> IterationStatus {
+        auto walked = JSC::AOT::PropertyWalk::forEachOwnPropertyAsCreated(vm, walkedObject, [&](const JSC::AOT::PropertyWalk::OwnProperty& own) -> IterationStatus {
             hasUnderscoreProto |= own.name == vm.propertyNames->underscoreProto.impl();
             propertiesOfCompiledObject.append({ Identifier::fromUid(vm, own.name), own.attributes });
             valuesOfCompiledObject.appendWithCrashOnOverflow(own.value);
             return IterationStatus::Continue;
         });
         listsCompiledObject = walked == JSC::AOT::PropertyWalk::Result::Completed && !hasUnderscoreProto;
-        fast = listsCompiledObject;
-    }
+        return listsCompiledObject;
+    };
+    bool fast = !nonIndexedOnly && canWalkQuickly(object);
     bool hasNoOwnProperty = listsCompiledObject ? propertiesOfCompiledObject.isEmpty() : structure->outOfLineSize() == 0 && structure->inlineSize() == 0;
 #else
+    auto canWalkQuickly = [&](JSC::JSObject* walkedObject) {
+        return canPerformFastPropertyEnumerationForIterationBun(walkedObject->structure());
+    };
+    bool fast = !nonIndexedOnly && canWalkQuickly(object);
     bool hasNoOwnProperty = structure->outOfLineSize() == 0 && structure->inlineSize() == 0;
 #endif
 
@@ -5595,7 +5604,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
             if (proto) {
                 if ((structure = proto.structureOrNull())) {
                     prototypeObject = proto;
-                    fast = canPerformFastPropertyEnumerationForIterationBun(structure);
+                    fast = canWalkQuickly(asObject(proto));
                     prototypeCount = 1;
                 }
             }
@@ -5648,7 +5657,7 @@ restart:
         };
 
 #if ENABLE(AOT)
-        if (listsCompiledObject && objectToUse == object) {
+        if (listsCompiledObject) {
             for (size_t i = 0; i < propertiesOfCompiledObject.size(); i++) {
                 collect(propertiesOfCompiledObject[i].key.impl(), propertiesOfCompiledObject[i].attributes, [&] {
                     return valuesOfCompiledObject.at(i);
@@ -5703,7 +5712,7 @@ restart:
                     if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
                         if ((structure = proto.structureOrNull())) {
                             prototypeObject = proto;
-                            fast = canPerformFastPropertyEnumerationForIterationBun(structure);
+                            fast = canWalkQuickly(asObject(proto));
                             goto restart;
                         }
                     }

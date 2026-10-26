@@ -1,0 +1,18 @@
+error: TS2540: Cannot assign to 'assigned' because it is a read-only property.
+error: TS2540: Cannot assign to 'sep' because it is a read-only property.
+error: TS2540: Cannot assign to 'quoted' because it is a read-only property.
+error: TS2632: Cannot assign to 'byKey' because it is an import.
+error: TS2632: Cannot assign to 'byIndex' because it is an import.
+error: TS2540: Cannot assign to 'added' because it is a read-only property.
+error: TS2540: Cannot assign to 'defaulted' because it is a read-only property.
+error: TS2540: Cannot assign to 'incremented' because it is a read-only property.
+error: TS2540: Cannot assign to 'decremented' because it is a read-only property.
+error: TS2540: Cannot assign to 'element' because it is a read-only property.
+error: TS2540: Cannot assign to 'rest' because it is a read-only property.
+error: TS2540: Cannot assign to 'property' because it is a read-only property.
+error: TS2540: Cannot assign to 'ofLoop' because it is a read-only property.
+error: TS2540: Cannot assign to 'inLoop' because it is a read-only property.
+error: TS2540: Cannot assign to 'behindParentheses' because it is a read-only property.
+error: TS2540: Cannot assign to 'insideParentheses' because it is a read-only property.
+error: TS2704: The operand of a 'delete' operator cannot be a read-only property.
+error: TS2632: Cannot assign to 'deletedByKey' because it is an import.

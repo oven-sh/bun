@@ -5,10 +5,10 @@
 # so the store names a field there too, and none under "undefined"
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Holder" fields=[{key="a"
-# CHECK: {key=symbol("state")@m1:100 declared={type=int} flags=[IsAddedLate
+# CHECK: {key=symbol("state")@m1:100 declared={type=2} flags=[IsAddedLate
 # CHECK: layout L1 name="Other" fields=[{key="a"
 # CHECK-NOT: key="undefined"
-# CHECK: {key=symbol("other")@m0:200 declared={type=int} flags=[IsAddedLate
+# CHECK: {key=symbol("other")@m0:200 declared={type=2} flags=[IsAddedLate
 # CHECK-NOT: key="undefined"
 # CHECK: variable g0
 

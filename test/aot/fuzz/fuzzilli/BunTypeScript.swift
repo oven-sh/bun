@@ -199,6 +199,10 @@ private struct Callable {
     var result: TypeScriptType
     /// False where the plan didn't write every parameter's type, so the checker has a signature that the plan doesn't follow.
     var isTracked = true
+    /// Which parameter has the type of the function's type parameter.
+    var genericPosition: Int? = nil
+    var isBounded = false
+    var returnsTypeParameter = false
 }
 
 /// A value with brackets around it counts as an identifier where Fuzzilli wants one.
@@ -248,6 +252,7 @@ final class TypeScriptPlan {
     private var ignoredHeads = Set<Int>()
     private var enumMembers = [String: String]()
     private var basesWithMembers = [String]()
+    private var genericHeads = [Int: String]()
     private var reassigned = Set<Variable>()
 
     // What the checker is told.
@@ -666,6 +671,9 @@ final class TypeScriptPlan {
                     table[property] = Member(type: translate(type), isOptional: true)
                 }
             }
+            if classOfGroup[group] == nil, choices.percent(15) {
+                table["neverStored"] = Member(type: choices.pick([.number, .string, .array(.number), .named(name)]), isOptional: true)
+            }
             if classOfGroup[group] == nil, table.count >= 2, choices.percent(30) {
                 let inherited = table.keys.sorted().prefix(1 + choices.below(table.count - 1))
                 members["\(name)Base"] = table.filter { inherited.contains($0.key) }
@@ -736,6 +744,11 @@ final class TypeScriptPlan {
                     var target = parameter.type
                     if parameter.isRest, case .array(let element) = target { target = element }
                     if target == .int32, !isSmallWholeNumber(instr.input(first + i)) { return false }
+                    if i == callable.genericPosition {
+                        // The checker infers the type argument from the argument.
+                        if callable.isBounded || type(of: instr.input(first + i)) == .untracked { convert(first + i, .toAny) }
+                        continue
+                    }
                     if parameter.isOptional { target = .union(of: [target, .undefined]) }
                     pass(first + i, into: target)
                 }
@@ -877,7 +890,7 @@ final class TypeScriptPlan {
 
             case .callFunction(let op):
                 if !op.isCallOptional, let callable = callables[instr.input(0)], passArguments(callable, from: 1) {
-                    produce(instr.output, callable.result)
+                    produce(instr.output, callable.returnsTypeParameter ? .untracked : callable.result)
                 } else {
                     produce(instr.output, .untracked, onIgnoredLine: giveUp())
                 }
@@ -896,8 +909,36 @@ final class TypeScriptPlan {
                     let callable = method(op.methodName, of: name), passArguments(callable, from: 1)
                 {
                     produce(instr.output, callable.result)
+                } else if !op.isReceiverOptional, !op.isCallOptional,
+                    let callable = libraryMethod(op.methodName, of: type(of: instr.input(0))), passArguments(callable, from: 1)
+                {
+                    produce(instr.output, callable.result)
                 } else {
                     produce(instr.output, .untracked, onIgnoredLine: giveUp())
+                }
+
+            case .getComputedProperty(let op):
+                if !op.isReceiverOptional, type(of: instr.input(1)).isNumber, let element = elementType(of: type(of: instr.input(0))) {
+                    produce(instr.output, element)
+                } else {
+                    produce(instr.output, .untracked, onIgnoredLine: giveUp())
+                }
+
+            case .setComputedProperty:
+                if type(of: instr.input(1)).isNumber, case .array(let element) = type(of: instr.input(0)).plain {
+                    pass(2, into: element)
+                } else {
+                    giveUp()
+                }
+
+            case .beginForLoop(let op):
+                if op.type == .forOf, !op.isAsync, op.usingType == .none, op.header == .simple,
+                    let element = elementType(of: type(of: instr.input(0)))
+                {
+                    declared[instr.innerOutput(0)] = element
+                } else {
+                    giveUp()
+                    for v in instr.allOutputs { declared[v] = .untracked }
                 }
 
             case .reassign:
@@ -906,6 +947,10 @@ final class TypeScriptPlan {
 
             case .destructAndReassign:
                 convert(0, .ignoredLine)
+
+            case .createNamedVariable(let op):
+                if op.declarationMode == .global { convert(0, .ignoredLine) } else if op.hasInitialValue { convert(0, .toAny) }
+                declared[instr.output] = .untracked
 
             case .update(let op):
                 let (a, b) = (type(of: instr.input(0)), type(of: instr.input(1)))
@@ -995,7 +1040,8 @@ final class TypeScriptPlan {
             case .beginPlainFunction, .beginArrowFunction:
                 let callable = beginSubroutine(instr, parameters: instr.innerOutputs, canReturn: true)
                 callables[instr.output] = callable
-                declared[instr.output] = callable.isTracked ? .function(callable.parameters, callable.result) : .untracked
+                declared[instr.output] =
+                    callable.isTracked && callable.genericPosition == nil ? .function(callable.parameters, callable.result) : .untracked
                 subroutines.append((index, returnAnnotations[index]))
 
             case .beginClassConstructor:
@@ -1010,7 +1056,7 @@ final class TypeScriptPlan {
                 let plain = !op.isGenerator && !op.isAsync
                 let callable = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), canReturn: plain)
                 if let name = classNames.last ?? nil, !op.isStatic {
-                    if plain { methods[name, default: [:]][op.methodName] = callable }
+                    if plain, !callable.returnsTypeParameter { methods[name, default: [:]][op.methodName] = callable }
                     declared[instr.innerOutput(0)] = .named(name)
                 }
                 subroutines.append((index, returnAnnotations[index]))
@@ -1027,6 +1073,69 @@ final class TypeScriptPlan {
                 giveUp()
                 for v in instr.allOutputs { declared[v] = .untracked }
             }
+        }
+    }
+
+    private func elementType(of type: TypeScriptType) -> TypeScriptType? {
+        switch type.plain {
+        case .array(let element), .readonlyArray(let element): return element
+        default: return nil
+        }
+    }
+
+    /// The methods of arrays, strings and numbers that the plan follows.
+    private func libraryMethod(_ name: String, of receiver: TypeScriptType) -> Callable? {
+        func callable(_ parameters: [(TypeScriptType, optional: Bool, rest: Bool)], _ result: TypeScriptType) -> Callable {
+            Callable(
+                parameters: parameters.enumerated().map {
+                    .init(name: "p\($0.offset)", type: $0.element.rest ? .array($0.element.0) : $0.element.0, isOptional: $0.element.optional, isRest: $0.element.rest)
+                }, result: result)
+        }
+        let index: (TypeScriptType, optional: Bool, rest: Bool) = (.number, false, false)
+        let optionalIndex: (TypeScriptType, optional: Bool, rest: Bool) = (.number, true, false)
+        switch receiver.plain {
+        case .array(let element), .readonlyArray(let element):
+            let one: (TypeScriptType, optional: Bool, rest: Bool) = (element, false, false)
+            switch name {
+            case "includes": return callable([one], .boolean)
+            case "indexOf", "lastIndexOf": return callable([one], .number)
+            case "join": return callable([(.string, true, false)], .string)
+            case "slice": return callable([optionalIndex, optionalIndex], .array(element))
+            case "at": return callable([index], .union(of: [element, .undefined]))
+            case "toString": return callable([], .string)
+            default: break
+            }
+            guard isArray(receiver.plain) else { return nil }
+            switch name {
+            case "push", "unshift": return callable([(element, false, true)], .number)
+            case "pop", "shift": return callable([], .union(of: [element, .undefined]))
+            case "reverse", "sort": return callable([], .array(element))
+            case "fill": return callable([one], .array(element))
+            default: return nil
+            }
+        case .string:
+            let text: (TypeScriptType, optional: Bool, rest: Bool) = (.string, false, false)
+            switch name {
+            case "charAt", "repeat": return callable([index], .string)
+            case "charCodeAt": return callable([index], .number)
+            case "at": return callable([index], .union(of: [.string, .undefined]))
+            case "indexOf", "lastIndexOf": return callable([text], .number)
+            case "includes", "startsWith", "endsWith": return callable([text], .boolean)
+            case "slice": return callable([optionalIndex, optionalIndex], .string)
+            case "substring": return callable([index, optionalIndex], .string)
+            case "toUpperCase", "toLowerCase", "trim", "trimStart", "trimEnd", "toString": return callable([], .string)
+            case "padStart", "padEnd": return callable([index, (.string, true, false)], .string)
+            case "concat": return callable([(.string, false, true)], .string)
+            case "split": return callable([text], .array(.string))
+            default: return nil
+            }
+        case .number, .int32:
+            switch name {
+            case "toString", "toFixed": return callable([optionalIndex], .string)
+            default: return nil
+            }
+        default:
+            return nil
         }
     }
 
@@ -1105,6 +1214,11 @@ final class TypeScriptPlan {
         let isSimple = op.parameters.destructuringParameters.isEmpty
         let fewest = fewestArguments[instr.index] ?? op.parameters.count
         var optional = false
+        // One parameter can have the type of a type parameter, which the function can also return.
+        let typeParameter = TypeScriptType.named("T\(instr.index)")
+        let genericPosition =
+            acceptance == .casts && canReturn && isSimple && !parameters.isEmpty && choices.percent(settings.generic)
+            ? choices.below(parameters.count) : -1
         for (i, v) in parameters.enumerated() {
             let name = "a\(v.number)"
             guard isSimple, !op.parameters.defaultParameterIndices.contains(i) else {
@@ -1118,6 +1232,13 @@ final class TypeScriptPlan {
             var annotation = chooseAnnotation(for: right)
             if isRest, let chosen = annotation, !isArray(chosen) { annotation = .array(chosen) }
             if annotation == .number, !reassigned.contains(v), choices.percent(settings.int32) { annotation = .int32 }
+            if i == genericPosition, !isRest, !reassigned.contains(v) {
+                annotation = typeParameter
+                let bound = choices.pick(["", "", " extends unknown", " = \(right.text)", " extends \(widen(right).text)"])
+                genericHeads[instr.index] = "<\(typeParameter.text)\(bound)>"
+                callable.genericPosition = i
+                callable.isBounded = bound.hasPrefix(" extends") && bound != " extends unknown"
+            }
             optional = !isRest && (optional || i >= fewest)
             if let annotation {
                 parameterAnnotations[name] = (annotation, optional)
@@ -1131,9 +1252,13 @@ final class TypeScriptPlan {
         }
         if canReturn {
             let right = resultTypes[instr.index].map { translate($0) } ?? .any
-            if var annotation = chooseAnnotation(for: right) {
+            if var annotation = callable.genericPosition != nil && choices.percent(60) ? typeParameter : chooseAnnotation(for: right) {
+                callable.returnsTypeParameter = annotation == typeParameter
                 if !endsWithReturn(instr.index) { annotation = .union(of: [annotation, .undefined]) }
-                if !containsReturn(instr.index) { annotation = .void }
+                if !containsReturn(instr.index) {
+                    annotation = .void
+                    callable.returnsTypeParameter = false
+                }
                 returnAnnotations[instr.index] = annotation
                 callable.result = annotation
             }
@@ -1269,7 +1394,7 @@ final class TypeScriptPlan {
         case .throughUnknown(let type): text = "(\(e) as unknown as \(type.text))"
         case .nonNull: text = "\(e)!"
         case .satisfies(let type): text = "(\(e) satisfies \(type.text))"
-        case .helper(let name, let type): text = "\(name)<\(type.text)>(\(expression.text) as any)"
+        case .helper(let name, let type): text = "\(name)<\(type.text)>(\(e) as any)"
         case .parsed(let type): text = "(JSON.parse(writeAsText(\(expression.text))) as \(type.text))"
         case .replaced(let replacement): return Expression(type: Identifier, text: replacement, numSubexpressions: 0)
         case .ignoredLine:
@@ -1294,7 +1419,7 @@ final class TypeScriptPlan {
 
     /// Stands behind the last parameter until `finish` puts the type behind the bracket.
     func returnMarker(at index: Int) -> String {
-        (ignoredHeads.contains(index) ? Self.ignoredLineMarker : "") + (returnAnnotations[index] == nil ? "" : "/*returns \(index)*/")
+        (genericHeads[index] == nil ? "" : "/*generic \(index)*/") + (ignoredHeads.contains(index) ? Self.ignoredLineMarker : "") + (returnAnnotations[index] == nil ? "" : "/*returns \(index)*/")
     }
 
     func fieldAnnotation(at index: Int) -> String { fieldAnnotations[index] ?? "" }
@@ -1397,10 +1522,35 @@ final class TypeScriptPlan {
         for (index, type) in returnAnnotations {
             text = text.replacingOccurrences(of: "/*returns \(index)*/)", with: "): \(type.text)")
         }
+        for (index, parameters) in genericHeads {
+            // The marker stands behind the parameters. The type parameters belong in front of the bracket that opens them.
+            guard let marker = text.range(of: "/*generic \(index)*/") else { continue }
+            var depth = 0
+            var position = marker.lowerBound
+            while position > text.startIndex {
+                position = text.index(before: position)
+                if text[position] == ")" || text[position] == "]" || text[position] == "}" { depth += 1 }
+                if text[position] == "[" || text[position] == "{" { depth -= 1 }
+                if text[position] == "(" {
+                    if depth == 0 { break }
+                    depth -= 1
+                }
+            }
+            text.removeSubrange(marker)
+            text.insert(contentsOf: parameters, at: position)
+        }
         var body = [String]()
+        var openClassExpressions = [Substring]()
         lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        for line in lines {
+        for var line in lines {
             let indentation = line.prefix(while: { $0 == " " })
+            // Fuzzilli ends a class expression without a semicolon, and a bracket at the start of the next line would call it.
+            if line.hasSuffix("{"), line.contains(" = class {") || line.contains(" = class extends ") {
+                openClassExpressions.append(indentation)
+            } else if let open = openClassExpressions.last, line == open + "}" {
+                openClassExpressions.removeLast()
+                line += ";"
+            }
             if line.contains(Self.ignoredLineMarker) {
                 body.append("\(indentation)// @ts-ignore")
                 body.append(line.replacingOccurrences(of: Self.ignoredLineMarker, with: ""))
@@ -1429,7 +1579,11 @@ final class TypeScriptPlan {
                 "    \(member.isReadonly ? "readonly " : "")\(propertyKey(key))\(member.isOptional ? "?" : ""): \(member.type.text);"
             }
             let base = baseOf[name].map { " extends \($0)" } ?? ""
-            head.append("interface \(name)\(base) {\n\(fields.joined(separator: "\n"))\n}")
+            if base.isEmpty, !basesWithMembers.contains(String(name.dropLast(4))), name.utf8.reduce(0, { $0 + Int($1) }) % 3 == 0 {
+                head.append("type \(name) = {\n\(fields.joined(separator: "\n"))\n};")
+            } else {
+                head.append("interface \(name)\(base) {\n\(fields.joined(separator: "\n"))\n}")
+            }
         }
 
         var tail = [String]()

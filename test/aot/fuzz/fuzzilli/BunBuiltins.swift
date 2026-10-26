@@ -129,7 +129,13 @@ extension ProgramBuilder {
         callFunction(print, withArgs: [loadString(name + " this"), this])
         for argument in arguments.prefix(2) { callFunction(print, withArgs: [loadString(name), argument]) }
         if probability(0.5) { setProperty(randomCustomPropertyName(), of: this, to: randomJsVariable(), guard: true) }
-        buildRecursive(n: 4)
+        // The generated code can hold calls with handlers of their own.
+        let depth = Thread.current.threadDictionary["BunHandlerDepth"] as? Int ?? 0
+        if depth < 2 {
+            Thread.current.threadDictionary["BunHandlerDepth"] = depth + 1
+            buildRecursive(n: 4)
+            Thread.current.threadDictionary["BunHandlerDepth"] = depth
+        }
         if probability(0.5) { doReturn(randomJsVariable()) }
     }
 
@@ -201,10 +207,13 @@ extension ProgramBuilder {
     }
 }
 
-let bunCodeGenerators: [(CodeGenerator, Int)] = BunBuiltins.shared.calls.isEmpty ? [] : [
-    (CodeGenerator("BunCallGenerator") { b in b.build(chooseUniform(from: BunBuiltins.shared.calls)) }, 30),
+/// BUN_FUZZILLI_BUILTINS_WEIGHT=<n> makes these generators n times as likely.
+private let weight = Int(ProcessInfo.processInfo.environment["BUN_FUZZILLI_BUILTINS_WEIGHT"] ?? "") ?? 1
 
-    (CodeGenerator("BunCallWithHandlersGenerator") { b in b.build(chooseUniform(from: BunBuiltins.callsWithHandlers)) }, 30),
+let bunCodeGenerators: [(CodeGenerator, Int)] = BunBuiltins.shared.calls.isEmpty ? [] : [
+    (CodeGenerator("BunCallGenerator") { b in b.build(chooseUniform(from: BunBuiltins.shared.calls)) }, 30 * weight),
+
+    (CodeGenerator("BunCallWithHandlersGenerator") { b in b.build(chooseUniform(from: BunBuiltins.callsWithHandlers)) }, 30 * weight),
 
     (CodeGenerator("BunSubclassGenerator") { b in
         let call = chooseUniform(from: BunBuiltins.constructors)
@@ -215,10 +224,10 @@ let bunCodeGenerators: [(CodeGenerator, Int)] = BunBuiltins.shared.calls.isEmpty
             }
         }
         b.construct(subclass, withArgs: b.buildArguments(for: call), guard: true)
-    }, 10),
+    }, 10 * weight),
 
     (CodeGenerator("BunAwaitGenerator", inContext: .single(.async), inputs: .required(.jsPromise())) { b, promise in
         let print = b.createNamedVariable(forBuiltin: "printValue")
         b.callFunction(print, withArgs: [b.loadString("awaited"), b.await(promise)])
-    }, 10),
+    }, 10 * weight),
 ]

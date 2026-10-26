@@ -558,13 +558,33 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 
+namespace Bun {
+bool waitsForMicrotasksThatBeganWithoutAsyncContextTracking();
+void didFinishMicrotaskThatMayHaveBegunWithoutAsyncContextTracking(JSC::VM&, Zig::GlobalObject*);
+void updateOnEachMicrotaskTick(JSC::VM&);
+}
+
+static thread_local bool newNextTickQueueWaitsForMicrotaskToEnd;
+
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
-    if (auto queue = globalObject->m_nextTickQueue.get()) {
+    Bun::didFinishMicrotaskThatMayHaveBegunWithoutAsyncContextTracking(vm, globalObject);
+    bool drainsNextTickQueue = std::exchange(newNextTickQueueWaitsForMicrotaskToEnd, false);
+    if (!Bun::waitsForMicrotasksThatBeganWithoutAsyncContextTracking())
         globalObject->resetOnEachMicrotaskTick();
+    if (!drainsNextTickQueue)
+        return;
+    if (auto queue = globalObject->m_nextTickQueue.get())
         queue->drain(vm, globalObject);
-    }
+}
+
+void Bun::updateOnEachMicrotaskTick(JSC::VM& vm)
+{
+    if (newNextTickQueueWaitsForMicrotaskToEnd || waitsForMicrotasksThatBeganWithoutAsyncContextTracking())
+        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+    else
+        vm.setOnEachMicrotaskTick(nullptr);
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
@@ -609,6 +629,7 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
 {
+    newNextTickQueueWaitsForMicrotaskToEnd = true;
     vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 }
 

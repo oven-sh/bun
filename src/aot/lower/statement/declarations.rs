@@ -5,9 +5,10 @@ use bun_sema::hir::{
 };
 
 use crate::ir::generated::TypeSiteKind;
+use crate::lower::expression::{Evaluation, Tail};
 use crate::lower::member::PropertyName;
 use crate::lower::pattern::PatternOrigin;
-use crate::lower::{FileLowering, FunctionLowering, scope};
+use crate::lower::{FileLowering, FunctionLowering, control, scope};
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(crate) fn last_mapped_declaration_position(
@@ -57,8 +58,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             PatKind::Ident(name) => {
                 let binding = bound.initialized_binding(decl.pat);
                 let key = self.file.function_name_key(binding, name);
-                let name = PropertyName::Constant(key);
-                self.lower_named_evaluation(initializer, name)
+                let is_returned = matches!(self.returned_declaration, Some((returned, _)) if returned == declaration);
+                let tail = match is_returned && control::allows_tail_call(self) {
+                    true => Tail::Yes { casts: None },
+                    false => Tail::No,
+                };
+                let evaluation = Evaluation {
+                    name: Some(PropertyName::Constant(key)),
+                    ..Evaluation::at_tail(tail)
+                };
+                self.lower_expression_in(initializer, evaluation)
             }
             // The pattern takes each name from where the module keeps it, and nothing from what the call yields.
             PatKind::Object(_) if self.file.find_destructured_module(initializer).is_some() => {

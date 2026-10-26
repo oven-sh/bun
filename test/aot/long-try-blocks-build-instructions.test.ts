@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { withReport } from "./harness/flags";
 import { expectLinearInstructionCount } from "./long-functions-instructions";
-import { writeLocalsStoredInTry } from "./long-functions-programs";
+import { writeLocalsStoredInTry, writeStringsStoredInTry } from "./long-functions-programs";
 import { test } from "./supported";
 
 const isSlowBuild = isDebug || isASAN;
@@ -18,9 +18,17 @@ async function countLimitHits(localCount: number, limit: string) {
 }
 
 test.skipIf(isSlowBuild || isWindows)(
-  "the instructions of a build are nearly linear in the number of locals a try block stores to",
+  "the instructions of a build are linear in the number of locals a try block stores to",
   async () => {
-    await expectLinearInstructionCount(4_000, writeLocalsStoredInTry, 5);
+    await expectLinearInstructionCount(4_000, writeLocalsStoredInTry, 4);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of strings a try block stores to locals",
+  async () => {
+    await expectLinearInstructionCount(4_000, writeStringsStoredInTry, 4);
   },
   240_000,
 );

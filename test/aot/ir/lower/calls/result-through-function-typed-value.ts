@@ -35,27 +35,27 @@ export function throughCapture() {
     return 1;
   }
   return () => {
-    const value = inner();
+    var value = inner();
     return value;
   };
 }
 
 export function throughField(source: Source) {
-  const value = source.pick("a");
+  var value = source.pick("a");
   return value;
 }
 
 export function throughMethod(source: Source) {
-  const value = source.read();
+  var value = source.read();
   return value;
 }
 
 export function throughParameter(make: () => Row) {
-  const value = make();
+  var value = make();
   return value;
 }
 
 export function unwrittenResult(guess: () => any) {
-  const value = guess();
+  var value = guess();
   return value;
 }

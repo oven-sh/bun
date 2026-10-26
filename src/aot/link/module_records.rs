@@ -348,9 +348,6 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.keeps_error(module) {
             flags |= ModuleFlags::KEEPS_ERROR;
         }
-        if graph.is_loaded_by_loader(module) {
-            flags |= ModuleFlags::IS_LOADED_BY_LOADER;
-        }
         if graph.names_way_to_module_objects(module) {
             flags |= ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
         }

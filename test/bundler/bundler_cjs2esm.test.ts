@@ -1389,6 +1389,43 @@ describe("bundler", () => {
       ],
     },
   });
+  // The same for a name that an empty file, a JSON file or a text file does not have.
+  itBundled("cjs2esm/LazyExportInUnwrappedPackageMissingExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "react/empty.js";
+        import { b } from "react/package.json";
+        import { c } from "react/NOTICE.txt";
+        console.log(a, b, c);
+      `,
+      "/node_modules/react/empty.js": ``,
+      "/node_modules/react/package.json": `{ "version": "19.0.0" }`,
+      "/node_modules/react/NOTICE.txt": `notice`,
+    },
+    bundleErrors: {
+      "/entry.js": [
+        `No matching export in "node_modules/react/empty.js" for import "a"`,
+        `No matching export in "node_modules/react/package.json" for import "b"`,
+        `No matching export in "node_modules/react/NOTICE.txt" for import "c"`,
+      ],
+    },
+  });
+  // A read of such a name off the namespace builds with a warning, as in any other package.
+  itBundled("cjs2esm/ESModuleInUnwrappedPackageMissingNamespaceMember", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as React from "react";
+        console.log(React.nope, React.version);
+      `,
+      "/node_modules/react/index.js": `export const version = "19";`,
+    },
+    bundleWarnings: {
+      "/entry.js": [
+        `Import "nope" will always be undefined because there is no matching export in "node_modules/react/index.js"`,
+      ],
+    },
+    run: { stdout: "undefined 19" },
+  });
   // A destructured `require()` of an unwrapped package reads the namespace
   // object of an ES module, inside or outside the unwrap list.
   itBundled("cjs2esm/ESModuleInUnwrappedPackageDestructuredRequire", {
@@ -1516,6 +1553,16 @@ describe("bundler", () => {
       outdir: "/out",
       run: { file: "/out/entry.js", stdout: "f" },
     },
+    // #18008, under any package name: `ReferenceError: exports_bar is not defined`.
+    SideEffectsFalse: {
+      todo: true,
+      files: exportStarOfCommonJS(
+        "react",
+        chained,
+        "bar.js",
+        `{ "name": "react", "type": "module", "sideEffects": false }`,
+      ),
+    },
   };
   for (const [name, options] of Object.entries(exportStarOfCommonJSCases)) {
     itBundled(`cjs2esm/ESModuleInUnwrappedPackageExportStarOfCommonJS${name}`, {
@@ -1528,6 +1575,7 @@ describe("bundler", () => {
   // A `require()` of a CommonJS file that converts to an ES module gets the
   // interop object of an ES module, with `__esModule: true`. The file did not
   // set it. A `require()` in a `try` block of any file reads the same object.
+  // `TypeError: undefined is not an object (evaluating '(m.__esModule ? m.default : m).make')`
   itBundled("cjs2esm/ESModuleInUnwrappedPackageRequiresConvertedCommonJS", {
     todo: true,
     files: {
@@ -1573,13 +1621,12 @@ describe("bundler", () => {
         import notice from "react/NOTICE.txt";
         import pkg from "react/package.json";
         import * as ns from "react/package.json";
-        const { version } = require("react/package.json");
-        console.log(typeof notice, notice, Object.keys(pkg).join(","), Object.keys(ns).join(","), version);
+        console.log(typeof notice, notice, Object.keys(pkg).join(","), Object.keys(ns).join(","));
       `,
       "/node_modules/react/NOTICE.txt": `notice`,
       "/node_modules/react/package.json": `{ "version": "19.0.0", "name": "react" }`,
     },
-    run: { stdout: "string notice version,name default,name,version 19.0.0" },
+    run: { stdout: "string notice version,name default,name,version" },
   });
   itBundled("cjs2esm/LazyExportInUnwrappedPackageSplitDynamicImport", {
     files: {

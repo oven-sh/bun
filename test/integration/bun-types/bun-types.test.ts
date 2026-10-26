@@ -580,13 +580,23 @@ describe("@types/bun integration test", () => {
     const rulePages = await Array.fromAsync(new Bun.Glob("lint/rules/*/**").scan({ cwd: docsDir }));
     expect(rulePages).toEqual([]);
 
-    const lintDocs = await Bun.file(join(docsDir, "lint", "index.mdx")).text();
-    expect(lintDocs).toContain("](/docs/lint/rules)");
-    expect(lintDocs).not.toMatch(/\]\(\/lint[/#)]/);
-
     const ruleIndex = await Bun.file(join(docsDir, "lint", "rules", "index.mdx")).text();
     expect(ruleIndex).toContain("](https://bun.com/docs/lint/rules/eslint/eqeqeq)");
     expect(ruleIndex).not.toMatch(/\]\(\/lint\//);
+  });
+
+  // A link to a copied section (`/lint`, `/format`, ...) is rewritten to `/docs/...`, with or
+  // without an anchor. A link to something the package does not carry stays on bun.com.
+  test.each([
+    ["lint/index.mdx", "](/docs/lint/rules)"],
+    ["lint/rules/index.mdx", "](/docs/lint#configure-rules)"],
+    ["lint/plugins.mdx", "](/docs/format)"],
+    ["typescript.mdx", "](/docs/typescript-6)"],
+    ["runtime/file-io.mdx", "](https://bun.com/images/cat.jpg)"],
+  ])("packed bun-types rewrites the links in docs/%s", async (file, rewrittenLink) => {
+    const content = await Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "docs", file)).text();
+    expect(content).toContain(rewrittenLink);
+    expect(content).not.toMatch(/\]\(\/(?!docs\/)/);
   });
 
   describe("basic type checks", () => {

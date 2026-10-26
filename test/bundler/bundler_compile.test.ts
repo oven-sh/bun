@@ -988,15 +988,37 @@ describe("bundler", () => {
         const req = (x) => require(x);
         const y = req('commonjs');
         const z = req('esm').default;
-        const m = req('with-main');
-        const e = req('with-exports/feature');
-        console.log(JSON.stringify([w, x, y, z, m, e]));
+        console.log(JSON.stringify([w, x, y, z]));
         module.exports = null;
       `,
       "/node_modules/commonjs/index.js": "throw new Error('Must be runtime import.')",
       "/node_modules/esm/index.js": "throw new Error('Must be runtime import.')",
       "/node_modules/other/index.js": "throw new Error('Must be runtime import.')",
       "/node_modules/other-esm/index.js": "throw new Error('Must be runtime import.')",
+    },
+    runtimeFiles: {
+      "/node_modules/commonjs/index.js": "module.exports = 2; require('other');",
+      "/node_modules/esm/index.js": "import 'other-esm'; export default 3;",
+      "/node_modules/other/index.js": "globalThis.x = 1;",
+      "/node_modules/other-esm/index.js": "globalThis.w = 0;",
+    },
+    run: {
+      stdout: "[0,1,2,3]",
+      setCwd: true,
+    },
+    compile: true,
+  });
+  // A package inside node_modules is resolved through its own package.json at runtime, even
+  // though the executable does not load the project's package.json by default.
+  itBundled("compile/DynamicRequirePackageJsonMainAndExports", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        const m = req('with-main');
+        const e = req('with-exports/feature');
+        console.log(JSON.stringify([m, e]));
+        module.exports = null;
+      `,
       "/node_modules/with-main/package.json": JSON.stringify({ name: "with-main", main: "lib/main.js" }),
       "/node_modules/with-main/lib/main.js": "throw new Error('Must be runtime import.')",
       "/node_modules/with-exports/package.json": JSON.stringify({
@@ -1006,10 +1028,6 @@ describe("bundler", () => {
       "/node_modules/with-exports/lib/feature.js": "throw new Error('Must be runtime import.')",
     },
     runtimeFiles: {
-      "/node_modules/commonjs/index.js": "module.exports = 2; require('other');",
-      "/node_modules/esm/index.js": "import 'other-esm'; export default 3;",
-      "/node_modules/other/index.js": "globalThis.x = 1;",
-      "/node_modules/other-esm/index.js": "globalThis.w = 0;",
       "/node_modules/with-main/package.json": JSON.stringify({ name: "with-main", main: "lib/main.js" }),
       "/node_modules/with-main/lib/main.js": "module.exports = 4;",
       "/node_modules/with-exports/package.json": JSON.stringify({
@@ -1019,7 +1037,29 @@ describe("bundler", () => {
       "/node_modules/with-exports/lib/feature.js": "module.exports = 5;",
     },
     run: {
-      stdout: "[0,1,2,3,4,5]",
+      stdout: "[4,5]",
+      setCwd: true,
+    },
+    compile: true,
+  });
+  // A static import of an --external package is resolved at startup from the cwd's node_modules
+  // through the package's main field.
+  itBundled("compile/ExternalPackageWithMain", {
+    external: ["with-main"],
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import value from "with-main";
+        console.log(value);
+      `,
+      "/node_modules/with-main/package.json": JSON.stringify({ name: "with-main", main: "lib/main.js" }),
+      "/node_modules/with-main/lib/main.js": "throw new Error('Must be runtime import.')",
+    },
+    runtimeFiles: {
+      "/node_modules/with-main/package.json": JSON.stringify({ name: "with-main", main: "lib/main.js" }),
+      "/node_modules/with-main/lib/main.js": "module.exports = 'external-main';",
+    },
+    run: {
+      stdout: "external-main",
       setCwd: true,
     },
     compile: true,

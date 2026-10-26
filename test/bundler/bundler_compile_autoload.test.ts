@@ -486,6 +486,36 @@ console.log("PRELOAD");
     },
   });
 
+  // Test that the project's own package.json is loaded when autoloadPackageJson: true.
+  // A self-reference through its "exports" resolves.
+  itBundled("compile/AutoloadPackageJsonSelfReferenceEnabled", {
+    compile: {
+      autoloadPackageJson: true,
+    },
+    files: {
+      "/entry.js": /* js */ `
+        const selfName = "my-app";
+        const subpath = "utils";
+        import(selfName + "/" + subpath)
+          .then(m => console.log(m.default))
+          .catch(e => console.log("import-failed: " + e.message));
+      `,
+    },
+    runtimeFiles: {
+      "/package.json": JSON.stringify({
+        name: "my-app",
+        exports: {
+          "./utils": "./src/utils.js",
+        },
+      }),
+      "/src/utils.js": `export default "utils-from-self-reference";`,
+    },
+    run: {
+      stdout: "utils-from-self-reference",
+      setCwd: true,
+    },
+  });
+
   // Test that the project's own package.json is NOT loaded when autoloadPackageJson: false (default).
   // A self-reference through its "exports" fails. A package inside node_modules is still resolved
   // through its own package.json: that is the resolution algorithm, not a config file.

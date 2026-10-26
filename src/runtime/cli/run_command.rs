@@ -850,6 +850,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         b.options.global_cache = ctx.debug.global_cache;
         b.options.install_preference = offline;
         b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
+        if ctx.runtime_options.eval.reads_configuration {
+            b.resolver.opts.packages_require_like_node();
+        }
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;

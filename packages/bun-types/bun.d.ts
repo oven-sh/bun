@@ -10268,6 +10268,8 @@ declare module "bun" {
      *
      * Patterns are matched against archive entry paths normalized to use forward slashes (`/`),
      * regardless of the host operating system. Always write patterns using `/` as the separator.
+     * A normalized path has no `./`, and a `./` in a pattern is ignored too (outside of `{}` groups),
+     * so `./src/*` means `src/*`.
      *
      * - Positive patterns: Only entries matching at least one pattern are extracted.
      * - Negative patterns (prefixed with `!`): Entries matching these patterns are excluded.
@@ -10516,8 +10518,9 @@ declare module "bun" {
      * File contents are loaded into memory, so for large archives consider using `extract()` instead.
      *
      * @param glob - Optional glob pattern(s) to filter files. Supports the same syntax as {@link Bun.Glob},
-     *   including negation patterns (prefixed with `!`). Patterns are matched against paths normalized
-     *   to use forward slashes (`/`).
+     *   including negation patterns (prefixed with `!`). Patterns are matched against the same
+     *   normalized paths as in `extract()`: forward slashes (`/`), no `./`. An entry whose name has a
+     *   `..` component or is an absolute path is matched by its stored name.
      * @returns A promise that resolves with a Map where keys are file paths (always using forward slashes `/` as separators) and values are File objects
      *
      * @example

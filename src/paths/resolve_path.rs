@@ -1468,6 +1468,32 @@ pub fn normalize_buf_z_spill<'a, P: PlatformT>(
     normalize_buf_z::<P>(str, buf_or_spill(buf, spill, str.len() + 2))
 }
 
+/// Whether [`normalize_buf_z`] for [`platform::Posix`] returns `path` unchanged.
+pub fn is_normalized_posix(path: &[u8]) -> bool {
+    // It drops a leading `/` and an empty component, and it reads `\` as a separator.
+    if path.is_empty()
+        || path[0] == b'/'
+        || strings::contains_char(path, b'\\')
+        || strings::contains(path, b"//")
+    {
+        return false;
+    }
+    // A `.` or `..` component is at the start or after a `/`.
+    let mut component = path;
+    loop {
+        let after_dots = component
+            .strip_prefix(b"..")
+            .or_else(|| component.strip_prefix(b"."));
+        if matches!(after_dots, Some([] | [b'/', ..])) {
+            return false;
+        }
+        match strings::index_of(component, b"/.") {
+            Some(slash) => component = &component[slash + 1..],
+            None => return true,
+        }
+    }
+}
+
 /// `buf` when it holds `needed` bytes, otherwise `spill` grown to `needed`.
 pub fn buf_or_spill<'a>(buf: &'a mut [u8], spill: &'a mut Vec<u8>, needed: usize) -> &'a mut [u8] {
     if needed <= buf.len() {
@@ -2939,6 +2965,28 @@ mod tests {
         let mut spill = Vec::new();
         assert_eq!(norm(&mut buf[..1], &mut spill, b""), b".\0");
         assert_eq!(spill.len(), 2);
+    }
+
+    #[test]
+    fn is_normalized_posix_agrees_with_the_normalizer() {
+        // Every path of up to 5 of these bytes.
+        const BYTES: &[u8; 4] = b"a./\\";
+        let mut buf = [0u8; 16];
+        for len in 0..=5u32 {
+            for code in 0..4u32.pow(len) {
+                let path: Vec<u8> = (0..len)
+                    .map(|at| BYTES[(code >> (2 * at) & 3) as usize])
+                    .collect();
+                let unchanged =
+                    normalize_buf_z::<platform::Posix>(&path, &mut buf).as_bytes() == &path[..];
+                assert_eq!(
+                    is_normalized_posix(&path),
+                    unchanged,
+                    "{:?}",
+                    String::from_utf8_lossy(&path)
+                );
+            }
+        }
     }
 
     #[test]

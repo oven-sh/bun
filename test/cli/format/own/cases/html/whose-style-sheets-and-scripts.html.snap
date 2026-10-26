@@ -1,0 +1,81 @@
+------------------
+{ printWidth: 80 }
+------------------
+<style>
+  a {
+    font-family:
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      sans-serif;
+  }
+</style>
+<script>
+  x = {
+    a: 1,
+
+    b: 2,
+    c: 3,
+
+    d: 4,
+  };
+  y = [a, b];
+  f(
+    a,
+
+    b,
+  );
+</script>
+<p
+  style="
+    font-family:
+      system-ui,
+      -apple-system,
+      &quot;Segoe UI&quot;,
+      sans-serif;
+  "
+>
+  அனிமேசன், நகைச்சுவை படங்கள் மற்றும் செய்திகளை அனிமேசன், நகைச்சுவை படங்கள்
+</p>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<style>
+  a {
+    font-family:
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      sans-serif;
+  }
+</style>
+<script>
+  x = {
+    a: 1,
+
+    b: 2,
+    c: 3,
+
+    d: 4,
+  };
+  y = [a, b];
+  f(
+    a,
+
+    b,
+  );
+</script>
+<p
+  style="
+    font-family:
+      system-ui,
+      -apple-system,
+      &quot;Segoe UI&quot;,
+      sans-serif;
+  "
+>
+  அனிமேசன், நகைச்சுவை படங்கள் மற்றும் செய்திகளை அனிமேசன், நகைச்சுவை படங்கள்
+</p>
+
+===================== End =====================

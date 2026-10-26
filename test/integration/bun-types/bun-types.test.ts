@@ -318,6 +318,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "BunTest.bind.ts": null,
   "ByteStream.bind.ts": null,
   "BytecodeOrderRecorder.bind.ts": null,
+  "ConsoleObject.bind.ts": null,
   "Counters.bind.ts": null,
   "Crypto.bind.ts":
     'typeof Bun & { Crypto: Class<Omit<Crypto, "subtle">>; timingSafeEqual: typeof import("node:crypto").timingSafeEqual }',
@@ -396,6 +397,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
     "typeof Bun & { FrameworkFileSystemRouter: Class<{ match(path: string): any; toJSON(): any }> }",
   "fmt_jsc.bind.ts": null,
   "h2_frame_parser.bind.ts": null,
+  "hash_map_testing.bind.ts": null,
   "headers_jsc.bind.ts": null,
   "hosted_git_info_jsc.bind.ts": null,
   "html_rewriter.bind.ts": "{ HTMLRewriter: typeof HTMLRewriter }",

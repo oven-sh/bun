@@ -425,6 +425,17 @@ impl DirEntry {
         }
     }
 
+    /// Takes `alias_key` out of the key hashes of this listing, once that key is mapped elsewhere.
+    pub(crate) fn remove_alias(&mut self, alias_key: u64) {
+        let Some(owners) = &mut self.owners else {
+            return;
+        };
+        owners.retain(|&key| key != alias_key);
+        if owners.len() < 2 {
+            self.owners = None;
+        }
+    }
+
     /// Replaces the listing with `fresh`, a new read of the same directory, and keeps its keys.
     pub(crate) fn refill(&mut self, mut fresh: DirEntry) {
         fresh.owners = self.owners.take();

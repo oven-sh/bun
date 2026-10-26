@@ -7069,7 +7069,7 @@ fn listing_slot_for_walk(
             rfs.entries.at_index(slot.index)
         && !listing_is_named(listing.dir, walked)
     {
-        rfs.entries.remove_hash(slot.hash);
+        rfs.unmap_from_listing(&slot);
         return rfs.listing_slot(walked, real);
     }
     Ok(slot)

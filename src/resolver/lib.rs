@@ -1158,11 +1158,21 @@ pub mod fs {
                 Some(EntriesOption::Entries(listing))
                     if strings::paths::without_trailing_slash_windows_path(listing.dir) != real_dir
             ) {
-                self.entries.remove_hash(slot.hash);
+                self.unmap_from_listing(&slot);
                 return self.entries.get_or_put(real);
             }
             self.map_to_listing_slot(walked, &slot);
             Ok(slot)
+        }
+
+        /// Unmaps the key of `slot` from the listing there, which another path names, and
+        /// takes it out of that listing's owners, so that a bust of the listing leaves the
+        /// `DirInfo` under the key alone. The caller holds `entries_mutex`.
+        pub(crate) fn unmap_from_listing(&mut self, slot: &bun_alloc::Result) {
+            if let Some(EntriesOption::Entries(listing)) = self.entries.at_index(slot.index) {
+                listing.remove_alias(slot.hash);
+            }
+            self.entries.remove_hash(slot.hash);
         }
 
         /// Stores `value` in the slot that [`listing_slot`](Self::listing_slot)

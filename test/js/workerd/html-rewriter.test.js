@@ -431,6 +431,111 @@ describe("HTMLRewriter", () => {
       expect(await res.text()).toBe("<div>hello|</div>");
     });
 
+    // lol-html gives a text node to the handler in chunks of at most 1024
+    // bytes after a byte that is not UTF-8, and for every part of the node
+    // after its first. A `<` that does not open a tag ends a part, and so does
+    // the end of a write. When the handler suspends on a chunk, lol-html keeps
+    // the undecoded rest of that part and continues from it after the resume.
+    describe("async text handler on a text node of many chunks", () => {
+      // The period is not a factor of 1024, so each chunk has its own text.
+      const fill = length => Buffer.alloc(length, "abcdefghijklmnopqrstuvwxyz0123456789_").toString();
+      const textLength = 8 * 1024;
+      const bodies = {
+        "after a byte that is not UTF-8": {
+          text: "\uFFFD" + fill(textLength),
+          body: () =>
+            Buffer.concat([Buffer.from("<p>\xE9", "latin1"), Buffer.from(fill(textLength)), Buffer.from("</p>")]),
+        },
+        "after a '<' that does not open a tag": {
+          text: "a < " + fill(textLength),
+          body: () => "<p>a < " + fill(textLength) + "</p>",
+        },
+        "after the first write": {
+          text: "abcd" + fill(textLength),
+          body: () =>
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(Buffer.from("<p>abcd"));
+                await setImmediatePromise();
+                controller.enqueue(Buffer.from(fill(textLength)));
+                await setImmediatePromise();
+                controller.enqueue(Buffer.from("</p>"));
+                controller.close();
+              },
+            }),
+        },
+      };
+      const transform = async (body, onChunk) => {
+        const chunks = [];
+        const res = new HTMLRewriter()
+          .on("p", {
+            text(chunk) {
+              chunks.push([chunk.text, chunk.lastInTextNode]);
+              return onChunk(chunk);
+            },
+          })
+          .transform(new Response(body));
+        return { output: await res.text(), chunks };
+      };
+
+      it.each(Object.keys(bodies))("sees the chunks that a sync handler sees, %s", async name => {
+        const { text, body } = bodies[name];
+        const sync = await transform(body(), () => {});
+        const suspended = await transform(body(), () => setImmediatePromise());
+        expect(sync.chunks.length).toBeGreaterThan(8);
+        expect(sync.chunks.map(([chunkText]) => chunkText).join("")).toBe(text);
+        expect(suspended).toEqual(sync);
+      });
+
+      it.each(Object.keys(bodies))("a mutation after each await lands on its own chunk, %s", async name => {
+        const { text, body } = bodies[name];
+        const { output } = await transform(body(), async chunk => {
+          const upper = chunk.text.toUpperCase();
+          await setImmediatePromise();
+          chunk.replace(upper, { html: true });
+        });
+        expect(output).toBe(`<p>${text.toUpperCase()}</p>`);
+      });
+
+      // Every suspension copied the undecoded rest of the text again: 544
+      // bytes from the allocator for each byte of a 1 MiB text node. An ASAN
+      // build does not allocate through mimalloc.
+      it.skipIf(isASAN)("copies the rest of the text once, not at every suspension", async () => {
+        const length = 1024 * 1024;
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const { heapStats } = require("bun:jsc");
+             const length = ${length};
+             const body = Buffer.concat([Buffer.from("<p>\\xE9", "latin1"), Buffer.alloc(length, "a"), Buffer.from("</p>")]);
+             let chunks = 0;
+             const rewriter = new HTMLRewriter().on("p", {
+               async text() {
+                 chunks++;
+                 await new Promise(resolve => setImmediate(resolve));
+               },
+             });
+             const before = heapStats().mimalloc.malloc_requested;
+             await rewriter.transform(new Response(body)).bytes();
+             const requested = heapStats().mimalloc.malloc_requested - before;
+             console.log(JSON.stringify({ chunks, requestedPerByte: Math.round(requested / length) }));`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        const { chunks, requestedPerByte } = JSON.parse(stdout);
+        expect(chunks).toBe(length / 1024 + 2);
+        // The body, its copy in the Response, the parked rest, the parked chunks and the output.
+        expect(requestedPerByte).toBeGreaterThan(1);
+        expect(requestedPerByte).toBeLessThan(16);
+        expect(exitCode).toBe(0);
+      });
+    });
+
     // The `is_async` arm of `on_rewriting_error`: a handler throwing while the
     // input is still streaming must surface the real error, not lol-html's
     // generic "The rewriter has been stopped."

@@ -2079,6 +2079,25 @@ describe("bundler", () => {
     },
     run: { file: "/out/src/entry.js", stdout: "entry lib" },
   });
+  // A specifier that names a directory still names it after the rewrite: `../lib`
+  // from the output would load the sibling `lib.js` instead of `lib/index.js`.
+  itBundled("edgecase/ExternalDirectoryKeepsTrailingSeparator", {
+    files: {
+      "/lib/entry.js": /* js */ `
+        import index from ".";
+        console.log(index);
+      `,
+      "/lib/index.js": `export default "index";`,
+      "/lib.js": `export default "sibling";`,
+    },
+    external: ["./lib"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const imports = new Bun.Transpiler().scanImports(api.readFile("/out/entry.js")).map(i => i.path);
+      expect(imports).toEqual(["../lib/"]);
+    },
+    run: { file: "/out/entry.js", stdout: "index" },
+  });
   // A `./`-prefixed wildcard names files, so besides matching specifiers as
   // written (kept as written, like esbuild) it also matches by resolved path:
   // `../vendor/b.js` from a subdirectory is as external as `./vendor/a.js` from

@@ -2187,9 +2187,9 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     // Matched by its resolved path, so the specifier is printed relative to where
-    // the output goes (stdout: the cwd), like esbuild. Neither lib/index.ts nor
-    // the sibling lib.ts is bundled.
-    expect(stdout).toContain('from "./lib"');
+    // the output goes (stdout: the cwd). It still names the directory, not the
+    // sibling lib.ts, and neither file is bundled.
+    expect(stdout).toContain('from "./lib/"');
     expect(stdout).not.toContain("sibling");
     expect(stdout).not.toContain('"index"');
     expect(exitCode).toBe(0);

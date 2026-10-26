@@ -609,12 +609,24 @@ impl BuildCommand {
                 )
                 .expect("unreachable");
                 this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
-                this_transpiler.options.outfile = outfile.into();
                 if let Some(dir) = bun_core::dirname(outfile) {
                     ctx.bundler_options.outdir = dir.into();
                 }
                 // resolver.opts.entry_naming — field does not exist on the
                 // resolver subset; bundler-side `entry_naming` is sufficient.
+            }
+
+            if this_transpiler.options.output_dir.is_empty() && !ctx.bundler_options.compile {
+                // Same rule as the `'dump` block: two files (a linked source map) land next
+                // to the entry point, one file in --outfile's directory or on stdout.
+                let dir = if this_transpiler.options.source_map == options::SourceMapOption::Linked
+                    && ctx.args.entry_points.len() == 1
+                {
+                    bun_core::dirname(&ctx.args.entry_points[0])
+                } else {
+                    bun_core::dirname(outfile)
+                };
+                this_transpiler.options.cli_output_dir = dir.unwrap_or(b"").into();
             }
 
             // Stack-owned Mini event loop so its tasks/concurrent_tasks queues

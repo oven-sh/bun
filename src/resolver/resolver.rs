@@ -2093,6 +2093,18 @@ impl<'a> Resolver<'a> {
                 ));
             }
 
+            // "." and "./lib/" name a directory: keep the separator the join stripped.
+            let names_directory = Self::import_path_names_directory(import_path)
+                && !strings::ends_with_char(abs_path, SEP);
+            let len = abs_path.len();
+            let buf = bufs!(relative_abs_path);
+            let abs_path: &[u8] = if names_directory && len < buf.len() {
+                buf[len] = SEP;
+                &buf[..=len]
+            } else {
+                &buf[..len]
+            };
+
             return ResultUnion::Success(Result {
                 path_pair: PathPair {
                     primary: Path::init(

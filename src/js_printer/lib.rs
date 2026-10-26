@@ -6559,16 +6559,28 @@ pub(crate) mod __gated_printer {
                 bun_paths::resolve_path::platform::Loose,
                 false,
             >(self.options.output_dir, text);
-            if rel.starts_with(b"./")
-                || rel.starts_with(b"../")
-                || rel == b".."
-                || bun_paths::is_absolute(rel)
-            {
-                return self.bump.alloc_slice_copy(rel);
+            let rel = rel.strip_suffix(b"/").unwrap_or(rel);
+            if rel.is_empty() {
+                return b"./";
             }
-            let out = self.bump.alloc_slice_fill_copy(rel.len() + 2, 0u8);
-            out[..2].copy_from_slice(b"./");
-            out[2..].copy_from_slice(rel);
+            let prefix: &[u8] =
+                if rel.starts_with(b"../") || rel == b".." || bun_paths::is_absolute(rel) {
+                    b""
+                } else {
+                    b"./"
+                };
+            // The resolver keeps the trailing separator of a specifier that names a directory.
+            let suffix: &[u8] = if text.last().is_some_and(|&c| c == b'/' || c == b'\\') {
+                b"/"
+            } else {
+                b""
+            };
+            let out = self
+                .bump
+                .alloc_slice_fill_copy(prefix.len() + rel.len() + suffix.len(), 0u8);
+            out[..prefix.len()].copy_from_slice(prefix);
+            out[prefix.len()..][..rel.len()].copy_from_slice(rel);
+            out[prefix.len() + rel.len()..].copy_from_slice(suffix);
             out
         }
 

@@ -92,8 +92,7 @@ pub struct Graph<'a> {
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
 
-    /// Does any import record have `PRINT_PATH_RELATIVE_TO_OUTPUT`? Chunks need
-    /// `output_dir_abs` only then.
+    /// Some import record has `PRINT_PATH_RELATIVE_TO_OUTPUT`, so chunks need `output_dir_abs`.
     pub(crate) has_output_relative_import_paths: bool,
 }
 

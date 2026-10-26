@@ -1249,9 +1249,8 @@ pub struct BundleOptions<'a> {
     pub(crate) output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
-    /// `bun build --outfile`; the CLI writes it, the linker reads its directory
-    /// (`Chunk::output_dir_abs`).
-    pub outfile: Box<[u8]>,
+    /// `bun build` without `--outdir`: the directory the CLI writes to (empty: stdout).
+    pub cli_output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
 
     pub(crate) write: bool,
@@ -1508,7 +1507,7 @@ impl<'a> BundleOptions<'a> {
             // close the parent's fd when the worker options drop.
             output_dir_handle: None,
             output_dir: self.output_dir.clone(),
-            outfile: self.outfile.clone(),
+            cli_output_dir: self.cli_output_dir.clone(),
             root_dir: self.root_dir.clone(),
             write: self.write,
             preserve_symlinks: self.preserve_symlinks,
@@ -1743,7 +1742,7 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define::default()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
-            outfile: Box::default(),
+            cli_output_dir: Box::default(),
             target,
             write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below

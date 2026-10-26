@@ -287,6 +287,8 @@ _bun_complete_word() {
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
             [[ "${cur_word}" != -* ]] && {
                 COMPREPLY+=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") );
+                # `bun dev` runs the script, so the scripts complete here as they do after `run`
+                _read_scripts_in_package_json;
                 _file_arguments "${RUNNABLE_FILES}";
             }
             return;;

@@ -537,6 +537,7 @@ describe("bun", () => {
           // completed `reinstall` (the scripts that start with `r`) and `bun run build:<TAB>` nothing.
           "bun run build:r": ["release"],
           "bun run build:": ["nightly", "release"],
+          "bun build:r": ["release"],
           "bun --loader .ts:j": ["js", "json", "jsx"],
           "bun --inspect=localhost:6499 run d": ["dev"],
           "bun --cwd=sub run li": ["lint:fix"],
@@ -544,8 +545,8 @@ describe("bun", () => {
           "bun run dev -- host: te": ["test/", "test:unit"],
           // As before.
           "bun add --p": ["--peer", "--production"],
-          "bun r": ["remove", "repl", "run"],
-          "bun te": ["test"],
+          "bun r": ["reinstall", "remove", "repl", "run"],
+          "bun te": ["test", "test:unit"],
         };
         // bash's default COMP_WORDBREAKS has ':' and '=', so readline makes them words of their own.
         const replies = await offered(String(dir), Object.keys(expected), line =>

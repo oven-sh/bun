@@ -19,3 +19,15 @@ impl ZigStackFrameCode {
     /// 👷
     pub(crate) const CONSTRUCTOR: Self = Self(6);
 }
+
+/// What kind of code a frame runs. Same FFI contract as [`ZigStackFrameCode`].
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+pub struct ZigStackFrameKind(pub u8);
+
+impl ZigStackFrameKind {
+    pub const SCRIPT: Self = Self(0);
+    pub const HOST: Self = Self(1);
+    pub const BUILTIN: Self = Self(2);
+    pub const WASM: Self = Self(3);
+}

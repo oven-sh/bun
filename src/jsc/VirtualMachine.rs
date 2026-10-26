@@ -6684,6 +6684,10 @@ impl VirtualMachine {
         fn is_unknown_source(url: &bun_core::String) -> bool {
             url.is_empty() || url.eq_ascii(b"[unknown]") || url.starts_with_ascii(b"[source:")
         }
+        // A frame with no file of its own: a builtin, a host function, a WebAssembly function.
+        fn has_no_file(f: &crate::ZigStackFrame) -> bool {
+            f.kind != crate::ZigStackFrameKind::SCRIPT || is_unknown_source(&f.source_url)
+        }
 
         let mut frames_len = exception.stack.frames_len as usize;
         // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
@@ -6700,7 +6704,7 @@ impl VirtualMachine {
                 }
                 // Workaround for being unable to hide that specific frame
                 // without also hiding the frame before it.
-                if is_unknown_source(&frame.source_url) && is_noisy_builtin(&frame.function_name) {
+                if has_no_file(frame) && is_noisy_builtin(&frame.function_name) {
                     start_index = Some(0);
                     break;
                 }
@@ -6712,9 +6716,7 @@ impl VirtualMachine {
                     if is_hidden_frame(frame) {
                         continue;
                     }
-                    if is_unknown_source(&frame.source_url)
-                        && is_noisy_builtin(&frame.function_name)
-                    {
+                    if has_no_file(frame) && is_noisy_builtin(&frame.function_name) {
                         continue;
                     }
                     // Swap rather than overwrite: the discarded tail past `j`
@@ -6739,11 +6741,7 @@ impl VirtualMachine {
             for (i, frame) in frames.iter().enumerate() {
                 if frame.source_url.starts_with_ascii(b"bun:")
                     || frame.source_url.starts_with_ascii(b"node:")
-                    || frame.source_url.is_empty()
-                    || frame.source_url.eq_ascii(b"native")
-                    || frame.source_url.eq_ascii(b"unknown")
-                    || frame.source_url.eq_ascii(b"[unknown]")
-                    || frame.source_url.starts_with_ascii(b"[source:")
+                    || has_no_file(frame)
                 {
                     top_frame_is_builtin = true;
                     continue;
@@ -7794,7 +7792,13 @@ impl VirtualMachine {
                     );
                     (name_str, loc_str)
                 };
-                if !name_str.is_empty() {
+                if !name_str.is_empty() && loc_str.is_empty() {
+                    let _ = write!(
+                        writer,
+                        "%0A      at {}",
+                        bun_core::fmt::github_action(name_str.as_bytes()),
+                    );
+                } else if !name_str.is_empty() {
                     let _ = write!(
                         writer,
                         "%0A      at {} ({})",

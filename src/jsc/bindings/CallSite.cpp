@@ -5,13 +5,14 @@
 
 #include "config.h"
 #include "CallSite.h"
+#include "ErrorStackFrame.h"
 
 #include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/CodeBlock.h"
 #include "helpers.h"
 #include "wtf/text/OrdinalNumber.h"
 
 #include <JavaScriptCore/JSCInlines.h>
-#include <optional>
 
 using namespace JSC;
 using namespace WebCore;
@@ -36,7 +37,26 @@ static bool isUserFunction(JSC::JSCell* callee)
     return !JSC::isGeneratorOrAsyncFunctionBodyParseMode(function->jsExecutable()->parseMode());
 }
 
-void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
+static bool isEvalFrame(const ZigStackFrame& record, JSC::CodeBlock* codeBlock)
+{
+    if (record.code_type == ZigStackFrameCodeEval)
+        return true;
+    if (!codeBlock)
+        return false;
+    auto* executable = codeBlock->ownerExecutable();
+    if (!executable)
+        return false;
+    switch (executable->evalContextType()) {
+    case JSC::EvalContextType::None:
+        return false;
+    case JSC::EvalContextType::FunctionEvalContext:
+    case JSC::EvalContextType::InstanceFieldEvalContext:
+        return true;
+    }
+    return false;
+}
+
+void CallSite::finishCreation(VM& vm, const JSC::StackFrame& stackFrame, const ZigStackFrame& record, bool encounteredStrictFrame)
 {
     Base::finishCreation(vm);
 
@@ -47,13 +67,13 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
      * will return undefined.".
      * Thus, if we've already encountered a strict frame, we'll treat our frame as strict too. */
 
-    bool isStrictFrame = encounteredStrictFrame;
     JSC::JSCell* callee = stackFrame.callee();
-    JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
-    if (!isStrictFrame) {
-        if (codeBlock) {
-            isStrictFrame = codeBlock->ownerExecutable()->isInStrictContext();
-        }
+    // A builtin's code block stays hidden: JSC's builtins are all strict, and their strictness must not
+    // cascade to the user frames below [].map(callback).
+    JSC::CodeBlock* codeBlock = record.kind == ZigStackFrameKindScript ? stackFrame.codeBlock() : nullptr;
+    bool isStrictFrame = encounteredStrictFrame;
+    if (!isStrictFrame && codeBlock) {
+        isStrictFrame = codeBlock->ownerExecutable()->isInStrictContext();
     }
 
     // JSC::StackFrame has no receiver, so getThis() is always undefined.
@@ -75,28 +95,37 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         }
     }
 
-    m_functionName.set(vm, this, stackFrame.functionName());
-    m_sourceURL.set(vm, this, stackFrame.sourceURL());
-    m_sourceID = stackFrame.sourceID();
+    m_functionName.set(vm, this, jsString(vm, record.function_name.toWTFString(BunString::ZeroCopy)));
+    m_sourceURL.set(vm, this, jsString(vm, record.source_url.toWTFString(BunString::ZeroCopy)));
+    m_sourceID = codeBlock ? codeBlock->ownerExecutable()->sourceID() : JSC::noSourceID;
 
-    const auto* sourcePositions = stackFrame.getSourcePositions();
-    if (sourcePositions) {
-        m_lineNumber = sourcePositions->line;
-        m_columnNumber = sourcePositions->column;
+    if (record.hasPosition()) {
+        m_lineNumber = OrdinalNumber::fromZeroBasedInt(record.position.line_zero_based);
+        m_columnNumber = OrdinalNumber::fromZeroBasedInt(record.position.column_zero_based);
     }
 
-    if (stackFrame.isEval()) {
+    if (isEvalFrame(record, codeBlock)) {
         m_flags |= static_cast<unsigned int>(Flags::IsEval);
-    } else if (stackFrame.isFunctionOrEval()) {
+    } else if (record.code_type == ZigStackFrameCodeFunction || record.code_type == ZigStackFrameCodeConstructor) {
         m_flags |= static_cast<unsigned int>(Flags::IsFunction);
     }
-    if (stackFrame.isConstructor()) {
+    if (record.code_type == ZigStackFrameCodeConstructor) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (!stackFrame.codeBlock()) {
+    switch (record.kind) {
+    case ZigStackFrameKindHost:
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
+        break;
+    case ZigStackFrameKindBuiltin:
+        m_flags |= static_cast<unsigned int>(Flags::IsNative) | static_cast<unsigned int>(Flags::IsBuiltin);
+        break;
+    case ZigStackFrameKindWasm:
+        m_flags |= static_cast<unsigned int>(Flags::IsNative) | static_cast<unsigned int>(Flags::IsWasm);
+        break;
+    default:
+        break;
     }
-    if (stackFrame.isAsync()) {
+    if (record.is_async) {
         m_flags |= static_cast<unsigned int>(Flags::IsAsync);
     }
 }
@@ -124,85 +153,59 @@ JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject)
     return JSC::JSFunction::create(vm, globalObject, 1, "nativeFrameForTesting"_s, nativeFrameForTesting, ImplementationVisibility::Public);
 }
 
+JSC::JSString* CallSite::fileName(JSC::VM& vm) const
+{
+    JSC::JSValue sourceURL = m_sourceURL.get();
+    if (sourceURL.isString() && asString(sourceURL)->length() > 0)
+        return asString(sourceURL);
+    if (isWasm())
+        return jsNontrivialString(vm, "[wasm code]"_s);
+    if (isNative() && !isBuiltin())
+        return jsNontrivialString(vm, "[native code]"_s);
+    if (m_sourceID == JSC::noSourceID)
+        return jsNontrivialString(vm, "[unknown]"_s);
+    // The 'bindings' package tells modules apart by getFileName(): a placeholder per source.
+    return jsNontrivialString(vm, makeString("[source:"_s, m_sourceID, ']'));
+}
+
 void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = jsUndefined();
-    if (m_thisValue) {
-        thisValue = m_thisValue.get();
-    }
 
-    JSString* myFunctionName = functionName().toStringOrNull(globalObject);
-    RETURN_IF_EXCEPTION(scope, );
-    JSString* mySourceURL = sourceURL().toStringOrNull(globalObject);
-    RETURN_IF_EXCEPTION(scope, );
-
-    String functionName;
-    if (myFunctionName && myFunctionName->length() > 0) {
-        functionName = myFunctionName->getString(globalObject);
+    WTF::String functionName;
+    if (JSC::JSValue name = m_functionName.get(); name.isString()) {
+        functionName = asString(name)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, );
-    } else if (m_flags & (static_cast<unsigned int>(Flags::IsFunction) | static_cast<unsigned int>(Flags::IsEval))) {
-        functionName = "<anonymous>"_s;
+    }
+    WTF::String sourceURL;
+    if (JSC::JSValue url = m_sourceURL.get(); url.isString()) {
+        sourceURL = asString(url)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
     }
 
-    std::optional<OrdinalNumber> column = columnNumber().zeroBasedInt() >= 0 ? std::optional(columnNumber()) : std::nullopt;
-    std::optional<OrdinalNumber> line = lineNumber().zeroBasedInt() >= 0 ? std::optional(lineNumber()) : std::nullopt;
-
-    if (functionName.length() > 0) {
-
-        if (isConstructor()) {
-            sb.append("new "_s);
-        }
-
-        if (auto* object = thisValue.getObject()) {
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto className = object->calculatedClassName(object);
-            if (topExceptionScope.exception()) {
-                (void)topExceptionScope.tryClearException();
-            }
-
-            if (className.length() > 0) {
-                sb.append(className);
-                sb.append('.');
-            }
-        }
-
-        sb.append(functionName);
+    Bun::OwnedZigStackFrames records(1);
+    ZigStackFrame& record = records[0];
+    record.function_name = Bun::toStringRef(functionName);
+    record.source_url = Bun::toStringRef(sourceURL);
+    record.is_async = isAsync();
+    if (isWasm())
+        record.kind = ZigStackFrameKindWasm;
+    else if (isBuiltin())
+        record.kind = ZigStackFrameKindBuiltin;
+    else if (isNative())
+        record.kind = ZigStackFrameKindHost;
+    if (isConstructor())
+        record.code_type = ZigStackFrameCodeConstructor;
+    else if (isEval())
+        record.code_type = ZigStackFrameCodeEval;
+    else if (m_flags & static_cast<unsigned int>(Flags::IsFunction))
+        record.code_type = ZigStackFrameCodeFunction;
+    if (m_lineNumber.zeroBasedInt() >= 0) {
+        record.position.line_zero_based = m_lineNumber.zeroBasedInt();
+        record.position.column_zero_based = std::max(m_columnNumber.zeroBasedInt(), 0);
     }
 
-    if (isNative()) {
-        if (functionName.length() > 0) {
-            sb.append(" ("_s);
-        }
-        sb.append("native"_s);
-        if (functionName.length() > 0) {
-            sb.append(')');
-        }
-    } else {
-        if (functionName.length() > 0) {
-            sb.append(" ("_s);
-        }
-        if (!mySourceURL || mySourceURL->length() == 0) {
-            sb.append("unknown"_s);
-        } else {
-            sb.append(mySourceURL->getString(globalObject));
-            RETURN_IF_EXCEPTION(scope, );
-        }
-
-        if (line && column) {
-            sb.append(':');
-            sb.append(line.value().oneBasedInt());
-            sb.append(':');
-            sb.append(column.value().oneBasedInt());
-        } else if (line) {
-            sb.append(':');
-            sb.append(line.value().oneBasedInt());
-        }
-
-        if (functionName.length() > 0) {
-            sb.append(')');
-        }
-    }
+    Bun::appendStackFrame(sb, record);
 }
 
 DEFINE_VISIT_CHILDREN(CallSite);

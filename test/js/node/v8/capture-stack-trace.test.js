@@ -1085,6 +1085,153 @@ test("the default Error.prepareStackTrace heads the stack with the error's name 
   expect({ byHand, insideACallback }).toEqual({ byHand: expected, insideACallback: expected });
 });
 
+// A wrapper that only forwards to the default Error.prepareStackTrace (source-map-support, depd, Babel's
+// rewrite-stack-trace) must not change the frames: both render the one record of each frame. This also
+// pins the text of a frame that has no file: a builtin keeps its position, a host function says unknown.
+test("a wrapper around the default Error.prepareStackTrace leaves the frames as they are", async () => {
+  const frames = stack =>
+    stack
+      .split("\n")
+      .slice(1, 3)
+      .map(line => line.trim());
+  class Box {
+    constructor() {
+      this.error = new Error("box");
+    }
+  }
+  async function later() {
+    await 1;
+    return new Error("later");
+  }
+  const shapes = {
+    builtin: () => [1].map(() => new Error("map"))[0],
+    host: () => JSON.parse("1", () => new Error("parse")),
+    constructor: () => new Box().error,
+    eval: () => eval('new Error("eval")'),
+    "function code": () => new Function('return new Error("fn")')(),
+    async: () => later(),
+    "anonymous constructor": () =>
+      new (class {
+        constructor() {
+          this.error = new Error("anon");
+        }
+      })().error,
+  };
+  // One call site for every way of formatting, so the positions can be compared. The stack is read while
+  // the formatter is installed: it is formatted on the first read.
+  const madeWith = async (make, prepareStackTrace) => {
+    const error = await make();
+    Error.prepareStackTrace = prepareStackTrace;
+    try {
+      return { error, stack: error.stack };
+    } finally {
+      Error.prepareStackTrace = origPrepareStackTrace;
+    }
+  };
+  const plain = {};
+  const wrapped = {};
+  const calledByHand = {};
+  const site = {};
+  const position = {};
+  for (const [shape, make] of Object.entries(shapes)) {
+    let { error, stack } = await madeWith(make, origPrepareStackTrace);
+    plain[shape] = frames(stack);
+    position[shape] = [error.line, error.column, error.sourceURL];
+    ({ error, stack } = await madeWith(make, (error, callSites) => origPrepareStackTrace(error, callSites)));
+    wrapped[shape] = frames(stack);
+    // error.line, error.column and error.sourceURL are those of the first frame that has a position, under a wrapper too.
+    expect([error.line, error.column, error.sourceURL]).toEqual(position[shape]);
+    // The header is read from the error, the frames from the call sites: each line is a call site's toString().
+    ({ stack } = await madeWith(make, (error, callSites) =>
+      ["Error: x", ...callSites.map(callSite => "    at " + callSite)].join("\n"),
+    ));
+    calledByHand[shape] = frames(stack);
+    ({ stack } = await madeWith(make, (error, callSites) => callSites));
+    site[shape] = stack.slice(0, 2).map(callSite => [callSite.isNative(), callSite.getFileName()]);
+  }
+  expect({ wrapped, calledByHand }).toEqual({ wrapped: plain, calledByHand: plain });
+  expect(plain.builtin[0]).toMatch(/^at map \(native:\d+:\d+\)$/);
+  expect(plain.host[0]).toBe("at parse (unknown)");
+  expect(plain.constructor[0]).toStartWith("at new Box (");
+  expect(plain.eval[1]).toBe("at eval (unknown)");
+  expect(plain["anonymous constructor"][0]).toStartWith("at new <anonymous> (");
+  expect(position.host.slice(0, 2)).toEqual([expect.any(Number), expect.any(Number)]);
+  expect(site.builtin[0]).toEqual([true, "[unknown]"]);
+  expect(site.host[0]).toEqual([true, "[native code]"]);
+  expect(site.constructor[0]).toEqual([false, import.meta.path]);
+});
+
+// `new X()` is at `new`, where V8 has it, whichever way the stack is formatted.
+test("a frame made with new is at the new keyword", () => {
+  const where = error =>
+    error.stack
+      .split("\n")[1]
+      .match(/:(\d+):(\d+)\)?$/)
+      .slice(1)
+      .map(Number);
+  const text = "\n\nconst made = new Error('made');\nmade";
+  Error.prepareStackTrace = origPrepareStackTrace;
+  const plain = where((0, eval)(text));
+  Error.prepareStackTrace = (error, callSites) => origPrepareStackTrace(error, callSites);
+  const wrapped = where((0, eval)(text));
+  Error.prepareStackTrace = (error, callSites) => callSites[0].getLineNumber() + ":" + callSites[0].getColumnNumber();
+  const callSite = (0, eval)(text).stack;
+  expect({ plain, wrapped, callSite }).toEqual({ plain: [3, 14], wrapped: [3, 14], callSite: "3:14" });
+});
+
+// The error printer parses a stack that was read back out of its text. A frame it parses must print as
+// the text did, so a nameless constructor frame is `new <anonymous>` there too.
+test.concurrent("the error printer prints a nameless constructor frame as new <anonymous>", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const error = new (class { constructor() { this.error = new Error("anon"); } })().error;
+      void error.stack;
+      throw error;`,
+    ],
+    env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("at new <anonymous> (");
+  expect(stderr).not.toContain("at new  (");
+  expect(exitCode).toBe(1);
+});
+
+// A node:vm frame belongs to the vm's source, even when its filename is that of a transpiled module of
+// Bun's realm: it is not mapped through that module's source map, on either path.
+test.concurrent("a node:vm frame named after a transpiled file keeps its own position", async () => {
+  using dir = tempDir("vm-frame-keeps-position", {
+    "probe.ts": [
+      `import vm from "node:vm";`,
+      `const typed: number = 1;`,
+      `const code: string = "\\n\\nfunction deep() { return new Error('x'); }\\ndeep()";`,
+      `const frame = () => vm.runInNewContext(code, {}, { filename: import.meta.path }).stack.split("\\n")[1];`,
+      `const plain = frame();`,
+      `const original = Error.prepareStackTrace;`,
+      `Error.prepareStackTrace = (error, callSites) => original(error, callSites);`,
+      `const wrapped = frame();`,
+      `console.log(JSON.stringify({ plain, wrapped, typed }));`,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "probe.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const at = `    at deep (${join(String(dir), "probe.ts")}:3:26)`;
+  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+    stdout: { plain: at, wrapped: at, typed: 1 },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // As V8: a caller of the default formatter gets the throw, and the error.stack a prepareStackTrace
 // callback sees describes it, so reading .stack does not throw because a callback is installed.
 // A message that throws is read lazily here (V8 captured it at construction) and still throws.
@@ -2138,7 +2285,7 @@ test.concurrent("a stack taken while a CommonJS module loads names the frame of 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
-    stdout: { line: "    at anonymous (unknown)", name: "anonymous", text: "anonymous (native)" },
+    stdout: { line: "    at anonymous (unknown)", name: "anonymous", text: "anonymous (unknown)" },
     stderr: "",
   });
   expect(exitCode).toBe(0);

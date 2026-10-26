@@ -390,7 +390,7 @@ pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
 pub use self::url_search_params::URLSearchParams;
-pub use self::zig_stack_frame_code::ZigStackFrameCode;
+pub use self::zig_stack_frame_code::{ZigStackFrameCode, ZigStackFrameKind};
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
 #[path = "GarbageCollectionController.rs"]

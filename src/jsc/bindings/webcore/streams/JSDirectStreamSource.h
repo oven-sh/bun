@@ -48,16 +48,12 @@ public:
 
     const JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
 
-    // Only this class calls the source's functions: what pull() and cancel() return reaches a
-    // caller as a promise that an internal reaction can hang on (promiseForReactions).
     bool hasPull() const { return pullFunction(); }
-    // pull(controller); a throw propagates, and a missing pull() throws a TypeError. nullptr:
-    // pull() returned no promise.
+    // pull(controller) as a promise for internal reactions, or nullptr if it returned none; a throw propagates.
     JSC::JSPromise* pull(JSC::JSGlobalObject*, JSC::JSValue controller);
     // cancel(reason) in the stream's async context, as a promise (a throw rejects it).
     JSC::JSPromise* cancel(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason);
-    // cancel(reason) for a sink that closed underneath the source: nothing waits for what it
-    // returns, and a throw propagates.
+    // cancel(reason) for a sink that closed under the source: nothing waits for the result; a throw propagates.
     void cancelFromSink(JSC::JSGlobalObject*, JSC::JSValue reason);
     // close(reason); a throw propagates.
     void close(JSC::JSGlobalObject*, JSC::JSValue reason);
@@ -66,6 +62,7 @@ private:
     JSDirectStreamSource(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, JSC::JSValue underlyingSource, JSC::JSObject* pull, JSC::JSObject* cancel, JSC::JSObject* close);
 
+    // Private: a promise that the source's functions return has to pass through reactionPromise().
     JSC::JSValue thisValue() const { return internalField(Field::UnderlyingSource).get(); }
     JSC::JSObject* pullFunction() const { return internalField(Field::Pull).get().getObject(); }
     JSC::JSObject* cancelFunction() const { return internalField(Field::Cancel).get().getObject(); }

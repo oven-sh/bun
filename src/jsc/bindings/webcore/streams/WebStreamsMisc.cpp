@@ -459,7 +459,9 @@ JSPromise* promiseResolvedWithFast(JSGlobalObject* globalObject, JSValue value)
 
 JSPromise* promiseForReactionsSlow(JSGlobalObject* globalObject, JSPromise* promise)
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     auto* follower = promiseResolvedWithFast(globalObject, promise);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     // A follower that is fulfilled at once holds the cell itself: its `then` is not callable.
     if (follower == promise || follower->status() == JSPromise::Status::Fulfilled)
         return promise;

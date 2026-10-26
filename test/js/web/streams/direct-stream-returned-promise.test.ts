@@ -263,12 +263,14 @@ describe("what pull() returns", () => {
     expect(seen).toEqual(["the stream", "the caller", "the caller"]);
   });
 
-  // A follower for each result would be one more Promise for each read.
+  // A follower for each result would be one more Promise for each read. The child runs with the
+  // collector off, so a count is a number of allocations.
   test("a plain promise is used as it is: no Promise is allocated for it", async () => {
     const src = `
       const { heapStats } = require("bun:jsc");
       const READS = 4000;
       const chunk = new Uint8Array(1);
+      const promises = () => heapStats().objectTypeCounts.Promise || 0;
       const drain = async reader => { while (!(await reader.read()).done) {} };
       const sources = {
         directPull: () => {
@@ -285,27 +287,35 @@ describe("what pull() returns", () => {
         generatorBody: () =>
           new Response((async function* () { for (let i = 0; i < READS; i++) yield chunk; })()).body,
       };
-      const perRead = {};
+      const counts = {};
       for (const [name, make] of Object.entries(sources)) {
         await drain(make().getReader());
-        Bun.gc(true);
-        const before = heapStats().objectTypeCounts.Promise || 0;
+        const before = promises();
         await drain(make().getReader());
-        perRead[name] = (heapStats().objectTypeCounts.Promise - before) / READS;
+        counts[name] = (promises() - before) / READS;
       }
-      console.log(JSON.stringify(perRead));
+      const counted = promises();
+      Bun.gc(true);
+      counts.collected = counted - promises();
+      console.log(JSON.stringify(counts));
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: { ...bunEnv, BUN_JSC_useGC: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const perRead = JSON.parse(stdout.trim());
-    // Per read: the promise of read(), and for the direct stream the promise of its async pull().
-    // A follower would add one to each.
+    const counts = stdout ? JSON.parse(stdout) : {};
+    // For each read: the promise of read(), and for the direct stream the promise of its async pull().
+    // A follower would add one to each. A count that is too high is shown as it is.
     expect({
-      directPull: perRead.directPull < 2.5,
-      generatorBody: perRead.generatorBody < 1.5,
+      directPull: counts.directPull < 2.5 || counts.directPull,
+      generatorBody: counts.generatorBody < 1.5 || counts.generatorBody,
+      collected: counts.collected,
       stderr,
       exitCode,
-    }).toEqual({ directPull: true, generatorBody: true, stderr: "", exitCode: 0 });
+    }).toEqual({ directPull: true, generatorBody: true, collected: 0, stderr: "", exitCode: 0 });
   });
 });
 
@@ -414,13 +424,15 @@ describe("what cancel() returns after the sink closed", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      "throws": ["uncaughtException: cancel threw"],
-      "returns a rejected promise": [],
-      "returns a promise that starts in then() and rejects": [],
-      "returns a promise that rejects later and whose then getter throws": [],
+    expect({ stderr, reports: stdout && JSON.parse(stdout), exitCode }).toEqual({
+      stderr: "",
+      reports: {
+        "throws": ["uncaughtException: cancel threw"],
+        "returns a rejected promise": [],
+        "returns a promise that starts in then() and rejects": [],
+        "returns a promise that rejects later and whose then getter throws": [],
+      },
+      exitCode: 0,
     });
-    expect(exitCode).toBe(0);
   });
 });

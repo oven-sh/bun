@@ -97,8 +97,7 @@ void JSDirectStreamSource::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Close), "close"_s);
 }
 
-// The async-iterable source (BunAsyncIterableSource.cpp) returns promises that Bun made: a
-// replaced Promise.prototype.then must not see them.
+// Bun's own async-iterable source returns promises that a replaced Promise.prototype.then must not see.
 JSPromise* JSDirectStreamSource::reactionPromiseSlow(JSGlobalObject* globalObject, JSPromise* returned) const
 {
     if (thisValue().inherits<JSAsyncIteratorSourceOperation>())

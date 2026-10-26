@@ -963,7 +963,8 @@ where
                     }
                     #[cfg(not(windows))]
                     {
-                        let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
+                        let mut affected_buf: [&[u8]; bun_watcher::MAX_COUNT] =
+                            [b"".as_slice(); bun_watcher::MAX_COUNT];
                         let mut entries_option: Option<*mut Fs::DirEntry> = None;
 
                         // Note: the affected-name element type differs by
@@ -1066,7 +1067,8 @@ where
                         };
 
                         // Read before the bust: the next read of the listing drops a removed name.
-                        let mut affected_entries: [Option<&'static Fs::Entry>; 128] = [None; 128];
+                        let mut affected_entries =
+                            [None::<&'static Fs::Entry>; bun_watcher::MAX_COUNT];
                         if affected_len > 0 {
                             let names = (0..affected_len).map(|i| {
                                 if IS_KQUEUE {

@@ -1227,10 +1227,10 @@ impl SendQueue {
         }
     }
 
-    /// The peer process has exited. A channel that is still open with nothing left to read is closed
-    /// here, so that `run_pending` reports its end before the owner reports the exit.
+    /// The peer process has exited. A channel whose other end is closed, with nothing left to read,
+    /// is closed here, so that `run_pending` reports its end before the owner reports the exit.
     pub(crate) fn close_after_peer_exit(&self) {
-        if self.socket_is_open() && !self.has_unread_input() {
+        if self.peer_closed_and_drained() {
             // A write still in flight on Windows is cancelled: nothing is left to complete it.
             #[cfg(windows)]
             self.windows_close(true);
@@ -1240,35 +1240,47 @@ impl SendQueue {
         self.run_pending();
     }
 
-    /// Whether the kernel holds input for the channel that the loop has not read yet.
-    fn has_unread_input(&self) -> bool {
+    /// Whether the channel is open on our side, closed on the other, with no input left to read.
+    fn peer_closed_and_drained(&self) -> bool {
         let SocketUnion::Open(socket) = *self.socket.get() else {
             return false;
         };
         #[cfg(not(windows))]
         {
-            let mut queued: c_int = 0;
-            // SAFETY: FIONREAD writes one int.
-            let rc =
-                unsafe { libc::ioctl(socket.fd().native(), libc::FIONREAD as _, &raw mut queued) };
-            rc == 0 && queued > 0
+            let mut byte = 0u8;
+            // SAFETY: peeks at most one byte into `byte`.
+            let peeked = unsafe {
+                libc::recv(
+                    socket.fd().native(),
+                    (&raw mut byte).cast(),
+                    1,
+                    libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                )
+            };
+            if peeked >= 0 {
+                return peeked == 0;
+            }
+            // Any error but "nothing to read yet" ends the stream (ECONNRESET: the peer died with
+            // our data unread).
+            let errno = bun_sys::last_errno();
+            errno != libc::EAGAIN && errno != libc::EWOULDBLOCK && errno != libc::EINTR
         }
         #[cfg(windows)]
         {
             use bun_sys::windows::kernel32::PeekNamedPipe;
-            let mut queued: u32 = 0;
-            // SAFETY: `socket` is the live pipe (`socket == Open`); only `queued` is written.
+            // Fails once the other end is closed and the pipe is empty.
+            // SAFETY: `socket` is the live pipe (`socket == Open`); each out-pointer may be null.
             let peeked = unsafe {
                 PeekNamedPipe(
                     (*socket).handle,
                     core::ptr::null_mut(),
                     0,
                     core::ptr::null_mut(),
-                    &raw mut queued,
+                    core::ptr::null_mut(),
                     core::ptr::null_mut(),
                 )
             };
-            peeked != 0 && queued > 0
+            peeked == 0
         }
     }
 

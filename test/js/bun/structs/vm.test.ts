@@ -195,10 +195,13 @@ p.x`);
 
   test("vm.runInContext with struct syntax", () => {
     const context = vm.createContext({ seen: [] as unknown[] });
-    vm.runInContext("shared struct Cell { value; }
-const cell = new Cell();
-cell.value = 3;
-seen.push(cell);", context);
+    vm.runInContext(
+      `shared struct Cell { value; }
+      const cell = new Cell();
+      cell.value = 3;
+      seen.push(cell);`,
+      context,
+    );
     const cell = (context as { seen: object[] }).seen[0];
     expect(Reflect.canBeShared(cell)).toBe(true);
     expect(Atomics.load(cell, "value")).toBe(3);
@@ -286,14 +289,11 @@ seen.push(cell);", context);
     expect(vm.runInNewContext("const struct = 1; struct + 1")).toBe(2);
     expect(vm.runInNewContext("var struct = { shared: 2 }; struct.shared")).toBe(2);
     expect(vm.runInNewContext(`"struct S { x; }"`)).toBe("struct S { x; }");
-    expect(vm.runInNewContext("`
-struct S { x; }`")).toBe("
-struct S { x; }");
-    expect(vm.runInNewContext("// struct S { x; }
-3")).toBe(3);
+    // A line that looks like a declaration inside a template literal is lowered harmlessly and still a string.
+    expect(vm.runInNewContext(["`", "struct S { x; }`"].join("\n"))).toBe("\nstruct S { x; }");
+    expect(vm.runInNewContext(["// struct S { x; }", "3"].join("\n"))).toBe(3);
     expect(vm.runInNewContext("/* struct S { x; } */ 4")).toBe(4);
-    expect(vm.runInNewContext("function struct() { return 5 }
-struct()")).toBe(5);
+    expect(vm.runInNewContext(["function struct() { return 5 }", "struct()"].join("\n"))).toBe(5);
     // Nothing was added to the context for a source that was not lowered.
     expect(vm.runInNewContext(`typeof __structBase`)).toBe("undefined");
     expect(vm.runInNewContext(`const struct = 1; typeof __structBase`)).toBe("undefined");

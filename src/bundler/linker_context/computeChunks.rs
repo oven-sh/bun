@@ -157,7 +157,7 @@ pub(crate) fn compute_chunks(
         }
 
         // `import()` of a CSS module script loads its JS stub: a JS chunk.
-        let is_dynamic_css_module_script = this.css_module_scripts.contains(&source_index)
+        let is_dynamic_css_module_script = this.is_css_module_script(source_index)
             && this.graph.files.items_entry_point_kind()[source_index as usize]
                 == crate::EntryPoint::Kind::DynamicImport;
         if css_asts[source_index as usize].is_some() && !is_dynamic_css_module_script {

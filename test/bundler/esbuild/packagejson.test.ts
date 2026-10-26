@@ -2539,6 +2539,35 @@ describe("bundler", () => {
       stdout: "scoped-browser scoped-browser-no-ext unscoped-browser {}",
     },
   });
+  // A package found through NODE_PATH has its "browser" map applied to subpath
+  // imports too.
+  itBundled("packagejson/BrowserMapNodePathSubpath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import sub from 'demo-pkg/x.js'
+        import scoped from '@scope/pkg/x'
+        import main from 'demo-pkg'
+        console.log(sub, scoped, main, JSON.stringify(require('demo-pkg/node.js')))
+      `,
+      "/Users/user/global/demo-pkg/package.json": `{ "main": "./main.js", "browser": { "./x.js": "./x-browser.js", "./main.js": "./main-browser.js", "./node.js": false } }`,
+      "/Users/user/global/demo-pkg/x.js": `module.exports = 'node'`,
+      "/Users/user/global/demo-pkg/x-browser.js": `module.exports = 'browser'`,
+      "/Users/user/global/demo-pkg/main.js": `module.exports = 'main-node'`,
+      "/Users/user/global/demo-pkg/main-browser.js": `module.exports = 'main-browser'`,
+      "/Users/user/global/demo-pkg/node.js": `throw 'fail'`,
+      "/Users/user/global/@scope/pkg/package.json": `{ "browser": { "./x": "./x-browser.js" } }`,
+      "/Users/user/global/@scope/pkg/x.js": `module.exports = 'scoped-node'`,
+      "/Users/user/global/@scope/pkg/x-browser.js": `module.exports = 'scoped-browser'`,
+    },
+    backend: "cli",
+    target: "browser",
+    env: {
+      NODE_PATH: "{{root}}/Users/user/global",
+    },
+    run: {
+      stdout: "browser scoped-browser main-browser {}",
+    },
+  });
   // When "main" points at a directory, the implicit "<dir>/index" is checked
   // against the browser map before extension resolution.
   itBundled("packagejson/BrowserMapMainFieldDirIndexNoExt", {

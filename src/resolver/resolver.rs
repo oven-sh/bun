@@ -2853,6 +2853,34 @@ impl<'a> Resolver<'a> {
                         bstr::BStr::new(abs_path)
                     ));
                 }
+
+                // Check the "browser" map
+                if self.care_about_browser_field
+                    && let Some(esm) = esm_.as_ref()
+                    && let Some(abs_package_path) = self
+                        .fs_ref()
+                        .abs_buf_checked(&[path, esm.name], bufs!(esm_absolute_package_path))
+                    && let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path)
+                {
+                    match self.load_package_subpath_from_browser_map(
+                        pkg_dir_info,
+                        abs_path,
+                        kind,
+                        global_cache,
+                        out,
+                    ) {
+                        BrowserMapSubpath::NoEntry => {}
+                        BrowserMapSubpath::Found => {
+                            if let Some(d) = self.debug_logs.as_mut() {
+                                d.decrease_indent();
+                            }
+                            return MatchStatus::Success;
+                        }
+                        // `abs_path` is stale now; move on to the next directory.
+                        BrowserMapSubpath::NotFound => continue,
+                    }
+                }
+
                 if self
                     .load_as_file_or_directory(abs_path, kind, out)
                     .is_success()

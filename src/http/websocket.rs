@@ -62,6 +62,11 @@ impl Opcode {
     }
 }
 
+/// Status codes allowed in a Close frame (RFC 6455 §7.4).
+pub fn is_valid_close_code(code: u16) -> bool {
+    matches!(code, 1000..=1003 | 1007..=1014 | 3000..=4999)
+}
+
 // A packed u16 bitfield: #[repr(transparent)] u16 + manual shift accessors.
 // Field order is LSB-first:
 //   bits 0..=6   len: u7
@@ -132,6 +137,10 @@ impl WebsocketHeader {
     pub const fn final_(self) -> bool {
         (self.0 >> Self::FINAL_SHIFT) & 1 != 0
     }
+    #[inline]
+    pub fn set_final(&mut self, v: bool) {
+        self.0 = (self.0 & !(1u16 << Self::FINAL_SHIFT)) | ((v as u16) << Self::FINAL_SHIFT);
+    }
 
     pub fn write_header(self, writer: &mut impl std::io::Write, n: usize) -> std::io::Result<()> {
         // packed structs are sometimes buggy
@@ -167,17 +176,12 @@ impl WebsocketHeader {
         }
     }
 
-    pub const fn frame_size(byte_length: usize) -> usize {
-        Self::HEADER_LENGTH + byte_length + Self::length_byte_count(byte_length)
-    }
-
-    pub const fn frame_size_including_mask(byte_length: usize) -> usize {
-        Self::frame_size(byte_length) + Self::MASK_LENGTH
-    }
-
-    pub const fn slice(self) -> [u8; 2] {
-        // @bitCast(@byteSwap(@bitCast(self)))
-        self.0.to_be_bytes()
+    /// `masked` adds the 4-byte masking key that client frames carry.
+    pub const fn frame_size(byte_length: usize, masked: bool) -> usize {
+        Self::HEADER_LENGTH
+            + Self::length_byte_count(byte_length)
+            + Self::MASK_LENGTH * masked as usize
+            + byte_length
     }
 
     pub const fn from_slice(bytes: [u8; 2]) -> WebsocketHeader {

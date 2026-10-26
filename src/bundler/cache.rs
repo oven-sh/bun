@@ -24,7 +24,7 @@ use bun_ast::RuntimeTranspilerCache;
 /// Written by CLI argument parsing and `VirtualMachine` init, and flipped
 /// lazily on cache-dir resolution failure. Module-level so those writers can
 /// reach it; `disabled()` reads it.
-pub static DISABLED: AtomicBool = AtomicBool::new(false);
+pub(crate) static DISABLED: AtomicBool = AtomicBool::new(false);
 
 /// Extension surface for the canonical `RuntimeTranspilerCache` (defined in
 /// `bun_js_parser`). Separate trait so the env-var-dependent bodies stay in
@@ -68,7 +68,7 @@ impl JavaScript {
 impl JavaScript {
     // For now, we're not going to cache JavaScript ASTs.
     // It's probably only relevant when bundling for production.
-    pub fn parse<'a>(
+    pub(crate) fn parse<'a>(
         &self,
         bump: &'a Bump,
         opts: js_parser::ParserOptions<'a>,
@@ -87,7 +87,11 @@ impl JavaScript {
         };
 
         let result = match parser.parse() {
-            Ok(r) => r,
+            Ok(r) => {
+                // The parser halts on every logged error.
+                debug_assert_eq!(temp_log.errors, 0);
+                r
+            }
             Err(err) => {
                 // `Parser::parse` consumes `self`, so `parser` is gone in this
                 // arm. The `&'a mut temp_log` it held is released, so read

@@ -6,15 +6,25 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunExe,
+  isPosix,
+  isRoot,
+  isWindows,
+  rss,
+  runWithErrorPromise,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
-afterAll(() => console.error("After all RSS", process.memoryUsage.rss() / 1024 / 1024));
-beforeAll(() => console.error("Before all RSS", process.memoryUsage.rss() / 1024 / 1024));
+afterAll(() => console.error("After all RSS", rss() / 1024 / 1024));
+beforeAll(() => console.error("Before all RSS", rss() / 1024 / 1024));
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -54,7 +64,6 @@ afterAll(async () => {
 });
 
 const BUN = bunExe();
-const isRoot = process.getuid?.() === 0;
 
 describe("bunshell", () => {
   describe("exit codes", async () => {
@@ -101,7 +110,7 @@ describe("bunshell", () => {
     });
   });
   describe("js_obj_test", async () => {
-    function runTest(name: string, builder: TestBuilder) {
+    function runTest(name: string, builder: InstanceType<typeof TestBuilder>) {
       test(`js_obj_test_name_${name}`, async () => {
         await builder.run();
       });
@@ -181,6 +190,28 @@ describe("bunshell", () => {
       expect(stdout.toString()).toEqual("a  b\n");
     });
 
+    test("$.escape converts its argument to a string, also when there is nothing to escape", () => {
+      expect($.escape(1 as any)).toBe('"1"');
+      expect($.escape({ toString: () => "a b" } as any)).toBe('"a b"');
+      expect($.escape({ toString: () => "plain" } as any)).toBe("plain");
+      expect($.escape({ toString: () => "é\u65e5" } as any)).toBe("é\u65e5");
+      expect($.escape(new String("plain") as any)).toBe("plain");
+      expect([true, null, undefined, NaN].map(value => $.escape(value as any))).toEqual([
+        "true",
+        "null",
+        "undefined",
+        "NaN",
+      ]);
+      // @ts-expect-error
+      expect($.escape()).toBe("undefined");
+      // A lone surrogate has no UTF-8, so what needs no escaping does not go through it.
+      expect($.escape("\ud800")).toBe("\ud800");
+      expect($.escape(new String("a\ud800") as any)).toBe("a\ud800");
+      expect(() => $.escape(Symbol() as any)).toThrow(
+        expect.objectContaining({ name: "TypeError", message: "Cannot convert a symbol to a string" }),
+      );
+    });
+
     test("quotes values containing a tab, carriage return, or question mark", async () => {
       expect($.escape("a\tb")).toEqual('"a\tb"');
       expect($.escape("a\rb")).toEqual('"a\rb"');
@@ -221,6 +252,30 @@ describe("bunshell", () => {
       TestBuilder.command`FOO=bar && echo "${shellvar}"`.stdout(`$FOO\n`).runAsTest("double quotes");
       TestBuilder.command`FOO=bar && echo '${shellvar}'`.stdout(`$FOO\n`).runAsTest("single quotes");
       TestBuilder.command`FOO=bar && echo ${shellvar}`.stdout(`$FOO\n`).runAsTest("no quotes");
+    });
+
+    describe("interpolated value after a literal $ stays literal", async () => {
+      const name = "FOO";
+      TestBuilder.command`FOO=bar && echo $${name}`.stdout(`$FOO\n`).runAsTest("no quotes");
+      TestBuilder.command`FOO=bar && echo "$${name}"`.stdout(`$FOO\n`).runAsTest("double quotes");
+      TestBuilder.command`FOO=bar && echo a$${name}b`.stdout(`a$FOOb\n`).runAsTest("inside a word");
+
+      test("does not extend a preceding variable name", async () => {
+        const { stdout, stderr, exitCode } = await $`FOOBAR=long && FOO=short && echo $FOO${"BAR"}`.env({ ...bunEnv });
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("shortBAR\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test("does not name a variable from the environment", async () => {
+        const { stdout, stderr, exitCode } = await $`echo $${"SHELL_TEST_SECRET"}`.env({
+          ...bunEnv,
+          SHELL_TEST_SECRET: "hunter2",
+        });
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("$SHELL_TEST_SECRET\n");
+        expect(exitCode).toBe(0);
+      });
     });
 
     test("can't escape a js string/obj ref", async () => {
@@ -481,6 +536,22 @@ describe("bunshell", () => {
     expect(await file.text()).toEqual(thisFileText);
   });
 
+  test("redirect stdin from a ReadableStream throws", async () => {
+    for (const cmd of ["cat", "echo", "true && cat", `${BUN} -e "process.stdin.pipe(process.stdout)"`]) {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("hello from a stream\n"));
+          controller.close();
+        },
+      });
+      expect(async () => await $`${{ raw: cmd }} < ${stream}`.env(bunEnv).quiet()).toThrow(
+        "ReadableStream is not supported as a shell redirect yet",
+      );
+    }
+    const stream = new Response("hello from a stream\n").body!;
+    expect(await $`cat < ${await new Response(stream).blob()}`.text()).toBe("hello from a stream\n");
+  });
+
   // TODO This sometimes fails
   test("redirect stderr", async () => {
     const buffer = Buffer.alloc(128, 0);
@@ -502,6 +573,159 @@ describe("bunshell", () => {
     const { stdout } = await $`echo "LMAO" | cat`;
 
     expect(stdout.toString()).toEqual("LMAO\n");
+  });
+
+  // The builtin cat is only on by default on Windows; the flag turns it on
+  // everywhere. Captured output finishes the command from the reader side,
+  // output on a real fd also goes through the writer completions, and the
+  // missing-file case with stderr on a fd finishes from the writer side alone.
+  test("builtin cat finishes from its reader and writer completions", async () => {
+    using dir = tempDir("builtin-cat", {});
+    const script = /* ts */ `
+      import { $ } from "bun";
+      $.nothrow();
+      const results = {};
+      for (const [name, run] of Object.entries({
+        "captured": () => $\`echo hi | cat\`,
+        "stdout to fd": () => $\`echo hi | cat > out.txt\`,
+        "missing file, stderr captured": () => $\`cat missing.txt\`,
+        "missing file, stderr to fd": () => $\`cat missing.txt 2> err.txt\`,
+      })) {
+        const r = await run().quiet();
+        results[name] = { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+      }
+      results["out.txt"] = await Bun.file("out.txt").text();
+      results["err.txt"] = await Bun.file("err.txt").text();
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // On Windows the message carries the absolute path (shell_openat only
+    // re-tags the error with the argument as written on POSIX).
+    const missingFileError = expect.stringMatching(/^cat: (.*[\\/])?missing\.txt: No such file or directory\n$/);
+    expect(JSON.parse(stdout)).toEqual({
+      "captured": { stdout: "hi\n", stderr: "", exitCode: 0 },
+      "stdout to fd": { stdout: "", stderr: "", exitCode: 0 },
+      "missing file, stderr captured": { stdout: "", stderr: missingFileError, exitCode: 1 },
+      "missing file, stderr to fd": { stdout: "", stderr: "", exitCode: 1 },
+      "out.txt": "hi\n",
+      "err.txt": missingFileError,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // `ulimit -n` caps the fd table of the child so the pipeline cannot create
+  // its pipes (EMFILE). The pipeline must print the error on its stderr and
+  // finish with exit code 1 so the `$` promise settles and the script goes on,
+  // instead of throwing from inside the interpreter and never completing.
+  describe.skipIf(isWindows)("pipeline that fails to create its pipes", () => {
+    const runWithFdLimit = (limit: number, script: string, env = bunEnv) =>
+      Bun.spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -n ${limit} && exec "$1" -e "$2"`, "sh", bunExe(), script],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+    test("reports EMFILE on stderr and finishes with exit code 1", async () => {
+      // 24 pipes need 48 fds; the whole process gets 32.
+      const pipeline = ["echo hi", ...Array(24).fill("cat")].join(" | ");
+      const script = /* ts */ `
+        import { $ } from "bun";
+        const results = {};
+        const record = (name, r) => {
+          results[name] = { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+        };
+        record("stderr captured", await $\`${pipeline}\`.nothrow().quiet());
+        record("stderr on a fd", await $\`${pipeline}\`.nothrow());
+        record("script continues", await $\`${pipeline}; echo after\`.nothrow().quiet());
+        try {
+          await $\`${pipeline}\`.quiet();
+          results["throws"] = "did not throw";
+        } catch (e) {
+          record("throws", e);
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = runWithFdLimit(32, script);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("bun: Too many open files\n");
+      expect(JSON.parse(stdout)).toEqual({
+        "stderr captured": { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 },
+        "stderr on a fd": { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 },
+        "script continues": { stdout: "after\n", stderr: "bun: Too many open files\n", exitCode: 0 },
+        "throws": { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // Pipelines of growing length against a fixed fd budget. The short ones
+    // fit. Past some length the pipes still fit but the per-command `dup` of
+    // the cwd fd fails. Past that the pipes themselves fail. Every pipeline
+    // must finish, either with its output or with the EMFILE message.
+    test("reports EMFILE from the per-command env dup and finishes", async () => {
+      const script = /* ts */ `
+        import { $ } from "bun";
+        const results = [];
+        for (let n = 2; n <= 16; n++) {
+          const pipeline = ["echo hi", ...Array(n - 1).fill("cat")].join(" | ");
+          const r = await $\`\${{ raw: pipeline }}\`.nothrow().quiet();
+          results.push({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode });
+        }
+        console.log(JSON.stringify(results));
+      `;
+      // The builtin cat keeps this to pipes and dups: no subprocess, so no
+      // spawn-time fds change the accounting.
+      await using proc = runWithFdLimit(32, script, { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const results = JSON.parse(stdout);
+      const ok = { stdout: "hi\n", stderr: "", exitCode: 0 };
+      const emfile = { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 };
+      const firstFailure = results.findIndex(r => r.exitCode !== 0);
+      expect(firstFailure).toBeGreaterThan(0);
+      expect(results).toEqual([...Array(firstFailure).fill(ok), ...Array(results.length - firstFailure).fill(emfile)]);
+      expect(exitCode).toBe(0);
+    });
+
+    // Same sweep with a subshell at the head. A subshell runs a Script of its
+    // own, so if the pipeline started it before a later command's `dup`
+    // failed, tearing the pipeline down would leave that Script behind with
+    // the subshell's echo still writing into the pipe. The echo then reports
+    // to a freed node once the pipe is closed under it. No child may start
+    // until every child is set up.
+    test("reports EMFILE from the per-command env dup when the head is a subshell", async () => {
+      const script = /* ts */ `
+        import { $ } from "bun";
+        const results = [];
+        for (let n = 2; n <= 16; n++) {
+          const pipeline = ["(echo hi)", ...Array(n - 1).fill("cat")].join(" | ");
+          const r = await $\`\${{ raw: pipeline }}\`.nothrow().quiet();
+          results.push({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode });
+          // One event loop turn, so that a write a torn-down child left in
+          // flight completes (and reports) before the next pipeline runs.
+          await Bun.sleep(0);
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = runWithFdLimit(32, script, { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const results = JSON.parse(stdout);
+      const ok = { stdout: "hi\n", stderr: "", exitCode: 0 };
+      const emfile = { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 };
+      const firstFailure = results.findIndex(r => r.exitCode !== 0);
+      expect(firstFailure).toBeGreaterThan(0);
+      expect(results).toEqual([...Array(firstFailure).fill(ok), ...Array(results.length - firstFailure).fill(emfile)]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("operators no spaces", async () => {
@@ -870,6 +1094,62 @@ booga"
           expect(out).not.toContain("keep2.txt");
         })
         .runAsTest("long leading run of injected ! stays literal");
+
+      // `Bun.Glob` has extglob groups. In the shell, parentheses in a word are always data.
+      for (const injected of ["@()!(zzz)", "!(zzz)", "a!(zzz)", "@(a|aa|b)", "+(a)", "?(a)a", "*(a)", "*(a|b)"]) {
+        TestBuilder.command`echo ${injected}/f.*`
+          .ensureTempDir()
+          .directory("a")
+          .file("a/f.txt", "")
+          .directory("aa")
+          .file("aa/f.txt", "")
+          .directory("b")
+          .file("b/f.txt", "")
+          .exitCode(1)
+          .stderr(`bun: no matches found: ${injected}/f.*\n`)
+          .runAsTest(`injected ${injected} is literal`);
+      }
+
+      TestBuilder.command`V=${"@()!(zzz)"}; echo "$V"/f.* || echo $(echo ${"+(a)"})/f.*`
+        .ensureTempDir()
+        .directory("a")
+        .file("a/f.txt", "")
+        .exitCode(1)
+        .stderr("bun: no matches found: @()!(zzz)/f.*\nbun: no matches found: +(a)/f.*\n")
+        .runAsTest("an extglob group from a variable or a command substitution is literal");
+
+      const withParentheses = (out: string) => expect(out.replaceAll("\\", "/")).toBe("c++(old)/f.ts\n");
+      const inFolderWithParentheses = (builder: ReturnType<typeof TestBuilder.command>) =>
+        builder.ensureTempDir().directory("c++(old)").file("c++(old)/f.ts", "").directory("c").file("c/f.ts", "");
+
+      inFolderWithParentheses(TestBuilder.command`echo ${"c++(old)"}/*.ts`)
+        .stdout(withParentheses)
+        .runAsTest("an interpolated folder name with parentheses still matches that folder");
+      inFolderWithParentheses(TestBuilder.command`echo "c++(old)"/*.ts`)
+        .stdout(withParentheses)
+        .runAsTest("a double-quoted folder name with parentheses still matches that folder");
+      inFolderWithParentheses(TestBuilder.command`echo 'c++(old)'/*.ts`)
+        .stdout(withParentheses)
+        .runAsTest("a single-quoted folder name with parentheses still matches that folder");
+
+      test.skipIf(isWindows)("a quoted name with parentheses that is a symlink to a folder still expands", async () => {
+        using dir = tempDir("bunshell-symlink-parentheses", { "real/f.ts": "" });
+        symlinkSync("real", join(String(dir), "Dropbox (Personal)"));
+        const { stdout, exitCode } = await $`echo "Dropbox (Personal)"/f.* ${"Dropbox (Personal)"}/*.ts`
+          .cwd(String(dir))
+          .nothrow()
+          .quiet();
+        expect(stdout.toString()).toBe("Dropbox (Personal)/f.ts Dropbox (Personal)/f.ts\n");
+        expect(exitCode).toBe(0);
+      });
+
+      TestBuilder.command`echo *"(1)".ts`
+        .ensureTempDir()
+        .file("g(1).ts", "")
+        .file("g1.ts", "")
+        .file("1.ts", "")
+        .stdout("g(1).ts\n")
+        .runAsTest("a literal * before quoted parentheses isn't an extglob group");
     });
 
     test("glob on a nonexistent absolute directory does not crash the process", async () => {
@@ -915,7 +1195,7 @@ booga"
     });
 
     test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
-      const dir = tempDirWithFiles("glob-eacces", { "placeholder.txt": "" });
+      await using dir = tempDir("glob-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);
@@ -970,6 +1250,13 @@ booga"
     test("command", async () => {
       const { stdout } = await $`{echo,a,b,c} {d,e,f}`;
       expect(stdout.toString()).toEqual("a b c d e f\n");
+    });
+
+    test("a word with more than 65535 tokens fails", async () => {
+      const word = "{" + Array(32768).fill("a").join(",") + "}";
+      const { stderr, exitCode } = await $`echo ${{ raw: word }}`.quiet().nothrow();
+      expect(stderr.toString()).toBe("bun: unexpected token while expanding braces\n");
+      expect(exitCode).toBe(1);
     });
   });
 
@@ -1138,11 +1425,26 @@ booga"
       expect(exitCode).toBe(0);
     });
 
+    test(".cwd() to a missing directory rejects the promise instead of throwing from then()", async () => {
+      using dir = tempDir("cwd-missing", {});
+      const missing = join(String(dir), "does-not-exist");
+      const promise = $`echo hi`.cwd(missing).nothrow();
+      // `then()` starts the shell. A setup failure must settle the promise,
+      // not throw out of `then()`.
+      const settled = promise.then(
+        () => "resolved",
+        e => e,
+      );
+      const err = await settled;
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("No such file or directory");
+    });
+
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
     test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
-      const dir = tempDirWithFiles("cd-eacces", { "placeholder.txt": "" });
+      await using dir = tempDir("cd-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess");
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);
@@ -1305,6 +1607,25 @@ describe("deno_task", () => {
     TestBuilder.command`echo $(echo 1)`.stdout("1\n").runAsTest("nested echo cmd subst");
     TestBuilder.command`echo $(echo 1 && echo 2)`.stdout("1 2\n").runAsTest("nested echo cmd subst with conditional");
     // TODO Sleep tests
+
+    describe("drops NUL bytes from the output", () => {
+      TestBuilder.command`echo "$(echo -e 'a\0b\0c')" $(echo -e 'a\0b c\0d')`
+        .stdout("abc ab cd\n")
+        .runAsTest("passed to echo");
+
+      TestBuilder.command`${BUN} run ./code.ts x $(echo -e '\0') y "$(echo -e '\0')" z`
+        .ensureTempDir()
+        .file("code.ts", `console.log(JSON.stringify(process.argv.slice(2)))`)
+        .stdout(out => expect(JSON.parse(out)).toEqual(["x", "y", "", "z"]))
+        .runAsTest("skips an unquoted NUL and passes a quoted NUL as an empty argument");
+
+      TestBuilder.command`${BUN} exec ${`echo hi > "$(echo -e 'f\\0zz')"; touch t1zzz; [[ -f $(echo -e 't1\\0zzz') ]] && echo yes || echo no`}`
+        .ensureTempDir()
+        .stdout("yes\n")
+        .fileEquals("fzz", "hi\n")
+        .doesNotExist("f")
+        .runAsTest("used as a redirect target or in a file test");
+    });
   });
 
   describe("shell variables", async () => {
@@ -1318,6 +1639,12 @@ describe("deno_task", () => {
       .stdout("Test1\nTest: 1\nCommandSub\n$\n$VAR\n")
       .stderr("bun: command not found: 1\n")
       .runAsTest("shell var 3");
+
+    // Assignment values are not field split (POSIX 2.9.1), so the command
+    // substitution output keeps its interior whitespace.
+    TestBuilder.command`VAR=$(echo a && echo b) && echo "$VAR"`
+      .stdout("a\nb\n")
+      .runAsTest("assignment keeps command substitution newlines");
   });
 
   describe("env variables", async () => {
@@ -1328,6 +1655,22 @@ describe("deno_task", () => {
     TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
       .stdout("1 testing test this out\n")
       .runAsTest("exported vars 2");
+
+    // `export` is a declaration utility: a `NAME=value` operand expands like
+    // an assignment, with no field splitting of the substitution output.
+    TestBuilder.command`export NAME=$(echo "hello world") && echo "NAME=[$NAME] world=[$world]"`
+      .stdout("NAME=[hello world] world=[]\n")
+      .runAsTest("export does not field split command substitution");
+
+    TestBuilder.command`export A=$(echo one two) B=$(echo three four) && echo "$A,$B"`
+      .stdout("one two,three four\n")
+      .runAsTest("export does not field split multiple assignment operands");
+
+    // A word that is not a literal `NAME=` assignment keeps the normal
+    // field splitting, matching bash.
+    TestBuilder.command`export $(echo "SPLIT=hello world") && echo "SPLIT=[$SPLIT]"`
+      .stdout("SPLIT=[hello]\n")
+      .runAsTest("export splits a non-assignment word");
   });
 
   describe("pipeline", async () => {
@@ -3049,6 +3392,146 @@ test("redirect target buffer stays attached while a builtin command is running",
   expect(stringifyBuffer(buffer)).toEqual("pin.txt\n");
 });
 
+test.skipIf(isWindows)(
+  "output redirect buffer for an external command is detachable as soon as the command settles",
+  async () => {
+    // `> ${buf}` for an external command is pinned until the child's stdout
+    // reaches EOF. Here `sh` prints and exits at once while a background
+    // grandchild inherits the stdout pipe and holds it open until the gated
+    // fetch below is answered. The process exit and the stderr EOF are then
+    // processed long before the stdout EOF, so the stdout reader is the
+    // callback that settles the promise. The code after `await` must already
+    // see the buffer unpinned: a `transfer()` detaches it instead of copying.
+    const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
+    const gate = Promise.withResolvers<void>();
+    const grandchildStarted = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        grandchildStarted.resolve();
+        await gate.promise;
+        return new Response("ok");
+      },
+    });
+    const grandchildCode = `await fetch(${JSON.stringify(String(server.url))})`;
+    const promise = $`sh -c ${'"$0" -e "$1" 2>/dev/null & echo hi'} ${BUN} ${grandchildCode} > ${buffer}`
+      .env(bunEnv)
+      .nothrow();
+    const running = promise.then(o => o);
+    // By the time the request arrives, `sh` has exited and the grandchild is
+    // the only holder of the stdout pipe. If the command settles first, the
+    // grandchild never held it: fail with the shell's output instead of
+    // waiting on the gate until the test times out.
+    await Promise.race([
+      grandchildStarted.promise,
+      running.then(r => {
+        throw new Error(`command settled before the grandchild connected (exit ${r.exitCode}): ${r.stderr}`);
+      }),
+    ]);
+
+    // The grandchild still holds stdout, so the buffer is pinned: a detach
+    // attempt copies instead (or throws).
+    try {
+      buffer.buffer.transfer();
+    } catch {}
+    const detachedWhileOpen = buffer.buffer.detached;
+    gate.resolve();
+    expect(detachedWhileOpen).toBe(false);
+
+    const result = await running;
+    expect(stringifyBuffer(buffer)).toEqual("hi\n");
+
+    buffer.buffer.transfer();
+    expect(buffer.buffer.detached).toBe(true);
+    expect(result.exitCode).toBe(0);
+  },
+);
+
+test("a builtin stops writing to a redirect target that was resized to 0", async () => {
+  const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
+  const buffer = new Uint8Array(ab);
+  // .then() starts the interpreter. `yes` writes its first batch and queues the next one.
+  const running = $`yes > ${buffer}`
+    .env(bunEnv)
+    .quiet()
+    .nothrow()
+    .then(o => o);
+  await Promise.resolve();
+  ab.resize(0);
+
+  const result = await running;
+  expect(result.stderr.toString()).toBe("yes: ENOSPC\n");
+  expect(result.exitCode).toBe(1);
+});
+
+describe.each(["> ", "2>&1 "])("an external command with a `%s${buf}` redirect", redirect => {
+  test.skipIf(isWindows)("drops the output that arrives after the target was resized to 0", async () => {
+    const ab = new ArrayBuffer(1 << 20, { maxByteLength: 1 << 21 });
+    const buffer = new Uint8Array(ab);
+    const gate = Promise.withResolvers<void>();
+    const childWaiting = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        childWaiting.resolve();
+        await gate.promise;
+        return new Response("ok");
+      },
+    });
+    // The second write waits for the fetch, so it arrives after the resize.
+    const childCode = `
+      const chunk = Buffer.alloc(1 << 16, 0x41);
+      process.stdout.write(chunk);
+      await fetch(${JSON.stringify(String(server.url))});
+      process.stdout.write(chunk);
+    `;
+    const running = $`${BUN} -e ${childCode} ${{ raw: redirect }}${buffer}`
+      .env(bunEnv)
+      .quiet()
+      .nothrow()
+      .then(o => o);
+
+    await Promise.race([
+      childWaiting.promise,
+      running.then(r => {
+        throw new Error(`command settled before the child connected (exit ${r.exitCode}): ${r.stderr}`);
+      }),
+    ]);
+    ab.resize(0);
+    gate.resolve();
+
+    const result = await running;
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+});
+
+test("a builtin stops writing to a redirect target whose WebAssembly.Memory grew", async () => {
+  // Without fast memory, grow() moves the block. Without the Gigacage, the old block is unmapped.
+  const child = `
+    const mem = new WebAssembly.Memory({ initial: 128, maximum: 132 });
+    const target = new Uint8Array(mem.buffer);
+    const running = Bun.$\`yes > \${target}\`.quiet().nothrow().then(o => o);
+    await Promise.resolve();
+    const wroteBeforeGrow = target[0] === 0x79 && target[1] === 0x0a;
+    mem.grow(4);
+    const result = await running;
+    console.log(JSON.stringify({ wroteBeforeGrow, exitCode: result.exitCode, stderr: result.stderr.toString() }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [BUN, "-e", child],
+    env: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0", Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ wroteBeforeGrow: true, exitCode: 1, stderr: "yes: ENOSPC\n" }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("stdin redirect from a Uint8Array sends the bytes captured when the command starts", async () => {
   // `< ${buf}` snapshots the buffer's contents when the command starts and
   // streams them to the child's stdin across multiple event-loop turns.
@@ -3106,6 +3589,41 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
       stderr: result.stderr.toString(),
       exitCode: result.exitCode,
     }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
+describe.skipIf(isWindows)("stdin redirect whose pipe outlives the command's process", () => {
+  // `< ${input}` is pumped into the child over a pipe. A command finishes once
+  // its exit code and the stdin, stdout and stderr closes are all in, and the
+  // four arrive as separate event-loop callbacks. Here the child hands its
+  // stdin to a background `sleep` and exits without reading the redirect,
+  // which is bigger than the pipe buffer: the exit and the stdout/stderr EOFs
+  // are processed first, and the pending stdin write only fails once `sleep`
+  // lets go of the pipe. That stdin close is what has to finish the command.
+  // Without it the promise never settles.
+  const SIZE = 1 << 20;
+  const script = "exec 3<&0; sleep 1 <&3 >/dev/null 2>&1 & echo out; echo err >&2; exit 3";
+  const redirects: Array<[string, () => Buffer | Blob]> = [
+    ["Buffer", () => Buffer.alloc(SIZE, "a")],
+    ["Blob", () => new Blob([Buffer.alloc(SIZE, "a")])],
+  ];
+
+  test.concurrent.each(redirects)("%s", async (_name, input) => {
+    const r = await $`sh -c ${script} < ${input()}`.quiet().nothrow();
+    expect({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+      stdout: "out\n",
+      stderr: "err\n",
+      exitCode: 3,
+    });
+  });
+
+  test.concurrent("inside a pipeline", async () => {
+    const r = await $`sh -c ${script} < ${Buffer.alloc(SIZE, "a")} | cat`.quiet().nothrow();
+    expect({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+      stdout: "out\n",
+      stderr: "err\n",
+      exitCode: 0,
+    });
   });
 });
 
@@ -3171,4 +3689,138 @@ test("cd treats interpolated arguments starting with tilde or dash as literal di
     expect(stdout.toString()).toBe("");
     expect(exitCode).toBe(1);
   }
+});
+
+test.each([
+  ["ASCII", "a\0b"],
+  ["Latin-1", "caf\xe9\0b"],
+  ["UTF-16", "\u4e2d\0b"],
+])(".cwd() and .env() reject a %s string with a NUL byte", (_, value) => {
+  const error = (name: string) => ({
+    code: "ERR_INVALID_ARG_VALUE",
+    message: `The shell ${name} must be a string without null bytes. Received ${JSON.stringify(value)}`,
+  });
+  expect(() => $`true`.cwd(value)).toThrow(error("cwd"));
+  expect(() => $`true`.env({ [value]: "1" })).toThrow(error("env key"));
+  expect(() => $`true`.env({ X: value })).toThrow(error("env value"));
+  expect(() => new $.Shell().cwd(value)`true`).toThrow(error("cwd"));
+});
+
+test(".env() rejects a NUL byte at any offset in an ASCII string and copies clean strings unchanged", async () => {
+  const env: Record<string, string> = { LATIN1: "caf\xe9", UTF16: "\u4e2d", EMPTY: "" };
+  const error = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+  for (const length of [1, 7, 8, 9, 17, 33, 129, 200]) {
+    const clean = Buffer.alloc(length, "\x01a~\x7f").latin1Slice();
+    env["V" + length] = clean;
+    for (const at of length > 33 ? [0, 64, length - 9, length - 1] : Array(length).keys()) {
+      const value = clean.slice(0, at) + "\0" + clean.slice(at + 1);
+      expect(() => $`true`.env({ X: value })).toThrow(error);
+      expect(() => $`true`.env({ [value]: "1" })).toThrow(error);
+    }
+  }
+  const raw = `echo "[$${Object.keys(env).join("][$")}]"`;
+  expect(await $`${{ raw }}`.env(env).text()).toBe(`[${Object.values(env).join("][")}]\n`);
+});
+
+describe("literal digits after an interpolated value", () => {
+  TestBuilder.command`echo ${"a b"}0`
+    .stdout("a b0\n")
+    .runAsTest("a literal digit after an interpolated string is preserved");
+
+  TestBuilder.command`echo ${5}0`.stdout("50\n").runAsTest("a literal digit after an interpolated number is preserved");
+
+  TestBuilder.command`echo ${"a b"}1 ${"c d"}`
+    .stdout("a b1 c d\n")
+    .runAsTest("each interpolated value keeps its own slot when followed by a literal digit");
+});
+
+test.skipIf(isWindows)("external command resolution uses the PATH from the shell environment", async () => {
+  using dir = tempDir("shell-argv0-path", {
+    "onlyintool": "#!/bin/sh\necho from-onlyintool\n",
+  });
+  chmodSync(join(String(dir), "onlyintool"), 0o755);
+  const toolDir = String(dir).replaceAll("\\", "/");
+
+  {
+    const { stdout, stderr, exitCode } = await $`onlyintool`
+      .env({ ...bunEnv, PATH: toolDir })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, stderr, exitCode } = await $`PATH=${toolDir} onlyintool`.quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, stderr, exitCode } = await $`export PATH=${toolDir}; onlyintool`.quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+});
+
+// Windows joins each file operand onto the shell's cwd in one path buffer. POSIX passes operands to the *at() syscalls.
+test.if(isWindows)("operands longer than the path buffer fail with ENAMETOOLONG", async () => {
+  using dir = tempDir("shell-long-operand", { "in.txt": "content\n" });
+  const script = `
+    import { $ } from "bun";
+    $.nothrow();
+    $.cwd(process.env.SHELL_CWD);
+    const long = Buffer.alloc(100_000, "a").toString();
+    // Too long as written, but normalizes to a short name inside the cwd.
+    const collapsing = Buffer.alloc(100_000, "a/../").toString();
+    const show = buf => buf.toString().replaceAll(long, "<long>").replaceAll(collapsing, "<collapsing>");
+    const run = async promise => {
+      const { exitCode, stdout, stderr } = await promise.quiet();
+      return { exitCode, stdout: show(stdout), stderr: show(stderr) };
+    };
+    console.log(
+      JSON.stringify({
+        cat: await run($\`cat \${long}\`),
+        redirect: await run($\`echo hi > \${long}\`),
+        isFile: await run($\`[[ -f \${long} ]]\`),
+        rootedCat: await run($\`cat \${"/" + long}\`),
+        rootedLs: await run($\`ls \${"/" + long}\`),
+        rootedMvTarget: await run($\`mv in.txt \${"/" + long}\`),
+        rootedRedirect: await run($\`echo hi > \${"/" + long}\`),
+        rootedIsDir: await run($\`[[ -d \${"/" + long} ]]\`),
+        collapsingCat: await run($\`cat \${collapsing + "in.txt"}\`),
+        collapsingIsFile: await run($\`[[ -f \${collapsing + "in.txt"} ]]\`),
+        collapsingRedirect: await run($\`echo hi > \${collapsing + "out.txt"}\`),
+      }),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, SHELL_CWD: String(dir) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const failed = (stderr: string) => ({ exitCode: 1, stdout: "", stderr });
+  const succeeded = (stdout: string) => ({ exitCode: 0, stdout, stderr: "" });
+  expect(JSON.parse(stdout)).toEqual({
+    cat: failed("cat: <long>: File name too long\n"),
+    redirect: failed("bun: File name too long: <long>"),
+    isFile: failed(""),
+    rootedCat: failed("cat: /<long>: File name too long\n"),
+    rootedLs: failed("ls: /<long>: File name too long\n"),
+    rootedMvTarget: failed("mv: /<long>: File name too long\n"),
+    rootedRedirect: failed("bun: File name too long: /<long>"),
+    rootedIsDir: failed(""),
+    collapsingCat: succeeded("content\n"),
+    collapsingIsFile: succeeded(""),
+    collapsingRedirect: succeeded(""),
+  });
+  expect(await Bun.file(join(String(dir), "in.txt")).text()).toBe("content\n");
+  expect(await Bun.file(join(String(dir), "out.txt")).text()).toBe("hi\n");
+  expect(exitCode).toBe(0);
 });

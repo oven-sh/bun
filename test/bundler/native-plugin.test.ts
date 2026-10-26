@@ -488,7 +488,7 @@ values;`;
           ],
         });
         expect.unreachable();
-      } catch (e) {
+      } catch (e: any) {
         expect(e.toString()).toContain(
           "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
         );
@@ -512,7 +512,7 @@ values;`;
         ],
       });
       expect.unreachable();
-    } catch (e) {
+    } catch (e: any) {
       expect(e.toString()).toContain(
         'TypeError [ERR_INVALID_ARG_TYPE]: Could not find the symbol "OOGA_BOOGA_420" in the given napi module.',
       );

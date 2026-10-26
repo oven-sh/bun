@@ -7,9 +7,9 @@ use bun_core::strings;
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
 pub struct Url {
     /// The url string.
-    pub import_record_idx: u32,
+    pub(crate) import_record_idx: u32,
     /// The location where the `url()` was seen in the CSS source file.
-    pub loc: crate::dependencies::Location,
+    pub(crate) loc: crate::dependencies::Location,
 }
 
 impl Url {
@@ -17,8 +17,9 @@ impl Url {
         let start_pos = input.position();
         let loc = input.current_source_location();
         let url = input.expect_url_cloned()?;
+        let end_pos = input.position();
         let import_record_idx =
-            input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
+            input.add_import_record(url, start_pos, end_pos, bun_ast::ImportKind::Url)?;
         Ok(Url {
             import_record_idx,
             loc: crate::dependencies::Location::from_source_location(loc),
@@ -26,7 +27,7 @@ impl Url {
     }
 
     /// Returns whether the URL is absolute, and not relative.
-    pub fn is_absolute(&self, import_records: &[ImportRecord]) -> bool {
+    pub(crate) fn is_absolute(&self, import_records: &[ImportRecord]) -> bool {
         let url: &[u8] = import_records[self.import_record_idx as usize].path.pretty;
 
         // Quick checks. If the url starts with '.', it is relative.
@@ -145,7 +146,7 @@ impl Url {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         Url {
             import_record_idx: self.import_record_idx,
             loc: self.loc,
@@ -160,7 +161,7 @@ impl Url {
 
     // TODO: dedupe import records??
     // This might not fucking work
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         // Only `import_record_idx` participates in identity (matches `eql`
         // above); `loc` is presentation metadata.
         hasher.update(&self.import_record_idx.to_ne_bytes());

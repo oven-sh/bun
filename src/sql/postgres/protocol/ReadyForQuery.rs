@@ -1,17 +1,9 @@
 use super::new_reader::NewReader;
-use super::transaction_status_indicator::TransactionStatusIndicator;
 use crate::postgres::AnyPostgresError;
 
 pub struct ReadyForQuery {
-    pub status: TransactionStatusIndicator,
-}
-
-impl Default for ReadyForQuery {
-    fn default() -> Self {
-        Self {
-            status: TransactionStatusIndicator::I,
-        }
-    }
+    /// `I`: idle. `T`: in a transaction block. `E`: in a failed transaction block.
+    pub transaction_status: u8,
 }
 
 impl ReadyForQuery {
@@ -20,11 +12,8 @@ impl ReadyForQuery {
     ) -> Result<Self, AnyPostgresError> {
         reader.length()?;
 
-        let status = reader.int::<u8>()?;
-        // TransactionStatusIndicator is a `#[repr(transparent)] struct(u8)` newtype —
-        // wrap directly, no discriminant validation needed.
         Ok(Self {
-            status: TransactionStatusIndicator(status),
+            transaction_status: reader.int::<u8>()?,
         })
     }
 }

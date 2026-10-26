@@ -14,6 +14,8 @@ pub trait WriterContext: Copy {
     /// returned by `offset()`). Used to roll a partially-serialized packet
     /// back out of the write buffer when it cannot be framed.
     fn truncate(self, offset: usize);
+    /// `slice::copy_within` on the written bytes; offsets as returned by `offset()`.
+    fn copy_within(self, src: core::ops::Range<usize>, dest: usize);
 }
 
 #[derive(Clone, Copy)]
@@ -22,33 +24,50 @@ pub struct NewWriterWrap<C: WriterContext> {
 }
 
 pub struct Packet<C: WriterContext> {
-    pub header: PacketHeader,
-    pub offset: usize,
-    pub ctx: NewWriterWrap<C>,
+    pub(crate) sequence_id: u8,
+    pub(crate) offset: usize,
+    pub(crate) ctx: NewWriterWrap<C>,
 }
 
 impl<C: WriterContext> Packet<C> {
     pub fn end(&mut self) -> Result<(), AnyMySQLError> {
+        const MAX: usize = PacketHeader::MAX_PAYLOAD_LENGTH;
         let new_offset = self.ctx.wrapped.offset();
         // fix position for packet header
         let length = new_offset - self.offset - PacketHeader::SIZE;
-        // The length field is only 24 bits and we don't implement multi-packet
-        // splitting on the write path; truncating would let the server reparse
-        // the tail as separate attacker-controlled packets. Roll the partial
-        // packet back out of the buffer and reject.
-        if length >= PacketHeader::MAX_PAYLOAD_LENGTH {
-            self.ctx.wrapped.truncate(self.offset);
-            return Err(AnyMySQLError::Overflow);
+        // A payload of MAX bytes or more continues in further packets; the last
+        // one is shorter than MAX, empty if need be.
+        let extra_packets = length / MAX;
+        for _ in 0..extra_packets {
+            if let Err(err) = self.ctx.write(&[0u8; PacketHeader::SIZE]) {
+                self.ctx.wrapped.truncate(self.offset);
+                return Err(err);
+            }
         }
-        self.header.length = u32::try_from(length).expect("int cast");
-        bun_core::scoped_log!(NewWriter, "writing packet header: {}", self.header.length);
-        self.ctx.pwrite(&self.header.encode(), self.offset)
+        for index in (0..=extra_packets).rev() {
+            let chunk = index * MAX..length.min((index + 1) * MAX);
+            let header = PacketHeader {
+                length: chunk.len() as u32,
+                sequence_id: self.sequence_id.wrapping_add(index as u8),
+            };
+            let header_offset = self.offset + index * (PacketHeader::SIZE + MAX);
+            if index > 0 {
+                let payload = self.offset + PacketHeader::SIZE;
+                self.ctx.wrapped.copy_within(
+                    payload + chunk.start..payload + chunk.end,
+                    header_offset + PacketHeader::SIZE,
+                );
+            }
+            bun_core::scoped_log!(NewWriter, "writing packet header: {}", header.length);
+            self.ctx.pwrite(&header.encode(), header_offset)?;
+        }
+        Ok(())
     }
 }
 
 impl<C: WriterContext> NewWriterWrap<C> {
     #[inline]
-    pub fn write_length_encoded_int(self, data: u64) -> Result<(), AnyMySQLError> {
+    pub(crate) fn write_length_encoded_int(self, data: u64) -> Result<(), AnyMySQLError> {
         self.wrapped.write(encode_length_int(data).slice())
     }
 
@@ -67,28 +86,25 @@ impl<C: WriterContext> NewWriterWrap<C> {
         bun_core::scoped_log!(NewWriter, "starting packet: {}", o);
         self.write(&[0u8; PacketHeader::SIZE])?;
         Ok(Packet {
-            header: PacketHeader {
-                sequence_id,
-                length: 0,
-            },
+            sequence_id,
             offset: o,
             ctx: self,
         })
     }
 
-    pub fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyMySQLError> {
+    pub(crate) fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyMySQLError> {
         self.wrapped.pwrite(data, i)
     }
 
-    pub fn int4(self, value: MySQLInt32) -> Result<(), AnyMySQLError> {
+    pub(crate) fn int4(self, value: MySQLInt32) -> Result<(), AnyMySQLError> {
         self.write(&value.to_ne_bytes())
     }
 
-    pub fn int1(self, value: u8) -> Result<(), AnyMySQLError> {
+    pub(crate) fn int1(self, value: u8) -> Result<(), AnyMySQLError> {
         self.write(&[value])
     }
 
-    pub fn write_z(self, value: &[u8]) -> Result<(), AnyMySQLError> {
+    pub(crate) fn write_z(self, value: &[u8]) -> Result<(), AnyMySQLError> {
         self.write(value)?;
         if value.is_empty() || value[value.len() - 1] != 0 {
             self.write(&[0u8])?;

@@ -8,7 +8,7 @@ use crate::{Parser, PrintErr, Printer, Result};
 /// Parses either a `<number>` or `<percentage>`, but is always stored and serialized as a number.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AlphaValue {
-    pub v: f32,
+    pub(crate) v: f32,
 }
 
 impl AlphaValue {
@@ -23,13 +23,5 @@ impl AlphaValue {
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         CSSNumberFns::to_css(self.v, dest)
-    }
-}
-
-impl crate::generics::CssHash for AlphaValue {
-    /// Field-wise: hash the single `f32` payload.
-    #[inline]
-    fn hash(&self, hasher: &mut crate::generics::Wyhash) {
-        crate::generics::CssHash::hash(&self.v, hasher);
     }
 }

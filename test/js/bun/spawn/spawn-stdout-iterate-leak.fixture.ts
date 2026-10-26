@@ -18,6 +18,7 @@ import { once } from "events";
 
 const MB = 1024 * 1024;
 const CHUNK = 32768;
+const rss = process.memoryUsage.rss;
 
 async function run(iters: number) {
   const proc = spawn("cat", [], { stdio: ["pipe", "pipe", "ignore"] });
@@ -76,7 +77,7 @@ const samples: number[] = [];
 for (let i = 0; i < STEPS; i++) {
   await run(ITERS);
   Bun.gc(true);
-  samples.push(process.memoryUsage.rss());
+  samples.push(rss());
 }
 
 console.log(

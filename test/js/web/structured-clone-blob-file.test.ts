@@ -1,6 +1,7 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
+import { join } from "node:path";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -241,7 +242,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned[0].size).toBe(4);
 
       expect(cloned[1]).toBeInstanceOf(File);
-      expect(cloned[1].name).toBe("test.txt");
+      expect((cloned[1] as File).name).toBe("test.txt");
       expect(cloned[1].size).toBe(4);
     });
 
@@ -522,6 +523,74 @@ describe("structuredClone with Blob and File", () => {
       });
     });
 
+    test("a file-backed Blob sized past MAX_SIZE deserializes with unknown size and can be sliced", async () => {
+      using dir = tempDir("blob-deser-size", { "probe.txt": "0123456789abcdefghij" });
+      const path = join(String(dir), "probe.txt");
+      // Plant a distinctive slice end so the u64 size field can be located
+      // in whatever framing the current build emits, then overwrite it.
+      const sentinel = 0x0badf00d1234;
+      const good = Buffer.from(serialize(Bun.file(path).slice(0, sentinel)));
+      const needle = Buffer.alloc(8);
+      needle.writeBigUInt64LE(BigInt(sentinel));
+      const at = good.indexOf(needle);
+      expect(at).toBeGreaterThan(0);
+      const bad = Buffer.from(good);
+      bad.writeBigUInt64LE(1n << 63n, at);
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { deserialize } = require("bun:jsc");
+            const v8 = require("node:v8");
+            const bad = Buffer.from(process.argv[1], "base64");
+            for (const de of [deserialize, b => v8.deserialize(b)]) {
+              const blob = de(bad);
+              const head = await blob.slice(0, 10).text();
+              process.stdout.write(JSON.stringify({ head, size: blob.size }) + "\\n");
+            }
+          `,
+          bad.toString("base64"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const lines = stdout
+        .split("\n")
+        .filter(Boolean)
+        .map(l => JSON.parse(l));
+      expect({ lines, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        lines: [
+          { head: "0123456789", size: 20 },
+          { head: "0123456789", size: 20 },
+        ],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    test("file-backed Blob path longer than PATH_MAX is rejected at deserialize", () => {
+      const probe = Buffer.alloc(16, 0x5a);
+      const good = Buffer.from(serialize(Bun.file(probe.toString("latin1"))));
+      const at = good.indexOf(probe);
+      expect(at).toBeGreaterThan(4);
+      expect(good.readUInt32LE(at - 4)).toBe(probe.length);
+
+      // Longer than MAX_PATH_BYTES on every platform (Windows is ~96 KiB).
+      const long = Buffer.concat([Buffer.from("/"), Buffer.alloc(100_000, "a")]);
+      const len = Buffer.alloc(4);
+      len.writeUInt32LE(long.length);
+      const bad = Buffer.concat([good.subarray(0, at - 4), len, long, good.subarray(at + probe.length)]);
+
+      expect(() => deserialize(bad)).toThrow("Unable to deserialize data.");
+      expect(() => v8.deserialize(bad)).toThrow("Unable to deserialize data.");
+    });
+
     test("in-process: offset at store boundary yields empty view", async () => {
       // offset == store length stays within the allocation on any build, so
       // this is safe to assert in-process and covers the boundary directly.
@@ -767,10 +836,10 @@ describe("structuredClone with Blob and File", () => {
       // with it the window is flat modulo a few MiB of noise.
       for (let i = 0; i < 1000; i++) attempt();
       Bun.gc(true);
-      const rssBefore = process.memoryUsage.rss();
+      const rssBefore = rss();
       for (let i = 0; i < 1500; i++) attempt();
       Bun.gc(true);
-      const rssAfter = process.memoryUsage.rss();
+      const rssAfter = rss();
 
       const deltaMiB = (rssAfter - rssBefore) / 1024 / 1024;
       // ASAN's quarantine retains freed allocations (default 256 MB) so the

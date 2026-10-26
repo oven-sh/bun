@@ -72,6 +72,55 @@ impl HasLength for &crate::String {
     }
 }
 
+/// Lookup for large maps, which store their keys as data instead of as an
+/// inlined compare tree: keys are sorted by `(len, bytes)` and concatenated
+/// into `blob`; `buckets[len]` is `(blob offset, first sorted position)` of
+/// the run of keys with that length (with one sentinel entry past the longest
+/// key), and `order[sorted position]` is the key's declaration index. Returns
+/// the declaration index, or `u32::MAX` on a miss.
+#[doc(hidden)]
+pub fn sorted_key_index(key: &[u8], blob: &[u8], buckets: &[(u32, u32)], order: &[u16]) -> u32 {
+    match sorted_key_position(key, blob, buckets) {
+        Some((position, _)) => u32::from(order[position]),
+        None => u32::MAX,
+    }
+}
+
+/// The interned copy of `key` in a sorted key blob (same layout as above), for
+/// tables that only need membership plus a `'static` spelling of the key.
+pub fn sorted_key_slice(
+    key: &[u8],
+    blob: &'static [u8],
+    buckets: &[(u32, u32)],
+) -> Option<&'static [u8]> {
+    let (_, offset) = sorted_key_position(key, blob, buckets)?;
+    Some(&blob[offset..offset + key.len()])
+}
+
+/// `(sorted position, blob offset)` of `key`, if present.
+fn sorted_key_position(key: &[u8], blob: &[u8], buckets: &[(u32, u32)]) -> Option<(usize, usize)> {
+    let len = key.len();
+    if len + 1 >= buckets.len() {
+        return None;
+    }
+    let (offset, first) = buckets[len];
+    let offset = offset as usize;
+    let count = (buckets[len + 1].1 - first) as usize;
+    let keys = &blob[offset..offset + count * len];
+    // Binary search over `count` fixed-width keys.
+    let (mut lo, mut hi) = (0usize, count);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let candidate = &keys[mid * len..(mid + 1) * len];
+        match candidate.cmp(key) {
+            core::cmp::Ordering::Less => lo = mid + 1,
+            core::cmp::Ordering::Greater => hi = mid,
+            core::cmp::Ordering::Equal => return Some((first as usize + mid, offset + mid * len)),
+        }
+    }
+    None
+}
+
 #[macro_export]
 macro_rules! comptime_string_map {
     ($($t:tt)*) => {
@@ -114,6 +163,213 @@ mod tests {
             b"incommon" => TestEnum::C,
             b"samelen" => TestEnum::E,
         };
+    }
+
+    crate::comptime_string_map! {
+        /// More than 64 keys: exercises the sorted-data lookup path.
+        static BIG: u32 = {
+            b"a" => 0,
+            b"bb" => 1,
+            b"ccc" => 2,
+            b"dddd" => 3,
+            b"alpha" => 4,
+            b"beta" => 5,
+            b"gamma" => 6,
+            b"delta" => 7,
+            b"epsilon" => 8,
+            b"zeta" => 9,
+            b"eta" => 10,
+            b"theta" => 11,
+            b"iota" => 12,
+            b"kappa" => 13,
+            b"lambda" => 14,
+            b"mu" => 15,
+            b"nu" => 16,
+            b"xi" => 17,
+            b"omicron" => 18,
+            b"pi" => 19,
+            b"rho" => 20,
+            b"sigma" => 21,
+            b"tau" => 22,
+            b"upsilon" => 23,
+            b"phi" => 24,
+            b"chi" => 25,
+            b"psi" => 26,
+            b"omega" => 27,
+            b"key00" => 28,
+            b"key01" => 29,
+            b"key02" => 30,
+            b"key03" => 31,
+            b"key04" => 32,
+            b"key05" => 33,
+            b"key06" => 34,
+            b"key07" => 35,
+            b"key08" => 36,
+            b"key09" => 37,
+            b"key10" => 38,
+            b"key11" => 39,
+            b"key12" => 40,
+            b"key13" => 41,
+            b"key14" => 42,
+            b"key15" => 43,
+            b"key16" => 44,
+            b"key17" => 45,
+            b"key18" => 46,
+            b"key19" => 47,
+            b"key20" => 48,
+            b"key21" => 49,
+            b"key22" => 50,
+            b"key23" => 51,
+            b"key24" => 52,
+            b"key25" => 53,
+            b"key26" => 54,
+            b"key27" => 55,
+            b"key28" => 56,
+            b"key29" => 57,
+            b"key30" => 58,
+            b"key31" => 59,
+            b"key32" => 60,
+            b"key33" => 61,
+            b"key34" => 62,
+            b"key35" => 63,
+            b"key36" => 64,
+            b"key37" => 65,
+            b"key38" => 66,
+            b"key39" => 67,
+            b"key40" => 68,
+            b"key41" => 69,
+            b"key42" => 70,
+            b"key43" => 71,
+            b"key44" => 72,
+            b"key45" => 73,
+            b"key46" => 74,
+            b"key47" => 75,
+            b"key48" => 76,
+            b"key49" => 77,
+            b"key50" => 78,
+            b"key51" => 79,
+            b"key52" => 80,
+            b"key53" => 81,
+            b"key54" => 82,
+            b"key55" => 83,
+            b"key56" => 84,
+            b"key57" => 85,
+            b"key58" => 86,
+            b"key59" => 87,
+        };
+    }
+
+    crate::comptime_string_set! {
+        static BIG_SET = {
+            b"a",
+            b"bb",
+            b"ccc",
+            b"dddd",
+            b"alpha",
+            b"beta",
+            b"gamma",
+            b"delta",
+            b"epsilon",
+            b"zeta",
+            b"eta",
+            b"theta",
+            b"iota",
+            b"kappa",
+            b"lambda",
+            b"mu",
+            b"nu",
+            b"xi",
+            b"omicron",
+            b"pi",
+            b"rho",
+            b"sigma",
+            b"tau",
+            b"upsilon",
+            b"phi",
+            b"chi",
+            b"psi",
+            b"omega",
+            b"key00",
+            b"key01",
+            b"key02",
+            b"key03",
+            b"key04",
+            b"key05",
+            b"key06",
+            b"key07",
+            b"key08",
+            b"key09",
+            b"key10",
+            b"key11",
+            b"key12",
+            b"key13",
+            b"key14",
+            b"key15",
+            b"key16",
+            b"key17",
+            b"key18",
+            b"key19",
+            b"key20",
+            b"key21",
+            b"key22",
+            b"key23",
+            b"key24",
+            b"key25",
+            b"key26",
+            b"key27",
+            b"key28",
+            b"key29",
+            b"key30",
+            b"key31",
+            b"key32",
+            b"key33",
+            b"key34",
+            b"key35",
+            b"key36",
+            b"key37",
+            b"key38",
+            b"key39",
+            b"key40",
+            b"key41",
+            b"key42",
+            b"key43",
+            b"key44",
+            b"key45",
+            b"key46",
+            b"key47",
+            b"key48",
+            b"key49",
+            b"key50",
+            b"key51",
+            b"key52",
+            b"key53",
+            b"key54",
+            b"key55",
+            b"key56",
+            b"key57",
+            b"key58",
+            b"key59",
+        };
+    }
+
+    #[test]
+    fn large_map_uses_sorted_lookup() {
+        for (i, key) in BIG.keys().enumerate() {
+            assert_eq!(BIG.get(key), Some(&(i as u32)), "{}", bstr::BStr::new(key));
+            assert!(BIG_SET.contains(key));
+            let mut upper = key.to_vec();
+            upper.make_ascii_uppercase();
+            assert_eq!(BIG.get_ascii_case_insensitive(&upper), Some(&(i as u32)));
+            if upper != key {
+                assert_eq!(BIG.get(&upper), None);
+            }
+        }
+        assert_eq!(BIG.len(), 88);
+        assert_eq!(BIG.get(b""), None);
+        assert_eq!(BIG.get(b"key60"), None);
+        assert_eq!(BIG.get(b"alphb"), None);
+        assert_eq!(BIG.get(b"a-very-long-key-beyond-max-len"), None);
+        assert!(!BIG_SET.contains(b"nope"));
     }
 
     #[test]

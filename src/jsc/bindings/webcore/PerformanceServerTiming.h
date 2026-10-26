@@ -26,12 +26,15 @@
 
 #pragma once
 
+#include "ScriptWrappable.h"
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
-class PerformanceServerTiming : public RefCounted<PerformanceServerTiming> {
+class PerformanceServerTiming : public ScriptWrappable, public RefCounted<PerformanceServerTiming> {
+    WTF_MAKE_TZONE_ALLOCATED(PerformanceServerTiming);
+
 public:
     static Ref<PerformanceServerTiming> create(String&& name, double duration, String&& description);
     ~PerformanceServerTiming();

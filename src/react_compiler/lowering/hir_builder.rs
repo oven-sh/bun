@@ -12,13 +12,18 @@ use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::diagnostics::Position;
+use crate::hir::cfg_utils::mark_instruction_ids;
+use crate::hir::cfg_utils::mark_predecessors;
+use crate::hir::cfg_utils::remove_dead_do_while_statements;
+use crate::hir::cfg_utils::remove_unnecessary_try_catch;
+use crate::hir::cfg_utils::remove_unreachable_for_updates;
+use crate::hir::cfg_utils::reverse_postorder_blocks;
 use crate::hir::environment::Environment;
-use crate::hir::visitors::each_terminal_successor;
-use crate::hir::visitors::terminal_fallthrough;
 use crate::hir::*;
 use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
 
 use crate::program::Host;
+use std::rc::Rc;
 
 // ---------------------------------------------------------------------------
 // Reserved word check (matches TS isReservedWord)
@@ -88,7 +93,7 @@ pub(crate) fn reserved_identifier_diagnostic(name: &str) -> CompilerDiagnostic {
 // Loc → SourceLocation
 // ---------------------------------------------------------------------------
 
-/// Bun's `Loc` is a byte offset; HIR `SourceLocation` wants `{line, column}`.
+/// Bun's `Loc` is a byte offset; upstream's `SourceLocation` has `{line, column}`.
 /// The compiler only uses the end position for diagnostic span width, so a
 /// start-only location with the byte offset in `Position.index` is sufficient.
 pub(crate) fn convert_loc(loc: Loc) -> Option<SourceLocation> {
@@ -96,8 +101,6 @@ pub(crate) fn convert_loc(loc: Loc) -> Option<SourceLocation> {
         return None;
     }
     let pos = Position {
-        line: 0,
-        column: 0,
         index: Some(loc.start as u32),
     };
     Some(SourceLocation {
@@ -110,7 +113,7 @@ pub(crate) fn convert_loc(loc: Loc) -> Option<SourceLocation> {
 // symbol::Kind → BindingKind
 // ---------------------------------------------------------------------------
 
-pub(crate) fn convert_binding_kind(kind: symbol::Kind) -> BindingKind {
+fn convert_binding_kind(kind: symbol::Kind) -> BindingKind {
     use symbol::Kind as Sk;
     match kind {
         Sk::Hoisted => BindingKind::Var,
@@ -135,42 +138,42 @@ pub enum FunctionNode<'a> {
 }
 
 impl<'a> FunctionNode<'a> {
-    pub fn args(&self) -> &'a [G::Arg] {
+    pub(crate) fn args(&self) -> &'a [G::Arg] {
         match self {
             FunctionNode::Function(f) => f.args.slice(),
             FunctionNode::Arrow(a) => a.args.slice(),
         }
     }
 
-    pub fn body(&self) -> &'a G::FnBody {
+    pub(crate) fn body(&self) -> &'a G::FnBody {
         match self {
             FunctionNode::Function(f) => &f.body,
             FunctionNode::Arrow(a) => &a.body,
         }
     }
 
-    pub fn is_async(&self) -> bool {
+    pub(crate) fn is_async(&self) -> bool {
         match self {
             FunctionNode::Function(f) => f.flags.contains(ast::flags::Function::IsAsync),
             FunctionNode::Arrow(a) => a.is_async,
         }
     }
 
-    pub fn is_generator(&self) -> bool {
+    pub(crate) fn is_generator(&self) -> bool {
         match self {
             FunctionNode::Function(f) => f.flags.contains(ast::flags::Function::IsGenerator),
             FunctionNode::Arrow(_) => false,
         }
     }
 
-    pub fn has_rest_arg(&self) -> bool {
+    pub(crate) fn has_rest_arg(&self) -> bool {
         match self {
             FunctionNode::Function(f) => f.flags.contains(ast::flags::Function::HasRestArg),
             FunctionNode::Arrow(a) => a.has_rest_arg,
         }
     }
 
-    pub fn has_react_hooks_suppression(&self) -> bool {
+    pub(crate) fn has_react_hooks_suppression(&self) -> bool {
         match self {
             FunctionNode::Function(f) => f
                 .flags
@@ -179,7 +182,7 @@ impl<'a> FunctionNode<'a> {
         }
     }
 
-    pub fn loc(&self) -> Loc {
+    pub(crate) fn loc(&self) -> Loc {
         match self {
             FunctionNode::Function(f) => f.body.loc,
             FunctionNode::Arrow(a) => a.body.loc,
@@ -189,14 +192,14 @@ impl<'a> FunctionNode<'a> {
     /// Loc that keys the parser's `FunctionArgs` scope for this function.
     /// For `G::Fn` this is `open_parens_loc`; arrows have no stable field so
     /// callers fall back via `HirBuilder::push_scope`'s no-op-on-miss.
-    pub fn args_loc(&self) -> Loc {
+    pub(crate) fn args_loc(&self) -> Loc {
         match self {
             FunctionNode::Function(f) => f.open_parens_loc,
             FunctionNode::Arrow(a) => a.body.loc,
         }
     }
 
-    pub fn name_ref(&self) -> Option<Ref> {
+    pub(crate) fn name_ref(&self) -> Option<Ref> {
         match self {
             FunctionNode::Function(f) => f.name.as_ref().map(|n| n.ref_).filter(|r| r.is_valid()),
             FunctionNode::Arrow(_) => None,
@@ -246,7 +249,7 @@ impl Scope {
 // WipBlock: a block under construction that does not yet have a terminal
 // ---------------------------------------------------------------------------
 
-pub struct WipBlock {
+pub(crate) struct WipBlock {
     pub id: BlockId,
     pub instructions: HirVec<InstructionId>,
     pub kind: BlockKind,
@@ -268,9 +271,9 @@ fn new_block(id: BlockId, kind: BlockKind) -> WipBlock {
     clippy::disallowed_types,
     reason = "vendored react_compiler_hir HashSet<BindingId> contract"
 )]
-type RefSet = std::collections::HashSet<Ref>;
+type RefSet = crate::collections::FxHashSet<Ref>;
 
-pub struct HirBuilder<'h> {
+pub(crate) struct HirBuilder<'h> {
     completed: IndexMap<BlockId, BasicBlock>,
     current: WipBlock,
     entry: BlockId,
@@ -280,16 +283,14 @@ pub struct HirBuilder<'h> {
     context: IndexMap<Ref, Option<SourceLocation>>,
     /// Resolved bindings: maps a `Ref` to the HIR IdentifierId created for it.
     bindings: IndexMap<Ref, IdentifierId>,
-    /// Refs already resolved to bindings, for collision avoidance.
-    used_refs: IndexSet<Ref>,
     env: &'h mut Environment,
-    pub(crate) host: &'h dyn Host,
+    host: &'h dyn Host,
+    type_casts: &'h [(Loc, Loc)],
+    targets_with_defaults: &'h [(Loc, Loc)],
+    parentheses: &'h [(Loc, Loc)],
     exception_handler_stack: Vec<BlockId>,
     /// Flat instruction table being built up.
     instruction_table: HirVec<Instruction>,
-    /// Traversal context: counts the number of `fbt` tag parents
-    /// of the current babel node.
-    pub fbt_depth: u32,
     /// The scope of the function being compiled (for context identifier checks).
     function_scope: &'h ast::Scope,
     /// The scope of the outermost component/hook function.
@@ -302,13 +303,13 @@ pub struct HirBuilder<'h> {
     /// Set of `Ref`s for variables declared in scopes between component_scope
     /// and any inner function scope, that are referenced from an inner function scope.
     /// These need StoreContext/LoadContext instead of StoreLocal/LoadLocal.
-    context_identifiers: RefSet,
+    context_identifiers: Rc<RefSet>,
     /// ES-module import bindings keyed by clause-item `Ref`. Populated from the
     /// module's `SImport` statements before lowering so `resolve_identifier`
     /// can return `ImportSpecifier`/`ImportDefault`/`ImportNamespace` (and thus
     /// reach `Environment::resolve_module_type`) when `Symbol::namespace_alias`
     /// is absent — which it is for plain `import {x} from 'm'` outside HMR.
-    import_bindings: IndexMap<Ref, VariableBinding>,
+    import_bindings: &'h IndexMap<Ref, VariableBinding>,
 }
 
 impl<'h> HirBuilder<'h> {
@@ -317,16 +318,15 @@ impl<'h> HirBuilder<'h> {
     // -----------------------------------------------------------------------
 
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         env: &'h mut Environment,
         host: &'h dyn Host,
         function_scope: &'h ast::Scope,
         component_scope: &'h ast::Scope,
-        context_identifiers: RefSet,
+        context_identifiers: Rc<RefSet>,
         bindings: Option<IndexMap<Ref, IdentifierId>>,
-        context: Option<IndexMap<Ref, Option<SourceLocation>>>,
+        import_bindings: &'h IndexMap<Ref, VariableBinding>,
         entry_block_kind: Option<BlockKind>,
-        used_refs: Option<IndexSet<Ref>>,
     ) -> Self {
         let entry = env.next_block_id();
         let kind = entry_block_kind.unwrap_or(BlockKind::Block);
@@ -335,47 +335,63 @@ impl<'h> HirBuilder<'h> {
             current: new_block(entry, kind),
             entry,
             scopes: Vec::new(),
-            context: context.unwrap_or_default(),
+            context: IndexMap::new(),
             bindings: bindings.unwrap_or_default(),
-            used_refs: used_refs.unwrap_or_default(),
             env,
             host,
+            type_casts: host.type_casts(),
+            targets_with_defaults: host.targets_with_defaults(),
+            parentheses: host.parentheses(),
             exception_handler_stack: Vec::new(),
             instruction_table: AstAlloc::vec(),
-            fbt_depth: 0,
             function_scope,
             component_scope,
             scope_stack: vec![function_scope],
             context_identifiers,
-            import_bindings: IndexMap::new(),
+            import_bindings,
         }
     }
 
-    pub fn environment(&self) -> &Environment {
+    pub(crate) fn environment(&self) -> &Environment {
         self.env
     }
 
-    pub fn environment_mut(&mut self) -> &mut Environment {
+    pub(crate) fn environment_mut(&mut self) -> &mut Environment {
         self.env
     }
 
-    pub fn host(&self) -> &'h dyn Host {
+    pub(crate) fn host(&self) -> &'h dyn Host {
         self.host
     }
 
-    pub fn set_import_bindings(&mut self, bindings: IndexMap<Ref, VariableBinding>) {
-        self.import_bindings = bindings;
+    pub(crate) fn type_cast_around(&self, operand: Loc) -> Option<Loc> {
+        let casts = self.type_casts;
+        let at = casts.binary_search_by_key(&operand.start, |it| it.0.start);
+        Some(casts.get(at.ok()?)?.1)
     }
 
-    pub fn import_bindings(&self) -> &IndexMap<Ref, VariableBinding> {
-        &self.import_bindings
+    pub(crate) fn parentheses_around(&self, inner: Loc) -> Option<Loc> {
+        let all = self.parentheses;
+        let at = all.binary_search_by_key(&inner.start, |it| it.0.start);
+        Some(all.get(at.ok()?)?.1)
     }
 
-    pub fn function_scope(&self) -> &'h ast::Scope {
+    /// The place of `x = d` for that of its `x`. What has no default has its own.
+    pub(crate) fn with_default(&self, target: Loc) -> Loc {
+        let all = self.targets_with_defaults;
+        let at = all.binary_search_by_key(&target.start, |it| it.0.start);
+        at.ok().and_then(|at| all.get(at)).map_or(target, |it| it.1)
+    }
+
+    pub(crate) fn import_bindings(&self) -> &'h IndexMap<Ref, VariableBinding> {
+        self.import_bindings
+    }
+
+    pub(crate) fn function_scope(&self) -> &'h ast::Scope {
         self.function_scope
     }
 
-    pub fn component_scope(&self) -> &'h ast::Scope {
+    pub(crate) fn component_scope(&self) -> &'h ast::Scope {
         self.component_scope
     }
 
@@ -385,7 +401,7 @@ impl<'h> HirBuilder<'h> {
 
     /// Push the lexical scope keyed at `loc`. If the host has no scope at that
     /// loc, the current top is re-pushed so `pop_scope` always balances.
-    pub fn push_scope(&mut self, loc: Loc) {
+    pub(crate) fn push_scope(&mut self, loc: Loc) {
         let next = self
             .host
             .scope_for_loc(loc)
@@ -393,12 +409,12 @@ impl<'h> HirBuilder<'h> {
         self.scope_stack.push(next);
     }
 
-    pub fn pop_scope(&mut self) {
+    pub(crate) fn pop_scope(&mut self) {
         debug_assert!(self.scope_stack.len() > 1, "pop_scope underflow");
         self.scope_stack.pop();
     }
 
-    pub fn current_scope(&self) -> &'h ast::Scope {
+    pub(crate) fn current_scope(&self) -> &'h ast::Scope {
         *self.scope_stack.last().expect("scope_stack never empty")
     }
 
@@ -408,7 +424,7 @@ impl<'h> HirBuilder<'h> {
     /// *references* still carry `RefTag::SourceContentsSlice` (a byte-range
     /// into source text) rather than the resolved symbol ref. Walk the scope
     /// chain from `current_scope()` to find the declaring `Member`.
-    pub fn resolve_ref(&self, ref_: Ref) -> Ref {
+    pub(crate) fn resolve_ref(&self, ref_: Ref) -> Ref {
         use bun_ast::base::RefTag;
         if ref_.tag() == RefTag::Symbol {
             return ref_;
@@ -424,43 +440,39 @@ impl<'h> HirBuilder<'h> {
         ref_
     }
 
-    pub fn context(&self) -> &IndexMap<Ref, Option<SourceLocation>> {
+    pub(crate) fn context(&self) -> &IndexMap<Ref, Option<SourceLocation>> {
         &self.context
     }
 
-    pub fn context_identifiers(&self) -> &RefSet {
+    pub(crate) fn set_context(&mut self, context: IndexMap<Ref, Option<SourceLocation>>) {
+        self.context = context;
+    }
+
+    /// Shared with the builders of nested functions until one of them adds to it.
+    pub(crate) fn context_identifiers(&self) -> &Rc<RefSet> {
         &self.context_identifiers
     }
 
-    pub fn add_context_identifier(&mut self, ref_: Ref) {
-        self.context_identifiers.insert(self.resolve_ref(ref_));
+    pub(crate) fn add_context_identifier(&mut self, ref_: Ref) {
+        let ref_ = self.resolve_ref(ref_);
+        Rc::make_mut(&mut self.context_identifiers).insert(ref_);
     }
 
-    pub fn host_and_env_mut(&mut self) -> (&'h dyn Host, &mut Environment) {
+    pub(crate) fn host_and_env_mut(&mut self) -> (&'h dyn Host, &mut Environment) {
         (self.host, self.env)
     }
 
-    pub fn bindings(&self) -> &IndexMap<Ref, IdentifierId> {
-        &self.bindings
+    /// For the builder of a nested function, which starts with the bindings of this one.
+    pub(crate) fn take_bindings(&mut self) -> IndexMap<Ref, IdentifierId> {
+        std::mem::take(&mut self.bindings)
     }
 
-    pub fn used_refs(&self) -> &IndexSet<Ref> {
-        &self.used_refs
+    /// What [`Self::take_bindings`] gave, and the bindings that the nested function added.
+    pub(crate) fn put_bindings(&mut self, child_bindings: IndexMap<Ref, IdentifierId>) {
+        self.bindings = child_bindings;
     }
 
-    pub fn merge_used_refs(&mut self, child_used_refs: &IndexSet<Ref>) {
-        for &ref_ in child_used_refs.iter() {
-            self.used_refs.insert(ref_);
-        }
-    }
-
-    pub fn merge_bindings(&mut self, child_bindings: IndexMap<Ref, IdentifierId>) {
-        for (ref_, identifier_id) in child_bindings {
-            self.bindings.entry(ref_).or_insert(identifier_id);
-        }
-    }
-
-    pub fn push(&mut self, instruction: Instruction) {
+    pub(crate) fn push(&mut self, instruction: Instruction) {
         let loc = instruction.loc;
         let instr_id = InstructionId(self.instruction_table.len() as u32);
         self.instruction_table.push(instruction);
@@ -481,7 +493,11 @@ impl<'h> HirBuilder<'h> {
         }
     }
 
-    pub fn terminate(&mut self, terminal: Terminal, next_block_kind: Option<BlockKind>) -> BlockId {
+    pub(crate) fn terminate(
+        &mut self,
+        terminal: Terminal,
+        next_block_kind: Option<BlockKind>,
+    ) -> BlockId {
         let wip = std::mem::replace(
             &mut self.current,
             new_block(BlockId(u32::MAX), BlockKind::Block),
@@ -507,7 +523,11 @@ impl<'h> HirBuilder<'h> {
         block_id
     }
 
-    pub fn terminate_with_continuation(&mut self, terminal: Terminal, continuation: WipBlock) {
+    pub(crate) fn terminate_with_continuation(
+        &mut self,
+        terminal: Terminal,
+        continuation: WipBlock,
+    ) {
         let wip = std::mem::replace(&mut self.current, continuation);
         let block_id = wip.id;
         self.completed.insert(
@@ -523,12 +543,12 @@ impl<'h> HirBuilder<'h> {
         );
     }
 
-    pub fn reserve(&mut self, kind: BlockKind) -> WipBlock {
+    pub(crate) fn reserve(&mut self, kind: BlockKind) -> WipBlock {
         let id = self.env.next_block_id();
         new_block(id, kind)
     }
 
-    pub fn try_enter_reserved(
+    pub(crate) fn try_enter_reserved(
         &mut self,
         wip: WipBlock,
         f: impl FnOnce(&mut Self) -> Result<Terminal, CompilerDiagnostic>,
@@ -550,7 +570,7 @@ impl<'h> HirBuilder<'h> {
         Ok(())
     }
 
-    pub fn try_enter(
+    pub(crate) fn try_enter(
         &mut self,
         kind: BlockKind,
         f: impl FnOnce(&mut Self, BlockId) -> Result<Terminal, CompilerDiagnostic>,
@@ -561,7 +581,7 @@ impl<'h> HirBuilder<'h> {
         Ok(wip_id)
     }
 
-    pub fn try_enter_try_catch(
+    pub(crate) fn try_enter_try_catch(
         &mut self,
         handler: BlockId,
         f: impl FnOnce(&mut Self) -> Result<(), CompilerDiagnostic>,
@@ -572,12 +592,12 @@ impl<'h> HirBuilder<'h> {
         result
     }
 
-    pub fn resolve_throw_handler(&self) -> Option<BlockId> {
+    pub(crate) fn resolve_throw_handler(&self) -> Option<BlockId> {
         self.exception_handler_stack.last().copied()
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    pub fn loop_scope<T>(
+    pub(crate) fn loop_scope<T>(
         &mut self,
         label: Option<String>,
         continue_block: BlockId,
@@ -590,20 +610,19 @@ impl<'h> HirBuilder<'h> {
             break_block,
         });
         let value = f(self)?;
-        let last = self
-            .scopes
-            .pop()
-            .expect("Mismatched loop scope: stack empty");
+        let last = self.scopes.pop().ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Mismatched loop scope: stack empty", None, None)
+        })?;
         match &last {
             Scope::Loop {
                 label: l,
                 continue_block: c,
                 break_block: b,
             } => {
-                assert!(
+                crate::diagnostics::invariant(
                     *l == label && *c == continue_block && *b == break_block,
-                    "Mismatched loop scope"
-                );
+                    "Mismatched loop scope",
+                )?;
             }
             _ => {
                 return Err(CompilerDiagnostic::new(
@@ -617,7 +636,7 @@ impl<'h> HirBuilder<'h> {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    pub fn label_scope<T>(
+    pub(crate) fn label_scope<T>(
         &mut self,
         label: String,
         break_block: BlockId,
@@ -628,16 +647,18 @@ impl<'h> HirBuilder<'h> {
             break_block,
         });
         let value = f(self)?;
-        let last = self
-            .scopes
-            .pop()
-            .expect("Mismatched label scope: stack empty");
+        let last = self.scopes.pop().ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Mismatched label scope: stack empty", None, None)
+        })?;
         match &last {
             Scope::Label {
                 label: l,
                 break_block: b,
             } => {
-                assert!(*l == label && *b == break_block, "Mismatched label scope");
+                crate::diagnostics::invariant(
+                    *l == label && *b == break_block,
+                    "Mismatched label scope",
+                )?;
             }
             _ => {
                 return Err(CompilerDiagnostic::new(
@@ -651,7 +672,7 @@ impl<'h> HirBuilder<'h> {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    pub fn switch_scope<T>(
+    pub(crate) fn switch_scope<T>(
         &mut self,
         label: Option<String>,
         break_block: BlockId,
@@ -662,16 +683,18 @@ impl<'h> HirBuilder<'h> {
             break_block,
         });
         let value = f(self)?;
-        let last = self
-            .scopes
-            .pop()
-            .expect("Mismatched switch scope: stack empty");
+        let last = self.scopes.pop().ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Mismatched switch scope: stack empty", None, None)
+        })?;
         match &last {
             Scope::Switch {
                 label: l,
                 break_block: b,
             } => {
-                assert!(*l == label && *b == break_block, "Mismatched switch scope");
+                crate::diagnostics::invariant(
+                    *l == label && *b == break_block,
+                    "Mismatched switch scope",
+                )?;
             }
             _ => {
                 return Err(CompilerDiagnostic::new(
@@ -684,7 +707,7 @@ impl<'h> HirBuilder<'h> {
         Ok(value)
     }
 
-    pub fn lookup_break(&self, label: Option<&str>) -> Result<BlockId, CompilerDiagnostic> {
+    pub(crate) fn lookup_break(&self, label: Option<&str>) -> Result<BlockId, CompilerDiagnostic> {
         for scope in self.scopes.iter().rev() {
             match scope {
                 Scope::Loop { .. } | Scope::Switch { .. } if label.is_none() => {
@@ -703,7 +726,10 @@ impl<'h> HirBuilder<'h> {
         ))
     }
 
-    pub fn lookup_continue(&self, label: Option<&str>) -> Result<BlockId, CompilerDiagnostic> {
+    pub(crate) fn lookup_continue(
+        &self,
+        label: Option<&str>,
+    ) -> Result<BlockId, CompilerDiagnostic> {
         for scope in self.scopes.iter().rev() {
             match scope {
                 Scope::Loop {
@@ -733,35 +759,27 @@ impl<'h> HirBuilder<'h> {
         ))
     }
 
-    pub fn make_temporary(&mut self, loc: Option<SourceLocation>) -> IdentifierId {
+    pub(crate) fn make_temporary(&mut self, loc: Option<SourceLocation>) -> IdentifierId {
         let id = self.env.next_identifier_id();
         self.env.identifiers[id.0 as usize].loc = loc;
         id
     }
 
-    pub fn record_error(&mut self, error: CompilerErrorDetail) -> Result<(), CompilerError> {
+    pub(crate) fn record_error(&mut self, error: CompilerErrorDetail) -> Result<(), CompilerError> {
         self.env.record_error(error)
     }
 
-    pub fn record_diagnostic(&mut self, diagnostic: CompilerDiagnostic) {
+    pub(crate) fn record_diagnostic(&mut self, diagnostic: CompilerDiagnostic) {
         self.env.record_diagnostic(diagnostic);
     }
 
-    pub fn current_block_kind(&self) -> BlockKind {
+    pub(crate) fn current_block_kind(&self) -> BlockKind {
         self.current.kind
     }
 
-    pub fn build(
+    pub(crate) fn build(
         mut self,
-    ) -> Result<
-        (
-            HIR,
-            HirVec<Instruction>,
-            IndexSet<Ref>,
-            IndexMap<Ref, IdentifierId>,
-        ),
-        CompilerError,
-    > {
+    ) -> Result<(HIR, HirVec<Instruction>, IndexMap<Ref, IdentifierId>), CompilerError> {
         let mut hir = HIR {
             blocks: std::mem::take(&mut self.completed),
             entry: self.entry,
@@ -769,20 +787,22 @@ impl<'h> HirBuilder<'h> {
 
         let mut instructions = AstAlloc::take(&mut self.instruction_table);
 
-        let rpo_blocks = get_reverse_postordered_blocks(&hir, &instructions);
+        let unordered = reverse_postorder_blocks(&mut hir)?;
 
-        for (id, block) in &hir.blocks {
-            if !rpo_blocks.contains_key(id) {
-                let has_function_expr = block.instructions.iter().any(|&instr_id| {
+        for (id, block) in &unordered {
+            if !hir.blocks.contains_key(id) {
+                let function_expr = block.instructions.iter().find(|&&instr_id| {
                     matches!(
                         instructions[instr_id.0 as usize].value,
                         InstructionValue::FunctionExpression { .. }
                     )
                 });
-                if has_function_expr {
-                    let loc = block
-                        .instructions
-                        .first()
+                if let Some(function_expr) = function_expr {
+                    let at = match self.env.config.unreachable_code_is_reported_at_its_function {
+                        true => Some(function_expr),
+                        false => block.instructions.first(),
+                    };
+                    let loc = at
                         .and_then(|&i| instructions[i.0 as usize].loc)
                         .or_else(|| block.terminal.loc().copied());
                     self.env.record_error(CompilerErrorDetail {
@@ -796,17 +816,14 @@ impl<'h> HirBuilder<'h> {
             }
         }
 
-        hir.blocks = rpo_blocks;
-
         remove_unreachable_for_updates(&mut hir);
         remove_dead_do_while_statements(&mut hir);
         remove_unnecessary_try_catch(&mut hir);
         mark_instruction_ids(&mut hir, &mut instructions);
         mark_predecessors(&mut hir);
 
-        let used_refs = self.used_refs;
         let bindings = self.bindings;
-        Ok((hir, instructions, used_refs, bindings))
+        Ok((hir, instructions, bindings))
     }
 
     // -----------------------------------------------------------------------
@@ -821,7 +838,7 @@ impl<'h> HirBuilder<'h> {
         self.host.symbols().get(ref_.inner_index() as usize)
     }
 
-    pub fn ref_name(&self, ref_: Ref) -> Result<String, CompilerError> {
+    pub(crate) fn ref_name(&self, ref_: Ref) -> Result<String, CompilerError> {
         core::str::from_utf8(self.host.ref_name(ref_))
             .map(str::to_owned)
             .map_err(|_| crate::diagnostics::cold_todo("non-utf8 identifier", None))
@@ -831,19 +848,20 @@ impl<'h> HirBuilder<'h> {
     ///
     /// On first encounter, creates a new Identifier with the symbol's name and a
     /// fresh id. On subsequent encounters, returns the cached IdentifierId.
-    pub fn resolve_binding(&mut self, ref_: Ref) -> Result<IdentifierId, CompilerError> {
+    pub(crate) fn resolve_binding(&mut self, ref_: Ref) -> Result<IdentifierId, CompilerError> {
         self.resolve_binding_with_loc(ref_, None)
     }
 
-    pub fn resolve_binding_with_loc(
+    pub(crate) fn resolve_binding_with_loc(
         &mut self,
         ref_: Ref,
         loc: Option<SourceLocation>,
     ) -> Result<IdentifierId, CompilerError> {
         let ref_ = self.resolve_ref(ref_);
-        let name = self.ref_name(ref_)?;
+        let host = self.host;
+        let name = host.ref_name(ref_);
 
-        if name == "fbt" {
+        if name == b"fbt" {
             let should_record_fbt_error = if let Some(&identifier_id) = self.bindings.get(&ref_) {
                 match &self.env.identifiers[identifier_id.0 as usize].name {
                     Some(IdentifierName::Named(resolved_name)) => resolved_name == b"fbt",
@@ -869,41 +887,28 @@ impl<'h> HirBuilder<'h> {
             return Ok(identifier_id);
         }
 
-        if is_always_reserved_word(&name) {
-            return Err(CompilerError::from(reserved_identifier_diagnostic(&name)));
+        let stored_name = StoreStr::new(name);
+        let name = core::str::from_utf8(name)
+            .map_err(|_| crate::diagnostics::cold_todo("non-utf8 identifier", None))?;
+
+        if is_always_reserved_word(name) {
+            return Err(CompilerError::from(reserved_identifier_diagnostic(name)));
         }
 
-        let name_taken = |env: &Environment,
-                          used_refs: &IndexSet<Ref>,
-                          bindings: &IndexMap<Ref, IdentifierId>,
-                          candidate: &[u8],
-                          ref_: Ref|
-         -> bool {
-            used_refs.iter().any(|&r| {
-                r != ref_
-                    && bindings.get(&r).is_some_and(|&id| {
-                        matches!(
-                            &env.identifiers[id.0 as usize].name,
-                            Some(IdentifierName::Named(n)) if n.slice() == candidate
-                        )
-                    })
-            })
-        };
-
-        let mut candidate = name.clone();
-        let mut index = 0u32;
-        while name_taken(
-            self.env,
-            &self.used_refs,
-            &self.bindings,
-            candidate.as_bytes(),
-            ref_,
-        ) {
-            candidate = format!("{}_{}", name, index);
-            index += 1;
+        // The first of `name`, `name_0`, `name_1`, .. that no binding has.
+        let mut candidate = name.to_owned();
+        if let Some(&first_untried) = self.env.binding_names.get(&stored_name) {
+            let mut index = first_untried;
+            loop {
+                candidate = format!("{}_{}", name, index);
+                index += 1;
+                if !self.env.binding_names.contains_key(candidate.as_bytes()) {
+                    break;
+                }
+            }
+            self.env.binding_names.insert(stored_name, index);
         }
 
-        let stored_name = StoreStr::new(self.host.ref_name(ref_));
         let stored_candidate = if candidate == name {
             stored_name
         } else {
@@ -927,12 +932,12 @@ impl<'h> HirBuilder<'h> {
             self.env.identifiers[id.0 as usize].loc = Some(loc);
         }
 
-        self.used_refs.insert(ref_);
+        self.env.binding_names.insert(stored_candidate, 0);
         self.bindings.insert(ref_, id);
         Ok(id)
     }
 
-    pub fn set_identifier_declaration_loc(
+    pub(crate) fn set_identifier_declaration_loc(
         &mut self,
         id: IdentifierId,
         loc: &Option<SourceLocation>,
@@ -947,7 +952,7 @@ impl<'h> HirBuilder<'h> {
     /// Bun's parser already resolved every reference, so the `Ref` directly
     /// indexes the symbol table; this maps `symbol::Kind` to the HIR's
     /// Global/Import*/ModuleLocal/Identifier classification.
-    pub fn resolve_identifier(
+    pub(crate) fn resolve_identifier(
         &mut self,
         ref_: Ref,
         loc: Option<SourceLocation>,
@@ -1002,16 +1007,23 @@ impl<'h> HirBuilder<'h> {
                 if let Some(binding) = self.import_bindings.get(&ref_) {
                     return Ok(binding.clone());
                 }
+                if let Some(namespace) = self.host.namespace_of_import_item(ref_)
+                    && let Some(VariableBinding::ImportNamespace { module, .. }) =
+                        self.import_bindings.get(&namespace)
+                {
+                    return Ok(VariableBinding::ImportSpecifier {
+                        name,
+                        module: *module,
+                        imported: name,
+                    });
+                }
                 return Ok(VariableBinding::Global { name });
             }
             _ => {}
         }
 
-        let module_scope = self.host.module_scope();
-        if let Some(member) = module_scope.members.get(sym.original_name.slice()) {
-            if member.ref_ == ref_ {
-                return Ok(VariableBinding::ModuleLocal { name });
-            }
+        if self.host.is_module_level(ref_) {
+            return Ok(VariableBinding::ModuleLocal { name });
         }
         // Module-scope generated symbols (jsx-runtime `jsx`/`jsxDEV`/`Fragment`,
         // compiler-runtime `c`, etc.) are minted by the parser's visit pass after
@@ -1019,7 +1031,7 @@ impl<'h> HirBuilder<'h> {
         // and `import_bindings`. They are module-level imports, not locals —
         // classify them as Global so inference initializes them as Frozen instead
         // of tripping the "Expected value kind to be initialized" invariant.
-        if module_scope.generated.contains(&ref_) {
+        if self.host.module_scope().generated.contains(&ref_) {
             return Ok(VariableBinding::Global { name });
         }
 
@@ -1033,265 +1045,17 @@ impl<'h> HirBuilder<'h> {
 
     /// Check if a `Ref` resolves to a context identifier (captured from an
     /// enclosing function scope).
-    pub fn is_context_identifier(&self, ref_: Ref) -> bool {
+    pub(crate) fn is_context_identifier(&self, ref_: Ref) -> bool {
         let ref_ = self.resolve_ref(ref_);
-        if let Some(member) = self.symbol(ref_).and_then(|sym| {
-            self.host
-                .module_scope()
-                .members
-                .get(sym.original_name.slice())
-        }) {
-            if member.ref_ == ref_ {
-                return false;
-            }
+        if ref_.is_symbol() && self.host.is_module_level(ref_) {
+            return false;
         }
         self.context_identifiers.contains(&ref_)
     }
 
-    pub fn is_context_binding(&self, ref_: Ref) -> bool {
+    pub(crate) fn is_context_binding(&self, ref_: Ref) -> bool {
         self.is_context_identifier(ref_)
     }
-}
-
-// ---------------------------------------------------------------------------
-// Post-build helper functions
-// ---------------------------------------------------------------------------
-
-pub(crate) fn get_reverse_postordered_blocks(
-    hir: &HIR,
-    _instructions: &[Instruction],
-) -> IndexMap<BlockId, BasicBlock> {
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
-    let mut used: IndexSet<BlockId> = IndexSet::new();
-    let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
-    let mut postorder: Vec<BlockId> = Vec::new();
-
-    fn visit(
-        hir: &HIR,
-        block_id: BlockId,
-        is_used: bool,
-        visited: &mut IndexSet<BlockId>,
-        used: &mut IndexSet<BlockId>,
-        used_fallthroughs: &mut IndexSet<BlockId>,
-        postorder: &mut Vec<BlockId>,
-    ) {
-        let was_used = used.contains(&block_id);
-        let was_visited = visited.contains(&block_id);
-        visited.insert(block_id);
-        if is_used {
-            used.insert(block_id);
-        }
-        if was_visited && (was_used || !is_used) {
-            return;
-        }
-
-        let block = hir
-            .blocks
-            .get(&block_id)
-            .unwrap_or_else(|| panic!("[HIRBuilder] expected block {:?} to exist", block_id));
-
-        let mut successors = each_terminal_successor(&block.terminal);
-        successors.reverse();
-
-        let fallthrough = terminal_fallthrough(&block.terminal);
-
-        if let Some(ft) = fallthrough {
-            if is_used {
-                used_fallthroughs.insert(ft);
-            }
-            visit(hir, ft, false, visited, used, used_fallthroughs, postorder);
-        }
-        for successor in successors {
-            visit(
-                hir,
-                successor,
-                is_used,
-                visited,
-                used,
-                used_fallthroughs,
-                postorder,
-            );
-        }
-
-        if !was_visited {
-            postorder.push(block_id);
-        }
-    }
-
-    visit(
-        hir,
-        hir.entry,
-        true,
-        &mut visited,
-        &mut used,
-        &mut used_fallthroughs,
-        &mut postorder,
-    );
-
-    let mut blocks = IndexMap::new();
-    for block_id in postorder.into_iter().rev() {
-        let block = hir.blocks.get(&block_id).unwrap();
-        if used.contains(&block_id) {
-            blocks.insert(block_id, block.clone());
-        } else if used_fallthroughs.contains(&block_id) {
-            blocks.insert(
-                block_id,
-                BasicBlock {
-                    kind: block.kind,
-                    id: block_id,
-                    instructions: AstAlloc::vec(),
-                    terminal: Terminal::Unreachable {
-                        id: block.terminal.evaluation_order(),
-                        loc: block.terminal.loc().copied(),
-                    },
-                    preds: block.preds.clone(),
-                    phis: AstAlloc::vec(),
-                },
-            );
-        }
-    }
-
-    blocks
-}
-
-pub(crate) fn remove_unreachable_for_updates(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
-    for block in hir.blocks.values_mut() {
-        if let Terminal::For { update, .. } = &mut block.terminal {
-            if let Some(update_id) = *update {
-                if !block_ids.contains(&update_id) {
-                    *update = None;
-                }
-            }
-        }
-    }
-}
-
-pub(crate) fn remove_dead_do_while_statements(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
-    for block in hir.blocks.values_mut() {
-        let should_replace = if let Terminal::DoWhile { test, .. } = &block.terminal {
-            !block_ids.contains(test)
-        } else {
-            false
-        };
-        if should_replace {
-            if let Terminal::DoWhile {
-                loop_block,
-                id,
-                loc,
-                ..
-            } = std::mem::replace(
-                &mut block.terminal,
-                Terminal::Unreachable {
-                    id: EvaluationOrder(0),
-                    loc: None,
-                },
-            ) {
-                block.terminal = Terminal::Goto {
-                    block: loop_block,
-                    variant: GotoVariant::Break,
-                    id,
-                    loc,
-                };
-            }
-        }
-    }
-}
-
-pub(crate) fn remove_unnecessary_try_catch(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
-
-    let replacements: Vec<(BlockId, BlockId, BlockId, BlockId, Option<SourceLocation>)> = hir
-        .blocks
-        .iter()
-        .filter_map(|(&block_id, block)| {
-            if let Terminal::Try {
-                block: try_block,
-                handler,
-                fallthrough,
-                loc,
-                ..
-            } = &block.terminal
-            {
-                if !block_ids.contains(handler) {
-                    return Some((block_id, *try_block, *handler, *fallthrough, *loc));
-                }
-            }
-            None
-        })
-        .collect();
-
-    for (block_id, try_block, handler_id, fallthrough_id, loc) in replacements {
-        if let Some(block) = hir.blocks.get_mut(&block_id) {
-            block.terminal = Terminal::Goto {
-                block: try_block,
-                id: EvaluationOrder(0),
-                loc,
-                variant: GotoVariant::Break,
-            };
-        }
-
-        if let Some(fallthrough) = hir.blocks.get_mut(&fallthrough_id) {
-            if fallthrough.preds.len() == 1 && fallthrough.preds.contains(&handler_id) {
-                hir.blocks.shift_remove(&fallthrough_id);
-            } else {
-                fallthrough.preds.shift_remove(&handler_id);
-            }
-        }
-    }
-}
-
-pub(crate) fn mark_instruction_ids(hir: &mut HIR, instructions: &mut [Instruction]) {
-    let mut order: u32 = 0;
-    for block in hir.blocks.values_mut() {
-        for &instr_id in &block.instructions {
-            order += 1;
-            instructions[instr_id.0 as usize].id = EvaluationOrder(order);
-        }
-        order += 1;
-        block.terminal.set_evaluation_order(EvaluationOrder(order));
-    }
-}
-
-pub(crate) fn mark_predecessors(hir: &mut HIR) {
-    for block in hir.blocks.values_mut() {
-        block.preds.clear();
-    }
-
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
-
-    fn visit(
-        hir: &mut HIR,
-        block_id: BlockId,
-        prev_block_id: Option<BlockId>,
-        visited: &mut IndexSet<BlockId>,
-    ) {
-        if let Some(prev_id) = prev_block_id {
-            if let Some(block) = hir.blocks.get_mut(&block_id) {
-                block.preds.insert(prev_id);
-            } else {
-                return;
-            }
-        }
-
-        if visited.contains(&block_id) {
-            return;
-        }
-        visited.insert(block_id);
-
-        let successors = if let Some(block) = hir.blocks.get(&block_id) {
-            each_terminal_successor(&block.terminal)
-        } else {
-            return;
-        };
-
-        for successor in successors {
-            visit(hir, successor, Some(block_id), visited);
-        }
-    }
-
-    visit(hir, hir.entry, None, &mut visited);
 }
 
 // ---------------------------------------------------------------------------

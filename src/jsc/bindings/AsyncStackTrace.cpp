@@ -18,6 +18,7 @@
 #include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/UnlinkedCodeBlock.h>
+#include <wtf/SmallSet.h>
 
 using namespace JSC;
 
@@ -172,8 +173,8 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    // Generators already visited. A chain that leads back to one is a cycle.
-    WTF::HashSet<JSC::JSAsyncFunctionGenerator*> seen;
+    // Generators already visited. A chain that leads back to one is a cycle. 16 fit with no allocation: the default limit is 10 frames.
+    WTF::SmallSet<JSC::JSAsyncFunctionGenerator*, WTF::PtrHash<JSC::JSAsyncFunctionGenerator*>, WTF::HashTraits<JSC::JSAsyncFunctionGenerator*>, 16> seen;
     auto unlessSeen = [&](JSC::JSAsyncFunctionGenerator* generator) {
         return generator && seen.contains(generator) ? nullptr : generator;
     };

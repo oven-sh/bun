@@ -2,7 +2,7 @@ use bun_lint::prelude::*;
 
 /// Disallow bitwise operators.
 pub struct NoBitwise {
-    /// The bit `i` is set if `BITWISE_OPERATORS[i]` is allowed.
+    /// Bit `i` is set if `BITWISE_OPERATORS[i]` is allowed.
     allowed: u16,
     int32_hint: bool,
 }
@@ -15,7 +15,7 @@ const BITWISE_OPERATORS: [&str; 13] =
 const ASSIGNMENTS: usize = 6;
 const BIT_NOT: usize = 12;
 
-/// The index of the binary operator in `BITWISE_OPERATORS`.
+/// Returns the binary operator's index in `BITWISE_OPERATORS`.
 fn index_of(op: BinOp) -> Option<usize> {
     Some(match op {
         BinOp::BitXor => 0,
@@ -29,7 +29,7 @@ fn index_of(op: BinOp) -> Option<usize> {
 }
 
 impl NoBitwise {
-    /// `index`: of the operator of `e` in `BITWISE_OPERATORS`.
+    /// `index` is the index of `e`'s operator in `BITWISE_OPERATORS`.
     fn check<'a>(&self, e: Expr<'a>, index: usize, cx: &Cx<'a, Self>) {
         if self.allowed & (1 << index) == 0 {
             cx.report(e, UNEXPECTED).data("operator", BITWISE_OPERATORS[index]);

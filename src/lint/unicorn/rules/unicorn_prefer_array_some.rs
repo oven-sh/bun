@@ -62,7 +62,7 @@ impl Rule for PreferArraySome {
         check_find(self, e, cx);
     }
 
-    // Each finds nothing in a file that does not mention what it is about.
+    // Neither check finds anything in a file that doesn't mention its method names.
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         check_find_index(self, e, cx);
         if matches!(e.binary_op(), Some(BinOp::Gt | BinOp::NotEqEq)) {
@@ -71,13 +71,13 @@ impl Rule for PreferArraySome {
     }
 }
 
-/// Where the name of the method is written, for a callee that is plainly `a.name` or `a["name"]`.
+/// The span of the method's name, for a callee that's plainly `a.name` or `a["name"]`.
 fn target_span(call: Call) -> Option<Span> {
     let callee = call.callee();
     static_property_info(callee).filter(|_| !callee.is_parenthesized()).map(|it| it.0)
 }
 
-/// A call that is not the whole of an optional chain.
+/// A call that isn't a whole optional chain.
 fn as_call_expression(e: Expr<'_>) -> Option<Call<'_>> {
     e.as_call().filter(|_| !e.is_chain_root())
 }
@@ -113,7 +113,7 @@ fn check_find<'a>(_: &PreferArraySome, e: Expr<'a>, cx: &mut Cx<'a, PreferArrayS
     });
 }
 
-/// The `e == null` that `e` is in, and whether that is true if nothing is found.
+/// The `e == null` that contains `e`, and whether it's true when nothing is found.
 fn find_nullish_comparison_parent(e: Expr<'_>) -> Option<(Expr<'_>, bool)> {
     let parent = e.parent().as_expr().filter(|_| !e.is_chain_root())?;
     let ExprKind::Binary { op, right, .. } = parent.kind() else {

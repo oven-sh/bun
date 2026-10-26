@@ -664,8 +664,10 @@ describe.concurrent("=strict runs static code only", () => {
           worker.onerror = e => reject(new Error(e.message));
         }),
         hotLoop: async () => {
-          const { numberOfDFGCompiles } = await import("bun:jsc");
+          const { noInline, numberOfDFGCompiles } = await import("bun:jsc");
           function hot(a, b) { return a + b; }
+          // Inlined into this loop, hot() would never be called again and never be compiled itself.
+          noInline(hot);
           let sum = 0;
           while (!numberOfDFGCompiles(hot)) sum = hot(sum, 1) | 0;
           return numberOfDFGCompiles(hot) > 0;

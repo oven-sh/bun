@@ -30,18 +30,18 @@ const UNEXPECTED_CURLY_AFTER_CONDITION: Message = Message::new(
     "Unnecessary { after '{{name}}' condition.",
 );
 
-/// What ESLint's `prepareCheck` returns.
+/// The return value of ESLint's `prepareCheck`.
 pub struct Check<'a> {
     body: Stmt<'a>,
     name: &'static str,
     has_condition: bool,
-    /// The body is a block.
+    /// True if the body is a block.
     actual: bool,
-    /// Whether it should be one. `None` if it does not matter.
+    /// True if it should be one. `None` if either is fine.
     expected: Option<bool>,
 }
 
-/// The line on which the last token of `statement` ends, not counting a `;`.
+/// Returns the line where `statement`'s last token ends, not counting a `;`.
 fn last_line_excluding_semicolon(statement: Stmt<'_>) -> Option<u32> {
     let file = statement.file();
     let last = file.last_token(statement)?;
@@ -52,7 +52,7 @@ fn last_line_excluding_semicolon(statement: Stmt<'_>) -> Option<u32> {
     Some(file.line_of(last.end()))
 }
 
-/// Whether `statement` ends on the line of the token before it.
+/// True if `statement` ends on the same line as the token before it.
 fn is_collapsed_one_liner(statement: Stmt<'_>) -> bool {
     let file = statement.file();
     let before = file
@@ -61,8 +61,8 @@ fn is_collapsed_one_liner(statement: Stmt<'_>) -> bool {
     before.is_some() && before == last_line_excluding_semicolon(statement)
 }
 
-/// oxlint's `is_collapsed_one_liner`: there is no line break between what is written before `statement`, be it a
-/// comment, and the end of `statement` without its `;`. So `;` alone on the next line is none.
+/// oxlint's `is_collapsed_one_liner`: there's no line break between whatever comes before `statement`, even a comment,
+/// and the end of `statement` without its `;`. So a `;` by itself on the next line doesn't count.
 fn is_collapsed_one_liner_for_oxlint(statement: Stmt<'_>) -> bool {
     let file = statement.file();
     let before = file
@@ -76,8 +76,8 @@ fn is_collapsed_one_liner_for_oxlint(statement: Stmt<'_>) -> bool {
     file.line_of(before) == file.line_of(end_without_semicolon_for_oxlint(statement))
 }
 
-/// Where the text of `statement` ends without the `;` and the white space at its end. A comment before the `;` is part
-/// of it.
+/// Returns where `statement`'s text ends, without the `;` and whitespace at its end. A comment before the `;` is
+/// included.
 fn end_without_semicolon_for_oxlint(statement: Stmt<'_>) -> u32 {
     let last = statement
         .text()
@@ -86,8 +86,8 @@ fn end_without_semicolon_for_oxlint(statement: Stmt<'_>) -> u32 {
     statement.span().start + last.map_or(0, |it| it as u32 + 1)
 }
 
-/// oxlint's `is_followed_by_else_keyword`: it skips a character after the block, and wants a space, a `;` or a `{`
-/// after the `else`, or where that would be.
+/// oxlint's `is_followed_by_else_keyword`: it skips one character after the block, and requires a space, `;` or `{`
+/// after the `else`, or where the `else` would be.
 fn is_followed_by_else_for_oxlint(block: Stmt<'_>) -> bool {
     let rest = block
         .file()
@@ -117,7 +117,7 @@ fn is_one_liner(statement: Stmt<'_>) -> bool {
             == Some(statement.file().line_of(statement.span().start))
 }
 
-/// Whether what is in the block that `closing` ends needs a `;` after it once the braces are gone.
+/// True if the contents of the block that `closing` ends need a `;` after them once the braces are removed.
 fn needs_semicolon<'a>(file: &'a File<'a>, closing: Token<'a>) -> bool {
     let (Some(before), Some(after)) = (file.token_before(closing), file.token_after(closing))
     else {
@@ -126,8 +126,8 @@ fn needs_semicolon<'a>(file: &'a File<'a>, closing: Token<'a>) -> bool {
     if ast_utils::is_semicolon_token(&before) {
         return false;
     }
-    // A `;` after a block would be a statement of its own, which an `else` cannot follow. After the
-    // body of a function expression or an arrow function it ends the statement.
+    // A `;` after a block would be a separate statement, which an `else` can't follow. After the body of a function
+    // expression or arrow function, it ends the statement.
     let ends_with_block = match utils::get_node_by_range_index(file, before.start()) {
         Node::Stmt(last) => last.as_block().is_some(),
         Node::Func(func) => {
@@ -150,10 +150,10 @@ fn needs_semicolon<'a>(file: &'a File<'a>, closing: Token<'a>) -> bool {
         || before.is_punctuator("--")
 }
 
-/// The block `body` without its braces.
+/// Removes the braces of the block `body`.
 fn remove_braces<'a>(fixer: Fixer<'a>, body: Stmt<'a>) -> Option<Fix> {
     let (file, span) = (fixer.file(), body.span());
-    // oxlint takes the braces away, and puts a space after a `do`.
+    // oxlint just removes the braces, and adds a space after a `do`.
     if file.language().is_oxlint {
         let is_after_do =
             matches!(body.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::DoWhile);
@@ -176,15 +176,15 @@ fn remove_braces<'a>(fixer: Fixer<'a>, body: Stmt<'a>) -> Option<Fix> {
     Some(fixer.replace(body, replaced))
 }
 
-/// The first `if` of the chain of `if`, `else if` and `else` that `body` is a branch of. oxlint's rule is called with it, and goes
-/// through the chain.
+/// Returns the first `if` of the `if`, `else if`, `else` chain that `body` is a branch of. oxlint's rule is called with
+/// it and walks the chain.
 fn first_of_chain<'a>(body: Stmt<'a>, chains: &mut AncestorMemo<'a, Stmt<'a>>) -> Option<Stmt<'a>> {
     let link = body.parent().as_stmt();
     let link = link.filter(|it| it.tag() == StmtTag::If)?;
     chains.find(Node::Stmt(link), |link, parent| {
         let link = link.as_stmt()?;
-        let goes_on = parent.as_stmt().and_then(Stmt::as_if);
-        (!goes_on.is_some_and(|it| it.2 == Some(link))).then_some(link)
+        let outer_if = parent.as_stmt().and_then(Stmt::as_if);
+        (!outer_if.is_some_and(|it| it.2 == Some(link))).then_some(link)
     })
 }
 
@@ -275,7 +275,7 @@ impl Curly {
         }
     }
 
-    /// Keeps `check` for [`Curly::report_all`] if there is something to report.
+    /// Saves `check` for [`Curly::report_all`] if there's something to report.
     fn note<'a>(check: Check<'a>, cx: &mut Cx<'a, Self>) {
         if check
             .expected
@@ -285,8 +285,9 @@ impl Curly {
         }
     }
 
-    /// Of bodies that are in each other, only the fix of the outermost can be applied, and each has all the text of its
-    /// body. So the outermost come first: a rule that reports more than it can loses what it reports last.
+    /// For nested bodies, only the outermost fix can be applied, and each fix contains its body's whole text. So the
+    /// outermost bodies are reported first, because a rule that reports more than it's allowed to loses its last
+    /// reports.
     fn report_all<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut checks = std::mem::take(&mut cx.state);
         utils::sort::sort_unstable_by_key(&mut checks, |it| it.body.span().start);
@@ -296,9 +297,9 @@ impl Curly {
         }
     }
 
-    /// The whole chain of `if`, `else if` and `else` that starts with `first`.
+    /// Checks the whole `if`, `else if`, `else` chain that starts with `first`.
     fn check_if<'a>(&self, first: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        // Each link of a chain stands for itself.
+        // Each link of the chain is checked on its own.
         if !self.is_consistent {
             if let Some((_, yes, no)) = first.as_if() {
                 Self::note(self.prepare_check(yes, "if", true), cx);
@@ -355,7 +356,7 @@ const LOOPS: [StmtTag; 5] = [
 impl Rule for Curly {
     const META: Meta = Meta::eslint("curly", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().stmts(&[StmtTag::If]).stmts(&LOOPS).finish();
-    /// What is to be reported.
+    /// The checks to report.
     type State<'a> = Vec<Check<'a>>;
 
     fn new(options: &Options) -> Self {

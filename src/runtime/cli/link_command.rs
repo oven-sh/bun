@@ -25,7 +25,7 @@ impl LinkCommand {
     }
 }
 
-/// What `bun link` and `bun unlink` do before they differ.
+/// The setup that `bun link` and `bun unlink` have in common.
 pub(crate) fn init_for_link(
     ctx: &mut command::ContextData,
     subcommand: Subcommand,
@@ -49,7 +49,7 @@ pub(crate) fn init_for_link(
         Output::flush();
     }
 
-    // What loading the config files had to say: nothing below prints it.
+    // Print the messages from loading the config files, because nothing below does.
     if manager.log_mut().has_any() {
         let _ = manager
             .log_mut()
@@ -181,7 +181,8 @@ pub(crate) fn link_global_bins(
     let mut link_dest_buf = bun_paths::path_buffer_pool::get();
     let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
-    // Twice: `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) cannot be one value.
+    // Built twice, because `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) can't
+    // be the same value.
     let node_modules_path = || match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
         Ok(p) => p,
         Err(e) => {

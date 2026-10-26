@@ -62,8 +62,8 @@
 "safe_fn_returns_shared_mut:src/http/lib.rs" = 9
 
 [bun_http_jsc]
-"generic_body_not_generic:src/http_jsc/websocket_client.rs" = 2
-"generic_body_not_generic:src/http_jsc/websocket_client/WebSocketUpgradeClient.rs" = 1
+"generic_body_not_generic:src/http_jsc/websocket_client.rs" = 6
+"generic_body_not_generic:src/http_jsc/websocket_client/WebSocketUpgradeClient.rs" = 2
 
 [bun_install]
 "bare_bool_args:src/install/windows-shim/BinLinkingShim.rs" = 1
@@ -158,14 +158,14 @@
 "generic_body_not_generic:src/router/lib.rs" = 1
 
 [bun_runtime]
-"always_unwrapped_option:src/runtime/bake/production.rs" = 1
+"always_unwrapped_option:src/runtime/bake/production/per_thread.rs" = 1
 "always_unwrapped_option:src/runtime/cli/init_command.rs" = 1
 "always_unwrapped_option:src/runtime/node/node_fs.rs" = 1
 "always_unwrapped_option:src/runtime/webcore/streams.rs" = 1
 "bool_beside_option:src/runtime/shell/subproc.rs" = 1
 "bool_cluster:src/runtime/test_runner/pretty_format.rs" = 1
-"bound_checked_only_in_debug:src/runtime/bake/FrameworkRouter.rs" = 1
 "bound_checked_only_in_debug:src/runtime/bake/dev_server/serialized_failure.rs" = 1
+"bound_checked_only_in_debug:src/runtime/bake/router/pattern.rs" = 1
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
 "discarded_error:src/runtime/ffi/mod.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
@@ -195,7 +195,7 @@
 "generic_body_not_generic:src/runtime/server/NodeHTTPResponse.rs" = 1
 "generic_body_not_generic:src/runtime/server/RequestContext.rs" = 7
 "generic_body_not_generic:src/runtime/server/mod.rs" = 2
-"generic_body_not_generic:src/runtime/server/server_body.rs" = 2
+"generic_body_not_generic:src/runtime/server/server_body.rs" = 1
 "generic_body_not_generic:src/runtime/shell/Builtin.rs" = 1
 "generic_body_not_generic:src/runtime/socket/Listener.rs" = 1
 "generic_body_not_generic:src/runtime/socket/socket_body.rs" = 8

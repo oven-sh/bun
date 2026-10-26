@@ -104,7 +104,20 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
 
-/// The form `Version.value.folder` has in local packages. `None`: too long for `buf`.
+/// Finds `"name"` in the file on disk. The cached tree can be of an edit that is not written.
+fn name_range_on_disk(source: &bun_ast::Source) -> bun_ast::Range {
+    let mut log = bun_ast::Log::init();
+    let Ok(json) = crate::bun_json::ParsedJson::parse_package_json(source, &mut log) else {
+        return bun_ast::Range::NONE;
+    };
+    match json.root.as_property(b"name") {
+        Some(name) => source.range_of_string(value_loc_of(source, name.loc)),
+        None => bun_ast::Range::NONE,
+    }
+}
+
+/// Returns the path in the form that `Version.value.folder` has in local packages, or `None` if it
+/// doesn't fit in `buf`.
 pub(crate) fn folder_relative_to_top_level_dir<'a>(
     pkg_dir: &[u8],
     folder: &[u8],
@@ -120,7 +133,7 @@ pub(crate) fn folder_relative_to_top_level_dir<'a>(
     // empty when the package depends on itself
     let relative: &[u8] = if relative.is_empty() { b"." } else { relative };
     let len = relative.len();
-    buf[..len].copy_from_slice(relative);
+    buf.get_mut(..len)?.copy_from_slice(relative);
     #[cfg(windows)]
     path::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..len]);
     Some(&buf[..len])
@@ -141,7 +154,7 @@ fn invalid_trusted_dependencies(
     crate::Error::InvalidPackageJSON
 }
 
-/// Once per file: a workspace package that changed is parsed twice into the same log.
+/// Warns once per file, because a workspace that changed is parsed twice into the same log.
 #[cold]
 fn warn_ignored_patched_dependencies(
     log: &mut bun_ast::Log,
@@ -160,7 +173,8 @@ fn warn_ignored_patched_dependencies(
     }
 }
 
-/// A declared `trustedDependencies`, even `[]`, replaces the default list: the set becomes `Some`.
+/// A declared `trustedDependencies`, even `[]`, replaces the default list, so the set becomes
+/// `Some`.
 pub(crate) fn parse_append_trusted_dependencies(
     trusted_dependencies: &mut Option<TrustedDependenciesSet>,
     log: &mut bun_ast::Log,
@@ -192,7 +206,8 @@ pub(crate) fn parse_append_trusted_dependencies(
     Ok(())
 }
 
-/// For a migration, which may not have parsed the root package.json. Keeps what it recorded.
+/// Used by a migration, which may not have parsed the root package.json. Keeps what the migration
+/// already recorded.
 pub(crate) fn append_patched_dependencies(
     lockfile: &mut Lockfile,
     json: Expr,
@@ -529,7 +544,7 @@ impl Package<u64> {
                 resolve_id: new_package.resolutions.off + i,
             };
 
-            // Weak peer slots must not keep their target alive; bound in `Cloner::flush`.
+            // A weak peer must not keep its target alive. It's bound in `Cloner::flush`.
             if old.is_weak_peer(self.dependencies.off + i, *old_resolution)
                 && old
                     .held_at_load
@@ -661,7 +676,8 @@ impl Package<u64> {
                 'list: for (i, (key, version_string_)) in
                     keys.iter().zip(version_strings.iter()).enumerate()
                 {
-                    // Somebody else's manifest: not this project's error.
+                    // The problem is in another package's manifest, so it isn't reported as this
+                    // project's error.
                     let declared = version_string_.slice(&manifest.string_buf);
                     if key.slice(&manifest.string_buf).is_empty()
                         || dependency::nameless_npm_alias(declared).is_some()
@@ -816,16 +832,62 @@ pub(crate) struct DroppedRow {
     pub(crate) package: PackageID,
 }
 
+/// A dependency that differs between package.json and the lockfile.
+pub(crate) struct ChangedDependency {
+    name: Box<[u8]>,
+    /// Path of the workspace whose package.json changed. Empty for the root.
+    workspace: Box<[u8]>,
+    change: DependencyChange,
+}
+
+enum DependencyChange {
+    Added,
+    Removed,
+    /// Moved to a different group, e.g. from `dependencies` to `devDependencies`.
+    MovedGroup,
+    /// Became an optional peer, or stopped being one.
+    PeerMeta,
+    Range {
+        now: Box<[u8]>,
+        before: Box<[u8]>,
+    },
+}
+
+impl core::fmt::Display for ChangedDependency {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use bun_core::fmt::escape_control_chars as text;
+        write!(f, "{}", text(&self.name))?;
+        match &self.change {
+            DependencyChange::Added => f.write_str(" was added")?,
+            DependencyChange::Removed => f.write_str(" was removed")?,
+            DependencyChange::MovedGroup => f.write_str(" is in different dependency groups")?,
+            DependencyChange::PeerMeta => f.write_str(" changed in peerDependenciesMeta")?,
+            DependencyChange::Range { now, before } => {
+                write!(f, " changed from {} to {}", text(before), text(now))?;
+            }
+        }
+        if !self.workspace.is_empty() {
+            write!(f, " in {}", text(&self.workspace))?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 pub struct DiffSummary {
     pub(crate) add: u32,
     pub(crate) remove: u32,
+    /// The first changed dependency, shown in the `--frozen-lockfile` error. Only set for frozen
+    /// installs.
+    pub(crate) first_change: Option<ChangedDependency>,
     /// The dependencies removed from the package.json of the root and of each workspace.
     pub(crate) dropped_rows: Vec<DroppedRow>,
     pub(crate) update: u32,
-    /// Of `update`: the ones that leave every dependency as it is.
+    /// How many of the changes counted in `update` leave every dependency unchanged.
     pub(crate) script_only_updates: u32,
     pub(crate) overrides_changed: bool,
+    /// The sorted names with a rule in bun.lock or package.json, if `overrides_changed`.
+    pub(crate) overridden_names: Vec<PackageNameHash>,
     pub(crate) catalogs_changed: bool,
     /// Set after the differ, by `Lockfile::reconcile_package_extensions`.
     pub(crate) package_extensions_changed: bool,
@@ -833,7 +895,8 @@ pub struct DiffSummary {
     /// `packageExtensions` rule adds anymore, as `(Lockfile::package_extension_key, name hash)`.
     pub(crate) removed_extension_rows: Vec<(u64, PackageNameHash)>,
 
-    /// Trusted now, not when the lockfile was saved: an installed package's blocked scripts run.
+    /// Packages that are trusted now but weren't when the lockfile was saved. If one is already
+    /// installed, its blocked scripts run.
     pub(crate) added_trusted_dependencies: TrustedDependenciesSet,
     pub(crate) removed_trusted_dependencies: bool,
 
@@ -844,11 +907,36 @@ pub struct DiffSummary {
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
     /// Indexes, in the new root's dependencies, of the workspaces that a lockfile from Bun 1.4 or
-    /// older has no entry for, because the root also depends on a registry version of that name.
+    /// older has no entry for, because the root also depends on a registry version of that package.
     pub(crate) members_left_out: Vec<u32>,
+    /// Indexes, in the old root's dependencies, of the entries that Bun 1.4 and older kept next to
+    /// the optional dependency of the same name. They stay until the dependencies change.
+    pub(crate) second_entries: Vec<u32>,
 }
 
 impl DiffSummary {
+    /// `buf` is the string buffer of the lockfile that `owner` belongs to.
+    fn record_first_change(
+        &mut self,
+        owner: &Package,
+        buf: &[u8],
+        name: &[u8],
+        change: DependencyChange,
+    ) {
+        if self.first_change.is_some() {
+            return;
+        }
+        let workspace: &[u8] = match owner.resolution.tag {
+            ResolutionTag::Workspace => owner.resolution.workspace().slice(buf),
+            _ => b"",
+        };
+        self.first_change = Some(ChangedDependency {
+            name: name.into(),
+            workspace: workspace.into(),
+            change,
+        });
+    }
+
     #[inline]
     pub(crate) fn changes_resolutions(&self) -> bool {
         self.add > 0
@@ -919,6 +1007,7 @@ impl Diff {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
         let frozen = pm.options.enable.frozen_lockfile();
+        let keeps_missing_workspaces = lockfile::pruned_workspaces::keeps_missing_workspaces(pm);
         macro_rules! from_buf {
             () => {
                 from_lockfile.buffers.string_bytes.as_slice()
@@ -971,7 +1060,7 @@ impl Diff {
 
         let mut catalog_entries_skipped: Vec<Box<[u8]>> = Vec::new();
         if is_root {
-            // `None`: a catalog does not have as many entries on one side as on the other.
+            // `None` means a catalog has a different number of entries on each side.
             let same_catalogs: Option<bool> = 'catalogs: {
                 // don't sort if lengths are different
                 if from_lockfile.catalogs.default.count() != to_lockfile.catalogs.default.count()
@@ -1058,7 +1147,8 @@ impl Diff {
         // Two `from` rows can pair with one `to` row, so the lengths do not give the added count.
         let mut paired = AutoBitSet::init_empty(to_deps!().len())?;
         for (i, from_dep) in from_deps.iter().enumerate() {
-            // Common: the same position or a constant offset. The o(n^2) case: it comes before.
+            // Usually it's at the same position or at a constant offset. The O(n^2) case is when it
+            // comes earlier.
             let found = (to_i..to_deps!().len()).chain(0..to_i).find(|&to_i| {
                 let to_dep = &to_deps!()[to_i];
                 from_dep.name_hash == to_dep.name_hash
@@ -1066,6 +1156,24 @@ impl Diff {
             });
 
             let Some(cur_to_i) = found else {
+                // A name in `optionalDependencies` and in another group is one optional dependency,
+                // and a peer that `peerDependenciesMeta` makes optional is one optional peer. Bun 1.4
+                // and older kept both if the name is a workspace's.
+                let is_optional_twin = |dep: &Dependency| {
+                    dep.name_hash == from_dep.name_hash
+                        && dep.behavior.contains(Behavior::OPTIONAL)
+                        && dep.behavior.is_peer() == from_dep.behavior.is_peer()
+                };
+                if is_root
+                    && to_lockfile.workspace_paths.contains(&from_dep.name_hash)
+                    && !from_dep.behavior.is_workspace()
+                    && from_deps.iter().any(is_optional_twin)
+                    && to_deps!().iter().any(is_optional_twin)
+                    && Self::is_still_in_root_manifest(pm, log, from_dep, from_buf!())
+                {
+                    summary.second_entries.push(i as u32);
+                    continue;
+                }
                 if is_root
                     && from_dep.behavior.is_workspace()
                     && lockfile::pruned_workspaces::workspace_is_missing_on_disk(
@@ -1076,7 +1184,10 @@ impl Diff {
                     if (from_resolutions[i] as usize) < from_lockfile.packages.len() {
                         missing_workspaces.push(from_resolutions[i]);
                     }
-                    if frozen && !summary.overrides_changed && !summary.catalogs_changed {
+                    if keeps_missing_workspaces
+                        && !summary.overrides_changed
+                        && !summary.catalogs_changed
+                    {
                         summary.pruned_workspaces.push(from_dep.name_hash);
                         continue;
                     }
@@ -1085,13 +1196,25 @@ impl Diff {
                 if !removed_names.contains(&from_dep.name_hash) {
                     removed_names.push(from_dep.name_hash);
                 }
+                let is_still_listed = to_deps!().iter().any(|to_dep| {
+                    to_dep.name_hash == from_dep.name_hash && !to_dep.behavior.is_workspace()
+                });
+                if frozen && !from_dep.behavior.is_workspace() {
+                    let is_still_peer = from_dep.behavior.is_peer()
+                        && to_deps!().iter().any(|to_dep| {
+                            to_dep.name_hash == from_dep.name_hash && to_dep.behavior.is_peer()
+                        });
+                    let change = match (is_still_listed, is_still_peer) {
+                        (_, true) => DependencyChange::PeerMeta,
+                        (true, false) => DependencyChange::MovedGroup,
+                        (false, false) => DependencyChange::Removed,
+                    };
+                    let name = from_dep.name.slice(from_buf!());
+                    summary.record_first_change(from, from_buf!(), name, change);
+                }
                 // The root's implicit dependency on a workspace listed in "workspaces" is skipped:
                 // the isolated linker creates no link for it, so there is none to remove.
-                if !from_dep.behavior.is_workspace()
-                    && !to_deps!().iter().any(|to_dep| {
-                        to_dep.name_hash == from_dep.name_hash && !to_dep.behavior.is_workspace()
-                    })
-                {
+                if !from_dep.behavior.is_workspace() && !is_still_listed {
                     summary.dropped_rows.push(DroppedRow {
                         owner: from.meta.id,
                         name: from_dep.name,
@@ -1103,14 +1226,46 @@ impl Diff {
             to_i = cur_to_i + 1;
             paired.set(cur_to_i);
 
+            if is_root
+                && from_dep.version.tag != to_deps!()[cur_to_i].version.tag
+                // A workspace that the lockfile doesn't have may be new, and `bun install` links it.
+                // Next to a published version, a frozen install leaves it out either way.
+                && (from_dep.version.tag == dependency::version::Tag::Workspace
+                    || from_lockfile.workspace_paths.contains(&from_dep.name_hash)
+                    || (frozen
+                        && to_deps!().iter().any(|own| {
+                            own.name_hash == from_dep.name_hash
+                                && Self::is_published_version_of(own, to_buf!(), own.name_hash)
+                        })))
+            {
+                let row = to.dependencies.off as usize + cur_to_i;
+                Self::keep_older_link(from_lockfile, from_dep, to_lockfile, row);
+                to_deps = to
+                    .dependencies
+                    .get(to_lockfile.buffers.dependencies.as_slice())
+                    .into();
+            }
             let to_version = &to_deps!()[cur_to_i].version;
             let same = Dependency::eql(&to_deps!()[cur_to_i], from_dep, to_buf!(), from_buf!());
+            // Bun 1.4 and older wrote an optional peer with a workspace's name twice. In bun.lockb, the
+            // one that has the range is not optional.
+            if !same
+                && is_root
+                && to_lockfile.workspace_paths.contains(&from_dep.name_hash)
+                && from_deps.iter().any(|twin| {
+                    twin.behavior.difference(Behavior::OPTIONAL)
+                        == from_dep.behavior.difference(Behavior::OPTIONAL)
+                        && Dependency::eql(&to_deps!()[cur_to_i], twin, to_buf!(), from_buf!())
+                })
+            {
+                continue;
+            }
             // A migration writes `file:x` for `file:./x`.
             let same_folder = !same
                 && from_dep.version.tag == dependency::version::Tag::Folder
                 && to_version.tag == dependency::version::Tag::Folder
                 && (to_version.folder()).eql(*from_dep.version.folder(), to_buf!(), from_buf!());
-            // The lockfile records the literal: an update that keeps its package.
+            // The lockfile records the literal, so this is an update that keeps its package.
             let retyped = same
                 && !from_dep.behavior.is_workspace()
                 && !(to_version.literal).eql(from_dep.version.literal, to_buf!(), from_buf!());
@@ -1140,6 +1295,14 @@ impl Diff {
                         to_deps!(),
                         cur_to_i,
                     )
+                    // Bun 1.4 and older could leave out the packages that a workspace depends on.
+                    // These are the rows that `verify_resolutions` fails the install for.
+                    || (!frozen
+                        && from.resolution.tag == ResolutionTag::Workspace
+                        && from_resolutions[i] as usize >= from_lockfile.packages.len()
+                        && !lockfile::bun_lock::may_stay_unresolved(from_dep)
+                        && (from_dep.behavior)
+                            .is_enabled(pm.options.dependency_features(from.resolution.tag)))
                 {
                     summary.update += 1;
                     continue;
@@ -1170,7 +1333,8 @@ impl Diff {
                         .dependencies
                         .get(to_lockfile.buffers.dependencies.as_slice())
                         .into();
-                    // Older versions never updated these: a frozen install takes it as locked.
+                    // Older versions never updated these, so a frozen install accepts what's
+                    // locked.
                     if frozen
                         && (folder_diff.take()).is_some_and(|diff| diff.changes_dependencies())
                     {
@@ -1245,6 +1409,9 @@ impl Diff {
                         removed_names,
                     )?;
                     summary.dropped_rows.append(&mut diff.dropped_rows);
+                    if summary.first_change.is_none() {
+                        summary.first_change = diff.first_change.take();
+                    }
                     // Both calls may have grown `to_lockfile.buffers.dependencies`.
                     to_deps = to
                         .dependencies
@@ -1327,45 +1494,72 @@ impl Diff {
             let recorded_request = (from_dep.version.tag == dependency::version::Tag::DistTag
                 || from_dep.version.literal.is_empty())
                 && still_satisfied();
-            summary.script_only_updates += (retyped || recorded_request || range_link) as u32;
+            let is_equivalent = retyped || recorded_request || range_link;
+            summary.script_only_updates += is_equivalent as u32;
+            if frozen && !is_equivalent && !from_dep.behavior.is_workspace() {
+                let change = DependencyChange::Range {
+                    now: (to_deps!()[cur_to_i].version.literal.slice(to_buf!())).into(),
+                    before: from_dep.version.literal.slice(from_buf!()).into(),
+                };
+                let name = from_dep.name.slice(from_buf!());
+                summary.record_first_change(from, from_buf!(), name, change);
+            }
         }
 
         if is_root {
+            let second_entries = &summary.second_entries;
             summary.members_left_out = (to_deps!().iter().enumerate())
                 .filter(|(to_i, member)| {
                     // Bun 1.4 and older replaced the root's entry for a workspace with the root's
-                    // own dependency of that name if the workspace did not satisfy its range.
+                    // own dependency on that package if the workspace did not satisfy its range, or
+                    // if the dependency was in two groups. bun.lockb still has the workspace's path.
                     member.behavior.is_workspace()
                         && !paired.is_set(*to_i)
                         && to_lockfile.workspace_versions.contains(&member.name_hash)
-                        && (to_deps!().iter().enumerate()).any(|(own_i, own)| {
-                            own.name_hash == member.name_hash
-                                && paired.is_set(own_i)
-                                && !own.behavior.is_workspace()
-                                && own.version.try_npm().is_some_and(|npm| {
-                                    semver::string::Builder::string_hash(npm.name.slice(to_buf!()))
-                                        == member.name_hash
-                                })
-                        })
+                        && (from_lockfile.workspace_paths.contains(&member.name_hash)
+                            || (to_deps!().iter().enumerate()).any(|(own_i, own)| {
+                                // bun.lock looks the same if the workspace is new. Next to an
+                                // alias, `bun install` adds it either way.
+                                (frozen || own.name_hash == member.name_hash)
+                                    && paired.is_set(own_i)
+                                    && Self::is_published_version_of(
+                                        own,
+                                        to_buf!(),
+                                        member.name_hash,
+                                    )
+                            })
+                            || second_entries.iter().any(|&own| {
+                                Self::is_published_version_of(
+                                    &from_deps[own as usize],
+                                    from_buf!(),
+                                    member.name_hash,
+                                )
+                            }))
                 })
                 .map(|(to_i, _)| to_i as u32)
                 .collect();
         }
-        // An older bun.lock lacks the `*` optional peer of a name only `peerDependenciesMeta` has.
-        summary.add = to_deps!()
-            .iter()
-            .enumerate()
+        // An older bun.lock doesn't have the `*` optional peer for a name that's only in
+        // `peerDependenciesMeta`.
+        let added: Vec<&Dependency> = (to_deps!().iter().enumerate())
             .filter(|(to_i, to_dep)| {
                 !paired.is_set(*to_i)
                     && !(frozen
                         && to_dep.behavior.is_optional_peer()
                         && to_dep.version.literal.slice(to_buf!()) == b"*")
+                    && !summary.members_left_out.contains(&(*to_i as u32))
             })
-            .count() as u32
-            - summary.members_left_out.len() as u32;
+            .map(|(_, to_dep)| to_dep)
+            .collect();
+        summary.add = added.len() as u32;
+        if frozen && let Some(added) = added.iter().find(|dep| !dep.behavior.is_workspace()) {
+            let name = added.name.slice(to_buf!());
+            summary.record_first_change(from, from_buf!(), name, DependencyChange::Added);
+        }
         if is_root {
             summary.remove = removed_names.len() as u32;
-            // After the loop: it adds each workspace's `trustedDependencies` to `to_lockfile`.
+            // This comes after the loop, which adds each workspace's `trustedDependencies` to
+            // `to_lockfile`.
             if !summary.pruned_workspaces.is_empty()
                 && to_lockfile.trusted_dependencies.is_none()
                 && let Some(recorded) = &from_lockfile.trusted_dependencies
@@ -1373,7 +1567,8 @@ impl Diff {
                 to_lockfile.trusted_dependencies =
                     Some(Lockfile::recorded_default_trust(recorded)?);
             }
-            // A frozen install cannot record that the scripts ran: every one would run them.
+            // A frozen install can't record that the scripts ran, so every frozen install would run
+            // them again.
             if !frozen {
                 Self::trusted_dependencies(
                     &mut summary,
@@ -1394,7 +1589,7 @@ impl Diff {
                     recorded: from.dependencies,
                 },
                 &survivors,
-                frozen,
+                keeps_missing_workspaces,
                 pm.options.log_level.is_silent(),
             );
         }
@@ -1457,7 +1652,8 @@ impl Diff {
         Ok(summary)
     }
 
-    /// A `file:` directory's package.json against its entry. `None`: unreadable, the entry stands.
+    /// Compares the package.json of a `file:` directory with its lockfile entry. Returns `None` if
+    /// the file can't be read, and the entry is kept.
     #[inline(never)]
     fn generate_folder(
         pm: &mut PackageManager,
@@ -1484,7 +1680,7 @@ impl Diff {
         let source =
             bun_ast::Source::init_path_string(package_json_path.slice(), contents.as_slice());
         let mut folder_pkg = Package::default();
-        // Its messages point into `source`; the resolver reports them when it reads the directory.
+        // Its messages point into `source`. The resolver reports them when it reads the directory.
         let mut parse_log = bun_ast::Log::init();
         if folder_pkg
             .parse(
@@ -1530,7 +1726,8 @@ impl Diff {
         );
     }
 
-    /// npm's sticky rule: `to_dep` names the package `locked` and its range accepts that version.
+    /// npm's sticky rule: returns true if `to_dep` refers to the package `locked` and its range
+    /// accepts that version.
     pub(crate) fn locked_version_satisfies(
         from_lockfile: &Lockfile,
         locked: PackageID,
@@ -1548,6 +1745,97 @@ impl Diff {
         resolution.tag == ResolutionTag::Npm
             && (npm.name).eql(packages.items_name()[locked as usize], to_buf, from_buf)
             && (npm.version).satisfies(resolution.npm().version, to_buf, from_buf)
+    }
+
+    /// The parsed root has no row for a dependency that is also in `optionalDependencies`, so this
+    /// reads package.json: does the group of `dep` still have it, with the same text?
+    #[cold]
+    fn is_still_in_root_manifest(
+        pm: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        dep: &Dependency,
+        buf: &[u8],
+    ) -> bool {
+        let group: &[u8] = if dep.behavior.is_dev() {
+            b"devDependencies"
+        } else if dep.behavior.is_peer() {
+            b"peerDependencies"
+        } else {
+            b"dependencies"
+        };
+        let Some(path) = lockfile::join_top_level_dir(&[b"package.json"]) else {
+            return false;
+        };
+        let Ok(entry) = pm
+            .workspace_package_json_cache
+            .get_with_path(log, path.slice(), Default::default())
+            .unwrap()
+        else {
+            return false;
+        };
+        let bump = bun_alloc::Arena::new();
+        (entry.root.get(group))
+            .and_then(|rows| rows.get(dep.name.slice(buf)))
+            .and_then(|written| written.as_utf8(&bump))
+            .is_some_and(|written| {
+                dependency::trim_literal(written)
+                    == dependency::trim_literal(dep.version.literal.slice(buf))
+            })
+    }
+
+    /// Returns true for a range of registry versions of the package that `member` is the name of.
+    fn is_published_version_of(own: &Dependency, buf: &[u8], member: PackageNameHash) -> bool {
+        !own.behavior.is_workspace()
+            && own.version.try_npm().is_some_and(|npm| {
+                semver::string::Builder::string_hash(npm.name.slice(buf)) == member
+            })
+    }
+
+    /// Bun 1.4 and older took a dist-tag of a workspace's name from the registry, and linked the
+    /// workspace for a `file:` path to its folder under any name. While package.json says the same,
+    /// the root's dependency `row` is read the way the lockfile has it.
+    fn keep_older_link(
+        from_lockfile: &Lockfile,
+        from_dep: &Dependency,
+        to_lockfile: &mut Lockfile,
+        row: usize,
+    ) {
+        use dependency::version::Tag;
+        let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+        let to_buf = to_lockfile.buffers.string_bytes.as_slice();
+        let to_dep = &mut to_lockfile.buffers.dependencies[row];
+        if !(to_dep.version.literal).eql(from_dep.version.literal, to_buf, from_buf) {
+            return;
+        }
+        match (from_dep.version.tag, to_dep.version.tag) {
+            (Tag::DistTag, Tag::Workspace) => {
+                let literal = to_dep.version.literal.sliced(to_buf);
+                if let Some(version) = dependency::parse(
+                    to_dep.name,
+                    to_dep.name_hash,
+                    literal.slice,
+                    &literal,
+                    None,
+                    None,
+                ) {
+                    to_dep.version = version;
+                }
+            }
+            (Tag::Workspace, Tag::Folder) => {
+                let folder = *to_dep.version.folder();
+                // The folder can have stopped being a workspace, or be one of another name now.
+                if folder.eql(*from_dep.version.workspace(), to_buf, from_buf)
+                    && (to_lockfile.workspace_paths.iter()).any(|(name_hash, path)| {
+                        path.eql(folder, to_buf, to_buf)
+                            && from_lockfile.workspace_paths.contains(name_hash)
+                    })
+                {
+                    to_dep.version.tag = Tag::Workspace;
+                    to_dep.version.value.workspace = folder;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// A one-sided merge can leave a pin that the unchanged range rules out. Only flags clear cases.
@@ -1587,23 +1875,23 @@ impl Diff {
                 == 1
     }
 
-    /// `to` is about to replace `from_id`; its rows keep what `generate` lets a root row keep.
+    /// `to` is about to replace `from_id`. Its dependencies keep the resolutions that `generate`
+    /// would let the root's dependencies keep.
     pub(crate) fn keep_resolutions(pm: &mut PackageManager, from_id: PackageID, to: &Package) {
-        if pm.to_update || from_id >= pm.lockfile.loaded_package_count {
+        if from_id >= pm.lockfile.loaded_package_count {
             return;
         }
         let from = pm.lockfile.packages.items_dependencies()[from_id as usize];
+        if pm.to_update {
+            return Self::keep_while_refreshing(pm, from_id, from, to.dependencies);
+        }
         for to_i in to.dependencies.begin() as usize..to.dependencies.end() as usize {
             let lockfile = &*pm.lockfile;
             let buf = lockfile.buffers.string_bytes.as_slice();
             let to_dep = &lockfile.buffers.dependencies[to_i];
-            let kept = (from.begin() as usize..from.end() as usize).find_map(|from_i| {
-                let from_dep = &lockfile.buffers.dependencies[from_i];
-                let locked = lockfile.buffers.resolutions[from_i];
-                (from_dep.name_hash == to_dep.name_hash
-                    && from_dep.behavior == to_dep.behavior
-                    && (lockfile.packages.items_resolution().get(locked as usize))
-                        .is_some_and(|resolution| resolution.tag != ResolutionTag::Folder)
+            let kept = Self::locked_for(lockfile, from, to_dep, |from_dep, locked| {
+                (lockfile.packages.items_resolution().get(locked as usize))
+                    .is_some_and(|resolution| resolution.tag != ResolutionTag::Folder)
                     && ((Dependency::eql(to_dep, from_dep, buf, buf)
                         && !Self::locked_version_is_out_of_range(
                             lockfile,
@@ -1612,11 +1900,55 @@ impl Diff {
                             to.dependencies.get(&lockfile.buffers.dependencies),
                             to_i - to.dependencies.begin() as usize,
                         ))
-                        || Self::locked_version_satisfies(lockfile, locked, to_dep, buf)))
-                .then_some(locked)
+                        || Self::locked_version_satisfies(lockfile, locked, to_dep, buf))
             });
             if let Some(locked) = kept {
                 pm.lockfile.buffers.resolutions[to_i] = locked;
+            }
+        }
+    }
+
+    /// The package of the dependency in `from` with the name and group of `to_dep`, if `keeps` it.
+    fn locked_for(
+        lockfile: &Lockfile,
+        from: DependencySlice,
+        to_dep: &Dependency,
+        keeps: impl Fn(&Dependency, PackageID) -> bool,
+    ) -> Option<PackageID> {
+        (from.begin() as usize..from.end() as usize).find_map(|from_i| {
+            let from_dep = &lockfile.buffers.dependencies[from_i];
+            let locked = lockfile.buffers.resolutions[from_i];
+            (from_dep.name_hash == to_dep.name_hash
+                && from_dep.behavior == to_dep.behavior
+                && keeps(from_dep, locked))
+            .then_some(locked)
+        })
+    }
+
+    /// A dependency in `to` that `refreshes_in_place` keeps the package of the same one in `from`.
+    pub(crate) fn keep_while_refreshing(
+        pm: &mut PackageManager,
+        declarer: PackageID,
+        from: DependencySlice,
+        to: DependencySlice,
+    ) {
+        use crate::package_manager_real::enqueue;
+        for to_i in to.begin()..to.end() {
+            let lockfile = &*pm.lockfile;
+            let buf = lockfile.buffers.string_bytes.as_slice();
+            let to_dep = &lockfile.buffers.dependencies[to_i as usize];
+            if lockfile.buffers.resolutions[to_i as usize] != invalid_package_id
+                || !enqueue::may_refresh_in_place(to_dep)
+            {
+                continue;
+            }
+            let kept = Self::locked_for(lockfile, from, to_dep, |from_dep, locked| {
+                Dependency::eql(to_dep, from_dep, buf, buf)
+                    && enqueue::refreshes_in_place(pm, declarer, to_dep, locked)
+            });
+            if let Some(locked) = kept {
+                pm.lockfile.buffers.resolutions[to_i as usize] = locked;
+                pm.lockfile.mark_refreshing(to_i);
             }
         }
     }
@@ -1653,7 +1985,8 @@ impl Diff {
                     .iter()
                     .any(|&hash| !default_trusted_dependencies::has_with_hash(hash));
             }
-            // Also an entry that is on the default list: the lockfile did not have it.
+            // This includes an entry that's on the default list, because the lockfile didn't have
+            // it.
             (None, Some(to)) => {
                 for (hash, to_name) in to.iter() {
                     added.put(*hash, to_name.clone())?;
@@ -1922,7 +2255,8 @@ impl Package<u64> {
                     dependency_version.value.folder = string_builder.append::<String>(relative);
                 }
 
-                // The root has one `node_modules/<name>`: the workspace wins over the folder.
+                // The root only has one `node_modules/<name>`, and the workspace wins over the
+                // folder.
                 if !is_link
                     && let Some(path) = workspace_path
                     && package_dependencies
@@ -2199,7 +2533,8 @@ impl Package<u64> {
     ) -> crate::Result<()> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        // For `asString` transcoding: borrowed only until `string_builder.append` copies.
+        // Used by `asString` for transcoding. The result is only borrowed until
+        // `string_builder.append` copies it.
         let bump = bun_alloc::Arena::new();
         // While it's live, read `string_bytes` through `string_builder.string_bytes`.
         let mut string_builder = crate::string_builder!(lockfile);
@@ -2366,7 +2701,7 @@ impl Package<u64> {
 
         let missing_workspace = if pm.options.runtime_auto_install {
             workspace_map::MissingWorkspace::SkipEmptyToo
-        } else if pm.options.enable.frozen_lockfile() {
+        } else if lockfile::pruned_workspaces::keeps_missing_workspaces(pm) {
             workspace_map::MissingWorkspace::SkipIfInLockfile(&pm.lockfile)
         } else {
             workspace_map::MissingWorkspace::Error
@@ -2599,7 +2934,8 @@ impl Package<u64> {
         let off = lockfile.buffers.dependencies.len();
         debug_assert!(lockfile.buffers.dependencies.len() == lockfile.buffers.resolutions.len());
 
-        // Appended to the lockfile after the last `?`: a caller may swallow an error and re-enter.
+        // Only appended to the lockfile after the last `?`, because a caller may swallow an error
+        // and call this again.
         let mut package_dependencies: Vec<Dependency> =
             Vec::with_capacity(total_dependencies_count as usize);
 
@@ -2799,11 +3135,7 @@ impl Package<u64> {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
-                        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-                        // `bun_sys::getcwd` returns the byte length — slice
-                        // the buffer ourselves.
-                        let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
-                        let cwd: &[u8] = &cwd_buf.0[..cwd_len];
+                        let root_dir = workspace_map::package_json_dir(source);
 
                         let num_notes = 'count: {
                             let mut i: usize = 0;
@@ -2828,7 +3160,7 @@ impl Package<u64> {
                                 if strings::eql_long(&value.name, &entry.name, true) {
                                     let note_abs_path = bun_core::ZBox::from_bytes(
                                         resolve_path::join_abs_string_z::<path::platform::Auto>(
-                                            cwd,
+                                            root_dir,
                                             &[note_path, b"package.json"],
                                         )
                                         .as_bytes(),
@@ -2853,7 +3185,7 @@ impl Package<u64> {
                                         text: b"Package name is also declared here".to_vec().into(),
                                         location: bun_ast::Location::init_or_null(
                                             Some(&note_src),
-                                            note_src.range_of_string(value.name_loc),
+                                            name_range_on_disk(&note_src),
                                         )
                                         .as_ref()
                                         .cloned(),
@@ -2868,7 +3200,7 @@ impl Package<u64> {
 
                         let abs_path = bun_core::ZBox::from_bytes(
                             resolve_path::join_abs_string_z::<path::platform::Auto>(
-                                cwd,
+                                root_dir,
                                 &[path_, b"package.json"],
                             )
                             .as_bytes(),
@@ -2881,7 +3213,7 @@ impl Package<u64> {
 
                         let _ = log.add_range_error_fmt_with_notes(
                             Some(&src),
-                            src.range_of_string(entry.name_loc),
+                            name_range_on_disk(&src),
                             notes.into(),
                             format_args!(
                                 "Workspace name \"{}\" already exists",
@@ -3202,7 +3534,7 @@ pub mod serializer {
     pub(crate) struct PackagesLoadResult<SemverIntType: VersionInt> {
         pub list: List<SemverIntType>,
         pub needs_update: bool,
-        /// How many `extern_strings` the `Map` bins reach into.
+        /// How far into `extern_strings` the `Map` bins reach.
         pub bin_map_end: usize,
     }
 

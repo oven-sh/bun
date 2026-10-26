@@ -40,7 +40,8 @@ fn pack_bump() -> &'static bun_alloc::Arena {
     BUMP.with(|b| unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(b) })
 }
 
-/// Raw projection: `pack()` holds the `&mut MapEntry` this yields across other `ctx.manager` uses.
+/// Returns a raw projection, because `pack()` holds the resulting `&mut MapEntry` across other uses
+/// of `ctx.manager`.
 #[inline]
 fn pm_workspace_cache<'a>(
     m: *mut PackageManager,
@@ -150,7 +151,8 @@ impl PackCommand {
             );
             Global::crash();
         }
-        // Typed relative to `original_cwd`; `PackageManager::init` has changed directory since.
+        // The path is relative to `original_cwd`, and `PackageManager::init` has changed the
+        // directory since.
         let mut abs_buf = bun_paths::path_buffer_pool::get();
         for (what, option) in [
             ("filename", &mut options.pack_filename),
@@ -287,7 +289,7 @@ pub(crate) struct PackQueueItem {
 
 impl Ord for PackQueueItem {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        // Reversed: `BinaryHeap` is a max-heap and the smallest path pops first.
+        // Reversed, because `BinaryHeap` is a max-heap and the smallest path should pop first.
         strings::order(other.path.as_bytes(), self.path.as_bytes())
     }
 }
@@ -309,7 +311,7 @@ pub(crate) struct PackQueue {
     seen: StringHashMap<()>,
 }
 impl PackQueue {
-    /// A path that is already queued is dropped: no file is packed twice.
+    /// Drops a path that's already queued, so that no file is packed twice.
     fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
         if self.seen.get_or_put(item.path.as_bytes())?.found_existing {
             return Ok(());
@@ -335,7 +337,8 @@ impl PackQueue {
 /// (dir, dir_subpath, dir_depth)
 struct DirInfo(Dir, Box<[u8]>, usize);
 
-/// (dir, dir_depth). The root (depth 1) is the caller's and stays open; the walk closes the rest.
+/// (dir, dir_depth). The root (depth 1) belongs to the caller and stays open. The walk closes the
+/// others.
 struct WalkedDir(Dir, usize);
 impl Drop for WalkedDir {
     fn drop(&mut self) {
@@ -483,7 +486,8 @@ fn print_ignored(
     Output::flush();
 }
 
-/// Whether `errno` means nothing exists at the path. `ELOOP` comes from a cycle of symlinks.
+/// Returns true if `errno` means that nothing exists at the path. `ELOOP` comes from a cycle of
+/// symlinks.
 fn is_absent(errno: bun_sys::E) -> bool {
     matches!(
         errno,
@@ -506,7 +510,8 @@ fn fail_open_dir(err: crate::Error, subpath: &[u8]) -> ! {
     Global::crash();
 }
 
-/// Opens a directory that the walk listed, so every failure is fatal; one swapped for a symlink since is not followed.
+/// Opens a directory that the walk listed, so every failure is fatal. If it was replaced by a
+/// symlink in the meantime, the symlink isn't followed.
 fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
     let opts = bun_sys::OpenDirOptions {
         iterate: true,
@@ -517,7 +522,7 @@ fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
         .unwrap_or_else(|err| fail_open_dir(err.into(), entry_subpath.as_bytes()))
 }
 
-/// `None` when the directory is not there. A directory that is there and does not open is fatal.
+/// Returns `None` if the directory doesn't exist. If it exists but can't be opened, that's fatal.
 fn open_dir_if_present(root_dir: &Dir, subpath: &ZStr) -> Option<Dir> {
     match root_dir.open_dir(subpath.as_bytes(), ITERABLE) {
         Ok(dir) => Some(dir),
@@ -526,7 +531,8 @@ fn open_dir_if_present(root_dir: &Dir, subpath: &ZStr) -> Option<Dir> {
     }
 }
 
-/// `lstat`s where the filesystem reports no kind (FUSE, NFS, XFS `ftype=0`): a link stays a link.
+/// Calls `lstat` on file systems that don't report an entry's kind (FUSE, NFS, XFS with `ftype=0`),
+/// so a symlink is still reported as a symlink.
 pub(crate) fn next_dir_entry(
     iter: &mut DirIterator::WrappedIterator,
     dir_subpath: &[u8],
@@ -804,8 +810,9 @@ fn add_bundled_dep(
     };
     let mut json = parse();
 
-    // A folder that is not inside a `node_modules` is a workspace or a linked folder, not an
-    // installed copy. It contributes the same files that its own tarball would contain.
+    // A folder whose real path below the project has no `node_modules` component is a workspace
+    // or a linked folder, not an installed copy. The walk for installed copies reads no ignore
+    // file, so such a folder does not take it, whether or not its package.json loads.
     let below_project = (real_path.strip_prefix(&*bundle.project_path)).unwrap_or(&real_path);
     let is_own_package = !strings::contains(below_project, path::NODE_MODULES_NEEDLE);
     if is_own_package && manifests.is_none() && json.is_some_and(needs_workspace_manifests) {
@@ -814,37 +821,19 @@ fn add_bundled_dep(
         json = parse();
     }
 
-    if let (Some(source), Some(json)) = (&source, &json) {
+    if let Some(json) = &json {
         find_dependencies_to_bundle(bundle, index, json, root_path)?;
-
-        if is_own_package {
-            let mut add_file = |file: &[u8], edited: Option<Box<[u8]>>| -> Result<(), AllocError> {
-                bundle.files.push(BundledFile {
-                    path: entry_subpath(&subpath, file)?,
-                    source: entry_subpath(&real_path, file)?,
-                    edited,
-                });
-                Ok(())
-            };
-            let edited = if needs_workspace_manifests(*json) {
-                let indentation = JSON::guess_indentation(&source.contents);
-                Some(edit_root_package_json(
-                    manifests.as_ref(),
-                    &real_path,
-                    *json,
-                    source,
-                    indentation,
-                )?)
-            } else {
-                None
-            };
-            add_file(b"package.json", edited)?;
-            let (published, _) = published_files(&dir, &real_path, json, pack_bump(), log_level)?;
-            for file in published.into_paths() {
-                add_file(file.as_bytes(), None)?;
-            }
-            return Ok(());
-        }
+    }
+    if is_own_package {
+        return add_own_package(
+            bundle,
+            &subpath,
+            &real_path,
+            dir,
+            source.as_ref().zip(json.as_ref()),
+            manifests.as_ref(),
+            log_level,
+        );
     }
 
     // `is_excluded` only treats depth 1, the project root, specially. Any other depth works.
@@ -890,6 +879,78 @@ fn add_bundled_dep(
         }
     }
 
+    Ok(())
+}
+
+/// Adds the files of a bundled workspace or linked folder. Like in npm, a folder that has a
+/// package.json entry is packed as a package, and a folder that has none as a directory.
+fn add_own_package(
+    bundle: &mut Bundle,
+    subpath: &[u8],
+    real_path: &[u8],
+    dir: Dir,
+    // `None` if the package.json is missing, can't be read as a file, or does not parse.
+    manifest: Option<(&bun_ast::Source, &Expr)>,
+    workspace_manifests: Option<&WorkspaceManifests>,
+    log_level: LogLevel,
+) -> Result<(), AllocError> {
+    let mut add_file = |file: &[u8], edited: Option<Box<[u8]>>| -> Result<(), AllocError> {
+        bundle.files.push(BundledFile {
+            path: entry_subpath(subpath, file)?,
+            source: entry_subpath(real_path, file)?,
+            edited,
+        });
+        Ok(())
+    };
+
+    let json = match manifest {
+        Some((source, json)) => {
+            let edited = if needs_workspace_manifests(*json) {
+                let indentation = JSON::guess_indentation(&source.contents);
+                Some(edit_root_package_json(
+                    workspace_manifests,
+                    real_path,
+                    *json,
+                    source,
+                    indentation,
+                )?)
+            } else {
+                None
+            };
+            add_file(b"package.json", edited)?;
+            *json
+        }
+        None => match bin_kind_without_following_symlinks(real_path, b"package.json") {
+            bun_sys::FileKind::Unknown => {
+                let mut files = PackQueue::default();
+                // `is_excluded` removes `depth - 1` components from a path to anchor the patterns
+                // of an ignore file.
+                let depth = strings::count_char(subpath, b'/') + 2;
+                iterate_project_tree(
+                    &mut files,
+                    &[],
+                    Some(&[]),
+                    DirInfo(dir, subpath.into(), depth),
+                    log_level,
+                )?;
+                for file in files.into_paths() {
+                    add_file(&file.as_bytes()[subpath.len() + 1..], None)?;
+                }
+                return Ok(());
+            }
+            kind => {
+                // A package.json that does not parse is packed as it is.
+                if kind == bun_sys::FileKind::File {
+                    add_file(b"package.json", None)?;
+                }
+                Expr::init(E::Object::default(), Default::default())
+            }
+        },
+    };
+    let (published, _) = published_files(&dir, real_path, &json, pack_bump(), log_level)?;
+    for file in published.into_paths() {
+        add_file(file.as_bytes(), None)?;
+    }
     Ok(())
 }
 
@@ -968,7 +1029,8 @@ fn find_dependencies_to_bundle(
     Ok(())
 }
 
-/// `files_excludes`: `"files"` includes the directory `root_dir`; these are its negated entries.
+/// `files_excludes` is set when `root_dir` is a directory that is packed whole: one that `"files"`
+/// includes, with the negated entries of `"files"`, or a bundled folder that has no package.json.
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
@@ -1015,7 +1077,9 @@ fn iterate_project_tree(
 
             if dir_depth == 1 {
                 // The root package.json and the bundled dependencies are handled separately.
-                if entry_name == b"package.json" || entry_name == b"node_modules" {
+                if (entry_name == b"package.json" && entry.kind == bun_sys::FileKind::File)
+                    || entry_name == b"node_modules"
+                {
                     continue;
                 }
             } else if files_excludes.is_some()
@@ -1171,7 +1235,8 @@ pub(crate) fn bin_subpath<'a>(
         }
         BinType::File => normalized,
     };
-    // Nothing re-includes `.git` and `.npmrc`. Depth 2 leaves out the rule for the root's lockfiles.
+    // Nothing can re-include `.git` and `.npmrc`. Passing depth 2 skips the rule for the root's
+    // lockfiles.
     let never_packed =
         || strings::split(subpath, b"/").any(|name| is_unconditionally_excluded(name, 2).is_some());
     (!is_package_root_or_outside(subpath) && !never_packed()).then_some(subpath)
@@ -1191,7 +1256,8 @@ pub(crate) fn bin_kind_without_following_symlinks(
     let mut spill: Vec<u8> = Vec::new();
     let slashes = (bin_path.iter().enumerate()).filter_map(|(i, &c)| (c == b'/').then_some(i));
     for end in slashes.chain([bin_path.len()]) {
-        // By absolute path: on Windows `lstatat` reports a reparse point as its target's kind.
+        // Use the absolute path, because on Windows `lstatat` reports a reparse point as the kind
+        // of its target.
         let parts: [&[u8]; 2] = [abs_workspace_path, &bin_path[..end]];
         let abs_path =
             resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
@@ -1211,7 +1277,7 @@ pub(crate) fn bin_kind_without_following_symlinks(
     bun_sys::FileKind::Unknown
 }
 
-/// `published_files` has queued the bins already; the walks skip them.
+/// `published_files` has already queued the bins, so the walks skip them.
 fn is_listed_bin(bins: &[BinInfo], ty: BinType, subpath: &ZStr) -> bool {
     bins.iter()
         .any(|bin| bin.ty == ty && strings::eql_long(bin.path.as_bytes(), subpath.as_bytes(), true))
@@ -1247,7 +1313,8 @@ fn is_unconditionally_excluded(
 enum Exclusion<'a> {
     Included,
     Excluded(&'a [u8], IgnorePatternsKind),
-    /// An excluded directory with a negation below it; unlike in npm, its entries stay excluded.
+    /// An excluded directory that has a negated pattern below it. Unlike in npm, its entries stay
+    /// excluded.
     WalkOnly(&'a [u8], IgnorePatternsKind),
 }
 
@@ -1355,7 +1422,7 @@ fn is_excluded<'a>(
     }
 }
 
-/// Whether a negated pattern could match a path below the directory `dir_rel`.
+/// Returns true if a negated pattern could match a path below the directory `dir_rel`.
 fn negation_reaches_below(pattern: &Pattern, dir_rel: &[u8]) -> bool {
     // Without a slash it un-ignores entries of the directories that are walked, and opens none.
     if !pattern.flags.contains(PatternFlags::REL_PATH) {
@@ -1370,24 +1437,6 @@ fn negation_reaches_below(pattern: &Pattern, dir_rel: &[u8]) -> bool {
         }
     }
     glob_segments.next().is_some()
-}
-
-/// Tag names for `bun_core::FileKind`.
-fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
-    use bun_core::FileKind as K;
-    match kind {
-        K::BlockDevice => "block_device",
-        K::CharacterDevice => "character_device",
-        K::Directory => "directory",
-        K::NamedPipe => "named_pipe",
-        K::SymLink => "sym_link",
-        K::File => "file",
-        K::UnixDomainSocket => "unix_domain_socket",
-        K::Whiteout => "whiteout",
-        K::Door => "door",
-        K::EventPort => "event_port",
-        K::Unknown => "unknown",
-    }
 }
 
 /// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
@@ -1476,7 +1525,7 @@ pub(crate) fn published_files(
     Ok((pack_queue, bins))
 }
 
-/// Through the manager's cache; exits when it cannot be read or parsed.
+/// Reads it through the manager's cache. Exits if it can't be read or parsed.
 pub(crate) fn package_json_entry<'a>(
     manager: &mut PackageManager,
     abs_package_json_path: &ZStr,
@@ -1707,7 +1756,7 @@ pub(crate) fn pack(
         }
     }
 
-    // Not before the scripts: one of them may be what writes the real version.
+    // This has to come after the scripts, because one of them may write the real version.
     if for_publish {
         package_version =
             published_version(package_version).ok_or(PackError::InvalidPackageVersion)?;
@@ -1875,7 +1924,7 @@ pub(crate) fn pack(
         "set archive block padding",
     );
 
-    // `bun publish` uploads the bytes from memory; only `bun pm pack` writes a file.
+    // `bun publish` uploads the bytes from memory. Only `bun pm pack` writes a file.
     let mut dest_buf = bun_paths::path_buffer_pool::get();
     let abs_tarball_dest: Option<&ZStr> = if for_publish {
         None
@@ -2140,7 +2189,8 @@ fn run_lifecycle_script(
     }
 }
 
-/// Whether a `name` or `version` could steer the tarball's filename outside the destination directory.
+/// Returns true if a `name` or `version` could move the tarball's filename outside the destination
+/// directory.
 fn has_unsafe_tarball_filename_part(value: &[u8]) -> bool {
     strings::split(value, b"/").any(|component| component == b"." || component == b"..")
         || strings::contains_any(value, b"\\:\0")
@@ -2516,9 +2566,10 @@ fn add_archive_entry(
     entry.clear()
 }
 
-/// What the tarball's package.json gets in place of a `workspace:` or `catalog:` spec.
+/// What replaces a `workspace:` or `catalog:` specifier in the tarball's package.json.
 pub(crate) enum Substitution<'a> {
-    /// `workspace:^` / `~` / `*`: the workspace's current version behind that prefix.
+    /// For `workspace:^`, `workspace:~` and `workspace:*`: the workspace's current version with
+    /// that prefix.
     WorkspaceVersion(&'static str),
     /// `workspace:@acme/core@*` (alias), `workspace:../core`, or `workspace:1.x` on a workspace.
     WorkspaceRangeOrDirectory(&'a [u8]),
@@ -2543,7 +2594,7 @@ impl<'a> Substitution<'a> {
         )))
     }
 
-    /// `Err`: which protocol does not resolve, and why.
+    /// On failure, `Err` says which protocol couldn't be resolved and why.
     pub(crate) fn published(
         self,
         manifests: &WorkspaceManifests,
@@ -2630,7 +2681,8 @@ fn needs_workspace_manifests(package_json: Expr) -> bool {
     needed
 }
 
-/// Alias first, as the installer reads it; directory before range, since only a directory has a version.
+/// The alias is checked first, like the installer does. A directory is checked before a range,
+/// because only a directory has a version.
 fn publish_spec_for_workspace_range_or_directory(
     manifests: &WorkspaceManifests,
     package_dir: &[u8],
@@ -2687,7 +2739,7 @@ fn publish_spec_for_workspace_range_or_directory(
     ))
 }
 
-/// `workspace:<name>@<range>`; `<name>` may be scoped, and `../@scope/pkg` is a directory.
+/// Splits `workspace:<name>@<range>`. `<name>` may be scoped, and `../@scope/pkg` is a directory.
 fn split_workspace_alias(spec: &[u8]) -> Option<(&[u8], &[u8])> {
     let at = strings::last_index_of_char(spec, b'@').filter(|at| *at > 0)?;
     let (name, range) = (&spec[..at], &spec[at + 1..]);
@@ -2838,10 +2890,11 @@ impl Pattern {
             return None;
         }
 
-        let negation: &[u8] = if flags.contains(PatternFlags::NEGATED) {
-            b"!"
-        } else {
-            b""
+        let negation: &[u8] = match flags.contains(PatternFlags::NEGATED) {
+            // In npm and git this `!` negates and the `(` is a plain character. Side by side they would start a group.
+            true if remain.starts_with(b"(") => b"!\\",
+            true => b"!",
+            false => b"",
         };
         Some(Pattern {
             glob: glob::Prepared::new(CowString::init_owned(
@@ -2884,7 +2937,8 @@ pub(crate) enum IgnorePatternsKind {
 }
 
 impl IgnorePatterns {
-    /// Fatal: the tarball would hold the files that were to be ignored.
+    /// Fatal, because otherwise the tarball would include the files that were supposed to be
+    /// ignored.
     fn ignore_file_fail(
         dir: &Dir,
         ignore_kind: IgnorePatternsKind,
@@ -2910,7 +2964,7 @@ impl IgnorePatterns {
         Global::crash();
     }
 
-    /// Same as git's `trim_trailing_spaces` in dir.c: `foo\ ` keeps its space.
+    /// Same as git's `trim_trailing_spaces` in dir.c. For example, `foo\ ` keeps its space.
     fn trim_trailing_spaces(line: &[u8]) -> &[u8] {
         let mut last_space: Option<usize> = None;
         let mut i = 0;
@@ -2986,7 +3040,7 @@ impl IgnorePatterns {
 enum PackListOrQueue<'a> {
     /// A dry run read nothing, so the sizes come from `stat`.
     Queue(&'a mut PackQueue),
-    /// What was archived, and the length of the edited package.json.
+    /// The files that were archived, and the length of the edited package.json.
     List(&'a PackList, usize),
 }
 
@@ -3075,30 +3129,37 @@ fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool {
 pub(crate) mod bindings {
     use super::*;
     use bun_core::String as BunString;
-    use bun_jsc::{
-        CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc,
-    };
+    use bun_jsc::bindgen::{self, JsHeap};
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_read_tarball(
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = call_frame.arguments();
-        if args.len() < 1 || !args[0].is_string() {
-            return Err(global.throw(format_args!("expected tarball path string argument")));
+    use crate::generated_bindgen::pack_command::{Tarball, TarballEntry, TarballEntryKind};
+
+    fn tarball_entry_kind(kind: bun_sys::FileKind) -> TarballEntryKind {
+        use bun_sys::FileKind as K;
+        match kind {
+            K::BlockDevice => TarballEntryKind::BlockDevice,
+            K::CharacterDevice => TarballEntryKind::CharacterDevice,
+            K::Directory => TarballEntryKind::Directory,
+            K::NamedPipe => TarballEntryKind::NamedPipe,
+            K::SymLink => TarballEntryKind::SymLink,
+            K::File => TarballEntryKind::File,
+            K::UnixDomainSocket => TarballEntryKind::UnixDomainSocket,
+            K::Whiteout => TarballEntryKind::Whiteout,
+            K::Door => TarballEntryKind::Door,
+            K::EventPort => TarballEntryKind::EventPort,
+            K::Unknown => TarballEntryKind::Unknown,
         }
+    }
 
-        let tarball_path_str = args[0].to_bun_string(global)?;
-
-        let tarball_path = tarball_path_str.to_utf8();
-
-        let tarball_file = match bun_sys::open_file(tarball_path.slice(), Default::default()) {
+    pub(crate) fn read_tarball<'a>(
+        heap: &JsHeap<'a>,
+        tarball_path: &[u8],
+    ) -> bindgen::Result<'a, Tarball> {
+        let tarball_file = match bun_sys::open_file(tarball_path, Default::default()) {
             Ok(f) => f,
             Err(err) => {
-                return Err(global.throw(format_args!(
+                return Err(heap.error(format_args!(
                     "failed to open tarball file \"{}\": {}",
-                    bstr::BStr::new(tarball_path.slice()),
+                    bstr::BStr::new(tarball_path),
                     crate::Error::from(err).name(),
                 )));
             }
@@ -3108,9 +3169,9 @@ pub(crate) mod bindings {
             Ok(b) => b,
             Err(err) => {
                 let _ = tarball_file.close();
-                return Err(global.throw(format_args!(
+                return Err(heap.error(format_args!(
                     "failed to read tarball contents \"{}\": {}",
-                    bstr::BStr::new(tarball_path.slice()),
+                    bstr::BStr::new(tarball_path),
                     crate::Error::from(err).name(),
                 )));
             }
@@ -3130,22 +3191,15 @@ pub(crate) mod bindings {
         let mut sha512 = sha::SHA512::init();
         sha512.update(&tarball);
         sha512.r#final(&mut sha512_digest);
-        let base64_buf = bun_base64::encode_alloc(&sha512_digest);
-        let integrity_value = bun_string_jsc::create_utf8_for_js(global, &base64_buf)?;
+        let integrity = bun_base64::encode_alloc(&sha512_digest);
 
-        struct EntryInfo {
-            pathname: BunString,
-            kind: bun_sys::FileKind,
-            perm: bun_sys::Mode,
-            contents: Option<BunString>,
-        }
-        let mut entries_info: Vec<EntryInfo> = Vec::new();
+        let mut entries: Vec<TarballEntry> = Vec::new();
 
         let archive = Archive::opaque_ref(Archive::read_new());
-        let check = |status: ArchiveResult, action: &str| -> JsResult<()> {
+        let check = |status: ArchiveResult, action: &str| -> bindgen::Result<'a, ()> {
             match status {
-                ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => Err(global
-                    .throw(format_args!(
+                ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => Err(heap
+                    .error(format_args!(
                         "failed to {}: {}",
                         action,
                         bstr::BStr::new(archive.error_string())
@@ -3179,7 +3233,7 @@ pub(crate) mod bindings {
                     continue;
                 }
                 ArchiveResult::Failed | ArchiveResult::Fatal => {
-                    return Err(global.throw(format_args!(
+                    return Err(heap.error(format_args!(
                         "failed to read archive header: {}",
                         bstr::BStr::new(archive.error_string()),
                     )));
@@ -3201,10 +3255,10 @@ pub(crate) mod bindings {
                     let kind = bun_sys::kind_from_mode(archive_entry_ref.filetype());
                     let perm = archive_entry_ref.perm();
 
-                    let mut entry_info = EntryInfo {
+                    let mut entry = TarballEntry {
                         pathname: pathname_string,
-                        kind,
-                        perm,
+                        kind: tarball_entry_kind(kind),
+                        perm: f64::from(perm),
                         contents: None,
                     };
 
@@ -3215,19 +3269,19 @@ pub(crate) mod bindings {
 
                         let read = archive.read_data(&mut read_buf);
                         if read < 0 {
-                            let pathname_utf8 = entry_info.pathname.to_utf8();
-                            return Err(global.throw(format_args!(
+                            let pathname_utf8 = entry.pathname.to_utf8();
+                            return Err(heap.error(format_args!(
                                 "failed to read archive entry \"{}\": {}",
                                 bstr::BStr::new(pathname_utf8.slice()),
                                 bstr::BStr::new(archive.error_string()),
                             )));
                         }
                         read_buf.truncate(usize::try_from(read).expect("int cast"));
-                        entry_info.contents = Some(BunString::clone_utf8(&read_buf));
+                        entry.contents = Some(BunString::clone_utf8(&read_buf));
                         read_buf.clear();
                     }
 
-                    entries_info.push(entry_info);
+                    entries.push(entry);
                 }
             }
             header_status = archive.read_next_header(&mut archive_entry);
@@ -3236,29 +3290,11 @@ pub(crate) mod bindings {
         check(archive.read_close(), "close read archive")?;
         check(archive.read_free(), "close read archive")?;
 
-        let entries = JSArray::create_empty(global, entries_info.len())?;
-
-        for (i, entry) in entries_info.into_iter().enumerate() {
-            let obj = JSValue::create_empty_object(global, 0);
-            obj.put(global, b"pathname", entry.pathname.into_js(global)?);
-            let kind = match entry.kind {
-                bun_sys::FileKind::Unknown => global.common_strings().unknown(),
-                kind => BunString::static_(file_kind_tag(kind)).to_js(global)?,
-            };
-            obj.put(global, b"kind", kind);
-            obj.put(global, b"perm", JSValue::js_number(f64::from(entry.perm)));
-            if let Some(contents) = entry.contents {
-                obj.put(global, b"contents", contents.into_js(global)?);
-            }
-            entries.put_index(global, u32::try_from(i).expect("int cast"), obj)?;
-        }
-
-        let result = JSValue::create_empty_object(global, 4);
-        result.put(global, b"entries", entries);
-        result.put(global, b"size", JSValue::js_number(tarball.len() as f64));
-        result.put(global, b"shasum", shasum_str.into_js(global)?);
-        result.put(global, b"integrity", integrity_value);
-
-        Ok(result)
+        Ok(Tarball {
+            entries,
+            size: tarball.len(),
+            shasum: shasum_str,
+            integrity,
+        })
     }
 }

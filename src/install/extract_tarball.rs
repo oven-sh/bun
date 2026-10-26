@@ -31,11 +31,12 @@ pub struct ExtractTarball {
     /// story as `cache_dir`).
     pub(crate) temp_dir: Fd,
     pub(crate) dependency_id: DependencyID,
-    /// `PackageManager::skips_verify`, which the cache lookup goes by as well.
+    /// The value of `PackageManager::skips_verify`, which the cache lookup also uses.
     pub(crate) skip_verify: bool, // = false
     pub(crate) in_trusted_dependencies: bool,
     pub(crate) integrity: Integrity, // = Integrity::default()
-    /// This run cannot pin the row (`pins_tarballs`): `url` names the cache entry.
+    /// This run can't pin the dependency (see `pins_tarballs`), so the cache entry is named after
+    /// `url`.
     pub(crate) stays_unpinned: bool,
     pub(crate) url: StringOrTinyString,
     /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,
@@ -69,7 +70,8 @@ impl ExtractTarball {
         Ok(result)
     }
 
-    /// Settled before extracting: a `file:` / URL tarball's cache entry is named after it.
+    /// Determined before extracting, because the cache entry of a `file:` or URL tarball is named
+    /// after it.
     pub(crate) fn lockfile_integrity(&self, compute: impl FnOnce() -> Integrity) -> Integrity {
         match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
@@ -533,7 +535,8 @@ impl ExtractTarball {
                     } else {
                         *integrity
                     };
-                    // Says which bytes a copy in node_modules is of: `PackageInstall::verify`.
+                    // Records which bytes a copy in node_modules came from. See
+                    // `PackageInstall::verify`.
                     let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
                         &mut bufs.json_path_buf.0,
                         &[tmpname.as_bytes(), b".bun-tag"],
@@ -576,7 +579,8 @@ impl ExtractTarball {
                     bun_sys::make_path::make_path(cache_dir, &folder_name[..scope_len as usize]);
             }
 
-            // Read in staging: a package.json that fails the install must not become a cache hit.
+            // Read it in the staging folder, so that a package.json that fails the install never
+            // becomes a cache hit.
             let needs_json = match self.resolution.tag {
                 // TODO remove extracted files not matching any globs under "files"
                 ResolutionTag::Github

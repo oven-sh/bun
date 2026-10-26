@@ -21,7 +21,7 @@ const LINK_OUTSIDE_OF_HEAD: Message = Message::new(
 pub struct State<'a> {
     /// The `name` of each `export default name;`.
     default_exports: Option<FxHashSet<Name<'a>>>,
-    /// That something is in what is exported by default.
+    /// Caches whether a node is inside the default export.
     in_export_default: AncestorMemo<'a, ()>,
 }
 
@@ -57,7 +57,7 @@ impl Rule for NoPageCustomFont {
     }
 }
 
-/// The `a` of the `const a = ..` whose whole initializer `e` is.
+/// Returns the `a` in `const a = ..` if `e` is the whole initializer.
 fn name_of_declarator(e: Expr<'_>) -> Option<Name<'_>> {
     match e.parent() {
         Node::VarDecl(declarator) if !e.is_parenthesized() => declarator.pat().as_ident(),
@@ -65,7 +65,7 @@ fn name_of_declarator(e: Expr<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// The `name` of each `export default name;`.
+/// Returns the `name` of each `export default name;`.
 fn default_exports<'a>(file: &'a File<'a>) -> FxHashSet<Name<'a>> {
     let exported = file.body().iter().filter_map(|stmt| match stmt.kind() {
         StmtKind::ExportDefault(id) if !id.is_parenthesized() => id.as_ident(),

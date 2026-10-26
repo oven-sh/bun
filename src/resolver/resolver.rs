@@ -7001,20 +7001,18 @@ impl<'b> BrowserMapPath<'b> {
 }
 
 /// `path` may come by `dir.abs_real_path`; "sideEffects" and "browser" keys go by `dir.abs_path`.
+/// The walked path is joined as `entry_abs_path` joins one: `dir.abs_path` can have `//` or `/./`.
 fn with_path_as_walked<R>(dir: &DirInfo::DirInfo, path: &[u8], f: impl FnOnce(&[u8]) -> R) -> R {
     if !dir.abs_real_path.is_empty() {
         let file = bun_paths::basename(path);
         if !file.is_empty() && file.len() < path.len() && path.ends_with(file) {
             let parent = strings::trim_right(&path[..path.len() - file.len()], &[SEP]);
             if parent == strings::trim_right(dir.abs_real_path, &[SEP]) {
-                let walked = strings::trim_right(dir.abs_path, &[SEP]);
-                let len = walked.len() + 1 + file.len();
                 let mut buf = bun_paths::path_buffer_pool::get();
-                if len <= buf.len() {
-                    buf[..walked.len()].copy_from_slice(walked);
-                    buf[walked.len()] = SEP;
-                    buf[walked.len() + 1..len].copy_from_slice(file);
-                    return f(&buf[..len]);
+                let walked =
+                    Fs::FileSystem::get().abs_buf_checked(&[dir.abs_path, file], &mut buf[..]);
+                if let Some(walked) = walked {
+                    return f(walked);
                 }
             }
         }

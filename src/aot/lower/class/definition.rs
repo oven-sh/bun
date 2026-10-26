@@ -228,7 +228,11 @@ impl FileLowering<'_, '_, '_, '_> {
     fn class_store_position(&self, class: ClassId) -> u32 {
         let node = self.hir[class];
         let has_mapped_name = node.name.is_some() && !node.flags.contains(Flags::DEFAULT);
-        let name_length = || String::from_utf8_lossy(self.queries.atom_bytes(node.name)).encode_utf16().count();
+        let name_length = || {
+            String::from_utf8_lossy(self.queries.atom_bytes(node.name))
+                .encode_utf16()
+                .count()
+        };
         match has_mapped_name && name_length() >= "class ".len() {
             true => node.name_pos,
             false => node.text_start,

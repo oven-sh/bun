@@ -1136,15 +1136,27 @@ fn default_exports_of_types() {
         ("export default T; interface T {}", false),
         ("export interface T {} export default T;", false),
         ("type T = number; export default T;", false),
-        ("namespace T { export type U = number; } export default T;", false),
-        ("declare namespace T { const a: number; } export default T;", false),
+        (
+            "namespace T { export type U = number; } export default T;",
+            false,
+        ),
+        (
+            "declare namespace T { const a: number; } export default T;",
+            false,
+        ),
         ("declare global { interface T {} } export default T;", false),
-        ("interface T {} declare const T: number; export default T;", false),
+        (
+            "interface T {} declare const T: number; export default T;",
+            false,
+        ),
         ("interface Map {} export default Map;", false),
         ("interface T {} export default T as unknown;", false),
         ("interface T {} const T = 1; export default T;", true),
         ("interface T {} export default [T];", true),
-        ("namespace T { export const a = 1; } export default T;", true),
+        (
+            "namespace T { export const a = 1; } export default T;",
+            true,
+        ),
         ("declare const T: number; export default T;", true),
         ("declare class T {} export default T;", true),
         ("import type { T } from './t'; export default T;", true),
@@ -1159,10 +1171,14 @@ fn default_exports_of_types() {
             assert_eq!(is_dead, !exports_value, "{text}");
         });
     }
-    analyzed("a.js", "/** @typedef {number} T */ export default T;", |s| {
-        let statement = first_stmt(s, |kind| matches!(kind, StmtKind::ExportDefault(_)));
-        assert!(s.bound.exports_value(statement));
-    });
+    analyzed(
+        "a.js",
+        "/** @typedef {number} T */ export default T;",
+        |s| {
+            let statement = first_stmt(s, |kind| matches!(kind, StmtKind::ExportDefault(_)));
+            assert!(s.bound.exports_value(statement));
+        },
+    );
 }
 
 #[test]

@@ -1248,6 +1248,39 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                 _ => {}
             }
 
+            // "module.exports = __toCommonJS(exports, 1);" once the body ran, so an external `require()` gets that export too.
+            if flags.wrap != crate::WrapKind::Cjs
+                && flags.force_include_exports_for_entry_point
+                && c.graph.meta.items_resolved_exports()[source_index as usize]
+                    .contains(b"module.exports")
+            {
+                stmts.push(Stmt::assign(
+                    Expr::init(
+                        E::Dot {
+                            target: Expr::init_identifier(
+                                c.unbound_module_ref,
+                                bun_ast::Loc::EMPTY,
+                            ),
+                            name: b"exports".into(),
+                            name_loc: bun_ast::Loc::EMPTY,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    ),
+                    Expr::init(
+                        E::Call {
+                            target: Expr::init_identifier(to_common_js_ref, bun_ast::Loc::EMPTY),
+                            args: bun_ast::ExprNodeList::from_slice(&[
+                                Expr::init_identifier(ast.exports_ref, bun_ast::Loc::EMPTY),
+                                Expr::init(E::Number::new(1.0), bun_ast::Loc::EMPTY),
+                            ]),
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    ),
+                ));
+            }
+
             // TODO:
             // If we are generating CommonJS for node, encode the known export names in
             // a form that node can understand them. This relies on the specific behavior

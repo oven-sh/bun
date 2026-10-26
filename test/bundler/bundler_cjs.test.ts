@@ -1435,4 +1435,78 @@ describe("bundler", () => {
       stdout: '{"name":"api","early":"object"} {"type":"object","version":2,"esModule":true}',
     },
   });
+
+  // A `--format=cjs` bundle of such an entry point is what CommonJS code
+  // outside the bundle loads: its `require()` gets the export too, the same
+  // value `require("./lib.mjs")` of the source gives in Node.js and `bun run`.
+  const formatCjsEntryUser = /* js */ `
+    const Foo = require("./out.js");
+    class Bar extends Foo {}
+    console.log(typeof Foo, new Bar() instanceof Foo, Foo.inBundle(), require("./out.js") === Foo);
+  `;
+  itBundled("cjs/require_esm_module_exports_export_format_cjs_entry", {
+    files: {
+      "/lib.mjs": /* js */ `
+        export default class Foo {
+          static inBundle() { return "static"; }
+        }
+        export const named = 1;
+        export { Foo as "module.exports" };
+      `,
+    },
+    runtimeFiles: { "/user.cjs": formatCjsEntryUser },
+    format: "cjs",
+    target: "node",
+    run: {
+      file: "/user.cjs",
+      stdout: "function true static true",
+    },
+  });
+
+  // The same entry point behind its `__esm` wrapper: a file in the bundle
+  // requires it too, and both `require()` calls agree.
+  itBundled("cjs/require_esm_module_exports_export_format_cjs_entry_wrapped", {
+    files: {
+      "/lib.mjs": /* js */ `
+        import { inBundle } from "./inside.cjs";
+        export default class Foo {}
+        Foo.inBundle = inBundle;
+        export { Foo as "module.exports" };
+      `,
+      "/inside.cjs": /* js */ `
+        exports.inBundle = () => typeof require("./lib.mjs");
+      `,
+    },
+    runtimeFiles: { "/user.cjs": formatCjsEntryUser },
+    entryPoints: ["/lib.mjs"],
+    format: "cjs",
+    target: "node",
+    run: {
+      file: "/user.cjs",
+      stdout: "function true function true",
+    },
+  });
+
+  // An entry point whose export is `null` still gives the namespace copy.
+  itBundled("cjs/require_esm_module_exports_export_format_cjs_entry_null", {
+    files: {
+      "/lib.mjs": /* js */ `
+        const n = null;
+        export const a = 1;
+        export { n as "module.exports" };
+      `,
+    },
+    runtimeFiles: {
+      "/user.cjs": /* js */ `
+        const m = require("./out.js");
+        console.log(typeof m, m.a, m["module.exports"], m.__esModule);
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    run: {
+      file: "/user.cjs",
+      stdout: "object 1 null true",
+    },
+  });
 });

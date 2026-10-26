@@ -694,18 +694,26 @@ devTest("a stylesheet that was not there to read and that another stylesheet fin
     await second.style(".second").color.expect.toBe("green");
   },
 });
-// The build of /first keeps the image. In the build of /second, the script gets the kept image and
-// the stylesheet reads the file. Each file that names the image fails, also when it read nothing.
-for (const last of ["second.ts", "second.css"]) {
+// The build of /first keeps the image. In the build of /second, the stylesheet reads the file, and the
+// dev server then lists the directory again. A script that loads before that gets the kept image and
+// reads nothing. A script that loads after it does not resolve the import. Each file that names the
+// image fails.
+for (const [early, last] of [
+  ["second.css", "second.ts"],
+  ["second.ts", "second.css"],
+]) {
   devTest(`a script and a stylesheet fail for an image that was deleted, and ${last} loads last`, {
     files: {
       ...servePlugin(["first", "second"]),
       "plugin.ts": `
+        import { basename } from "node:path";
         export default {
           name: "loads one file after every other file",
           setup(build) {
-            build.onLoad({ filter: /${last.replace(".", "\\\\.")}$/ }, async args => {
-              await args.defer();
+            build.onLoad({ filter: /second[.](ts|css)$/ }, async args => {
+              const file = basename(args.path);
+              if (file === "${last}") await args.defer();
+              (globalThis.counts.loaded ??= []).push(file);
             });
           },
         };
@@ -731,6 +739,7 @@ for (const last of ["second.ts", "second.css"]) {
           'second.ts:1:17: error: Could not resolve: "./node_modules/lib/img.svg"',
         ],
       });
+      expect(await dev.fetch("/counts").json()).toEqual({ loaded: [early, last] });
       await c.expectReload(async () => {
         await dev.write("node_modules/lib/img.svg", `<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>`);
       });
@@ -1433,9 +1442,6 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   // because the dev server does not keep a barrel. The plugin gives the server graph the source, and
   // deletes the file before the client graph reads it.
   const barrelOfTwoGraphs = (restore: boolean) => ({
-    skip: [
-      "win32" as const, // the build of /two still reads the barrel and passes
-    ],
     framework: { ...minimalFramework, serverComponents: oneServerGraph },
     pluginFile: `
       import fs from "node:fs";
@@ -1450,7 +1456,7 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
             build.onLoad({ filter: /CompB[.]ts$/ }, () => {
               secondBuild = true;
             });
-            build.onLoad({ filter: /[\\/]bar[\\/]index[.]js$/ }, async args => {
+            build.onLoad({ filter: /[\\\\/]bar[\\\\/]index[.]js$/ }, async args => {
               if (args.side === "server") {
                 const contents = fs.readFileSync(args.path, "utf8");
                 if (++serverLoads === 2) serverHasSource.resolve();
@@ -1513,9 +1519,6 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   });
   // The route has the server copy of the barrel when the SSR graph does not find the file.
   devTest("a barrel that only the SSR graph does not find fails the file of that graph", {
-    skip: [
-      "win32", // the build of the save still reads the barrel for the SSR graph and passes
-    ],
     framework: { ...minimalFramework, serverComponents: separateSSRGraph },
     // A request does not bundle the route again, so the page shows the errors of the build of the save.
     env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
@@ -1531,7 +1534,7 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
               await args.defer();
               deleteAtNextLoad = true;
             });
-            build.onLoad({ filter: /[\\/]bar[\\/]index[.]js$/ }, args => {
+            build.onLoad({ filter: /[\\\\/]bar[\\\\/]index[.]js$/ }, args => {
               if (!deleteAtNextLoad) return;
               deleteAtNextLoad = false;
               fs.unlinkSync(args.path);
@@ -1578,10 +1581,6 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   // The read of late.ts fails. The onLoad of second.ts continues when every other module is loaded,
   // and writes late.ts back. second.ts then imports it.
   const lateOnce = {
-    skip: [
-      // The build reads late.ts, and the onLoad of second.ts throws "path must be a string or a file descriptor".
-      "win32" as const,
-    ],
     framework: { ...minimalFramework, serverComponents: separateSSRGraph },
     pluginFile: `
       import fs from "node:fs";
@@ -1591,7 +1590,7 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
         {
           name: "deletes late.ts before the first read and writes it back for the second",
           setup(build) {
-            build.onLoad({ filter: /([\\/]lib[\\/]late|second)[.]ts$/ }, async args => {
+            build.onLoad({ filter: /([\\\\/]lib[\\\\/]late|second)[.]ts$/ }, async args => {
               if (basename(args.path) === "second.ts") {
                 await args.defer();
                 fs.writeFileSync(late, 'export const value = "restored";');

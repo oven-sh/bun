@@ -7764,8 +7764,8 @@ describe("css tests", () => {
         ".a:fullscreen:not(.b,.c){background:url(data:,a)}",
       ])("%s", source => {
         const builds = [source];
-        for (let i = 0; i < 4; i++) builds.push(cssInternals.minifyTest(builds[i], "", targets));
-        expect(builds[4]).toBe(builds[3]);
+        for (let i = 0; i < 6; i++) builds.push(cssInternals.minifyTest(builds[i], "", targets));
+        expect(builds[6]).toBe(builds[5]);
       });
     });
 

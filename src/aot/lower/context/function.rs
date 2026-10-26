@@ -1,5 +1,6 @@
 use std::mem::take;
 
+use bun_sema::hir::ExprId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::FileLowering;
@@ -32,6 +33,8 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) enum_constants: FxHashSet<ValueId>,
     // Where the declarations end that Bun's transpiler prints in one statement with the next one.
     pub(in crate::lower) joined_declarations_end: Option<u32>,
+    // Where the operators of a binary expression are reported, for the expressions that have operands with operators of their own.
+    pub(in crate::lower) operator_positions: FxHashMap<ExprId, u32>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -61,6 +64,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             unclaimed_narrowings: FxHashMap::default(),
             enum_constants: FxHashSet::default(),
             joined_declarations_end: None,
+            operator_positions: FxHashMap::default(),
             handler: None,
             position,
             nesting_depth: 0,
@@ -89,6 +93,12 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(crate) fn set_position(&mut self, position: u32) {
         self.position = position;
         self.builder.set_position(Some(position));
+    }
+
+    // What is emitted until the next position is reported at `reported` when it throws, and stands at `written` in the source text.
+    pub(crate) fn set_position_of_text_elsewhere(&mut self, reported: u32, written: u32) {
+        self.set_position(reported);
+        self.builder.set_written_position(written);
     }
 
     pub(crate) fn position(&self) -> u32 {

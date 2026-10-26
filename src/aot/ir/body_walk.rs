@@ -1,7 +1,7 @@
 use super::body::{FieldWord, WELL_FORMED, Words};
 use super::generated::{
     BlockHead, Opcode, ParameterHead, TargetHead, TerminatorHead, TerminatorKind, ValueHead,
-    visit_terminator_fields, visit_value_fields,
+    WRITTEN_POSITION_FOLLOWS, visit_terminator_fields, visit_value_fields,
 };
 
 fn read_words<const N: usize, W: Words + ?Sized>(words: &W, at: usize) -> [u32; N] {
@@ -46,8 +46,9 @@ fn walk_value<W: Words + ?Sized>(
 ) -> usize {
     let head = read_words::<{ ValueHead::WORDS }, W>(words, at);
     let head = ValueHead::from_words(&head).expect(WELL_FORMED);
-    let opcode = Opcode::from_wire(head.opcode).expect(WELL_FORMED);
-    visit_value_fields(opcode, words, at + ValueHead::WORDS, visit).expect(WELL_FORMED)
+    let opcode = Opcode::from_wire(head.opcode & !WRITTEN_POSITION_FOLLOWS).expect(WELL_FORMED);
+    let end = visit_value_fields(opcode, words, at + ValueHead::WORDS, visit).expect(WELL_FORMED);
+    end + usize::from(head.opcode & WRITTEN_POSITION_FOLLOWS != 0)
 }
 
 fn walk_terminator<W: Words + ?Sized>(

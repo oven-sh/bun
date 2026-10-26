@@ -1,4 +1,4 @@
-// What a stack trace of plain Bun shows for each kind of site: JavaScriptCore reports a divot, and Bun's source map takes it back to the last token that js_printer maps.
+// What a stack trace of plain Bun shows for each kind of site: JavaScriptCore reports a divot; the source map takes it back to the last token that js_printer maps.
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="asksIn"
 // CHECK: = PropHas {{*}} @2292
@@ -29,7 +29,7 @@
 // CHECK-LABEL: function {{*}}name="deletes"
 // CHECK: = PropDelete {{*}} @3197
 // CHECK-LABEL: function {{*}}name="destructures"
-// CHECK: = PropGet {{*}}key="x"{{*}} @3260
+// CHECK: = PropGet {{*}}key="x"{{*}} @3260 @3252
 // CHECK-LABEL: function {{*}}name="enumerates"
 // CHECK: = ForInOpen {{*}} @3349
 // CHECK-LABEL: function {{*}}name="iterates"

@@ -160,6 +160,7 @@ pub struct ValueView<'a> {
     pub id: ValueId,
     pub opcode: Opcode,
     pub position: Option<u32>,
+    pub written_position: Option<u32>,
     pub fields: &'a [u32],
 }
 

@@ -1,4 +1,4 @@
-use bun_sema::bind::{Binding, Bound, ClassOwner, CodeUnit, Decl};
+use bun_sema::bind::{Binding, Bound, ClassOwner, CodeUnit, Decl, ScopeId};
 use bun_sema::hir::{ClassId, ExprId, ExprKind, FnId, ParamId, PatKind};
 
 use super::{ClassPlan, InitializerCall, InjectionPoint, fields, is_derived_class};
@@ -8,6 +8,7 @@ use crate::ir::generated::{
 };
 use crate::ir::{DeclaredType, FunctionId, FunctionKey, StringId, TypeTable, ValueId};
 use crate::lower::call::Arguments;
+use crate::lower::layouts::class_position;
 use crate::lower::member::PropertyName;
 use crate::lower::scope::ScopeSlot;
 use crate::lower::{FileLowering, FunctionLowering, convert, function};
@@ -96,7 +97,8 @@ pub(super) fn declare_constructor(
     }
     let key = FunctionKey::ImplicitConstructor(file.own_class(class));
     file.declare_function(key, |file| {
-        let position = file.hir[class].name_pos;
+        // The engine knows a constructor that is not written by the position of its class.
+        let position = class_position(&file.hir[class]);
         let mut header =
             function::create_header(file, key, FunctionKind::BaseConstructor, position);
         if is_derived_class(file.hir, class) {
@@ -149,6 +151,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.emit_injected_steps(class, &plan, this);
         }
         this
+    }
+
+    // The constructor, and the function that initializes an instance, for a super call in evaluated text.
+    pub(in crate::lower) fn get_super_call_parts(
+        &mut self,
+        class: ClassId,
+        constructor_scope: ScopeId,
+    ) -> Option<(ValueId, Option<ValueId>)> {
+        let plan = self.file.class_plan(class);
+        if !plan.this_binding_elements.is_empty() {
+            return None;
+        }
+        let callee = self.get_slot(constructor_scope, ScopeSlot::Callee);
+        let is_initialized_at_binding = plan.initializer_call == InitializerCall::AtThisBinding
+            && !plan.instance_elements.is_empty();
+        let initializer = is_initialized_at_binding.then(|| {
+            let initializer = fields::declare_initializer(self.file, class, false);
+            self.emit_closure(initializer, None)
+        });
+        Some((callee, initializer))
     }
 
     pub(crate) fn emit_constructor_result(&mut self, value: ValueId) -> ValueId {

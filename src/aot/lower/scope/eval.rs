@@ -127,7 +127,13 @@ impl FileLowering<'_, '_, '_, '_> {
             CodeUnit::Function(function) => {
                 let is_derived = self.is_derived_constructor(function);
                 let kind = hir.runtime_function_kind(function);
-                let flags = compute_function_flags(kind, is_derived);
+                let mut flags = compute_function_flags(kind, is_derived);
+                // The engine parses `super()` in a text that the constructor of any class evaluates itself. In a class without a parent the call throws when it runs.
+                if kind == FnKind::Constructor
+                    && !arrow_flags.contains(EvalScopeFlags::IS_IN_ARROW_FUNCTION)
+                {
+                    flags |= EvalScopeFlags::ALLOWS_SUPER_CALL;
+                }
                 (flags, Some(this_scope), bound.function_class(function))
             }
             CodeUnit::FieldInitializer(member) => {

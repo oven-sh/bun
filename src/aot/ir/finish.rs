@@ -12,7 +12,7 @@ use super::builder::{
 };
 use super::generated::{
     BlockHead, Body, Function, Opcode, ParameterHead, TargetHead, TerminatorHead, ValueHead,
-    visit_terminator_fields, visit_value_fields,
+    WRITTEN_POSITION_FOLLOWS, visit_terminator_fields, visit_value_fields,
 };
 use super::ids::{BlockId, Id, TypeId, ValueId};
 
@@ -30,6 +30,7 @@ impl FunctionBuilder {
         let FunctionBuilder {
             mut function,
             values,
+            written_positions,
             field_words,
             mut blocks,
             ssa,
@@ -43,8 +44,12 @@ impl FunctionBuilder {
         close_open_blocks(&mut blocks);
         scratch.order_blocks(&blocks);
         let (value_count, word_count) = scratch.number_values(&blocks, &values);
+        let is_listed =
+            |(value, _): &&(ValueId, u32)| scratch.value_numbers[value.index()].is_some();
+        let word_count = word_count + written_positions.iter().filter(is_listed).count();
         let mut encoder = Encoder {
             values: &values,
+            written_positions: &written_positions,
             field_words: &field_words,
             blocks: &blocks,
             block_numbers: &scratch.block_numbers,
@@ -224,6 +229,7 @@ impl FinishScratch {
 
 struct Encoder<'a> {
     values: &'a [PendingValue],
+    written_positions: &'a [(ValueId, u32)],
     field_words: &'a [u32],
     blocks: &'a [PendingBlock],
     block_numbers: &'a [Option<BlockId>],
@@ -263,14 +269,19 @@ impl Encoder<'_> {
     fn encode_value(&mut self, id: ValueId) {
         let value = &self.values[id.index()];
         let (opcode, fields) = operation_of(value);
+        let written_positions = self.written_positions;
+        let written = written_positions.binary_search_by_key(&id, |&(value, _)| value);
+        let written = written.ok().map(|index| written_positions[index].1);
+        let mark = written.map_or(0, |_| WRITTEN_POSITION_FOLLOWS);
         let head = ValueHead {
-            opcode: opcode.to_wire(),
+            opcode: opcode.to_wire() | mark,
             position: value.position,
         };
         head.append_to(&mut self.words);
         self.encode_fields(fields, |words, visit| {
             visit_value_fields(opcode, words, 0, visit)
         });
+        self.words.extend(written);
     }
 
     fn encode_terminator(&mut self, terminator: &PendingTerminator) {

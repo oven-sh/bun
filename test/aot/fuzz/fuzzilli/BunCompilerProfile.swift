@@ -7,8 +7,12 @@ private let entryPoint = ProcessInfo.processInfo.environment["BUN_FUZZILLI_ENTRY
 
 /// Fuzzilli gives Bun no variable of its own environment but these.
 private let inheritedEnvironment = ProcessInfo.processInfo.environment.filter { name, _ in
-    ["ASAN_SYMBOLIZER_PATH", "BUN_FUZZILLI_CPU_SECONDS", "BUN_FUZZILLI_MEMORY_MEGABYTES", "HOME"].contains(name)
+    name.hasPrefix("BUN_FUZZILLI_") || ["ASAN_SYMBOLIZER_PATH", "HOME"].contains(name)
 }
+
+/// Names of code generators, separated by commas.
+private let disabledByTheEnvironment = (ProcessInfo.processInfo.environment["BUN_FUZZILLI_DISABLED_GENERATORS"] ?? "")
+    .split(separator: ",").map(String.init)
 
 let bunCompilerProfile = Profile(
     processArgs: { randomize in
@@ -16,10 +20,14 @@ let bunCompilerProfile = Profile(
             "build",
             "--compile",
             "--aot",
-            "--aot-validate",
-            "--aot-verify-each-pass",
             "--aot-threads=1",
+            // `bun run` prints a function's text as its transpiler wrote it. Bun hides the text in both runs.
+            "--no-compile-function-source",
         ]
+        // A program that uses Bun's own modules compiles them too, and checking those takes most of the time.
+        if ProcessInfo.processInfo.environment["BUN_FUZZILLI_CHECKS_PASSES"] != "0" {
+            args += ["--aot-validate", "--aot-verify-each-pass"]
+        }
         if randomize {
             if probability(0.2) { args.append("--aot-heat=everything-is-hot") }
             else if probability(0.2) { args.append("--aot-heat=everything-is-cold") }
@@ -58,18 +66,22 @@ let bunCompilerProfile = Profile(
         ("fuzzilli('FUZZILLI_CRASH', 0)", .shouldCrash)
     ],
 
-    additionalCodeGenerators: [],
+    additionalCodeGenerators: bunCodeGenerators,
 
     additionalProgramTemplates: WeightedList<ProgramTemplate>([]),
 
-    disabledCodeGenerators: [],
+    // A compiled program can't replace a built-in, and a built-in named here can be a call of require().
+    disabledCodeGenerators: ["BuiltinOverwriteGenerator"] + disabledByTheEnvironment,
 
-    // They learn from a run, and nothing runs.
+    // They read what the program writes with fuzzilli('FUZZILLI_PRINT', ..), which a compiled program doesn't have.
     disabledMutators: ["ExplorationMutator", "ProbingMutator"],
 
-    additionalBuiltins: [:],
+    additionalBuiltins: [
+        // Bun puts its declaration in front of every program.
+        "printValue": .function([.string, .jsAnything] => .undefined)
+    ].merging(BunBuiltins.builtins) { ours, _ in ours },
 
-    additionalObjectGroups: [],
+    additionalObjectGroups: BunBuiltins.objectGroups,
 
     additionalEnumerations: [],
 

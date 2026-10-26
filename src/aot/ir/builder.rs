@@ -149,6 +149,9 @@ pub struct FunctionBuilder {
     pub(super) blocks: Vec<PendingBlock>,
     pub(super) current_block: BlockId,
     pub(super) position: Option<u32>,
+    written_position: Option<u32>,
+    // In the order of the values. Only a value that is written elsewhere than at its position has an entry.
+    pub(super) written_positions: Vec<(ValueId, u32)>,
     pub(super) ssa: SsaState,
     pub(super) finish_scratch: FinishScratch,
 }
@@ -163,6 +166,8 @@ impl FunctionBuilder {
             blocks: scratch.blocks,
             current_block: ENTRY_BLOCK,
             position: None,
+            written_position: None,
+            written_positions: Vec::new(),
             ssa: scratch.ssa,
             finish_scratch: scratch.finish,
         };
@@ -322,6 +327,13 @@ impl FunctionBuilder {
 
     pub fn set_position(&mut self, position: Option<u32>) {
         self.position = position;
+        self.written_position = None;
+    }
+
+    // Until the next position: where the source text has what is emitted. The position is where an error is reported.
+    pub fn set_written_position(&mut self, written: u32) {
+        let differs = self.position.is_some_and(|position| position != written);
+        self.written_position = differs.then_some(written);
     }
 
     #[cfg(test)]
@@ -348,6 +360,9 @@ impl FunctionBuilder {
             definition: PendingDefinition::Operation { opcode, fields },
             position: self.position,
         });
+        if let Some(written) = self.written_position {
+            self.written_positions.push((value, written));
+        }
         self.blocks[self.current_block.index()].values.push(value);
         value
     }

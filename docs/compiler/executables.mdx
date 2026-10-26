@@ -1025,7 +1025,7 @@ Pass `--asset` multiple times to embed several directories (for example `--asset
 
 With `--aot`, modules keep their places relative to one another, and so do the files you embed. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`, the same as under `bun run`, and `--asset node_modules/@img` is at `node_modules/@img`. A file or folder from outside of the working directory keeps only its own name: `--asset ../shared` is at `shared`, at the top of the embedded files.
 
-`process.chdir()` works on an embedded directory. After it, `process.cwd()`, `path.resolve()` and the relative paths that you pass to `node:fs` and `Bun.file()` start there.
+`process.chdir()` works on an embedded directory. After it, `process.cwd()`, `path.resolve()` and the relative paths that you pass to `node:fs`, `Bun.file()` and `Bun.Glob` start there.
 
 ```ts index.ts icon="/icons/typescript.svg"
 process.chdir(import.meta.dir);

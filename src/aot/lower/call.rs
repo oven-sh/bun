@@ -57,6 +57,7 @@ pub(in crate::lower) struct CallOptions<'t> {
     pub(in crate::lower) tail: Tail<'t>,
     pub(in crate::lower) expected_result: Option<ExpectedResultId>,
     pub(in crate::lower) is_never_inlined: bool,
+    pub(in crate::lower) is_reflect_construct_syntax: bool,
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -189,6 +190,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 options.expected_result,
                 IS_ANNOTATED_PURE,
                 options.is_never_inlined,
+                options.is_reflect_construct_syntax,
             ),
             Arguments::List(list) => self.builder.call_list(
                 callee.function,
@@ -228,6 +230,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             tail: Tail::No,
             expected_result: self.find_expected_result(call),
             is_never_inlined: false,
+            is_reflect_construct_syntax: self.file.is_reflect_construct_syntax(site.callee)
+                && matches!(&arguments, Arguments::Values(values) if values.len() >= 2),
         };
         self.set_position(self.file.last_mapped_position(site.callee));
         match tail {
@@ -305,6 +309,7 @@ pub(in crate::lower) fn emit_call_of(
         tail: Tail::No,
         expected_result: None,
         is_never_inlined: false,
+        is_reflect_construct_syntax: false,
     };
     lowering.emit_call_at(callee, arguments, options)
 }

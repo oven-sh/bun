@@ -1,0 +1,7 @@
+plus no error no error
+template no error no error
+assigned no error no error
+loop no error no error
+typeOf no error no error
+held no error no error
+result no error no error

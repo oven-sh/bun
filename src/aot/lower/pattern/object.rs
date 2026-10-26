@@ -52,7 +52,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             };
             let prepared = self.prepare_target(property.target);
-            self.set_position(source_position);
+            self.set_position_of_text_elsewhere(source_position, property.position);
             let read = self.emit_get(object, name);
             self.set_position(property.position);
             let read = super::apply_default(self, read, property.default, property.target);

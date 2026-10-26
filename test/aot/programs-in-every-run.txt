@@ -46,6 +46,7 @@ arrays/numbers-come-into-copies-of-lists-by-every-road
 arrays/numbers-read-from-one-list-are-stored-into-another
 arrays/numbers-with-undefined-or-null-among-them-are-read-stored-and-grown
 arrays/objects-with-elements-find-what-is-hung-above-their-prototype-later
+arrays/objects-with-elements-made-before-and-behind-a-proxy-that-is-hung-above-them
 arrays/one-operator-takes-what-a-typed-array-or-iterator-hands-out-and-it-is-undefined
 arrays/prototype-changed-in-callback
 arrays/push-grows-long-arrays
@@ -84,6 +85,8 @@ async-and-generators/awaited-steps-of-a-generator-that-lived-through-a-collectio
 async-and-generators/awaited-steps-of-generators-that-need-a-barrier
 async-and-generators/awaited-steps-that-wait-or-do-not
 async-and-generators/awaited-steps-under-stores-that-wait-or-do-not
+async-and-generators/coroutines-that-drop-an-object-before-a-loop-of-collections-and-waits-1
+async-and-generators/coroutines-that-drop-an-object-before-a-loop-of-collections-and-waits-2
 async-and-generators/each-loop-over-its-own-async-iterator-of-promises
 async-and-generators/finally-shares-native-executables
 async-and-generators/first-suspensions-of-many-frame-sizes
@@ -102,6 +105,8 @@ async-and-generators/many-values-across-await-in-try
 async-and-generators/object-read-after-await
 async-and-generators/objects-dropped-before-a-yield-are-collected
 async-and-generators/objects-dropped-before-an-await-are-collected
+async-and-generators/objects-last-read-before-an-await-in-a-large-frame-are-collected
+async-and-generators/objects-last-read-between-two-awaits-are-collected
 async-and-generators/only-async-functions-are-async-frames
 async-and-generators/pending-request-handler-keeps-alive
 async-and-generators/rest-of-an-awaited-step-with-few-members-told-apart
@@ -134,6 +139,7 @@ builtin-modules/an-unknown-module-behind-the-node-prefix-has-its-own-error-code
 builtin-modules/bun-ffi-calls-into-the-c-library
 builtin-modules/default-export-and-namespace-of-modules-that-fail
 builtin-modules/eleven-node-modules-are-imported-and-every-pass-is-verified
+builtin-modules/functions-of-built-in-modules-print-as-under-bun-run
 builtin-modules/functions-of-the-library-that-host-objects-hold-are-read-and-never-called-in-a-validating-build
 builtin-modules/init-paths-of-node-module-is-called
 builtin-modules/json-parse-of-arrays-with-one-object-many-objects-and-strings-of-one-character
@@ -170,6 +176,7 @@ calls-fast-paths/literal-for-destructured-parameter
 calls-fast-paths/rest-read-in-typed-code
 calls-fast-paths/uncurry-this
 calls-of-proxies/a-call-through-more-proxies-than-the-stack-holds-is-a-range-error
+calls-of-proxies/a-call-through-more-proxies-with-ordinary-handlers-than-the-stack-holds
 calls-of-proxies/a-stack-lists-a-proxy-at-its-first-call-only
 calls-of-proxies/recursion-without-trap
 calls-of-proxies/tail-calls-through-proxies-from-code-made-at-run-time
@@ -205,6 +212,8 @@ calls/construct-trace-forwarding-function
 calls/deep-tail-recursion-between-a-spread-call-and-a-call-with-a-short-list
 calls/deep-tail-recursion-through-rest-parameters-in-a-validating-build
 calls/deep-tail-recursion-where-one-function-answers-any-and-the-next-declares-a-type
+calls/deep-tail-recursion-where-parsed-text-comes-back-to-a-function-that-declares-a-type
+calls/deep-tail-recursion-where-what-comes-back-is-not-of-the-declared-type
 calls/define-properties-returns-its-target-near-the-end-of-the-stack
 calls/destructured-parameters
 calls/errors-of-json-cast-to-a-type-list-the-callers-of-json
@@ -272,6 +281,7 @@ classes-and-closures/a-closure-made-anew-on-every-turn-is-read-on-that-turn
 classes-and-closures/a-closure-made-anew-on-every-turn-is-read-on-that-turn-in-module-code
 classes-and-closures/a-closure-made-anew-on-the-way-a-test-always-takes-is-read-on-that-turn
 classes-and-closures/a-closure-over-another-object-is-stored-by-name-into-a-field
+classes-and-closures/a-large-name-given-to-a-function-at-run-time-is-held-once
 classes-and-closures/a-name-is-looked-for-in-an-object-behind-a-read-of-it-in-a-loop
 classes-and-closures/a-setter-without-a-getter-hides-a-member-of-object-prototype
 classes-and-closures/accessors-under-names-that-a-class-has-from-its-creation
@@ -288,6 +298,7 @@ classes-and-closures/computed-accessor-name-too-long
 classes-and-closures/computed-member-of-a-class-nobody-constructs
 classes-and-closures/defining-the-name-a-function-already-has
 classes-and-closures/derived-constructor-result-in-try
+classes-and-closures/functions-named-by-computed-keys-come-and-go
 classes-and-closures/hoisted-function-captures
 classes-and-closures/inner-functions-that-call-each-other-and-variables-that-get-another-function
 classes-and-closures/instanceof-where-constructor-functions-and-classes-share-a-prototype-object
@@ -345,6 +356,7 @@ classes/static-field-replaces-a-static-method-that-a-loop-stored-to
 classes/static-fields-named-like-static-methods-and-accessors-are-listed
 classes/static-fields-whose-type-is-one-number-are-read-while-they-change
 classes/stores-to-a-function-below-another-function-strict
+classes/super-call-in-a-text-evaluated-by-the-constructor-of-a-class-without-a-parent
 classes/the-constructor-above-lets-the-object-out-before-the-fields-below-are-defined
 classes/the-name-of-a-class-is-read-while-its-decorators-run
 classes/the-prototype-object-of-a-class-is-no-instance-of-it
@@ -353,7 +365,11 @@ classes/unread-field-is-stored-below-a-replaced-parent
 classes/what-a-loop-reads-is-changed-inside-the-loop-without-naming-it
 closed-world/a-member-of-bun-is-named-on-a-copy-of-bun-behind-many-calls
 closed-world/a-member-of-bun-is-named-on-a-parameter-that-took-another-value-first
+closed-world/a-member-of-bun-is-named-on-an-object-below-bun
+closed-world/a-member-of-bun-is-named-on-bun-read-off-the-global-object
+closed-world/a-member-of-bun-is-named-on-what-a-promise-is-settled-with
 closed-world/a-member-of-bun-is-named-on-what-an-async-function-returns
+closed-world/a-member-of-bun-is-replaced-behind-many-calls
 closed-world/a-name-asked-of-an-instance-and-of-primitives
 closed-world/a-name-asked-of-process-and-of-other-things
 closed-world/a-polyfill-installed-by-assign-on-computed-targets
@@ -372,6 +388,7 @@ closed-world/files-that-load-as-host-objects-by-name
 closed-world/functions-native-code-calls/timer-delay-known-at-run-time
 closed-world/import-of-text-refused
 closed-world/members-of-built-in-objects-are-redefined-by-closures-handed-on-through-a-spread-beside-evaluated-text
+closed-world/members-of-process-are-listed-once-a-value-has-carried-it-out
 closed-world/package-outside-sees-no-module-object-of-the-program
 closed-world/replaceable-members-out-of-a-table-beside-an-external-package
 closed-world/script-declarations-over-every-global
@@ -425,10 +442,17 @@ commonjs/a-commonjs-file-requires-the-entry-point-whose-first-import-takes-anoth
 commonjs/a-commonjs-file-requires-the-es-module-that-an-import-call-is-loading
 commonjs/a-commonjs-file-requires-the-es-module-that-hands-on-all-its-names
 commonjs/a-constructor-function-that-only-unseen-code-constructs
+commonjs/a-file-that-a-function-requires-takes-names-out-of-a-built-in-module-by-a-pattern
 commonjs/a-function-stored-as-push-on-the-list-of-children-is-called-for-each-file-required
 commonjs/a-module-imports-a-name-stored-on-the-exports-object-that-the-file-replaced-with-a-function
 commonjs/a-module-imports-a-name-stored-on-the-exports-object-that-the-file-replaced-with-a-string
 commonjs/a-module-imports-a-name-stored-on-the-exports-object-that-the-file-replaced-with-an-object
+commonjs/a-module-imports-a-name-through-a-star-export-of-a-file-that-never-stores-it
+commonjs/a-module-imports-a-name-through-a-star-export-of-a-file-that-replaced-its-exports-object
+commonjs/a-module-imports-a-name-through-a-star-export-of-a-file-that-stores-it
+commonjs/a-module-imports-a-name-through-a-star-export-of-a-file-that-stores-it-in-a-branch-not-taken
+commonjs/a-module-imports-a-name-through-two-star-exports-of-a-file-that-never-stores-it
+commonjs/a-module-re-exports-a-name-through-a-star-export-of-a-file-that-never-stores-it
 commonjs/a-pattern-over-require-reads-names-that-an-es-module-passes-on-from-a-commonjs-file
 commonjs/a-typescript-entry-point-re-exports-a-name-that-the-file-never-stores
 commonjs/a-typescript-module-re-exports-a-name-that-the-file-never-stores
@@ -449,7 +473,9 @@ commonjs/exports-object-replaced
 commonjs/extensions-and-package-types-with-commonjs-names-only-where-bun-is-missing
 commonjs/four-files-change-what-the-loader-finds-on-their-lists-of-children
 commonjs/getters-among-the-exports-of-the-entry-point-run-behind-it
+commonjs/import-of-a-module-that-imports-a-name-through-a-star-export-of-a-file-that-never-stores-it
 commonjs/index-of-on-the-list-of-children-gets-each-child
+commonjs/members-of-require-are-read-under-computed-keys
 commonjs/module-compile-stores-require-on-its-receiver
 commonjs/module-id-behind-dynamic-import
 commonjs/module-require-behind-an-optional-link
@@ -459,6 +485,7 @@ commonjs/names-imported-out-of-a-commonjs-file-are-constructed-called-and-read
 commonjs/push-above-the-list-of-children-gets-each-child
 commonjs/require-cache-lists-no-module-of-the-executable
 commonjs/require-of-a-constant-path-with-a-type
+commonjs/require-of-a-module-that-imports-a-name-through-a-star-export-of-a-file-that-never-stores-it
 commonjs/require-rejects-a-specifier-that-is-not-a-string
 commonjs/require-type-attribute
 commonjs/required-modules-need-no-module-object
@@ -522,6 +549,7 @@ data-from-outside/typed-parse-in-a-program-that-evaluates-text-and-makes-a-shado
 data-from-outside/unions-below-unions-that-no-tag-tells-apart-take-time-in-proportion
 declarations/class-and-function-bindings-that-are-assigned-again
 declarations/constants-copied-from-returned-object
+declarations/functions-declared-in-blocks-of-a-sloppy-file-are-read-outside-them
 definitions-by-descriptor/a-bound-function-that-is-a-getter-throws-where-the-language-reads-the-property
 definitions-by-descriptor/a-computed-name-among-the-written-names-of-a-map
 definitions-by-descriptor/a-descriptor-of-constants-alone
@@ -571,13 +599,19 @@ errors/classes-that-extend-error
 errors/every-kind-of-place-that-throws
 errors/places-that-throw-with-another-text-or-column
 errors/reads-of-null-with-many-values-in-registers
+errors/stack-frames-of-classes-called-without-new
+errors/stack-frames-of-default-constructors
+errors/stack-frames-of-reflect-construct-by-the-way-it-is-called
 errors/stack-frames-under-reflect-construct
+errors/stack-frames-where-reflect-construct-is-not-written-as-a-call-of-it
 errors/stack-lines-after-types-over-several-lines
 errors/stack-lines-of-expressions-written-over-several-lines
 errors/stack-positions-after-types-on-the-same-line
 errors/stack-positions-of-callers
+errors/stack-positions-of-callers-that-step-a-generator
 errors/stack-positions-of-expressions-that-throw
 errors/stack-positions-of-expressions-that-throw-in-commonjs
+errors/stack-positions-of-operators-in-chains
 errors/traces-of-many-places-asked-round-after-round
 errors/what-a-program-can-ask-about-a-stack
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made
@@ -876,6 +910,7 @@ language/redundant-tests
 language/remainders-and-negations-of-integers-wherever-they-go
 language/remainders-of-numbers-by-constants
 language/replaced-console-log-keeps-its-arguments
+language/super-call-in-evaluated-text
 language/super-call-in-the-text-of-a-direct-eval
 language/switch-cases-share-targets
 language/the-copies-at-the-end-of-a-block-outnumber-the-registers
@@ -924,6 +959,7 @@ modules/a-file-without-an-extension-lies-beside-a-computed-path
 modules/a-late-module-reaches-what-is-not-installed-through-a-module-that-the-entry-point-imports
 modules/a-member-of-a-cycle-that-another-member-requires-stays-evaluated-when-the-cycle-throws
 modules/a-module-resumed-inside-require-awaits-a-number
+modules/a-module-resumed-inside-require-awaits-calls-of-async-functions
 modules/a-module-resumed-inside-require-awaits-settled-promises
 modules/a-module-resumed-inside-require-keeps-its-async-context
 modules/a-module-resumed-inside-require-queues-a-job-and-a-tick
@@ -938,6 +974,7 @@ modules/a-strict-bundle-in-the-commonjs-format-of-bun-build-returns-early-and-na
 modules/an-asset-lies-at-the-path-of-a-compiled-module
 modules/an-async-function-and-the-entry-point-await-a-promise-that-require-settles
 modules/an-embedded-asset-is-loaded-by-the-loader-of-its-extension
+modules/an-embedded-file-opened-for-reading-refuses-writes
 modules/an-import-equals-names-a-module-that-only-a-declaration-knows
 modules/an-imported-commonjs-file-requires-a-module-that-awaits
 modules/cycles-in-which-a-module-throws-are-asked-for-by-require
@@ -946,6 +983,7 @@ modules/cycles-with-top-level-await-in-which-a-module-throws
 modules/each-way-to-require-a-module-with-top-level-await
 modules/each-way-to-require-by-a-computed-name-a-module-with-top-level-await
 modules/esbuild-require-shim-loads-files-and-packages
+modules/glob-symlink-and-chdir-start-at-a-folder-of-the-executable
 modules/graphs-with-a-cycle-in-which-a-module-throws
 modules/import-meta-require-held-by-a-binding
 modules/imported-commonjs-files-run-in-the-order-they-are-loaded
@@ -1038,6 +1076,12 @@ native-callbacks/species-getter-runs-for-splice-kept-in-a-parsed-array
 native-callbacks/species-getter-runs-for-split-kept-in-a-parsed-array
 native-callbacks/species-getter-runs-for-then-kept-in-a-parsed-array
 native-callbacks/what-code-of-an-operand-hands-back-is-used
+node-http-probes/frozen-sealed-and-closed-heirs
+node-http-probes/frozen-sealed-and-closed-objects
+node-http-probes/frozen-sealed-and-closed-streams
+node-http-probes/listeners-on-a-frozen-socket
+node-http-probes/objects-closed-in-other-ways
+node-http-probes/objects-closed-through-others
 nothing-throws-because-of-a-type/a-test-that-only-null-and-undefined-should-fail-is-failed-by-other-values
 nothing-throws-because-of-a-type/tests-that-a-declared-type-would-decide-are-met-by-other-values
 null-where-the-type-says-none/a-field-declared-and-never-made-is-read-in-a-callback-of-a-function-called-twice
@@ -1291,6 +1335,7 @@ strings/every-spelling-of-a-conversion-answers-the-same
 strings/expressions-that-ask-for-a-character-narrow-text-lacks
 strings/first-and-rest-of-a-string-read-from-a-field
 strings/fixed-count-group-repeats-millions-of-times
+strings/fixed-count-group-repeats-millions-of-times-beside-duplicate-named-groups
 strings/flat-string-keys
 strings/integers-become-text-once-twice-and-often
 strings/integers-that-come-once-become-text-between-small-collections
@@ -1321,6 +1366,8 @@ strings/switches-over-short-texts
 strings/texts-are-cut-and-replaced-at-texts-of-every-length
 strings/texts-built-of-numbers-and-constants-in-front-of-calls-and-of-reads-that-throw
 strings/texts-that-may-be-undefined-put-in-order
+strings/texts-too-long-that-nobody-reads-in-functions-called-often
+strings/texts-too-long-that-nobody-reads-made-in-many-ways
 structural-types/a-class-extends-a-constructor-function-whose-prototype-was-replaced
 structural-types/a-constructor-function-of-a-js-module-is-constructed-in-typescript
 structural-types/a-constructor-function-written-in-javascript-is-given-where-a-construct-signature-is-expected
@@ -1458,6 +1505,7 @@ untyped-loops/counters-that-pass-int32-beside-slow-paths-that-count-on
 untyped-loops/loops-over-the-elements-of-a-declared-union
 untyped-loops/loops-over-the-elements-of-whatever-is-given
 untyped-loops/loops-that-expect-an-array-are-handed-other-iterables
+untyped-loops/sums-of-a-field-and-a-counter-are-cut-to-32-bits-or-kept-whole-at-the-edges-of-32-52-and-53-bits
 untyped-loops/sums-of-integers-past-int32-go-into-bitwise-operators
 untyped-speed/a-text-with-members-that-nobody-reads-is-not-twice-as-slow-to-parse-as-by-a-callee-out-of-a-variable
 untyped-speed/an-object-constructed-and-filled-is-not-five-times-as-slow-as-an-empty-literal-filled

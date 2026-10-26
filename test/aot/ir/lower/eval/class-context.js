@@ -18,6 +18,20 @@
 // DERIVED: [[unbound]] = Undefined
 // DERIVED: = DirectEval [[text]], [[unbound]], {{*}}evalScope=[[scope]]
 
+// RUN(ALONE): link
+// ALONE: module [[entry]] path="{{*}}class-context"
+// ALONE: evalscope [[scope]] flags=[IsInFunction, AllowsSuperProperty, AllowsSuperCall, AllowsNewTarget] bindings=
+// ALONE: {kind=This depth=1 layout=
+// ALONE: {kind=ClassObject depth=
+// ALONE: function [[alone]] name="Alone" module=[[entry]]
+// ALONE: = DirectEval {{*}}evalScope=[[scope]]
+
+// RUN(ARROW): link
+// ARROW: module [[entry]] path="{{*}}class-context"
+// ARROW: evalscope [[scope]] flags=[IsInFunction, IsInArrowFunction, AllowsSuperProperty, AllowsNewTarget] bindings=
+// ARROW: function [[later]] name="later" module=[[entry]] {{*}}kind=Arrow
+// ARROW: = DirectEval {{*}}evalScope=[[scope]]
+
 // RUN(FIELD): link
 // FIELD: module [[entry]] path="{{*}}class-context"
 // FIELD: evalscope [[scope]] flags=[IsInArrowFunction, IsInFieldInitializer, AllowsSuperProperty, AllowsNewTarget] bindings=
@@ -47,6 +61,19 @@ export class Derived extends Base {
   constructor(text) {
     super();
     eval(text);
+  }
+}
+
+export class Alone {
+  constructor(text) {
+    eval(text);
+  }
+}
+
+export class Deferred {
+  constructor(text) {
+    const later = () => eval(text);
+    later();
   }
 }
 

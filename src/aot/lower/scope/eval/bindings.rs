@@ -248,7 +248,15 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
         if flags.contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR)
             || self.lowering.file.has_location(this)
         {
-            self.add_stored(create_binding(EvalBindingKind::This, None, depth), this);
+            let mut binding = create_binding(EvalBindingKind::This, None, depth);
+            let class = self.context.class;
+            let class = class.filter(|_| flags.contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR));
+            let parts = class.and_then(|class| self.lowering.get_super_call_parts(class, scope));
+            if let Some((constructor, initializer)) = parts {
+                binding.function = Some(self.add_value_operand(constructor));
+                binding.setter = initializer.map(|function| self.add_value_operand(function));
+            }
+            self.add_stored(binding, this);
         }
         if flags.contains(EvalScopeFlags::ALLOWS_SUPER_PROPERTY) {
             let binding = create_binding(EvalBindingKind::HomeObject, None, depth);

@@ -143,9 +143,13 @@ struct EntryCollector<'a, 's> {
 }
 
 impl EntryCollector<'_, '_> {
-    fn commonjs_file_at(&self, site: usize) -> Option<FileId> {
+    /// A CommonJS file, or an ES module, which may hand on the names of one with `export *`.
+    fn exporting_file_at(&self, site: usize) -> Option<FileId> {
         match &self.scan.sites[site] {
-            ScannedSite::Module(module) => self.modules.find_commonjs_file(*module),
+            ScannedSite::Module(module) => {
+                let file = self.modules.find_commonjs_file(*module);
+                file.or_else(|| self.modules.table_file(*module))
+            }
             _ => None,
         }
     }
@@ -155,7 +159,7 @@ impl EntryCollector<'_, '_> {
         let Some(site) = self.analysis.import_site_index(site_kind) else {
             return;
         };
-        let Some(exporter) = self.commonjs_file_at(site) else {
+        let Some(exporter) = self.exporting_file_at(site) else {
             return;
         };
         for (declaration, item) in imported_items(self.files, self.hir, id) {
@@ -193,7 +197,7 @@ impl EntryCollector<'_, '_> {
             else {
                 continue;
             };
-            let exporter = self.commonjs_file_at(site as usize);
+            let exporter = self.exporting_file_at(site as usize);
             imports.extend(exporter.map(|exporter| WrittenImport {
                 imported: CommonJsImport {
                     importer: self.file,

@@ -218,10 +218,10 @@ bun compile ./main.ts
 ```
 
 ```txt
-50% of property accesses are one load: 1 free, 0 tested, 1 by name (2)
+33.3% of property accesses are one load: 1 free, 0 tested, 2 by name (3)
 ```
 
-Every `Item` in the list is now an object literal that the compiler sees, so `item.price` in the loop is free. The access that's left is in `readItem`. It reads from the parsed object by name, once for each object that comes in.
+Every `Item` in the list is now an object literal that the compiler sees, so `item.price` in the loop is free. The two accesses that are left are in `readItem`. It reads `sku` and `price` from the parsed object by name, once for each object that comes in.
 
 Fix the first entry, then run the command again. A fix can uncover another cause behind it: if two things keep `Item` untyped, the report shows one of them at a time.
 

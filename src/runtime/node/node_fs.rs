@@ -503,12 +503,25 @@ fn source_path_stats(path: &[u8], big_int: bool) -> Option<StatOrNotFound> {
     Some(stats_of(&result, big_int))
 }
 
-fn create_unnamed_file() -> Maybe<FD> {
+/// A read-only descriptor of an unnamed file that holds `contents`.
+fn create_unnamed_file(contents: &[u8]) -> Maybe<FD> {
+    fn fill_and_reopen(writable: FD, contents: &[u8], path: &ZStr) -> Maybe<FD> {
+        let reopened = sys::File::borrow(&writable)
+            .write_all(contents)
+            .and_then(|()| sys::open(path, sys::O::RDONLY | sys::O::CLOEXEC, 0));
+        writable.close();
+        reopened
+    }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if sys::can_use_memfd()
-        && let Ok(fd) = sys::memfd_create(c"bun-embedded-file", sys::MemfdFlags::NonExecutable)
+        && let Ok(writable) =
+            sys::memfd_create(c"bun-embedded-file", sys::MemfdFlags::NonExecutable)
     {
-        return Ok(fd);
+        let path =
+            bun_core::ZBox::from_vec(format!("/proc/self/fd/{}", writable.native()).into_bytes());
+        if let Ok(fd) = fill_and_reopen(writable, contents, &path) {
+            return Ok(fd);
+        }
     }
     let mut name_buffer = [0u8; 64];
     let name = paths::fs::FileSystem::tmpname(
@@ -525,9 +538,10 @@ fn create_unnamed_file() -> Maybe<FD> {
         ]
         .concat(),
     );
-    let fd = sys::open(&path, sys::O::RDWR | sys::O::CREAT | sys::O::EXCL, 0o600)?;
+    let writable = sys::open(&path, sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL, 0o600)?;
+    let reopened = fill_and_reopen(writable, contents, &path);
     let _ = sys::unlink(&path);
-    Ok(fd)
+    reopened
 }
 
 /// An embedded file has no descriptor, so its bytes are copied into an unnamed file.
@@ -535,15 +549,7 @@ fn open_embedded_file(contents: &[u8], flags: i32, path: &[u8]) -> Maybe<FD> {
     if flags & (sys::O::WRONLY | sys::O::RDWR | sys::O::TRUNC | sys::O::APPEND) != 0 {
         return Err(sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path));
     }
-    let fd = create_unnamed_file().map_err(|err| err.with_path(path))?;
-    let written = sys::File::borrow(&fd)
-        .write_all(contents)
-        .and_then(|()| sys::lseek(fd, 0, libc::SEEK_SET));
-    if let Err(err) = written {
-        fd.close();
-        return Err(err.with_path(path));
-    }
-    Ok(fd)
+    create_unnamed_file(contents).map_err(|err| err.with_path(path))
 }
 
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
@@ -1017,16 +1023,7 @@ mod _async_tasks {
                     } else {
                         None
                     };
-                    let answer: Option<Maybe<ret::Open>> = match refusal {
-                        Some(error) => Some(Err(error)),
-                        None => embedded_file_of_compiled_program(path.as_bytes()).map(|file| {
-                            open_embedded_file(
-                                file.utf8_contents(),
-                                args.flags.as_int(),
-                                args.path.slice(),
-                            )
-                        }),
-                    };
+                    let answer: Option<Maybe<ret::Open>> = refusal.map(Err);
                     if let Some(answer) = answer {
                         // SAFETY: identity write — `R == ret::Open` for this `F`.
                         unsafe {
@@ -3537,7 +3534,7 @@ pub(crate) mod args {
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the error returns below.
-            let old_path = PathLike::from_js_required(ctx, arguments, "target")?;
+            let old_path = PathLike::from_js_as_written(ctx, arguments, "target")?;
             let new_path = PathLike::from_js_required(ctx, arguments, "path")?;
             // The type argument is only available on Windows and
             // ignored on other platforms. It can be set to 'dir',
@@ -6453,6 +6450,15 @@ impl NodeFS {
     #[cfg(windows)]
     pub(crate) fn uv_open(&mut self, args: &args::Open, rc: uv::ReturnCodeI64) -> Maybe<ret::Open> {
         if let Some(err) = rc.to_error(sys::Tag::open) {
+            if err.get_errno() == E::ENOENT
+                && let Some(file) = embedded_file_of_compiled_program(args.path.slice())
+            {
+                return open_embedded_file(
+                    file.utf8_contents(),
+                    args.flags.as_int(),
+                    args.path.slice(),
+                );
+            }
             return Err(err.with_path(args.path.slice()));
         }
         Ok(FD::from_uv(rc.to_fd()))

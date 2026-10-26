@@ -1,7 +1,8 @@
 use super::body::{BlockView, StreamError, TargetView, TerminatorView, ValueView};
 use super::generated::{
     BlockHead, InternalErrorKind, Opcode, ParameterHead, TargetHead, TerminatorHead,
-    TerminatorKind, ValueHead, visit_terminator_fields, visit_value_fields,
+    TerminatorKind, ValueHead, WRITTEN_POSITION_FOLLOWS, visit_terminator_fields,
+    visit_value_fields,
 };
 use super::ids::{ABSENT_WORD, BlockId, ValueId};
 
@@ -91,13 +92,17 @@ pub(super) fn read_value(
 ) -> Result<(ValueView<'_>, &[u32]), InternalErrorKind> {
     let invalid_head = InternalErrorKind::IdOutOfRange;
     let (head, rest) = split_head(words, ValueHead::WORDS, ValueHead::from_words, invalid_head)?;
-    let opcode = Opcode::from_wire(head.opcode).ok_or(InternalErrorKind::UnknownEnumerator)?;
+    let opcode = Opcode::from_wire(head.opcode & !WRITTEN_POSITION_FOLLOWS);
+    let opcode = opcode.ok_or(InternalErrorKind::UnknownEnumerator)?;
     let length = visit_value_fields(opcode, rest, 0, &mut |_, _| {});
     let (fields, rest) = split_fields(rest, length)?;
+    let written_length = usize::from(head.opcode & WRITTEN_POSITION_FOLLOWS != 0);
+    let (written, rest) = split_fields(rest, Some(written_length))?;
     let value = ValueView {
         id,
         opcode,
         position: head.position,
+        written_position: written.first().copied(),
         fields,
     };
     Ok((value, rest))

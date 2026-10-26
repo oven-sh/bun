@@ -76,7 +76,13 @@ impl ScanOpts {
         }
 
         let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
-        let cwd_str: Box<[u8]> = if !absolute {
+        let in_executable = bun_core::working_directory_in_executable();
+        let cwd_str: Box<[u8]> = if let Some(directory) = in_executable {
+            Box::from(join_string_buf::<platform::Auto>(
+                &mut path_buf2,
+                &[directory, cwd],
+            ))
+        } else if !absolute {
             Box::from(join_string_buf::<platform::Auto>(&mut path_buf2, &[cwd]))
         } else {
             let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -108,7 +114,8 @@ impl ScanOpts {
             cwd: match options.cwd {
                 Some(cwd) => Self::parse_cwd(cwd, options.absolute, fn_name)?,
                 None => None,
-            },
+            }
+            .or_else(|| bun_core::working_directory_in_executable().map(Box::from)),
             dot: options.dot,
             absolute: options.absolute,
             only_files: options.only_files,

@@ -2,7 +2,8 @@ mod delete;
 mod type_of;
 
 use bun_sema::atom::known;
-use bun_sema::hir::{BinOp, ExprId, ExprKind, UnOp};
+use bun_sema::bind::Parent;
+use bun_sema::hir::{BinOp, ExprId, ExprKind, StmtKind, UnOp};
 use bun_sema::module_format::main_module_operand;
 use smallvec::SmallVec;
 
@@ -101,7 +102,38 @@ pub(in crate::lower) fn lower_binary(
         OperatorClass::In => return lowering.lower_in(expression, left, right),
         OperatorClass::Plain | OperatorClass::Ordering | OperatorClass::ControlFlow => {}
     }
-    lowering.lower_binary_spine(op, left, right)
+    lowering.lower_binary_spine(expression, op, left, right)
+}
+
+fn get_precedence(op: BinOp) -> u8 {
+    match op {
+        BinOp::Comma => 0,
+        BinOp::Nullish => 1,
+        BinOp::Or => 2,
+        BinOp::And => 3,
+        BinOp::BitOr => 4,
+        BinOp::BitXor => 5,
+        BinOp::BitAnd => 6,
+        BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => 7,
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof => 8,
+        BinOp::Shl | BinOp::Shr | BinOp::UShr => 9,
+        BinOp::Add | BinOp::Sub => 10,
+        BinOp::Mul | BinOp::Div | BinOp::Rem => 11,
+        BinOp::Pow => 12,
+    }
+}
+
+fn needs_parentheses(outer: BinOp, inner: BinOp, is_left_operand: bool) -> bool {
+    let is_and_or = |op| matches!(op, BinOp::And | BinOp::Or);
+    if (outer == BinOp::Nullish && is_and_or(inner))
+        || (inner == BinOp::Nullish && is_and_or(outer))
+    {
+        return true;
+    }
+    match is_left_operand == (outer != BinOp::Pow) {
+        true => get_precedence(inner) < get_precedence(outer),
+        false => get_precedence(inner) <= get_precedence(outer),
+    }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -166,7 +198,110 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.logical_not(boolean)
     }
 
-    fn lower_binary_spine(&mut self, op: BinOp, left: ExprId, right: ExprId) -> ValueId {
+    // The binary expression that has `expression` as an operand, if Bun's transpiler prints the operand without parentheses.
+    fn find_operator_around(&self, expression: ExprId) -> Option<ExprId> {
+        let hir = self.file.hir;
+        let ExprKind::Binary { op: inner, .. } = hir[expression].kind else {
+            return None;
+        };
+        let mut operand = expression;
+        while let Parent::Expr(parent) = self.file.bound.parent_of_expr(operand) {
+            match hir[parent].kind {
+                ExprKind::Binary { op, left, .. } => {
+                    let shares_position =
+                        op != BinOp::Comma && !needs_parentheses(op, inner, left == operand);
+                    return shares_position.then_some(parent);
+                }
+                _ if hir.type_assertion_operand(parent).is_some() => operand = parent,
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    // `(a + b) * c`, `(a + b).x * c`: the first token that Bun's transpiler prints is a parenthesis, which its source map does not know.
+    fn is_printed_in_parentheses_first(&self, expression: ExprId) -> bool {
+        let hir = self.file.hir;
+        let mut first = expression;
+        loop {
+            let (next, outer) = match hir[first].kind {
+                ExprKind::Binary { op, left, .. } => (left, Some(op)),
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (obj, None),
+                ExprKind::Call(site) => (hir[site].callee, None),
+                _ => return false,
+            };
+            let next = self.file.skip_type_syntax(next);
+            match (hir[next].kind, outer) {
+                (ExprKind::Binary { op: inner, .. }, Some(outer)) => {
+                    if inner == BinOp::Comma || needs_parentheses(outer, inner, true) {
+                        return true;
+                    }
+                }
+                (ExprKind::Binary { .. }, None)
+                | (ExprKind::Cond { .. } | ExprKind::Assign { .. }, _) => return true,
+                _ => {}
+            }
+            first = next;
+        }
+    }
+
+    // The last position that the source map knows in front of an expression.
+    fn find_position_in_front_of(&self, expression: ExprId) -> Option<u32> {
+        let hir = self.file.hir;
+        match self.file.bound.parent_of_expr(expression) {
+            Parent::Stmt(statement) => match hir[statement].kind {
+                StmtKind::Return(_)
+                | StmtKind::Throw(_)
+                | StmtKind::While { .. }
+                | StmtKind::Switch { .. } => Some(hir[statement].start),
+                _ => None,
+            },
+            Parent::FnBody(function) => Some(self.file.parameters_position(function)),
+            Parent::Expr(parent) => match hir[parent].kind {
+                ExprKind::Assign { target, value, .. } if value == expression => {
+                    Some(self.file.last_mapped_position(target))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    // JSC's parser gives all operators of an expression the position of its first token, up to the next parentheses.
+    fn find_operator_position(&mut self, expression: ExprId) -> u32 {
+        let mut operands: SmallVec<[ExprId; 8]> = SmallVec::new();
+        let mut outermost = expression;
+        let position = loop {
+            if let Some(&position) = self.operator_positions.get(&outermost) {
+                break position;
+            }
+            match self.find_operator_around(outermost) {
+                Some(parent) => {
+                    operands.push(parent);
+                    outermost = parent;
+                }
+                None => {
+                    let before = match self.is_printed_in_parentheses_first(outermost) {
+                        true => self.find_position_in_front_of(outermost),
+                        false => None,
+                    };
+                    break before.unwrap_or_else(|| self.file.first_position(outermost));
+                }
+            }
+        };
+        for operand in operands {
+            self.operator_positions.insert(operand, position);
+        }
+        position
+    }
+
+    fn lower_binary_spine(
+        &mut self,
+        expression: ExprId,
+        op: BinOp,
+        left: ExprId,
+        right: ExprId,
+    ) -> ValueId {
         let hir = self.file.hir;
         let mut spine: SmallVec<[(BinOp, ExprId); 8]> = SmallVec::new();
         spine.push((op, right));
@@ -187,8 +322,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             spine.push((op, right));
             innermost = left;
         }
-        // Every operator of the spine starts with the same operand.
-        let first_position = self.file.first_position(innermost);
+        let first_position = self.find_operator_position(expression);
         let mut value = self.lower_expression(innermost);
         for &(node_op, node_right) in spine.iter().rev() {
             let right_value = self.lower_expression(node_right);

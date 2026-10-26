@@ -23,6 +23,13 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       result.childStartsOutside = String(Bun.spawnSync(["pwd"]).stdout).trim() === before;
       result.chdirIntoFile = code(() => process.chdir(asset));
       result.chdirNowhere = code(() => process.chdir(root + "/nowhere"));
+      result.glob = [...new Bun.Glob("*.txt").scanSync()].map(name => fs.readFileSync(name, "utf8"));
+      result.globInRelativeCwd = [...new Bun.Glob("*.txt").scanSync({ cwd: "." })].length;
+      fs.symlinkSync("target.txt", path.join(before, "link"));
+      result.symlinkTarget = fs.readlinkSync(path.join(before, "link"));
+      result.chdirOutByRelativePath = code(() => process.chdir(path.relative(root, before)));
+      result.outByRelativePath = process.cwd() === before;
+      process.chdir(root);
       process.chdir(before);
       result.back = process.cwd() === before;
       result.writeFresh = code(() => fs.writeFileSync(root + "/fresh", "x"));
@@ -60,6 +67,11 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       childStartsOutside: true,
       chdirIntoFile: "ENOTDIR",
       chdirNowhere: "ENOENT",
+      glob: ["hello asset"],
+      globInRelativeCwd: 1,
+      symlinkTarget: "target.txt",
+      chdirOutByRelativePath: "fine",
+      outByRelativePath: true,
       back: true,
       writeFresh: "EROFS",
       writeOver: "EROFS",

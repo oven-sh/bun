@@ -219,7 +219,14 @@ fn create_source_header(
     let key = FunctionKey::Source(source);
     let declared = file.function_positions(function);
     let kind = file.compute_function_kind(function);
-    let mut header = create_header(file, key, kind, func.start);
+    // JSC reports what has no position of its own in a constructor where the parameters start.
+    let position = match kind {
+        FunctionKind::BaseConstructor | FunctionKind::DerivedConstructor => {
+            file.parameters_position(function)
+        }
+        _ => func.start,
+    };
+    let mut header = create_header(file, key, kind, position);
     header.flags |= compute_source_flags(hir, function);
     if file.inputs.library_functions.is_left_out(source) {
         header.flags = header

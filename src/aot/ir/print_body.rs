@@ -67,6 +67,7 @@ impl Printer<'_> {
         self.out.push_str(value.opcode.name());
         print_value_fields(value.opcode, value.fields, self);
         self.print_position(value.position);
+        self.print_position(value.written_position);
         self.out.push('\n');
     }
 

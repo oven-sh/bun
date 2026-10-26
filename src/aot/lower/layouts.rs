@@ -19,7 +19,7 @@ use super::{CheckerTypeId, FileLowering};
 use crate::ir::generated::{FieldFlags, LimitId};
 use crate::ir::{DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, TypeId};
 
-pub(in crate::lower) use self::classes::{define_class_layout, private_key};
+pub(in crate::lower) use self::classes::{class_position, define_class_layout, private_key};
 #[cfg(test)]
 pub(crate) use self::defined_object_types::late_answers;
 pub use self::defined_object_types::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};

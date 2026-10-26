@@ -1,10 +1,10 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::PrivateNameId;
+use bun_sema::bind::{CodeUnit, PrivateNameId};
 use bun_sema::check::aot::{ClassMemberSource, ClassRef};
 use bun_sema::hir::{ClassId, Flags, MemberId, ParamId, PatKind, PropKey};
 use smallvec::SmallVec;
 
-use super::{ClassElement, FieldValue, is_auto_accessor};
+use super::{ClassElement, FieldValue, is_auto_accessor, is_derived_class};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{Field, FieldFlags, FunctionFlags, FunctionKind, TypeSiteKind};
 use crate::ir::{ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, TypeTable, ValueId};
@@ -113,7 +113,15 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         let mut lowering = FunctionLowering::begin(self, function);
         let this = lowering.builder.this_value();
-        let this = this.expect("an initializer function takes this");
+        let mut this = this.expect("an initializer function takes this");
+        if lowering.builder.function().kind != FunctionKind::Initializer {
+            let split = lowering.split_on_type(this, TypeTable::OBJECT);
+            lowering.builder.switch_to(split.not_taken);
+            let undefined = lowering.builder.undefined();
+            lowering.emit_return(undefined, None);
+            lowering.builder.switch_to(split.taken);
+            this = split.taken_value;
+        }
         for &element in elements {
             lowering.emit_class_element(class, element, this);
         }
@@ -121,6 +129,21 @@ impl FileLowering<'_, '_, '_, '_> {
         lowering.emit_return(undefined, None);
         lowering.finish();
     }
+}
+
+// A super call in evaluated text hands the initializer whatever the parent returned.
+fn is_called_by_evaluated_text(file: &mut FileLowering<'_, '_, '_, '_>, class: ClassId) -> bool {
+    let evals = file.bound.runtime.eval_scopes();
+    if evals.is_empty() || !is_derived_class(file.hir, class) {
+        return false;
+    }
+    let Some(constructor) = file.class_plan(class).constructor else {
+        return false;
+    };
+    evals.iter().any(|(_, eval)| {
+        let owner = file.scopes.lexical_owner(eval.scope);
+        file.bound.code_unit(owner) == CodeUnit::Function(constructor)
+    })
 }
 
 pub(super) fn declare_initializer(
@@ -134,12 +157,21 @@ pub(super) fn declare_initializer(
         false => FunctionKey::InstanceInitializer(reference),
     };
     file.declare_function(key, |file| {
-        let this_type = match is_static {
-            true => DeclaredType::from_compiler(TypeTable::FUNCTION),
-            false => file.class_this_type(reference, None),
+        let (kind, this_type) = match is_static {
+            true => {
+                let this_type = DeclaredType::from_compiler(TypeTable::FUNCTION);
+                (FunctionKind::Initializer, this_type)
+            }
+            false if is_called_by_evaluated_text(file, class) => {
+                (FunctionKind::Method, DeclaredType::untyped())
+            }
+            false => {
+                let this_type = file.class_this_type(reference, None);
+                (FunctionKind::Initializer, this_type)
+            }
         };
         let position = file.hir[class].name_pos;
-        let mut header = function::create_header(file, key, FunctionKind::Initializer, position);
+        let mut header = function::create_header(file, key, kind, position);
         header.flags |= FunctionFlags::HAS_THIS | FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
         header.this_type = this_type;
         header

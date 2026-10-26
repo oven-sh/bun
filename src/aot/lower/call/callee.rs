@@ -399,6 +399,20 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // JSC's parser knows `Reflect.construct(target, list)` by these two names, whatever `Reflect` is bound to.
+    pub(super) fn is_reflect_construct_syntax(&self, callee: ExprId) -> bool {
+        let hir = self.hir;
+        let Some((object, MemberKey::Name(name))) = hir.member_key(self.skip_type_syntax(callee))
+        else {
+            return false;
+        };
+        let ExprKind::Ident(object) = hir[self.skip_type_syntax(object)].kind else {
+            return false;
+        };
+        self.queries.atom_bytes(object) == b"Reflect"
+            && self.queries.atom_bytes(name) == b"construct"
+    }
+
     pub(super) fn find_callee_name(&mut self, callee: ExprId) -> Option<StringId> {
         let hir = self.hir;
         let inner = self.skip_type_syntax(callee);

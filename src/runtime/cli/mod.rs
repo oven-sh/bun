@@ -130,6 +130,9 @@ pub(crate) mod fuzzilli_command;
 #[cfg(all(bun_fuzzilli, unix))]
 #[path = "fuzzilli_compile_loop.rs"]
 pub(crate) mod fuzzilli_compile_loop;
+#[cfg(all(bun_fuzzilli, unix))]
+#[path = "fuzzilli_run_comparison.rs"]
+pub(crate) mod fuzzilli_run_comparison;
 #[path = "install_command.rs"]
 pub(crate) mod install_command;
 #[path = "repl_command.rs"]

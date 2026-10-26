@@ -537,7 +537,7 @@ pub(in crate::lower) fn private_key(
     file.hidden_key(owner, text)
 }
 
-fn class_position(node: &hir::Class) -> u32 {
+pub(in crate::lower) fn class_position(node: &hir::Class) -> u32 {
     match node.name.is_some() {
         true => node.name_pos,
         false => node.start,

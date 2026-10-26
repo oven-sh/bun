@@ -569,27 +569,39 @@ fn find_link_failure(
     Some(written.fail(importer, kind))
 }
 
-// A name that an ES module imports and that some run of the body of the CommonJS module may end without.
+// A name that an ES module imports and that some run of the body of the CommonJS module may end without. With the file that would have it: the import may name an ES module that hands the name on.
 fn find_absent_name(
     tables: &ExportTables,
     modules: &ModuleSet,
     written: &WrittenImport,
-) -> Option<PendingFailure> {
+) -> Option<(PendingFailure, CommonJsImport)> {
     let CommonJsImport {
         importer,
         exporter,
         name,
     } = written.imported;
     let exporter = ModuleRef::File(exporter);
-    let may_be_absent = match tables.resolve_in(modules, exporter, name).resolution {
-        // Without a `default` of its own a module exports its value under the name.
-        Resolution::Synthetic { module, name } => {
-            name != known::default && tables.commonjs.may_lack(module, name)
-        }
-        _ => false,
+    let Resolution::Synthetic {
+        module: owner,
+        name: owned_name,
+    } = tables.resolve_in(modules, exporter, name).resolution
+    else {
+        return None;
+    };
+    // Without a `default` of its own a module exports its value under the name.
+    if owned_name == known::default || !tables.commonjs.may_lack(owner, owned_name) {
+        return None;
+    }
+    let imported = match modules.find_commonjs_file(exporter) {
+        Some(_) => written.imported,
+        None => CommonJsImport {
+            importer,
+            exporter: modules.find_commonjs_file(owner)?,
+            name: owned_name,
+        },
     };
     let kind = ModuleFailureKind::ExportMayBeAbsent { exporter, name };
-    may_be_absent.then(|| written.written.fail(importer, kind))
+    Some((written.written.fail(importer, kind), imported))
 }
 
 pub(super) fn resolve_exports(
@@ -662,9 +674,9 @@ pub(super) fn resolve_exports(
     }
     let mut absent_names = Vec::new();
     for written in &commonjs_imports {
-        if let Some(pending) = find_absent_name(&tables, modules, written) {
+        if let Some((pending, imported)) = find_absent_name(&tables, modules, written) {
             tables.failures.push(pending);
-            absent_names.push((written.imported, written.written.order));
+            absent_names.push((imported, written.written.order));
         }
     }
     let failures = &mut tables.failures;
@@ -672,7 +684,11 @@ pub(super) fn resolve_exports(
     absent_names.shared_sort_by_key(|&(imported, order)| (imported.importer, order));
     tables.absent_commonjs_names = absent_names;
     let imported = commonjs_imports.iter().map(|written| written.imported);
-    tables.commonjs_imports = imported.collect();
+    let names_file = |imported: &CommonJsImport| {
+        let exporter = ModuleRef::File(imported.exporter);
+        modules.find_commonjs_file(exporter).is_some()
+    };
+    tables.commonjs_imports = imported.filter(names_file).collect();
     commonjs_namespace_loads.sort_unstable();
     commonjs_namespace_loads.dedup();
     tables.commonjs_namespace_loads = commonjs_namespace_loads;

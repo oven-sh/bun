@@ -529,18 +529,33 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, set_cwd(global_object, to))
     }
 
-    /// What `process.chdir(to)` finds under the executable's own root. `None` if `to` leads elsewhere: that is the system's.
-    fn find_directory_in_executable(to: &[u8]) -> Option<Result<&'static [u8], bun_sys::E>> {
+    enum ChdirTarget<'a> {
+        InExecutable(Result<&'static [u8], bun_sys::E>),
+        OnDisk(&'a bun_core::ZStr),
+    }
+
+    /// Resolves `to` against the working directory when that is a folder of the executable, which the system cannot do.
+    fn resolve_chdir_target<'a>(
+        to: &'a bun_core::ZStr,
+        buf: &'a mut bun_paths::PathBuffer,
+    ) -> ChdirTarget<'a> {
         use bun_paths::resolve_path::{self, platform};
-        let graph = bun_standalone_graph::Graph::get_ref()?;
+        let Some(graph) = bun_standalone_graph::Graph::get_ref() else {
+            return ChdirTarget::OnDisk(to);
+        };
         let current = bun_core::working_directory_in_executable();
-        if !bun_paths::is_absolute(to) && current.is_none() {
-            return None;
+        if !bun_paths::is_absolute(to.as_bytes()) && current.is_none() {
+            return ChdirTarget::OnDisk(to);
         }
-        let path = resolve_path::join_abs_string::<platform::Auto>(current.unwrap_or(b"/"), &[to]);
-        let leaves_executable =
-            bun_paths::is_absolute(to) && !bun_standalone_graph::is_bun_standalone_file_path(path);
-        (!leaves_executable).then(|| graph.dir_key(path))
+        let path = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+            current.unwrap_or(b"/"),
+            &mut buf[..],
+            &[to.as_bytes()],
+        );
+        if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
+            return ChdirTarget::InExecutable(graph.dir_key(path.as_bytes()));
+        }
+        ChdirTarget::OnDisk(if current.is_some() { path } else { to })
     }
 
     fn set_cwd(global_object: &JSGlobalObject, to: &EncodedSlice) -> JsResult<JSValue> {
@@ -565,19 +580,20 @@ mod _impl {
         let prev_cwd: Box<[u8]> = Box::from(
             bun_core::working_directory_in_executable().unwrap_or_else(|| fs.top_level_dir()),
         );
-        match find_directory_in_executable(slice.as_bytes()) {
-            None => {}
-            Some(Ok(directory)) => {
+        let mut resolved = bun_paths::path_buffer_pool::get();
+        let on_disk = match resolve_chdir_target(slice, &mut resolved) {
+            ChdirTarget::OnDisk(path) => path,
+            ChdirTarget::InExecutable(Ok(directory)) => {
                 bun_core::set_working_directory_in_executable(Some(directory));
                 return directory_in_executable_to_js(global_object, directory);
             }
-            Some(Err(errno)) => {
+            ChdirTarget::InExecutable(Err(errno)) => {
                 let e = bun_sys::Error::from_code(errno, bun_sys::Tag::chdir)
                     .with_path_dest(&prev_cwd, slice.as_bytes());
                 return Err(global_object.throw_value(e.to_js(global_object)));
             }
-        }
-        match vm.set_process_cwd(slice) {
+        };
+        match vm.set_process_cwd(on_disk) {
             bun_sys::Result::Ok(()) => {
                 bun_core::set_working_directory_in_executable(None);
                 vm.test_isolation_scope(|state| {

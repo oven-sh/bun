@@ -123,6 +123,49 @@ fn call_round_trip() {
 }
 
 #[test]
+fn written_position_round_trip() {
+    let build_reads = |written: [u32; 2]| {
+        build(&[TypeTable::ANYTHING], |builder| {
+            let object = builder.parameter(0);
+            emit_dropped_values(builder);
+            let key = PropertyKeyId::new(3);
+            builder.set_position(Some(17));
+            builder.set_written_position(written[0]);
+            builder.prop_get(object, key, false, false);
+            builder.set_written_position(17);
+            builder.prop_get(object, key, false, false);
+            builder.set_written_position(written[1]);
+            builder.set_position(Some(21));
+            let last = builder.prop_get(object, key, false, false);
+            builder.return_value(Some(last));
+        })
+    };
+    let places_of = |body: &Body| -> Vec<(Option<u32>, Option<u32>)> {
+        let values = entry_of(body).values();
+        values
+            .map(|value| (value.position, value.written_position))
+            .collect()
+    };
+    let count_references = |body: &Body| {
+        let mut count = 0;
+        body.for_each_reference(&mut |_| count += 1);
+        count
+    };
+    let (marked, plain) = (build_reads([5, 9]), build_reads([17, 21]));
+    assert_eq!(
+        places_of(&marked),
+        [(Some(17), Some(5)), (Some(17), None), (Some(21), None)]
+    );
+    assert_eq!(
+        places_of(&plain),
+        [(Some(17), None), (Some(17), None), (Some(21), None)]
+    );
+    assert_eq!(marked.code.len(), plain.code.len() + 1);
+    assert!(marked.check_stream().is_ok());
+    assert_eq!(count_references(&marked), count_references(&plain));
+}
+
+#[test]
 fn new_object_round_trip() {
     let body = build(&[TypeTable::ANYTHING], |builder| {
         let first = builder.parameter(0);

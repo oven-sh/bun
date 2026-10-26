@@ -330,6 +330,25 @@ impl Resolver<'_, '_> {
         ways
     }
 
+    // `require[key]`: a computed key reads any member, `main` among them.
+    fn find_way_that_computed_key_reads(
+        &self,
+        member: ExprId,
+    ) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
+        let hir = self.input.hir;
+        let (object, MemberKey::Computed(_)) = hir.member_key(member)? else {
+            return None;
+        };
+        let (ExprState::Builtin(value) | ExprState::Held(value)) =
+            self.state(hir.skip_type_assertions(object))
+        else {
+            return None;
+        };
+        let is_require = table::canonical_id(value.path.id) == BuiltinId::ModuleRequire;
+        (is_require && self.is_plain_read(member))
+            .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::Object))
+    }
+
     pub(super) fn collect_module_object_mentions(&mut self) {
         if self.input.dialect != SourceDialect::Program {
             return;
@@ -337,6 +356,7 @@ impl Resolver<'_, '_> {
         let mut mentions = Vec::new();
         for expr in self.evaluated_exprs() {
             let found = self.find_module_object_mention(expr).into_iter();
+            let found = found.chain(self.find_way_that_computed_key_reads(expr));
             for (owner, object_use) in found.chain(self.find_ways_that_pattern_reads(expr)) {
                 mentions.push(ModuleObjectMention {
                     expr,

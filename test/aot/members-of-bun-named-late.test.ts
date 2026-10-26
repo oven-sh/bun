@@ -65,11 +65,12 @@ describe.concurrent.each([6, 14])("the class that a module of Bun makes, behind 
       openAfterUnknownValue(`Reflect.get(bun, "SQL")`),
       `() => open(Bun)`,
     ],
-    gap(notCompiled, [
-      "read by Reflect.get on globalThis.Bun",
-      "",
-      `() => new (Reflect.get(globalThis.Bun, "SQL"))(${url})`,
-    ]),
+    ["read by Reflect.get on globalThis.Bun", "", `() => new (Reflect.get(globalThis.Bun, "SQL"))(${url})`],
+    [
+      "named on a parameter that takes globalThis.Bun",
+      `const open = bun => new bun.SQL(${url});\n`,
+      `() => open(globalThis.Bun)`,
+    ],
     [
       "read by Reflect.getOwnPropertyDescriptor",
       "",
@@ -83,16 +84,19 @@ describe.concurrent.each([6, 14])("the class that a module of Bun makes, behind 
     ["named on require()", "", `() => new (import.meta.require("bun").SQL)(${url})`],
     ["named on a spread copy", "", `() => new ({ ...Bun }).SQL(${url})`],
     ["named on a copy by Object.assign", "", `() => new (Object.assign({}, Bun).SQL)(${url})`],
-    gap(notCompiled, ["named on an object below Bun", "", `() => new (Object.create(Bun).SQL)(${url})`]),
+    ["named on an object below Bun", "", `() => new (Object.create(Bun).SQL)(${url})`],
+    ["named on a literal below Bun", "", `() => new ({ __proto__: Bun }).SQL(${url})`],
     [
       "named on what an async function returns",
       "const find = async () => Bun;\n",
       `async () => new (await find()).SQL(${url})`,
     ],
+    ["named on what a promise resolves to", "", `async () => new (await Promise.resolve(Bun)).SQL(${url})`],
+    ["named on what a reaction takes", "", `() => Promise.resolve(Bun).then(bun => new bun.SQL(${url}))`],
     gap(notCompiled, [
-      "named on what a promise resolves to",
+      "named on what Promise.all() resolves to",
       "",
-      `async () => new (await Promise.resolve(Bun)).SQL(${url})`,
+      `async () => {\n    const [bun] = await Promise.all([Bun]);\n    return new bun.SQL(${url});\n  }`,
     ]),
   ])("%s", async (_, first, last) => {
     using dir = tempDir("aot-members-of-bun-named-late", {

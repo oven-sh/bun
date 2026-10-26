@@ -56,6 +56,7 @@
 //   prototype-chains-linked-by-hand constructor functions and classes linked by Object.setPrototypeOf, Object.create, __extends or util.inherits, often in a factory that takes the base; in the middle the chain or a method changes
 //   built-ins-called-often-through-unknown-values one to five built-ins in one program, each called 1 to 400 times through a value the compiler cannot follow; in the middle that value, the receiver or an operand changes
 //   order-of-promise-jobs handlers of then, catch and finally on promises of every state, awaits, microtasks and ticks, some under a store of AsyncLocalStorage: each step writes down its number, and the program prints every order it saw
+//   chains-of-awaits-entered-by-the-host chains of async functions that mostly wait for nothing, linked by name, by value, by closures, bound functions, Promise.resolve and then, entered from callbacks of the host: each step writes down its number
 //   arrays-grown-from-empty-literals arrays that start as `[]` at one place in the code and grow by a schedule that changes from call to call, filled in a dozen ways, then cut, frozen, given holes or kept
 //   closures-in-fields-replaced-from-outside closures kept in fields of classes and object literals, replaced by functions that know nothing about their target, then called, compared and marked through typed readers
 //   tail-calls-that-hand-rest-parameters-on functions that end in a call to one another, up to a million calls deep, and hand their rest parameters on: spread, by element, copied, or the array itself
@@ -75,6 +76,9 @@
 //   functions-that-keep-very-many-values-alive one function keeps 40 to 5,000 values alive at once, through a loop, into a catch block or over calls that collect, and sums them all (functions-that-keep-very-many-values-alive.ts)
 //   a-full-heap-is-let-go-and-built-ins-make-things objects are kept until no more fit, all or half of them are let go, and at once one built-in that makes things is called thousands of times: there is room again, so no call may fail (a-full-heap-is-let-go-and-built-ins-make-things.ts)
 //   static-fields-hold-values-outside-their-declared-types a static field of an enum, a union of number literals, or one of these or undefined, null or a string is stored numbers and other values that TypeScript lets in, in every way and place, and read in every way around each store (static-fields-hold-values-outside-their-declared-types.ts)
+//   values-that-end-before-a-suspension-beside-values-that-cross-it async functions, generators and async generators hold up to 520 values at once: some are last read before a suspension, others behind it, in a later turn of a loop, in a catch, in a finally, or when the caller throws in or returns (values-that-end-before-a-suspension-beside-values-that-cross-it.ts)
+//   tail-calls-between-the-program-and-functions-made-from-text a ring of strict functions, some in the program, some made from text at run time, some behind a Proxy without an apply trap, call one another in tail position in ten forms with fewer, as many or more arguments than the callee names, a hundred thousand times (tail-calls-between-the-program-and-functions-made-from-text.ts)
+//   int32-fields-read-under-keys-as-operands fields declared int32 are read with brackets under a key that is one of a few names, a symbol, an enum member, an element of a list of names or a parameter, as operands of operators and built-in functions; the objects come out of JSON.parse and may hold what is no int32 (int32-fields-read-under-keys-as-operands.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
@@ -414,6 +418,17 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
         : undefined;
     };
   }
+  if (existsSync(join(import.meta.dir, "chains-of-awaits-entered-by-the-host.ts"))) {
+    const { generate } = await import("./chains-of-awaits-entered-by-the-host.ts");
+    sources["chains-of-awaits-entered-by-the-host"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "chains-of-awaits-entered-by-the-host", seed, ...program, notes: typed ? "typed" : "untyped" }
+        : undefined;
+    };
+  }
   if (existsSync(join(import.meta.dir, "arrays-grown-from-empty-literals.ts"))) {
     const { generate } = await import("./arrays-grown-from-empty-literals.ts");
     sources["arrays-grown-from-empty-literals"] = (seed, bed) => {
@@ -681,6 +696,7 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     "names-asked-of-full-tables-and-texts-converted-again",
     "a-full-heap-is-let-go-and-built-ins-make-things",
     "static-fields-hold-values-outside-their-declared-types",
+    "int32-fields-read-under-keys-as-operands",
   ])
     if (existsSync(join(import.meta.dir, name + ".ts")))
       sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
@@ -690,6 +706,8 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     "what-a-function-declares-however-often-call-and-apply-enter-it",
     "makers-of-makers-each-with-a-prototype-of-its-own",
     "built-ins-called-often-through-unknown-values",
+    "values-that-end-before-a-suspension-beside-values-that-cross-it",
+    "tail-calls-between-the-program-and-functions-made-from-text",
   ])
     if (existsSync(join(import.meta.dir, name + ".ts")))
       sources[name] = untypedForTheProduct(name, (await import(`./${name}.ts`)).generate);

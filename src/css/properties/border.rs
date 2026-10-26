@@ -1513,7 +1513,7 @@ mod border_handler_body {
             self.border_inline_end.reset(arena);
         }
 
-        /// `dest[start..]` lands behind a declaration that sets `border-image`: keep the resets of the source.
+        /// `dest[start..]` lands behind a `border-image` of this list: keep the source's resets.
         #[cold]
         #[inline(never)]
         fn keep_border_image(

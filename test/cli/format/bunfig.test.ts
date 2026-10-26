@@ -549,6 +549,20 @@ export function add(a, b) {}
       example(["  ```ts", "  foo()", "```"]),
       example(["  ```ts", "  foo();", "  ```"]),
     ],
+    // oxfmt leaves the text after the closing fence where it is, and reads the whole block as code on its second
+    // pass. Indented like the code, a fence in that text is not taken for the closing fence.
+    [
+      "text after a fenced example that has an indented fence in it",
+      "jsdoc = true",
+      example(["```js", "foo()", "```", "Notes:", "- Also:", "  ```js", "  bar()", "  ```"]),
+      example(["  ```js", "  foo();", "  ```", "  Notes:", "  - Also:", "    ```js", "    bar()", "    ```"]),
+    ],
+    [
+      "text after a fenced example",
+      "jsdoc = true",
+      example(["```js", "foo()", "```", "", "This prints 1."]),
+      example(["  ```js", "  foo();", "  ```", "", "  This prints 1."]).replace(" * \n", " *\n"),
+    ],
     [
       "a fence inside a fence",
       "jsdoc = true",
@@ -635,15 +649,6 @@ export function add(a, b) {}
     expect(second.exitCode).toBe(0);
   });
 
-  // The closing fence is indented like the opening fence. A fence in the text after the block, indented like the
-  // code, doesn't close it. oxfmt prints the same, and reads the whole block as code on its second pass.
-  test("text after a fenced example that has an indented fence in it", async () => {
-    const input = example(["```js", "foo()", "```", "Notes:", "- Also:", "  ```js", "  bar()", "  ```"]);
-    const printed = example(["  ```js", "  foo();", "  ```", "Notes:", "- Also:", "  ```js", "  bar()", "  ```"]);
-    const result = await format({ ...bunfig("jsdoc = true"), "a.js": input });
-    expect(result.files["a.js"]).toBe(printed);
-    expect(result.exitCode).toBe(0);
-  });
 });
 
 describe.concurrent("svelte", () => {

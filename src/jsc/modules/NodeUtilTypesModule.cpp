@@ -1115,8 +1115,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsArrayBufferView,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-    return JSValue::encode(
-        jsBoolean(cell->type() >= Int8ArrayType && cell->type() <= DataViewType));
+    return JSValue::encode(jsBoolean(isTypedArrayTypeIncludingDataView(cell->type())));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsTypedArray,
     (JSC::JSGlobalObject * globalObject,
@@ -1233,6 +1232,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsEventTarget,
 
 namespace Zig {
 
+// nullptr when a script replaced ArrayBuffer.isView before this module first loads: JSC keeps no other reference to the original.
+static JSFunction* arrayBufferIsViewOfRealm(VM& vm, Zig::GlobalObject* globalObject)
+{
+    JSValue value = globalObject->arrayBufferConstructor()->getDirect(vm, vm.propertyNames->isView);
+    if (!value)
+        return nullptr;
+    auto* function = dynamicDowncast<JSFunction>(value);
+    if (!function || function->classInfo() != JSFunction::info() || function->globalObject() != globalObject)
+        return nullptr;
+    // With the JIT off JSC records NoIntrinsic for every host function, so the name of the executable identifies this one.
+    if (function->name(vm) != vm.propertyNames->isView.string())
+        return nullptr;
+    return function;
+}
+
 // Hardcoded module "node:util/types"
 DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes)
 {
@@ -1265,7 +1279,12 @@ DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes)
     putNativeFn(Identifier::fromString(vm, "isModuleNamespaceObject"_s), jsFunctionIsModuleNamespaceObject);
     putNativeFn(Identifier::fromString(vm, "isAnyArrayBuffer"_s), jsFunctionIsAnyArrayBuffer);
     putNativeFn(Identifier::fromString(vm, "isBoxedPrimitive"_s), jsFunctionIsBoxedPrimitive);
-    putNativeFn(Identifier::fromString(vm, "isArrayBufferView"_s), jsFunctionIsArrayBufferView);
+    // As in Node, the export is ArrayBuffer.isView itself: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/types.js#L67
+    JSFunction* isArrayBufferView = arrayBufferIsViewOfRealm(vm, globalObject);
+    // The stand-in has the intrinsic of the original, so the DFG and FTL inline a call of either.
+    if (!isArrayBufferView)
+        isArrayBufferView = JSFunction::create(vm, globalObject, 1, "isView"_s, jsFunctionIsArrayBufferView, ImplementationVisibility::Public, ArrayBufferIsViewIntrinsic);
+    put(Identifier::fromString(vm, "isArrayBufferView"_s), isArrayBufferView);
     putNativeFn(Identifier::fromString(vm, "isTypedArray"_s), jsFunctionIsTypedArray);
     putNativeFn(Identifier::fromString(vm, "isUint8Array"_s), jsFunctionIsUint8Array);
     putNativeFn(Identifier::fromString(vm, "isUint8ClampedArray"_s), jsFunctionIsUint8ClampedArray);

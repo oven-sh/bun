@@ -211,8 +211,7 @@ describe("path.resolve", () => {
   describe("many arguments", () => {
     const roots = { posix: "/", win32: "C:\\" };
 
-    // 9 arguments do not fit the inline argument list. On Linux the larger counts use the medium
-    // scratch tier, the large scratch tier and a heap buffer.
+    // 9 arguments exceed the inline list. On Linux the other counts use the medium tier, the large tier and the heap.
     test.each(["posix", "win32"])("path.%s.resolve keeps every argument, in order", flavour => {
       const { resolve, sep } = path[flavour];
       for (const count of [9, 300, 1500, 5000]) {
@@ -263,50 +262,41 @@ describe("path.resolve", () => {
       expect(cases.map(([resolve, args]) => resolve(...args))).toEqual(cases.map(([, , expected]) => expected));
     });
 
-    // resolve() reads its arguments from last to first. It used to move the whole path built so
-    // far once per argument: the 60,000 short arguments here moved the 16 MiB argument 60,000
-    // times, which took 34 s in a release build and 43 s in a debug build. With one copy per
-    // argument the child takes 0.1 s (release) or 2 s (debug, 6 s on a busy machine). No time
-    // is asserted: the spawn timeout kills a child that moves the path again.
-    const spawnTimeout = isDebug ? 20_000 : 10_000;
-
-    test.concurrent.each(["posix", "win32"])(
-      "path.%s.resolve copies each argument once",
-      async flavour => {
-        const root = roots[flavour];
-        const count = 60_000;
-        const lastBytes = 16 * 1024 * 1024;
-        const script = `
-          const { resolve, sep } = require("node:path").${flavour};
-          const root = ${JSON.stringify(root)};
-          const last = Buffer.alloc(${lastBytes}, "b").toString();
-          const args = new Array(${count}).fill("a");
-          args.push(last);
-          const resolved = resolve(root, ...args);
-          console.log(JSON.stringify({
-            length: resolved.length,
-            start: resolved.startsWith(root + Buffer.alloc(${count} * 2, "a" + sep).toString()),
-            end: resolved.endsWith(last),
-          }));
-        `;
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", script],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "pipe",
-          timeout: spawnTimeout,
-          killSignal: "SIGKILL",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-          stdout: JSON.stringify({ length: root.length + count * 2 + lastBytes, start: true, end: true }),
-          stderr: "",
-          exitCode: 0,
-          signalCode: null,
-        });
-      },
-      30_000,
-    );
+    // The spawn timeout is the check: a loop that moves the path again for each argument runs several times longer.
+    test.concurrent.each(["posix", "win32"])("path.%s.resolve copies each argument once", async flavour => {
+      const root = roots[flavour];
+      // Fewer arguments in a debug build, so that its child also finishes within the default test timeout.
+      const count = isDebug ? 20_000 : 60_000;
+      const lastBytes = 16 * 1024 * 1024;
+      const script = `
+        const { resolve, sep } = require("node:path").${flavour};
+        const root = ${JSON.stringify(root)};
+        const last = Buffer.alloc(${lastBytes}, "b").toString();
+        const args = new Array(${count}).fill("a");
+        args.push(last);
+        const resolved = resolve(root, ...args);
+        console.log(JSON.stringify({
+          length: resolved.length,
+          start: resolved.startsWith(root + Buffer.alloc(${count} * 2, "a" + sep).toString()),
+          end: resolved.endsWith(last),
+        }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: JSON.stringify({ length: root.length + count * 2 + lastBytes, start: true, end: true }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
   });
 
   test.skipIf(isWindows)("a backslash at the end of the cwd is part of its name", async () => {

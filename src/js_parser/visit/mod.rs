@@ -402,9 +402,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if let Some(value) = decl.value {
                                 if let ExprData::ERequireString(req) = value.data {
                                     if let Some(unwrapped_id) = req.unwrapped_id.get() {
+                                        // See `DeferredImportNamespace::scope`.
+                                        let is_conditional_var = kind == LocalKind::KVar
+                                            && (self.is_inside_single_stmt_body
+                                                || !self.current_scope.kind_stops_hoisting());
+                                        let scope = self.current_scope;
                                         let deferred = &mut self.imports_to_convert_from_require
                                             [unwrapped_id.get_usize()];
                                         deferred.namespace.ref_ = ref_;
+                                        if is_conditional_var {
+                                            deferred.scope = Some(scope);
+                                        }
                                         self.import_items_for_namespace
                                             .insert(ref_, ImportItemForNamespaceMap::default());
                                         continue 'outer;

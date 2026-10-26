@@ -2561,22 +2561,20 @@ impl<'a> LinkerContext<'a> {
     ) -> js_printer::RequireOrImportMeta {
         let flags = self.graph.meta.items_flags()[source_index as usize];
         let wrapper_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
+        // A file that keeps its `__commonJS` wrapper has no namespace object: the value is the call.
+        let was_unwrapped_require = was_unwrapped_require
+            && flags.wrap != WrapKind::Cjs
+            && self.graph.ast.items_flags()[source_index as usize]
+                .contains(AstFlags::FORCE_CJS_TO_ESM);
         js_printer::RequireOrImportMeta {
-            exports_ref: if flags.wrap == WrapKind::Esm
-                || (was_unwrapped_require
-                    && self.graph.ast.items_flags()[source_index as usize]
-                        .contains(AstFlags::FORCE_CJS_TO_ESM))
-            {
+            exports_ref: if flags.wrap == WrapKind::Esm || was_unwrapped_require {
                 self.graph.ast.items_exports_ref()[source_index as usize]
             } else {
                 Ref::NONE
             },
             is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
             wrapper_ref,
-
-            was_unwrapped_require: was_unwrapped_require
-                && self.graph.ast.items_flags()[source_index as usize]
-                    .contains(AstFlags::FORCE_CJS_TO_ESM),
+            was_unwrapped_require,
         }
     }
 

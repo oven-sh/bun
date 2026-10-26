@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import assert from "node:assert";
 import fs from "node:fs";
 // import child from "node:child_process";
@@ -181,6 +181,97 @@ describe("path.resolve", () => {
     expect(() => {
       return path.posix.resolve(undefined, "/hi");
     }).not.toThrow();
+  });
+
+  describe("many arguments", () => {
+    const roots = { posix: "/", win32: "C:\\" };
+
+    // 9 arguments exceed the inline list. On Linux the other counts use the medium tier, the large tier and the heap.
+    test.each(["posix", "win32"])("path.%s.resolve keeps every argument, in order", flavour => {
+      const { resolve, sep } = path[flavour];
+      for (const count of [9, 300, 1500, 5000]) {
+        const segments = Array.from({ length: count }, (_, i) => Buffer.alloc(8 + (i % 17), "a").toString() + i);
+        expect(resolve(roots[flavour], ...segments)).toBe(roots[flavour] + segments.join(sep));
+      }
+    });
+
+    // The expected values are the output of Node.js v26.3.0.
+    test("dot segments, empty arguments and a later root", () => {
+      const up = new Array(50).fill("..");
+      const posixDownUp = new Array(40).fill("b/..");
+      const win32DownUp = new Array(40).fill("b\\..");
+      const cases = [
+        [path.posix.resolve, ["/"], "/"],
+        [path.posix.resolve, ["/.."], "/"],
+        [path.posix.resolve, ["/a/.."], "/"],
+        [path.posix.resolve, ["/a/b/c/"], "/a/b/c"],
+        [path.posix.resolve, ["//a//b//"], "/a/b"],
+        [path.posix.resolve, ["/a", "b", "..", "c", ".", "", "d/", "../e"], "/a/c/e"],
+        [path.posix.resolve, ["ignored", "/abs", "x", "/last", "y", "..", "z"], "/last/z"],
+        [path.posix.resolve, ["/a", "..", "..", "..", "b"], "/b"],
+        [path.posix.resolve, ["/a/b", "../../../c/./d//"], "/c/d"],
+        [path.posix.resolve, ["/", "", "", "a", "", "b", ""], "/a/b"],
+        [path.posix.resolve, ["/x", ...up, "y"], "/y"],
+        [path.posix.resolve, ["/a", ...posixDownUp, "c"], "/a/c"],
+        [path.posix.resolve, ["/..", "..", "a", "...", "b"], "/a/.../b"],
+        [path.win32.resolve, ["C:\\"], "C:\\"],
+        [path.win32.resolve, ["C:\\.."], "C:\\"],
+        [path.win32.resolve, ["C:\\a\\.."], "C:\\"],
+        [path.win32.resolve, ["C:/a/b/c/"], "C:\\a\\b\\c"],
+        [path.win32.resolve, ["c:\\"], "c:\\"],
+        [path.win32.resolve, ["\\\\server\\share"], "\\\\server\\share\\"],
+        [path.win32.resolve, ["\\\\server\\share", ".."], "\\\\server\\share\\"],
+        [path.win32.resolve, ["\\\\server\\share\\a", "..", "b"], "\\\\server\\share\\b"],
+        [path.win32.resolve, ["//server/share/a/../.."], "\\\\server\\share\\"],
+        [path.win32.resolve, ["C:\\a", "b", "..", "c", ".", "", "d\\", "..\\e"], "C:\\a\\c\\e"],
+        [path.win32.resolve, ["C:\\base", "D:\\other", "C:rel", "x"], "C:\\base\\rel\\x"],
+        [path.win32.resolve, ["C:\\base", "\\\\srv\\share\\dir", "x", "..", "y"], "\\\\srv\\share\\dir\\y"],
+        [path.win32.resolve, ["C:\\a", "\\rooted", "x"], "C:\\rooted\\x"],
+        [path.win32.resolve, ["C:/a/b", "..\\..\\..\\c"], "C:\\c"],
+        [path.win32.resolve, ["c:\\A", "C:b"], "C:\\A\\b"],
+        [path.win32.resolve, ["D:\\ignored", "C:\\x", ...up, "y"], "C:\\y"],
+        [path.win32.resolve, ["C:\\a", ...win32DownUp, "c"], "C:\\a\\c"],
+        [path.win32.resolve, ["C:\\", "", "", "a", "", "b", ""], "C:\\a\\b"],
+        [path.win32.resolve, ["E:\\one", "e:two", "E:..\\three"], "E:\\one\\three"],
+      ];
+      expect(cases.map(([resolve, args]) => resolve(...args))).toEqual(cases.map(([, , expected]) => expected));
+    });
+
+    // The spawn timeout is the check: a loop that moves the path again for each argument runs several times longer.
+    test.concurrent.each(["posix", "win32"])("path.%s.resolve copies each argument once", async flavour => {
+      const root = roots[flavour];
+      // Fewer arguments in a debug build, so that its child also finishes within the default test timeout.
+      const count = isDebug ? 20_000 : 60_000;
+      const lastBytes = 16 * 1024 * 1024;
+      const script = `
+        const { resolve, sep } = require("node:path").${flavour};
+        const root = ${JSON.stringify(root)};
+        const last = Buffer.alloc(${lastBytes}, "b").toString();
+        const args = new Array(${count}).fill("a");
+        args.push(last);
+        const resolved = resolve(root, ...args);
+        console.log(JSON.stringify({
+          length: resolved.length,
+          start: resolved.startsWith(root + Buffer.alloc(${count} * 2, "a" + sep).toString()),
+          end: resolved.endsWith(last),
+        }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: JSON.stringify({ length: root.length + count * 2 + lastBytes, start: true, end: true }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
   });
 
   test("very long paths", () => {

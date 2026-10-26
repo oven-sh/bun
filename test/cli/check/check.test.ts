@@ -6852,7 +6852,7 @@ export const s: string = f(x);
 `;
         using dir = project({ "a.ts": where === "before the call" ? box + call : call + box });
         const { stdout, exitCode } = await check(dir);
-        const line = where === "before the call" ? 10 : 4;
+        const line = where === "before the call" ? 11 : 4;
         expect(stdout).toBe(`a.ts(${line},14): error TS2322: Type '${inferred}' is not assignable to type 'string'.`);
         expect(exitCode).toBe(1);
       });

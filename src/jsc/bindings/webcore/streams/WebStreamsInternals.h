@@ -362,8 +362,7 @@ void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefau
 // against unset branch slots). Callers skip a terminal branch.
 JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
-// The promise-less [reaction-convention] deferral: handler(value, context) runs as its own microtask under the async
-// context current at this call, as a reaction registered now would.
+// handler(value, context) runs as its own microtask, in the async context that is current at this call.
 void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
 // True if a chain of tees or text streams has used too much stack for the next link. The link then continues from a microtask.
 bool streamLinkMustDefer(JSC::VM&); // userJS: no (pure) — WebStreamsMisc.cpp

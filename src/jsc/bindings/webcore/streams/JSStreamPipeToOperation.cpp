@@ -352,8 +352,7 @@ void JSStreamPipeToOperation::onWriterReadyFulfilled(JSGlobalObject* globalObjec
     pipeToLoopStep(globalObject, this);
 }
 
-// Reacting to every write promise is the point (no spurious unhandledRejection); the loop is
-// driven by the read requests, the shutdown by the closed-promise reactions and onWritesFinishedForShutdown.
+// Reacting to every write promise is the point (no spurious unhandledRejection). It drives neither the loop nor the shutdown.
 void JSStreamPipeToOperation::onWriteSettled(JSGlobalObject*)
 {
 }
@@ -611,9 +610,7 @@ void pipeToReadRequestChunkSteps(JSGlobalObject* globalObject, JSStreamPipeToOpe
     RELEASE_AND_RETURN(scope, WebCore::registerPipeReaction(globalObject, writer->readyPromise(globalObject), runtime->onPipeWriterReadyFulfilled(), nullptr, op));
 }
 
-// The close and error steps only end the read. The shutdown starts from the reactions that startPipeToOperation()
-// registered on the reader's closed promise, so it runs in the async context of the pipeTo() call and not in the
-// context of whoever closed or errored the source.
+// Only ends the read: the reader's closed-promise reactions start the shutdown, in the async context of the pipeTo() call.
 void pipeToReadRequestCloseOrErrorSteps(JSStreamPipeToOperation* op)
 {
     op->m_readInFlight = false;

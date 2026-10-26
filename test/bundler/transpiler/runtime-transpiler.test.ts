@@ -697,15 +697,16 @@ describe("tsconfig unused imports", () => {
           const source = (name: string) =>
             "import { unused } from " + JSON.stringify(path.join(here, "effect-" + name + ".ts")) + '; console.log("' + name + '");';
           const dependency = path.join(here, "node_modules", "dep", "index.ts");
+          const nowhere = path.join(here, "no-such-directory", "memory.ts");
           const build = await Bun.build({
             entrypoints: [path.join(here, "entry.ts")],
             target: "bun",
             files: {
               [path.join(here, "entry.ts")]:
-                'import "./disk.ts"; import "./memory.ts"; import "/nowhere/memory.ts"; import ' + JSON.stringify(dependency) + ";",
+                'import "./disk.ts"; import "./memory.ts"; import ' + JSON.stringify(nowhere) + "; import " + JSON.stringify(dependency) + ";",
               [path.join(here, "disk.ts")]: source("replaced"),
               [path.join(here, "memory.ts")]: source("memory"),
-              "/nowhere/memory.ts": source("nowhere"),
+              [nowhere]: source("nowhere"),
               [dependency]: source("dep"),
             },
           });
@@ -1047,6 +1048,78 @@ describe("tsconfig unused imports", () => {
     const build = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "main.ts"]);
     expect(build.stderr).toBe("");
     expect(await run(String(dir), ["out.js"])).toEqual({ stdout: "main\n", stderr: "", exitCode: 0 });
+  });
+
+  // Auto-install answers an import of a bare name from the registry. An import that only
+  // tsconfig.json keeps is not such a request: `import { type Handler } from "aws-lambda"` names
+  // the types of `@types/aws-lambda`, and the package `aws-lambda` is another thing.
+  describe("auto-install", () => {
+    async function registryOf(name: string, files: Record<string, string>) {
+      const tarball = await new Bun.Archive(
+        Object.fromEntries(Object.entries(files).map(([file, text]) => [`package/${file}`, text])),
+        { compress: "gzip" },
+      ).bytes();
+      const requests: string[] = [];
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const { origin, pathname } = new URL(req.url);
+          requests.push(pathname);
+          if (pathname === `/${name}-1.0.0.tgz`) return new Response(tarball);
+          if (pathname !== `/${name}`) return new Response("not found", { status: 404 });
+          return Response.json({
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball: `${origin}/${name}-1.0.0.tgz` } } },
+          });
+        },
+      });
+      return {
+        requests,
+        bunfig: `[install]\nregistry = "http://127.0.0.1:${server.port}/"\n`,
+        [Symbol.dispose]() {
+          server.stop(true);
+        },
+      };
+    }
+    const autoInstall = (dir: string, entry: string) =>
+      run(dir, [entry], { ...bunEnv, BUN_INSTALL_CACHE_DIR: path.join(dir, ".bun-cache") });
+
+    test.concurrent.each([
+      ["a type-only clause", `import { type Handler } from "pkg";\nexport const handler: Handler = () => {};`],
+      ["a name that no value uses", `import { Handler } from "pkg";\nexport const handler: Handler = () => {};`],
+      ["an empty clause", `import {} from "pkg";`],
+      ["a type-only re-export", `export { type Handler } from "pkg";`],
+    ])("%s makes no request to the registry", async (_, statement) => {
+      using registry = await registryOf("pkg", {
+        "package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+        "index.js": `console.log("the package ran");`,
+      });
+      using dir = tempDir("ts-unused-imports-auto-install", {
+        "tsconfig.json": verbatim,
+        "bunfig.toml": registry.bunfig,
+        "entry.ts": `${statement}\nconsole.log("entry");\n`,
+      });
+      expect(await autoInstall(String(dir), "entry.ts")).toEqual({ stdout: "entry\n", stderr: "", exitCode: 0 });
+      expect(registry.requests).toEqual([]);
+    });
+
+    // The project that installs a package did not write its files, and the tsconfig.json in its
+    // tarball is not the project's either.
+    test.concurrent("a package in the cache takes no setting from the tsconfig.json of its tarball", async () => {
+      using registry = await registryOf("pkg", {
+        "package.json": JSON.stringify({ name: "pkg", version: "1.0.0", type: "module", module: "index.ts" }),
+        "tsconfig.json": verbatim,
+        "index.ts": `import { unused } from "./register.ts";\nexport const value: string = "value";`,
+        "register.ts": `console.log("register ran");\nexport const unused = 1;`,
+      });
+      using dir = tempDir("ts-unused-imports-cached-package", {
+        "bunfig.toml": registry.bunfig,
+        "entry.ts": `import { value } from "pkg";\nconsole.log(value);\n`,
+      });
+      expect(await autoInstall(String(dir), "entry.ts")).toEqual({ stdout: "value\n", stderr: "", exitCode: 0 });
+      expect(registry.requests).toEqual(["/pkg", "/pkg-1.0.0.tgz"]);
+    });
   });
 
   // A kept import is a request for its module, at its place in the file. These programs run

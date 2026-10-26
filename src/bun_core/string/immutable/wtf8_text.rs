@@ -393,14 +393,10 @@ impl Iterator for Wtf8DecodedUnits<'_> {
         if let Some(trail) = self.trail.take() {
             return Some(trail);
         }
-        let rest = self.text.get(self.at..)?;
-        let (cp, size) = match wtf8_codepoint_at(rest, 0) {
-            (_, 0) => return None,
-            // U+FFFD itself has three bytes.
-            (UNICODE_REPLACEMENT, 1) => (UNICODE_REPLACEMENT, wtf8_step_replaced(rest).len),
-            found => found,
-        };
-        self.at += size;
+        let rest = self.text.get(self.at..).filter(|rest| !rest.is_empty())?;
+        let step = wtf8_step(rest);
+        let cp = step.code_point;
+        self.at += step.len;
         if cp > 0xFFFF {
             self.trail = Some(0xDC00 | (cp & 0x3FF) as u16);
             return Some((0xD7C0 + (cp >> 10)) as u16);
@@ -597,6 +593,35 @@ mod tests {
                 assert_eq!(wtf8_code_unit_at(&text, index), Past(len), "round {round}");
             }
             assert_eq!(wtf8_decoded_len_utf16(&text), len, "round {round}");
+        }
+    }
+
+    #[test]
+    fn decoded_units_are_those_of_a_lossy_decode_of_utf8() {
+        // Every text of up to four of these bytes. Half of a surrogate pair is not UTF-8: a text that starts one is left out.
+        let bytes = [
+            0x41, 0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0, 0xC2, 0xDF, 0xE0, 0xE1, 0xEC,
+            0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF4, 0xF5, 0xFF,
+        ];
+        let mut texts: Vec<Vec<u8>> = vec![Vec::new()];
+        for from in [0, 1, 23, 507] {
+            let longer: Vec<Vec<u8>> = texts[from..]
+                .iter()
+                .flat_map(|text| bytes.map(|byte| [&text[..], &[byte]].concat()))
+                .collect();
+            texts.extend(longer);
+        }
+        assert_eq!(texts.len(), 1 + 22 + 484 + 10_648 + 234_256);
+        for text in &texts {
+            if text
+                .windows(2)
+                .any(|pair| pair[0] == 0xED && pair[1] >= 0xA0)
+            {
+                continue;
+            }
+            let lossy: Vec<u16> = String::from_utf8_lossy(text).encode_utf16().collect();
+            let decoded: Vec<u16> = wtf8_decoded_units(text).collect();
+            assert_eq!(decoded, lossy, "{text:x?}");
         }
     }
 

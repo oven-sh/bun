@@ -36,6 +36,10 @@ pub(crate) struct Scanner<'a> {
     current_dir: Option<Rc<Dir>>,
     /// Path walked to the directory being iterated. `Entry.dir` is the path it was first read by.
     walked_dir: &'static [u8],
+    /// Whether `next` ran since the last read began. A cached listing is returned without it.
+    read_iterated: bool,
+    /// Directories cached only for a link to them on the working directory's path, until scanned.
+    behind_links: Vec<&'static [u8]>,
 }
 
 // FIFO queue of scan entries (pop_front / push_back).
@@ -92,6 +96,8 @@ impl<'a> Scanner<'a> {
             search_count: 0,
             current_dir: None,
             walked_dir: b"",
+            read_iterated: false,
+            behind_links: Self::listed_behind_links(transpiler.fs),
         })
     }
 
@@ -185,7 +191,7 @@ impl<'a> Scanner<'a> {
                 for entry_ptr in entry_ptrs {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr });
+                    self.next(unsafe { &*entry_ptr });
                 }
             }
         }
@@ -199,10 +205,7 @@ impl<'a> Scanner<'a> {
                 Some(parent) => (parent.fd, entry.name.slice()),
                 None => (Fd::cwd(), path2),
             };
-            #[cfg(not(windows))]
-            let opened = bun_sys::open_dir_at(parent, rel_path);
-            #[cfg(windows)]
-            let opened = bun_sys::open_dir_no_renaming_or_deleting_windows(parent, rel_path);
+            let opened = Self::open_dir(parent, rel_path);
             // Dropping `entry` releases the parent fd once its last child is opened.
             drop(entry);
             let Ok(child_fd) = opened else {
@@ -223,19 +226,89 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
+    fn open_dir(parent: Fd, path: &[u8]) -> bun_sys::Maybe<Fd> {
+        #[cfg(not(windows))]
+        {
+            bun_sys::open_dir_at(parent, path)
+        }
+        #[cfg(windows)]
+        {
+            bun_sys::open_dir_no_renaming_or_deleting_windows(parent, path)
+        }
+    }
+
     /// `handle` stays owned by the caller; the resolver caches the listing but not the fd.
     fn read_dir_with_name(
         &mut self,
         name: &'static [u8],
         handle: Option<Fd>,
-    ) -> crate::Result<&'static mut EntriesOption> {
+    ) -> crate::Result<&'static EntriesOption> {
         self.walked_dir = name;
+        self.read_iterated = false;
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
-        unsafe { &mut (*fs_ptr).fs }
+        let read: crate::Result<&'static EntriesOption> = unsafe { &mut (*fs_ptr).fs }
             .read_directory_with_iterator(name, handle, fs::GENERATION_BASE, false, iter)
-            .map_err(Into::into)
+            .map(|cached| &*cached)
+            .map_err(Into::into);
+        // Cached only for a link to `name`: its entries go to `next` now, as at a first read.
+        if let Ok(EntriesOption::Entries(listing)) = read
+            && self.take_behind_link(name)
+            && !self.read_iterated
+        {
+            if let Some(dir) = handle {
+                self.next_in_directory_order(listing, dir);
+            } else if let Ok(dir) = Self::open_dir(Fd::cwd(), name).map(Dir::from_fd) {
+                self.next_in_directory_order(listing, dir.fd);
+            }
+        }
+        read
+    }
+
+    /// Where links on the working directory's path lead, which is how their listings are named.
+    fn listed_behind_links(fs: *mut FileSystem) -> Vec<&'static [u8]> {
+        // SAFETY: `fs` is the process singleton; its listings are read under `entries_mutex`.
+        let real_fs = unsafe { &mut (*fs).fs };
+        let _lock = real_fs.entries_mutex.lock_guard();
+        let mut behind_links: Vec<&'static [u8]> = Vec::new();
+        let mut above = bun_core::top_level_dir();
+        loop {
+            let walked = strings::without_trailing_slash(above);
+            // The resolver read `above` by this path, so it is not one that only a link reached.
+            behind_links.retain(|real| strings::without_trailing_slash(real) != walked);
+            if let Some(EntriesOption::Entries(listing)) = real_fs.entries.get(above)
+                && strings::without_trailing_slash(listing.dir) != walked
+            {
+                behind_links.push(listing.dir);
+            }
+            let parent = bun_resolver::Dirname::dirname(above);
+            if parent.len() >= above.len() {
+                return behind_links;
+            }
+            above = parent;
+        }
+    }
+
+    /// Whether `dir` is one of `behind_links`. It is taken off them: the scan reads it now.
+    fn take_behind_link(&mut self, dir: &[u8]) -> bool {
+        let dir = strings::without_trailing_slash(dir);
+        let listed = self.behind_links.len();
+        self.behind_links
+            .retain(|real| strings::without_trailing_slash(real) != dir);
+        self.behind_links.len() != listed
+    }
+
+    /// Hands a cached `listing` to `next` in the order `dir` gives the names, as a first read does.
+    fn next_in_directory_order(&mut self, listing: &fs::DirEntry, dir: Fd) {
+        // A listing is probed under `entries_mutex`, which a read also holds while `next` runs.
+        let _lock = self.fs().fs.entries_mutex.lock_guard();
+        let mut names = bun_sys::iterate_dir(dir);
+        while let Ok(Some(found)) = names.next() {
+            if let Some(cached) = listing.get(found.name.slice_u8()) {
+                self.next(cached.entry());
+            }
+        }
     }
 
     pub(crate) fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
@@ -336,9 +409,10 @@ impl<'a> Scanner<'a> {
             == strings::without_trailing_slash(self.walked_dir)
     }
 
-    pub(crate) fn next(&mut self, entry: &mut fs::Entry) {
+    pub(crate) fn next(&mut self, entry: &fs::Entry) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
+        self.read_iterated = true;
         // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
         // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.

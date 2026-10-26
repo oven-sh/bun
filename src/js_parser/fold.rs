@@ -173,6 +173,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EIdentifier(id) => {
+                    // `.length` of a long const string folds as the literal's does, with no copy of the string.
+                    if p.has_long_const_read
+                        && name == b"length"
+                        && p.options.features.minify_syntax
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        && !identifier_opts.is_delete_target()
+                        && let Some(value) = p.long_const_read(&id)
+                        && let Some(str_) = value.unwrap_inlined().data.e_string()
+                        && let Some(len) = e_string_javascript_length(&str_)
+                    {
+                        p.ignore_usage(id.ref_);
+                        return Some(p.new_expr(E::Number::new(len as f64), loc));
+                    }
+
                     // A local holding one module's namespace (`const ns = await
                     // import(…)`) reads its exports as `import * as ns` does:
                     // `ns.a` becomes an import item of that record, below.

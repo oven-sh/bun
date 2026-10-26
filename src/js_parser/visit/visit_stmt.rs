@@ -2342,6 +2342,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_should_fold_typescript_constant_expressions =
             p.should_fold_typescript_constant_expressions;
         p.should_fold_typescript_constant_expressions = true;
+        // An initializer that names a const string makes a string member.
+        let old_const_literal_required = core::mem::replace(&mut p.const_literal_required, true);
 
         // Create an assignment for each enum value
         for value in values.iter_mut() {
@@ -2473,6 +2475,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.should_fold_typescript_constant_expressions =
             old_should_fold_typescript_constant_expressions;
+        p.const_literal_required = old_const_literal_required;
 
         let mut value_stmts: StmtList<'a> = BumpVec::with_capacity_in(value_exprs.len(), p.arena);
         // Generate statements from expressions

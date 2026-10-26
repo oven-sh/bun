@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
 
+const countOf = (text: string, part: string) => text.split(part).length - 1;
+const textOf = (fill: string, length: number) => Buffer.alloc(length, fill).toString();
+
 describe("bundler", () => {
   // A direct eval at the top level of a file the bundler wraps in a CommonJS
   // closure can reach that file's top-level names, so they are not renamed.
@@ -2044,6 +2047,266 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // A read of a `const` string over 64 units stays a name, so the string is
+  // printed once. Before, each read printed the whole literal: 50 KB for a
+  // 10 KB string with 5 reads. These are the flags of `--minify`.
+  itBundled("minify/ConstStringOverInlineBoundPrintedOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        const TOP = "${textOf("t", 10000)}";
+        function nested() {
+          const NESTED = "${textOf("n", 10000)}";
+          return [NESTED, NESTED, NESTED];
+        }
+        console.log([TOP, TOP, TOP, TOP, TOP].concat(nested()).map(text => text[0] + text.length).join());
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect({
+        top: countOf(code, textOf("t", 10000)),
+        nested: countOf(code, textOf("n", 10000)),
+        bytes: code.length < 20_500 ? "under 20,500" : code.length,
+      }).toEqual({ top: 1, nested: 1, bytes: "under 20,500" });
+    },
+    run: { stdout: "t10000,t10000,t10000,t10000,t10000,n10000,n10000,n10000" },
+  });
+
+  // Each const is two copies of the one before it. No literal in the source
+  // is long, and every read printed the whole string: the output grew by 4
+  // for each 2 consts.
+  itBundled("minify/ConstStringChainOfTemplatesStaysSmall", {
+    files: {
+      "/entry.js":
+        `const A0 = "abcdefgh";\n` +
+        Array.from({ length: 12 }, (_, i) => `const A${i + 1} = \`\${A${i}}\${A${i}}\`;\n`).join("") +
+        `console.log([A12, A12, A12].map(text => text.length).join());\n`,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js").length).toBeLessThan(1_000);
+    },
+    run: { stdout: "32768,32768,32768" },
+  });
+
+  // An unused const is still removed. So is one that only dead code reads,
+  // or only `.length`. Dead code that is printed (the `switch`) gets no copy.
+  itBundled("minify/ConstStringOverInlineBoundUnusedOrDead", {
+    files: {
+      "/entry.js": /* js */ `
+        function unused() { const S = "${textOf("u", 100)}"; return 1; }
+        function deadBranch() { const S = "${textOf("d", 100)}"; if (false) sink(S, S, S); return 2; }
+        function deadButPrinted() { const S = "${textOf("k", 100)}"; if (false) { switch (0) { case [S, S, S, S, S]: } } return 3; }
+        function onlyLength() { const S = "${textOf("l", 100)}"; return S.length + S.length; }
+        console.log(unused(), deadBranch(), deadButPrinted(), onlyLength());
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect({
+        unused: countOf(code, textOf("u", 100)),
+        deadBranch: countOf(code, textOf("d", 100)),
+        deadButPrinted: countOf(code, textOf("k", 100)),
+        onlyLength: countOf(code, textOf("l", 100)),
+      }).toEqual({ unused: 0, deadBranch: 0, deadButPrinted: 0, onlyLength: 0 });
+    },
+    run: { stdout: "1 2 3 200" },
+  });
+
+  // A const string still decides a branch when it is over the bound: the
+  // module that only the dead branch requires is not bundled.
+  for (const [length, copies] of [
+    [64, 2],
+    [65, 1],
+  ] as const) {
+    itBundled(`minify/ConstStringOfLength${length}DropsTheDeadBranch`, {
+      files: {
+        "/entry.js": /* js */ `
+          function get() {
+            const url = process.env.API_URL;
+            if (!url) return require("./dev-only.js").mock;
+            return [url, url].map(text => text.length).join();
+          }
+          console.log(get());
+        `,
+        "/dev-only.js": /* js */ `exports.mock = "dev-only mock";`,
+      },
+      minifySyntax: true,
+      define: { "process.env.API_URL": JSON.stringify(textOf("u", length)) },
+      onAfterBundle(api) {
+        const code = api.readFile("/out.js");
+        expect({
+          devOnlyModule: code.includes("dev-only mock"),
+          copies: countOf(code, textOf("u", length)),
+        }).toEqual({ devOnlyModule: false, copies });
+      },
+      run: { stdout: `${length},${length}` },
+    });
+  }
+
+  // `require()`, `import()` and `feature()` need the literal at any length.
+  itBundled("minify/ConstStringOverInlineBoundIsALiteralForSpecifiers", {
+    files: {
+      "/entry.js": /* js */ `
+        import { feature } from "bun:bundle";
+        const REQUIRED = "./${textOf("r", 70)}.js";
+        const IMPORTED = "./${textOf("i", 70)}.js";
+        const FLAG = "${textOf("F", 70)}";
+        const ALIAS_OF_FLAG = FLAG;
+        const flags = [feature(FLAG) ? "on" : "off", feature(ALIAS_OF_FLAG) ? "on" : "off"];
+        console.log(require(REQUIRED).name, (await import(IMPORTED)).name, flags.join());
+      `,
+      ["/" + textOf("r", 70) + ".js"]: /* js */ `exports.name = "was required";`,
+      ["/" + textOf("i", 70) + ".js"]: /* js */ `export const name = "was imported";`,
+    },
+    minifySyntax: true,
+    features: [textOf("F", 70)],
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect({
+        required: code.includes("was required"),
+        imported: code.includes("was imported"),
+        flag: countOf(code, textOf("F", 70)),
+      }).toEqual({ required: true, imported: true, flag: 0 });
+    },
+    run: { stdout: "was required was imported on,on" },
+  });
+
+  // An exported const and a const in a scope with a direct eval keep their
+  // declaration, which was one more copy. An alias is a name too.
+  itBundled("minify/ConstStringOverInlineBoundAliasExportAndEval", {
+    files: {
+      "/entry.js": /* js */ `
+        export const EXPORTED = "${textOf("x", 100)}";
+        function alias() { const S = "${textOf("a", 100)}"; const T = S; return [T, T, S]; }
+        function evil(code) { const S = "${textOf("e", 100)}"; return [eval(code), S, S]; }
+        console.log([EXPORTED, EXPORTED].concat(alias(), evil("S")).map(text => text[0] + text.length).join());
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect({
+        exported: countOf(code, textOf("x", 100)),
+        alias: countOf(code, textOf("a", 100)),
+        evil: countOf(code, textOf("e", 100)),
+      }).toEqual({ exported: 1, alias: 1, evil: 1 });
+    },
+    run: { stdout: "x100,x100,a100,a100,a100,e100,e100,e100" },
+  });
+
+  // A read that is a name needs the declaration. These orders visit a read
+  // after the statement list of the declaration is done, or before the
+  // declaration. A const that is read once keeps its declaration too: the
+  // read is not moved into `exports.text = `.
+  itBundled("minify/ConstStringOverInlineBoundKeepsItsDeclaration", {
+    files: {
+      "/entry.js": /* js */ `
+        function fallthrough(i) {
+          switch (i) {
+            case 0:
+              const A = "${textOf("s", 100)}";
+            case 1:
+              return [A, A];
+          }
+        }
+        function oneReadInLaterCase(i) {
+          switch (i) {
+            case 0:
+              const A = "${textOf("l", 100)}";
+            case 1:
+              return A;
+          }
+        }
+        function readBeforeDeclaration() {
+          const read = () => A;
+          const A = "${textOf("c", 100)}";
+          return [read(), A];
+        }
+        function onlyReadBeforeDeclaration() {
+          const read = () => A;
+          const A = "${textOf("b", 100)}";
+          return read();
+        }
+        function afterReturn() {
+          const A = "${textOf("d", 100)}";
+          return late();
+          function late() { return [A, A]; }
+        }
+        const lib = require("./lib.cjs");
+        lib.init();
+        console.log(
+          [fallthrough(0), oneReadInLaterCase(0), readBeforeDeclaration(), onlyReadBeforeDeclaration(), afterReturn(), lib.text]
+            .flat()
+            .map(text => text[0] + text.length)
+            .join(),
+        );
+      `,
+      "/lib.cjs": /* js */ `exports.init = function () { const text = "${textOf("e", 100)}"; exports.text = text; };`,
+    },
+    minifySyntax: true,
+    run: { stdout: "s100,s100,l100,c100,c100,b100,d100,d100,e100" },
+  });
+
+  // The React Compiler sees the read of a module-scope const as the
+  // identifier it is.
+  itBundled("minify/ConstStringOverInlineBoundInReactCompiledComponent", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const TITLE = "${textOf("T", 100)}";
+        export function Label({ text }) {
+          return <div title={TITLE}>{TITLE}{text}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    minifySyntax: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatch(/\b_c\(\d+\)/);
+      expect(countOf(code, textOf("T", 100))).toBe(1);
+      expect(code).toContain("title: TITLE");
+    },
+  });
+
+  // A template that reads a const string over the bound beside a shorter one
+  // keeps a name between two folded pieces of text. The React Compiler has to
+  // print each piece whole.
+  for (const [length, cls, url] of [
+    [64, `className: "<L> short px-4"`, `"data-url": "short/<L>/tail"`],
+    [65, "cls = `${LONG} short px-4`", "url = `short/${LONG}/tail`"],
+  ] as const) {
+    itBundled(`minify/ConstStringOfLength${length}InReactCompiledTemplate`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          const LONG = "${textOf("L", length)}";
+          const SHORT = "short";
+          export function Label({ text }) {
+            const cls = \`\${LONG} \${SHORT} px-4\`;
+            const url = \`\${SHORT}/\${LONG}/tail\`;
+            return <div className={cls} data-url={url}>{text}</div>;
+          }
+        `,
+      },
+      reactCompiler: true,
+      minifySyntax: true,
+      backend: "cli",
+      external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+      onAfterBundle(api) {
+        const code = api.readFile("/out.js").replaceAll(textOf("L", length), "<L>");
+        expect(code).toMatch(/\b_c\(\d+\)/);
+        expect(code).toContain(cls);
+        expect(code).toContain(url);
+      },
+    });
+  }
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables
@@ -2114,3 +2377,423 @@ test.each(["transformSync", "transform"] as const)(
     expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");
   },
 );
+
+// What `Bun.Transpiler({ inline: true, minify: { syntax: true } })` prints for
+// a const string at the inline bound (64 units) and one unit over it. `<L>`
+// stands for the string. Over the bound a read stays a name and the
+// declaration stays. What needs a literal (`require()`, `import()`) still
+// gets it, and `.length` and a test of the value still fold.
+const constStringRows = [
+  [
+    "two reads",
+    (text: string) => `function f() { const S = "${text}"; return [S, S]; }`,
+    `function f() {\n  return ["<L>", "<L>"];\n}`,
+    `function f() {\n  const S = "<L>";\n  return [S, S];\n}`,
+  ],
+  [
+    "one read",
+    (text: string) => `function f() { const S = "${text}"; return S; }`,
+    `function f() {\n  return "<L>";\n}`,
+    `function f() {\n  const S = "<L>";\n  return S;\n}`,
+  ],
+  [
+    "one read after a call",
+    (text: string) => `function f(g) { const S = "${text}"; g(); return S; }`,
+    `function f(g) {\n  g();\n  return "<L>";\n}`,
+    `function f(g) {\n  const S = "<L>";\n  g();\n  return S;\n}`,
+  ],
+  [
+    "one read that is assigned to an export",
+    (text: string) => `exports.f = function () { const S = "${text}"; exports.text = S; };`,
+    `exports.f = function() {\n  exports.text = "<L>";\n};`,
+    `exports.f = function() {\n  const S = "<L>";\n  exports.text = S;\n};`,
+  ],
+  [
+    "one read beside an indirect eval",
+    (text: string) => `function f(code) { const S = "${text}"; return S + (0, eval)(code); }`,
+    `function f(code) {\n  return "<L>" + (0, eval)(code);\n}`,
+    `function f(code) {\n  const S = "<L>";\n  return S + (0, eval)(code);\n}`,
+  ],
+  [
+    "length and typeof",
+    (text: string) => `function f() { const S = "${text}"; return [S.length, S["length"], typeof S, S]; }`,
+    `function f() {\n  return [64, 64, "string", "<L>"];\n}`,
+    `function f() {\n  const S = "<L>";\n  return [65, 65, typeof S, S];\n}`,
+  ],
+  [
+    "length alone",
+    (text: string) => `function f() { const S = "${text}"; return S.length; }`,
+    `function f() {\n  return 64;\n}`,
+    `function f() {\n  return 65;\n}`,
+  ],
+  [
+    "a test of the value",
+    (text: string) => `function f(x) { const S = "${text}"; return [S ? 1 : 2, !S, S && x, S || x, S ?? x, x]; }`,
+    `function f(x) {\n  return [1, !1, x, "<L>", "<L>", x];\n}`,
+    `function f(x) {\n  const S = "<L>";\n  return [1, !1, x, S, S, x];\n}`,
+  ],
+  [
+    "a branch that the value decides",
+    (text: string) => `function f() { const S = "${text}"; if (!S) return require("./dev-only.js"); return S; }`,
+    `function f() {\n  return "<L>";\n}`,
+    `function f() {\n  const S = "<L>";\n  return S;\n}`,
+  ],
+  [
+    "an alias",
+    (text: string) => `function f() { const S = "${text}"; const T = S; return [T, T, S]; }`,
+    `function f() {\n  return ["<L>", "<L>", "<L>"];\n}`,
+    `function f() {\n  const S = "<L>", T = S;\n  return [T, T, S];\n}`,
+  ],
+  [
+    "an alias read where the const is shadowed",
+    (text: string) => `const S = "${text}"; const T = S; function f(S) { return [T, S]; }`,
+    `const S = "<L>", T = "<L>";\nfunction f(S) {\n  return ["<L>", S];\n}`,
+    `const S = "<L>", T = S;\nfunction f(S) {\n  return [T, S];\n}`,
+  ],
+  [
+    "a shorthand property and a computed key",
+    (text: string) => `function f() { const S = "${text}"; return { [S]: 1, S }; }`,
+    `function f() {\n  return { ["<L>"]: 1, S: "<L>" };\n}`,
+    `function f() {\n  const S = "<L>";\n  return { [S]: 1, S };\n}`,
+  ],
+  [
+    "require(), import() and require.resolve()",
+    (text: string) => `const S = "${text}"; export const a = [require(S), import(S), require.resolve(S)];`,
+    `const S = "<L>";\nexport const a = [require("<L>"), import("<L>"), require.resolve("<L>")];`,
+    `const S = "<L>";\nexport const a = [require("<L>"), import("<L>"), require.resolve("<L>")];`,
+  ],
+  [
+    "two reads after import()",
+    (text: string) => `async function f() { const S = "${text}"; const m = await import("./x.js"); return [m, S, S]; }`,
+    `async function f() {\n  return [await import("./x.js"), "<L>", "<L>"];\n}`,
+    `async function f() {\n  const S = "<L>";\n  return [await import("./x.js"), S, S];\n}`,
+  ],
+  [
+    "two reads after require()",
+    (text: string) => `function f() { const S = "${text}"; const m = require("./x.js"); return [m, S, S]; }`,
+    `function f() {\n  return [require("./x.js"), "<L>", "<L>"];\n}`,
+    `function f() {\n  const S = "<L>";\n  return [require("./x.js"), S, S];\n}`,
+  ],
+  [
+    "the options of import()",
+    (text: string) => `const S = "${text}"; export const a = import("./x.js", { with: { type: S } });`,
+    `const S = "<L>";\nexport const a = import("./x.js", { with: { type: "<L>" } });`,
+    `const S = "<L>";\nexport const a = import("./x.js", { with: { type: S } });`,
+  ],
+  [
+    "a template with no holes",
+    (text: string) => `function f() { const S = \`${text}\`; return [S, S]; }`,
+    `function f() {\n  return ["<L>", "<L>"];\n}`,
+    `function f() {\n  const S = "<L>";\n  return [S, S];\n}`,
+  ],
+  [
+    "a template that a short const fills",
+    (text: string) =>
+      `function f() { const A = "${text.slice(0, 2)}"; const S = \`\${A}${text.slice(2)}\`; return [S, S]; }`,
+    `function f() {\n  return ["<L>", "<L>"];\n}`,
+    `function f() {\n  const S = "<L>";\n  return [S, S];\n}`,
+  ],
+] as const;
+
+// What the same transpiler prints one unit over the bound, for shapes where
+// the output at the bound is the business of another change (a const that
+// another `switch` case reads, a `with` statement, a `delete` or write target).
+const constStringRowsOverTheBound = [
+  [
+    "a const in a switch case",
+    (text: string) => `function f(i) { switch (i) { case 0: const S = "${text}"; case 1: return [S, S]; } }`,
+    `function f(i) {\n  switch (i) {\n    case 0:\n      const S = "<L>";\n    case 1:\n      return [S, S];\n  }\n}`,
+  ],
+  [
+    "a const in a switch case with one read in that case",
+    (text: string) => `function f(i, g) { switch (i) { case 0: const S = "${text}"; g(S); case 1: return S; } }`,
+    `function f(i, g) {\n  switch (i) {\n    case 0:\n      const S = "<L>";\n      g(S);\n    case 1:\n      return S;\n  }\n}`,
+  ],
+  [
+    "the operand of delete",
+    (text: string) => `function f() { const S = "${text}"; return [delete S, S]; }`,
+    `function f() {\n  const S = "<L>";\n  return [delete "<L>", S];\n}`,
+  ],
+  [
+    "a write to length",
+    (text: string) => `function f() { const S = "${text}"; S.length = 1; S.length++; return [delete S.length, S]; }`,
+    `function f() {\n  const S = "<L>";\n  S.length = 1;\n  S.length++;\n  return [delete S.length, S];\n}`,
+  ],
+  [
+    "reads in a with statement",
+    (text: string) => `function f(o) { const S = "${text}"; with (o) { return [S, delete S, S.length, S ? 1 : 2]; } }`,
+    `function f(o) {\n  const S = "<L>";\n  with (o)\n    return [S, delete S, S.length, S ? 1 : 2];\n}`,
+  ],
+  [
+    "an alias in a with statement",
+    (text: string) => `function f(o) { const S = "${text}"; with (o) { const T = S; return [T.length, T, T]; } }`,
+    `function f(o) {\n  const S = "<L>";\n  with (o) {\n    const T = S;\n    return [T.length, T, T];\n  }\n}`,
+  ],
+] as const;
+
+const printConstString = (options: object, source: (text: string) => string, length: number) =>
+  new Bun.Transpiler({ loader: "js", ...options } as any)
+    .transformSync(source(textOf("x", length)))
+    .replace(/x{60,}/g, "<L>")
+    .trim();
+
+test.each(constStringRows)("inline bound of a const string: %s", (_, source, at64, at65) => {
+  const options = { inline: true, minify: { syntax: true } };
+  expect({
+    at64: printConstString(options, source, 64),
+    at65: printConstString(options, source, 65),
+  }).toEqual({ at64, at65 });
+});
+
+test.each(constStringRowsOverTheBound)("over the inline bound of a const string: %s", (_, source, at65) => {
+  expect(printConstString({ inline: true, minify: { syntax: true } }, source, 65)).toBe(at65);
+});
+
+// With `inline: false` a read is never the value, so the bound changes nothing.
+test.each([...constStringRows, ...constStringRowsOverTheBound])(
+  "inline: false prints a const string the same at 64 and at 65 units: %s",
+  (_, source) => {
+    const options = { inline: false, minify: { syntax: true } };
+    expect(printConstString(options, source, 65)).toBe(printConstString(options, source, 64));
+  },
+);
+
+// The bound is the length the parser holds: UTF-16 code units for a string
+// literal, and UTF-8 bytes for a string that `define` supplies.
+test("inline bound of a const string counts UTF-16 code units, and bytes for a define", () => {
+  const keepsDeclaration = (source: string, define?: Record<string, string>) =>
+    new Bun.Transpiler({ loader: "js", inline: true, minify: { syntax: true }, define } as any)
+      .transformSync(source)
+      .includes("const S");
+  const literal = (units: number) => `function f() { const S = "\u03C0${textOf("c", units - 1)}"; return [S, S]; }`;
+  const defined = (bytes: number) => JSON.stringify(textOf("\u00E9", bytes));
+  expect({
+    literalOf64Units: keepsDeclaration(literal(64)),
+    literalOf65Units: keepsDeclaration(literal(65)),
+    defineOf32UnitsIn64Bytes: keepsDeclaration(`function f() { const S = VALUE; return [S, S]; }`, {
+      VALUE: defined(64),
+    }),
+    defineOf33UnitsIn66Bytes: keepsDeclaration(`function f() { const S = VALUE; return [S, S]; }`, {
+      VALUE: defined(66),
+    }),
+  }).toEqual({
+    literalOf64Units: false,
+    literalOf65Units: true,
+    defineOf32UnitsIn64Bytes: false,
+    defineOf33UnitsIn66Bytes: true,
+  });
+});
+
+// A const that names a string enum member holds that string. The enum
+// declaration is one more copy.
+test("inline bound of a const string covers a const that names a string enum member", () => {
+  const transpiler = new Bun.Transpiler({ loader: "ts", inline: true, minify: { syntax: true } } as any);
+  const copies = [64, 65].map(length => {
+    const text = textOf("e", length);
+    const source = `enum E { A = "${text}" }\nfunction f() { const K = E.A; return [K, K, K]; }`;
+    return countOf(transpiler.transformSync(source), text);
+  });
+  expect(copies).toEqual([4, 2]);
+});
+
+// `Bun.Transpiler` with `inline: true` and no minification keeps every
+// declaration. It printed the string in the declaration and in each read.
+test.each(["transformSync", "transform"] as const)(
+  "inline: %s prints a const string over the inline bound once",
+  async method => {
+    const long = textOf("T", 200);
+    const source = `const LONG = "${long}";\nexport function reads() { return [LONG, LONG, LONG.length]; }\n`;
+    const outputs = [];
+    for (const minify of [undefined, { syntax: true }]) {
+      const output = await new Bun.Transpiler({ loader: "js", inline: true, minify } as any)[method](source);
+      outputs.push({ copies: countOf(output, long), length: /LONG\.length|200/.exec(output)?.[0] });
+    }
+    expect(outputs).toEqual([
+      { copies: 1, length: "LONG.length" },
+      { copies: 1, length: "200" },
+    ]);
+  },
+);
+
+// The runtime transpiler inlines a `const` too, with no flag. A 60 KB file
+// with a 40,000-byte const read at 10,000 places peaked at 910 MB.
+test.concurrent.each([
+  [
+    "index.js",
+    `const LONG = "${textOf("L", 200)}";
+function reads() { return [LONG, LONG, LONG]; }
+console.log(JSON.stringify([reads.toString().includes("LLLL"), reads().map(text => text.length)]));`,
+    [false, [200, 200, 200]],
+  ],
+  [
+    "index.cjs",
+    `const LONG = "${textOf("L", 200)}";
+exports.reads = function () { return [LONG, LONG, LONG]; };
+console.log(JSON.stringify([exports.reads.toString().includes("LLLL"), exports.reads().map(text => text.length)]));`,
+    [false, [200, 200, 200]],
+  ],
+  [
+    "namespace.ts",
+    `namespace Texts {
+  export const LONG = "${textOf("L", 200)}";
+  export function reads() { return [LONG, LONG, LONG]; }
+}
+console.log(JSON.stringify([Texts.reads.toString().includes("LLLL"), Texts.reads().map(text => text.length)]));`,
+    [false, [200, 200, 200]],
+  ],
+  [
+    // No renamer runs here, so a read has to print the name that the source has.
+    "alias-under-shadow.js",
+    `const LONG = "${textOf("L", 200)}";
+const ALIAS = LONG;
+function reads(LONG) { return [ALIAS, ALIAS, LONG]; }
+console.log(JSON.stringify([reads.toString().includes("LLLL"), reads("shadow").map(text => text.length)]));`,
+    [false, [200, 200, 6]],
+  ],
+  [
+    // The read in a later case needs the declaration, also when the first case reads it once.
+    "switch.js",
+    `function sink(text) {}
+function reads(i) {
+  switch (i) {
+    case 0:
+      const LONG = "${textOf("L", 200)}";
+      sink(LONG);
+    case 1:
+      return [LONG, LONG, LONG];
+  }
+}
+console.log(JSON.stringify([reads.toString().split("${textOf("L", 200)}").length > 2, reads(0).map(text => text.length)]));`,
+    [false, [200, 200, 200]],
+  ],
+  [
+    // An enum initializer that names a const string makes a string member, with no reverse mapping.
+    "enum.ts",
+    `const LONG = "${textOf("L", 200)}";
+function reads() {
+  enum Texts { A = LONG }
+  return [Texts.A, LONG, LONG, Object.keys(Texts).join()];
+}
+console.log(JSON.stringify([reads.toString().split("${textOf("L", 200)}").length > 3, reads().map(text => text.length)]));`,
+    [false, [200, 200, 200, 1]],
+  ],
+  [
+    // One read is not moved into the statement, which would be visited again: `(0, eval)` stays indirect.
+    "indirect-eval.cjs",
+    `function reads(code) { const LONG = "${textOf("L", 200)}"; return LONG + (0, eval)(code); }
+const text = reads("var leaked = 1;");
+console.log(JSON.stringify([reads.toString().includes("(0, eval)"), [text.length, typeof leaked]]));`,
+    [true, [209, "number"]],
+  ],
+  [
+    // A read that runs before the declaration throws, as it does without inlining.
+    "read-before-declaration.js",
+    `const early = (() => { try { return read(); } catch (error) { return error.constructor.name; } })();
+const LONG = "${textOf("L", 200)}";
+function read() { return LONG; }
+console.log(JSON.stringify([read.toString().includes("LLLL"), [early, read().length]]));`,
+    [false, ["ReferenceError", 200]],
+  ],
+  [
+    // Each const is two copies of the one before it. Every read printed the whole string.
+    "template-chain.js",
+    `const A0 = "abcdefgh";
+${Array.from({ length: 12 }, (_, i) => `const A${i + 1} = \`\${A${i}}\${A${i}}\`;`).join("\n")}
+function reads() { return [A12, A12, A12]; }
+console.log(JSON.stringify([reads.toString().length > 100, reads().map(text => text.length)]));`,
+    [false, [32768, 32768, 32768]],
+  ],
+] as const)(
+  "runtime transpiler does not copy a long const string into each read: %s",
+  async (file, source, expected) => {
+    using dir = tempDir("const-string-runtime", { [file]: source });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), file],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A macro converts its arguments to JS values, so it needs the literal of a
+// const string of any length, also through an alias. A string that a macro
+// returns to a `const` is a const value too, by name or through a pattern,
+// and its `.length` folds. A `let` or a `var` is not changed.
+test.concurrent("a macro gets a long const string as a literal, and its long result is not copied", async () => {
+  using dir = tempDir("const-string-macro", {
+    "macro.ts": `export function lengthOf(text: string | { text: string }) {
+  return typeof text === "string" ? text.length : text.text.length;
+}
+export function long() {
+  return "${textOf("m", 200)}";
+}
+export function longObject() {
+  return { text: "${textOf("o", 200)}", unused: 1 };
+}
+export function longArray() {
+  return ["${textOf("b", 200)}", "second"];
+}
+`,
+    "index.ts": `import { lengthOf, long, longArray, longObject } from "./macro.ts" with { type: "macro" };
+const TEXT = "${textOf("a", 200)}";
+const ALIAS = TEXT;
+const RESULT = long();
+const { text: FROM_OBJECT } = longObject();
+const [FROM_ARRAY] = longArray();
+function reads() { return [RESULT, RESULT, RESULT]; }
+function readsObject() { return [FROM_OBJECT, FROM_OBJECT, FROM_OBJECT]; }
+function readsArray() { return [FROM_ARRAY, FROM_ARRAY]; }
+function lengthOfResult() { return RESULT.length; }
+function mutable(i) {
+  let ofLet = long();
+  { var ofVar = long(); }
+  switch (i) {
+    case 0:
+      let ofCase = long();
+      return [ofLet, ofVar, ofCase];
+  }
+}
+console.log(JSON.stringify({
+  arguments: [lengthOf(TEXT), lengthOf(ALIAS), lengthOf({ text: TEXT }), lengthOf(FROM_OBJECT), lengthOf(FROM_ARRAY)],
+  copiesInReads: [reads, readsObject, readsArray].map(fn => /m{200}|o{200}|b{200}/.test(fn.toString())),
+  values: [reads, readsObject, readsArray].map(fn => fn().map(text => text.length)),
+  lengthOfResult: lengthOfResult.toString().replace(/\\s+/g, " "),
+  mutableSource: mutable.toString().replaceAll("${textOf("m", 200)}", "<M>").replace(/\\s+/g, " "),
+  mutable: mutable(0).map(text => text.length),
+}));
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // A debug build logs each macro call to stdout.
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({
+    arguments: [200, 200, 200, 200, 200],
+    copiesInReads: [false, false, false],
+    values: [
+      [200, 200, 200],
+      [200, 200, 200],
+      [200, 200],
+    ],
+    lengthOfResult: "function lengthOfResult() { return 200; }",
+    mutableSource: 'function mutable(i) { switch (i) { case 0: return ["<M>", "<M>", "<M>"]; } }',
+    mutable: [200, 200, 200],
+  });
+  expect(exitCode).toBe(0);
+});

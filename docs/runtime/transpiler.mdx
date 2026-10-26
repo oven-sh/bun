@@ -224,6 +224,8 @@ interface TranspilerOptions {
 
   // Whether to inline constant values
   // Typically improves performance and decreases bundle size
+  // A const string of more than 64 UTF-16 code units is not inlined:
+  // its usages keep the name, and the string is printed once
   // Default: false
   inline?: boolean,
 }

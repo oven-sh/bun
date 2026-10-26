@@ -803,6 +803,10 @@ impl SideEffects {
                 value: false,
                 side_effects: SideEffects::CouldHaveSideEffects,
             }),
+            ExprData::EIdentifier(id) if p.long_const_read(id).is_some() => Some(Known {
+                value: false,
+                side_effects: SideEffects::NoSideEffects,
+            }),
             // Always null or undefined
             ExprData::ENull(_) | ExprData::EUndefined(_) => Some(Known {
                 value: true,
@@ -891,6 +895,11 @@ impl SideEffects {
                 side_effects: SideEffects::NoSideEffects,
             }),
             ExprData::EFunction(_) | ExprData::EArrow(_) | ExprData::ERegExp(_) => Some(Known {
+                value: true,
+                side_effects: SideEffects::NoSideEffects,
+            }),
+            // A const string over the inline bound is not empty.
+            ExprData::EIdentifier(id) if p.long_const_read(id).is_some() => Some(Known {
                 value: true,
                 side_effects: SideEffects::NoSideEffects,
             }),

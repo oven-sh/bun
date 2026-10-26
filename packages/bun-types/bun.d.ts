@@ -3037,6 +3037,12 @@ declare module "bun" {
      * 1. `const` declarations to primitive types (excluding Object/Array) at the top of a scope before any `let` or `var` declarations are inlined into their usages.
      * 2. `let` and `const` declarations only used once are inlined into their usages.
      *
+     * Rule 1 has one exception: a `const` string of more than 64 UTF-16 code
+     * units. Its usages keep the name, also when there is only one, so the
+     * string is printed once. A `require()` or `import()` specifier, a macro
+     * argument and an enum initializer still receive the string. A string
+     * from `define` is measured in UTF-8 bytes.
+     *
      * JavaScript engines typically do these optimizations internally, however
      * it might only happen much later in the compilation pipeline, after code
      * has been executed many many times.

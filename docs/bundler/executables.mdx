@@ -463,7 +463,7 @@ await Bun.build({
 
 With this option disabled, those variables cannot preload code, switch the executable to the Bun CLI, or configure the inspector. The setting is embedded in the executable. Runtime arguments embedded with `--compile-exec-argv` or `compile.execArgv` still apply.
 
-This option requires a compilation target with the same version number as the Bun instance running the build and cannot be combined with `--compile-executable-path` or `compile.executablePath`. An older or custom runtime may not implement the opt-out, so these combinations fail at build time.
+This option requires the default compilation target, which uses the Bun executable running the build. Targets for another platform, CPU variant, or Bun version, and custom executables set with `--compile-executable-path` or `compile.executablePath`, are rejected before downloading or reading the target runtime. A cached or downloaded runtime may not implement the opt-out, even if it has the same version number.
 
 If your application launches its own executable with `BUN_BE_BUN=1` to run Bun commands, that subprocess will run the compiled application instead. Use a separate Bun executable for those commands.
 

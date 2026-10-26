@@ -2909,14 +2909,17 @@ pub fn validate_env_options(
     env_options: bool,
 ) -> Result<(), CompileError> {
     if !env_options {
-        if !target.is_current_version() {
+        if !target.is_default() {
             return Err(CompileError::fmt(format_args!(
-                "Disabling runtime environment options requires the current Bun version"
+                "Disabling runtime environment options requires the default Bun target \"{}\"; received \"{}\".\nnote: Remove --target or compile.target to use the current Bun executable.",
+                CompileTarget::default(),
+                target,
             )));
         }
-        if self_exe_path.is_some() {
+        if let Some(path) = self_exe_path {
             return Err(CompileError::fmt(format_args!(
-                "Disabling runtime environment options cannot be combined with a custom executable path"
+                "Disabling runtime environment options cannot be combined with custom executable path {}.\nnote: Remove --compile-executable-path or compile.executablePath to use the current Bun executable.",
+                bun_core::fmt::quote(path),
             )));
         }
     }

@@ -1321,9 +1321,10 @@ it("names the routes of one directory the same through a link to it, above it an
   `);
 });
 
-// A route whose file the resolver found through the router's own `dir` takes the file from what the
-// resolver kept for it, so only the name of such a route is pinned, until reload().
-it("names the routes the same when Bun.resolveSync found some of their files before the router was made", async () => {
+// Bun.resolveSync leaves the path of a file it finds in the resolver's cache, and a router that is made
+// takes the file of a route from there. It finds three here, each through a link: to the file, to `dir`
+// and to a directory below `dir`.
+it("names the routes and their files the same when Bun.resolveSync found some of the files first", async () => {
   // What a router gives when it is made first.
   const routed = {
     matches: [
@@ -1348,35 +1349,8 @@ it("names the routes the same when Bun.resolveSync found some of their files bef
       "./p/index.tsx is site/pages/index.tsx",
       "./site/pages/linked/c is shared/c.tsx",
     ],
-    "site/pages": {
-      matches: [
-        "/a is /a in site/pages/a.tsx, src a.tsx",
-        "/sub/7 is /sub/[id] in site/pages/sub/[id].tsx, src sub/[id].tsx",
-        "/linked/deep/d is /linked/deep/d in shared/deep/d.tsx, src ../../shared/deep/d.tsx",
-        expect.stringMatching(/^\/sub\/to-a is \/sub\/to-a in /),
-      ],
-      routes: [
-        "/ is site/pages/index.tsx",
-        "/a is site/pages/a.tsx",
-        expect.stringMatching(/^\/linked\/c is /),
-        "/linked/deep/d is shared/deep/d.tsx",
-        "/sub/[id] is site/pages/sub/[id].tsx",
-        "/sub/b is site/pages/sub/b.tsx",
-        expect.stringMatching(/^\/sub\/to-a is /),
-      ],
-    },
-    p: {
-      matches: routed.matches,
-      routes: [
-        expect.stringMatching(/^\/ is /),
-        "/a is site/pages/a.tsx",
-        "/linked/c is shared/c.tsx",
-        "/linked/deep/d is shared/deep/d.tsx",
-        "/sub/[id] is site/pages/sub/[id].tsx",
-        "/sub/b is site/pages/sub/b.tsx",
-        "/sub/to-a is site/pages/a.tsx",
-      ],
-    },
+    "site/pages": routed,
+    p: routed,
     "pages-by-link": routed,
     "site-by-link/pages": routed,
     "site/pages after reload(), with three files more": [

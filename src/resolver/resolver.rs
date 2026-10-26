@@ -4641,12 +4641,21 @@ impl<'a> Resolver<'a> {
 
             // The listing is kept under the real directory, so a link on the way to this
             // one is followed before the slot is chosen.
-            let real_dir: &'static [u8] = match parent_dir_ptr {
+            let mut real_dir: &'static [u8] = match parent_dir_ptr {
                 Some(parent) if !self.opts.preserve_symlinks => {
                     self.real_dir_from_parent(parent, dir_path, open_dir)
                 }
                 _ => b"",
             };
+            // The listing under the real path is read by that path, as every other reader
+            // of it does: `open_dir` is where the link leads now, and that can be another
+            // directory. A real path that does not open is one the link no longer leads
+            // to, and the directory is kept as walked.
+            if !real_dir.is_empty()
+                && !rfs!().read_real_listing(real_dir, self.generation, self.store_fd)
+            {
+                real_dir = b"";
+            }
 
             let mut cached_dir_entry_result =
                 listing_slot_for_walk(rfs!(), dir_path, real_dir).expect("unreachable");
@@ -4658,10 +4667,6 @@ impl<'a> Resolver<'a> {
                 if real_info.status == allocators::ItemStatus::NotFound {
                     self.dir_cache_mut().remove_hash(real_info.hash);
                 }
-                // A stale listing under the real path is read again by that path, as every
-                // other reader of it does: `open_dir` is where the link leads now, and that
-                // can be another directory.
-                rfs!().entries_at_locked(cached_dir_entry_result.index, self.generation);
             }
 
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
@@ -4671,9 +4676,7 @@ impl<'a> Resolver<'a> {
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    // A listing under the real path that is still stale did not open by it.
-                    // It stays empty: `open_dir` is not read into it.
-                    if entries.generation >= self.generation || !real_dir.is_empty() {
+                    if entries.generation >= self.generation {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
@@ -4683,6 +4686,9 @@ impl<'a> Resolver<'a> {
             }
 
             if needs_iter {
+                // `open_dir` is read into a listing that is named as walked. The one under
+                // a real path is current by now.
+                debug_assert!(real_dir.is_empty());
                 // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to
                 // slots in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this
                 // fn and are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv).
@@ -4690,20 +4696,9 @@ impl<'a> Resolver<'a> {
                     if let Some(existing) = in_place {
                         // SAFETY: see block-wide note above.
                         unsafe { &*existing }.dir
-                    } else if real_dir.is_empty() {
+                    } else {
                         Fs::file_system::DirnameStore::instance()
                             .append_slice(dir_path)
-                            .expect("unreachable")
-                    } else {
-                        // Named as a walk to the real directory names it: with a
-                        // trailing separator.
-                        let sep: &[u8] = if real_dir[real_dir.len() - 1] == SEP {
-                            b""
-                        } else {
-                            SEP_STR.as_bytes()
-                        };
-                        Fs::file_system::DirnameStore::instance()
-                            .append_parts(&[real_dir, sep])
                             .expect("unreachable")
                     },
                     self.generation,

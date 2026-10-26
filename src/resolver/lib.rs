@@ -1121,12 +1121,11 @@ pub mod fs {
         /// belongs to the key of `real`, so that every path to one directory
         /// reads one `DirEntry`: when that key has a slot, `walked` is mapped
         /// to it here, in place of a slot `walked` got from a reader that had
-        /// no real path. When it has none, the caller reads the directory into
-        /// a `DirEntry` named `real` and stores it with
-        /// [`put_listing`](Self::put_listing), which maps `walked` to the new
-        /// slot. A key of `real` that is mapped to a listing under another
-        /// name, from when a link at `real` led to that directory, is unmapped
-        /// here and has none. The caller holds `entries_mutex`.
+        /// no real path. A walk gives that key its listing before it asks,
+        /// with [`read_real_listing`](Self::read_real_listing). A key of `real`
+        /// that is mapped to a listing under another name, from when a link at
+        /// `real` led to that directory, is unmapped here and has none. The
+        /// caller holds `entries_mutex`.
         #[inline(always)]
         pub(crate) fn listing_slot(
             &mut self,
@@ -1209,6 +1208,73 @@ pub mod fs {
             if let Some(EntriesOption::Entries(listing)) = self.entries.at_index(slot.index) {
                 listing.add_alias(slot.hash, walked_hash);
             }
+        }
+
+        /// Makes the listing of `real` current for `generation`, for a walk that a
+        /// link led there. False when `real` cannot be opened and read. The walk has
+        /// `real` from what the parent of the link cached, and the link can lead
+        /// somewhere else by now. So the listing named `real` is read by that path,
+        /// as in every other read of it, and not from the directory the walk opened.
+        /// The caller holds `entries_mutex`.
+        pub(crate) fn read_real_listing(
+            &mut self,
+            real: &[u8],
+            generation: Generation,
+            store_fd: bool,
+        ) -> bool {
+            debug_assert!(
+                self.entries_mutex.is_held_by_current_thread(),
+                "read_real_listing: caller must hold entries_mutex",
+            );
+            let real = strings::paths::without_trailing_slash_windows_path(real);
+            // With `real` as the path walked too, the slot is the one of its own key.
+            let Ok(mut slot) = self.listing_slot(real, real) else {
+                return false;
+            };
+            if matches!(
+                self.entries.at_index(slot.index),
+                Some(EntriesOption::Entries(_))
+            ) {
+                return matches!(
+                    self.entries_at_locked(slot.index, generation),
+                    Some(EntriesOption::Entries(listing)) if listing.generation >= generation
+                );
+            }
+            let Ok(handle) = bun_sys::open_dir_for_iteration(Fd::cwd(), real) else {
+                return false;
+            };
+            let keeps_fd = store_fd && !self.need_to_close_files();
+            let stored = self
+                .put_first_listing(&mut slot, real, generation, handle, keeps_fd)
+                .is_ok();
+            if !(stored && keeps_fd) {
+                let _ = bun_sys::close(handle);
+            }
+            stored
+        }
+
+        /// Reads `handle`, which is open on `dir`, into a new listing in `slot`.
+        fn put_first_listing(
+            &mut self,
+            slot: &mut bun_alloc::Result,
+            dir: &[u8],
+            generation: Generation,
+            handle: Fd,
+            store_fd: bool,
+        ) -> crate::CrateResult<()> {
+            // Named as the walk to a directory names its listing: with a trailing separator.
+            let sep: &[u8] = if dir.last() == Some(&bun_paths::SEP) {
+                b""
+            } else {
+                bun_paths::SEP_STR.as_bytes()
+            };
+            let name = DirnameStore::instance().append_parts(&[dir, sep])?;
+            let listing = self.readdir(store_fd, None, name, generation, handle, ())?;
+            let listing = bun_core::heap::into_raw(Box::new(listing));
+            // SAFETY: a fresh leaked `Box`, which the slot keeps for the life of the process.
+            let listing = unsafe { &mut *listing };
+            self.entries.put(slot, EntriesOption::Entries(listing))?;
+            Ok(())
         }
 
         pub fn read_directory(

@@ -196,19 +196,18 @@ fn code_unit_at_after_ascii(text: &[u8], index: u32) -> Wtf8CodeUnitAt {
     }
 }
 
-/// The bytes that [`code_unit_at_from`] decodes one sequence at a time, at most, per call.
+/// The most bytes that [`code_unit_at_from`] decodes one sequence at a time before it counts again.
 const DECODED_BLOCK: usize = 64;
 
 /// [`wtf8_code_unit_at`] from the sequence start `at`, which `seen <= index` code units are before.
 fn code_unit_at_from(text: &[u8], mut at: usize, mut seen: u32, index: u32) -> Wtf8CodeUnitAt {
     // The block grows while the index is after it, and is halved from then on.
-    let (mut block, mut grows) = (DECODED_BLOCK, true);
+    let (mut block, mut grows) = (2 * DECODED_BLOCK, true);
     loop {
-        let rest = text.len() - at;
-        let mut end = at + block.min(rest);
-        if rest > DECODED_BLOCK {
+        let span = block.min(text.len() - at);
+        if span > DECODED_BLOCK {
             // A block of UTF-8 that ends before the index is counted, not decoded.
-            end = sequence_start_before(text, end);
+            let end = sequence_start_before(text, at + span);
             let counted = &text[at..end];
             if is_valid_utf8(counted) {
                 let units = element_length_utf8_into_utf16(counted) as u32;
@@ -220,14 +219,11 @@ fn code_unit_at_from(text: &[u8], mut at: usize, mut seen: u32, index: u32) -> W
                     continue;
                 }
             }
-            grows = false;
-            if block > DECODED_BLOCK {
-                block /= 2;
-                continue;
-            }
+            (block, grows) = (span / 2, false);
+            continue;
         }
         let mut units = wtf8_checked_units(&text[at..]);
-        while units.at < end - at || units.trail.is_some() {
+        while units.at < span || units.trail.is_some() {
             let Some((offset, unit)) = units.next() else {
                 break;
             };
@@ -246,7 +242,7 @@ fn code_unit_at_from(text: &[u8], mut at: usize, mut seen: u32, index: u32) -> W
         if at >= text.len() {
             return Wtf8CodeUnitAt::Past(seen);
         }
-        grows = true;
+        (block, grows) = (2 * DECODED_BLOCK, true);
     }
 }
 

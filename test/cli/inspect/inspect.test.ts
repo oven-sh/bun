@@ -5,6 +5,7 @@ import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
+import { listenForInspectee, spawnInspectee, valueOf } from "./inspector-client";
 import { InspectorSession, JUnitReporter, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
 let inspectee: Subprocess;
@@ -300,6 +301,183 @@ describe("websocket", () => {
   });
 });
 
+// Each attached client is one frontend, and each numbers its commands from 1. The response
+// to a command belongs to the client that sent it, and to no other client.
+describe("more than one client", () => {
+  test("each client gets the response to its own command, and an idle client gets none", async () => {
+    await using inspectee = await spawnInspectee("jsc");
+    const a = await inspectee.attach("A");
+    const b = await inspectee.attach("B");
+    const idle = await inspectee.attach("idle");
+
+    const [answerForA, answerForB] = await Promise.all([a.evaluate("'answer-for-A'"), b.evaluate("'answer-for-B'")]);
+    await Promise.all([a.settle(), b.settle(), idle.settle()]);
+
+    expect({ answerForA, answerForB, a: a.responses(), b: b.responses(), idle: idle.responses() }).toEqual({
+      answerForA: "answer-for-A",
+      answerForB: "answer-for-B",
+      a: ["1:answer-for-A"],
+      b: ["1:answer-for-B"],
+      idle: [],
+    });
+  });
+
+  test("the response to Runtime.awaitPromise goes to the client that awaited", async () => {
+    await using inspectee = await spawnInspectee("jsc");
+    const a = await inspectee.attach("A");
+    const b = await inspectee.attach("B");
+
+    const promise = await a.call("Runtime.evaluate", {
+      expression: "new Promise(resolve => (globalThis.resolveIt = resolve))",
+    });
+    const awaited = a.call("Runtime.awaitPromise", { promiseObjectId: promise.result.result.objectId });
+    await a.settle();
+
+    // The promise settles while B's second command runs. That command has the id of A's pending one.
+    const first = await b.evaluate("'first-for-B'");
+    const second = await b.evaluate("resolveIt('awaited-by-A'), 'second-for-B'");
+    const awaitedByA = valueOf(await awaited);
+    await Promise.all([a.settle(), b.settle()]);
+
+    expect({ awaitedByA, first, second, a: a.responses(), b: b.responses() }).toEqual({
+      awaitedByA: "awaited-by-A",
+      first: "first-for-B",
+      second: "second-for-B",
+      a: ["1:Promise", "2:awaited-by-A"],
+      b: ["1:first-for-B", "2:second-for-B"],
+    });
+  });
+
+  test("the response for a client that closed is not sent to the client that remains", async () => {
+    await using inspectee = await spawnInspectee("jsc");
+    const a = await inspectee.attach("A");
+    const b = await inspectee.attach("B");
+
+    const promise = await a.call("Runtime.evaluate", {
+      expression: "new Promise(resolve => (globalThis.resolveIt = resolve))",
+    });
+    a.send("Runtime.awaitPromise", { promiseObjectId: promise.result.result.objectId });
+    await a.settle();
+    await a.close();
+
+    const first = await b.evaluate("'first-for-B'");
+    const second = await b.evaluate("resolveIt('awaited-by-A'), 'second-for-B'");
+    await b.settle();
+
+    expect({ first, second, b: b.responses() }).toEqual({
+      first: "first-for-B",
+      second: "second-for-B",
+      b: ["1:first-for-B", "2:second-for-B"],
+    });
+  });
+
+  test("a second client's command is answered to it while the first client's command is paused", async () => {
+    await using inspectee = await spawnInspectee("jsc");
+    const a = await inspectee.attach("A");
+    const b = await inspectee.attach("B");
+
+    await a.call("Debugger.enable");
+    await a.call("Debugger.setBreakpointsActive", { active: true });
+    await a.call("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+    // The process has one Debugger for all clients. B asks for it too, and gets its events like A.
+    await b.call("Debugger.enable");
+    const paused = a.evaluate("debugger; 'A-after-the-pause'");
+    await a.waitFor(message => message.method === "Debugger.paused");
+
+    // B's commands run inside the dispatch of A's paused command.
+    const duringThePause = await b.evaluate("'B-during-the-pause'");
+    await b.call("Debugger.resume");
+    const afterThePause = await paused;
+    await Promise.all([a.settle(), b.settle()]);
+
+    expect({
+      duringThePause,
+      afterThePause,
+      a: a.responses(),
+      b: b.responses(),
+      aEvents: a.events("Debugger.paused", "Debugger.resumed"),
+      bEvents: b.events("Debugger.paused", "Debugger.resumed"),
+    }).toEqual({
+      duringThePause: "B-during-the-pause",
+      afterThePause: "A-after-the-pause",
+      a: ["1:{}", "2:{}", "3:{}", "4:A-after-the-pause"],
+      b: [expect.stringMatching(/^1:/), "2:B-during-the-pause", "3:{}"],
+      aEvents: ["Debugger.paused", "Debugger.resumed"],
+      bEvents: ["Debugger.paused", "Debugger.resumed"],
+    });
+  });
+
+  test("the error of a command that fails goes to the client that sent it", async () => {
+    await using inspectee = await spawnInspectee("jsc");
+    const a = await inspectee.attach("A");
+    const b = await inspectee.attach("B");
+
+    const failed = await b.call("Runtime.awaitPromise", { promiseObjectId: '{"injectedScriptId":1,"id":999999}' });
+    await Promise.all([a.settle(), b.settle()]);
+
+    expect({ failed: valueOf(failed), a: a.responses(), b: b.responses() }).toEqual({
+      failed: "error -32000",
+      a: [],
+      b: ["1:error -32000"],
+    });
+  });
+
+  test("the error of an awaited promise that fails later goes to the client that awaited", async () => {
+    await using inspectee = await spawnInspectee("jsc");
+    const a = await inspectee.attach("A");
+    const b = await inspectee.attach("B");
+
+    const promise = await a.call("Runtime.evaluate", {
+      expression: "new Promise(resolve => (globalThis.resolveIt = resolve))",
+    });
+    // A value that refers to itself cannot be returned by value. The backend finds that out when the promise settles.
+    a.send("Runtime.awaitPromise", { promiseObjectId: promise.result.result.objectId, returnByValue: true });
+    await a.settle();
+
+    const first = await b.evaluate("'first-for-B'");
+    const second = await b.evaluate(
+      "(() => { const cyclic = {}; cyclic.self = cyclic; resolveIt(cyclic); })(), 'second-for-B'",
+    );
+    await Promise.all([a.settle(), b.settle()]);
+
+    expect({ first, second, a: a.responses(), b: b.responses() }).toEqual({
+      first: "first-for-B",
+      second: "second-for-B",
+      a: ["1:Promise", "2:error -32000"],
+      b: ["1:first-for-B", "2:second-for-B"],
+    });
+  });
+
+  test("the error for a message that is not JSON goes to its sender", async () => {
+    await using inspectee = await spawnInspectee("jsc");
+    const a = await inspectee.attach("A");
+    const b = await inspectee.attach("B");
+
+    a.sendRaw("{this is not JSON");
+    await a.waitFor(message => message.id === null);
+    await Promise.all([a.settle(), b.settle()]);
+
+    expect({ a: a.responses(), b: b.responses() }).toEqual({ a: ["null:error -32700"], b: [] });
+  });
+
+  test("a command from a client that closes before the inspected thread sees it is answered to no client", async () => {
+    await using inspectee = await spawnInspectee("jsc");
+    const a = await inspectee.attach("A");
+    const held = a.evaluate("hold()");
+    await inspectee.stderr(/HOLDING/);
+
+    // The inspected thread is busy, so it registers this client only after the client is gone.
+    const late = await inspectee.attach("late");
+    late.send("Runtime.evaluate", { expression: "'answer-for-late'" });
+    await late.close();
+    inspectee.release();
+
+    expect(await held).toBe("released");
+    await a.settle();
+    expect(a.responses()).toEqual(["1:released"]);
+  });
+});
+
 describe("http metadata endpoint", () => {
   let metadataInspectee: Subprocess | undefined;
 
@@ -453,6 +631,28 @@ describe("unix domain socket without websocket", () => {
     test("BUN_INSPECT='unix:' bun --inspect", async () => {
       const path = randomSocketPath();
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
+    });
+
+    // BUN_INSPECT and --inspect together put a unix socket client and a WebSocket client on one process.
+    test("a unix socket client and a WebSocket client each get the response to their own command", async () => {
+      const path = randomSocketPath();
+      using listener = listenForInspectee(path, "unix");
+      await using inspectee = await spawnInspectee("jsc", { env: { BUN_INSPECT: "unix://" + path } });
+      const unix = await listener.client;
+      const webSocket = await inspectee.attach("WebSocket");
+
+      const [answerForUnix, answerForWebSocket] = await Promise.all([
+        unix.evaluate("'answer-for-unix'"),
+        webSocket.evaluate("'answer-for-WebSocket'"),
+      ]);
+      await Promise.all([unix.settle(), webSocket.settle()]);
+
+      expect({ answerForUnix, answerForWebSocket, unix: unix.responses(), webSocket: webSocket.responses() }).toEqual({
+        answerForUnix: "answer-for-unix",
+        answerForWebSocket: "answer-for-WebSocket",
+        unix: ["1:answer-for-unix"],
+        webSocket: ["1:answer-for-WebSocket"],
+      });
     });
   }
 });

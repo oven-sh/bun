@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
+import { spawnInspectee, valueOf } from "../../../cli/inspect/inspector-client";
 
 test("inspector.url()", () => {
   expect(inspector.url()).toBeUndefined();
@@ -1069,6 +1070,137 @@ test("Debugger.scriptParsed reports isModule and scriptLanguage from JSC's scrip
     // JSC names a WebAssembly.Module compiled from bytes <n>.wasm itself.
     { url: expect.stringMatching(/\.wasm$/), isModule: false, scriptLanguage: "WebAssembly" },
   ]);
+});
+
+// Each client of inspector.open() has its own protocol adapter, and each adapter numbers the
+// commands it sends to the backend from 1. The response to a command belongs to the client
+// that sent it, and to no other client.
+const awaitedPromise = {
+  // Runtime.evaluate: an object that holds a promise. `resolveIt()` settles the promise.
+  holder: { expression: "({ promise: new Promise(resolve => (globalThis.resolveIt = resolve)) })" },
+  // Runtime.callFunctionOn: the backend answers this one when the promise settles.
+  awaitIt: (objectId: string) => ({
+    objectId,
+    functionDeclaration: "function () { return this.promise; }",
+    awaitPromise: true,
+    returnByValue: true,
+  }),
+};
+
+test("two inspector.open() clients each get the result of their own Runtime.evaluate", async () => {
+  await using inspectee = await spawnInspectee("cdp");
+  const a = await inspectee.attach("A");
+  const b = await inspectee.attach("B");
+  // One round trip each, so the backend has both clients before the commands that overlap.
+  await a.evaluate("'first-for-A'");
+  await b.evaluate("'first-for-B'");
+
+  // A's second command is still running when B's adapter sends B's second command to the backend.
+  const answerForA = a.evaluate("hold()");
+  await inspectee.stderr(/HOLDING/);
+  const answerForB = b.evaluate("'answer-for-B'");
+  // The adapter answers this command itself. So B's adapter has seen B's evaluate by now.
+  await b.call("Runtime.getIsolateId");
+  inspectee.release();
+
+  expect({ a: await answerForA, b: await answerForB }).toEqual({ a: "released", b: "answer-for-B" });
+});
+
+test("the error of a failed command goes to the inspector.open() client that sent it", async () => {
+  await using inspectee = await spawnInspectee("cdp");
+  const a = await inspectee.attach("A");
+  const b = await inspectee.attach("B");
+  await b.evaluate("'first-for-B'");
+
+  // A's failing command and B's second command wait behind hold(), under the same backend id.
+  const held = a.evaluate("hold()");
+  await inspectee.stderr(/HOLDING/);
+  const failed = a.call("Runtime.callFunctionOn", {
+    objectId: "no-such-object",
+    functionDeclaration: "function () {}",
+  });
+  await a.call("Runtime.getIsolateId");
+  const answerForB = b.evaluate("'answer-for-B'");
+  await b.call("Runtime.getIsolateId");
+  inspectee.release();
+
+  expect({ held: await held, failed: valueOf(await failed), answerForB: await answerForB }).toEqual({
+    held: "released",
+    failed: "error -32000",
+    answerForB: "answer-for-B",
+  });
+});
+
+test("the result of an awaited promise goes to the inspector.open() client that awaited", async () => {
+  await using inspectee = await spawnInspectee("cdp");
+  const a = await inspectee.attach("A");
+  const holder = await a.call("Runtime.evaluate", awaitedPromise.holder);
+  const awaited = a.call("Runtime.callFunctionOn", awaitedPromise.awaitIt(holder.result.result.objectId));
+  await a.settle();
+
+  // B attaches later. The promise settles while B's second command runs.
+  const b = await inspectee.attach("B");
+  const first = await b.evaluate("'first-for-B'");
+  const second = await b.evaluate("resolveIt('awaited-by-A'), 'second-for-B'");
+
+  expect({ awaitedByA: valueOf(await awaited), first, second }).toEqual({
+    awaitedByA: "awaited-by-A",
+    first: "first-for-B",
+    second: "second-for-B",
+  });
+});
+
+test("an in-process inspector.Session does not answer an inspector.open() client", async () => {
+  await using inspectee = await spawnInspectee("cdp", {
+    script: `
+      globalThis.startSession = () => {
+        const session = new inspector.Session();
+        session.connect();
+        session.post("Debugger.enable");
+        return "started";
+      };`,
+  });
+  const client = await inspectee.attach("client");
+  const holder = await client.call("Runtime.evaluate", awaitedPromise.holder);
+  const awaited = client.call("Runtime.callFunctionOn", awaitedPromise.awaitIt(holder.result.result.objectId));
+  await client.settle();
+
+  // The Session's commands go to the backend through an adapter of their own. The backend
+  // has answered them when it answers the client's next command.
+  const started = await client.evaluate("startSession()");
+  await client.evaluate("'after-the-session'");
+  const resolved = await client.evaluate("resolveIt('awaited-by-the-client'), 'resolved'");
+
+  expect({ started, resolved, awaited: valueOf(await awaited) }).toEqual({
+    started: "started",
+    resolved: "resolved",
+    awaited: "awaited-by-the-client",
+  });
+});
+
+test("a client of a reopened inspector does not get the result the previous client awaited", async () => {
+  await using inspectee = await spawnInspectee("cdp");
+  const previous = await inspectee.attach("previous");
+  const holder = await previous.call("Runtime.evaluate", awaitedPromise.holder);
+  previous.send("Runtime.callFunctionOn", awaitedPromise.awaitIt(holder.result.result.objectId));
+  await previous.settle();
+
+  // close() disconnects the previous client. Its command stays pending in the backend.
+  previous.send("Runtime.evaluate", {
+    expression: "setTimeout(() => { inspector.close(); inspector.open(0, '127.0.0.1'); }, 0)",
+  });
+  inspectee.url = (await inspectee.stderr(/Debugger listening on (ws:\/\/\S+)/))[1];
+
+  // The promise settles when next's first command ends. Next's second command is then pending
+  // in its adapter, under the backend id that the previous client's command had.
+  const next = await inspectee.attach("next");
+  const first = next.evaluate("hold(), resolveIt('awaited-by-previous'), 'first-for-next'");
+  await inspectee.stderr(/HOLDING/);
+  const second = next.evaluate("'second-for-next'");
+  await next.call("Runtime.getIsolateId");
+  inspectee.release();
+
+  expect({ first: await first, second: await second }).toEqual({ first: "first-for-next", second: "second-for-next" });
 });
 
 test("disconnect does not clobber a console method reassigned by user code", () => {

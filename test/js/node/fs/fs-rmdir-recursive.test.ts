@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { pathToFileURL } from "node:url";
+import { inspect } from "node:util";
 
 const isWindows = process.platform === "win32";
 // rmdir(2) on a file. libuv reports ENOENT for it on Windows.
@@ -246,9 +247,10 @@ const forms: [string, (target: any, options: any) => Promise<string>][] = [
       new Promise(resolve => {
         try {
           (fs.rmdir as any)(target, options, (...args: any[]) => {
-            // A successful callback gets `null` and nothing else.
-            if (args[0] === null) assert.deepStrictEqual(args, [null]);
-            resolve(args[0] ? failure(args[0], "delivered") : "ok");
+            // A successful callback gets `null` alone. Nothing throws in here: the outcome carries any other arguments to the assertion.
+            if (args[0]) resolve(failure(args[0], "delivered"));
+            else if (args.length === 1 && args[0] === null) resolve("ok");
+            else resolve(`ok with the callback arguments ${inspect(args)}`);
           });
         } catch (e) {
           resolve(failure(e, "thrown"));

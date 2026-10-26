@@ -1293,6 +1293,11 @@ impl<'a> Resolver<'a> {
             | ast::ImportKind::EntryPointRun
             | ast::ImportKind::Stmt
             | ast::ImportKind::Dynamic => options::ExtOrder::DefaultEsm,
+            _ if !self.opts.extension_order.required_by_package.is_empty()
+                && strings::path_contains_node_modules_folder(source_dir) =>
+            {
+                options::ExtOrder::RequiredByPackage
+            }
             _ => options::ExtOrder::DefaultDefault,
         };
 

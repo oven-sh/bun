@@ -955,6 +955,7 @@ fn resolver_bundle_options_subset(
                 default: src.extension_order.node_modules.default.clone(),
                 esm: src.extension_order.node_modules.esm.clone(),
             },
+            required_by_package: Box::default(),
             css: ropts::owned_string_list(ropts::bundle_options::defaults::CSS_EXTENSION_ORDER),
         },
         conditions: ropts::Conditions {

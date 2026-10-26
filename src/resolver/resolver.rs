@@ -647,7 +647,7 @@ impl TouchedDirs {
     }
 }
 
-/// How many replays collect now, on all threads. It is zero except right after a miss.
+/// How many replays collect now, on all threads. `Relaxed`: only a hint, a thread's own `REPLAY` is the gate.
 static ARMED_REPLAYS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 thread_local! {

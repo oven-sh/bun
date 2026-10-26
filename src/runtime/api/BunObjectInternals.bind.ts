@@ -8,3 +8,6 @@ export const registerMacro = b.fn({
   capability: "heap",
   throws: true,
 });
+
+/** `bun:internal-for-testing`. */
+export const resolverDirInfoSlotsUsed = b.fn({ returns: b.usize });

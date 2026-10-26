@@ -293,7 +293,7 @@ const files = {
         // resolves its own file at once. They find the same cached directories stale at
         // the same time, and only one of them is the one that drops a directory.
         fs.mkdirSync("shared-dir");
-        write("steps.cjs", \`
+        fs.writeFileSync("steps.cjs", \`
           const fs = require("node:fs");
           const path = require("node:path");
           module.exports = id => {

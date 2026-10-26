@@ -163,8 +163,6 @@ const resolveSignature = {
 export const resolve = b.fn({ ...resolveSignature, returns: b.any, rejects: true });
 export const resolveSync = b.fn({ ...resolveSignature, returns: b.string });
 
-export const resolverDirInfoSlotsUsed = b.fn({ returns: b.usize });
-
 export const serve = b.fn({ args: { options: b.any }, returns: b.any, capability: "js", throws: true });
 
 export const shellEscape = b.fn({

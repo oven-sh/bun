@@ -28,6 +28,7 @@ arrays/array-subclass-prototype-element
 arrays/array-with-hundreds-of-negative-keys-in-a-validating-build
 arrays/arrays-become-prototypes-after-a-class-prototype-got-a-setter-under-an-index
 arrays/arrays-of-the-greatest-length-are-read-and-stored-into
+arrays/callbacks-call-a-function-that-always-throws-while-the-array-they-walk-is-changed
 arrays/computed-nans-written-by-index-into-float-views
 arrays/concat-called-on-a-primitive-wraps-it-in-an-object
 arrays/element-reads-with-double-keys
@@ -459,6 +460,7 @@ classes/unread-field-is-stored-below-a-replaced-parent
 classes/what-a-loop-reads-is-changed-inside-the-loop-without-naming-it
 closed-world/a-built-in-module-is-read-under-a-symbol-that-a-stream-keeps
 closed-world/a-built-in-module-under-a-symbol-of-a-stream-is-read-on-copies-of-the-stream
+closed-world/a-function-that-runs-text-or-loads-a-module-is-picked-from-a-table-under-a-key-put-together-at-run-time
 closed-world/a-member-of-bun-is-named-by-the-default-of-a-key-picked-at-run-time
 closed-world/a-member-of-bun-is-named-on-a-copy-by-descriptors-of-a-value-the-build-does-not-know
 closed-world/a-member-of-bun-is-named-on-a-copy-by-descriptors-of-what-a-built-in-handed-on
@@ -486,6 +488,7 @@ closed-world/a-proxy-of-eval-is-called
 closed-world/a-proxy-of-the-function-constructor-is-called
 closed-world/a-proxy-of-the-function-constructor-is-constructed
 closed-world/a-proxy-of-the-function-constructor-whose-traps-hand-on-is-called
+closed-world/a-require-function-whose-parent-is-put-together-at-run-time-is-given-names-of-packages-that-are-not-installed
 closed-world/calls-into-loaded-modules-refused
 closed-world/code-by-computed-path-without-js-extension
 closed-world/code-by-computed-path-without-js-extension-with-eval
@@ -538,6 +541,7 @@ collector/collections-run-inside-function-objects-that-are-only-lent-while-other
 collector/collector-runs-beside-every-kind-of-allocation
 collector/eval-constants-at-heap-limit
 collector/flags-kept-out-of-line-are-read-by-the-last-holder-of-their-object-in-a-loop-that-makes-texts
+collector/function-objects-named-while-the-program-runs-are-called-where-the-stack-ends
 collector/function-objects-named-while-the-program-runs-are-collected-after-their-calls
 collector/function-objects-named-while-the-program-runs-outlive-the-collections-inside-their-calls
 collector/large-constants-at-heap-limit
@@ -557,6 +561,7 @@ collector/objects-held-only-by-places-nobody-reads-stay-alive
 collector/objects-with-many-new-names-are-made-while-a-collection-marks
 collector/text-made-at-run-time-adds-properties-behind-full-collections
 collector/weak-maps-that-grew-old-keep-what-is-added-between-young-collections
+collector/what-a-function-holds-that-other-functions-only-call
 collector/what-a-function-nobody-reads-holds-beside-the-names-of-its-scope
 collector/what-a-member-nobody-reads-holds-through-instances
 collector/what-a-member-nobody-reads-holds-through-other-records
@@ -608,6 +613,7 @@ commonjs/an-imported-commonjs-file-requires-a-module-that-imports-its-importer
 commonjs/an-imported-file-requires-an-es-module-that-shares-a-module-with-the-graph-being-loaded
 commonjs/an-object-stored-as-the-children-changes-what-each-later-child-exports
 commonjs/built-in-modules-required-through-a-held-module-object
+commonjs/classes-with-private-members-that-nobody-uses-are-defined-below-members-of-exports
 commonjs/code-that-does-nothing-holds-the-only-commonjs-name
 commonjs/create-require-called-with-call
 commonjs/default-and-namespace-imports-of-commonjs-files
@@ -623,6 +629,7 @@ commonjs/getters-among-the-exports-of-the-entry-point-run-behind-it
 commonjs/getters-of-exports-run-in-written-order
 commonjs/getters-of-imported-exports-run-in-written-order
 commonjs/import-of-a-module-that-imports-a-name-through-a-star-export-of-a-file-that-never-stores-it
+commonjs/imported-files-and-their-jobs-run-up-to-the-import-that-ends-the-load
 commonjs/index-of-on-the-list-of-children-gets-each-child
 commonjs/jobs-of-a-file-of-a-deeper-module-run-before-a-file-below-it
 commonjs/jobs-of-imported-files-run-between-the-files-of-a-graph-loaded-by-import
@@ -815,12 +822,14 @@ errors/classes-that-extend-error
 errors/errors-of-every-operand-that-a-built-in-function-converts-are-caught
 errors/every-kind-of-place-that-throws
 errors/frames-of-a-printed-error-below-expressions-that-construct
+errors/frames-of-commonjs-files-that-throw-while-they-are-imported
 errors/iterating-what-is-not-iterable
 errors/messages-name-the-built-in-function-that-cannot-be-constructed
 errors/own-property-names-of-errors-made-in-programs-classes-and-built-in-modules
 errors/places-that-throw-with-another-text-or-column
 errors/reads-of-null-with-many-values-in-registers
 errors/stack-frames-below-an-async-generator-behind-an-await
+errors/stack-frames-below-an-async-generator-that-is-stepped-behind-a-collection
 errors/stack-frames-below-an-async-generator-that-steps-another
 errors/stack-frames-below-the-callbacks-of-next-tick
 errors/stack-frames-follow-the-name-of-the-function-object
@@ -874,12 +883,16 @@ errors/stack-frames-where-the-initializer-of-a-field-throws
 errors/stack-lines-after-types-over-several-lines
 errors/stack-lines-of-expressions-written-over-several-lines
 errors/stack-positions-after-types-on-the-same-line
+errors/stack-positions-behind-members-that-are-tags-of-templates
+errors/stack-positions-behind-spreads-of-operands-in-parentheses
+errors/stack-positions-beside-variables-at-the-top-of-a-module
 errors/stack-positions-in-concatenations-and-compound-assignments
 errors/stack-positions-in-text-that-the-program-evaluates
 errors/stack-positions-in-the-output-of-bun-build
 errors/stack-positions-of-callers
 errors/stack-positions-of-callers-that-step-a-generator
 errors/stack-positions-of-checks-that-have-no-place-of-their-own
+errors/stack-positions-of-constants-at-the-top-of-a-file
 errors/stack-positions-of-conversions-that-have-no-place-of-their-own
 errors/stack-positions-of-expressions-that-throw
 errors/stack-positions-of-expressions-that-throw-in-commonjs
@@ -1500,6 +1513,7 @@ objects-inside-objects/what-an-inner-object-in-its-room-held-is-let-go
 objects-that-are-not-what-their-layout-says/a-lone-read-in-cold-code-meets-every-stranger
 objects-that-are-not-what-their-layout-says/a-variable-of-a-class-or-null-holds-what-object-create-made
 objects-that-are-not-what-their-layout-says/an-accessor-is-defined-on-what-from-entries-or-group-by-answered
+objects-that-are-not-what-their-layout-says/nodes-made-by-a-tag-are-read-beside-modules-whose-objects-have-fields-of-the-same-names
 objects-that-are-not-what-their-layout-says/what-object-create-made-is-stored-to-called-deleted-from-and-asked-for-a-name
 objects-that-are-not-what-their-layout-says/what-object-create-made-or-an-instance-of-another-class-has-a-method-called
 objects-that-are-not-what-their-layout-says/what-object-create-made-or-an-instance-of-another-class-has-a-number-field-read
@@ -1578,6 +1592,7 @@ objects/objects-written-with-index-keys-below-typed-arrays-are-walked-by-for-in
 objects/optional-number-fields-box-every-value
 objects/own-accessors-whose-getters-nobody-can-list
 objects/own-property-that-holds-undefined-hides-a-method
+objects/own-values-of-built-in-objects-that-the-program-added-to
 objects/property-descriptors-only-taken-apart
 objects/stack-trace-captured-on-a-frozen-empty-object
 objects/stack-trace-captured-on-a-frozen-instance
@@ -1784,6 +1799,7 @@ strings/expressions-that-ask-for-a-character-narrow-text-lacks
 strings/first-and-rest-of-a-string-read-from-a-field
 strings/fixed-count-group-repeats-millions-of-times
 strings/fixed-count-group-repeats-millions-of-times-beside-duplicate-named-groups
+strings/fixed-count-group-that-takes-no-input-repeats-billions-of-times
 strings/flat-string-keys
 strings/integers-become-text-once-twice-and-often
 strings/integers-that-come-once-become-text-between-small-collections
@@ -1915,6 +1931,7 @@ typed-objects/generic-type-growing-several-ways
 typed-objects/getters-whose-type-goes-through-this-of-their-own-literal
 typed-objects/int32-union-takes-objects-and-null
 typed-objects/json-stringify-generated-records-2
+typed-objects/keys-of-objects-of-two-layouts-that-also-hold-indexes-are-written-as-json
 typed-objects/literal-with-computed-key-is-born-typed
 typed-objects/literals-with-a-symbol-key-beside-declared-types-of-the-same-members-are-printed
 typed-objects/narrowed-identity-recursive-types
@@ -1978,15 +1995,21 @@ untyped-stress/prototype-chains-changed-at-random-1
 untyped-stress/prototype-chains-changed-at-random-beside-a-library-module
 untyped-stress/set-and-map-iteration-without-operations
 untyped-stress/string-building
+ways-into-library-modules/net-socket-through-create-require-found-by-a-loop-over-the-keys-of-a-table-of-functions
 ways-into-library-modules/net-socket-through-create-require-in-a-copy-of-node-module-read-far-down-a-chain-of-calls
+ways-into-library-modules/net-socket-through-create-require-named-on-a-proxy-of-node-module
+ways-into-library-modules/net-socket-through-create-require-named-on-a-proxy-whose-get-trap-reads-node-module
 ways-into-library-modules/net-socket-through-create-require-named-on-a-star-import-made-of-copied-values
 ways-into-library-modules/net-socket-through-create-require-named-on-a-star-import-made-of-getters
 ways-into-library-modules/net-socket-through-create-require-named-on-a-star-import-made-of-getters-or-descriptors
 ways-into-library-modules/net-socket-through-create-require-named-on-a-variable-that-holds-node-module-or-a-value-nobody-knows
+ways-into-library-modules/net-socket-through-create-require-named-on-an-object-below-a-proxy-whose-handler-is-an-instance-of-a-class
 ways-into-library-modules/net-socket-through-create-require-named-on-exports-that-export-all-of-node-module
 ways-into-library-modules/net-socket-through-create-require-named-on-the-default-of-a-star-import-made-of-getters-or-descriptors
 ways-into-library-modules/net-socket-through-create-require-named-on-what-was-filled-under-the-keys-of-node-module
+ways-into-library-modules/net-socket-through-create-require-picked-from-a-table-of-functions-under-a-key-put-together-at-run-time
 ways-into-library-modules/net-socket-through-get-builtin-module-in-a-copy-of-process-read-far-down-a-chain-of-calls
+ways-into-library-modules/net-socket-through-get-builtin-module-named-on-a-proxy-whose-get-trap-reads-process
 ways-into-library-modules/net-socket-through-get-builtin-module-named-on-a-star-import-made-of-getters
 ways-into-library-modules/net-socket-through-get-builtin-module-named-on-a-variable-that-holds-process-or-a-value-nobody-knows
 ways-into-library-modules/net-socket-through-get-builtin-module-stored-under-another-name-on-an-object-handed-out-before
@@ -2011,6 +2034,7 @@ workers/reading-a-property-of-null-throws-in-every-thread
 workers/sixty-four-at-once
 workers/spinning-workers-are-terminated-at-once
 workers/stacks-of-errors-in-many-workers
+workers/terminate-or-vm-timeout-during-first-use-of-a-class
 workers/terminated-anywhere
 workers/terminated-in-the-message-listener-of-a-worker-that-ends-by-itself
 workers/terminated-in-the-middle-of-a-native-call

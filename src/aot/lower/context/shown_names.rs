@@ -14,10 +14,10 @@ use crate::ir::StringId;
 #[derive(Default)]
 pub(super) struct ShownNames {
     shortens_bindings: bool,
-    shortens_functions: bool,
     /// In order. A direct eval finds what they declare by what is written.
     scopes_around_evals: Vec<ScopeId>,
-    interned: FxHashMap<SymbolId, StringId>,
+    /// Those handed out so far. None: a function is shown by the name that is written.
+    short_function_names: Option<FxHashMap<SymbolId, StringId>>,
     /// Of a module of Bun's own. In order of position.
     bundled: &'static [BundledName],
 }
@@ -49,9 +49,8 @@ impl ShownNames {
         scopes_around_evals.dedup();
         ShownNames {
             shortens_bindings: true,
-            shortens_functions: options.minifies_identifiers,
             scopes_around_evals,
-            interned: FxHashMap::default(),
+            short_function_names: options.minifies_identifiers.then(FxHashMap::default),
             bundled,
         }
     }
@@ -154,11 +153,9 @@ impl FileLowering<'_, '_, '_, '_> {
 
     /// No two bindings of the program give one name: a table with such names for keys holds.
     fn short_function_name(&mut self, binding: Binding) -> Option<StringId> {
-        if !self.shown_names.shortens_functions {
-            return None;
-        }
+        let names = self.shown_names.short_function_names.as_ref()?;
         let symbol = self.find_shortened_symbol(binding)?;
-        if let Some(&name) = self.shown_names.interned.get(&symbol) {
+        if let Some(&name) = names.get(&symbol) {
             return Some(name);
         }
         let mut text = Vec::new();
@@ -167,7 +164,8 @@ impl FileLowering<'_, '_, '_, '_> {
             &mut text,
         );
         let name = self.intern_bytes(&text);
-        self.shown_names.interned.insert(symbol, name);
+        let names = self.shown_names.short_function_names.as_mut()?;
+        names.insert(symbol, name);
         Some(name)
     }
 }

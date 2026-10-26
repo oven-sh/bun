@@ -1,13 +1,15 @@
 use super::finish_body;
-use crate::ir::generated::{BlockFrequency, FunctionKind};
+use crate::ir::generated::{BlockFrequency, FunctionFlags, FunctionKind};
 use crate::ir::{FunctionId, FunctionKey, TypeTable, VariableKey};
 use crate::lower::{FileLowering, FunctionLowering, function};
 use crate::modules::ModuleRef;
 
-// What is written in a file, and what is made for it, names the record of the file, which has the path and the positions.
+// What is written in a file, and what is made for it, names the record of the file, which has the path and the positions. Nobody wrote it, so no stack trace lists it.
 fn declare_body(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) {
     file.declare_function(key, |file| {
-        function::create_header(file, key, FunctionKind::Module, 0)
+        let mut header = function::create_header(file, key, FunctionKind::Module, 0);
+        header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
+        header
     });
 }
 

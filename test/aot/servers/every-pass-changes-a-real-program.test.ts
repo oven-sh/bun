@@ -9,9 +9,9 @@
 //                     lay out, which never report a change. A listed pass that does change something fails the test as well, so the
 //                     list says what is so.
 //   write barriers    a store of a cell into an object is followed by a write barrier unless the compiler shows that none is needed: the
-//                     object is younger than any collection, or a later store into it has the barrier. The share of stores that go
-//                     without is held for every program, and the number of barriers for the terminal program, whose whole text lies in
-//                     this repository: the others change with the packages that are installed.
+//                     object is younger than any collection, or a later store into it has the barrier. The number of barriers is
+//                     held for every program. The share of stores that go without is printed and not held: it falls where code
+//                     that needed few barriers is no longer compiled, and the program has fewer barriers all the same.
 //
 // To take a pass out: this test says by a run what the pass does to these programs. A pass that changes them is at work, whatever a
 // benchmark says, and what it buys has to be asked of the programs (--aot-disable=pass:<name>).
@@ -60,20 +60,21 @@ const statisticsOfPassesThatReportNoChange = {
  * It counts places in the code, not barriers that run: a call that is inlined brings a copy of each of its barriers along,
  * and the share of stores without a barrier stays what it was.
  */
-const barriersOfTheTerminalProgram = 199;
-/** Of a hundred stores of cells, how many are compiled without a barrier. */
-const percentWithoutBarrierAtLeast: Record<string, number> = {
-  bun: 8,
-  thin: 10,
-  hono: 7,
-  elysia: 10,
-  node: 14,
-  koa: 16,
-  express: 15,
-  fastify: 18,
-  typescript: 10,
-  terminal: 9,
+/** The write barriers that each program is compiled with on Linux x64. A number here only ever goes down. */
+const barriersAtMost: Record<string, number> = {
+  bun: 508,
+  thin: 519,
+  hono: 717,
+  elysia: 2353,
+  node: 1673,
+  koa: 2772,
+  express: 2816,
+  fastify: 4260,
+  typescript: 15565,
+  terminal: 199,
 };
+/** The whole text of the terminal program lies in this repository, and its number is small: it is held where it was read. */
+const isHeldHere = (program: string) => program !== "terminal" || (isLinux && process.arch === "x64");
 
 if (!requestedServers)
   console.error(
@@ -155,12 +156,7 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/every pass chan
     console.log(
       `BARRIERS ${seen.map(row => `${row.program} ${row.emitted} (${row.percentWithout}% without)`).join(", ")}`,
     );
-    // Whatever copies or removes code moves the counts, and the shares hardly: two points.
-    expect(seen.filter(row => row.percentWithout < percentWithoutBarrierAtLeast[row.program] - 2)).toEqual([]);
-    // The text of Bun's own modules differs a little from platform to platform, and so do the counts.
-    if (isLinux && process.arch === "x64")
-      expect(seen.find(row => row.program === "terminal")!.emitted).toBeLessThanOrEqual(
-        barriersOfTheTerminalProgram * 1.05,
-      );
+    // The text of Bun's own modules differs a little from platform to platform, and so do the counts: five in a hundred.
+    expect(seen.filter(row => isHeldHere(row.program) && row.emitted > barriersAtMost[row.program] * 1.05)).toEqual([]);
   });
 });

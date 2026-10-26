@@ -286,6 +286,7 @@ else setTimeout(function onTimer() { throwGiven(make()); }, 1);
 const forms = [...main.matchAll(/^  "([^"]+)": /gm)].map(match => match[1]);
 
 // The frames and what the program itself prints. An executable holds no source text to print an excerpt of, and names its files otherwise.
+// A position without a file lies in the text of a built-in function, which is no part of the program: the name of that frame is compared.
 const shown = (run: { stdout: string; stderr: string; exitCode: number }) => ({
   lines: `${run.stdout}\n${run.stderr}`
     .split("\n")
@@ -294,7 +295,8 @@ const shown = (run: { stdout: string; stderr: string; exitCode: number }) => ({
       line
         .trim()
         .replace(/\(?[^ (]*[\\/]([a-z]+\.js:)/, "$1")
-        .replace(/\)$/, ""),
+        .replace(/\)$/, "")
+        .replace(/ \(\d+:\d+$/, ""),
     ),
   exitCode: run.exitCode,
 });

@@ -140,13 +140,24 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         // The transpiler knows the value from the declaration on.
         let is_declared = self.hir[pattern].pos < self.hir[name].pos;
-        (is_declared && self.is_replaced_by_its_value(declaration))
+        (is_declared && self.is_named_by_its_value(declaration))
             .then_some(self.hir[declaration].init)
     }
 
+    // At the top of a file the transpiler keeps the declaration.
     pub(in crate::lower) fn is_replaced_by_its_value(&self, declaration: VarDeclId) -> bool {
         let statement = self.bound.var_stmt[declaration.idx()];
-        let Some(siblings) = self.find_siblings(statement) else {
+        self.bound.parent_of_stmt(statement) != Parent::File
+            && self.is_named_by_its_value(declaration)
+    }
+
+    fn is_named_by_its_value(&self, declaration: VarDeclId) -> bool {
+        let statement = self.bound.var_stmt[declaration.idx()];
+        let siblings = match self.bound.parent_of_stmt(statement) {
+            Parent::File => self.find_among(self.hir.body, false, statement),
+            _ => self.find_siblings(statement),
+        };
+        let Some(siblings) = siblings else {
             return false;
         };
         let steps = self
@@ -319,6 +330,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 budget.take_step()
                     && match hir[earlier].kind {
                         StmtKind::Var(declarations) => declarations.iter().all(is_constant),
+                        StmtKind::Directive { .. } => true,
                         _ => !self.is_printed(earlier),
                     }
             })
@@ -387,7 +399,16 @@ impl FileLowering<'_, '_, '_, '_> {
             },
             _ => return None,
         };
-        let siblings = &hir.ids[list.range()];
+        self.find_among(list, is_block, statement)
+    }
+
+    fn find_among(
+        &self,
+        list: IdList<StmtId>,
+        is_block: bool,
+        statement: StmtId,
+    ) -> Option<Siblings> {
+        let siblings = &self.hir.ids[list.range()];
         let index = siblings.partition_point(|&sibling| StmtId::from(sibling) < statement);
         let is_found = siblings
             .get(index)

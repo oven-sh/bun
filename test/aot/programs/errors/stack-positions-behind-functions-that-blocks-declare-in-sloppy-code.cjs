@@ -24,6 +24,9 @@ function show(label, run) {
     console.log(label, "|", error.constructor.name, "|", placesOf(error).slice(0, -2).join(" "));
   }
 }
+function showRejection(error) {
+  console.log("rejected |", error.constructor.name, "|", placesOf(error).slice(0, -2).join(" "));
+}
 show("try { function g({ x }) {} g(nothing); } finally {}", () => { try { function g({ x }) {} g(nothing); } finally {} });
 show("if (five) { function g() { fail(); } g(); }", () => { if (five) { function g() { fail(); } g(); } });
 show("{ function g() { fail(); } g(); }", () => { { function g() { fail(); } g(); } });
@@ -59,7 +62,7 @@ show("{ function g() { return 1; } `${g}${symbol}`; }", () => { { function g() {
 show("{ function g(a = fail()) { return 1; } g(); }", () => { { function g(a = fail()) { return 1; } g(); } });
 show("{ function g() { return 1; } class A extends g.x {} }", () => { { function g() { return 1; } class A extends g.x {} } });
 show("{ function* g() { fail(); } g().next(); }", () => { { function* g() { fail(); } g().next(); } });
-show("{ async function g() { fail(); } g(); fail(); }", () => { { async function g() { fail(); } g(); fail(); } });
+show("{ async function g() { fail(); } g().catch(showRejection); fail(); }", () => { { async function g() { fail(); } g().catch(showRejection); fail(); } });
 show("{ function g() { let next = 1; next++; fail(); } g(); }", () => { { function g() { let next = 1; next++; fail(); } g(); } });
 show("{ function g() { if (five) { fail(); } } g(); }", () => { { function g() { if (five) { fail(); } } g(); } });
 show("{ function g() { fail(); return; } g(); }", () => { { function g() { fail(); return; } g(); } });

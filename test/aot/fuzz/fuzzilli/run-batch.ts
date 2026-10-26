@@ -5,6 +5,7 @@
 //
 // It takes `count` files out of `programs` for each batch and waits for more. `--batches 0` never ends. `--keep` copies the files instead.
 // `--count 1,3,12` takes one program for the first batch, three for the second, twelve for the third, one for the fourth. Which code the compiler takes for hot depends on what else the executable holds.
+// `--group 1` makes each program an entry point, which the compiler takes for a program of its own: up to 127 of them share an executable and nothing else.
 // `--hides-function-text` is for a Bun built with --fuzzilli=on: neither run shows the text of a function, which the two spell differently.
 import {
   appendFileSync,
@@ -19,6 +20,7 @@ import {
 } from "node:fs";
 import { extname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { opensTheWorld } from "../the-world-is-open.ts";
 
 const { values: options } = parseArgs({
   options: {
@@ -52,6 +54,12 @@ const buildFlags = [
 const runner = "run-each-program-in-a-worker.ts";
 const mark = `=== ${Math.random().toString(36).slice(2)} ended`;
 const maxFindsIsolated = 8;
+/**
+ * Beside a program that can evaluate text or load a module under a computed name, all entry points of a build are one program, and the compiler proves less about it.
+ * Such programs wait here and share executables with each other. The text only sorts them: the build's report has the say.
+ */
+const waitingWithTheWorldOpen: string[] = [];
+const isWrittenToOpenTheWorld = (text: string) => opensTheWorld(text) || /(?<![.\w$])eval\b/.test(text);
 // A program that prints without end would fill the disk. How much a run can write to a file, in blocks of 512 bytes.
 const maxBlocksWritten = (256 << 20) / 512;
 
@@ -133,6 +141,31 @@ function importersOf(file: string, folder: string) {
   return [...importers].filter(isProgram).map(name => parseInt(name));
 }
 
+/** Whether the compiler made one program of the entry points in place of one of each, and the first of our programs that its report names as the reason. */
+function programsOf(folder: string, entryPoints: number) {
+  type Report = { statistics: { EngineRuns: number }; unseenCode: { location: { file: string } | null }[] };
+  let report: Report;
+  try {
+    report = JSON.parse(readFileSync(join(folder, "report.json"), "utf8"));
+  } catch {
+    return {};
+  }
+  const named = report.unseenCode.map(({ location }) => /programs[\\/](\d+)\./.exec(location?.file ?? "")?.[1]);
+  const openedBy = named.find(index => index !== undefined);
+  return {
+    // The compiler runs once for each program. When they turn out to be one, it runs once more.
+    areOneProgram: report.statistics.EngineRuns !== entryPoints,
+    openedBy: openedBy === undefined ? undefined : Number(openedBy),
+  };
+}
+
+type Built = {
+  refused: Set<number>;
+  writesToBuiltins: Set<number>;
+  areOneProgram?: boolean;
+  openedBy?: number;
+  stopped?: { reason: string; culprit: number | undefined; stderr: string };
+};
 /** Builds the executable. Returns the programs that the errors name, or how the compiler stopped. */
 async function build(
   folder: string,
@@ -140,17 +173,28 @@ async function build(
   extension: string,
   inGroup: number,
   mode = ["--aot", ...buildFlags],
-) {
+): Promise<Built> {
   const groups = Array.from(
     { length: Math.ceil(programCount / inGroup) },
     (_, group) => `./group-${group}${extension}`,
   );
   const ran = await spawn(
     "build",
-    [bun, "build", "--compile", ...mode, "./" + runner, ...groups, "--outfile", join(folder, "batch")],
+    [
+      bun,
+      "build",
+      "--compile",
+      ...mode,
+      ...(mode.includes("--aot") ? ["--aot-report", join(folder, "report.json")] : []),
+      "./" + runner,
+      ...groups,
+      "--outfile",
+      join(folder, "batch"),
+    ],
     folder,
     {},
-    60 + programCount,
+    // Each entry point is a program, which holds the part of the library that it uses.
+    60 + programCount + 3 * groups.length,
   );
   // "error: .." or "warn: ..", and below it "at <file>:<line>:<column>".
   const [refused, writesToBuiltins] = [new Set<number>(), new Set<number>()];
@@ -164,7 +208,8 @@ async function build(
       if (header.includes("read-only in a compiled executable")) writesToBuiltins.add(program);
     }
   }
-  if (ran.exitCode === 0 && existsSync(join(folder, "batch"))) return { refused: new Set<number>(), writesToBuiltins };
+  if (ran.exitCode === 0 && existsSync(join(folder, "batch")))
+    return { refused: new Set<number>(), writesToBuiltins, ...programsOf(folder, groups.length + 1) };
   // Of several such lines, the first that names a program.
   const stops = [
     ...ran.stderr.matchAll(
@@ -404,23 +449,15 @@ async function differsAmong(
   extension: string,
   index: number,
 ): Promise<boolean | undefined> {
-  layOut(folder, texts, extension, texts.length);
-  await build(folder, texts.length, extension, texts.length);
+  const inGroup = Math.min(groupSize, texts.length);
+  layOut(folder, texts, extension, inGroup);
+  await build(folder, texts.length, extension, inGroup);
   if (!existsSync(join(folder, "batch"))) return undefined;
   const compiled = (
-    await run("compiled", [join(folder, "batch")], folder, extension, texts.length, [index], milliseconds * 20)
+    await run("compiled", [join(folder, "batch")], folder, extension, inGroup, [index], milliseconds * 20)
   ).get(index)!;
   const plain = (
-    await run(
-      "plain",
-      [bun, "run", "./" + runner],
-      folder,
-      extension,
-      texts.length,
-      [index],
-      milliseconds * 20,
-      plainEnv,
-    )
+    await run("plain", [bun, "run", "./" + runner], folder, extension, inGroup, [index], milliseconds * 20, plainEnv)
   ).get(index)!;
   return !agree(compiled, plain);
 }
@@ -591,26 +628,35 @@ async function takePrograms(): Promise<string[]> {
   const paths: string[] = [];
   for (;;) {
     for (const name of readdirSync(source).filter(name => /\.[cm]?[jt]s$/.test(name))) {
-      if (paths.length === count) return paths;
       try {
         if (options.keep) copyFileSync(join(source, name), join(claimed, name));
         else renameSync(join(source, name), join(claimed, name));
         paths.push(join(claimed, name));
       } catch {}
+      if (paths.length === count) return paths;
     }
     if (options.keep && paths.length) return paths;
     await Bun.sleep(100);
   }
 }
 
-for (let batch = 0; batches === 0 || batch < batches; batch++) {
+let extension = "";
+for (let batch = 0; batches === 0 || batch < batches || waitingWithTheWorldOpen.length; batch++) {
   for (const stage in spent) delete spent[stage];
   const started = performance.now();
   count = countsOfPrograms[batch % countsOfPrograms.length];
-  const paths = await takePrograms();
-  const extension = extname(paths[0]);
-  let texts = paths.map(path => readFileSync(path, "latin1"));
-  for (const path of paths) rmSync(path, { force: true });
+  const haveTheWorldOpen = waitingWithTheWorldOpen.length >= count || (batches !== 0 && batch >= batches);
+  let texts = waitingWithTheWorldOpen.splice(0, haveTheWorldOpen ? count : 0);
+  if (!haveTheWorldOpen) {
+    const paths = await takePrograms();
+    extension = extname(paths[0]);
+    for (const path of paths) {
+      const text = readFileSync(path, "latin1");
+      (isWrittenToOpenTheWorld(text) ? waitingWithTheWorldOpen : texts).push(text);
+      rmSync(path, { force: true });
+    }
+    if (texts.length === 0) continue;
+  }
   const folder = join(work, `batch-${process.pid}`);
   const counts: Record<string, number> = { taken: texts.length };
   const add = (kind: string, by = 1) => (counts[kind] = (counts[kind] ?? 0) + by);
@@ -627,12 +673,10 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
       add("processor seconds in them", Math.round(spent.build.cpuSeconds - secondsBefore));
     }
     if (stopped) {
-      const first = (stopped.culprit ?? 0) - ((stopped.culprit ?? 0) % groupSize);
-      const group = stopped.culprit === undefined ? texts : texts.slice(first, first + groupSize);
       keepFind("build-stopped", stopped.reason, {
         ["program" + extension]: stopped.culprit === undefined ? "" : texts[stopped.culprit],
-        "programs.txt": group.map((text, offset) => `// ---- ${offset}\n${text}`).join("\n"),
-        "report.txt": `${stopped.reason}\n${bun} build --compile --aot ${buildFlags.join(" ")}\nprograms.txt holds the group, and the program is number ${(stopped.culprit ?? 0) - first} in it\n`,
+        "programs.txt": texts.map((text, offset) => `// ---- ${offset}\n${text}`).join("\n"),
+        "report.txt": `${stopped.reason}\n${bun} build --compile --aot ${buildFlags.join(" ")}\nprograms.txt holds the ${texts.length} programs of the build, in groups of ${groupSize}, and the program is number ${stopped.culprit ?? 0} in it\n`,
         "compiler.stderr": stopped.stderr,
       });
       add("stopped the build");
@@ -643,9 +687,21 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
       }
       refused.add(stopped.culprit);
     }
-    if (refused.size === 0) break;
-    add("refused", refused.size - (stopped ? 1 : 0));
-    texts = texts.filter((_, index) => !refused.has(index));
+    if (refused.size) {
+      add("refused", refused.size - (stopped ? 1 : 0));
+      texts = texts.filter((_, index) => !refused.has(index));
+      continue;
+    }
+    // The program that made one program of all leaves for an executable of such programs.
+    if (built.areOneProgram && built.openedBy !== undefined && !haveTheWorldOpen && texts.length > 1) {
+      add("builds that one program opened");
+      waitingWithTheWorldOpen.push(...texts.splice(built.openedBy, 1));
+      counts.taken--;
+      continue;
+    }
+    if (built.areOneProgram !== undefined)
+      add(built.areOneProgram ? "executables that are one program" : "executables with a program for each group");
+    break;
   }
   const all = texts.map((_, index) => index);
   const runCompiled = (indexes: number[], limit: number) =>
@@ -758,8 +814,7 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
         : "DIFFERS ONLY AMONG NEIGHBORS";
       if (where !== "differs alone too") {
         // Halves the neighbors while the difference stays.
-        const first = index - (index % groupSize);
-        let neighbors = all.slice(first, first + groupSize).filter(other => other !== index);
+        let neighbors = all.filter(other => other !== index);
         const among = (others: number[]) =>
           differsAmong(subset, [texts[index], ...others.map(other => texts[other])], extension, 0);
         const everyNeighbor = neighbors;

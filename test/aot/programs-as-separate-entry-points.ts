@@ -140,6 +140,8 @@ class Way {
   refused = new Map<string, string>();
   /** The smallest sets of programs that were not built together, though each half of the set was, with the command that says so. */
   notBuiltTogether: string[] = [];
+  /** The internal errors that the compiler reported for a program among others. The program is then built apart from them, so its own test does not tell. */
+  internalErrors: string[] = [];
   #executables = 0;
   constructor(
     readonly name: string,
@@ -175,7 +177,10 @@ class Way {
       if (smaller === this.notBuiltTogether.length && alone === this.refused.size) this.notBuiltTogether.push(`${said}\n  cd ${root} && ${this.command(["./" + runner, ...spelled], "programs").join(" ")}`);
       return;
     }
-    for (const [path, error] of refused) console.error(`REFUSED among ${programs.length} programs, ${this.name}: ${nameOf(path)}: ${error}`);
+    for (const [path, error] of refused) {
+      console.error(`REFUSED among ${programs.length} programs, ${this.name}: ${nameOf(path)}: ${error}`);
+      if (/\binternal compiler error\b/.test(error)) this.internalErrors.push(`${nameOf(path)} among ${programs.length} programs, ${this.name}: ${error}`);
+    }
     await this.build(root, programs.filter(path => !refused.has(path)));
     return this.build(root, [...refused.keys()]);
   }
@@ -323,6 +328,15 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
       async () => {
         await Promise.all(ways.map((_, index) => buildOnce(index)));
         expect(ways.flatMap(way => way.notBuiltTogether)).toEqual([]);
+      },
+      1_500_000,
+    );
+
+    test(
+      "the compiler reports no internal error",
+      async () => {
+        await Promise.all(ways.map((_, index) => buildOnce(index)));
+        expect(ways.flatMap(way => way.internalErrors)).toEqual([]);
       },
       1_500_000,
     );

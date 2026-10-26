@@ -163,7 +163,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 let environment = self.fragment.types.intern(Type::environment(layout));
                 DeclaredType::from_compiler(environment)
             }
-            Capture::Value(_) if is_left_out => DeclaredType::untyped(),
+            // The declaration of a variable may be left out with the function. What fills a slot never is.
+            Capture::Value(BindingRef::Symbol(_)) if is_left_out => DeclaredType::untyped(),
             Capture::Value(binding) => self.stored_position(binding),
         });
         positions.collect()

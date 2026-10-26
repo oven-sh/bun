@@ -125,10 +125,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         array
     }
 
-    fn lower_appended_spread(&mut self, array: ValueId, iterable: ExprId) {
+    fn lower_appended_spread(&mut self, array: ValueId, spread: ExprId, iterable: ExprId) {
         let hir = self.file.hir;
         // JSC reports and records the iteration at the end of `...`.
-        let position = self.file.first_position(iterable);
+        let position = match self.file.begins_with_parenthesis(iterable) {
+            true => hir[spread].pos,
+            false => self.file.first_position(iterable),
+        };
         if !ends_in_list_literal(self.file, iterable) {
             let iterable = self.lower_expression(iterable);
             self.set_position(position);
@@ -154,7 +157,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_condition(test, if_true, if_false);
                 for (block, arm) in [(if_true, yes), (if_false, no)] {
                     self.continue_in(block);
-                    self.lower_appended_spread(array, arm);
+                    self.lower_appended_spread(array, spread, arm);
                     self.jump(join);
                 }
                 self.continue_in(join);
@@ -168,7 +171,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let position = hir[element].pos;
         match hir[element].kind {
-            ExprKind::Spread(iterable) => self.lower_appended_spread(array, iterable),
+            ExprKind::Spread(iterable) => self.lower_appended_spread(array, element, iterable),
             ExprKind::Missing => {
                 self.set_position(position);
                 self.builder.append_hole(array);

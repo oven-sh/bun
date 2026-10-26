@@ -81,7 +81,7 @@ const rows: Row[] = [
   ["the-fields-of-a-merged-object.cjs", [], "sums of a literal", "sums of a spread", 1.1],
   ["an-object-put-together-from-others-and-kept.cjs", [], "literals", "spreads of two objects", 1.5],
   ["an-object-put-together-from-others-and-kept.cjs", [], "literals", "the rest of a record", 1.5],
-  ["an-object-put-together-from-others-and-kept.cjs", [], "literals", "the rest of one of three records", 3, 10.9],
+  ["an-object-put-together-from-others-and-kept.cjs", [], "literals", "the rest of one of three records", 3, 4.4],
 ];
 const [few, many] = [100_000, 400_000];
 

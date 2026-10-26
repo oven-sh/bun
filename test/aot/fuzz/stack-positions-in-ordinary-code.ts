@@ -60,24 +60,29 @@ const list = (open: string, parts: Doc[], close: string, pad: Doc = softline, en
 const block = (statements: Doc[]): Doc =>
   statements.length ? ["{", indent(statements.map(statement => [hardline, statement])), hardline, "}"] : "{}";
 
-interface Callable {
+export interface Callable {
+  // How the file that calls it writes it: a name, or an expression such as `library.work1`.
   name: string;
   arity: number;
   // The name that the last parameter, a pattern, takes out of an object.
   recordKey: string | null;
   isAsync: boolean;
   yields: boolean;
+  // Its name holds an `await`.
+  isAwaited?: boolean;
 }
 
-interface Member extends Callable {
+export interface Member extends Callable {
   kind: "method" | "getter" | "setter";
   isStatic: boolean;
   // `name = (given) => ..` in a class, `name: (given) => ..` in an object literal.
   isArrow: boolean;
 }
 
-interface Shape {
+export interface Shape {
   name: string;
+  // How a typed file writes the type of its instances, where that is not its name. Nothing: it writes no type.
+  typeName?: string | null;
   arity: number;
   members: Member[];
   base: Shape | null;
@@ -95,11 +100,79 @@ interface Scope {
   depth: number;
 }
 
+// In a program of several files it is a file of its own, which only untyped files use.
+export const constructorFunction = `function Legacy(value) {
+  this.value = step(value);
+}
+Legacy.prototype.read = function () {
+  return step(this.value);
+};
+Legacy.prototype.chainTo = function (value) {
+  this.value += step(value);
+  return this;
+};
+Object.defineProperty(Legacy.prototype, "half", {
+  get: function () {
+    return step(this.value) / 2;
+  },
+});
+Legacy.of = function (value) {
+  return new Legacy(step(value));
+};
+`;
+
+// One file of a program of several files (stack-positions-across-files.ts).
+export interface Part {
+  // `helpers` holds `step()` and what every file uses. `loaded` runs its calls while it is loaded, outside any handler.
+  role: "helpers" | "library" | "loaded" | "main";
+  // No two files of a program declare the same name.
+  counters: { names: number; literals: number };
+  // The lines that bring in what it uses of other files.
+  heading: string;
+  functions: Callable[];
+  shapes: Shape[];
+  // It may wait at its top level.
+  mayAwait: boolean;
+  // A `library` has blocks at its top level that catch and print.
+  printsWhileLoaded: boolean;
+  // In `main`: statements that load the files which throw while they are loaded.
+  loads: string;
+}
+
+// What the file `helpers` declares for a file that is typed or not.
+export const helperNames = (isTyped: boolean, isBroad: boolean) => [
+  ..."state step Chain emitted framesOf caught seen sum pick tag maybe later counter holder stream total".split(" "),
+  ...(isTyped ? ["same", "Level", "Units"] : []),
+  ...(isBroad ? "guarded wrapped Built gauge Texts texts range both Bag visited".split(" ") : []),
+];
+
+export interface Exported {
+  // `default`, or the name that another file asks for.
+  exportedAs: string;
+  callable?: Callable;
+  shape?: Shape;
+}
+
+export interface Options {
+  isTyped?: boolean;
+  isWide?: boolean;
+  isCommonJs?: boolean;
+  isBroad?: boolean;
+  part?: Part;
+}
+
+export function generate(random: Random, isTyped = false, isWide = false, isCommonJs = false, isBroad = false): string {
+  return write(random, { isTyped, isWide, isCommonJs, isBroad }).text;
+}
+
 // `isWide` adds what an executable shows otherwise than `bun run` today: members of enums that call, parameters of async functions that call, and async
 // generators that another async function steps.
 // `isCommonJs` writes a CommonJS file of sloppy code.
 // `isBroad` adds proxies, accessors on prototypes, constructor functions, tagged templates of classes, generators that are spread, and callbacks of more built-ins.
-export function generate(random: Random, isTyped = false, isWide = false, isCommonJs = false, isBroad = false): string {
+export function write(
+  random: Random,
+  { isTyped = false, isWide = false, isCommonJs = false, isBroad = false, part }: Options,
+): { text: string; exports: Exported[] } {
   const width = random.pick([60, 80, 80, 100, 120]);
   const typed = (text: string) => (isTyped ? text : "");
   const semi = random.chance(0.8) ? ";" : "";
@@ -113,12 +186,11 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
     : ["the first one", "doesn't retry (yet)", 'see "notes" }', "TODO: a) b)"];
   const inlineNote = (): Doc => (hasComments && random.chance(0.08) ? `/* ${random.pick(notes)} */ ` : "");
   const trailingNote = (): Doc => (hasComments && random.chance(0.1) ? ` // ${random.pick(notes)}` : "");
-  const functions: Callable[] = [];
-  const shapes: Shape[] = [];
-  let names = 0;
-  let literals = 0;
-  const fresh = (stem: string) => `${stem}${++names}`;
-  const literal = () => String(++literals);
+  const functions: Callable[] = [...(part?.functions ?? [])];
+  const shapes: Shape[] = [...(part?.shapes ?? [])];
+  const counters = part?.counters ?? { names: 0, literals: 0 };
+  const fresh = (stem: string) => `${stem}${++counters.names}`;
+  const literal = () => String(++counters.literals);
   const inner = (scope: Scope, changes: Partial<Scope> = {}): Scope => ({
     ...scope,
     numbers: [...scope.numbers],
@@ -175,7 +247,7 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
     return target.isAsync ? parenthesized(["await ", call]) : call;
   }
 
-  const canCall = (scope: Scope, target: Callable) => !target.isAsync || scope.isAsync;
+  const canCall = (scope: Scope, target: Callable) => (!target.isAsync && !target.isAwaited) || scope.isAsync;
 
   function memberUse(scope: Scope, receiver: Doc, member: Member, isOptional: boolean): Doc {
     const dot = isOptional ? "?." : ".";
@@ -952,7 +1024,8 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
         () => {
           if (!shapes.length) return [];
           const shape = random.pick(shapes);
-          const made = declare("object", construct(next, shape), `: ${shape.name}`);
+          const typeName = shape.typeName === undefined ? shape.name : shape.typeName;
+          const made = declare("object", construct(next, shape), typeName === null ? "" : `: ${typeName}`);
           scope.objects.push({ name: made.name, shape });
           return [made.text];
         },
@@ -1386,12 +1459,88 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
     depth: 0,
   };
   const parts: Doc[] = [];
+  const exports: Exported[] = [];
+  // What the end of the file exports: `[its name in the file, the name that another file asks for]`.
+  const listed: [string, string][] = [];
+  let hasDefault = false;
+  const listsAtEnd = part ? random.chance(0.3) : false;
+  // How a declaration at the top of one file of several reaches the others. `head` stands ahead of `function`, `class` or the arrow, `tail` behind the
+  // declaration, and `local` is how the file itself writes the name.
+  function exportOf(name: string, kind: "function" | "arrow" | "class") {
+    const plain = { head: kind === "arrow" ? `const ${name} = ` : "", tail: [] as Doc[], local: name, isNamed: true };
+    const as = random.chance(0.2) ? fresh(kind === "class" ? "Renamed" : "renamed") : name;
+    const later = () => (listed.push([name, as]), { ...plain, exportedAs: as });
+    if (listsAtEnd) return later();
+    if (!isCommonJs) {
+      return random.weighted<() => typeof plain & { exportedAs: string }>([
+        [4, () => ({ ...plain, head: "export " + plain.head, exportedAs: name })],
+        [
+          hasDefault ? 0 : 2,
+          () => (
+            (hasDefault = true),
+            kind === "arrow"
+              ? { ...plain, tail: [`export default ${name}${semi}`], exportedAs: "default" }
+              : { ...plain, head: "export default ", exportedAs: "default" }
+          ),
+        ],
+        [2, later],
+      ])();
+    }
+    const holder = random.pick(["exports", "exports", "module.exports"]);
+    return random.weighted<() => typeof plain & { exportedAs: string }>([
+      [3, () => ({ ...plain, tail: [`${holder}.${as} = ${name}${semi}`], exportedAs: as })],
+      [
+        2,
+        () => ({
+          head: `${holder}.${name} = `,
+          tail: [],
+          local: `${holder}.${name}`,
+          isNamed: false,
+          exportedAs: name,
+        }),
+      ],
+      [
+        kind === "arrow" ? 0 : 2,
+        () => ({ head: `${holder}.${name} = `, tail: [], local: `${holder}.${name}`, isNamed: true, exportedAs: name }),
+      ],
+      [
+        1,
+        () => ({
+          ...plain,
+          tail: [
+            `Object.defineProperty(exports, "${as}", {\n  enumerable: true,\n  get: function () {\n    return ${name};\n  },\n})${semi}`,
+          ],
+          exportedAs: as,
+        }),
+      ],
+    ])();
+  }
 
-  for (let index = random.between(3, 6); index > 0; index--) {
+  const declarations =
+    part?.role === "helpers" ? 0 : part?.role === "loaded" ? random.between(0, 2) : random.between(3, 6);
+  for (let index = declarations; index > 0; index--) {
     if (random.chance(0.35)) {
       // Only its methods run more than once.
       const shape = makeShape("Model");
       const base = shapes.length && random.chance(0.4) ? random.pick(shapes) : null;
+      if (part && part.role !== "main") {
+        const form = exportOf(shape.name, "class");
+        const isExpression = form.local !== shape.name;
+        parts.push(
+          [
+            classText(inner(top, { depth: 2 }), shape, base, [
+              form.head,
+              "class",
+              form.isNamed ? " " + shape.name : "",
+            ]),
+            isExpression ? semi : "",
+          ],
+          ...form.tail,
+        );
+        shapes.push({ ...reachable(shape), name: form.local });
+        exports.push({ exportedAs: form.exportedAs, shape: reachable(shape) });
+        continue;
+      }
       parts.push(
         classText(inner(top, { depth: 2 }), shape, base, [
           random.chance(0.2) && !isCommonJs ? "export " : "",
@@ -1415,7 +1564,14 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
     const parameters = parametersOf(inner(top, { depth: 3 }), body, target);
     const text = target.yields ? block(statements(body, random.between(1, 3), false)) : functionBody(body);
     const asArrow = !target.yields && random.chance(0.3);
-    const exported = random.chance(0.15) && !isCommonJs ? "export " : "";
+    const form = part && part.role !== "main" ? exportOf(target.name, asArrow ? "arrow" : "function") : null;
+    const exported = form
+      ? form.local === target.name
+        ? form.head
+        : ""
+      : random.chance(0.15) && !isCommonJs
+        ? "export "
+        : "";
     if (
       isTyped &&
       !asArrow &&
@@ -1428,23 +1584,33 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
       parts.push(`${exported}function ${target.name}(given: number): number;`);
     parts.push(
       asArrow
-        ? ["const ", target.name, " = ", target.isAsync ? "async " : "", parameters, " => ", text, semi]
+        ? [
+            form ? form.head : ["const ", target.name, " = "],
+            target.isAsync ? "async " : "",
+            parameters,
+            " => ",
+            text,
+            semi,
+          ]
         : [
-            exported,
+            form ? form.head : exported,
             target.isAsync ? "async " : "",
             "function",
-            target.yields ? "* " : " ",
-            target.name,
+            target.yields ? "*" : "",
+            !form || form.isNamed ? " " + target.name : target.yields ? "" : " ",
             parameters,
             " ",
             text,
+            form && form.local !== target.name ? semi : "",
           ],
+      ...(form?.tail ?? []),
     );
-    functions.push(target);
+    functions.push(form ? { ...target, name: form.local } : target);
+    if (form) exports.push({ exportedAs: form.exportedAs, callable: target });
   }
 
   const scenarios: string[] = [];
-  for (let index = random.between(2, 4); index > 0; index--) {
+  for (let index = part && part.role !== "main" ? 0 : random.between(2, 4); index > 0; index--) {
     const name = fresh("scenario");
     const isAsync = random.chance(0.5);
     scenarios.push(name);
@@ -1458,11 +1624,13 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
   }
 
   const any = typed(": any");
+  const calls = part ? "state.calls" : "calls";
+  const failing = part ? "state.failing" : "failing";
   const [thrower, helpers] = random.pick([
-    ['throw new Error("step " + calls);', ""],
-    ['throw new Error("step " + calls);', ""],
+    [`throw new Error("step " + ${calls});`, ""],
+    [`throw new Error("step " + ${calls});`, ""],
     [
-      "throw new StepError(calls);",
+      `throw new StepError(${calls});`,
       `class StepError extends Error {
   constructor(count${typed(": number")}) {
     super("step " + count);
@@ -1472,7 +1640,7 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
 `,
     ],
     [
-      "throw new StepError(calls);",
+      `throw new StepError(${calls});`,
       `class StepError extends Error {
   constructor(count${typed(": number")}) {
     super("step " + count);
@@ -1482,7 +1650,7 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
 `,
     ],
     [
-      "refuse(calls);",
+      `refuse(${calls});`,
       `function refuse(count${typed(": number")})${typed(": never")} {
   throw new RangeError("step " + count);
 }
@@ -1583,35 +1751,12 @@ function visited(value${typed(": number")}) {
   });
   return result;
 }
-${
-  isTyped
-    ? ""
-    : `function Legacy(value) {
-  this.value = step(value);
-}
-Legacy.prototype.read = function () {
-  return step(this.value);
-};
-Legacy.prototype.chainTo = function (value) {
-  this.value += step(value);
-  return this;
-};
-Object.defineProperty(Legacy.prototype, "half", {
-  get: function () {
-    return step(this.value) / 2;
-  },
-});
-Legacy.of = function (value) {
-  return new Legacy(step(value));
-};
-`
-}`;
+${isTyped || part ? "" : constructorFunction}`;
   const prelude = `${isCommonJs ? 'const { EventEmitter } = require("node:events");' : 'import { EventEmitter } from "node:events";'}
 
-let calls = 0;
-let failing = 0;
+${part ? "Error.stackTraceLimit = 50;\nconst state = { calls: 0, failing: 0 };" : "let calls = 0;\nlet failing = 0;"}
 ${helpers}function step${typed("<T>")}(value${typed(": T")})${typed(": T")} {
-  if (++calls === failing) ${thrower}
+  if (++${calls} === ${failing}) ${thrower}
   return value;
 }
 class Chain {
@@ -1639,9 +1784,9 @@ function emitted(value${typed(": number")}, listener${typed(": (value: number) =
 function framesOf(error${any})${typed(": string")} {
   return String(error.stack)
     .split("\\n")
-    .map(text => /^\\s*at (.*?) ?\\(?[^ ()]*main\\.c?[jt]s:(\\d+):(\\d+)\\)?$/.exec(text))
+    .map(text => /^\\s*at (.*?) ?\\(?[^ ()]*${part ? "[\\\\/]([\\w-]+)\\.[cm]" : "main\\.c"}?[jt]s:(\\d+):(\\d+)\\)?$/.exec(text))
     .filter(found => found !== null)
-    .map(found => found[1].replace(/^(new |async )?(<anonymous>|[oO]nce[A-Z]\\w*)$/, "$1") + "@" + found[2] + ":" + found[3])
+    .map(found => found[1].replace(/^(new |async )?(<anonymous>|[oO]nce[A-Z]\\w*)$/, "$1") + "@" + found[2] + ":" + found[3]${part ? ' + ":" + found[4]' : ""})
     .join(" < ");
 }
 const caught${typed(": string[]")} = [];
@@ -1686,38 +1831,78 @@ namespace Units {
   }
 }
 `)}`;
-  const driver = `for (const scenario of [${scenarios.join(", ")}]) {
-  failing = 0;
-  calls = 0;
+  const driver = `${part?.loads ?? ""}for (const scenario of [${scenarios.join(", ")}]) {
+  ${failing} = 0;
+  ${calls} = 0;
   await scenario();
-  const all = calls;
-  for (failing = 1; failing <= all; failing++) {
-    calls = 0;
+  const all = ${calls};
+  for (${failing} = 1; ${failing} <= all; ${failing}++) {
+    ${calls} = 0;
     caught.length = 0;
     try {
       await scenario();
-      console.log(scenario.name, failing, "returns", caught.join(" | "));
+      console.log(scenario.name, ${failing}, "returns", caught.join(" | "));
     } catch (error) {
-      console.log(scenario.name, failing, framesOf(error), caught.join(" | "));
+      console.log(scenario.name, ${failing}, framesOf(error), caught.join(" | "));
     }
   }
 }
 `;
+  const mayAwait = !isCommonJs && (part?.mayAwait ?? true);
   // Code at the top of the module runs once, so each block has one call that throws.
-  for (let index = random.between(1, 3); index > 0; index--) {
+  const blocks = !part
+    ? random.between(1, 3)
+    : part.role === "main" || (part.role === "library" && part.printsWhileLoaded)
+      ? random.between(0, 2)
+      : 0;
+  for (let index = blocks; index > 0; index--) {
     const label = fresh("top");
     parts.push([
-      `failing = ${random.between(1, 8)};`,
+      `${failing} = ${random.between(1, 8)};`,
       hardline,
-      "calls = 0;",
+      `${calls} = 0;`,
       hardline,
       "try ",
-      block(statements(inner(top, { isAsync: !isCommonJs }), random.between(2, 4), false)),
+      // While a file waits, the files beside it run.
+      block(statements(inner(top, { isAsync: mayAwait && part?.role !== "library" }), random.between(2, 4), false)),
       " catch (error) ",
       block([`console.log("${label}", framesOf(error));`]),
+      part ? [hardline, `${failing} = 0;`] : "",
     ]);
   }
   const runs = isCommonJs ? `(async function main() {\n${driver.replace(/^(?=.)/gm, "  ")}})();\n` : driver;
-  const text = prelude + print(join(parts, [hardline, hardline]), width) + "\n\n" + runs;
-  return random.chance(0.06) ? text.replace(/\n/g, "\r\n") : text;
+  const ended = (text: string) => (random.chance(0.06) ? text.replace(/\n/g, "\r\n") : text);
+  if (!part) return { text: ended(prelude + print(join(parts, [hardline, hardline]), width) + "\n\n" + runs), exports };
+
+  if (part.role === "helpers") {
+    for (const name of helperNames(isTyped, isBroad)) listed.push([name, name]);
+  }
+  if (part.role === "loaded") {
+    const scope = inner(top, { isAsync: mayAwait });
+    parts.push(...statements(scope, random.between(1, 3), false));
+    const value = number(inner(scope));
+    parts.push(
+      isCommonJs
+        ? [random.pick(["module.exports = ", "exports.value = ", "module.exports.value = "]), value, semi]
+        : hasDefault || random.chance(0.5)
+          ? ["export const ", fresh("value"), " = ", value, semi]
+          : ["export default ", value, semi],
+    );
+  }
+  if (listed.length) {
+    const names = listed.map(([name, as]) => (name === as ? name : isCommonJs ? `${as}: ${name}` : `${name} as ${as}`));
+    const text = [isCommonJs ? "module.exports = " : "export ", list("{", names, "}", line), semi];
+    if (!isCommonJs && part.role !== "helpers" && random.chance(0.3)) parts.unshift(text);
+    else parts.push(text);
+  }
+  return {
+    text: ended(
+      part.heading +
+        (part.role === "helpers" ? prelude : "") +
+        print(join(parts, [hardline, hardline]), width) +
+        "\n" +
+        (part.role === "main" ? "\n" + runs : ""),
+    ),
+    exports,
+  };
 }

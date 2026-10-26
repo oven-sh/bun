@@ -2,6 +2,7 @@ mod key;
 mod reference;
 
 use bun_sema::atom::known;
+use bun_sema::bind::Parent;
 use bun_sema::check::aot::ShapeKind;
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
@@ -235,12 +236,24 @@ pub(in crate::lower) fn emit_member_read(
         unreachable!("emit_member_read takes a Dot or an Index expression");
     };
     let object_position = lowering.file.member_position(object_expression);
+    // JSC records no position for the read of the tag of a template.
+    let is_tag = match lowering.file.bound.parent_of_expr(access) {
+        Parent::Expr(parent) => {
+            matches!(hir[parent].kind, ExprKind::TaggedTemplate(site) if hir[site].callee == access)
+        }
+        _ => false,
+    };
+    if is_tag {
+        lowering.set_position_to_last_recorded();
+    }
     // In `o[k]++` JSC tests `o` behind `k` and records no position for the test. The read that follows has one.
     if !lowering.builder.is_at_last_recorded_position() {
         lowering.set_position(object_position);
     }
     let value = lowering.emit_get(object, name);
-    lowering.builder.record_position(object_position);
+    if !is_tag {
+        lowering.builder.record_position(object_position);
+    }
     lowering.set_position(hir[access].pos);
     let value = lowering.claim_member_read(access, value);
     lowering.warn_function_introspection(access);

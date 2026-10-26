@@ -568,6 +568,102 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // Whether the text that Bun's transpiler prints for the operand of a `...` begins with a parenthesis, which its source map does not know.
+    pub(in crate::lower) fn begins_with_parenthesis(&self, operand: ExprId) -> bool {
+        #[derive(Copy, Clone)]
+        enum Around {
+            Spread,
+            Operator(BinOp),
+            Condition,
+            Access { is_callee: bool },
+        }
+        let hir = self.hir;
+        let mut first = self.skip_type_syntax(operand);
+        let mut around = Around::Spread;
+        loop {
+            let is_access = matches!(around, Around::Access { .. });
+            let is_loose = !matches!(around, Around::Spread);
+            let (next, below) = match hir[first].kind {
+                _ if self.is_printed_as_literal(first) => return false,
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    right,
+                } if self.is_removed_when_unused(left) => {
+                    let kept = hir[self.skip_type_syntax(right)].kind;
+                    let is_member = matches!(kept, ExprKind::Dot { .. } | ExprKind::Index { .. });
+                    if is_member && matches!(around, Around::Access { is_callee: true }) {
+                        return true;
+                    }
+                    (right, around)
+                }
+                ExprKind::Binary { op, left, right }
+                    if let Some(operand) = self.find_printed_logical_operand(op, left, right) =>
+                {
+                    (operand, around)
+                }
+                ExprKind::Binary { op, left, right } => {
+                    let is_wrapped = match around {
+                        Around::Spread => op == BinOp::Comma,
+                        Around::Operator(outer) => {
+                            op == BinOp::Comma || needs_parentheses(outer, op, true)
+                        }
+                        Around::Condition => op == BinOp::Comma,
+                        Around::Access { .. } => true,
+                    };
+                    if is_wrapped {
+                        return true;
+                    }
+                    (
+                        self.printed_operands(op, left, right).0,
+                        Around::Operator(op),
+                    )
+                }
+                ExprKind::Cond { test, branches } => match self.find_printed_condition(test) {
+                    Some(true) => (hir.branches(branches).yes, around),
+                    Some(false) => (hir.branches(branches).no, around),
+                    None if is_loose => return true,
+                    None => (test, Around::Condition),
+                },
+                ExprKind::Assign { .. } | ExprKind::Yield { .. } => return is_loose,
+                ExprKind::Fn(function) => return is_loose && hir[function].kind == FnKind::Arrow,
+                ExprKind::Await(_) => {
+                    return is_access || matches!(around, Around::Operator(BinOp::Pow));
+                }
+                ExprKind::Unary {
+                    op: UnOp::PostInc | UnOp::PostDec,
+                    ..
+                } => return is_access,
+                ExprKind::Unary { .. } => {
+                    return is_access || matches!(around, Around::Operator(BinOp::Pow));
+                }
+                ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_)
+                    if is_access
+                        && self.is_chain_root(first)
+                        && hir.expr_flags(first).contains(ExprFlags::PARENTHESIZED) =>
+                {
+                    return true;
+                }
+                ExprKind::Index { obj, index, .. } => match self.find_printed_element(obj, index) {
+                    Some(element) => (element, around),
+                    None => (obj, Around::Access { is_callee: false }),
+                },
+                ExprKind::Dot { obj, .. } => (obj, Around::Access { is_callee: false }),
+                ExprKind::Call(site) => (hir[site].callee, Around::Access { is_callee: true }),
+                ExprKind::TaggedTemplate(site) => {
+                    (hir[site].callee, Around::Access { is_callee: false })
+                }
+                ExprKind::Ident(_) => match self.find_printed_in_place(first) {
+                    Some(Printed::Initializer(initializer)) => (initializer, around),
+                    Some(Printed::Function(_)) | None => return false,
+                },
+                _ => return false,
+            };
+            first = self.skip_type_syntax(next);
+            around = below;
+        }
+    }
+
     // Bun's transpiler computes an operator whose operands are literals, and prints the result at the position of the operator's expression.
     fn is_printed_as_literal(&self, expression: ExprId) -> bool {
         let hir = self.hir;
@@ -625,6 +721,18 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // `a` in `.a` and in `["a"]`.
+    fn find_written_member_name(&self, key: MemberKey) -> Option<Atom> {
+        match key {
+            MemberKey::Name(name) => Some(name),
+            MemberKey::Computed(key) => match self.hir[self.skip_type_syntax(key)].kind {
+                ExprKind::String(text) => Some(text),
+                _ => None,
+            },
+            MemberKey::PrivateName(_) => None,
+        }
+    }
+
     // `Level.High`, `Level["High"]`, or `High` in another member of `Level`.
     fn find_named_enum_member(&self, expression: ExprId) -> Option<EnumMemberId> {
         let (hir, bound) = (self.hir, self.bound);
@@ -638,14 +746,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 _ => None,
             };
         };
-        let name = match key {
-            MemberKey::Name(name) => name,
-            MemberKey::Computed(key) => match hir[self.skip_type_syntax(key)].kind {
-                ExprKind::String(text) => text,
-                _ => return None,
-            },
-            MemberKey::PrivateName(_) => return None,
-        };
+        let name = self.find_written_member_name(key)?;
         let limit = self
             .inputs
             .limits
@@ -800,14 +901,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let ExprKind::Object(properties) = hir[self.skip_type_syntax(object)].kind else {
             return None;
         };
-        let name = match key {
-            MemberKey::Name(name) => name,
-            MemberKey::Computed(key) => match hir[self.skip_type_syntax(key)].kind {
-                ExprKind::String(text) => text,
-                _ => return None,
-            },
-            MemberKey::PrivateName(_) => return None,
-        };
+        let name = self.find_written_member_name(key)?;
         let mut properties = properties.iter().map(|property| hir[property]);
         let (Some(only), None) = (properties.next(), properties.next()) else {
             return None;

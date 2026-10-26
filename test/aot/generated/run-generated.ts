@@ -57,6 +57,10 @@ export type Generated = {
   groupsMayBeRefused?: RegExp;
   /** One of very many programs about what the compiler proves. `bun run --aot` is left out: it takes as long as the build. */
   isOnlyCompiled?: true;
+  /** It starts its executable again, with arguments of its own, so it shares its executable with no other program. */
+  startsItself?: true;
+  /** What it prints hangs on when a collection runs, so it takes no collections inside its calls. */
+  hangsOnCollections?: true;
   /** It leaves an error that nobody catches: plain Bun goes on and exits with 1, and so does the executable. */
   leavesAnError?: true;
   /** It ends in one of many ways. The executable ends with the exit code that plain Bun ends with. */
@@ -129,6 +133,7 @@ const sharesAnExecutable = (program: Generated) =>
   !isASAN &&
   !isDebug &&
   !!program.isOnlyCompiled &&
+  !program.startsItself &&
   !(program.wasOnceWrong && takesWhatIsFixed) &&
   !program.mayBeRefused &&
   !program.groupsMayBeRefused &&
@@ -231,6 +236,7 @@ export function generated(title: string, given: Generated[]) {
     const collectsInsideCalls =
       isChanged &&
       !program.mayStopOutOfMemory &&
+      !program.hangsOnCollections &&
       (process.env.AOT_GENERATED_COLLECTS === "all" || Bun.hash.crc32(`${program.name} ${title}`) % 3 === 0);
     const handsItsFunctionsOn =
       isChanged && (process.env.AOT_GENERATED_HANDS === "all" || Bun.hash.crc32(`${program.name}, ${title}`) % 3 === 0);
@@ -350,9 +356,9 @@ export function generated(title: string, given: Generated[]) {
       }
       if (result) {
         executables++;
-        // The compiler runs once for each program of a build.
+        // The compiler runs once for each program of a build, the runner's among them. Where it has thrown those away to make one program of them, it has run once more.
         const { EngineRuns } = JSON.parse(readFileSync(report, "utf8")).statistics;
-        shares[EngineRuns > together.length ? "a program each" : "one program"] += together.length;
+        shares[EngineRuns === together.length + 1 ? "a program each" : "one program"] += together.length;
       }
       await Promise.all(
         together.map(async member => {

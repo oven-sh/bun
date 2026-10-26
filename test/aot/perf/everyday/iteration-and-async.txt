@@ -406,6 +406,68 @@ function turn(i: number): number {
     return ((error as Error).cause as Error).message.length + (i & 1);
   }
 }
+//// throw-a-kept-error-through-three-frames
+const kept = new Error("bottom");
+function deep(n: number): number {
+  if (n === 0) throw kept;
+  return deep(n - 1) + 1;
+}
+function turn(i: number): number {
+  try {
+    return deep(3 + (i & 1));
+  } catch (error) {
+    return (error as Error).message.length + (i & 1);
+  }
+}
+//// throw-a-kept-error-through-three-finally-blocks
+const kept = new Error("bottom");
+let left = 0;
+function deep(n: number): number {
+  if (n === 0) throw kept;
+  try {
+    return deep(n - 1) + 1;
+  } finally {
+    left++;
+  }
+}
+function turn(i: number): number {
+  try {
+    return deep(3 + (i & 1));
+  } catch (error) {
+    return (error as Error).message.length + (left & 1);
+  }
+}
+//// catch-a-kept-error-and-throw-it-again
+const kept = new Error("bottom");
+function deep(n: number): number {
+  if (n === 0) throw kept;
+  try {
+    return deep(n - 1) + 1;
+  } catch (error) {
+    throw error;
+  }
+}
+function turn(i: number): number {
+  try {
+    return deep(3 + (i & 1));
+  } catch (error) {
+    return (error as Error).message.length + (i & 1);
+  }
+}
+//// throw-a-kept-error-out-of-a-callback-of-a-built-in
+const kept = new Error("inside");
+const list = [1, 2, 3];
+function turn(i: number): number {
+  try {
+    list.sort((a, b) => {
+      if (i >= 0) throw kept;
+      return a - b;
+    });
+    return 0;
+  } catch (error) {
+    return (error as Error).message.length + (i & 1);
+  }
+}
 //// error-made-not-thrown
 function turn(i: number): number {
   return new Error("message " + (i & 3)).message.length;

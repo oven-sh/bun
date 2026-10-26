@@ -129,6 +129,8 @@ class Way {
   refused = new Map<string, string>();
   /** The smallest sets of programs that were not built together, though each half of the set was, with the command that says so. */
   notBuiltTogether: string[] = [];
+  /** The internal errors that the compiler reported for a program among others. The program is then built apart from them, so its own test does not tell. */
+  internalErrors: string[] = [];
   /** The most memory that one of its builds had resident. */
   mostMegabytes = 0;
   #executables = 0;
@@ -174,7 +176,10 @@ class Way {
       if (smaller === this.notBuiltTogether.length && alone === this.refused.size) this.notBuiltTogether.push(`${said}\n  cd ${root} && ${this.command(["./" + starter, ...spelled], "programs").join(" ")}`);
       return;
     }
-    for (const [path, error] of refused) console.error(`REFUSED among ${programs.length} programs, ${this.name}: ${nameOf(path)}: ${error}`);
+    for (const [path, error] of refused) {
+      console.error(`REFUSED among ${programs.length} programs, ${this.name}: ${nameOf(path)}: ${error}`);
+      if (/\binternal compiler error\b/.test(error)) this.internalErrors.push(`${nameOf(path)} among ${programs.length} programs, ${this.name}: ${error}`);
+    }
     await this.build(root, programs.filter(path => !refused.has(path)));
     return this.build(root, [...refused.keys()]);
   }
@@ -264,6 +269,15 @@ export function programsAsEntryPoints(part = 1, parts = 1) {
         console.error(`MEMORY: ${ways.map(way => `${way.name}: ${way.mostMegabytes} MB`).join(", ")}`);
         console.error(`GROUPS: ${ways.map(way => `${way.name}: ${[...way.sizeOfGroups().values()].join(" + ")} entry points`).join(", ")}`);
         if (isLinux && !isASAN && !isDebug && !process.env.AOT_BUILD_FLAGS) expect(Math.max(...ways.map(way => way.mostMegabytes))).toBeLessThan(mostMegabytesOfABuild);
+      },
+      1_500_000,
+    );
+
+    test(
+      "the compiler reports no internal error",
+      async () => {
+        await Promise.all(ways.map((_, index) => buildOnce(index)));
+        expect(ways.flatMap(way => way.internalErrors)).toEqual([]);
       },
       1_500_000,
     );

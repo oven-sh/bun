@@ -1890,14 +1890,22 @@ impl<'a> Resolver<'a> {
             if let Some(custom_paths) = self.custom_dir_paths {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
+                for custom_path in custom_paths {
+                    let custom_utf8 = custom_path.to_utf8();
+                    match self.check_relative_path(
+                        custom_utf8.slice(),
+                        import_path,
+                        kind,
+                        global_cache,
+                    ) {
+                        ResultUnion::Success(res) => return ResultUnion::Success(res),
+                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
+                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
+                        ResultUnion::NotFound => {}
+                    }
+                }
                 debug_assert!(!check_package); // always from JavaScript
-                // bail out after this since there isn't anywhere else to check
-                return self.check_relative_path_in_custom_dirs(
-                    custom_paths,
-                    import_path,
-                    kind,
-                    global_cache,
-                );
+                return ResultUnion::NotFound; // bail out now since there isn't anywhere else to check
             } else {
                 match self.check_relative_path(source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
@@ -2061,164 +2069,29 @@ impl<'a> Resolver<'a> {
         rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
     }
 
-    /// Node's `path.resolve(entry)` for a `paths` entry. `buf` is taken only when that changes it.
-    fn custom_dir<'b>(
-        &self,
-        entry: &'b [u8],
-        buf: &'b mut Option<bun_paths::path_buffer_pool::Guard>,
-    ) -> Option<CustomDir<'b>> {
+    /// Node's `path.resolve(entry)` for a relative `paths` entry, and whether it was cut short.
+    fn custom_dir<'b>(&self, entry: &[u8], buf: &'b mut PathBuffer) -> Option<(&'b [u8], bool)> {
         #[cfg(windows)]
-        let path: &'b [u8] = if bun_paths::is_absolute(entry) {
-            entry
-        } else {
-            let buf = buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
-            self.fs_ref().abs_buf_checked(&[entry], &mut buf[..])?
-        };
+        let path: &'b [u8] = self.fs_ref().abs_buf_checked(&[entry], &mut buf[..])?;
         #[cfg(not(windows))]
         let path: &'b [u8] = {
-            if CustomDir::is_resolved(entry) {
-                return Some(CustomDir {
-                    path: entry,
-                    searchable_len: entry.len(),
-                });
-            }
-            let cwd: &[u8] = if entry.first() == Some(&b'/') {
-                b""
-            } else {
-                self.fs_ref().top_level_dir()
-            };
-            let buf = buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
-            if cwd.len() + entry.len() + 2 > buf.len() {
-                return None;
-            }
-            let joined =
-                bun_paths::join_string_buf(&mut buf[..], &[cwd, entry], bun_paths::Platform::Posix);
-            if joined.len() > 1 && joined.ends_with(b"/") {
-                &joined[..joined.len() - 1]
-            } else {
-                joined
-            }
+            use ::bun_paths::resolve_path::{join_z_buf_checked, platform};
+            let cwd = self.fs_ref().top_level_dir();
+            join_z_buf_checked::<platform::Posix>(&mut buf[..], &[cwd, entry])?.as_bytes()
         };
-
-        let searchable_len = match strings::index_of_any(path, CustomDir::UNSEARCHABLE) {
-            None => path.len(),
-            Some(unsearchable) => {
-                #[cfg(windows)]
-                let root_len = bun_paths::windows_filesystem_root(path).len();
-                #[cfg(not(windows))]
-                let root_len = 1;
-                if unsearchable < root_len {
-                    return None;
-                }
-                strings::last_index_of_any(&path[..unsearchable], CustomDir::SEPARATORS)
-                    .map_or(root_len, |separator| separator.max(root_len))
-            }
+        // The cache reads a NUL as the end of a path and, on POSIX, a backslash as a separator.
+        let misread: &[u8] = if cfg!(windows) { b"\0" } else { b"\\\0" };
+        let Some(first) = strings::index_of_any(path, misread) else {
+            return Some((path, false));
         };
-        Some(CustomDir {
-            path,
-            searchable_len,
-        })
-    }
-
-    /// Node's `_stat(entry) === 1`. The OS walks each component, so `missing/..` is no directory.
-    fn custom_dir_entry_is_directory(
-        &self,
-        entry: &[u8],
-        buf: &mut Option<bun_paths::path_buffer_pool::Guard>,
-    ) -> bool {
-        // Node hands the entry to stat() as a C string.
-        let entry = match strings::index_of_char(entry, 0) {
-            Some(nul) => &entry[..nul as usize],
-            None => entry,
-        };
-        if entry.is_empty() {
-            return false;
-        }
-        let cwd: &[u8] = if bun_paths::is_absolute(entry) {
-            b""
-        } else {
-            self.fs_ref().top_level_dir()
-        };
-        let buf = buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
-        if cwd.len() + 1 + entry.len() >= buf.len() {
-            return false;
-        }
-        let mut len = 0;
-        if !cwd.is_empty() {
-            buf[..cwd.len()].copy_from_slice(cwd);
-            buf[cwd.len()] = SEP;
-            len = cwd.len() + 1;
-        }
-        buf[len..len + entry.len()].copy_from_slice(entry);
-        len += entry.len();
-        buf[len] = 0;
-        bun_sys::directory_exists_at(FD::cwd(), bun_core::ZStr::from_buf(&buf[..], len))
-            .unwrap_or(false)
-    }
-
-    /// Node's `Module._findPath` over the `paths` entries, for a relative request.
-    #[cold]
-    #[inline(never)]
-    fn check_relative_path_in_custom_dirs(
-        &mut self,
-        custom_paths: &[bun_core::String],
-        import_path: &[u8],
-        kind: ast::ImportKind,
-        global_cache: GlobalCache,
-    ) -> ResultUnion {
-        let stays_inside = CustomDir::request_stays_inside(import_path);
-        let mut buf = None;
-        for custom_path in custom_paths {
-            let custom_utf8 = custom_path.to_utf8();
-            let entry = custom_utf8.slice();
-            let Some(dir) = self.custom_dir(entry, &mut buf) else {
-                continue;
-            };
-            let result = if !dir.is_cut() {
-                let dir = dir.path;
-                let result = self.check_relative_path(dir, import_path, kind, global_cache);
-                // Node skips an entry that is not a directory when the request cannot leave it.
-                if stays_inside && !entry.is_empty() && !matches!(result, ResultUnion::NotFound) {
-                    let is_directory = if cfg!(not(windows)) && CustomDir::has_parent_segment(entry)
-                    {
-                        self.custom_dir_entry_is_directory(entry, &mut buf)
-                    } else {
-                        matches!(self.dir_info_cached(dir), Ok(Some(_)))
-                    };
-                    if !is_directory {
-                        continue;
-                    }
-                }
-                result
-            } else if stays_inside {
-                continue;
-            } else {
-                // A ".." request can step out of the components that were cut off.
-                let mut joined = bun_paths::path_buffer_pool::get();
-                if dir.path.len() + import_path.len() + 3 > joined.len() {
-                    continue;
-                }
-                let mut len = bun_paths::join_string_buf(
-                    &mut joined[..],
-                    &[dir.path, import_path],
-                    bun_paths::Platform::AUTO,
-                )
-                .len();
-                if strings::index_of_any(&joined[..len], CustomDir::UNSEARCHABLE).is_some() {
-                    continue;
-                }
-                if Self::import_path_names_directory(import_path) && joined[len - 1] != SEP {
-                    joined[len] = SEP;
-                    len += 1;
-                }
-                self.check_relative_path(&joined[..len], b"", kind, global_cache)
-            };
-            match result {
-                ResultUnion::NotFound => {}
-                found => return found,
-            }
-        }
-        ResultUnion::NotFound
+        #[cfg(windows)]
+        let root_len = bun_paths::windows_filesystem_root(path).len();
+        #[cfg(not(windows))]
+        let root_len = 1;
+        let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+        let cut = strings::last_index_of_any(&path[..first], separators)
+            .map_or(root_len, |separator| separator.max(root_len));
+        Some((&path[..cut], true))
     }
 
     /// Node's search of `Module._nodeModulePaths(entry)` per `paths` entry, for a bare request.
@@ -2231,26 +2104,30 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
-        let mut buf = None;
-        for custom_path in custom_paths {
-            let custom_utf8 = custom_path.to_utf8();
-            let Some(dir) = self.custom_dir(custom_utf8.slice(), &mut buf) else {
-                continue;
-            };
-            // Nothing below the cut was searched, so a miss must not start an install.
-            let global_cache = if dir.is_cut() {
-                GlobalCache::disable
-            } else {
-                global_cache
-            };
-            match self.check_package_path(
-                &dir.path[..dir.searchable_len],
-                import_path,
-                kind,
-                global_cache,
-            ) {
-                ResultUnion::NotFound => {}
-                found => return found,
+        // No entry installs a package before every entry was searched for it.
+        for cache in [GlobalCache::disable, global_cache] {
+            for custom_path in custom_paths {
+                let custom_utf8 = custom_path.to_utf8();
+                let entry = custom_utf8.slice();
+                let mut buf;
+                let dir = if bun_paths::is_absolute(entry) {
+                    entry
+                } else {
+                    buf = bun_paths::path_buffer_pool::get();
+                    match self.custom_dir(entry, &mut buf) {
+                        // Nothing below the cut was searched, so a miss there installs nothing.
+                        Some((_, true)) if cache != GlobalCache::disable => continue,
+                        Some((dir, _)) => dir,
+                        None => continue,
+                    }
+                };
+                match self.check_package_path(dir, import_path, kind, cache) {
+                    ResultUnion::NotFound => {}
+                    found => return found,
+                }
+            }
+            if global_cache == GlobalCache::disable {
+                break;
             }
         }
         ResultUnion::NotFound
@@ -7114,77 +6991,6 @@ fn rewritten_file_extensions(
         b".mjs" => &[b".mts"],
         b".cjs" => &[b".cts"],
         _ => &[],
-    }
-}
-
-/// A `paths` entry of `require.resolve()` as Node's `path.resolve(entry)` reads it.
-struct CustomDir<'a> {
-    path: &'a [u8],
-    /// `path[..searchable_len]` ends before the first component that holds an `UNSEARCHABLE` byte.
-    searchable_len: usize,
-}
-
-impl CustomDir<'_> {
-    /// The directory cache reads a NUL as the end of a path and a POSIX backslash as a separator.
-    const UNSEARCHABLE: &'static [u8] = if cfg!(windows) { b"\0" } else { b"\\\0" };
-    const SEPARATORS: &'static [u8] = if cfg!(windows) { b"/\\" } else { b"/" };
-
-    fn is_cut(&self) -> bool {
-        self.searchable_len < self.path.len()
-    }
-
-    fn has_parent_segment(entry: &[u8]) -> bool {
-        strings::contains(entry, b"..")
-            && strings::split_any(entry, Self::SEPARATORS).any(|segment| segment == b"..")
-    }
-
-    /// Whether `path.resolve(entry)` returns `entry` unchanged and no byte of it is unsearchable.
-    #[cfg(not(windows))]
-    fn is_resolved(entry: &[u8]) -> bool {
-        if entry.first() != Some(&b'/') {
-            return false;
-        }
-        let mut segment_start = 1;
-        for (i, &byte) in entry.iter().enumerate().skip(1) {
-            match byte {
-                b'\\' | 0 => return false,
-                b'/' => {
-                    if matches!(&entry[segment_start..i], b"" | b"." | b"..") {
-                        return false;
-                    }
-                    segment_start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        entry.len() == 1 || !matches!(&entry[segment_start..], b"" | b"." | b"..")
-    }
-
-    /// Node's `insidePath`: false when `path.normalize(request)` starts with "..".
-    fn request_stays_inside(request: &[u8]) -> bool {
-        if !strings::contains(request, b"..") {
-            return true;
-        }
-        let mut depth: usize = 0;
-        let mut first_starts_with_dot_dot = false;
-        for segment in strings::split_any(request, Self::SEPARATORS) {
-            match segment {
-                b"" | b"." => {}
-                b".." => {
-                    if depth == 0 {
-                        return false;
-                    }
-                    depth -= 1;
-                }
-                _ => {
-                    if depth == 0 {
-                        first_starts_with_dot_dot = segment.starts_with(b"..");
-                    }
-                    depth += 1;
-                }
-            }
-        }
-        depth == 0 || !first_starts_with_dot_dot
     }
 }
 

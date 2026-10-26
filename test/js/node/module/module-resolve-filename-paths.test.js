@@ -187,30 +187,60 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
 });
 
 test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is not an array", () => {
-  // The request is not a builtin id: Node returns a builtin id before it reads `options.paths`.
-  const fakeParent = new Module("/some/other/directory/file.js");
+  const { path: dir, cleanup } = createTempDir("module-resolve-paths-not-array", {
+    "node_modules/resolve-test-pkg/index.js": "",
+  });
 
-  // Test with string (which is iterable but not an array)
-  expect(() => {
-    Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: "/some/path" });
-  }).toThrow();
+  try {
+    // The parent can resolve the package, so only the check of `options.paths` can throw.
+    const fakeParent = new Module(join(dir, "file.js"));
+    fakeParent.filename = join(dir, "file.js");
+    fakeParent.paths = Module._nodeModulePaths(dir);
+    expect(Module._resolveFilename("resolve-test-pkg", fakeParent)).toBe(
+      resolve(dir, "node_modules/resolve-test-pkg/index.js"),
+    );
 
-  // Test with Set (which is iterable but not an array)
-  expect(() => {
-    Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: new Set(["/some/path"]) });
-  }).toThrow();
+    // Test with string (which is iterable but not an array)
+    expect(() => {
+      Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: "/some/path" });
+    }).toThrow();
 
-  // Test with object (not iterable)
-  expect(() => {
-    Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: { 0: "/some/path" } });
-  }).toThrow();
+    // Test with Set (which is iterable but not an array)
+    expect(() => {
+      Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: new Set(["/some/path"]) });
+    }).toThrow();
 
-  expect(Module._resolveFilename("path", fakeParent, false, { paths: "/some/path" })).toBe("path");
+    // Test with object (not iterable)
+    expect(() => {
+      Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: { 0: "/some/path" } });
+    }).toThrow();
+
+    // Node returns a builtin id before it reads `options.paths`.
+    expect(Module._resolveFilename("path", fakeParent, false, { paths: "/some/path" })).toBe("path");
+  } finally {
+    cleanup();
+  }
 });
 
-// Node turns each `options.paths` entry into a directory with path.resolve(): a relative entry is
-// relative to process.cwd(), and only the host's separators separate. Each resolve runs in a child
-// process so that the cwd is the fixture and the resolver starts with empty caches.
+test("Module._resolveFilename reads options.paths one entry at a time for a relative request", () => {
+  const { path: dir, cleanup } = createTempDir("module-resolve-paths-lazy", {
+    "target.js": "",
+  });
+
+  try {
+    // Node stops at the entry that has the file and never reads the one after it.
+    const fakeParent = new Module("/some/other/directory/file.js");
+    expect(Module._resolveFilename("./target.js", fakeParent, false, { paths: [dir, 0] })).toBe(
+      resolve(dir, "target.js"),
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+// Node turns each `options.paths` entry into a directory with path.resolve(), so a relative entry
+// is relative to process.cwd() and not to the calling file. The probe is in `sub/` and runs with
+// the fixture root as the cwd, in a child process so that the resolver starts with empty caches.
 const probeSource = `
 const Module = require("node:module");
 const path = require("node:path");
@@ -243,26 +273,46 @@ console.log(JSON.stringify(results));
 function resolveRowsInChild(order) {
   const isWindows = process.platform === "win32";
   const files = {
-    "probe.cjs": probeSource,
+    "sub/probe.cjs": probeSource,
     // A node_modules directory at the root also keeps Bun's auto-install off.
     "node_modules/plugroot/index.js": "",
+    "node_modules/plugboth/index.js": "",
     "plugins/node_modules/plug/index.js": "",
+    "plugins/node_modules/plugboth/index.js": "",
     "plugins/file.js": "",
+    "deps/node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js" }),
+    "deps/node_modules/dep/index.js": "",
+    "deps/node_modules/vue-router/package.json": JSON.stringify({
+      name: "vue-router",
+      exports: { "./volar/sfc-route-blocks": "./dist/volar/sfc-route-blocks.cjs" },
+    }),
+    "deps/node_modules/vue-router/dist/volar/sfc-route-blocks.cjs": "",
+    "deps/node_modules/@scope/pkg/package.json": JSON.stringify({ name: "@scope/pkg", main: "lib/main.js" }),
+    "deps/node_modules/@scope/pkg/lib/main.js": "",
   };
   if (!isWindows) {
-    files["back/slash/node_modules/plugc/index.js"] = "";
     files["C:/plugins/node_modules/plugd/index.js"] = "";
   }
   const { path: dir, cleanup } = createTempDir("resolve-paths-entries", files);
 
   const plug = "plugins/node_modules/plug/index.js";
   const plugroot = "node_modules/plugroot/index.js";
+  const dep = "deps/node_modules/dep/index.js";
   const file = "plugins/file.js";
   const missing = "MODULE_NOT_FOUND";
   // [request, paths, expected, directory to chdir() into first]
   const rows = [
-    // A bare request searches node_modules from the entry upward.
-    ["plug", ["./plugins"], plug],
+    // https://github.com/oven-sh/bun/issues/45706
+    ["dep", ["./deps"], dep],
+    ["dep", ["../deps"], missing],
+    ["dep", [join(dir, "deps")], dep],
+    ["vue-router/volar/sfc-route-blocks", ["./deps"], "deps/node_modules/vue-router/dist/volar/sfc-route-blocks.cjs"],
+    ["@scope/pkg", ["deps"], "deps/node_modules/@scope/pkg/lib/main.js"],
+    // A package at two levels: the copy under the entry is the one to find.
+    ["plugboth", ["./plugins"], "plugins/node_modules/plugboth/index.js"],
+    ["plugboth", ["plugins"], "plugins/node_modules/plugboth/index.js"],
+    ["plugboth", ["nowhere"], "node_modules/plugboth/index.js"],
+    // The search starts at the entry and goes up.
     ["plug", ["plugins"], plug],
     ["plug", ["plugins/"], plug],
     ["plug", ["plugins/../plugins"], plug],
@@ -272,17 +322,13 @@ function resolveRowsInChild(order) {
     ["plugroot", [""], plugroot],
     ["plugroot", ["."], plugroot],
     ["plugroot", ["./nowhere/deeper"], plugroot],
+    ["plugroot", ["nowhere/"], plugroot],
     ["plug", ["."], plug, "plugins"],
     ["plugroot", [".."], plugroot, "plugins"],
-    // A relative request is joined to the entry. The entry must be a directory unless the
-    // request leaves it.
+    // A relative request is joined to the entry.
     ["./node_modules/plug/index.js", ["plugins"], plug],
-    ["./node_modules/plug/index.js", ["./plugins"], plug],
-    ["./node_modules/plug/index.js", [join(dir, "plugins")], plug],
-    ["./node_modules/plug/index.js", ["nowhere", "plugins"], plug],
     ["./file.js", ["plugins"], file],
     ["./file.js", ["nowhere"], missing],
-    [".", ["plugins/file.js"], missing],
     ["../plugins/file.js", ["nowhere"], file],
     // A builtin id is resolved before `paths` is read. Any other bare request needs strings.
     ["node:fs", [0], "node:fs"],
@@ -292,28 +338,19 @@ function resolveRowsInChild(order) {
   if (isWindows) {
     rows.push(["plug", ["plugins\\"], plug], ["plug", [".\\plugins"], plug]);
   } else {
-    const tooLong = Buffer.alloc(5000, "a").toString();
     rows.push(
-      ["plug", [dir + "/nope/../plugins"], plug],
       // A backslash and a drive letter are file name characters on POSIX.
       ["plug", ["plugins\\"], missing],
       ["plug", [".\\plugins"], missing],
-      ["plug", [dir + "/plugins\\"], missing],
       ["plugroot", ["plugins\\"], plugroot],
-      ["plugc", ["back\\slash"], missing],
+      ["plugroot", ["./plugins\\"], plugroot],
       ["plugd", ["C:/plugins"], "C:/plugins/node_modules/plugd/index.js"],
       ["plugd", ["C:\\plugins"], missing],
-      ["./node_modules/plug/index.js", ["plugins\\"], missing],
-      ["./node_modules/plug/index.js", [".\\plugins"], missing],
-      ["./node_modules/plugc/index.js", ["back\\slash"], missing],
-      ["./node_modules/plugd/index.js", ["C:/plugins"], "C:/plugins/node_modules/plugd/index.js"],
-      ["../plugins/file.js", ["plugins\\"], file],
-      // The OS does not collapse "nowhere/..": the directory does not exist.
-      ["./node_modules/plugroot/index.js", ["nowhere/.."], missing],
       ["plug", ["plugins\0x"], missing],
-      ["./index.js", [dir + "/plugins/node_modules/plug\0"], missing],
-      ["plug", [tooLong], missing],
-      ["./file.js", [tooLong], missing],
+      ["plugroot", ["plugins\0x"], plugroot],
+      // Longer than PATH_MAX as written, short once resolved.
+      ["plug", [Buffer.alloc(4200, "./").toString() + "plugins"], plug],
+      ["plug", [Buffer.alloc(5000, "a").toString()], missing],
     );
   }
 
@@ -324,21 +361,28 @@ function resolveRowsInChild(order) {
     );
     const { stdout, stderr, status } = spawnSync(
       process.execPath,
-      isBun ? ["--no-install", "probe.cjs", order] : ["probe.cjs", order],
+      isBun ? ["--no-install", "sub/probe.cjs", order] : ["sub/probe.cjs", order],
       { cwd: dir, env: childEnv, encoding: "utf8" },
     );
     let results;
     try {
       results = JSON.parse(stdout);
     } catch {
-      results = { stdout, stderr };
+      results = null;
     }
-    expect(results).toEqual(
-      rows.map(([, , expected]) => ({
-        "require.resolve": expected,
-        "Module._resolveFilename": expected,
-        "createRequire().resolve": expected,
-      })),
+    // One line per row and entry point, so that a failure names the row.
+    const shorten = entry =>
+      typeof entry !== "string" ? entry : entry.length > 80 ? `<${entry.length} bytes>` : entry.replace(dir, "<dir>");
+    const lines = valueOf =>
+      rows.flatMap(([request, paths, , chdir], i) =>
+        ["require.resolve", "Module._resolveFilename", "createRequire().resolve"].map(
+          name =>
+            `${name}(${JSON.stringify(request)}, { paths: ${JSON.stringify(paths.map(shorten))} })` +
+            `${chdir ? ` in ${chdir}` : ""} => ${valueOf(i, name)}`,
+        ),
+      );
+    expect(results === null ? { stdout, stderr } : lines((i, name) => results[i][name])).toEqual(
+      lines(i => rows[i][2]),
     );
     expect(status).toBe(0);
   } finally {
@@ -353,3 +397,56 @@ test("options.paths entries are resolved like path.resolve() does", () => {
 test("options.paths entries resolve the same in the reverse call order", () => {
   resolveRowsInChild("reverse");
 });
+
+if (isBun) {
+  // Nothing above the project has a node_modules directory, so Bun's auto-install is on. The
+  // first entry is outside the project and misses. The second entry has the package.
+  test("options.paths: no entry installs a package before every entry was searched", async () => {
+    const requests = [];
+    const registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        requests.push(new URL(request.url).pathname);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const { path: dir, cleanup } = createTempDir("resolve-paths-install-order", {
+      "a/b/project/plugins/node_modules/no-deps/index.js": "",
+      "a/b/project/bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+      "a/b/project/index.cjs": `
+        const path = require("node:path");
+        const resolved = require.resolve("no-deps", { paths: ["../..", "./plugins"] });
+        console.log(path.relative(process.cwd(), resolved).split(path.sep).join("/"));
+        // On POSIX this entry names a directory that does not exist. The search goes on above
+        // it, and a miss there installs nothing.
+        if (process.platform !== "win32") {
+          try {
+            require.resolve("no-deps-2", { paths: ["plugins\\\\"] });
+          } catch (error) {
+            console.log(error.code);
+          }
+        }
+      `,
+    });
+
+    try {
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "index.cjs"],
+        cwd: join(dir, "a", "b", "project"),
+        env: { ...childEnv, BUN_INSTALL_CACHE_DIR: join(dir, "cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, requests }).toEqual({
+        stdout: "plugins/node_modules/no-deps/index.js\n" + (process.platform === "win32" ? "" : "MODULE_NOT_FOUND\n"),
+        stderr: "",
+        requests: [],
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      registry.stop(true);
+      cleanup();
+    }
+  });
+}

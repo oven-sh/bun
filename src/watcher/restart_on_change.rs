@@ -5,8 +5,36 @@ use core::time::Duration;
 use bun_core::{FileKind, Timespec, ZBox, ZStr};
 
 pub fn kind_of(path: &ZStr) -> Option<FileKind> {
-    let stat = bun_sys::PosixStat::init(&bun_sys::stat(path).ok()?);
-    Some(bun_sys::kind_from_mode(stat.mode as bun_sys::Mode))
+    Some(kind_from_stat(&bun_sys::stat(path).ok()?))
+}
+
+fn kind_from_stat(stat: &bun_sys::Stat) -> FileKind {
+    bun_sys::kind_from_mode(bun_sys::PosixStat::init(stat).mode as bun_sys::Mode)
+}
+
+/// Whether `dir` has a regular file with one of `names`. As in the resolver's directory lookup, ASCII letter case does not count.
+pub fn dir_has_file(dir: &[u8], names: &[Box<[u8]>]) -> bun_sys::Maybe<bool> {
+    let dir = bun_sys::Dir::open(dir)?;
+    let mut entries = bun_sys::iterate_dir(dir.fd());
+    while let Some(entry) = entries.next()? {
+        let name = entry.name.slice_u8();
+        if !names.iter().any(|wanted| wanted.eq_ignore_ascii_case(name)) {
+            continue;
+        }
+        let kind = match entry.kind {
+            // The listing does not follow a link, and not every file system gives the kind.
+            FileKind::SymLink | FileKind::Unknown => {
+                bun_sys::fstatat(&dir, ZBox::from_bytes(name).as_zstr())
+                    .ok()
+                    .map(|stat| kind_from_stat(&stat))
+            }
+            kind => Some(kind),
+        };
+        if kind == Some(FileKind::File) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// A file whose content the start could not use, stamped before the start read it so that no save is missed.

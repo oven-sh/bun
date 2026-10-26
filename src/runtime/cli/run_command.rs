@@ -2914,15 +2914,23 @@ impl RunCommand {
         if restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory) {
             return;
         }
-        let mut files: Vec<ZBox> = Vec::new();
+        let Some(dir) = paths::dirname(path.as_bytes()) else {
+            return;
+        };
+        let mut names: Vec<Box<[u8]>> = Vec::new();
         resolver.for_each_entry_file_candidate(path.as_bytes(), |file| {
-            files.push(ZBox::from_bytes(file))
+            names.push(paths::basename(file).into())
         });
+        let has_entry_file = || restart_on_change::dir_has_file(dir, &names);
+        // The resolver cannot list that directory either, so no save ends a wait there.
+        if has_entry_file()
+            .is_err_and(|err| !matches!(err.get_errno(), sys::E::ENOENT | sys::E::ENOTDIR))
+        {
+            return;
+        }
         restart_on_change::restart_when(path.as_bytes(), || {
             restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory)
-                || files
-                    .iter()
-                    .any(|file| restart_on_change::kind_of(file.as_zstr()) == Some(FileKind::File))
+                || has_entry_file().unwrap_or(false)
         });
     }
 

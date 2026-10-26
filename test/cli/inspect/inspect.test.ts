@@ -1154,23 +1154,24 @@ describe.concurrent("bun test --isolate", () => {
   `;
 
   test(
-    "a client that detached in the first file does not make a later file abort",
+    "a client that detached does not make a later file abort",
     async () => {
       using dir = tempDir("inspect-isolate-detach", {
+        "a.test.ts": collectingTestFile("A"),
         // Waits for a file and not for the client: a Runtime.evaluate leaves an injected script
         // that keeps this file's global alive, and a global that stays alive is never destroyed.
-        "a.test.ts": `
+        "b.test.ts": `
           import { test } from "bun:test";
           import { existsSync } from "node:fs";
           import { join } from "node:path";
-          test("A", async () => {
-            process.stderr.write("READY A\\n");
+          test("B", async () => {
+            process.stderr.write("READY B\\n");
             while (!existsSync(join(import.meta.dir, "continue"))) await new Promise(resolve => setImmediate(resolve));
           }, 300_000);
         `,
-        "b.test.ts": collectingTestFile("B"),
         "c.test.ts": collectingTestFile("C"),
         "d.test.ts": collectingTestFile("D"),
+        "e.test.ts": collectingTestFile("E"),
       });
       await using run = new InspectedTestRun(String(dir), [
         ...isolated,
@@ -1178,18 +1179,19 @@ describe.concurrent("bun test --isolate", () => {
         "./b.test.ts",
         "./c.test.ts",
         "./d.test.ts",
+        "./e.test.ts",
       ]);
-      await run.reached("A");
+      await run.reached("B");
       const client = await run.connect();
       // The reply shows that the inspected thread attached the client.
       expect(await client.send("Inspector.enable")).toEqual({});
       await client.close();
       // The debugger thread serves this after it saw the socket close, so it has told the
-      // inspected thread to detach the client before the first file continues.
+      // inspected thread to detach the client before the file continues.
       const { host } = new URL(await run.inspectorUrl());
       expect((await fetch(`http://${host}/json/version`)).status).toBe(200);
       fs.writeFileSync(join(String(dir), "continue"), "");
-      expect(await run.finished()).toEqual(passed(4));
+      expect(await run.finished()).toEqual(passed(5));
     },
     timeout,
   );

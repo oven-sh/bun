@@ -6832,9 +6832,7 @@ pub mod bv2_impl {
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                 }
 
-                // The dev server serves CSS outside of the module graph, so it
-                // cannot produce the `CSSStyleSheet` a build does. Checked before
-                // plugins run: a plugin that resolves the path changes nothing.
+                // Not supported by the dev server. Must precede `onResolve` plugins.
                 if self.dev_server.is_some()
                     && import_record
                         .flags

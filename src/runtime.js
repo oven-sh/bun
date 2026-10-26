@@ -353,8 +353,7 @@ export var __cssModule = css => {
 // Resolves a chunk-relative asset `url()` in that CSS against the chunk.
 export var __cssUrl = (url, base) => (base ? new globalThis.URL(url, base).href : url);
 
-// The chunk's URL where `import.meta.url` does not exist (IIFE, CommonJS):
-// read while the chunk's <script> is the one that runs.
+// The chunk's URL in IIFE and CommonJS output. `currentScript` is only set while the chunk loads.
 export var __scriptUrl = /* @__PURE__ */ (() => {
   var d = globalThis.document;
   return d && d.currentScript && d.currentScript.src;

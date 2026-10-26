@@ -1,8 +1,9 @@
 import { gc } from "bun";
+import { fullGC } from "bun:jsc";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -11,8 +12,12 @@ describe("Channel", () => {
     const dc = channel(name);
     expect(hasSubscribers(name)).toBeFalse();
 
-    dc.subscribe(() => {});
+    const subscriber = () => {};
+    dc.subscribe(subscriber);
     expect(hasSubscribers(name)).toBeTrue();
+
+    // A subscriber holds its channel. Leave none behind for a rerun in this process.
+    dc.unsubscribe(subscriber);
 
     checkCalls();
   });
@@ -108,6 +113,7 @@ describe("Channel", () => {
     dc.subscribe(subscriber);
     dc.unsubscribe(subscriber);
     dc.subscribe(subscriber);
+    dc.unsubscribe(subscriber);
 
     checkCalls();
   });
@@ -424,6 +430,167 @@ describe("Channel", () => {
         frozen: "returned",
         speciesObject: "length 2",
       },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // test-diagnostics-channel-gc-maintains-subcriptions.js
+  //
+  // Node holds a channel for as long as it has a subscriber or a bound store.
+  // These tests keep no reference to a channel. Bun.gc() ends the keep-alive
+  // that a WeakRef gives its target for the current job before it collects, so
+  // a channel that only the registry refers to is gone when it returns.
+  describe("that nothing else refers to", () => {
+    const count = 100;
+    const named = (prefix: string) => Array.from({ length: count }, (_, i) => `${prefix}-${i}`);
+
+    test("is held while it has a subscriber or a bound store, whichever way that was added", () => {
+      const names = named("held");
+      const store = new AsyncLocalStorage();
+      const received = { subscribe: 0, channel: 0, symbol: 0, again: 0, store: 0, tracing: 0 };
+      const on = {
+        subscribe: () => void received.subscribe++,
+        channel: () => void received.channel++,
+        symbol: () => void received.symbol++,
+        again: () => void received.again++,
+        tracing: { start: () => void received.tracing++ },
+      };
+      for (const name of names) {
+        subscribe(`${name}-subscribe`, on.subscribe);
+        channel(`${name}-channel`).subscribe(on.channel);
+        subscribe(Symbol.for(name), on.symbol);
+        // The number of subscribers goes from 0 to 1 a second time.
+        subscribe(`${name}-again`, on.again);
+        unsubscribe(`${name}-again`, on.again);
+        subscribe(`${name}-again`, on.again);
+        channel(`${name}-store`).bindStore(store);
+        tracingChannel(name).subscribe(on.tracing);
+      }
+
+      gc(true);
+
+      for (const name of names) {
+        channel(`${name}-subscribe`).publish(name);
+        channel(`${name}-channel`).publish(name);
+        channel(Symbol.for(name)).publish(name);
+        channel(`${name}-again`).publish(name);
+        if (channel(`${name}-store`).runStores(name, () => store.getStore()) === name) received.store++;
+        tracingChannel(name).traceSync(() => {});
+      }
+      expect(received).toEqual({
+        subscribe: count,
+        channel: count,
+        symbol: count,
+        again: count,
+        store: count,
+        tracing: count,
+      });
+
+      for (const name of names) {
+        unsubscribe(`${name}-subscribe`, on.subscribe);
+        unsubscribe(`${name}-channel`, on.channel);
+        unsubscribe(Symbol.for(name), on.symbol);
+        unsubscribe(`${name}-again`, on.again);
+        channel(`${name}-store`).unbindStore(store);
+        tracingChannel(name).unsubscribe(on.tracing);
+      }
+    });
+
+    test("is held until its last subscriber and its last store are removed", () => {
+      const names = named("released");
+      const first = () => {};
+      const second = () => {};
+      const store = new AsyncLocalStorage();
+      const refs = names.map(name => {
+        const dc = channel(name);
+        dc.subscribe(first);
+        dc.subscribe(second);
+        dc.bindStore(store);
+        // Binding a store again replaces its transform. It is still one store.
+        dc.bindStore(store, data => data);
+        return new WeakRef(dc);
+      });
+      const alive = () => {
+        gc(true);
+        return refs.filter(ref => ref.deref() !== undefined).length;
+      };
+
+      const held: Record<string, number> = {};
+      held["two subscribers and a store"] = alive();
+      for (const name of names) unsubscribe(name, first);
+      held["one subscriber and a store"] = alive();
+      for (const name of names) unsubscribe(name, second);
+      held["a store"] = alive();
+      expect(held).toEqual({
+        "two subscribers and a store": count,
+        "one subscriber and a store": count,
+        "a store": count,
+      });
+
+      for (const name of names) channel(name).unbindStore(store);
+      // A reference that the module keeps holds every one of them, so this
+      // checks the population, as "references are not leaked" does.
+      expect(alive()).toBeLessThan(count / 10);
+    });
+
+    // A lookup by name is a WeakRef#deref(), and a deref() holds its target
+    // until the job ends. So unsubscribe(name) and subscribe(name) in one job
+    // act on one channel even when a collection runs between them, as in Node.
+    // fullGC() collects without ending the job.
+    test("is one channel across unsubscribe(name), a collection and subscribe(name) in one job", () => {
+      const names = named("one-job");
+      const first = () => {};
+      for (const name of names) {
+        subscribe(name, first);
+        (channel(name) as Channel & { tag?: string }).tag = name;
+      }
+      gc(true);
+
+      const unsubscribed = names.filter(name => unsubscribe(name, first)).length;
+      fullGC();
+      let received = 0;
+      const second = () => void received++;
+      for (const name of names) subscribe(name, second);
+      const sameChannel = names.filter(name => (channel(name) as Channel & { tag?: string }).tag === name).length;
+      for (const name of names) channel(name).publish(name);
+      expect({ unsubscribed, sameChannel, received }).toEqual({
+        unsubscribed: count,
+        sameChannel: count,
+        received: count,
+      });
+
+      for (const name of names) unsubscribe(name, second);
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/43086
+  test("a subscriber by name receives what is published in a later turn, after a collection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const dc = require("node:diagnostics_channel");
+          const received = [];
+          dc.subscribe("app.event", message => received.push(message));
+          dc.channel("app.event").publish(1);
+          for (let turn = 0; turn < 3; turn++) {
+            await new Promise(resolve => setImmediate(resolve));
+            Bun.gc(true);
+          }
+          const hasSubscribers = dc.hasSubscribers("app.event");
+          dc.channel("app.event").publish(2);
+          console.log(JSON.stringify({ hasSubscribers, received }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      result: { hasSubscribers: true, received: [1, 2] },
       stderr: "",
       exitCode: 0,
     });

@@ -18,20 +18,24 @@ const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromiseReject = Promise.$reject.bind(Promise);
 const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
 
-// TODO: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/src/node_util.h#L13
+// #strong is only written, and get() stays deref(), as in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L865-L896
 class WeakReference<T extends WeakKey> extends WeakRef<T> {
   #refs = 0;
+  // oxlint-disable-next-line no-unused-private-class-members
+  #strong: T | undefined = undefined;
 
   get() {
     return this.deref();
   }
 
   incRef() {
-    return ++this.#refs;
+    if (++this.#refs === 1) this.#strong = this.deref();
+    return this.#refs;
   }
 
   decRef() {
-    return --this.#refs;
+    if (--this.#refs === 0) this.#strong = undefined;
+    return this.#refs;
   }
 }
 

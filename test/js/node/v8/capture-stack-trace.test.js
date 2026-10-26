@@ -3,7 +3,7 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
-import { runInNewContext } from "node:vm";
+import vm, { runInNewContext } from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -967,10 +967,69 @@ test("Error.captureStackTrace inside a node:vm takes an Error target and a calle
   ]);
 });
 
-function captureUnderLimitsThatRecordNoFrames() {
-  const saved = Error.stackTraceLimit;
-  const stacks = {};
-  try {
+// Each entry runs `code` as the body of a fresh node:vm realm and returns its value.
+const vmRealmEntryPoints = [
+  ["vm.runInNewContext", code => vm.runInNewContext(code, {}, { filename: "in-vm.js" })],
+  ["vm.runInContext", code => vm.runInContext(code, vm.createContext({}), { filename: "in-vm.js" })],
+  ["vm.Script#runInContext", code => new vm.Script(code, { filename: "in-vm.js" }).runInContext(vm.createContext({}))],
+  ["vm.Script#runInNewContext", code => new vm.Script(code, { filename: "in-vm.js" }).runInNewContext({})],
+  [
+    "vm.compileFunction with a parsingContext",
+    code =>
+      vm.compileFunction(`return (${code});`, [], { filename: "in-vm.js", parsingContext: vm.createContext({}) })(),
+  ],
+  [
+    "a DONT_CONTEXTIFY context",
+    code => vm.runInContext(code, vm.createContext(vm.constants.DONT_CONTEXTIFY), { filename: "in-vm.js" }),
+  ],
+];
+
+test.each(vmRealmEntryPoints)("Error.captureStackTrace in a realm made by %s is Bun's function", (_, run) => {
+  const result = run(`(function () {
+    function inner() {
+      const target = {};
+      Error.captureStackTrace(target);
+      return target.stack;
+    }
+    const lines = inner().split("\\n").slice(0, 2);
+    Error.prepareStackTrace = (target, sites) => sites[0].getFunctionName();
+    const prepared = (function hooked() {
+      const target = {};
+      Error.captureStackTrace(target);
+      return target.stack;
+    })();
+    let thrown;
+    try {
+      Error.captureStackTrace(1);
+    } catch (e) {
+      thrown = [e instanceof TypeError, e.message];
+    }
+    return JSON.stringify({ lines, prepared, length: Error.captureStackTrace.length, thrown });
+  })()`);
+  expect(JSON.parse(result)).toEqual({
+    lines: ["Error", expect.stringMatching(/^    at inner \(in-vm\.js:\d+:\d+\)$/)],
+    prepared: "hooked",
+    length: 2,
+    thrown: [true, "invalid_argument"],
+  });
+});
+
+test("Error.captureStackTrace of a node:vm context, called from the main context, is Bun's function", () => {
+  const context = vm.createContext(vm.constants.DONT_CONTEXTIFY);
+  function host() {
+    const target = {};
+    context.Error.captureStackTrace(target);
+    return target.stack;
+  }
+  expect(host().split("\n").slice(0, 2)).toEqual([
+    "Error",
+    expect.stringMatching(/^    at host \(.*capture-stack-trace\.test\.js:\d+:\d+\)$/),
+  ]);
+});
+
+test("Error.captureStackTrace in a node:vm context records no frames when Error.stackTraceLimit is 0 or negative", () => {
+  const result = vm.runInNewContext(`
+    const stacks = {};
     for (const limit of [0, -1]) {
       Error.stackTraceLimit = limit;
       const target = {};
@@ -979,18 +1038,108 @@ function captureUnderLimitsThatRecordNoFrames() {
       Error.captureStackTrace(error);
       stacks[limit] = [target.stack, error.stack];
     }
-  } finally {
-    Error.stackTraceLimit = saved;
-  }
-  return JSON.stringify(stacks);
-}
-
-test.each([
-  ["the main context", () => captureUnderLimitsThatRecordNoFrames()],
-  ["a node:vm context", () => runInNewContext(`(${captureUnderLimitsThatRecordNoFrames})()`)],
-])("Error.captureStackTrace in %s records no frames when Error.stackTraceLimit is 0 or negative", (_, run) => {
+    JSON.stringify(stacks);
+  `);
   const headerOnly = ["Error", "RangeError: boom"];
-  expect(JSON.parse(run())).toEqual({ "0": headerOnly, "-1": headerOnly });
+  expect(JSON.parse(result)).toEqual({ "0": headerOnly, "-1": headerOnly });
+});
+
+// `globalThis` is a proxy in front of the global object. These realms have no sandbox object behind the global.
+test.each([
+  [
+    "a vm.createContext(DONT_CONTEXTIFY) context",
+    code => vm.runInContext(code, vm.createContext(vm.constants.DONT_CONTEXTIFY)),
+  ],
+  ["vm.runInNewContext(code, DONT_CONTEXTIFY)", code => vm.runInNewContext(code, vm.constants.DONT_CONTEXTIFY)],
+  [
+    "vm.Script#runInNewContext(DONT_CONTEXTIFY)",
+    code => new vm.Script(code).runInNewContext(vm.constants.DONT_CONTEXTIFY),
+  ],
+  ["the main context", code => (0, eval)(code)],
+  ["a ShadowRealm", code => new ShadowRealm().evaluate(code)],
+])("Error.captureStackTrace(globalThis) in %s sets a stack that globalThis shows", (_, run) => {
+  const result = run(`(function () {
+    try {
+      Error.captureStackTrace(globalThis);
+      const { enumerable, configurable } = Object.getOwnPropertyDescriptor(globalThis, "stack") ?? {};
+      const summary = { type: typeof globalThis.stack, enumerable, configurable };
+      summary.header = String(globalThis.stack).split("\\n")[0];
+      globalThis.stack = "assigned";
+      summary.assigned = globalThis.stack;
+      summary.deleted = delete globalThis.stack;
+      summary.afterDelete = typeof globalThis.stack;
+      return JSON.stringify(summary);
+    } finally {
+      delete globalThis.stack;
+    }
+  })()`);
+  expect(JSON.parse(result)).toEqual({
+    type: "string",
+    enumerable: false,
+    configurable: true,
+    header: "Error",
+    assigned: "assigned",
+    deleted: true,
+    afterDelete: "undefined",
+  });
+});
+
+test("Error.captureStackTrace on a DONT_CONTEXTIFY context sets a stack that the host and the context show", () => {
+  const capturedByHost = vm.createContext(vm.constants.DONT_CONTEXTIFY);
+  Error.captureStackTrace(capturedByHost);
+  const capturedInContext = vm.createContext(vm.constants.DONT_CONTEXTIFY);
+  const topLevelThis = vm.runInContext("Error.captureStackTrace(this); typeof this.stack", capturedInContext);
+
+  expect({
+    host: typeof capturedByHost.stack,
+    inContext: vm.runInContext("typeof globalThis.stack + ' ' + typeof stack", capturedByHost),
+    topLevelThis,
+    hostAfterContextCapture: typeof capturedInContext.stack,
+  }).toEqual({ host: "string", inContext: "string string", topLevelThis: "string", hostAfterContextCapture: "string" });
+});
+
+test("Error.prepareStackTrace sees a string stack on a globalThis target, and its result is kept", () => {
+  const result = vm.runInContext(
+    `
+    let seen;
+    Error.prepareStackTrace = (target, sites) => {
+      seen = [typeof target.stack, Array.isArray(sites)];
+      return "from-prepare";
+    };
+    Error.captureStackTrace(globalThis);
+    const kept = globalThis.stack;
+    JSON.stringify({ seen, kept });
+    `,
+    vm.createContext(vm.constants.DONT_CONTEXTIFY),
+  );
+  expect(JSON.parse(result)).toEqual({ seen: ["string", true], kept: "from-prepare" });
+});
+
+test("Error.captureStackTrace(globalThis) throws a TypeError when the global has a `var stack`", () => {
+  const result = vm.runInContext(
+    `
+    var stack = 1;
+    let caught;
+    try {
+      Error.captureStackTrace(globalThis);
+    } catch (e) {
+      caught = e;
+    }
+    JSON.stringify([caught instanceof TypeError, stack]);
+    `,
+    vm.createContext(vm.constants.DONT_CONTEXTIFY),
+  );
+  expect(JSON.parse(result)).toEqual([true, 1]);
+});
+
+test("Error.captureStackTrace(globalThis) in a contextified node:vm context leaves the sandbox object alone", () => {
+  const sandbox = {};
+  const inContext = vm.runInNewContext("Error.captureStackTrace(globalThis); typeof globalThis.stack", sandbox);
+  expect({ inContext, onSandbox: typeof sandbox.stack, keys: Object.keys(sandbox) }).toEqual({
+    inContext: "undefined",
+    onSandbox: "undefined",
+    keys: [],
+  });
 });
 
 test("Error.captureStackTrace inside error constructor works", () => {

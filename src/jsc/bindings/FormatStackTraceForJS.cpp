@@ -850,8 +850,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
-    // An Error.stackTraceLimit of 0, or one that is not a number, records no frames, as in V8.
-    size_t stackTraceLimit = lexicalGlobalObject->stackTraceLimit().value_or(0);
+    // A limit of 0 records no frames, as in V8. A non-number keeps the default: isInsideNodeModules() in internal/shared.ts sets one.
+    size_t stackTraceLimit = lexicalGlobalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
 
     WTF::Vector<JSC::StackFrame> stackTrace;
     if (stackTraceLimit) {

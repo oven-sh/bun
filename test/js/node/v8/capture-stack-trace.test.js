@@ -971,7 +971,7 @@ function captureUnderLimitsThatRecordNoFrames() {
   const saved = Error.stackTraceLimit;
   const stacks = {};
   try {
-    for (const limit of [0, -1, "foo"]) {
+    for (const limit of [0, -1]) {
       Error.stackTraceLimit = limit;
       const target = {};
       Error.captureStackTrace(target);
@@ -988,9 +988,9 @@ function captureUnderLimitsThatRecordNoFrames() {
 test.each([
   ["the main context", () => captureUnderLimitsThatRecordNoFrames()],
   ["a node:vm context", () => runInNewContext(`(${captureUnderLimitsThatRecordNoFrames})()`)],
-])("Error.captureStackTrace in %s records no frames when Error.stackTraceLimit is 0 or is not a number", (_, run) => {
+])("Error.captureStackTrace in %s records no frames when Error.stackTraceLimit is 0 or negative", (_, run) => {
   const headerOnly = ["Error", "RangeError: boom"];
-  expect(JSON.parse(run())).toEqual({ "0": headerOnly, "-1": headerOnly, "foo": headerOnly });
+  expect(JSON.parse(run())).toEqual({ "0": headerOnly, "-1": headerOnly });
 });
 
 test("Error.captureStackTrace inside error constructor works", () => {

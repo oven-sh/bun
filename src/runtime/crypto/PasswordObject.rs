@@ -419,7 +419,7 @@ impl PasswordOp for HashOp {
     }
     fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
         // PHC / bcrypt output is ASCII.
-        EncodedSlice::latin1(&value).to_js(g)
+        EncodedSlice::latin1(&value).to_js_bounded(g)
         // `value` drops here.
     }
 }
@@ -455,7 +455,11 @@ fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> J
         "Password {verb} failed with error \"{}\"",
         err.name()
     ));
-    instance.put(g, b"code", EncodedSlice::latin1(&error_code).to_js(g));
+    instance.put(
+        g,
+        b"code",
+        EncodedSlice::latin1(&error_code).to_js_bounded(g),
+    );
     instance
 }
 

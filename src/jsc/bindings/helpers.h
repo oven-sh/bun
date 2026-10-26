@@ -185,27 +185,51 @@ static const WTF::String toStringCopy(EncodedSlice str, StringPointer ptr)
               std::span { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
-static const WTF::String toStringCopy(EncodedSlice str)
+// `tryCreateUninitialized` returns null both for a length it refuses and for a
+// failed allocation. The result is the tag of a BunString that holds no string:
+// Dead reaches JS as ERR_STRING_TOO_LONG, OutOfMemory as ERR_MEMORY_ALLOCATION_FAILED.
+template<typename CharacterType>
+static BunStringTag uninitializedStringFailureTag(size_t length)
 {
-    if (str.len == 0 || str.ptr == nullptr) {
-        return WTF::String();
-    }
+    return WTF::StringImpl::isValidLength<CharacterType>(length) ? BunStringTag::OutOfMemory : BunStringTag::Dead;
+}
+
+// A new string with a copy of `str`, which is not empty. Null when the copy is
+// refused: `failure` is then Dead or OutOfMemory, as above. A UTF-8 `str` of
+// less than 2^30 bytes goes to WTF's converter, which ends the process when
+// its allocation fails.
+static WTF::String tryToStringCopy(EncodedSlice str, BunStringTag& failure)
+{
+    ASSERT(str.len && str.ptr);
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        const char* data = reinterpret_cast<const char*>(untag(str.ptr));
         // Check if the resulting UTF-16 string could possibly exceed the maximum length.
         size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
         if (str.len > maxLength) [[unlikely]] {
-            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
+            size_t utf16Length = simdutf::utf16_length_from_utf8(data, str.len);
             if (utf16Length > maxLength) {
+                failure = BunStringTag::Dead;
                 return {};
             }
         }
-        return convertUTF8ToString(std::span { untag(str.ptr), str.len });
+        WTF::String converted = convertUTF8ToString(std::span { untag(str.ptr), str.len });
+        // The length fits, so either the allocation failed or the bytes are ill-formed and too many for the replacing conversion.
+        if (converted.isNull()) [[unlikely]]
+            failure = simdutf::validate_utf8(data, str.len) ? BunStringTag::OutOfMemory : BunStringTag::Dead;
+        return converted;
+    }
+
+    // `setSyntheticAllocationLimitForTesting` lowers it.
+    if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
+        failure = BunStringTag::Dead;
+        return {};
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
         std::span<char16_t> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
         if (!impl) [[unlikely]] {
+            failure = uninitializedStringFailureTag<char16_t>(str.len);
             return WTF::String();
         }
         memcpy(out.data(), untag(str.ptr), str.len * sizeof(char16_t));
@@ -213,11 +237,23 @@ static const WTF::String toStringCopy(EncodedSlice str)
     } else {
         std::span<Latin1Character> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
-        if (!impl) [[unlikely]]
+        if (!impl) [[unlikely]] {
+            failure = uninitializedStringFailureTag<Latin1Character>(str.len);
             return WTF::String();
+        }
         memcpy(out.data(), untag(str.ptr), str.len * sizeof(Latin1Character));
         return WTF::String(WTF::move(impl));
     }
+}
+
+// For a caller with no way to report a refused copy: the null string stands for it, as it does for an empty `str`.
+static WTF::String toStringCopy(EncodedSlice str)
+{
+    if (str.len == 0 || str.ptr == nullptr) {
+        return WTF::String();
+    }
+    BunStringTag failure = BunStringTag::Dead;
+    return tryToStringCopy(str, failure);
 }
 
 static void appendToBuilder(EncodedSlice str, WTF::StringBuilder& builder)
@@ -244,11 +280,6 @@ static void appendToBuilder(EncodedSlice str, WTF::StringBuilder& builder)
     }
 
     builder.append({ byteCast<Latin1Character>(untag(str.ptr)), str.len });
-}
-
-static JSC::JSString* toJSStringGC(EncodedSlice str, JSC::JSGlobalObject* global)
-{
-    return JSC::jsString(global->vm(), toStringCopy(str));
 }
 
 static const EncodedSlice EncodedSliceEmpty = EncodedSlice { (unsigned char*)"", 0 };

@@ -8,8 +8,8 @@ use core::ptr::NonNull;
 use bun_core::EncodedSlice;
 
 use crate::{
-    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSArray, JSGlobalObject, JSObject,
-    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
+    JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -107,10 +107,12 @@ impl<'a> JsHeap<'a> {
         ))
     }
 
-    /// A string with a copy of `latin1`, or the empty string when that is longer than a string can be.
+    /// A string with a copy of `latin1`. Its error is not thrown: a `&mut self` method can call it.
     #[inline]
-    pub fn create_latin1_string(&self, latin1: &[u8]) -> JsLocal<'a, JSString> {
-        JsLocal::from_raw(EncodedSlice::latin1(latin1).to_js(self.global_object()))
+    pub fn create_latin1_string(&self, latin1: &[u8]) -> Result<'a, JsLocal<'a, JSString>> {
+        crate::encoded_slice::try_to_js(&EncodedSlice::latin1(latin1), self.global_object())
+            .map(JsLocal::from_raw)
+            .map_err(|error| Error::unthrown(error.to_error_instance(self.global_object())))
     }
 
     /// A string that takes over the allocation of `utf16`. Its error is not thrown: a `&mut self` method can call it.

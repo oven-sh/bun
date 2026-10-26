@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 
 const MiB = 1024 ** 2;
@@ -14,11 +14,17 @@ const allocationFailed = {
 };
 
 // Runs `script` in a child whose allocations fail above a cap (`env` sets the
-// cap up). The script calls `run(label, fn)` per case; the child prints the
-// collected results as JSON.
-async function resultsUnderCap(env: Record<string, string | undefined>, script: string) {
+// cap up, or the command that `wrap` puts in front of the child's). The script
+// calls `run(label, fn)` per case; the child prints the collected results as
+// JSON on its last line.
+async function resultsUnderCap(
+  env: Record<string, string | undefined>,
+  script: string,
+  { wrap = [], ...options }: { cwd?: string; stdin?: Blob; wrap?: string[] } = {},
+) {
   await using proc = Bun.spawn({
     cmd: [
+      ...wrap,
       bunExe(),
       "-e",
       `
@@ -29,20 +35,37 @@ async function resultsUnderCap(env: Record<string, string | undefined>, script: 
         catch (e) { results[label] = { name: e.name, code: e.code, message: e.message }; }
       };
       ${script}
-      console.log(JSON.stringify(results));
+      console.log("\\n" + JSON.stringify(results));
       `,
     ],
     env,
+    ...options,
     stdout: "pipe",
     // ASAN prints a benign "failed to allocate" WARNING line per recovered
     // failure; drain it but do not assert on it.
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim() || stderr).toStartWith("{");
+  const results = stdout.trim().split("\n").at(-1);
+  expect(results || stderr).toStartWith("{");
   expect(exitCode).toBe(0);
-  return JSON.parse(stdout);
+  return JSON.parse(results!);
 }
+
+// Writes `chunk` to a TextDecoderStream and reads what comes out. The writer
+// closes after the write, so a stream that drops the chunk ends the read too.
+const readThroughTextDecoderStream = `
+  const readThrough = async (chunk, ...args) => {
+    const stream = new TextDecoderStream(...args);
+    const writer = stream.writable.getWriter();
+    const reader = stream.readable.getReader();
+    const [, read] = await Promise.all([
+      writer.write(chunk).then(() => writer.close()).catch(() => {}),
+      reader.read(),
+    ]);
+    return read.value;
+  };
+`;
 
 // `BUN_JSC_maxSingleAllocationSize` makes every WTF `try*` allocation above the
 // cap return null, the way a failed allocation does. It exists in debug WTF
@@ -72,6 +95,33 @@ describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as a 
       "toString(ucs2)": allocationFailed,
       "StringDecoder(utf8).write": allocationFailed,
       "1 MiB toString(hex)": 2 * MiB,
+    });
+  });
+
+  // `process.env` and a string over bytes that Rust lends are copied in C++,
+  // and gave "" when the copy failed. The environment of a process cannot hold
+  // a value this long, so `process.env.BIG` comes from a .env file.
+  test("process.env and a string of borrowed bytes", async () => {
+    using dir = tempDir("buffer-oom-env", { ".env": "BIG=" + Buffer.alloc(5 * MiB, "a").toString() + "\n" });
+    const results = await resultsUnderCap(
+      { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * MiB) },
+      `
+      import { $ } from "bun";
+      await run("process.env.BIG", () => process.env.BIG);
+      // The failed read is not cached as the value.
+      await run("process.env.BIG again", () => process.env.BIG);
+      // The token list of 512 KiB of "a," is about 5 MiB of JSON.
+      await run("$.braces", () => $.braces("{" + Buffer.alloc(${MiB / 2}, "a,").toString() + "a}", { tokenize: true }));
+      // Under the cap, so the string is created.
+      results["$.braces({a,b})"] = $.braces("{a,b}", { tokenize: true }).length;
+      `,
+      { cwd: String(dir) },
+    );
+    expect(results).toEqual({
+      "process.env.BIG": allocationFailed,
+      "process.env.BIG again": allocationFailed,
+      "$.braces": allocationFailed,
+      "$.braces({a,b})": 76,
     });
   });
 });
@@ -144,5 +194,203 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
       "Response.text": allocationFailed,
       "Bun.file.text": allocationFailed,
     });
+  });
+
+  // An all-ASCII input is not transcoded: it is copied into a WTF string as
+  // long as the input, and the decoder returned "" when that copy failed.
+  // `Malloc=1` makes WTF allocate with the system allocator, which the cap
+  // reaches. The input is a mapped file, which the cap does not reach, so it
+  // can be longer than the cap.
+  test("TextDecoder.decode of ASCII, TextDecoderStream and Bun.unsafe.arrayBufferToString", async () => {
+    using dir = tempDir("buffer-oom-ascii", {});
+    const file = join(String(dir), "ascii.txt");
+    await Bun.write(file, Buffer.alloc(48 * MiB, "a"));
+    const results = await resultsUnderCap(
+      { ...env, Malloc: "1" },
+      `
+      ${readThroughTextDecoderStream}
+      const ascii = Bun.mmap(${JSON.stringify(file)});
+      await run("decode(utf-8)", () => new TextDecoder().decode(ascii));
+      await run("decode(utf-8, fatal)", () => new TextDecoder("utf-8", { fatal: true }).decode(ascii));
+      await run("decode(latin1)", () => new TextDecoder("latin1").decode(ascii));
+      const decoder = new TextDecoder();
+      await run("decode(utf-8, stream)", () => decoder.decode(ascii, { stream: true }));
+      // The chunk that failed did not spend the BOM of the stream, and the decoder still works.
+      results["the next chunk"] = decoder.decode(Uint8Array.of(0xef, 0xbb, 0xbf, 0x61));
+      await run("TextDecoderStream(latin1)", () => readThrough(ascii, "latin1"));
+      await run("TextDecoderStream(utf-8, fatal)", () => readThrough(ascii, "utf-8", { fatal: true }));
+      await run("arrayBufferToString(Uint8Array)", () => Bun.unsafe.arrayBufferToString(ascii));
+      await run("arrayBufferToString(Uint16Array)", () =>
+        Bun.unsafe.arrayBufferToString(new Uint16Array(ascii.buffer, ascii.byteOffset, ascii.byteLength / 2)));
+      // Under the cap, so the string is created.
+      results["32 MiB decode"] = new TextDecoder().decode(ascii.subarray(0, ${32 * MiB})).length;
+      `,
+    );
+    expect(results).toEqual({
+      "decode(utf-8)": allocationFailed,
+      "decode(utf-8, fatal)": allocationFailed,
+      "decode(latin1)": allocationFailed,
+      "decode(utf-8, stream)": allocationFailed,
+      "the next chunk": "a",
+      "TextDecoderStream(latin1)": allocationFailed,
+      "TextDecoderStream(utf-8, fatal)": allocationFailed,
+      "arrayBufferToString(Uint8Array)": allocationFailed,
+      "arrayBufferToString(Uint16Array)": allocationFailed,
+      "32 MiB decode": 32 * MiB,
+    });
+  });
+});
+
+// A release build has neither cap, but an address-space limit makes its
+// allocator return null. The input takes 60% of the address space that is
+// left, so the string, which is as long, cannot fit beside it. Nothing writes
+// to the input, so it costs no memory. An ASAN build cannot start under the
+// limit.
+test.skipIf(isASAN || !isLinux)(
+  "TextDecoder.decode of ASCII and Bun.unsafe.arrayBufferToString under an address-space limit",
+  async () => {
+    const results = await resultsUnderCap(
+      // One glibc arena, so that a thread that starts does not reserve another 64 MiB.
+      { ...bunEnv, MALLOC_ARENA_MAX: "1" },
+      `
+      import { readFileSync } from "node:fs";
+      const limit = Number(/Max address space\\s+(\\d+)/.exec(readFileSync("/proc/self/limits", "utf8"))[1]);
+      const used = Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))[1]) * 1024;
+      const input = new Uint8Array(Math.floor(((limit - used) * 0.6) / ${MiB}) * ${MiB});
+      // Takes what is left in blocks of that size, until none fits.
+      const hold = [];
+      try {
+        for (;;) hold.push(new Uint8Array(input.length));
+      } catch {}
+      await run("decode(utf-8)", () => new TextDecoder().decode(input));
+      await run("decode(latin1)", () => new TextDecoder("latin1").decode(input));
+      await run("arrayBufferToString", () => Bun.unsafe.arrayBufferToString(input));
+      // Fits in what is left, so the string is created.
+      results["1 MiB decode"] = new TextDecoder().decode(input.subarray(0, ${MiB})).length;
+      `,
+      { wrap: ["/bin/sh", "-c", `ulimit -v ${1024 * 1024} && exec "$0" "$@"`] },
+    );
+    expect(results).toEqual({
+      "decode(utf-8)": allocationFailed,
+      "decode(latin1)": allocationFailed,
+      "arrayBufferToString": allocationFailed,
+      "1 MiB decode": MiB,
+    });
+  },
+);
+
+// `BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT` lowers the longest string that Bun
+// copies from bytes, so a copy over it is refused the way a copy of 2^31 bytes
+// is. Each of these gave the whole string or "" instead of an error.
+describe("bytes that are copied into a string over the length limit", () => {
+  const tooLong = {
+    name: "Error",
+    code: "ERR_STRING_TOO_LONG",
+    message: "Cannot create a string longer than 2147483647 characters",
+  };
+  const big = Buffer.alloc(2 * MiB, "a").toString();
+  // `TZ` of bunEnv would win over the .env file.
+  const env = { ...bunEnv, TZ: undefined, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(MiB) };
+  const dotEnv = (...keys: string[]) => ({ ".env": keys.map(key => `${key}=${big}\n`).join("") });
+
+  test("process.env, $.braces, Blob, Request, FormData and Bun.unsafe.arrayBufferToString", async () => {
+    // The last value is not ASCII, so its copy converts from UTF-8.
+    const keys = ["BIG", "TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH", "NOT_ASCII"];
+    using dir = tempDir("string-limit", { ".env": dotEnv(...keys.slice(0, -1))[".env"] + `NOT_ASCII=é${big}\n` });
+    const results = await resultsUnderCap(
+      env,
+      `
+      import { $ } from "bun";
+      import { spawnSync } from "node:child_process";
+      const ascii = new Uint8Array(${2 * MiB}).fill(97);
+      const big = Buffer.from(ascii.buffer).toString("latin1");
+      for (const key of ${JSON.stringify(keys)}) await run("process.env." + key, () => process.env[key]);
+      // The failed read is not cached as the value.
+      await run("process.env.BIG again", () => process.env.BIG);
+      await run("$.braces", () => $.braces("{" + Buffer.alloc(${MiB / 2}, "a,").toString() + "a}", { tokenize: true }));
+      await run("Blob.type", () => new Blob([], { type: big }).type);
+      await run("Request.referrer", () => new Request("http://example.com/", { headers: { referrer: big } }).referrer);
+      const formData = part =>
+        new Response("--x\\r\\n" + part + "\\r\\n--x--\\r\\n", {
+          headers: { "content-type": "multipart/form-data; boundary=x" },
+        }).formData();
+      await run("FormData field", async () =>
+        (await formData('content-disposition: form-data; name="a"\\r\\n\\r\\n' + big)).get("a"));
+      await run("FormData file name", async () =>
+        (await formData('content-disposition: form-data; name="a"; filename="' + big + '"\\r\\n\\r\\nx')).get("a").name);
+      await run("arrayBufferToString(Uint8Array)", () => Bun.unsafe.arrayBufferToString(ascii));
+      await run("arrayBufferToString(Uint16Array)", () =>
+        Bun.unsafe.arrayBufferToString(new Uint16Array(${2 * MiB}).fill(97)));
+      // At the limit, so the string is created.
+      results["1 MiB"] = Bun.unsafe.arrayBufferToString(ascii.subarray(0, ${MiB})).length;
+      // A copy of process.env reads every variable, so it fails while one of them cannot be read.
+      await run("{ ...process.env }", () => ({ ...process.env }));
+      await run("child_process.spawnSync", () => spawnSync(process.execPath, ["-e", ""]));
+      for (const key of ${JSON.stringify(keys)}) delete process.env[key];
+      results["{ ...process.env } after delete"] = Object.keys({ ...process.env }).includes("BIG");
+      `,
+      { cwd: String(dir) },
+    );
+    expect(results).toEqual({
+      "process.env.BIG": tooLong,
+      "process.env.TZ": tooLong,
+      "process.env.NODE_TLS_REJECT_UNAUTHORIZED": tooLong,
+      "process.env.BUN_CONFIG_VERBOSE_FETCH": tooLong,
+      "process.env.NOT_ASCII": tooLong,
+      "process.env.BIG again": tooLong,
+      "$.braces": tooLong,
+      "Blob.type": tooLong,
+      "Request.referrer": tooLong,
+      "FormData field": tooLong,
+      "FormData file name": tooLong,
+      "arrayBufferToString(Uint8Array)": tooLong,
+      "arrayBufferToString(Uint16Array)": tooLong,
+      "1 MiB": MiB,
+      "{ ...process.env }": tooLong,
+      "child_process.spawnSync": tooLong,
+      "{ ...process.env } after delete": false,
+    });
+  });
+
+  // A variable with an integer name is read when `process.env` is made, so
+  // while its value cannot be read, no variable can.
+  test("process.env with an integer-named variable", async () => {
+    using dir = tempDir("string-limit-integer", { ".env": `123=${big}\nSMALL=abc\n` });
+    const results = await resultsUnderCap(
+      env,
+      `
+      await run("process.env[123]", () => process.env[123]);
+      await run("process.env.SMALL", () => process.env.SMALL);
+      `,
+      { cwd: String(dir) },
+    );
+    expect(results).toEqual({ "process.env[123]": tooLong, "process.env.SMALL": tooLong });
+  });
+
+  // The listener that prints a warning reads NODE_REDIRECT_WARNINGS first.
+  test("NODE_REDIRECT_WARNINGS", async () => {
+    using dir = tempDir("string-limit-warnings", dotEnv("NODE_REDIRECT_WARNINGS"));
+    const results = await resultsUnderCap(
+      env,
+      `
+      await run("process.emitWarning", async () => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        process.on("uncaughtException", reject);
+        process.emitWarning("a warning");
+        // The listener runs in a tick, before this.
+        setImmediate(resolve, "printed");
+        return await promise;
+      });
+      `,
+      { cwd: String(dir) },
+    );
+    expect(results).toEqual({ "process.emitWarning": tooLong });
+  });
+
+  test("prompt", async () => {
+    const results = await resultsUnderCap(env, `await run("prompt", () => prompt());`, {
+      stdin: new Blob([big + "\n"]),
+    });
+    expect(results).toEqual({ prompt: tooLong });
   });
 });

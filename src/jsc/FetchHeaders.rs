@@ -192,17 +192,20 @@ impl FetchHeaders {
         WebCore__FetchHeaders__get_(self, name_, out, global)
     }
 
-    pub fn get(&mut self, name_: &[u8], global: &JSGlobalObject) -> Option<EncodedSlice<'_>> {
+    /// Throws for a name that is not a header name.
+    pub fn get(
+        &mut self,
+        name_: &[u8],
+        global: &JSGlobalObject,
+    ) -> JsResult<Option<EncodedSlice<'_>>> {
         let mut out = EncodedSlice::EMPTY;
-        self.get_(&EncodedSlice::latin1(name_), &mut out, global);
-        if !out.is_empty() {
-            // Returns the EncodedSlice view (borrows C++-owned header
-            // storage); caller may `.slice()` it. Returning `&[u8]` directly
-            // would borrow the local `out`, not the underlying buffer.
-            return Some(out);
-        }
-
-        None
+        host_fn::from_js_host_call_generic(global, || {
+            self.get_(&EncodedSlice::latin1(name_), &mut out, global)
+        })?;
+        // Returns the EncodedSlice view (borrows C++-owned header
+        // storage); caller may `.slice()` it. Returning `&[u8]` directly
+        // would borrow the local `out`, not the underlying buffer.
+        Ok((!out.is_empty()).then_some(out))
     }
 
     pub fn fast_has(&mut self, name_: HTTPHeaderName) -> bool {

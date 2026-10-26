@@ -172,15 +172,15 @@ impl SecureContext {
         result.put(
             global,
             b"key",
-            EncodedSlice::latin1(key_slice).to_js(global),
+            EncodedSlice::latin1(key_slice).to_js(global)?,
         );
         result.put(
             global,
             b"cert",
-            EncodedSlice::latin1(cert_slice).to_js(global),
+            EncodedSlice::latin1(cert_slice).to_js(global)?,
         );
         if let Some(ca_slice) = ca_slice {
-            result.put(global, b"ca", EncodedSlice::latin1(ca_slice).to_js(global));
+            result.put(global, b"ca", EncodedSlice::latin1(ca_slice).to_js(global)?);
         }
         Ok(result)
     }

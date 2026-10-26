@@ -145,7 +145,8 @@ Throwing tells the debugger, which can run code, so after a throw the body retur
 reading what it borrowed. A `mutates: true` method does not throw: what the debugger runs can call
 a method of the same object while the `&mut self` is live. It returns the error, which is thrown
 after the borrow ends. Every `heap.create_*` that returns a `Result` throws at once, except
-`create_utf16_string_from_vec`, so a `mutates: true` method calls none of the others.
+`create_latin1_string` and `create_utf16_string_from_vec`, so a `mutates: true` method calls none
+of the others.
 
 ```rust
 // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are

@@ -1755,8 +1755,10 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
     } else {
         EncodedSlice name = toEncodedSlice("NODE_REDIRECT_WARNINGS"_s);
         EncodedSlice value = { nullptr, 0 };
-        if (Bun__getEnvValue(globalObject, &name, &value) && value.len > 0)
-            redirectPath = jsString(vm, Zig::toStringCopy(value));
+        if (Bun__getEnvValue(globalObject, &name, &value) && value.len > 0) {
+            redirectPath = Bun::toJS(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
     }
     args.append(redirectPath);
     // --disable-warning entries as a JS array (write-once at CLI parse), so
@@ -4742,19 +4744,14 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if !OS(WINDOWS)
-    auto* result = jsString(globalObject->vm(), Bun__Process__getTitle(globalObject).transferToWTFString());
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun__Process__getTitle(globalObject).transferToJS(globalObject)));
 #else
     // When a title was explicitly set (`--title` CLI flag or a prior
     // `process.title = ...`), the store is authoritative — the console title
     // that uv_get_process_title reads is unavailable in console-less
     // processes (CI) and never reflects the CLI flag.
-    if (Bun__Process__hasTitle()) {
-        auto* result = jsString(vm, Bun__Process__getTitle(globalObject).transferToWTFString());
-        RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, JSValue::encode(result));
-    }
+    if (Bun__Process__hasTitle())
+        RELEASE_AND_RETURN(scope, JSValue::encode(Bun__Process__getTitle(globalObject).transferToJS(globalObject)));
 
     char title[1024];
     title[0] = '\0'; // Initialize buffer to empty string

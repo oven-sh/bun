@@ -158,9 +158,9 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
     // EncodedSlice / StaticEncodedSlice: copies (the bytes are borrowed).
     if (this->tag == BunStringTag::StaticEncodedSlice)
         Bun::assertStaticStringIsNotCommon(this->impl.encoded);
-    WTF::String str = this->toWTFString();
+    auto* string = Bun::toJS(globalObject, this->impl.encoded);
     *this = { .tag = BunStringTag::Dead };
-    return jsString(vm, WTF::move(str));
+    return string;
 }
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
@@ -206,6 +206,37 @@ extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, 
 
 namespace Bun {
 
+// nullptr, with nothing thrown, when the copy is refused: `failure` is then Dead (too long) or OutOfMemory.
+static JSC::JSString* tryToJS(JSC::VM& vm, EncodedSlice slice, BunStringTag& failure)
+{
+    if (slice.len == 0 || slice.ptr == nullptr)
+        return JSC::jsEmptyString(vm);
+    WTF::String copy = Zig::tryToStringCopy(slice, failure);
+    if (copy.isNull()) [[unlikely]]
+        return nullptr;
+    return JSC::jsString(vm, WTF::move(copy));
+}
+
+JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, EncodedSlice slice)
+{
+    BunStringTag failure = BunStringTag::Dead;
+    if (auto* string = tryToJS(JSC::getVM(globalObject), slice, failure)) [[likely]]
+        return string;
+    // Throws what a BunString with that tag reaches JS as.
+    return toJS(globalObject, BunString { .tag = failure });
+}
+
+WTF::String toWTFStringCopy(JSC::JSGlobalObject* globalObject, EncodedSlice slice)
+{
+    if (slice.len == 0 || slice.ptr == nullptr)
+        return {};
+    BunStringTag failure = BunStringTag::Dead;
+    WTF::String copy = Zig::tryToStringCopy(slice, failure);
+    if (copy.isNull()) [[unlikely]]
+        toJS(globalObject, BunString { .tag = failure });
+    return copy;
+}
+
 JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
     if (bunString.tag == BunStringTag::Empty) {
@@ -238,11 +269,22 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     }
 
     if (bunString.tag == BunStringTag::EncodedSlice) {
-        return Zig::toJSStringGC(bunString.impl.encoded, globalObject);
+        return toJS(globalObject, bunString.impl.encoded);
     }
 
     UNREACHABLE();
 }
+
+}
+
+// A JSString with a copy of `slice`. An empty value, with nothing thrown, when
+// the copy is refused: `failure` is then Dead (too long) or OutOfMemory.
+extern "C" JSC::EncodedJSValue EncodedSlice__tryToJS(const EncodedSlice* slice, JSC::JSGlobalObject* globalObject, BunStringTag* failure)
+{
+    return JSValue::encode(Bun::tryToJS(JSC::getVM(globalObject), *slice, *failure));
+}
+
+namespace Bun {
 
 JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)
 {
@@ -411,14 +453,11 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC
     return JSValue::encode(result);
 }
 
-// `tryCreateUninitialized` returns null both for a length it refuses and for a
-// failed allocation; the tag tells transferToJS/toJS which error to throw.
+// The tag tells transferToJS/toJS which error to throw.
 template<typename CharacterType>
 static BunString uninitializedStringFailure(size_t length)
 {
-    if (!WTF::StringImpl::isValidLength<CharacterType>(length))
-        return { .tag = BunStringTag::Dead };
-    return { .tag = BunStringTag::OutOfMemory };
+    return { .tag = Zig::uninitializedStringFailureTag<CharacterType>(length) };
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(size_t length)

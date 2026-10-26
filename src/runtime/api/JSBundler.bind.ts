@@ -22,7 +22,7 @@ export const BuildArtifact = b.class({
     sourcemap: { getter: b.any, cache: true, capability: "heap" },
     stream: { ...method, args: { chunkSize: b.any }, passThis: true },
     text: method,
-    type: { getter: b.any, cache: true, capability: "js" },
+    type: cached,
   },
 });
 

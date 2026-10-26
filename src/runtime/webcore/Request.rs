@@ -734,15 +734,15 @@ impl Request {
         fetch_redirect_to_js(self.flags.redirect, cx.global())
     }
 
-    pub(crate) fn get_referrer(&self, cx: &mut JsScope<'_>) -> JSValue {
+    pub(crate) fn get_referrer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_object = cx.global();
         if let Some(headers_ref) = self.headers_mut().as_mut() {
-            if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
+            if let Some(referrer) = headers_ref.get(b"referrer", global_object)? {
                 return referrer.to_js(global_object);
             }
         }
 
-        JSValue::js_empty_string(global_object)
+        Ok(JSValue::js_empty_string(global_object))
     }
 
     pub(crate) fn get_referrer_policy(&self, cx: &mut JsScope<'_>) -> JSValue {

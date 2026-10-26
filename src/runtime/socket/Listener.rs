@@ -1384,7 +1384,7 @@ impl Listener {
             .unwrap(),
             _ => return Ok(()),
         };
-        let address_js = EncodedSlice::latin1(formatted).to_js(global);
+        let address_js = EncodedSlice::latin1(formatted).to_js(global)?;
         let port_js = match socket_ref.get_local_port() {
             Some(p) => JSValue::js_number(p as f64),
             None => JSValue::UNDEFINED,
@@ -1991,7 +1991,7 @@ fn dispatch_server_name(
     // SAFETY: `hostname` is NUL-terminated per the fn contract.
     let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
     // Peer-supplied SNI bytes, decoded as Latin-1 like Node's `OneByteString`.
-    let js_name = EncodedSlice::latin1(name.to_bytes()).to_js(&global);
+    let js_name = EncodedSlice::latin1(name.to_bytes()).to_js_bounded(&global);
     let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
         Ok(v) => v,
         Err(err) => global.take_exception(err),

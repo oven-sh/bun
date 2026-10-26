@@ -49,7 +49,7 @@ export const Request = b.class({
     method: getter,
     mode: getter,
     redirect: getter,
-    referrer: getter,
+    referrer: { ...getter, throws: true },
     referrerPolicy: getter,
     signal: { ...getter, cache: true },
     text: body.text,

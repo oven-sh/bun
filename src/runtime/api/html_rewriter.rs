@@ -2478,7 +2478,7 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     value.put(
         global,
         b"name",
-        EncodedSlice::latin1(b"HTMLRewriterError").to_js(global),
+        EncodedSlice::latin1(b"HTMLRewriterError").to_js_bounded(global),
     );
     value
 }

@@ -183,11 +183,17 @@ fn render_css_module_script(
     separator: &[u8],
 ) -> Result<&'static [u8], crate::Error> {
     let order =
-        crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(
+        match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(
             c,
             worker.arena(),
             &[Index::init(source_index)],
-        );
+        ) {
+            Ok(order) => order,
+            Err(too_deep) => {
+                too_deep.add_to_log(c.parse_graph().input_files.items_source(), c.log_disjoint());
+                return Err(crate::Error::BuildFailed);
+            }
+        };
     let count = order.len() as usize;
     let mut chunk = Chunk {
         content: Content::Css(crate::chunk::CssChunk {

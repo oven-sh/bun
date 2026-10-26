@@ -1,0 +1,12 @@
+function a() // 1
+{ "use strict" }
+class A {
+  b() // 2
+  { "use strict"; }
+}
+function c()
+// 3
+{
+  "use strict";
+  "use asm";
+}

@@ -24,10 +24,6 @@ impl GlobalCache {
     /// module-level `MAP` static.
     pub const MAP: __ComptimeStringMap_MAP = __ComptimeStringMap_MAP(());
 
-    pub fn allow_version_specifier(self) -> bool {
-        self == GlobalCache::force
-    }
-
     pub fn can_use(self, has_a_node_modules_folder: bool) -> bool {
         // When there is a node_modules folder, we default to false
         // When there is NOT a node_modules folder, we default to true
@@ -51,15 +47,5 @@ impl GlobalCache {
 
     pub fn is_enabled(self) -> bool {
         self != GlobalCache::disable
-    }
-
-    pub fn can_install(self) -> bool {
-        matches!(
-            self,
-            GlobalCache::auto
-                | GlobalCache::allow_install
-                | GlobalCache::force
-                | GlobalCache::fallback
-        )
     }
 }

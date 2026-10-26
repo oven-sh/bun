@@ -55,7 +55,6 @@ pub(crate) fn convert_stmts_for_chunk(
     wrap: WrapKind,
     ast: &JSAst<'_>,
 ) -> Result<(), crate::Error> {
-    let _ = bump;
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
     let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough
         || c.graph.files.items_entry_point_kind()[source_index as usize] != EntryPoint::Kind::None;
@@ -578,7 +577,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                                     core::ptr::read(&raw const s2.func)
                                                 },
                                             },
-                                            stmt.loc,
+                                            stmt2.loc,
                                         );
                                         stmt.data.s_function_mut().unwrap().func.name =
                                             Some(s.default_name);
@@ -597,7 +596,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                                 },
                                                 is_export: false,
                                             },
-                                            stmt.loc,
+                                            stmt2.loc,
                                         );
                                         stmt.data.s_class_mut().unwrap().class.class_name =
                                             Some(s.default_name);

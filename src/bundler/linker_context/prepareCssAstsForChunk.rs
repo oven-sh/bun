@@ -7,8 +7,7 @@ use crate::{BundleV2, Chunk, LinkerContext};
 
 use crate::bun_css::css_parser::{
     BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
-    BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, ParserOptions,
-    SmallList,
+    BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, SmallList,
 };
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets};
 use crate::bun_fs::Path;
@@ -148,7 +147,6 @@ pub(crate) fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chu
                         sources: Default::default(),
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
-                        options: ParserOptions::default(None),
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
@@ -196,7 +194,6 @@ pub(crate) fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chu
                             // `ManuallyDrop` so the duplicate is abandoned instead; the rule
                             // slab itself is arena-owned so it is reclaimed on arena reset.
                             let ast_import = core::mem::ManuallyDrop::new(BundlerStyleSheet {
-                                options: ParserOptions::default(None),
                                 license_comments: Default::default(),
                                 sources: Default::default(),
                                 source_map_urls: Default::default(),
@@ -323,7 +320,6 @@ pub(crate) fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chu
                         sources: Default::default(),
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
-                        options: ParserOptions::default(None),
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
@@ -467,8 +463,6 @@ fn wrap_rules_with_conditions(
     temp_bump: &Bump,
     conditions: &Vec<ImportConditions>,
 ) {
-    let mut dummy_import_records: Vec<ImportRecord> = Vec::new();
-
     let mut i: usize = conditions.len() as usize;
     while i > 0 {
         i -= 1;
@@ -526,8 +520,8 @@ fn wrap_rules_with_conditions(
                 ast.rules = arena_rule_list_one(
                     temp_bump,
                     BundlerCssRule::Supports(BundlerSupportsRule {
-                        condition: supports
-                            .clone_with_import_records(temp_bump, &mut dummy_import_records),
+                        // SAFETY: as for `layer` above.
+                        condition: unsafe { core::ptr::read(supports) },
                         rules: core::mem::take(&mut ast.rules),
                         loc: Location::dummy(),
                     }),
@@ -541,17 +535,14 @@ fn wrap_rules_with_conditions(
             ast.rules = arena_rule_list_one(
                 temp_bump,
                 BundlerCssRule::Media(BundlerMediaRule {
-                    query: item
-                        .media
-                        .clone_with_import_records(temp_bump, &mut dummy_import_records),
+                    // SAFETY: as for `layer` above.
+                    query: unsafe { core::ptr::read(&raw const item.media) },
                     rules: core::mem::take(&mut ast.rules),
                     loc: Location::dummy(),
                 }),
             );
         }
     }
-
-    debug_assert!(dummy_import_records.len() == 0);
 }
 
 pub use crate::ThreadPool;

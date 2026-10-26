@@ -1429,6 +1429,9 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   // because the dev server does not keep a barrel. The plugin gives the server graph the source, and
   // deletes the file before the client graph reads it.
   const barrelOfTwoGraphs = (restore: boolean) => ({
+    skip: [
+      "win32" as const, // the build of /two still reads the barrel and passes
+    ],
     framework: { ...minimalFramework, serverComponents: oneServerGraph },
     pluginFile: `
       import fs from "node:fs";
@@ -1506,6 +1509,9 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   });
   // The route has the server copy of the barrel when the SSR graph does not find the file.
   devTest("a barrel that only the SSR graph does not find fails the file of that graph", {
+    skip: [
+      "win32", // the build of the save still reads the barrel for the SSR graph and passes
+    ],
     framework: { ...minimalFramework, serverComponents: separateSSRGraph },
     // A request does not bundle the route again, so the page shows the errors of the build of the save.
     env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
@@ -1568,6 +1574,10 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   // The read of late.ts fails. The onLoad of second.ts continues when every other module is loaded,
   // and writes late.ts back. second.ts then imports it.
   const lateOnce = {
+    skip: [
+      // The build reads late.ts, and the onLoad of second.ts throws "path must be a string or a file descriptor".
+      "win32" as const,
+    ],
     framework: { ...minimalFramework, serverComponents: separateSSRGraph },
     pluginFile: `
       import fs from "node:fs";

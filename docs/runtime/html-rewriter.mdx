@@ -144,6 +144,27 @@ try {
 }
 ```
 
+Handlers run in the `AsyncLocalStorage` context of the `transform()` call. Every
+handler sees the store that was active when you called `transform()`, for the
+whole document, whichever code reads the returned body later:
+
+```ts
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const requestId = new AsyncLocalStorage<string>();
+const rewriter = new HTMLRewriter().on("a", {
+  element(element) {
+    element.setAttribute("data-request", requestId.getStore()!);
+  },
+});
+
+const response = requestId.run("abc123", () => rewriter.transform(new Response(Bun.file("page.html"))));
+console.log(await response.text()); // each <a> has data-request="abc123"
+```
+
+To give a handler a store of its own, bind the handler with
+`AsyncLocalStorage.bind()` before you pass it to `on()`.
+
 `transform()` on a `string` or `ArrayBuffer` has to return its result
 synchronously, so it cannot wait for a handler that needs the event loop to turn
 (a timer, I/O, a `fetch`). Such a handler makes `transform()` throw a

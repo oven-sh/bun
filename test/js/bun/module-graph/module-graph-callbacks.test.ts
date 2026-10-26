@@ -12,6 +12,8 @@ const ModuleGraph = Bun.ModuleGraph;
 const dir = String(
   tempDir("module-graph-callbacks-", {
     "data.txt": Buffer.alloc(10000, "0123456789").toString(),
+    // More than one read of a file.
+    "page.html": Buffer.alloc(4100 * 100, "<p>" + Buffer.alloc(4093, "x").toString() + "</p>").toString(),
     // A 1x1 PNG.
     "pixel.png": Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -289,6 +291,28 @@ const dir = String(
           const transformed = readable.pipeThrough(new TransformStream({ transform(chunk, controller) { seen("transform"); controller.enqueue(chunk); }, flush() { seen("flush"); } })).pipeThrough(new CompressionStream("gzip"));
           await new Response(transformed).arrayBuffer(); seen("after arrayBuffer()");
           await new Promise(resolve => new ReadableStream({ start(controller) { controller.enqueue("x"); controller.close(); } }).pipeTo(new WritableStream({ write() { seen("sink write"); }, close() { seen("sink close"); resolve(); } })));
+        },
+        htmlRewriter: async (seen, env) => {
+          // transform() rewrites the first read of the file. Its caller is not on the stack for the rest:
+          // the event loop rewrites it when nothing reads the output, and the output's reader when one does.
+          const page = import.meta.dir + "/page.html";
+          const ended = defer();
+          new HTMLRewriter()
+            .on("p", { element() { seen("element handler, output not read"); } })
+            .onDocument({ end() { seen("end handler, output not read"); ended.resolve(); } })
+            .transform(new Response(Bun.file(page)));
+          await ended.promise;
+          await new HTMLRewriter()
+            .on("p", { element() { seen("element handler, output read"); } })
+            .onDocument({ end() { seen("end handler, output read"); } })
+            .transform(new Response(Bun.file(page)))
+            .text();
+          seen("after text()");
+          const streamed = await fetch("http://127.0.0.1:" + env.httpPort + "/stream");
+          await new HTMLRewriter()
+            .onDocument({ text() { seen("text handler, fetched body"); }, end() { seen("end handler, fetched body"); } })
+            .transform(streamed)
+            .text();
         },
       };
     `,

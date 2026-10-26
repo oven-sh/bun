@@ -1605,6 +1605,18 @@ impl JSValue {
         AsyncContextFrame__callbackOf(self)
     }
 
+    /// The async context of the script that is calling (`undefined`: none). For an owner whose
+    /// callbacks are registered before the operation that calls them: it captures this when the
+    /// operation starts, into a slot the GC visits, for
+    /// [`call_in_async_context`](Self::call_in_async_context).
+    #[inline]
+    pub fn current_async_context(global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__current(global: &JSGlobalObject) -> JSValue;
+        }
+        AsyncContextFrame__current(global)
+    }
+
     /// Protects a JSValue from garbage collection (refcounted). The is_cell
     /// check happens on the C++ side (bindings.cpp).
     #[inline]
@@ -1653,6 +1665,47 @@ impl JSValue {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.
             unsafe { Bun__JSValue__call(global, self, this_value, args.len(), args.as_ptr()) }
+        })
+    }
+
+    /// [`call`](Self::call) in `async_context`, which
+    /// [`current_async_context`](Self::current_async_context) returned. Strict, unlike a wrapper
+    /// from [`with_async_context_if_needed`](Self::with_async_context_if_needed): an empty or
+    /// `undefined` context runs `self` (the bare function) in no context, never in the caller's.
+    /// A context of a disposed `Bun.ModuleGraph` is entered like any other: the owner refuses first.
+    #[track_caller]
+    pub fn call_in_async_context(
+        self,
+        global: &JSGlobalObject,
+        async_context: JSValue,
+        this_value: JSValue,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
+        unsafe extern "C" {
+            fn AsyncContextFrame__callInContext(
+                global: *const JSGlobalObject,
+                async_context: JSValue,
+                function: JSValue,
+                this_value: JSValue,
+                args_len: usize,
+                args_ptr: *const JSValue,
+            ) -> JSValue;
+        }
+        if self.has_nobody_to_call(global) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        host_fn::from_js_host_call(global, || {
+            // SAFETY: as in `call`.
+            unsafe {
+                AsyncContextFrame__callInContext(
+                    global,
+                    async_context,
+                    self,
+                    this_value,
+                    args.len(),
+                    args.as_ptr(),
+                )
+            }
         })
     }
 

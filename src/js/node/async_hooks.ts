@@ -13,6 +13,9 @@
 //   then run .$call() on it later.
 // - In C++, call AsyncContextFrame::withAsyncContextIfNeeded(jsValue). Then to call it,
 //   use AsyncContextFrame:: call(...) instead of JSC:: call.
+// - If the callback is received before the operation that calls it starts (HTMLRewriter's handlers, which
+//   every transform() shares), capture JSValue::current_async_context() when the operation starts, and call
+//   the bare function with call_in_async_context().
 //
 // The above functions will return the same JSFunction if the context is empty, and there are many
 // other checks to ensure that AsyncLocalStorage has virtually no impact on performance when not in

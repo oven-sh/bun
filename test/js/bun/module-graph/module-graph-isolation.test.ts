@@ -3191,6 +3191,64 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
       hostServer.stop(true);
     }
   });
+
+  test("an HTMLRewriter rewrite the graph started on a stream of the host's: its handlers run in the graph's context, after dispose() they are not called, and the host reading the output is told it failed", async () => {
+    using made = await newGraph();
+    const { graph } = made;
+    const encoder = new TextEncoder();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              controller = c;
+              // The head of the response goes out with the first chunk.
+              c.enqueue(encoder.encode("<i></i>"));
+            },
+          }),
+        ),
+    });
+    // The host's stream: dispose() leaves it open, and its chunks arrive when the test sends them.
+    const body = (await fetch(server.url)).body!;
+    const calledIn: string[] = [];
+    const called = Promise.withResolvers<void>();
+    const rewriter = new HTMLRewriter().on("b", {
+      element() {
+        calledIn.push(ModuleGraph.current === graph ? "the graph" : "the host");
+        called.resolve();
+      },
+    });
+    const rewritten: Response = graph.run(() => rewriter.transform(new Response(body)));
+    controller.enqueue(encoder.encode("<b>1</b>"));
+    await called.promise;
+    graph.dispose();
+    controller.enqueue(encoder.encode("<b>2</b>"));
+    controller.close();
+    expect(
+      await rewritten.text().then(
+        () => "fulfilled",
+        error => error.name,
+      ),
+    ).toBe("AbortError");
+    expect(calledIn).toEqual(["the graph"]);
+  });
+
+  test("what is left of a disposed graph's script still rewrites with HTMLRewriter: a transform() it runs to the end calls its handlers", async () => {
+    using made = await newGraph();
+    const { graph, app } = made;
+    const rewriter = new HTMLRewriter().on("b", {
+      element: element => void element.setAttribute("in", ModuleGraph.current === graph ? "the graph" : "the host"),
+    });
+    const rewritten = Promise.withResolvers<string>();
+    // A microtask the graph queued runs once more after dispose(), in the graph's context.
+    graph.run(() => queueMicrotask(() => rewritten.resolve(rewriter.transform("<b></b>"))));
+    graph.dispose();
+    expect(await rewritten.promise).toBe('<b in="the graph"></b>');
+    // The host calling the graph's code is the host.
+    expect(app.call(() => rewriter.transform("<b></b>"))).toBe('<b in="the host"></b>');
+  });
 });
 
 describe.concurrent("ModuleGraph isolation: competing graphs", () => {

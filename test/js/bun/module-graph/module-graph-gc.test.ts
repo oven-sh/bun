@@ -416,6 +416,29 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
   });
 
+  // A rewrite holds the async context of its transform(), here the graph's, for its handlers: until it ends.
+  test("an HTMLRewriter rewrite that has ended does not keep the graph whose context it started in, while the host holds its Response", async () => {
+    const lifetimes = new Lifetimes();
+    const held: Response[] = [];
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph());
+      // The handlers and the input are the host's: only the transform() calls are the graph's.
+      const rewriter = new HTMLRewriter().on("div", { element() {} });
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      const stream = new ReadableStream<Uint8Array>({ start: c => void (controller = c) });
+      const buffered: Response = graph.run(() => rewriter.transform(new Response("<div>x</div>")));
+      const streamed: Response = graph.run(() => rewriter.transform(new Response(stream)));
+      held.push(buffered, streamed);
+      const text = streamed.text();
+      controller.enqueue(new TextEncoder().encode("<div>x</div>"));
+      controller.close();
+      expect(await text).toBe("<div>x</div>");
+      graph.dispose();
+    })();
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    expect(held.length).toBe(2);
+  });
+
   // Nothing settles the promise that tells a server is closed once its graph is disposed, and its reactions reach the server.
   for (const [what, open] of [
     ["node:http server that is listening", io => io.listenWithNode()],

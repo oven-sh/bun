@@ -1040,6 +1040,15 @@ impl RewriterPipe {
         // This rewrite can outlive the rewriter's wrapper. Its handlers must not die with it.
         if let Some(handlers) = handlers {
             js_HTMLRewriterTransform::handlers_set_cached(cell, cx.global(), handlers.0);
+            // They run in the async context of this call, whichever stack drives the rewrite later.
+            let async_context = JSValue::current_async_context(cx.global());
+            if !async_context.is_undefined() {
+                js_HTMLRewriterTransform::async_context_set_cached(
+                    cell,
+                    cx.global(),
+                    async_context,
+                );
+            }
         }
 
         result_ref.set_url(original.url().clone());
@@ -1510,10 +1519,13 @@ impl RewriterPipe {
         debug_assert!(parked.is_none());
     }
 
-    /// `None` once the rewrite is over or the cell is collected.
-    fn handler_list(&self) -> Option<HandlerList> {
-        let cell = self.cell.try_get()?;
-        HandlerList::existing(js_HTMLRewriterTransform::handlers_get_cached(cell))
+    /// The `Bun.ModuleGraph` whose script called `transform()` was disposed, and it is not what is
+    /// left of that script that drives the rewrite now.
+    fn is_cut_off_from_its_script(&self) -> bool {
+        let vm = self.global.bun_vm();
+        vm.graph_context(self.script_context)
+            .is_some_and(|context| context.is_stopped())
+            && vm.context_of_caller().id() != self.script_context
     }
 
     /// The rewrite is over: an output `Response` that outlives it stops retaining the handlers.
@@ -1531,6 +1543,7 @@ impl RewriterPipe {
                 &self.global,
                 JSValue::UNDEFINED,
             );
+            let _ = js_HTMLRewriterTransform::async_context_take_cached(cell, &self.global);
         }
     }
 
@@ -1570,13 +1583,11 @@ impl RewriterPipe {
     fn take_end_tag_callback(
         &self,
         global: &JSGlobalObject,
+        cell: JSValue,
         slot: EndTagSlot,
     ) -> JsResult<Option<JSValue>> {
-        // `drive_rewriter` keeps the cell alive, and the array stays until lol-html returns.
-        let list = self
-            .cell
-            .try_get()
-            .and_then(js_HTMLRewriterTransform::end_tag_handlers_get_cached)
+        // The array stays until lol-html returns.
+        let list = js_HTMLRewriterTransform::end_tag_handlers_get_cached(cell)
             .filter(|list| list.is_cell());
         debug_assert!(list.is_some(), "HTMLRewriter end-tag handler has no array");
         let Some(list) = list else {
@@ -2259,10 +2270,22 @@ where
         return HandlerOutcome::Stop;
     };
 
+    // A disposed `Bun.ModuleGraph` hears nothing more, and the document does not go on without its
+    // handlers: the rewrite fails as it does when the graph made its input.
+    if sink.is_cut_off_from_its_script() {
+        record_handler_error(&sink, CommonAbortReason::UserAbort.to_js(global));
+        return HandlerOutcome::Stop;
+    }
+
     let callback = get_callback(&this).expect("callback must be set if handler registered");
+    // `drive_rewriter` keeps the cell alive. It holds the callbacks and their async context.
+    let Some(cell) = sink.cell.try_get() else {
+        debug_assert!(false, "HTMLRewriter handler ran without the Transform cell");
+        return HandlerOutcome::Stop;
+    };
     let (cb, this_object) = match callback {
         // The slot is free again: from here on only this frame holds `cb`.
-        HandlerCallback::EndTag(slot) => match sink.take_end_tag_callback(global, slot) {
+        HandlerCallback::EndTag(slot) => match sink.take_end_tag_callback(global, cell, slot) {
             Ok(Some(cb)) => (cb, JSValue::ZERO),
             // A pending termination stays pending, as below.
             Ok(None) | Err(_) => return HandlerOutcome::Stop,
@@ -2271,8 +2294,10 @@ where
             callback,
             this_object,
         } => {
-            // `drive_rewriter` keeps the cell that holds the list alive.
-            let Some(list) = sink.handler_list() else {
+            // `None` once the rewrite is over.
+            let Some(list) =
+                HandlerList::existing(js_HTMLRewriterTransform::handlers_get_cached(cell))
+            else {
                 debug_assert!(false, "HTMLRewriter handler ran without its handler list");
                 return HandlerOutcome::Stop;
             };
@@ -2304,12 +2329,20 @@ where
     // `BUN_JSC_validateExceptionChecks=1`: `JSGlobalObject__tryTakeException`
     // constructs a fresh `TopExceptionScope` whose ctor calls
     // `verifyExceptionCheckNeedIsSatisfied`, asserting if the preceding
-    // `Bun__JSValue__call` ThrowScope's `simulateThrow()` was not yet observed
+    // `AsyncContextFrame__callInContext` ThrowScope's `simulateThrow()` was not yet observed
     // by an enclosing scope. Open the scope here, read
     // the pending exception through it, and clear it explicitly.
     bun_jsc::top_scope!(scope, global);
 
-    let result = match cb.call(global, this_object, &[Z::to_js(wrapper, global)]) {
+    // In the async context of `transform()` (empty: none), not in the one of what drives the
+    // rewrite now: its reader, its input, the event loop.
+    let async_context = js_HTMLRewriterTransform::async_context_get_cached(cell);
+    let result = match cb.call_in_async_context(
+        global,
+        async_context.unwrap_or(JSValue::UNDEFINED),
+        this_object,
+        &[Z::to_js(wrapper, global)],
+    ) {
         Ok(v) => v,
         Err(_) => {
             // A termination (a worker's stop, an enclosing vm run's timeout) is not this handler's
@@ -2387,11 +2420,6 @@ where
             let wrapper = scopeguard::ScopeGuard::into_inner(guard);
             // lol-html moves the unit as it returns, so null the wrapper until `park_suspension` retargets it.
             wrapper.retarget(core::ptr::null_mut());
-            // The callback came out of the cell, and `drive_rewriter` keeps it alive.
-            let cell = sink
-                .cell
-                .try_get()
-                .expect("HTMLRewriter handler ran without the Transform cell");
             js_HTMLRewriterTransform::suspension_promise_set_cached(cell, global, result);
             sink.pending_suspension
                 .set(Some(Z::into_suspended(wrapper)));

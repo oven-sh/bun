@@ -3,6 +3,8 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "ModuleGraph.h"
+#include <JavaScriptCore/AsyncContextSwapScope.h>
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 
 #if ASSERT_ENABLED
@@ -188,3 +190,55 @@ JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue function
     return AsyncContextFrame::call(global, functionObject, thisValue, args);
 }
 #undef ASYNCCONTEXTFRAME_CALL_IMPL
+
+// What an owner captures when its operation starts, for AsyncContextFrame__callInContext. Undefined: none.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__current(JSGlobalObject* globalObject)
+{
+    return JSValue::encode(AsyncContextSwapScope::current(globalObject->vm(), globalObject));
+}
+
+// Bun__JSValue__call for a function registered before the operation that calls it, whose owner captured the context
+// of that operation. Strict, unlike a wrapper: an empty or undefined context is no context, never the caller's, and
+// what the function leaves current ends with the call. The owner refuses a disposed Bun.ModuleGraph's: this does not.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__callInContext(JSGlobalObject* globalObject, JSC::EncodedJSValue encodedAsyncContext, JSC::EncodedJSValue encodedFunction, JSC::EncodedJSValue encodedThis, size_t argumentCount, const JSC::EncodedJSValue* arguments)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue function = JSValue::decode(encodedFunction);
+    ASSERT_WITH_MESSAGE(function, "Cannot call function with JSValue zero.");
+    ASSERT(!dynamicDowncast<AsyncContextFrame>(function));
+    JSValue thisValue = JSValue::decode(encodedThis);
+    if (!thisValue)
+        thisValue = globalObject->globalThis();
+
+    MarkedArgumentBuffer args;
+    args.ensureCapacity(argumentCount);
+    for (size_t i = 0; i < argumentCount; i++)
+        args.append(JSValue::decode(arguments[i]));
+#if ASSERT_ENABLED
+    if (function.isCell())
+        auditEverything(globalObject, function, thisValue, args);
+#endif
+
+    auto callData = getCallData(function);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, function));
+        return {};
+    }
+
+    JSValue result;
+    {
+        AsyncContextSwapScope swap(vm, globalObject, JSValue::decode(encodedAsyncContext));
+        result = JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, thisValue, args);
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
+}

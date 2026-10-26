@@ -501,9 +501,13 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
-// A router that is made takes its routes from the resolver's cache, and opens no file that the cache has
-// the path of. reload() opens each file, and leaves out the route of one that does not open: a router
-// that is made after that throws for the file, until it opens again.
+// A router that is made takes its routes from the resolver's cache, and opens no file that was found or
+// opened since the last bust of its directory. reload() busts each directory, so it opens each file, and
+// leaves out the route of one that does not open: a router that is made after that throws for the file
+// until it opens or the resolver finds it, also when a router for other files walked the directory in
+// between. A failed resolve in the directory and another router's reload() bust it too. The second
+// Bun.build() reads a directory again with no bust, so no file is opened after it, not the one behind a
+// link either.
 // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
 it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer opens", async () => {
   using dir = tempDir("fsr-unreadable-route", {
@@ -512,7 +516,9 @@ it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer op
       import path from "path";
 
       const pages = path.join(import.meta.dir, "pages");
-      const make = () => new Bun.FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+      const linked = path.join(import.meta.dir, "linked");
+      const make = (dir = pages, fileExtensions = [".tsx"]) =>
+        new Bun.FileSystemRouter({ dir, style: "nextjs", fileExtensions });
       const show = (step: string, router: () => Bun.FileSystemRouter) => {
         try {
           console.log(step + ":", Object.keys(router().routes).sort().join(" "));
@@ -525,20 +531,50 @@ it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer op
         router.reload();
         return router;
       };
+      const forNotes = () => make(pages, [".md"]);
 
       show("made", () => router);
       fs.chmodSync(path.join(pages, "a.tsx"), 0o000);
       show("made again", make);
       show("after reload()", reloaded);
       show("made after reload()", make);
+      show("made for .md files", forNotes);
+      show("made after that", make);
+      Bun.resolveSync("./a.tsx", pages);
+      show("made once Bun.resolveSync() found the file", make);
       fs.chmodSync(path.join(pages, "a.tsx"), 0o644);
       show("made once the file opens", make);
       show("after reload() once the file opens", reloaded);
+
+      const busts = {
+        "a failed Bun.resolveSync()": () => Bun.resolveSync("./missing.tsx", pages),
+        "a failed require()": () => require(path.join(pages, "missing.tsx")),
+        "reload() of a router for .md files": () => forNotes().reload(),
+      };
+      for (const [name, bust] of Object.entries(busts)) {
+        fs.chmodSync(path.join(pages, "a.tsx"), 0o000);
+        show("made again", make);
+        try {
+          bust();
+        } catch {}
+        show("made after " + name, make);
+        fs.chmodSync(path.join(pages, "a.tsx"), 0o644);
+        show("made once the file opens", make);
+      }
+
+      show("made with a link to a.tsx", () => make(linked));
+      fs.chmodSync(path.join(linked, "a.tsx"), 0o000);
+      for (let i = 0; i < 2; i++) await Bun.build({ entrypoints: [path.join(linked, "index.tsx")] });
+      show("made after Bun.build() read the directory again", () => make(linked));
     `,
     "pages/index.tsx": "export default 1;\n",
     "pages/a.tsx": "export default 1;\n",
+    "pages/notes.md": "# notes\n",
     "pages/sub/b.tsx": "export default 1;\n",
+    "linked/index.tsx": "export default 1;\n",
+    "linked/a.tsx": "export default 1;\n",
   });
+  fs.symlinkSync("a.tsx", path.join(String(dir), "linked/to-a.tsx"));
   using unprivileged = unprivilegedSpawnOptions(String(dir));
 
   await using proc = Bun.spawn({
@@ -556,8 +592,22 @@ it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer op
       "made again: / /a /sub/b",
       "after reload(): / /sub/b",
       "made after reload(): EACCES opening route: <pages>/a.tsx",
+      "made for .md files: /notes",
+      "made after that: EACCES opening route: <pages>/a.tsx",
+      "made once Bun.resolveSync() found the file: / /a /sub/b",
       "made once the file opens: / /a /sub/b",
       "after reload() once the file opens: / /a /sub/b",
+      "made again: / /a /sub/b",
+      "made after a failed Bun.resolveSync(): EACCES opening route: <pages>/a.tsx",
+      "made once the file opens: / /a /sub/b",
+      "made again: / /a /sub/b",
+      "made after a failed require(): EACCES opening route: <pages>/a.tsx",
+      "made once the file opens: / /a /sub/b",
+      "made again: / /a /sub/b",
+      "made after reload() of a router for .md files: EACCES opening route: <pages>/a.tsx",
+      "made once the file opens: / /a /sub/b",
+      "made with a link to a.tsx: / /a /to-a",
+      "made after Bun.build() read the directory again: / /a /to-a",
     ],
     stderr: "",
     exitCode: 0,

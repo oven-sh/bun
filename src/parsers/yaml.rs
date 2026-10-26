@@ -2189,7 +2189,8 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) explicit_document_start_line: Option<Line>,
 
-    pub(crate) anchors: StringHashMap<Expr>,
+    /// The node of each anchor and the stack it took to parse it; see `parse_node`.
+    pub(crate) anchors: StringHashMap<(Expr, usize)>,
     /// Anchored collections enclosing the current position, innermost last.
     /// Pushed/popped only by `parse_collection`.
     pub(crate) open_collections: Vec<OpenCollection>,
@@ -2203,6 +2204,8 @@ pub struct Parser<'i, Enc: Encoding> {
     pub(crate) whitespace_buf: Vec<Whitespace<Enc>>,
 
     pub(crate) stack_check: StackCheck,
+    /// Since the innermost `PendingAnchor` was scanned; an alias counts as its target's stack.
+    least_stack_left: usize,
 
     pub(crate) merge_props_budget: usize,
     pub(crate) alias_expansion_budget: usize,
@@ -2250,6 +2253,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             tag_handles: StringHashMap::default(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
+            least_stack_left: usize::MAX,
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
             written: None,
@@ -2549,7 +2553,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match self.token.data {
                 TokenData::Anchor(name) if scanned_anchor.is_none() => {
-                    scanned_anchor = Some(PendingAnchor::new(&self.token, name));
+                    scanned_anchor = Some(self.pending_anchor(name, self.stack_check.remaining()));
                 }
                 TokenData::Tag(_) if scanned_tag.is_none() => {
                     scanned_tag = Some(self.token.clone());
@@ -3301,16 +3305,10 @@ pub(crate) struct PendingAnchor {
     name: StringRange,
     start: Pos,
     line: Line,
-}
-
-impl PendingAnchor {
-    fn new<Enc: Encoding>(token: &Token<Enc>, name: StringRange) -> Self {
-        Self {
-            name,
-            start: token.start,
-            line: token.line,
-        }
-    }
+    /// `stack_check.remaining()` where the annotated node begins.
+    stack_left: usize,
+    /// `Parser::least_stack_left` as it was; see `Parser::close_anchor`.
+    outer_least_stack_left: usize,
 }
 
 /// An anchored collection whose entries are being parsed: `node` is allocated
@@ -3367,11 +3365,40 @@ impl CollectionData for E::Object {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
+    /// The `&name` at `self.token`.
+    fn pending_anchor(&mut self, name: StringRange, stack_left: usize) -> PendingAnchor {
+        PendingAnchor {
+            name,
+            start: self.token.start,
+            line: self.token.line,
+            stack_left,
+            outer_least_stack_left: core::mem::replace(&mut self.least_stack_left, stack_left),
+        }
+    }
+
+    /// The stack used since `anchor` was scanned. Every anchor must come here: outer ones count it.
+    fn close_anchor(&mut self, anchor: &PendingAnchor) -> usize {
+        let stack = anchor.stack_left.saturating_sub(self.least_stack_left);
+        self.least_stack_left = self.least_stack_left.min(anchor.outer_least_stack_left);
+        stack
+    }
+
+    /// For an alias returned as it is: the anchors on the lines before it annotate nothing.
+    fn drop_anchors(&mut self, props: NodeProperties<Enc>) {
+        for anchor in [props.has_anchor, props.has_mapping_anchor]
+            .into_iter()
+            .flatten()
+        {
+            self.close_anchor(&anchor);
+        }
+    }
+
     // By value so binding consumes the `#[must_use]` anchor token.
     #[allow(clippy::needless_pass_by_value)]
     fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
+        let stack = self.close_anchor(&anchor);
         self.anchors
-            .put(Enc::key_bytes(anchor.name.slice(self.input)), node)
+            .put(Enc::key_bytes(anchor.name.slice(self.input)), (node, stack))
     }
 
     /// Parses a collection node: it is allocated (empty) before `body` parses
@@ -3412,13 +3439,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// resolves exactly as it would without cycle support. Only a name that
     /// would otherwise be unresolved is looked up among the enclosing
     /// collections still being parsed (innermost first): a cyclic alias.
-    fn resolve_alias(&mut self, name: StringRange) -> Result<Expr, ParseError> {
+    fn resolve_alias(&mut self, name: StringRange) -> Result<(Expr, usize), ParseError> {
         if self.written.is_some() {
-            return Ok(Expr::init(E::Boolean { value: false }, Loc::EMPTY));
+            return Ok((Expr::init(E::Boolean { value: false }, Loc::EMPTY), 0));
         }
         let name = name.slice(self.input);
-        if let Some(node) = self.anchors.get(Enc::key_bytes(name)) {
-            return Ok(*node);
+        if let Some(anchored) = self.anchors.get(Enc::key_bytes(name)) {
+            return Ok(*anchored);
         }
         let Some(OpenCollection { node, .. }) = self
             .open_collections
@@ -3433,7 +3460,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             CyclicAliases::Reject => Err(ParseError::CyclicAlias),
             CyclicAliases::Allow => {
                 self.has_cyclic_alias = true;
-                Ok(node)
+                Ok((node, 0))
             }
         }
     }
@@ -3756,7 +3783,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             match self.token.data {
                 TokenData::Anchor(name) if value_anchor.is_none() => {
-                    value_anchor = Some(PendingAnchor::new(&self.token, name));
+                    value_anchor = Some(self.pending_anchor(name, self.stack_check.remaining()));
                 }
                 TokenData::Tag(_) if value_tag.is_none() => {
                     value_tag = Some(self.token.clone());
@@ -3905,10 +3932,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(())
     }
 
+    /// Walkers of the tree recurse through aliases, so an alias is charged its target's stack.
     fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
-        if !self.stack_check.is_safe_to_recurse() {
+        let stack_left = self.stack_check.remaining();
+        if stack_left == 0 {
             return Err(ParseError::StackOverflow);
         }
+        self.least_stack_left = self.least_stack_left.min(stack_left);
 
         // c-ns-properties
         let mut node_props: NodeProperties<Enc> = NodeProperties::default();
@@ -3929,7 +3959,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 TokenData::Anchor(name) => {
-                    node_props.set_anchor(PendingAnchor::new(&self.token, *name))?;
+                    let name = *name;
+                    node_props.set_anchor(self.pending_anchor(name, stack_left))?;
                     self.scan(ScanOptions {
                         tag: node_props.tag(),
                         ..Default::default()
@@ -3965,8 +3996,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    let mut copy = self.resolve_alias(alias)?;
+                    let (mut copy, stack) = self.resolve_alias(alias)?;
 
+                    self.least_stack_left = stack_left
+                        .checked_sub(stack)
+                        .filter(|stack_left| *stack_left > 0)
+                        .ok_or(ParseError::StackOverflow)?
+                        .min(self.least_stack_left);
                     self.charge_alias_expansion(copy)?;
 
                     // update position from the anchor node to the alias node.
@@ -3983,6 +4019,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             break 'node copy;
                         }
                         if self.context.get() == Context::FlowKey {
+                            self.drop_anchors(node_props);
                             return Ok(copy);
                         }
                         // [192] implicit key sits at s-indent(n) (spaces only).
@@ -3994,6 +4031,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
                             if current_mapping_indent == alias_indent {
+                                self.drop_anchors(node_props);
                                 return Ok(copy);
                             }
                         }
@@ -4008,6 +4046,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         // [147] flow-map value is ns-flow-node, not a pair.
                         if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                            self.drop_anchors(node_props);
                             return Ok(copy);
                         }
 

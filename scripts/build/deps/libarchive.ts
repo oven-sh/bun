@@ -108,6 +108,14 @@ export const libarchive: Dependency = {
     // machinery (and its heap) are pure overhead and needless cross-thread
     // CRT-heap traffic.
     "patches/libarchive/archive_string-codepage-cache.patch",
+    // Upstream's gzip read filter never checks the CRC32/ISIZE trailer.
+    // Verify it, so a corrupted tarball fails the extract instead of
+    // installing the corrupted bytes.
+    "patches/libarchive/gzip-verify-trailer.patch",
+    // Adds the tar reader option `npm`, which `bun install` sets: where tar
+    // readers differ in what they take for a file, for its name or for the end
+    // of the archive, do what npm's does. Without the option nothing changes.
+    "patches/libarchive/tar-npm-compat.patch",
   ],
 
   // zlib-ng generates zlib.h during its own build; libarchive's gzip filter

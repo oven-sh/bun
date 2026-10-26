@@ -11,7 +11,7 @@ const AT_END: Message = Message::new("", "All `if` blocks contain the same code 
 const MOVE_BEFORE: Message = Message::new("", "Move the shared statements before the `if` statement.");
 const MOVE_AFTER: Message = Message::new("", "Move the shared statements after the `if` statement.");
 
-/// The statements of each block of `if {} else if {} else {}`.
+/// The statements of each block in `if {} else if {} else {}`.
 type Bodies<'a> = SmallVec<[List<'a, Stmt<'a>>; 4]>;
 
 impl Rule for BranchesSharingCode {
@@ -67,8 +67,8 @@ impl Rule for BranchesSharingCode {
     }
 }
 
-/// The blocks, if `if_stmt` is not itself after an `else`, there is an `else` at the end, and nothing but blocks in between. In a
-/// statement that is not a block oxlint sees no statements, so that nothing is shared.
+/// Returns the blocks if `if_stmt` doesn't itself follow an `else`, the chain ends with an `else`, and every branch is
+/// a block. oxlint sees no statements in a branch that isn't a block, so nothing would be shared.
 fn extract_if_sequence(if_stmt: Stmt<'_>) -> Option<Bodies<'_>> {
     let Some((.., Some(_))) = if_stmt.as_if() else {
         return None;
@@ -86,18 +86,18 @@ fn extract_if_sequence(if_stmt: Stmt<'_>) -> Option<Bodies<'_>> {
     Some(bodies)
 }
 
-/// The statement at `offset` from the start, or from the end, where the last is at 1.
+/// Returns the statement at `offset` from the start, or from the end, where the last statement is at 1.
 fn statement_at<'a>(body: List<'a, Stmt<'a>>, offset: usize, reverse: bool) -> Option<Stmt<'a>> {
     body.get(if reverse { body.len().checked_sub(offset)? } else { offset })
 }
 
-/// oxlint compares the syntax trees. Here it is the tokens, but for the `;` at the end.
+/// oxlint compares the ASTs. This compares the tokens, except a trailing `;`.
 fn content_eq<'a>(file: &'a File<'a>, left: Stmt<'a>, right: Stmt<'a>) -> bool {
     let without_semicolon = |it: Stmt<'a>| Span::new(it.span().start, it.semicolon().map_or_else(|| it.span().end, |it| it.start));
     left.tag() == right.tag() && ast_utils::equal_tokens(file, without_semicolon(left), without_semicolon(right))
 }
 
-/// How many statements all blocks start with, and how many they end with.
+/// Returns how many statements all the blocks start with, and how many they all end with.
 fn scan_blocks_for_eq<'a>(file: &'a File<'a>, bodies: &Bodies<'a>) -> (Option<usize>, Option<usize>) {
     let Some((&first_stmts, others)) = bodies.split_first() else {
         return (None, None);
@@ -117,7 +117,7 @@ fn scan_blocks_for_eq<'a>(file: &'a File<'a>, bodies: &Bodies<'a>) -> (Option<us
     (Some(start_end_eq).filter(|&it| it > 0), Some(end_begin_eq).filter(|&it| it > 0 && has_remaining_code_for_end))
 }
 
-/// The `if`, and in each block the statements that all have.
+/// Labels the `if`, and the shared statements in each block.
 fn label(labels: &mut Details, count: usize, bodies: &Bodies<'_>, reverse: bool) {
     labels.first("`if` statement declared here");
     for body in bodies {
@@ -135,7 +135,8 @@ fn duplicated_stmts_are_empty(count: usize, bodies: &Bodies<'_>, reverse: bool) 
     })
 }
 
-/// Whether the last statement of the block refers to what a `let`, `const` or `using` before it in the block declares.
+/// True if the block's last statement refers to something that an earlier `let`, `const` or `using` in the block
+/// declares.
 fn duplicated_end_references_branch_locals<'a>(body: List<'a, Stmt<'a>>) -> bool {
     let Some(duplicated) = body.last().map(Stmt::span) else {
         return false;
@@ -154,10 +155,10 @@ fn duplicated_end_references_branch_locals<'a>(body: List<'a, Stmt<'a>>) -> bool
     is_referenced
 }
 
-/// The last line of what is before `start`, as `str::lines` has it, if it is blank.
+/// Returns the last line of the text before `start`, as `str::lines` splits it, if it's blank.
 fn get_preceding_indent_str(text: &[u8], start: u32) -> Option<&[u8]> {
     let before = text.get(..start as usize).filter(|it| !it.is_empty())?;
-    // A line break at the end does not start another line.
+    // A trailing line break doesn't start another line.
     let line = match before.strip_suffix(b"\n") {
         Some(lines) => {
             let line = lines.get(bun_core::strings::last_index_of_char(lines, b'\n').map_or(0, |it| it + 1)..)?;

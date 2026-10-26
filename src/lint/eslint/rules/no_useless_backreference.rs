@@ -34,37 +34,37 @@ const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
 
 struct Lookaround {
-    is_behind: bool,
+    is_lookbehind: bool,
     is_negative: bool,
 }
 
 fn as_lookaround(node: regex::Node<'_>) -> Option<Lookaround> {
     match node.kind() {
         RegexKind::Assertion(Assertion::Lookahead { negate, .. }) => Some(Lookaround {
-            is_behind: false,
+            is_lookbehind: false,
             is_negative: negate,
         }),
         RegexKind::Assertion(Assertion::Lookbehind { negate, .. }) => Some(Lookaround {
-            is_behind: true,
+            is_lookbehind: true,
             is_negative: negate,
         }),
         _ => None,
     }
 }
 
-/// Why `group` has not captured anything whenever `bref`, which refers to it, is matched.
+/// Returns the reason why `group` can't have captured anything when `bref`, which refers to it, is matched.
 fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<Message> {
-    // Only its ancestors reach from where it starts to where it ends.
-    let is_around_bref =
+    // Only `bref`'s ancestors span its whole range.
+    let contains_bref =
         |node: regex::Node<'r>| node.start() <= bref.start() && bref.end() <= node.end() && node != bref;
-    if is_around_bref(group) {
+    if contains_bref(group) {
         return Some(NESTED);
     }
-    // From the group up to the lowest common ancestor, and the last node before that.
+    // Walk up from the group to the lowest common ancestor. `below_common` is the last node before it.
     let mut below_common = group;
     let mut is_in_negative_lookaround = false;
     let common = group.ancestors().find(|&ancestor| {
-        if is_around_bref(ancestor) {
+        if contains_bref(ancestor) {
             return true;
         }
         is_in_negative_lookaround |= as_lookaround(ancestor).is_some_and(|it| it.is_negative);
@@ -75,7 +75,7 @@ fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<Messa
         return Some(DISJUNCTIVE);
     }
     let lowest_common_lookaround = std::iter::once(common).chain(common.ancestors()).find_map(as_lookaround);
-    let is_matching_backward = lowest_common_lookaround.is_some_and(|it| it.is_behind);
+    let is_matching_backward = lowest_common_lookaround.is_some_and(|it| it.is_lookbehind);
     if !is_matching_backward && bref.end() <= group.start() {
         return Some(FORWARD);
     }
@@ -85,7 +85,7 @@ fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<Messa
     is_in_negative_lookaround.then_some(INTO_NEGATIVE_LOOKAROUND)
 }
 
-/// Whether some `\` in `pattern` is before what a backreference goes on with.
+/// Fast check: true if some `\` in `pattern` is followed by a character that can continue a backreference.
 fn may_have_backreference(pattern: &[u8]) -> bool {
     let mut rest = pattern;
     while let Some(at) = strings::index_of_char_usize(rest, b'\\') {
@@ -97,17 +97,18 @@ fn may_have_backreference(pattern: &[u8]) -> bool {
     false
 }
 
-/// `node` is the regular expression: a literal, or a call of `RegExp`.
+/// `node` is the regular expression: a literal, or a call to `RegExp`.
 fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoUselessBackreference>) {
-    check_pattern(pattern, Mode::of_flags(flags), &|_| node.span(), &|it| it.raw().to_vec(), cx);
+    check_pattern(pattern, Mode::from_flags(flags), &|_| node.span(), &|it| it.raw().to_vec(), cx);
 }
 
-/// `place`: where a backreference is reported. `shown`: what is said of a backreference and of a group.
+/// `report_span` returns the span to report for a backreference. `display_text` returns the text that the message shows
+/// for a backreference or a group.
 fn check_pattern<'a>(
     pattern: &[u8],
     mode: Mode,
-    place: &dyn Fn(regex::Node<'_>) -> Span,
-    shown: &dyn Fn(regex::Node<'_>) -> Vec<u8>,
+    report_span: &dyn Fn(regex::Node<'_>) -> Span,
+    display_text: &dyn Fn(regex::Node<'_>) -> Vec<u8>,
     cx: &Cx<'a, NoUselessBackreference>,
 ) {
     if !may_have_backreference(pattern) {
@@ -125,7 +126,7 @@ fn check_pattern<'a>(
         if problems.len() != resolved.len() {
             continue;
         }
-        // The groups in other alternatives do not matter if there is one in the same.
+        // Groups in other alternatives don't matter if there's one in the same alternative.
         if problems.iter().any(|problem| problem.0.id != DISJUNCTIVE.id) {
             problems.retain(|problem| problem.0.id != DISJUNCTIVE.id);
         }
@@ -137,9 +138,9 @@ fn check_pattern<'a>(
             1 => " and another group".to_owned(),
             count => format!(" and other {count} groups"),
         };
-        cx.report(place(bref), message)
-            .data("bref", shown(bref))
-            .data("group", shown(group))
+        cx.report(report_span(bref), message)
+            .data("bref", display_text(bref))
+            .data("group", display_text(group))
             .data("otherGroups", other_groups);
     }
 }
@@ -158,17 +159,17 @@ impl Rule for NoUselessBackreference {
         match (file.mentions("RegExp"), file.language().is_oxlint) {
             (false, _) => on,
             (true, true) => on.exprs(&[ExprTag::New]).calls_named(&["RegExp"]),
-            // Finding the calls takes resolving every name of the file.
+            // Finding the calls requires resolving every name in the file.
             (true, false) => on.finish(),
         }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // oxlint reads a pattern that is written where `RegExp` is called, and points at the backreference.
+        // oxlint only reads a pattern written directly in the `RegExp` call, and points at the backreference.
         if cx.language().is_oxlint {
             if let Some(pattern) = run_on_regex_node(e) {
-                let place = |it: regex::Node<'_>| pattern.span(it.start(), it.end());
-                check_pattern(pattern.text(), pattern.mode, &place, &|it| cx.slice(place(it)).to_vec(), cx);
+                let report_span = |it: regex::Node<'_>| pattern.span(it.start(), it.end());
+                check_pattern(pattern.text(), pattern.mode, &report_span, &|it| cx.slice(report_span(it)).to_vec(), cx);
             }
             return;
         }

@@ -2,11 +2,11 @@ use crate::prelude::*;
 use crate::text::{is_next_line_empty, skip_inline_comment, skip_trailing_comment};
 use crate::write;
 
-/// Prettier's `printArrayElements`: the elements of an array literal or an array pattern, each on
-/// its own line if they do not fit on one. `None` is a hole, which is written as the comma after it.
+/// Prettier's `printArrayElements`: the elements of an array literal or array pattern, each on its own line if they
+/// don't fit on one. `None` is a hole, which is printed as just the comma after it.
 ///
-/// `len`: the number of elements, including a rest element that the caller writes afterwards. The
-/// line break before that is written here.
+/// `len` is the number of elements, including a rest element that the caller prints afterwards. The line break before
+/// the rest element is printed here.
 pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
     len: usize,
     array: impl IntoIterator<Item = Option<N>>,
@@ -29,7 +29,7 @@ pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
             None => write!(f, ","),
         }
         if index != last_index {
-            // An empty line after an element is kept if the array breaks.
+            // Keep an empty line after an element if the array breaks.
             let text = f.source_text().as_bytes();
             let is_before_hole = matches!(elements.peek(), Some((_, None)));
             match element
@@ -43,14 +43,14 @@ pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
     }
 }
 
-/// For Prettier an empty line between two elements is kept if the array breaks. For oxfmt it breaks the array. From the
-/// first hole on, and before it, oxfmt keeps none.
+/// Prettier keeps an empty line between two elements if the array breaks. In oxfmt the empty line breaks the array.
+/// oxfmt drops empty lines right before the first hole and anywhere after it.
 fn empty_line_between_elements_breaks_array(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `isLineAfterElementEmpty`: the line after the comma that follows the element that ends
-/// at `end` is empty.
+/// Prettier's `isLineAfterElementEmpty`: true if the line after the comma following the element that ends at `end` is
+/// empty.
 pub(crate) fn is_line_after_element_empty(text: &[u8], end: usize) -> bool {
     let mut at = end;
     while text.get(at).is_some_and(|b| *b != b',') {

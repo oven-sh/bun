@@ -1,5 +1,5 @@
 //! JSC bridges for c-ares reply structs. Keeps `src/cares_sys/` free of
-//! `JSValue`/`JSGlobalObject`/`CallFrame` types — the original methods on
+//! `JSValue`/`JSGlobalObject` types — the original methods on
 //! each `struct_ares_*_reply` are aliased to the free fns here.
 
 use core::ffi::c_int;
@@ -7,9 +7,8 @@ use core::ffi::c_int;
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core as bstr;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
-};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc};
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
 
@@ -851,29 +850,19 @@ pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]
         .to_error_instance(global_this)
 }
 
-// ── canonicalizeIP host fn ─────────────────────────────────────────────────
-// `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
-#[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]
-fn bun_canonicalize_ip(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn canonicalize_ip<'a>(
+    cx: &mut JsScope<'a>,
+    (address, address_value): (&[u8], JsLocal<'a>),
+) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-
-    let arguments = callframe.arguments();
-
-    if arguments.is_empty() {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "canonicalizeIP() expects a string but received no arguments."
-        )));
-    }
-
-    let addr_arg = arguments[0].to_utf8(global_this)?;
-    let addr_str = addr_arg.slice();
+    let global_this = cx.global();
 
     let mut ip_addr = [0u8; bun_boringssl::INET6_ADDRSTRLEN + 1];
-    let Some(slice) = bun_boringssl::canonicalize_ip(addr_str, &mut ip_addr) else {
+    let Some(slice) = bun_boringssl::canonicalize_ip(address, &mut ip_addr) else {
         return Ok(JSValue::UNDEFINED);
     };
-    if addr_str == slice {
-        return Ok(arguments[0]);
+    if address == slice {
+        return Ok(address_value.to_js());
     }
 
     bun_string_jsc::create_utf8_for_js(global_this, slice)

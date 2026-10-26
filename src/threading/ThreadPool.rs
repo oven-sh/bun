@@ -708,6 +708,11 @@ impl ThreadPool {
         self.schedule_impl(&batch, true);
     }
 
+    /// False: the OS refused the first worker (or nothing was scheduled), and what is queued never runs.
+    pub fn has_workers(&self) -> bool {
+        self.sync.load(Ordering::Relaxed).spawned() > 0
+    }
+
     fn force_spawn(&self) {
         // Try to notify a thread
         let is_waking = false;

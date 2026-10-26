@@ -4,6 +4,7 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_ast::{E, Expr, ExprData, Loc, StoreStr};
 use bun_collections::VecExt as _;
+use bun_core::fmt::for_terminal;
 use bun_core::{Global, Output, strings};
 use bun_semver::{self as Semver, SlicedString};
 
@@ -21,11 +22,11 @@ use crate::bun_fs::FileSystem;
 
 use super::add_remove_with_filter::{
     WorkspaceMembers, WorkspaceTarget, fetch_entry_root, load_workspace_members,
-    local_relative_path, root_package_json_path,
+    local_relative_path,
 };
 use super::options::LogLevel;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
-use super::update_package_json_and_install::print_package_json_into_cache_entry;
+use super::update_package_json_and_install::save_entry;
 use super::workspace_package_json_cache::MapEntry;
 use super::{PackageManager, Subcommand, UpdateRequest};
 
@@ -91,14 +92,6 @@ fn root_entry<'a>(root_entries: &'a [RootEntry], name: &[u8]) -> Option<&'a [u8]
         .map(|(_, text)| &text[..])
 }
 
-fn root_target() -> WorkspaceTarget {
-    WorkspaceTarget {
-        name: Box::default(),
-        name_hash: None,
-        package_json_path: root_package_json_path(),
-    }
-}
-
 fn target_label(package_json: &Expr) -> Box<[u8]> {
     package_json
         .get(b"name")
@@ -117,8 +110,8 @@ fn note_follows(quiet: bool, name: &[u8], target: &[u8], entry: &[u8], declared:
         "{} in {} now follows the catalog entry \"{}\" instead of \"{}\"",
         BStr::new(name),
         BStr::new(target),
-        BStr::new(entry),
-        BStr::new(declared),
+        for_terminal(BStr::new(entry)),
+        for_terminal(BStr::new(declared)),
     );
     Output::flush();
 }
@@ -131,8 +124,8 @@ fn note_keeps(quiet: bool, name: &[u8], target: &[u8], declared: &[u8], entry: &
         "{} in {} keeps \"{}\" because the catalog entry is \"{}\"",
         BStr::new(name),
         BStr::new(target),
-        BStr::new(declared),
-        BStr::new(entry),
+        for_terminal(BStr::new(declared)),
+        for_terminal(BStr::new(entry)),
     );
     Output::flush();
 }
@@ -149,8 +142,8 @@ fn note_replaced(name: &[u8], from: &[u8], to: &[u8], also_used_by: &[Box<[u8]>]
     bun_core::note!(
         "catalog entry {} changed from \"{}\" to \"{}\"{}",
         BStr::new(name),
-        BStr::new(from),
-        BStr::new(to),
+        for_terminal(BStr::new(from)),
+        for_terminal(BStr::new(to)),
         BStr::new(&suffix),
     );
     Output::flush();
@@ -166,11 +159,11 @@ fn refuse_declared(literal: &[u8], target: &[u8], name: &[u8], flag: &[u8]) -> !
     Output::err_generic(
         "--catalog cannot add \"{s}\": {s} already declares {s}\n  bun add {s}@{s} {s}",
         (
-            BStr::new(literal),
+            for_terminal(BStr::new(literal)),
             BStr::new(target),
             BStr::new(name),
             BStr::new(name),
-            BStr::new(literal),
+            for_terminal(BStr::new(literal)),
             BStr::new(&flag_spelling),
         ),
     );
@@ -322,26 +315,17 @@ fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
         let Some(obj) = object.data.e_object() else {
             continue;
         };
-        for property in obj.properties.slice() {
-            let (Some(key), Some(value)) = (
-                property
-                    .key
-                    .as_ref()
-                    .and_then(|k| k.as_utf8_string_literal()),
-                property
-                    .value
-                    .as_ref()
-                    .and_then(|v| v.as_utf8_string_literal()),
-            ) else {
-                continue;
-            };
-            out.push((key.into(), value.into()));
-        }
+        let entries = obj.properties.slice().iter();
+        out.extend(
+            entries
+                .filter_map(PackageJSONEditor::string_pair)
+                .map(|(key, value)| (Box::from(key), Box::from(value))),
+        );
     }
 }
 
 fn member_targets(ws: &WorkspaceMembers) -> Vec<WorkspaceTarget> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = FileSystem::instance().top_level_dir();
     let mut buf = path_buffer_pool::get();
     ws.members
         .keys()
@@ -422,7 +406,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
                 Global::crash();
             }
         }
-        let root = fetch_entry_root(manager, &root_target());
+        let root = fetch_entry_root(manager, &WorkspaceTarget::root());
         if root.get(b"workspaces").is_none() {
             Output::err_generic(
                 "--catalog requires a \"workspaces\" field in the root package.json",
@@ -436,7 +420,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
         return;
     }
 
-    let root = fetch_entry_root(manager, &root_target());
+    let root = fetch_entry_root(manager, &WorkspaceTarget::root());
     if !root_defines_catalogs(&root) {
         return;
     }
@@ -473,13 +457,17 @@ fn existing_slot(package_json: &Expr, name: &[u8]) -> Option<StoreStr> {
     None
 }
 
+fn is_catalog_reference(slot: &[u8]) -> bool {
+    dependency::Tag::infer(dependency::trim_literal(slot)) == dependency::Tag::Catalog
+}
+
 fn catalog_group_of(reference: &[u8]) -> &[u8] {
+    let reference = dependency::trim_literal(reference);
     strings::trim(&reference[b"catalog:".len()..], &strings::WHITESPACE_CHARS)
 }
 
 fn references_flag_group(slot: &[u8], flag: &[u8]) -> bool {
-    dependency::Tag::infer(slot) == dependency::Tag::Catalog
-        && CatalogMap::same_name(catalog_group_of(slot), flag)
+    is_catalog_reference(slot) && CatalogMap::same_name(catalog_group_of(slot), flag)
 }
 
 fn find_add<'a>(
@@ -534,7 +522,9 @@ fn record_add(
         return Decision::Convert;
     }
 
-    let declared = declared.filter(|literal| catalogable_verbatim(literal));
+    let declared = declared
+        .map(dependency::trim_literal)
+        .filter(|literal| catalogable_verbatim(literal));
     let candidate = || match declared {
         Some(literal) => Candidate::Existing(literal.into()),
         None => Candidate::Latest,
@@ -800,8 +790,7 @@ pub(crate) fn edit_target(
             .iter()
             .find(|&&(name_hash, _)| name_hash == request.name_hash)
             .map(|&(_, slot)| slot);
-        let existing_ref = existing
-            .filter(|slot| dependency::Tag::infer(slot.slice()) == dependency::Tag::Catalog);
+        let existing_ref = existing.filter(|slot| is_catalog_reference(slot.slice()));
 
         let literal = if !options.before_install {
             let Some(reference) = existing_ref else {
@@ -986,11 +975,7 @@ pub(crate) fn edit_root_entry_before_install(
     }
     let root = root_package_json.root;
     edit_root_before_install(manager, &root)?;
-    print_package_json_into_cache_entry(root_package_json, root);
-    if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-        Global::crash();
-    }
+    save_entry(root_package_json, root, manager.log_mut());
     Ok(())
 }
 
@@ -1083,17 +1068,20 @@ pub(crate) fn edit_root_after_install(
                 let Some(seed) = lockfile.catalogs.find(buf, &add.group, &add.name) else {
                     continue;
                 };
-                if seed.version.tag != dependency::Tag::DistTag {
-                    continue;
-                }
+                let target = match seed.version.tag {
+                    dependency::Tag::DistTag => seed.version.dist_tag().name,
+                    // With `--exact`, a range the user typed is also replaced by the exact version.
+                    dependency::Tag::Npm
+                        if exact && matches!(add.candidate, Candidate::Explicit(_)) =>
+                    {
+                        seed.version.npm().name
+                    }
+                    _ => continue,
+                };
                 let mut literal = Vec::new();
                 if seed.version.literal.slice(buf).starts_with(b"npm:") {
-                    write!(
-                        &mut literal,
-                        "npm:{}@",
-                        BStr::new(seed.version.dist_tag().name.slice(buf))
-                    )
-                    .expect("infallible: in-memory write");
+                    write!(&mut literal, "npm:{}@", BStr::new(target.slice(buf)))
+                        .expect("infallible: in-memory write");
                 }
                 write!(
                     &mut literal,

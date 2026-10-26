@@ -72,7 +72,6 @@ export function initWebSocket(
   { url = "/_bun/hmr", onStatusChange }: { url?: string; onStatusChange?: (connected: boolean) => void } = {},
 ): WebSocketWrapper {
   url = normalizeWebSocketURL(url);
-  let firstConnection = true;
   let closed = false;
 
   // Allow some messages to be queued if sent before the connection is established.

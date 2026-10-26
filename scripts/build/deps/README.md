@@ -9,7 +9,8 @@ libraries/headers it provides.
 1. Copy `hdrhistogram.ts` (the simplest direct dep) to `<name>.ts`
 2. Fill in `name`, `repo`, `commit`, `sources`, `includes`, `provides.includes`
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
-4. `bun run scripts/build/phase3-test.ts` to verify it builds
+4. Add the name to `DepName` in `../source.ts`
+5. `bun run scripts/build/phase3-test.ts` to verify it builds
 
 That's it. For most deps you're done. If the dep's build is too entangled
 to list sources by hand (zlib-ng's per-file SIMD flags are about the
@@ -28,7 +29,7 @@ Case-sensitive filesystems enforce this.
 ## Removing a dependency
 
 1. Delete `<name>.ts`
-2. Remove from `allDeps` in `index.ts`
+2. Remove from `allDeps` in `index.ts`, and from `DepName` in `../source.ts`
 3. If any other dep has `fetchDeps: ["<name>"]`, remove that reference
 
 ## Updating a commit

@@ -1,0 +1,7 @@
+foo; // first
+;// second
+;
+bar; // third
+; // fourth
+; // fifth
+baz;

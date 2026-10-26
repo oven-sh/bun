@@ -1,7 +1,7 @@
 const { validateAbortSignal, validateFunction } = require("internal/validators");
 const { resistStopPropagation } = require("internal/shared");
 
-function addAbortListener(signal: AbortSignal, listener: EventListener): Disposable {
+function addAbortListener(signal: AbortSignal, listener: (event?: Event) => void): Disposable {
   if (signal === undefined) {
     throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
   }

@@ -10,11 +10,9 @@
 
 use bun_core::{Timespec, TimespecMockMode};
 
+use crate::generated_bindgen::timer::{js_Immediate as JSImmediate, js_Timeout as JSTimeout};
 use crate::jsc::JsCell;
-use crate::jsc::{
-    Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus,
-    generated::{JSImmediate, JSTimeout},
-};
+use crate::jsc::{Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus};
 use core::cell::Cell;
 // Note: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.
@@ -27,15 +25,20 @@ use super::{
 
 /// Data that TimerObject and ImmediateObject have in common.
 #[repr(C)]
-pub struct TimerObjectInternals {
+pub(crate) struct TimerObjectInternals {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`).
-    pub(crate) id: i32,
-    pub(crate) interval: Cell<u32>,
+    pub(crate) id: u64,
     pub this_value: JsCell<JsRef>,
+    pub(crate) interval: Cell<u32>,
     pub(crate) flags: Cell<Flags>,
-    /// `bun test --isolate` generation this timer was created in.
+    /// The context whose script created the timer.
+    pub(crate) context: bun_jsc::ContextId,
+    /// `VirtualMachine::test_isolation_generation` when it did.
     pub(crate) generation: u32,
 }
+
+// Putting `interval` between `id` and `this_value` would pad this to 48 bytes.
+const _: () = assert!(core::mem::size_of::<TimerObjectInternals>() == 40);
 
 impl TimerObjectInternals {
     /// Read-modify-write `self.flags` through the `Cell` (R-2: `flags` is
@@ -52,10 +55,11 @@ impl TimerObjectInternals {
 impl Default for TimerObjectInternals {
     fn default() -> Self {
         Self {
-            id: -1,
-            interval: Cell::new(0),
+            id: 0,
             this_value: JsCell::new(JsRef::empty()),
+            interval: Cell::new(0),
             flags: Cell::new(Flags::default()),
+            context: bun_jsc::ContextId::default(),
             generation: 0,
         }
     }
@@ -65,7 +69,7 @@ impl Default for TimerObjectInternals {
 // `bun_event_loop::EventLoopTimer::TimerFlags` so `bun_jsc::abort_signal::Timeout`
 // can name it without a forward dep on this crate. Re-exported here so existing
 // `TimerObjectInternals`/`All::update` callers see the same nominal type.
-pub use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
+pub(crate) use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `runImmediateTask` path for `__bun_run_immediate_task` (dispatch.rs).
@@ -276,8 +280,8 @@ impl TimerObjectInternals {
     pub(crate) fn init(
         &mut self,
         timer: JSValue,
-        global: &JSGlobalObject,
-        id: i32,
+        cx: &bun_jsc::JsThread<'_>,
+        id: u64,
         kind: Kind,
         interval: u32,
         callback: JSValue,
@@ -287,6 +291,9 @@ impl TimerObjectInternals {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
+        // Only a graph's context keeps a list of its timers.
+        // SAFETY: `vm` is the live per-thread VM.
+        let graph_context = unsafe { (*vm).as_graph_context(cx.context()) };
         *self = Self {
             id,
             flags: {
@@ -297,14 +304,21 @@ impl TimerObjectInternals {
                 Cell::new(f)
             },
             interval: Cell::new(interval),
-            // SAFETY: `vm` is the live per-thread VM; field read only.
-            generation: unsafe { (*vm).test_isolation_generation },
+            context: cx.context().id(),
+            generation: cx.vm().test_isolation_generation,
             this_value: JsCell::new(JsRef::empty()),
         };
+        // `self` is at its final address (embedded in its heap-allocated parent).
+        if let Some(context) = graph_context {
+            context.track_timer(
+                core::ptr::from_mut(self).cast(),
+                bun_jsc::ContextTimer::Object,
+            );
+        }
 
         if kind == Kind::SetImmediate {
-            JSImmediate::arguments_set_cached(timer, global, arguments);
-            JSImmediate::callback_set_cached(timer, global, callback);
+            JSImmediate::arguments_set_cached(timer, cx.global(), arguments);
+            JSImmediate::callback_set_cached(timer, cx.global(), callback);
             // `flags.kind` was just set to `SetImmediate` above.
             let TimerParent::Immediate(parent) = self.parent_ptr() else {
                 unreachable!()
@@ -317,16 +331,16 @@ impl TimerObjectInternals {
             // ref'd by event loop
             self.ref_();
         } else {
-            JSTimeout::arguments_set_cached(timer, global, arguments);
-            JSTimeout::callback_set_cached(timer, global, callback);
+            JSTimeout::arguments_set_cached(timer, cx.global(), arguments);
+            JSTimeout::callback_set_cached(timer, cx.global(), callback);
             JSTimeout::idle_timeout_set_cached(
                 timer,
-                global,
+                cx.global(),
                 JSValue::js_number(f64::from(interval)),
             );
             JSTimeout::repeat_set_cached(
                 timer,
-                global,
+                cx.global(),
                 if kind == Kind::SetInterval {
                     JSValue::js_number(f64::from(interval))
                 } else {
@@ -335,10 +349,11 @@ impl TimerObjectInternals {
             );
 
             // this increments the refcount and sets _idleStart
-            self.reschedule(timer, vm, global.as_ptr());
+            self.reschedule(timer, vm, cx.global().as_ptr());
         }
 
-        self.this_value.with_mut(|r| r.set_strong(timer, global));
+        self.this_value
+            .with_mut(|r| r.set_strong(timer, cx.global()));
     }
 
     /// Returns `true` if an
@@ -371,7 +386,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM (hook contract).
             || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: as above.
-            || s.generation != unsafe { (*vm).test_isolation_generation }
+            || unsafe { (*vm).has_outlived_its_script(s.context, s.generation) }
             // unref'd setImmediate callbacks should only run if there are things
             // keeping the event loop alive other than setImmediates
             || (!s.flags.get().is_keeping_event_loop_alive()
@@ -490,7 +505,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM (hook contract).
             || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: `vm` live per hook contract.
-            || s.generation != unsafe { (*vm).test_isolation_generation };
+            || unsafe { (*vm).has_outlived_its_script(s.context, s.generation) };
 
         s.set_event_loop_timer_state(EventLoopTimerState::FIRED);
 
@@ -834,7 +849,7 @@ impl TimerObjectInternals {
         }
 
         // (c) `vm.timer.maps.get(kind).swapRemove(id)` if
-        //     `has_accessed_primitive` — drops the i32→*mut EventLoopTimer
+        //     `has_accessed_primitive` — drops the id→*mut EventLoopTimer
         //     entry minted by `to_primitive`. Swap-remove: the id map is only
         //     ever keyed into, never iterated in order, and `deinit` runs for
         //     every id-accessed timer a GC sweep collects, so the ordered
@@ -845,11 +860,9 @@ impl TimerObjectInternals {
             let map = unsafe { (*state).timer.maps.get(kind) };
             if map.swap_remove(&self.id) {
                 // If this map got
-                // large, shrink it back down. Keys are i32, values are one
-                // pointer (~12 bytes per entry), so 21,000 timers accessed by
-                // ID ≈ 252 KiB; reclaim once the slack exceeds 256 KiB.
+                // large, shrink it back down: reclaim once the slack exceeds 256 KiB.
                 const ENTRY_SIZE: usize =
-                    core::mem::size_of::<i32>() + core::mem::size_of::<*mut EventLoopTimer>();
+                    core::mem::size_of::<u64>() + core::mem::size_of::<*mut EventLoopTimer>();
                 let allocated_bytes = map.capacity() * ENTRY_SIZE;
                 let used_bytes = map.count() * ENTRY_SIZE;
                 if allocated_bytes - used_bytes > 256 * 1024 {
@@ -864,6 +877,11 @@ impl TimerObjectInternals {
                 // SAFETY: as above.
                 unsafe { (*state).timer.maps.set_timeout.swap_remove(&self.id) };
             }
+        }
+
+        // SAFETY: `vm` is the live per-thread VM.
+        if let Some(context) = unsafe { (*vm).timer_context(self.context) } {
+            context.untrack_timer(core::ptr::from_mut(self).cast());
         }
 
         // (d) `setEnableKeepingEventLoopAlive(vm, false)` — without this a
@@ -899,11 +917,7 @@ impl TimerObjectInternals {
         unsafe { (*self.event_loop_timer()).state = state };
     }
 
-    pub(crate) fn do_ref(
-        &self,
-        _global: &JSGlobalObject,
-        this_value: JSValue,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(&self, this_value: JSValue) -> JSValue {
         this_value.ensure_still_alive();
 
         let did_have_js_ref = self.flags.get().has_js_ref();
@@ -920,14 +934,10 @@ impl TimerObjectInternals {
             self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), true);
         }
 
-        Ok(this_value)
+        this_value
     }
 
-    pub(crate) fn do_unref(
-        &self,
-        _global: &JSGlobalObject,
-        this_value: JSValue,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(&self, this_value: JSValue) -> JSValue {
         this_value.ensure_still_alive();
 
         let did_have_js_ref = self.flags.get().has_js_ref();
@@ -937,7 +947,7 @@ impl TimerObjectInternals {
             self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), false);
         }
 
-        Ok(this_value)
+        this_value
     }
 
     /// Node's deadline is `_idleStart + _idleTimeout`; writing `_idleStart`
@@ -972,18 +982,15 @@ impl TimerObjectInternals {
         &self,
         global_object: &JSGlobalObject,
         this_value: JSValue,
-    ) -> JsResult<JSValue> {
+    ) -> JSValue {
         // Immediates do not have a refresh function, and our binding generator should not let this
         // function be reached even if you override the `this` value calling a Timeout object's
         // `refresh` method
         debug_assert!(self.flags.get().kind() != Kind::SetImmediate);
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
-        if self.id == -1
-            || self.flags.get().kind() == Kind::SetImmediate
-            || self.flags.get().has_cleared_timer()
-        {
-            return Ok(this_value);
+        if self.flags.get().kind() == Kind::SetImmediate || self.flags.get().has_cleared_timer() {
+            return this_value;
         }
 
         self.this_value
@@ -994,13 +1001,11 @@ impl TimerObjectInternals {
             global_object.as_ptr(),
         );
 
-        Ok(this_value)
+        this_value
     }
 
-    pub(crate) fn has_ref(&self) -> JsResult<JSValue> {
-        Ok(JSValue::from(
-            self.flags.get().is_keeping_event_loop_alive(),
-        ))
+    pub(crate) fn has_ref(&self) -> bool {
+        self.flags.get().is_keeping_event_loop_alive()
     }
 
     /// First access mints an
@@ -1008,7 +1013,7 @@ impl TimerObjectInternals {
     /// `clearImmediate(+t)` (numeric-id form) can resolve it.
     ///
     /// Note (jsc/runtime crate cycle): `vm.timer.maps` resolved via `runtime_state()`.
-    pub(crate) fn to_primitive(&self) -> JsResult<JSValue> {
+    pub(crate) fn to_primitive(&self) -> JsResult<u64> {
         if !self.flags.get().has_accessed_primitive() {
             self.update_flags(|f| f.set_has_accessed_primitive(true));
             let state = crate::jsc_hooks::runtime_state();
@@ -1023,10 +1028,10 @@ impl TimerObjectInternals {
                     .timer
                     .maps
                     .get(self.flags.get().kind())
-                    .put(self.id, elt)
+                    .put_no_clobber(self.id, elt)
             }?;
         }
-        Ok(JSValue::js_number(f64::from(self.id)))
+        Ok(self.id)
     }
 
     /// Getter for `_destroyed`
@@ -1044,10 +1049,9 @@ impl TimerObjectInternals {
         }
     }
 
-    /// `.classes.ts` finalizer hook.
     /// Runs on the mutator thread during lazy sweep; do not touch any
     /// `JSValue`/`Strong` content here.
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         self.this_value.with_mut(|r| r.finalize());
     }
 

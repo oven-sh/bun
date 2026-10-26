@@ -378,33 +378,52 @@ devTest("import() evaluates a module with top-level await after require() refuse
       await 0;
       export const tla = "tla(" + flaky + ")";
     `,
+    // It has no await. A require() of it gets to "tla" through an import.
+    "via.ts": `
+      import { tla } from "./tla";
+      export const via = "via(" + tla + ")";
+    `,
     "routes/index.ts": `
+      function requireIt(load) {
+        try {
+          load();
+          return "required";
+        } catch (e) {
+          return e.message;
+        }
+      }
+      async function importVia() {
+        try {
+          const ns = await import("../via");
+          return ns === null ? "null" : ns.via;
+        } catch (e) {
+          return e.message;
+        }
+      }
       export default async function () {
-        const steps = [];
-        // "flaky" throws the first time. The body of "tla" does not run, and "tla" is stale.
-        try {
-          await import("../tla");
-          steps.push("loaded");
-        } catch (e) {
-          steps.push(e.message);
-        }
-        try {
-          require("../tla");
-          steps.push("required");
-        } catch (e) {
-          steps.push(e.message);
-        }
-        const ns = await import("../tla");
-        steps.push(ns === null ? "null" : ns.tla);
-        return Response.json(steps);
+        return Response.json([
+          // No load of "tla" ran before these two.
+          requireIt(() => require("../tla")),
+          requireIt(() => require("../via")),
+          // "flaky" throws the first time. The body of "tla" does not run, and "tla" is stale.
+          await importVia(),
+          requireIt(() => require("../tla")),
+          requireIt(() => require("../via")),
+          await importVia(),
+        ]);
       }
     `,
   },
   async test(dev) {
+    const refused = (id: string) =>
+      `Cannot require "${id}" because "tla.ts" uses top-level await, but 'require' is a synchronous operation.`;
     expect(await dev.fetch("/").json()).toEqual([
+      refused("tla.ts"),
+      refused("via.ts"),
       "flaky failed",
-      `Cannot require "tla.ts" because "tla.ts" uses top-level await, but 'require' is a synchronous operation.`,
-      "tla(flaky)",
+      refused("tla.ts"),
+      refused("via.ts"),
+      "via(tla(flaky))",
     ]);
   },
 });

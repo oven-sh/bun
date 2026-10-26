@@ -1,9 +1,10 @@
 import { spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  dtUnknownReaddir,
   isLinux,
   isWindows,
   makeTreeSync,
@@ -12,10 +13,11 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { chmodSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { mkfifo } from "mkfifo";
+import { chmodSync, existsSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
-import { join } from "path";
+import { dirname, join, relative } from "path";
 
 const { parseLockfile } = install_test_helpers;
 
@@ -1304,6 +1306,203 @@ describe.concurrent('a "workspaces" entry whose directory does not open', () => 
       } finally {
         chmodSync(secret, 0o755);
       }
+    });
+  });
+});
+
+// The walk of a "workspaces" entry gets a symlink as a symlink. It opens the link only to follow
+// it, and it follows a link as `bun install` does.
+describe.concurrent('a symlink in "workspaces"', () => {
+  type Layout = {
+    /** Directories with a package.json, from the root. The script of each prints its directory. */
+    packages: string[];
+    /** Directory links as `[link, target]`, both from the root. */
+    links: [link: string, target: string][];
+  };
+  const layouts = {
+    // A member that is a link, with a package below it.
+    member: { packages: ["packages/lib", "real/s", "real/s/nested"], links: [["packages/s", "real/s"]] },
+    // A link inside a member.
+    vendor: {
+      packages: ["packages/app", "elsewhere", "elsewhere/inner"],
+      links: [["packages/app/vendor", "elsewhere"]],
+    },
+    // A link below a link.
+    nested: {
+      packages: ["real/one", "real/one/deep", "other/b"],
+      links: [
+        ["up", "real"],
+        ["real/a", "other/b"],
+      ],
+    },
+    // A link with a package beside it. The directory it leads to has another parent.
+    beside: { packages: ["pk/pkga", "far/pkgb", "far/away/inner"], links: [["pk/lnk", "far/away"]] },
+    // Names with upper-case letters: a directory, a link to a package, a link to nothing.
+    upper: {
+      packages: ["packages/lib", "packages/MyLib", "real/s"],
+      links: [
+        ["packages/Sym", "real/s"],
+        ["packages/Broken", "nowhere"],
+      ],
+    },
+  } satisfies Record<string, Layout>;
+
+  /** `root`: the fields of the package.json at the root. Without it there is none. */
+  function fixture({ packages, links }: Layout, root?: { workspaces: string[] }) {
+    const files: Record<string, string> = {};
+    for (const dir of packages) {
+      const manifest = { name: dir.replaceAll("/", "-"), version: "1.0.0", scripts: { present: `echo ran:${dir}` } };
+      files[`${dir}/package.json`] = JSON.stringify(manifest);
+    }
+    if (root) files["package.json"] = JSON.stringify({ name: "ws", ...root });
+    const dir = tempDir("filter-symlink-workspaces", files);
+    for (const [link, target] of links) {
+      mkdirSync(dirname(join(String(dir), link)), { recursive: true });
+      // A junction needs no privilege on Windows. Its target is absolute and does not have to exist.
+      symlinkSync(join(String(dir), target), join(String(dir), link), "junction");
+    }
+    return dir;
+  }
+
+  async function run(cwd: string, args: string[], env: NodeJS.Dict<string> = bunEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, "present"],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      // The walk used to block in the open of a FIFO.
+      timeout: 30_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      ran: [...stdout.matchAll(/ran:(\S+)/g)].map(m => m[1]).sort(),
+      stderr,
+      exitCode,
+      signalCode: proc.signalCode,
+    };
+  }
+
+  /** The real directories of the members of `bun install`, from the root. */
+  async function installedDirs(cwd: string): Promise<string[]> {
+    const root = realpathSync(cwd);
+    return (await installedMembers(cwd))
+      .map(member => relative(root, realpathSync(join(cwd, member))).replaceAll("\\", "/"))
+      .sort();
+  }
+
+  const rows: [layout: keyof typeof layouts, workspaces: string[], members: string[]][] = [
+    // A link that a part of the entry other than `**` matches is a member.
+    ["member", ["packages/*"], ["packages/lib", "real/s"]],
+    ["member", ["packages/s"], ["real/s"]],
+    ["member", ["packages/s/**"], ["real/s", "real/s/nested"]],
+    ["member", ["packages/*/*"], ["real/s/nested"]],
+    ["vendor", ["packages/*/*"], ["elsewhere"]],
+    ["nested", ["up/*"], ["other/b", "real/one"]],
+    ["nested", ["up/*/*"], ["real/one/deep"]],
+    // `link/..` is the directory that holds the link, not the parent of what it leads to.
+    ["beside", ["pk/lnk/../pkga"], ["pk/pkga"]],
+    ["beside", ["pk/lnk/../p*"], ["pk/pkga"]],
+    ["beside", ["pk/lnk/../*"], ["pk/pkga"]],
+    // The walk opens an entry by its name on disk.
+    ["upper", ["packages/*"], ["packages/MyLib", "packages/lib", "real/s"]],
+  ];
+  test.each(rows.map(row => [`${row[0]} layout, ${JSON.stringify(row[1])}`, ...row] as const))(
+    "bun run and bun install find the same members for the %s",
+    async (_, layout, workspaces, members) => {
+      using dir = fixture(layouts[layout], { workspaces });
+      expect(await run(String(dir), ["run", "--workspaces"])).toMatchObject({ ran: members, exitCode: 0 });
+      expect(await installedDirs(String(dir))).toEqual(members);
+    },
+  );
+
+  // A file link and a FIFO need POSIX.
+  describe.skipIf(isWindows)("that leads to no directory", () => {
+    // `AGENTS.md` is a file. The links to it have upper-case names.
+    test.each([
+      ['"packages/*" and "packages/*/*"', ["packages/*", "packages/*/*"]],
+      ['no "workspaces"', undefined],
+    ])("a link to a file is no package, for %s", async (_, workspaces) => {
+      using dir = fixture({ packages: ["packages/lib"], links: [] }, workspaces && { workspaces });
+      await Bun.write(join(String(dir), "AGENTS.md"), "");
+      for (const at of ["CLAUDE.md", "packages/CLAUDE.md", "packages/lib/LICENSE"]) {
+        symlinkSync(relative(dirname(join(String(dir), at)), join(String(dir), "AGENTS.md")), join(String(dir), at));
+      }
+
+      expect(await run(String(dir), ["run", "--filter", "*"])).toMatchObject({
+        ran: ["packages/lib"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Nothing writes to the FIFO, so an open of it for reading never returns.
+    test.each([
+      ['"packages/*"', ["packages/*"]],
+      ['"packages/**"', ["packages/**"]],
+      ['no "workspaces"', undefined],
+    ])("a link to a FIFO does not stop the walk, for %s", async (_, workspaces) => {
+      using dir = fixture({ packages: ["packages/lib"], links: [] }, workspaces && { workspaces });
+      mkfifo(join(String(dir), "fifo"), 0o666);
+      for (const at of ["pipe", "packages/pipe", "packages/lib/pipe"]) {
+        symlinkSync(relative(dirname(join(String(dir), at)), join(String(dir), "fifo")), join(String(dir), at));
+      }
+
+      expect(await run(String(dir), ["run", "--filter", "*"])).toEqual({
+        ran: ["packages/lib"],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
+  // Some file systems give no kind for a directory entry. The walk then asks `lstat`.
+  describe.skipIf(!dtUnknownReaddir.available)("when the directory listing has no entry kinds", () => {
+    let env: NodeJS.Dict<string>;
+    // A C compiler on a busy machine can take longer than the default hook timeout.
+    beforeAll(async () => {
+      env = await dtUnknownReaddir.env();
+    }, 30_000);
+
+    test.each([
+      ["member", ["packages/*"], ["packages/lib", "real/s"]],
+      ["nested", ["up/*"], ["other/b", "real/one"]],
+      ["upper", ["packages/*"], ["packages/MyLib", "packages/lib", "real/s"]],
+    ] as const)("the %s layout has the same members for %j", async (layout, workspaces, members) => {
+      using dir = fixture(layouts[layout], { workspaces: [...workspaces] });
+      const result = await run(String(dir), ["run", "--workspaces"], env);
+      expect(result.stderr).toContain(dtUnknownReaddir.marker);
+      expect(result).toMatchObject({ ran: members, exitCode: 0 });
+    });
+  });
+
+  // Without "workspaces" nothing says which links lead to a package, so the walk goes through
+  // all of them.
+  describe('without "workspaces"', () => {
+    test("every package.json below the cwd is a candidate, also behind a link", async () => {
+      using dir = fixture({
+        packages: ["proj/a", "outside/b", "outside/c", "outside/c/deep"],
+        links: [
+          ["proj/b", "outside/b"],
+          ["proj/sub/Linked", "outside/c"],
+          ["proj/broken", "nowhere"],
+        ],
+      });
+
+      expect(await run(join(String(dir), "proj"), ["run", "--filter", "*"])).toMatchObject({
+        ran: ["outside/b", "outside/c", "outside/c/deep", "proj/a"],
+        exitCode: 0,
+      });
+    });
+
+    test("a link to a directory above itself does not loop", async () => {
+      using dir = fixture({ packages: ["proj/pkga", "proj/cyc"], links: [["proj/cyc/loop", "proj/cyc"]] });
+      // `cyc` is found at `proj/cyc` and once more through `loop`. The walk stops there.
+      expect(await run(join(String(dir), "proj"), ["run", "--filter", "*"])).toMatchObject({
+        ran: ["proj/cyc", "proj/cyc", "proj/pkga"],
+        exitCode: 0,
+      });
     });
   });
 });

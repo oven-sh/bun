@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
 use std::sync::OnceLock;
@@ -140,6 +140,8 @@ pub struct Entry {
 
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
+    /// The `bun_sys::FileKind` that the directory listing gave for the entry itself.
+    listed_kind: AtomicU8,
 
     abs_path: OnceLock<Interned>,
 }
@@ -211,6 +213,17 @@ impl Entry {
     pub fn abs_path_or_fill(&self, fill: impl FnOnce() -> Interned) -> Interned {
         let Ok(p) = self.abs_path_or_try_fill(|| Ok::<_, core::convert::Infallible>(fill()));
         p
+    }
+
+    /// The kind of the entry itself, from the directory listing. A symlink is `SymLink`. Never stats.
+    pub fn kind_no_follow(&self) -> bun_sys::FileKind {
+        use bun_sys::FileKind;
+        match self.listed_kind.load(Ordering::Relaxed) {
+            kind if kind == FileKind::Directory as u8 => FileKind::Directory,
+            kind if kind == FileKind::File as u8 => FileKind::File,
+            kind if kind == FileKind::SymLink as u8 => FileKind::SymLink,
+            _ => FileKind::Unknown,
+        }
     }
 
     /// Stat-on-first-use.
@@ -439,6 +452,12 @@ impl DirEntry {
             | DK::Door
             | DK::EventPort => return Ok(()),
         };
+        // Windows lists every reparse point as a symlink. Only `lstat` knows which ones are links.
+        let listed_kind = if cfg!(windows) && entry.kind == DK::SymLink {
+            DK::Unknown
+        } else {
+            entry.kind
+        };
 
         // Lowercase the entry basename once. The same bytes drive the
         // previous-generation case-insensitive probe, the new entry's
@@ -480,6 +499,9 @@ impl DirEntry {
                     // backref-deref pair.
                     let _guard = existing.mutex.lock_guard();
                     existing.dir = self.dir;
+                    existing
+                        .listed_kind
+                        .store(listed_kind as u8, Ordering::Relaxed);
 
                     // No cache rewrite here, even when the kind changed: a
                     // lock-free `kind()`/`symlink()` reader that already
@@ -544,6 +566,7 @@ impl DirEntry {
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
+                addr_of_mut!((*p).listed_kind).write(AtomicU8::new(listed_kind as u8));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we

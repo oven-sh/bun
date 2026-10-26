@@ -114,12 +114,12 @@ fn get_candidate_package_patterns<'a>(
                         if negated.take(pattern_bytes) {
                             continue;
                         }
-                        let size = pattern_bytes.len() + b"/package.json".len();
-                        let mut pattern = vec![0u8; size].into_boxed_slice();
-                        pattern[0..pattern_bytes.len()].copy_from_slice(pattern_bytes);
-                        pattern[pattern_bytes.len()..size].copy_from_slice(b"/package.json");
-
-                        out_patterns.push(pattern);
+                        // Joined as `bun install` joins it: `link/..` is the directory of `link`.
+                        let mut spill: Vec<u8> = Vec::new();
+                        out_patterns.push(Box::from(resolve_path::join_spill::<platform::Posix>(
+                            &mut spill,
+                            &[pattern_bytes, b"package.json".as_slice()],
+                        )));
                     }
                     _ => {
                         bun_core::pretty_errorln!(
@@ -379,7 +379,7 @@ impl<'a> PackageFilterIterator<'a> {
             self.root_dir,
             true,
             true,
-            false,
+            true,
             false,
             true,
             Some(glob_ignore_fn),

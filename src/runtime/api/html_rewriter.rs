@@ -618,6 +618,8 @@ pub struct RewriterPipe {
     context: Rc<RefCell<LOLHTMLContext>>,
     /// The context of the script that called `transform()`.
     script_context: bun_jsc::ContextId,
+    /// The cell's `asyncContext` holds the async context of `transform()`, and the handlers are called in it.
+    async_context_armed: Cell<bool>,
 
     // ── input side ───────────────────────────────────────────────────────
     /// Upstream to resume (`ready()`) once output drains, or `close()` once
@@ -935,6 +937,7 @@ impl RewriterPipe {
             rewriter: JsCell::new(None),
             context,
             script_context: cx.context().id(),
+            async_context_armed: Cell::new(false),
             input_source: Cell::new(SourceHandle::None),
             input_ended: Cell::new(false),
             js_pump_reaction_pending: Cell::new(false),
@@ -1040,6 +1043,13 @@ impl RewriterPipe {
         // This rewrite can outlive the rewriter's wrapper. Its handlers must not die with it.
         if let Some(handlers) = handlers {
             js_HTMLRewriterTransform::handlers_set_cached(cell, cx.global(), handlers.0);
+        }
+        // With `sync_only_noun` every handler runs inside this call, so the caller's context is already current.
+        if sync_only_noun.is_none()
+            && let Some(async_context) = cx.global().async_context_if_tracking()
+        {
+            js_HTMLRewriterTransform::async_context_set_cached(cell, cx.global(), async_context);
+            this.async_context_armed.set(true);
         }
 
         result_ref.set_url(original.url().clone());
@@ -1516,7 +1526,7 @@ impl RewriterPipe {
         HandlerList::existing(js_HTMLRewriterTransform::handlers_get_cached(cell))
     }
 
-    /// The rewrite is over: an output `Response` that outlives it stops retaining the handlers.
+    /// The rewrite is over: an output `Response` that outlives it stops retaining the handlers and the async context.
     fn release_handlers(&self) {
         debug_assert!(self.phase.get() == RewritePhase::Done);
         if self.driving.get() {
@@ -1531,7 +1541,23 @@ impl RewriterPipe {
                 &self.global,
                 JSValue::UNDEFINED,
             );
+            if self.async_context_armed.get() {
+                js_HTMLRewriterTransform::async_context_set_cached(
+                    cell,
+                    &self.global,
+                    JSValue::UNDEFINED,
+                );
+            }
         }
+    }
+
+    /// The async context of the `transform()` call, for the handler calls of an armed pipe.
+    fn async_context(&self) -> JSValue {
+        debug_assert!(self.sync_only_noun.get().is_none());
+        self.cell
+            .try_get()
+            .and_then(js_HTMLRewriterTransform::async_context_get_cached)
+            .unwrap_or(JSValue::UNDEFINED)
     }
 
     /// Holds `callback` for the end-tag handler that names the slot. `None`: no end tag can come.
@@ -2232,6 +2258,19 @@ fn record_handler_error(sink: &RewriterPipe, err: JSValue) {
     sink.set_handler_error(err);
 }
 
+/// Cold and out of line, or `JSValue::call` is no longer inlined in the eight handler closures.
+#[cold]
+#[inline(never)]
+fn call_in_transform_context(
+    sink: &RewriterPipe,
+    global: &JSGlobalObject,
+    callback: JSValue,
+    this_object: JSValue,
+    args: &[JSValue],
+) -> JsResult<JSValue> {
+    callback.call_in_async_context(global, sink.async_context(), this_object, args)
+}
+
 fn handler_callback<H, Z, L>(
     this: NonNull<H>,
     value: *mut L,
@@ -2309,7 +2348,13 @@ where
     // the pending exception through it, and clear it explicitly.
     bun_jsc::top_scope!(scope, global);
 
-    let result = match cb.call(global, this_object, &[Z::to_js(wrapper, global)]) {
+    let args = [Z::to_js(wrapper, global)];
+    let called = if sink.async_context_armed.get() {
+        call_in_transform_context(&sink, global, cb, this_object, &args)
+    } else {
+        cb.call(global, this_object, &args)
+    };
+    let result = match called {
         Ok(v) => v,
         Err(_) => {
             // A termination (a worker's stop, an enclosing vm run's timeout) is not this handler's

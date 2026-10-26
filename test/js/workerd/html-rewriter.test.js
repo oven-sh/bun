@@ -1,3 +1,4 @@
+import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
@@ -3537,6 +3538,576 @@ describe("GC pressure mid-rewrite", () => {
       stdout: JSON.stringify({ seen: 20, ended: true }),
       stderr: "",
       exitCode: 0,
+    });
+  });
+});
+
+// The handlers of one transform() all read the AsyncLocalStorage stores of the script that called
+// transform(), whichever piece of the body they are called for and whoever delivers or reads it.
+describe("content handlers run in the async context of transform()", () => {
+  // Made before the first test here, so that the tests above run in a process that has none.
+  let als;
+  beforeAll(() => {
+    als = new AsyncLocalStorage();
+  });
+
+  const pieces = 4;
+  const doctype = "<!doctype html>";
+  const piece = "<p>a<!--c--></p>\n";
+
+  // A handler of each kind, which records the store it reads. `onElement(n)` is called in the
+  // element handler of the nth <p>. The handlers are added to `base`.
+  function recorder(onElement = () => {}, base = new HTMLRewriter()) {
+    const seen = {
+      doctype: [],
+      element: [],
+      comments: [],
+      text: [],
+      endTag: [],
+      documentComments: [],
+      documentText: [],
+      end: [],
+    };
+    const ended = Promise.withResolvers();
+    let elements = 0;
+    const rewriter = base
+      .on("p", {
+        element(el) {
+          seen.element.push(als.getStore());
+          el.onEndTag(() => void seen.endTag.push(als.getStore()));
+          onElement(++elements);
+        },
+        comments() {
+          seen.comments.push(als.getStore());
+        },
+        text(chunk) {
+          if (chunk.text) seen.text.push(als.getStore());
+        },
+      })
+      .onDocument({
+        doctype() {
+          seen.doctype.push(als.getStore());
+        },
+        comments() {
+          seen.documentComments.push(als.getStore());
+        },
+        text(chunk) {
+          if (chunk.text === "\n") seen.documentText.push(als.getStore());
+        },
+        end() {
+          seen.end.push(als.getStore());
+          ended.resolve();
+        },
+      });
+    return { rewriter, seen, ended: ended.promise };
+  }
+  // What `seen` is when every handler read `store`, for the document that `gated()` yields.
+  const every = store => ({
+    doctype: [store],
+    element: Array(pieces).fill(store),
+    comments: Array(pieces).fill(store),
+    text: Array(pieces).fill(store),
+    endTag: Array(pieces).fill(store),
+    documentComments: Array(pieces).fill(store),
+    documentText: Array(pieces).fill(store),
+    end: [store],
+  });
+
+  // A document that arrives a part at a time: the doctype, then `parts[n]` after `release(n)`,
+  // then the end after `release(parts.length)`. A test releases part 0 after transform() returned
+  // and each later part from a handler, so every part is delivered by a native callback of its own.
+  function gated(parts = Array(pieces).fill(piece)) {
+    const gates = Array.from({ length: parts.length + 1 }, () => Promise.withResolvers());
+    return {
+      release: n => gates[n].resolve(),
+      releaseAll: () => gates.forEach(gate => gate.resolve()),
+      document: async function* () {
+        yield doctype;
+        for (let n = 0; n < parts.length; n++) {
+          await gates[n].promise;
+          yield parts[n];
+        }
+        await gates[parts.length].promise;
+      },
+    };
+  }
+
+  // Calls `use` with a fetch() Response whose body arrives as `document()` yields it.
+  async function withFetched(document, use) {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(document(), { headers: { "content-type": "text/html" } }),
+    });
+    return await use(await fetch(server.url));
+  }
+
+  const readers = {
+    ".text()": res => res.text(),
+    "for await of .body": async res => {
+      for await (const _ of res.body) {
+      }
+    },
+    "reader.read()": async res => {
+      const reader = res.body.getReader();
+      while (!(await reader.read()).done) {}
+    },
+    "Bun.serve()": async res => {
+      await using proxy = Bun.serve({ port: 0, fetch: () => res });
+      await (await fetch(proxy.url)).text();
+    },
+  };
+  for (const [name, read] of Object.entries(readers)) {
+    it(`for each piece of a fetch() body, read by ${name}`, async () => {
+      const { release, document } = gated();
+      const { rewriter, seen } = recorder(release);
+      await withFetched(document, input =>
+        als.run("transform", async () => {
+          const res = rewriter.transform(input);
+          release(0);
+          await read(res);
+        }),
+      );
+      expect(seen).toEqual(every("transform"));
+    });
+  }
+
+  it("for each piece of a Bun.spawn() stdout", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    // The child writes back each part that it is sent.
+    const send = n => {
+      if (n === pieces) return void proc.stdin.end();
+      proc.stdin.write((n === 0 ? doctype : "") + piece);
+      proc.stdin.flush();
+    };
+    const { rewriter, seen } = recorder(send);
+    await als.run("transform", async () => {
+      const res = rewriter.transform(new Response(proc.stdout));
+      send(0);
+      await res.text();
+    });
+    expect(seen).toEqual(every("transform"));
+    expect(await proc.exited).toBe(0);
+  });
+
+  // A ReadableStream that script made with the store "stream". Each pull() enqueues the next part of `document`.
+  const streamOf = document => {
+    const parts = document();
+    return als.run(
+      "stream",
+      () =>
+        new ReadableStream({
+          async pull(controller) {
+            const { done, value } = await parts.next();
+            if (done) controller.close();
+            else controller.enqueue(new TextEncoder().encode(value));
+          },
+        }),
+    );
+  };
+
+  it("for each piece of a ReadableStream that was made with another store", async () => {
+    const { release, document } = gated();
+    const { rewriter, seen } = recorder(release);
+    await als.run("transform", async () => {
+      const res = rewriter.transform(new Response(streamOf(document)));
+      release(0);
+      await res.text();
+    });
+    expect(seen).toEqual(every("transform"));
+  });
+
+  it("with no store when transform() had none, for each piece of a ReadableStream that was made with one", async () => {
+    const { release, document } = gated();
+    const { rewriter, seen } = recorder(release);
+    const res = rewriter.transform(new Response(streamOf(document)));
+    release(0);
+    await res.text();
+    expect(seen).toEqual(every(undefined));
+  });
+
+  it("for each piece, in each of two chained rewriters", async () => {
+    const { release, document } = gated();
+    const first = recorder();
+    const second = recorder(release);
+    await withFetched(document, async input => {
+      const between = als.run("first", () => first.rewriter.transform(input));
+      const res = als.run("second", () => second.rewriter.transform(between));
+      release(0);
+      await res.text();
+    });
+    expect({ first: first.seen, second: second.seen }).toEqual({ first: every("first"), second: every("second") });
+  });
+
+  it("before and after an await in an async handler", async () => {
+    const { release, document } = gated();
+    const stores = [];
+    const rewriter = new HTMLRewriter().on("p", {
+      async element() {
+        stores.push(als.getStore());
+        await new Promise(resolve => setImmediate(resolve));
+        stores.push(als.getStore());
+        release(stores.length / 2);
+      },
+    });
+    await withFetched(document, input =>
+      als.run("transform", async () => {
+        const res = rewriter.transform(input);
+        release(0);
+        await res.text();
+      }),
+    );
+    expect(stores).toEqual(Array(pieces * 2).fill("transform"));
+  });
+
+  // A handler that was registered before the recorder's returns a promise, so the recorder's run when the
+  // rewrite resumes. The document end handlers run last-registered-first.
+  it("for each piece, for the handlers that run after an async handler resumed the rewrite", async () => {
+    const { release, document } = gated();
+    const turn = () => new Promise(resolve => setImmediate(resolve));
+    const suspending = new HTMLRewriter().onDocument({ doctype: turn }).on("p", { element: turn });
+    const { rewriter, seen } = recorder(release, suspending);
+    rewriter.onDocument({ end: turn });
+    await withFetched(document, input =>
+      als.run("transform", async () => {
+        const res = rewriter.transform(input);
+        release(0);
+        await res.text();
+      }),
+    );
+    expect(seen).toEqual(every("transform"));
+  });
+
+  it("and not in that of the constructor, of on() or of the reader", async () => {
+    const { release, document } = gated();
+    const stores = [];
+    const rewriter = als.run("constructor", () => new HTMLRewriter());
+    als.run("on", () =>
+      rewriter.on("p", {
+        element() {
+          stores.push(als.getStore());
+          release(stores.length);
+        },
+      }),
+    );
+    await withFetched(document, async input => {
+      const res = als.run("transform", () => rewriter.transform(input));
+      release(0);
+      await als.run("reader", () => res.text());
+    });
+    expect(stores).toEqual(Array(pieces).fill("transform"));
+  });
+
+  it("an onEndTag() callback too, whichever store element.onEndTag() was called with", async () => {
+    const { release, document } = gated(["<p>a", "</p>"]);
+    const stores = [];
+    const rewriter = new HTMLRewriter().on("p", {
+      element(el) {
+        als.run("onEndTag", () =>
+          el.onEndTag(() => {
+            stores.push(als.getStore());
+            release(2);
+          }),
+        );
+        release(1);
+      },
+    });
+    await withFetched(document, input =>
+      als.run("transform", async () => {
+        const res = rewriter.transform(input);
+        release(0);
+        await res.text();
+      }),
+    );
+    expect(stores).toEqual(["transform"]);
+  });
+
+  it("a store that a handler enters ends with that handler", async () => {
+    const stores = [];
+    const rewriter = new HTMLRewriter().on("p", {
+      element() {
+        stores.push(als.getStore());
+        als.enterWith("handler");
+      },
+    });
+    const after = await als.run("transform", async () => {
+      const res = rewriter.transform(new Response("<p>a</p><p>b</p>"));
+      const store = als.getStore();
+      await res.text();
+      return store;
+    });
+    expect({ stores, after }).toEqual({ stores: ["transform", "transform"], after: "transform" });
+  });
+
+  it("a handler that throws for a later piece rejects the body with what it threw", async () => {
+    const { release, releaseAll, document } = gated();
+    const failure = new Error("handler failed");
+    const stores = [];
+    const rewriter = new HTMLRewriter().on("p", {
+      element() {
+        stores.push(als.getStore());
+        if (stores.length === 2) throw failure;
+        release(stores.length);
+      },
+    });
+    await withFetched(document, input =>
+      als.run("transform", async () => {
+        const res = rewriter.transform(input);
+        release(0);
+        expect(await res.text().catch(error => error)).toBe(failure);
+        releaseAll();
+      }),
+    );
+    expect(stores).toEqual(["transform", "transform"]);
+  });
+
+  describe("for each read of a file", () => {
+    // Each <p> is longer than one read of the file, so a text handler runs more than once for it.
+    const element = `<p>${Buffer.alloc(256 * 1024, "a").toString()}<!--c--></p>\n`;
+    const dir = tempDirWithFiles("hr-async-context", {
+      "in.html": doctype + Buffer.alloc(element.length * pieces, element).toString(),
+    });
+    const file = path.join(dir, "in.html");
+    const distinct = seen =>
+      Object.fromEntries(Object.entries(seen).map(([kind, stores]) => [kind, [...new Set(stores)]]));
+    const everyKind = store => Object.fromEntries(Object.keys(every(store)).map(kind => [kind, [store]]));
+
+    it("when nothing reads the output", async () => {
+      const { rewriter, seen, ended } = recorder();
+      als.run("transform", () => rewriter.transform(new Response(Bun.file(file))));
+      await ended;
+      expect(distinct(seen)).toEqual(everyKind("transform"));
+    });
+
+    it("when the reader has another store", async () => {
+      const { rewriter, seen } = als.run("on", recorder);
+      const res = als.run("transform", () => rewriter.transform(new Response(Bun.file(file))));
+      await als.run("reader", () => res.text());
+      expect(distinct(seen)).toEqual(everyKind("transform"));
+    });
+
+    it("when transform() is called with no store and the reader has one", async () => {
+      const { rewriter, seen } = recorder();
+      const res = rewriter.transform(new Response(Bun.file(file)));
+      await als.run("reader", () => res.text());
+      expect(distinct(seen)).toEqual(everyKind(undefined));
+    });
+
+    it("of each transform() of one HTMLRewriter", async () => {
+      const counts = new Map();
+      const rewriter = new HTMLRewriter().on("p", {
+        element() {
+          const store = als.getStore();
+          counts.set(store, (counts.get(store) ?? 0) + 1);
+        },
+      });
+      const responses = ["a", "b"].map(store => als.run(store, () => rewriter.transform(new Response(Bun.file(file)))));
+      await Promise.all(responses.map(res => res.text()));
+      expect([...counts].sort()).toEqual([
+        ["a", pieces],
+        ["b", pieces],
+      ]);
+    });
+  });
+
+  // The async context of a Bun.ModuleGraph's script also says that the script is the graph's.
+  describe("of a Bun.ModuleGraph", () => {
+    const dir = tempDirWithFiles("hr-async-context-graph", {
+      "rewrite.mjs": /* js */ `
+        export function rewrite(input, say) {
+          return new HTMLRewriter()
+            .on("p", { element() { say("element"); } })
+            .onDocument({ end() { say("end"); } })
+            .transform(input);
+        }
+        export const fetches = url => fetch(url);
+      `,
+    });
+    // A graph, its instance of rewrite.mjs, and a `say` that records the context it is called in.
+    async function graphOf() {
+      const graph = new Bun.ModuleGraph();
+      const said = [];
+      let elements = 0;
+      const say = (what, release) => {
+        const current = Bun.ModuleGraph.current;
+        said.push(`${what} in ${current === graph ? "the graph" : current ? "another graph" : "the host"}`);
+        if (what === "element") release(++elements);
+      };
+      return { graph, said, say, module: await graph.import(path.join(dir, "rewrite.mjs")) };
+    }
+
+    it("the graph's handlers run in the graph's context for each piece of a body that the host fetched", async () => {
+      const { release, document } = gated();
+      const { graph, said, say, module } = await graphOf();
+      using _ = graph;
+      await withFetched(document, async input => {
+        const res = graph.run(() => module.rewrite(input, what => say(what, release)));
+        release(0);
+        await res.text();
+      });
+      expect(said).toEqual([...Array(pieces).fill("element in the graph"), "end in the graph"]);
+    });
+
+    it("the host's handlers run in the host's context for each piece of a body that the graph fetched", async () => {
+      const { release, document } = gated();
+      const { graph, said, say, module } = await graphOf();
+      using _ = graph;
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(document()) });
+      const input = await graph.run(() => module.fetches(server.url.href));
+      const res = new HTMLRewriter()
+        .on("p", { element: () => say("element", release) })
+        .onDocument({ end: () => say("end", release) })
+        .transform(input);
+      release(0);
+      await res.text();
+      expect(said).toEqual([...Array(pieces).fill("element in the host"), "end in the host"]);
+    });
+  });
+
+  // The rewrite holds the async context of transform() for its handler calls, and no longer.
+  describe("an output Response that outlives its rewrite does not keep the store of transform()", () => {
+    const N = 60;
+    const failure = new Error("handler failed");
+    const heldStream = html => {
+      let controller;
+      const stream = new ReadableStream({ start: c => void (controller = c) });
+      return {
+        stream,
+        send() {
+          controller.enqueue(new TextEncoder().encode(html));
+          controller.close();
+        },
+      };
+    };
+    // Each returns what script keeps afterwards.
+    const rewrites = {
+      "that completes inside transform()": async () => {
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response("<p>x</p>"));
+        await res.text();
+        return res;
+      },
+      "that completes after transform() returned": async () => {
+        const input = heldStream("<p>x</p>");
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(input.stream));
+        input.send();
+        await res.text();
+        return res;
+      },
+      "that a handler fails": async () => {
+        const input = heldStream("<p>x</p>");
+        const res = new HTMLRewriter()
+          .on("p", {
+            element() {
+              throw failure;
+            },
+          })
+          .transform(new Response(input.stream));
+        input.send();
+        expect(await res.text().catch(error => error)).toBe(failure);
+        return res;
+      },
+      "that its reader cancels": async () => {
+        const input = heldStream("<p>x</p>");
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(input.stream));
+        const reader = res.body.getReader();
+        await reader.cancel();
+        return [res, reader];
+      },
+      // The cancel lands while lol-html is on the stack: it still has the end tag and the second <p> to run handlers for.
+      "that a handler cancels": async () => {
+        const input = heldStream("<p>x</p><p>y</p>");
+        const store = als.getStore();
+        const stores = [];
+        const res = new HTMLRewriter()
+          .on("p", {
+            element(el) {
+              stores.push(als.getStore());
+              el.onEndTag(() => void stores.push(als.getStore()));
+              if (stores.length === 1) reader.cancel();
+            },
+          })
+          .transform(new Response(input.stream));
+        const reader = res.body.getReader();
+        input.send();
+        // `reader.closed` settles inside the first call, before the later ones run: poll instead.
+        for (let turn = 0; stores.length < 4 && turn < 100; turn++) await new Promise(resolve => setImmediate(resolve));
+        expect(stores.map(read => read === store)).toEqual([true, true, true, true]);
+        return [res, reader];
+      },
+    };
+
+    it.each(Object.entries(rewrites))("a rewrite %s", async (_, rewrite) => {
+      const kept = [];
+      const stores = [];
+      for (let i = 0; i < N; i++) {
+        const store = {};
+        stores.push(new WeakRef(store));
+        kept.push(await als.run(store, rewrite));
+      }
+      Bun.gc(true);
+
+      // If the rewrite kept it: all N, for as long as `kept` is.
+      expect(stores.filter(store => store.deref() !== undefined).length).toBeLessThan(N / 4);
+      expect(kept).toHaveLength(N);
+    });
+  });
+
+  // These read the same before the handlers were called in the context of transform().
+  describe("as before", () => {
+    it("a handler of transform(string) and of transform(ArrayBuffer) reads the store of its caller", () => {
+      const stores = [];
+      const rewriter = new HTMLRewriter()
+        .on("p", { element: () => void stores.push(als.getStore()) })
+        .onDocument({ end: () => void stores.push(als.getStore()) });
+      als.run("string", () => rewriter.transform("<p>a</p>"));
+      als.run("buffer", () => rewriter.transform(new TextEncoder().encode("<p>a</p>").buffer));
+      expect(stores).toEqual(["string", "string", "buffer", "buffer"]);
+    });
+
+    // Every handler of these runs inside transform(), as a plain call of its caller.
+    it.each([
+      ["string", html => html],
+      ["ArrayBuffer", html => new TextEncoder().encode(html).buffer],
+    ])("a store that a handler of transform(%s) enters is read by the next handler and by the caller", (_, input) => {
+      const stores = [];
+      const rewriter = new HTMLRewriter()
+        .on("p", {
+          element() {
+            stores.push(als.getStore());
+            als.enterWith("handler");
+          },
+        })
+        .onDocument({ end: () => void stores.push(als.getStore()) });
+      const after = als.run("transform", () => {
+        rewriter.transform(input("<p>a</p><p>b</p>"));
+        return als.getStore();
+      });
+      expect({ stores, after }).toEqual({ stores: ["transform", "handler", "handler"], after: "handler" });
+    });
+
+    it("a handler from AsyncResource.bind() reads the store that it was bound with", async () => {
+      const { release, document } = gated();
+      const stores = [];
+      const element = als.run("bound", () =>
+        AsyncResource.bind(() => {
+          stores.push(als.getStore());
+          release(stores.length);
+        }),
+      );
+      const rewriter = new HTMLRewriter().on("p", { element });
+      await withFetched(document, input =>
+        als.run("transform", async () => {
+          const res = rewriter.transform(input);
+          release(0);
+          await res.text();
+        }),
+      );
+      expect(stores).toEqual(Array(pieces).fill("bound"));
     });
   });
 });

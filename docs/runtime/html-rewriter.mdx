@@ -144,6 +144,18 @@ try {
 }
 ```
 
+Handlers run in the async context of the `transform()` call. An
+`AsyncLocalStorage` store that is active when you call `transform(response)` is
+the store that every handler reads, for every part of the body. A handler does
+not read the store of the code that reads the result, nor of the code that
+produces the body stream. A store that a handler sets with `enterWith()` ends
+when that handler returns. To give a handler the context of its `on()` call
+instead, wrap it with `AsyncResource.bind()`.
+
+`transform()` on a `string` or `ArrayBuffer` calls every handler before it
+returns, as plain calls in the context of its caller. A store that a handler
+sets there with `enterWith()` stays for the next handler and for the caller.
+
 `transform()` on a `string` or `ArrayBuffer` has to return its result
 synchronously, so it cannot wait for a handler that needs the event loop to turn
 (a timer, I/O, a `fetch`). Such a handler makes `transform()` throw a

@@ -44,23 +44,33 @@ fn dedent_lines(text: &[u8], base_indent: usize) -> Vec<u8> {
     result
 }
 
-/// Returns `text` without the blank lines at its start. The first line with text keeps its indentation.
-fn trim_leading_blank_lines(text: &[u8]) -> &[u8] {
+/// Returns the code of an example: `text` without the blank lines around it. The first line keeps its indentation
+/// when lines follow it, as they keep theirs. Alone, it is trimmed, as oxfmt trims it: that is stable.
+fn example_code(text: &[u8]) -> &[u8] {
     let first_text = text.len() - strings::trim_unicode_whitespace_start(text).len();
-    match strings::last_index_of_char(&text[..first_text], b'\n') {
+    let code = match strings::last_index_of_char(&text[..first_text], b'\n') {
         Some(line_break) => &text[line_break + 1..],
         None => &text[first_text..],
+    };
+    let code = strings::trim_unicode_whitespace_end(code);
+    match strings::contains_char(code, b'\n') {
+        true => code,
+        false => strings::trim_unicode_whitespace_start(code),
     }
 }
 
 /// Splits `rest`, the lines after an opening fence, into the code and the closing fence: the last line that is ```
-/// behind its indentation, since a formatted example indents the fence with the code. oxfmt 0.72 finds it at the
-/// start of the line only, and on its second pass prints the block as code, with ` *   ```;` at the end.
-fn split_at_closing_fence(rest: &[u8]) -> Option<(&[u8], &[u8])> {
+/// behind `fence_indent`, the indentation of the opening fence, since a formatted example indents both with the code.
+/// oxfmt 0.72 finds it at the start of the line only, and on its second pass prints the block as code, with
+/// ` *   ```;` at the end.
+fn split_at_closing_fence<'a>(rest: &'a [u8], fence_indent: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
     let mut end = rest.len();
     loop {
         let start = strings::last_index_of_char(&rest[..end], b'\n').map_or(0, |at| at + 1);
-        if strings::trim_unicode_whitespace_start(&rest[start..end]).starts_with(b"```") {
+        if rest[start..end]
+            .strip_prefix(fence_indent)
+            .is_some_and(|line| line.starts_with(b"```"))
+        {
             let inner = strings::trim_unicode_whitespace_end(&rest[..start]);
             return Some((inner, strings::trim_unicode_whitespace(&rest[start..])));
         }
@@ -125,7 +135,7 @@ impl JsdocFormatter<'_> {
         let raw_text = tag.comment().parsed_preserving_whitespace();
         // The first line keeps its indentation, so that `push_raw_code_lines` sees what an earlier pass wrote in front
         // of every line. oxfmt trims it, and moves the lines after it to the right on every pass.
-        let mut code = strings::trim_unicode_whitespace_end(trim_leading_blank_lines(&raw_text));
+        let mut code = example_code(&raw_text);
         let out = self.content_lines.begin_line();
         out.push(b'@');
         out.extend_from_slice(normalized_kind);
@@ -136,9 +146,7 @@ impl JsdocFormatter<'_> {
         {
             out.extend_from_slice(b" <caption>");
             out.extend_from_slice(&rest[..end + END.len()]);
-            code = strings::trim_unicode_whitespace_end(trim_leading_blank_lines(
-                &rest[end + END.len()..],
-            ));
+            code = example_code(&rest[end + END.len()..]);
         }
         self.format_example_code(code);
     }
@@ -184,10 +192,10 @@ impl JsdocFormatter<'_> {
         // Three backticks also parse as JavaScript, so check for fences first.
         let (first_line, rest) = strings::split_once_char(code, b'\n').unwrap_or((code, b""));
         let lang_line = strings::trim_unicode_whitespace_start(first_line);
+        let fence_indent = &first_line[..first_line.len() - lang_line.len()];
         if lang_line.starts_with(b"```")
-            && let Some((inner_code, closing_fence)) = split_at_closing_fence(rest)
+            && let Some((inner_code, closing_fence)) = split_at_closing_fence(rest, fence_indent)
         {
-            let fence_indent = &first_line[..first_line.len() - lang_line.len()];
             return self.format_example_fenced_block(
                 fence_indent,
                 lang_line,

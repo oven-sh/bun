@@ -567,6 +567,12 @@ export function add(a, b) {}
       example(["if (", "  x"]),
       example(["  if (", "    x"]),
     ],
+    [
+      "one indented line that doesn't parse, with keepUnparsableExampleIndent",
+      keep,
+      example(["    npm install foo"]),
+      example(["  npm install foo"]),
+    ],
     // oxfmt trims the first line and prints `  if (` / `      x`, then moves the second line right on each pass.
     [
       "indented code that doesn't parse, with keepUnparsableExampleIndent",
@@ -614,6 +620,16 @@ export function add(a, b) {}
     expect(second.files["a.js"]).toBe(printed);
     expect(second.stderr).toBe("");
     expect(second.exitCode).toBe(0);
+  });
+
+  // The closing fence is indented like the opening fence. A fence in the text after the block, indented like the
+  // code, doesn't close it. oxfmt prints the same, and reads the whole block as code on its second pass.
+  test("text after a fenced example that has an indented fence in it", async () => {
+    const input = example(["```js", "foo()", "```", "Notes:", "- Also:", "  ```js", "  bar()", "  ```"]);
+    const printed = example(["  ```js", "  foo();", "  ```", "Notes:", "- Also:", "  ```js", "  bar()", "  ```"]);
+    const result = await format({ ...bunfig("jsdoc = true"), "a.js": input });
+    expect(result.files["a.js"]).toBe(printed);
+    expect(result.exitCode).toBe(0);
   });
 });
 

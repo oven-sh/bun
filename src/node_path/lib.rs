@@ -2172,24 +2172,23 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     resolve_windows_walk_t::<T, false>(paths, buf, buf2)
 }
 
-/// [`resolve_windows_t`] without the working directory. `None` when the walk reads every path
-/// and the resolved path still has no root or no device. `path.win32.resolve` then reads the
-/// argument before `paths`, so Node validates that argument only in this case.
-pub fn resolve_windows_in_paths_t<'a, T: PathCharCwd>(
-    paths: &[&[T]],
-    buf: &'a mut [T],
-    buf2: &mut [T],
-) -> Option<MaybeSlice<'a, T>> {
-    match resolve_windows_walk_t::<T, true>(paths, buf, buf2) {
-        Ok(resolved) if resolved.is_empty() => None,
-        resolved => Some(resolved),
-    }
+/// Whether the walk of [`resolve_windows_t`] stops inside `paths`: they give it a root and a
+/// device, so it does not read the working directory. When it does not stop there,
+/// `path.win32.resolve` reads the argument before `paths`. Node validates that argument only
+/// in this case, so `node:path` calls this only for an argument that is not a string.
+#[cold]
+pub fn resolve_windows_stops_in_paths_t<T: PathCharCwd>(paths: &[&[T]], buf2: &mut [T]) -> bool {
+    !matches!(
+        resolve_windows_walk_t::<T, true>(paths, &mut [], buf2),
+        Ok([])
+    )
 }
 
-/// The walk of [`resolve_windows_t`]. With `IN_PATHS`, it does not read the working directory:
-/// when it has read every path, it returns an empty path. A resolved path is never empty.
+/// The walk of [`resolve_windows_t`]. With `IN_PATHS`, it resolves no path and does not read the
+/// working directory. It returns an empty path when it has read every path, and a path that is
+/// not empty when it stops inside them.
 ///
-/// `IN_PATHS` is a const so that `resolve_windows_t` is the walk without this test.
+/// `IN_PATHS` is a const so that `resolve_windows_t` is the walk without these tests.
 fn resolve_windows_walk_t<'a, T: PathCharCwd, const IN_PATHS: bool>(
     paths: &[&[T]],
     buf: &'a mut [T],
@@ -2558,6 +2557,10 @@ fn resolve_windows_walk_t<'a, T: PathCharCwd, const IN_PATHS: bool>(
             }
         }
         i_i64 -= 1;
+    }
+    if IN_PATHS {
+        // The walk stopped inside `paths`. Any path that is not empty says so.
+        return Ok(l::<T>(CHAR_STR_DOT));
     }
 
     // Exit early for empty path.

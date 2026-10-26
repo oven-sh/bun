@@ -3446,23 +3446,25 @@ describe.concurrent("AST nodes in JavaScript plugins", () => {
         const positions = it => [it.start, it.end, ...it.range].join();
         export default { meta: { name: "probe" }, rules: { positions: { create: context => ({
           Program(node) {
-            const [comment] = context.sourceCode.getAllComments();
-            const [token] = context.sourceCode.getTokens(node);
+            const [line, block] = context.sourceCode.getAllComments();
+            const tokens = context.sourceCode.getTokens(node);
+            const regex = tokens.find(it => it.type === "RegularExpression");
             const [declaration] = node.body;
             const annotation = declaration.declarations[0].id.typeAnnotation;
             context.report({ node, message: JSON.stringify({
               keys: keys(declaration), positions: positions(declaration),
               annotationKeys: annotation ? keys(annotation) : null, annotationPositions: annotation ? positions(annotation) : null,
-              commentKeys: keys(comment), commentPositions: positions(comment),
-              tokenKeys: keys(token), tokenPositions: positions(token),
+              lineKeys: keys(line), linePositions: positions(line), blockKeys: keys(block), blockPositions: positions(block),
+              tokenKeys: keys(tokens[0]), tokenPositions: positions(tokens[0]),
+              regexKeys: keys(regex), regexPositions: positions(regex), regex: keys(regex.regex),
             }) });
           },
         }) } } };`;
       const files = {
         "plugin.mjs": plugin,
         "bunfig.toml": `[lint]\nplugins = ["./plugin.mjs"]\n[lint.rules]\n"probe/positions" = "error"\n`,
-        "index.ts": "// a\nconst answer: number = 42;\n",
-        "index.js": "// a\nconst answer = 42;\n",
+        "index.ts": "// a\n/* b */\nconst answer: number = 42, re = /c/g;\n",
+        "index.js": "// a\n/* b */\nconst answer = 42, re = /c/g;\n",
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", "index.ts", "index.js"]);
       const results: { filePath: string; messages: { ruleId: string; message: string }[] }[] = JSON.parse(raw);
@@ -3475,25 +3477,62 @@ describe.concurrent("AST nodes in JavaScript plugins", () => {
       expect(said).toEqual({
         "index.ts": {
           keys: "type,declarations,declare,kind,start,end,range,loc,parent",
-          positions: "5,31,5,31",
+          positions: "13,50,13,50",
           annotationKeys: "type,loc,start,end,range,typeAnnotation,parent",
-          annotationPositions: "17,25,17,25",
-          commentKeys: "type,loc,start,end,range,value",
-          commentPositions: "0,4,0,4",
+          annotationPositions: "25,33,25,33",
+          lineKeys: "type,loc,start,end,range,value",
+          linePositions: "0,4,0,4",
+          blockKeys: "type,loc,start,end,range,value",
+          blockPositions: "5,12,5,12",
           tokenKeys: "type,loc,start,end,range,value",
-          tokenPositions: "5,10,5,10",
+          tokenPositions: "13,18,13,18",
+          regexKeys: "type,loc,start,end,range,regex,value",
+          regexPositions: "45,49,45,49",
+          regex: "flags,pattern",
         },
         "index.js": {
           keys: "type,start,end,loc,range,declarations,kind,parent",
-          positions: "5,23,5,23",
+          positions: "13,42,13,42",
           annotationKeys: null,
           annotationPositions: null,
-          commentKeys: "type,value,start,end,range,loc",
-          commentPositions: "0,4,0,4",
+          lineKeys: "type,value,start,end,range,loc",
+          linePositions: "0,4,0,4",
+          blockKeys: "type,value,start,end,range,loc",
+          blockPositions: "5,12,5,12",
           tokenKeys: "type,value,start,end,loc,range",
-          tokenPositions: "5,10,5,10",
+          tokenPositions: "13,18,13,18",
+          regexKeys: "type,value,start,end,loc,range,regex",
+          regexPositions: "37,41,37,41",
+          regex: "flags,pattern",
         },
       });
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // The same trees as with an ESLint config, with `start` and `end` before `range` in the files that typescript-estree parses.
+  // Bun picks the source type by what the file has, where ESLint's config sets it.
+  test(
+    "have those layouts, with `start` and `end`, without an ESLint or oxlint config",
+    async () => {
+      const config = `[lint]\nplugins = ["./dump.cjs"]\nignorePatterns = ["dump.cjs"]\n[lint.rules]\n"dump/tree" = "error"\n`;
+      const { raw, exitCode } = await lint({ "dump.cjs": dump, "bunfig.toml": config, ...treeCases }, [
+        "-f",
+        "json",
+        ...Object.keys(treeCases),
+      ]);
+      const results: { filePath: string; messages: { ruleId: string; message: string }[] }[] = JSON.parse(raw);
+      const lines = (tree: string | undefined) => tree?.split(/(?<=[[ ])(?=(?:Node )?\{ type: )/);
+      const withoutSourceType = (tree: string) => tree.replace(/sourceType: "\w+"/, "sourceType");
+      for (const file of Object.keys(treeCases)) {
+        const result = results.find(it => it.filePath.replaceAll("\\", "/").endsWith(`/${file}`));
+        const found = result?.messages.filter(it => it.ruleId === "dump/tree").map(it => withoutSourceType(it.message));
+        let tree = withoutSourceType(expected.eslint[file]);
+        if (!file.endsWith(".js"))
+          tree = tree.replace(/range: \[(\d+), (\d+)\]/g, "start: $1, end: $2, range: [$1, $2]");
+        expect({ file, trees: found?.map(lines) }).toEqual({ file, trees: [lines(tree)] });
+      }
       expect(exitCode).toBe(1);
     },
     timeout,

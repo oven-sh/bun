@@ -723,6 +723,8 @@ function addListeners(entry, listeners) {
 let listenWords = new Uint32Array(64);
 // 0: the tree of typescript-estree, which oxlint's is like in every file, 1: that of espree.
 let fileDialect = 0;
+// Whether the file has typescript-estree's nodes with `start` and `end`, as without an ESLint or oxlint config: see layouts.rs.
+let fileHasStartEnd = false;
 
 function dialect() {
   return fileDialect;
@@ -979,6 +981,7 @@ function lint() {
   if (unloaded.size > 0) return [...unloaded];
   const pathStart = 24 + 4 * (plugins + count);
   fileDialect = (flags >> 2) & 1;
+  fileHasStartEnd = (flags & 512) !== 0 && (flags & (4 | 16)) === 0;
   filename = nativePath(messageText(pathStart, pathStart + pathLength), nodePath);
   physicalFilename =
     physicalLength === pathLength ? filename : nativePath(messageText(pathStart, pathStart + physicalLength), nodePath);

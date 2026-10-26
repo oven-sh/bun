@@ -77,8 +77,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 42: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
 /// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
-/// Version 44: The folds of `"lit"[n]`, `.length`, `.charCodeAt(n)`, `<` and unary `+` read an
-/// 8-bit string that is not ASCII by UTF-16 code unit. Older entries can hold a wrong constant.
+/// Version 44: String folds read a non-ASCII 8-bit string by UTF-16 code unit, not by byte.
 const EXPECTED_VERSION: u32 = 44;
 
 /// Source files smaller than this are not written to / read from the on-disk

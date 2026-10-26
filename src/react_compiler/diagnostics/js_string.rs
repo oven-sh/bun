@@ -75,8 +75,8 @@ impl JsString {
         self.0.get().data.is_empty()
     }
 
-    /// JS `String.prototype.length` (UTF-16 code-unit count). `None` for 8-bit bytes that are not
-    /// WTF-8, as [`E::EString::javascript_length`].
+    /// JS `String.prototype.length` (UTF-16 code-unit count).
+    /// `None` for 8-bit bytes that are not WTF-8.
     pub fn len_utf16(&self) -> Option<usize> {
         self.0.get().javascript_length().map(|n| n as usize)
     }

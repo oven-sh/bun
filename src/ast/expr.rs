@@ -2796,8 +2796,7 @@ pub use data::Store;
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `+'1'` is 1, and so is `+'\u{A0}1'`: `Number` trims the white space that is not ASCII too.
-/// What is left is NaN if it is not ASCII. `None` for a rope and for UTF-16.
+/// `Number(str)` after the JS white-space trim (`+'\u{A0}1'` is 1). `None` for a rope or UTF-16.
 fn flat_8bit_string_to_number(str: &E::String) -> Option<f64> {
     if str.next.is_some() || !str.is_utf8() {
         return None;

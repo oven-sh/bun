@@ -90,10 +90,7 @@ pub fn wtf8_len_utf16(text: &[u8]) -> u32 {
     }
 }
 
-/// The UTF-16 code units of `text`, each with the offset in bytes of its code point (the two halves
-/// of a pair have the offset of the pair), for text that has to be WTF-8: the walk ends before a
-/// byte that is part of no sequence, and [`Wtf8CheckedUnits::ill_formed`] then tells that end from
-/// the end of `text`. [`wtf8_to_utf16`] has U+FFFD for such a byte.
+/// (code point's byte offset, UTF-16 unit) pairs. Ends before an ill-formed byte: see `ill_formed`.
 #[inline]
 pub fn wtf8_checked_units(text: &[u8]) -> Wtf8CheckedUnits<'_> {
     Wtf8CheckedUnits {
@@ -148,8 +145,7 @@ impl Iterator for Wtf8CheckedUnits<'_> {
     }
 }
 
-/// `text.length`, or `None` if a byte of `text` is part of no sequence. [`wtf8_len_utf16`] counts
-/// such a byte as one unit.
+/// `text.length`, or `None` on an ill-formed byte, which [`wtf8_len_utf16`] counts as one unit.
 #[inline]
 pub fn wtf8_checked_len_utf16(text: &[u8]) -> Option<u32> {
     match first_non_ascii(text) {
@@ -215,8 +211,7 @@ fn code_unit_at_after_ascii(text: &[u8], index: u32) -> Wtf8CodeUnitAt {
     }
 }
 
-/// The four bytes of the code point whose two halves `before` ends with and `after` starts with:
-/// `"\uD83D" + "\uDE00"` is one character. See [`push_wtf8`].
+/// The 4 bytes of the pair whose halves end `before` and start `after`: `"\uD83D" + "\uDE00"`.
 pub fn wtf8_pair_across(before: &[u8], after: &[u8]) -> Option<[u8; 4]> {
     let ([.., 0xED, 0xA0..=0xAF, 0x80..=0xBF], [0xED, 0xB0..=0xBF, 0x80..=0xBF, ..]) =
         (before, after)

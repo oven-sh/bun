@@ -867,8 +867,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = current;
     }
 
-    /// `"lit"[number]` and `[a, b][number]` written over `e`, the index expression. `number` is
-    /// whole and not negative.
+    /// `"lit"[number]` or `[a, b][number]` written over `e`, for a whole `number` >= 0.
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn fold_constant_index(
         p: &mut Self,
@@ -889,8 +888,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         } else if let Some(array) = target.data.as_e_array() {
             let int: usize = number.value() as usize;
-            // [x][0] -> x
-            // ['a', 'b', 'c'][1] -> 'b'
+            // [x][0] -> x, ['a', 'b', 'c'][1] -> 'b'
             let inlined = if array.items.len_u32() == 1 && int == 0 {
                 Some(*array.items.at(0))
             } else if int < array.items.len_u32() as usize

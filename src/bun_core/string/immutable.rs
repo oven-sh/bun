@@ -2009,12 +2009,10 @@ pub fn order_utf16(a: &[u8], b: &[u8]) -> Ordering {
     }
 }
 
-/// [`order_utf16`] for texts that have to be WTF-8: `None` if a byte that is part of no sequence
-/// is at the first difference or before it. What is after the first difference is not looked at.
+/// [`order_utf16`], or `None` if an ill-formed byte is at or before the first difference.
 pub fn checked_order_utf16(a: &[u8], b: &[u8]) -> Option<Ordering> {
     let (common, order) = first_difference(a, b);
-    // What both texts start with is decoded too if it is not ASCII: a printer that takes the bytes
-    // after a cut-off sequence into it reads another difference than the bytes have.
+    // A shared non-ASCII prefix is decoded too: an ill-formed byte in it shifts what a printer reads.
     let start = match (first_non_ascii(&a[..common]), order) {
         (None, Some(order)) => return Some(order),
         (None, None) => sequence_start(a, common),
@@ -2035,8 +2033,7 @@ pub fn checked_order_utf16(a: &[u8], b: &[u8]) -> Option<Ordering> {
     }
 }
 
-/// The order of the WTF-8 `text` and the UTF-16 `units`, by code unit. `None` if a byte of `text`
-/// that is part of no sequence is at the first difference or before it.
+/// Code-unit order of WTF-8 `text` against UTF-16 `units`. `None` as in [`checked_order_utf16`].
 pub fn checked_order_wtf8_utf16(text: &[u8], units: &[u16]) -> Option<Ordering> {
     let mut left = wtf8_checked_units(text);
     let mut right = units.iter().copied();
@@ -2052,8 +2049,7 @@ pub fn checked_order_wtf8_utf16(text: &[u8], units: &[u16]) -> Option<Ordering> 
     }
 }
 
-/// How many bytes `a` and `b` both start with, and their order if the first difference is
-/// between two ASCII characters, or between one and the end of the other text.
+/// Length of the common prefix, and the order if the first difference is between ASCII or an end.
 fn first_difference(a: &[u8], b: &[u8]) -> (usize, Option<Ordering>) {
     let common = a.iter().zip(b).take_while(|(x, y)| x == y).count();
     let (x, y) = (a.get(common), b.get(common));
@@ -2062,8 +2058,7 @@ fn first_difference(a: &[u8], b: &[u8]) -> (usize, Option<Ordering>) {
     (common, order)
 }
 
-/// The start of the sequence that the byte at `common` may be part of: a lead byte starts one in
-/// every text.
+/// Start of the sequence that the byte at `common` may be part of. A lead byte always starts one.
 fn sequence_start(a: &[u8], common: usize) -> usize {
     let before = &a[common.saturating_sub(3)..common];
     match before.iter().rposition(|byte| !(0x80..0xC0).contains(byte)) {
@@ -2948,8 +2943,7 @@ mod tests {
                     a_units.cmp(b_units),
                     "{a:x?} {b:x?}"
                 );
-                // The checked order is the same order, or none where it depends on a byte that
-                // is part of no sequence.
+                // The checked order is the same, or none where it depends on an ill-formed byte.
                 let is_wtf8 = |text| super::wtf8_checked_len_utf16(text).is_some();
                 match super::checked_order_utf16(a, b) {
                     Some(order) => assert_eq!(order, a_units.cmp(b_units), "{a:x?} {b:x?}"),

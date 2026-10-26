@@ -1593,12 +1593,7 @@ pub struct EString {
     // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
     // at `Store::reset()` — see `nodes.rs` StoreStr docs).
-    /// With `is_utf16`, UTF-16 code units (see [`EString::slice16`]). Without it, 8-bit text: bytes
-    /// that are meant as WTF-8. The lexer stores only ASCII this way, but a define, an env value,
-    /// a macro result, a path and a regexp source are 8-bit with any bytes, not always well-formed.
-    /// So a byte of 8-bit text is not a character: read `.length`, a code unit and the order
-    /// through [`EString::javascript_length`], [`EString::code_unit_at`], [`EString::char_at`]
-    /// and [`EString::js_order`], which decline on bytes that are not WTF-8.
+    /// Not `is_utf16`: WTF-8 bytes, maybe ill-formed. Index them through [`Self::code_unit_at`].
     pub data: Str,
 
     // A very simple rope implementation
@@ -1606,8 +1601,7 @@ pub struct EString {
     // We don't need to deal with substrings
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
-    /// The bytes of every segment, or 0 for a string that was never joined. It is not the
-    /// `.length` of JavaScript: see [`EString::javascript_length`].
+    /// Bytes of all segments, or 0 if never joined. For `.length` see [`Self::javascript_length`].
     pub rope_len: u32,
     pub prefer_template: bool,
     pub is_utf16: bool,
@@ -1734,9 +1728,7 @@ impl EString {
             ..Default::default()
         }
     }
-    /// Text stored as the lexer stores a literal: UTF-16 unless it is ASCII. The folds and the
-    /// printer read 8-bit WTF-8 as well (see [`EString::data`]), and a UTF-16 string folds less:
-    /// it has no `[n]`, `.charCodeAt`, unary `+` or join fold.
+    /// Stores text as the lexer does: UTF-16 unless ASCII. UTF-16 has fewer folds than 8-bit.
     pub fn init_re_encode_utf8(utf8: &[u8], bump: &Bump) -> EString {
         if strings::first_non_ascii(utf8).is_none() {
             Self::init(utf8)
@@ -1856,8 +1848,8 @@ impl EString {
         Flattened::Owned(copy)
     }
 
-    /// The rope's bytes, concatenated into a fresh `bump` slice. The two halves of a surrogate
-    /// pair that meet at a seam become the four bytes of their code point.
+    /// The rope's bytes, concatenated into a fresh `bump` slice.
+    /// Two halves of a surrogate pair that meet at a seam become one four-byte sequence.
     fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
         let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
@@ -1923,8 +1915,7 @@ impl EString {
         crate::lexer_tables::is_identifier(self.slice(bump))
     }
 
-    /// The order of the bytes of two 8-bit strings, or of the code units of two UTF-16 strings.
-    /// For 8-bit text that is not the `<` of JavaScript: that is [`Self::js_order`].
+    /// Order of bytes (8-bit) or code units (UTF-16). JavaScript's `<` is [`Self::js_order`].
     #[inline]
     fn order(&self, other: &EString) -> Ordering {
         debug_assert!(self.is_utf8() == other.is_utf8());
@@ -1935,8 +1926,7 @@ impl EString {
         }
     }
 
-    /// `self < other` of JavaScript for two flat strings of either storage: the order of their
-    /// UTF-16 code units. `None` if it depends on 8-bit bytes that are not WTF-8.
+    /// JavaScript's `<` order of two flat strings, by UTF-16 code unit. `None` on ill-formed bytes.
     pub fn js_order(&self, other: &EString) -> Option<Ordering> {
         debug_assert!(self.next.is_none() && other.next.is_none());
         match (self.is_utf8(), other.is_utf8()) {
@@ -1948,8 +1938,7 @@ impl EString {
         }
     }
 
-    /// `.length`: the UTF-16 code units of either storage, and of a rope. `None` for 8-bit bytes
-    /// that are not WTF-8.
+    /// `.length` in UTF-16 code units, of a rope too. `None` on ill-formed 8-bit bytes.
     pub fn javascript_length(&self) -> Option<u32> {
         if !self.is_utf8() {
             return Some(self.slice16().len() as u32);
@@ -1963,9 +1952,7 @@ impl EString {
         Some(len)
     }
 
-    /// The UTF-16 code unit `index` of an 8-bit string, which may be a rope, with the segment and
-    /// the offset in bytes that it is read from. `None` past the end, and at or after bytes that
-    /// are not WTF-8.
+    /// Segment, byte offset and value of code unit `index` of an 8-bit rope. `None` on ill-formed bytes.
     fn locate_code_unit(&self, mut index: u32) -> Option<(&EString, usize, u16)> {
         debug_assert!(self.is_utf8());
         let mut segment = Some(self);
@@ -1985,10 +1972,7 @@ impl EString {
         self.locate_code_unit(index).map(|found| found.2)
     }
 
-    /// `[index]` of an 8-bit string, as 8-bit text too, so that a fold of the result reads it as
-    /// these readers do. A code unit that is a whole code point borrows its bytes of this string.
-    /// Half of a pair that is one four-byte sequence here is written to `bump` as its own three
-    /// bytes. See [`Self::locate_code_unit`].
+    /// `[index]` of an 8-bit string as 8-bit text, so folds chain. Half of a pair is 3 bytes in `bump`.
     pub fn char_at(&self, index: u32, bump: &Bump) -> Option<EString> {
         let (segment, at, unit) = self.locate_code_unit(index)?;
         let sequence = &segment.data[at..];
@@ -2649,8 +2633,7 @@ mod json_tape_tests {
     }
 }
 
-// Every segment is 32 bytes or less: the ASCII test of a longer one, and the `.length` of text
-// that is not ASCII, call simdutf, which Miri cannot.
+// Segments are 32 bytes or less: longer or non-ASCII ones reach simdutf, which Miri cannot call.
 #[cfg(test)]
 mod estring_reader_tests {
     use super::*;

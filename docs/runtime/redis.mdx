@@ -409,6 +409,7 @@ const client = new RedisClient("redis://localhost:6379", {
   //   ca: "path/to/ca.pem",
   //   cert: "path/to/cert.pem",
   //   key: "path/to/key.pem",
+  //   serverName: "redis.example.com", // SNI and the name the certificate must match (default: the URL host)
   // }
 });
 ```

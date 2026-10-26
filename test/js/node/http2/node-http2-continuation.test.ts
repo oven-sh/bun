@@ -290,7 +290,7 @@ describe("HTTP/2 CONTINUATION frames - Server Side", () => {
       },
     });
 
-    bunServer.on("stream", (stream, headers) => {
+    bunServer.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
       const path = headers[":path"] || "/";
 
       // Count received headers (excluding pseudo-headers)

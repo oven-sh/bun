@@ -1,0 +1,12 @@
+const [ /* 1 */ , ] = a;
+const [ , /* 2 */ ] = b;
+const [ , /* 3 */ , ] = c;
+const [ // 4
+, ] = d;
+const [
+// 5
+, ] = e;
+const [ /* 6 */ /* 7 */ , ] = f;
+function g([ /* 8 */ , ]) {}
+for (const [ /* 9 */ , ] of h);
+const [ /** @type {T} */ , ] = i;

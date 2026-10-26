@@ -47,8 +47,9 @@ impl PostinstallOptimizer {
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
+        // `as_array` returns `None` for `[]`, but an empty list still replaces the built-in list.
         let Some(mut array) = expr.as_array() else {
-            return Ok(false);
+            return Ok(expr.is_array());
         };
 
         while let Some(entry) = array.next() {
@@ -94,9 +95,11 @@ impl PostinstallOptimizer {
         metas: &[Meta],
         target_cpu: npm::Architecture,
         target_os: npm::OperatingSystem,
+        target_libc: npm::Libc,
     ) -> Option<PackageID> {
         // Loop through the list of optional dependencies with platform-specific constraints
         // Find a matching target-specific dependency.
+        // Unlike `Libc::for_dependency`, libc is checked for every kind of dependency.
         for &resolution in resolutions {
             if (resolution as usize) >= metas.len() {
                 continue;
@@ -105,7 +108,10 @@ impl PostinstallOptimizer {
             if meta.arch == npm::Architecture::ALL || meta.os == npm::OperatingSystem::ALL {
                 continue;
             }
-            if meta.arch.is_match(target_cpu) && meta.os.is_match(target_os) {
+            if meta.arch.is_match(target_cpu)
+                && meta.os.is_match(target_os)
+                && meta.libc.is_match(target_libc)
+            {
                 return Some(resolution);
             }
         }
@@ -166,6 +172,7 @@ impl List {
         metas: &[Meta],
         target_cpu: npm::Architecture,
         target_os: npm::OperatingSystem,
+        target_libc: npm::Libc,
     ) -> bool {
         // The feature flag defaults to false; see note on the binlinker flag above.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS
@@ -193,6 +200,7 @@ impl List {
                     metas,
                     target_cpu,
                     target_os,
+                    target_libc,
                 )
                 .is_some()
             }
@@ -209,17 +217,18 @@ impl List {
         }
         for default in DEFAULT_IGNORE.iter() {
             if default.name_hash == pkg_info.name_hash {
-                if let Some(version) = pkg_info.version {
-                    if version.order(
-                        default.minimum_version,
-                        pkg_info.version_buf,
-                        // minimum version doesn't need a string_buf because
-                        // it doesn't use pre/build tags
-                        b"",
-                    ) == core::cmp::Ordering::Less
-                    {
-                        return None;
-                    }
+                // Only a registry package has a version here. A git fork or a workspace with the
+                // same name still has to run its own install scripts.
+                let version = pkg_info.version?;
+                if version.order(
+                    default.minimum_version,
+                    pkg_info.version_buf,
+                    // minimum version doesn't need a string_buf because
+                    // it doesn't use pre/build tags
+                    b"",
+                ) == core::cmp::Ordering::Less
+                {
+                    return None;
                 }
                 return Some(PostinstallOptimizer::Ignore);
             }

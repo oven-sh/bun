@@ -1,99 +1,98 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 
 use super::Expect;
 use super::get_signature;
 use super::throw;
 
-pub(crate) fn to_have_length(
-    this: &Expect,
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let (this, value, not) =
-        this.matcher_prelude(global, frame.this(), "toHaveLength", "<green>expected<r>")?;
+impl Expect {
+    pub(crate) fn to_have_length(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let (this, value, not) =
+            self.matcher_prelude(global, this_value.to_js(), "toHaveLength", "<green>expected<r>")?;
 
-    let arguments = frame.arguments();
+        let expected = expected.to_js();
 
-    if arguments.len() < 1 {
-        return Err(global.throw_invalid_arguments(format_args!("toHaveLength() takes 1 argument")));
-    }
+        if !value.is_object() && !value.is_string() {
+            let mut fmt = super::make_formatter(global);
+            return Err(global.throw(format_args!(
+                "Received value does not have a length property: {}",
+                value.to_fmt(&mut fmt),
+            )));
+        }
 
-    let expected: JSValue = arguments[0];
+        if !expected.is_number() {
+            let mut fmt = super::make_formatter(global);
+            return Err(global.throw(format_args!(
+                "Expected value must be a non-negative integer: {}",
+                expected.to_fmt(&mut fmt),
+            )));
+        }
 
-    if !value.is_object() && !value.is_string() {
-        let mut fmt = super::make_formatter(global);
-        return Err(global.throw(format_args!(
-            "Received value does not have a length property: {}",
-            value.to_fmt(&mut fmt),
-        )));
-    }
+        let expected_length: f64 = expected.as_number();
+        if expected_length.round() != expected_length
+            || expected_length.is_infinite()
+            || expected_length.is_nan()
+            || expected_length < 0.0
+        {
+            let mut fmt = super::make_formatter(global);
+            return Err(global.throw(format_args!(
+                "Expected value must be a non-negative integer: {}",
+                expected.to_fmt(&mut fmt),
+            )));
+        }
 
-    if !expected.is_number() {
-        let mut fmt = super::make_formatter(global);
-        return Err(global.throw(format_args!(
-            "Expected value must be a non-negative integer: {}",
-            expected.to_fmt(&mut fmt),
-        )));
-    }
+        let mut pass = false;
 
-    let expected_length: f64 = expected.as_number();
-    if expected_length.round() != expected_length
-        || expected_length.is_infinite()
-        || expected_length.is_nan()
-        || expected_length < 0.0
-    {
-        let mut fmt = super::make_formatter(global);
-        return Err(global.throw(format_args!(
-            "Expected value must be a non-negative integer: {}",
-            expected.to_fmt(&mut fmt),
-        )));
-    }
+        let actual_length = value.get_length_if_property_exists_internal(global)?;
 
-    let mut pass = false;
+        if actual_length == f64::INFINITY {
+            let mut fmt = super::make_formatter(global);
+            return Err(global.throw(format_args!(
+                "Received value does not have a length property: {}",
+                value.to_fmt(&mut fmt),
+            )));
+        } else if actual_length.is_nan() {
+            return Err(global.throw(format_args!(
+                "Received value has non-number length property: {}",
+                actual_length,
+            )));
+        }
 
-    let actual_length = value.get_length_if_property_exists_internal(global)?;
+        if actual_length == expected_length {
+            pass = true;
+        }
 
-    if actual_length == f64::INFINITY {
-        let mut fmt = super::make_formatter(global);
-        return Err(global.throw(format_args!(
-            "Received value does not have a length property: {}",
-            value.to_fmt(&mut fmt),
-        )));
-    } else if actual_length.is_nan() {
-        return Err(global.throw(format_args!(
-            "Received value has non-number length property: {}",
-            actual_length,
-        )));
-    }
+        if not {
+            pass = !pass;
+        }
+        if pass {
+            return Ok(JSValue::UNDEFINED);
+        }
 
-    if actual_length == expected_length {
-        pass = true;
-    }
+        // handle failure
+        if not {
+            let signature: &str = get_signature("toHaveLength", "<green>expected<r>", true);
+            return throw!(
+                this,
+                global,
+                signature,
+                "\n\nExpected length: not <green>{}<r>\n", expected_length,
+            );
+        }
 
-    if not {
-        pass = !pass;
-    }
-    if pass {
-        return Ok(JSValue::UNDEFINED);
-    }
-
-    // handle failure
-    if not {
-        let signature: &str = get_signature("toHaveLength", "<green>expected<r>", true);
-        return throw!(
+        let signature: &str = get_signature("toHaveLength", "<green>expected<r>", false);
+        throw!(
             this,
             global,
             signature,
-            "\n\nExpected length: not <green>{}<r>\n", expected_length,
-        );
+            "\n\nExpected length: <green>{}<r>\nReceived length: <red>{}<r>\n",
+            expected_length, actual_length,
+        )
     }
-
-    let signature: &str = get_signature("toHaveLength", "<green>expected<r>", false);
-    throw!(
-        this,
-        global,
-        signature,
-        "\n\nExpected length: <green>{}<r>\nReceived length: <red>{}<r>\n",
-        expected_length, actual_length,
-    )
 }

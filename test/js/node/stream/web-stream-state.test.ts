@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+// @ts-expect-error isDisturbed is missing
 import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 
@@ -183,7 +184,7 @@ describe.concurrent("a stream that a native consumer takes", () => {
           await released;
           yield encode("last");
         })();
-        return new Response(body as unknown as BodyInit).body!;
+        return new Response(body as unknown as Bun.BodyInit).body!;
       }),
     "the stream of a node:stream Readable body": () =>
       held(released => {
@@ -193,7 +194,7 @@ describe.concurrent("a stream that a native consumer takes", () => {
           body.push("last");
           body.push(null);
         });
-        return new Response(body as unknown as BodyInit).body!;
+        return new Response(body as unknown as Bun.BodyInit).body!;
       }),
     // The pump attaches the sink to a native byte transform and lets it write there directly.
     "the readable of a TextEncoderStream": () =>

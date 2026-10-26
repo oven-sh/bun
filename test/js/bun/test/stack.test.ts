@@ -541,6 +541,7 @@ test("sync require", () => {
       "missing.test.js:
       1 | import { test } from "bun:test";
       2 | test("sync require", () => {
+      3 |   require("./does-not-exist");
       ResolveMessage: Cannot find module './does-not-exist'
       Require stack:
       - <dir>/missing.test.js

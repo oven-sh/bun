@@ -2993,13 +2993,13 @@ static JSC::JSObject* structsHolderOf(JSC::JSGlobalObject* realm, ASCIILiteral n
     return value.getObject();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(getStructsSurface, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName property))
+// Loads src/js/internal/structs.ts if that has not happened and puts its exports in place of the lazy properties of the realm that
+// holds `holder` (its `Atomics`, its `Reflect` or the global object itself). Returns the value of `property`, or empty with an exception
+// pending.
+static JSValue loadStructsSurface(JSGlobalObject* lexicalGlobalObject, JSObject* holder, PropertyName property)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* holder = JSValue::decode(thisValue).getObject();
-    if (!holder) [[unlikely]]
-        return JSValue::encode(jsUndefined());
     // The realm that holds the property, which is not the lexical one when one realm reads another's `Atomics`.
     JSGlobalObject* realm = structsRealmOf(holder);
     if (!realm) [[unlikely]]
@@ -3062,7 +3062,36 @@ JSC_DEFINE_CUSTOM_GETTER(getStructsSurface, (JSGlobalObject * lexicalGlobalObjec
     if (installGlobal)
         put(realm, "SharedArray"_s);
 
-    return JSValue::encode(surface->getDirect(vm, property));
+    return surface->getDirect(vm, property);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(getStructsSurface, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* holder = JSValue::decode(thisValue).getObject();
+    if (!holder) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    JSValue value = loadStructsSurface(lexicalGlobalObject, holder, property);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(value);
+}
+
+// Called before a shared struct or array is wrapped in `realm` (SharedStructObject.cpp). A realm that is handed one, through a
+// worker message or a structured clone, has to be able to use Atomics on it before any of its scripts read one of the lazy names.
+extern "C" void Bun__ensureStructsSurface(JSC::JSGlobalObject* realm)
+{
+    auto& vm = JSC::getVM(realm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* atomics = structsHolderOf(realm, "Atomics"_s);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!atomics)
+        return;
+    const Identifier mutexName = Identifier::fromString(vm, "Mutex"_s);
+    // Not lazy any more: installed already, or replaced by a script.
+    if (!isStructsLazy(realm, atomics, mutexName))
+        return;
+    loadStructsSurface(realm, atomics, mutexName);
 }
 
 // Makes the structs surface lazy in `realm`, a Zig global or a vm context's global, once its builtins exist.

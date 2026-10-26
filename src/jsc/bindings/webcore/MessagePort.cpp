@@ -32,7 +32,6 @@
 #include "BunClientData.h"
 #include "EventNames.h"
 #include "GlobalEventScope.h"
-#include "JSEventListener.h"
 #include "JSMessagePort.h"
 #include "MessageEvent.h"
 #include "MessagePortPipe.h"
@@ -69,6 +68,10 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
+    // A listening port can be collected before the peer-close task (which holds it weakly) runs; its loop ref must not outlive it.
+    ASSERT(!m_hasRef);
+    m_isRefd = false;
+    updateListenerEventLoopRef();
     if (!m_isDetached)
         m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
 }
@@ -490,46 +493,24 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
         return;
 
     auto& port = static_cast<MessagePort&>(self);
-    if (port.m_settingOnmessage)
-        return;
+    bool hadListeners = port.m_messageEventCount > 0;
     switch (kind) {
     case Add:
-        port.setMessageListenerCount(port.m_messageEventCount + 1);
+        port.m_messageEventCount++;
         break;
     case Remove:
         if (port.m_messageEventCount > 0)
-            port.setMessageListenerCount(port.m_messageEventCount - 1);
+            port.m_messageEventCount--;
         break;
     case Clear:
-        port.setMessageListenerCount(0);
+        port.m_messageEventCount = 0;
         break;
     }
-}
-
-void MessagePort::setMessageListenerCount(uint32_t count)
-{
-    bool hadListeners = m_messageEventCount > 0;
-    m_messageEventCount = count;
-    updateListenerEventLoopRef();
-    // node (setupPortReferencing) unref()s outright when the last 'message' listener goes, .ref() or not.
-    if (hadListeners && count == 0)
-        releaseJsRef();
-}
-
-void MessagePort::setOnmessage(JSValue value, JSObject& wrapper, JSGlobalObject* lexicalGlobalObject)
-{
-    bool wasCallable = eventHandlerAttribute(*this, eventNames().messageEvent, worldForDOMObject(wrapper)).isCallable();
-    {
-        SetForScope settingOnmessage { m_settingOnmessage, true };
-        setEventHandlerAttribute<JSEventListener>(*this, eventNames().messageEvent, value, wrapper);
-    }
-    // A non-callable object is installed (the getter returns it) but can never run, so it is not a listener here.
-    if (value.isCallable() && !wasCallable)
-        setMessageListenerCount(m_messageEventCount + 1);
-    else if (!value.isCallable() && wasCallable && m_messageEventCount > 0)
-        setMessageListenerCount(m_messageEventCount - 1);
-    if (value.isCallable())
-        jsRef(lexicalGlobalObject);
+    port.updateListenerEventLoopRef();
+    // node's setupPortReferencing unref()s the port when its last 'message' listener is removed, .ref() or not.
+    // removeAllListeners() arrives here as one Remove per listener; node's skips this step and leaves the port ref'd.
+    if (hadListeners && !port.m_messageEventCount)
+        port.releaseJsRef();
 }
 
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)

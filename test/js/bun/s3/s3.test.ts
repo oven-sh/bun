@@ -1677,7 +1677,13 @@ describe("s3 object that has a content-encoding", () => {
         body: inTransit,
         expected: hex(half),
       },
-      // Without a length the part is not known to be one. The read fails as before.
+      // Without a length the part is not known to be one. The client decodes it as before: a part
+      // that is a whole stream gives decompressed data, and a part that is cut fails.
+      "stream-without-length": {
+        headers: [gzip, `${wholeRange}/${stored.length * 2}`],
+        body: stored,
+        expected: hex(text),
+      },
       "part-without-length": {
         headers: [gzip, partRange],
         body: stored.subarray(0, 10),
@@ -1724,23 +1730,30 @@ describe("s3 object that has a content-encoding", () => {
     expect(actual).toEqual(expected);
   });
 
-  it("fetch() still decodes a range, so a part of the object rejects there", async () => {
-    const stored = Bun.gzipSync(text);
+  it("fetch() still decodes a range, so a part that is not a whole stream rejects there", async () => {
+    const first = Bun.gzipSync(text);
+    const stored = Buffer.concat([first, Bun.gzipSync(more)]);
     const key = randomUUIDv7();
     const file = client.file(key);
     await file.write(stored, { contentEncoding: "gzip" });
 
-    const headers = { range: "bytes=0-9" };
     const read = (response: Promise<Response>) =>
       response.then(response => response.bytes()).then(hex, error => ({ name: error.name, code: error.code }));
+    const s3 = server.clientOptions();
+    const cut = { range: "bytes=0-9" };
+    const stream = { range: `bytes=0-${first.length - 1}` };
     expect({
-      slice: hex(await file.slice(0, 10).bytes()),
-      presigned: await read(fetch(file.presign(), { headers })),
-      s3: await read(fetch(`s3://encoded/${key}`, { s3: server.clientOptions(), headers })),
+      "slice(0, 10)": hex(await file.slice(0, 10).bytes()),
+      "fetch(presigned), cut": await read(fetch(file.presign(), { headers: cut })),
+      "fetch(s3://), cut": await read(fetch(`s3://encoded/${key}`, { s3, headers: cut })),
+      "fetch(presigned), whole stream": await read(fetch(file.presign(), { headers: stream })),
+      "fetch(s3://), whole stream": await read(fetch(`s3://encoded/${key}`, { s3, headers: stream })),
     }).toEqual({
-      slice: hex(stored.subarray(0, 10)),
-      presigned: { name: "TypeError", code: "ZlibError" },
-      s3: { name: "TypeError", code: "ZlibError" },
+      "slice(0, 10)": hex(stored.subarray(0, 10)),
+      "fetch(presigned), cut": { name: "TypeError", code: "ZlibError" },
+      "fetch(s3://), cut": { name: "TypeError", code: "ZlibError" },
+      "fetch(presigned), whole stream": hex(text),
+      "fetch(s3://), whole stream": hex(text),
     });
   });
 

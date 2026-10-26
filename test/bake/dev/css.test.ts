@@ -332,7 +332,7 @@ devTest("css file that the page links and another linked stylesheet imports come
       `,
       { errors: null },
     );
-    // Not a page request: on a release build that bundles the whole route again.
+    // Not a page request: that bundles the whole route again.
     await dev.output.waitForLine(/Unexpected end of input/);
     // `shared.css` is a root of its own and a part of `styles.css`. The repair
     // must bundle both.

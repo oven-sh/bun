@@ -183,6 +183,127 @@ describe("path.resolve", () => {
     }).not.toThrow();
   });
 
+  // Node walks the arguments from the last one. It stops when the path is
+  // absolute and has a device (a drive or a UNC share). It does not read the
+  // arguments before that point, so it does not validate them.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L190-L344
+  // Every expected value is the output of Node v26.3.0.
+  describe("win32.resolve validates only the arguments that Node reads", () => {
+    const notStrings = [undefined, null, 123, {}, []];
+    const named = index =>
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining(`"paths[${index}]"`),
+      });
+
+    test.each([
+      // A drive and a root.
+      [["C:\\abs\\lib"], "C:\\abs\\lib"],
+      [["c:/abs", "rel"], "c:\\abs\\rel"],
+      [["", "C:\\abs", ""], "C:\\abs"],
+      [["D:rel", "C:\\abs"], "C:\\abs"],
+      // A UNC share.
+      [["\\\\server\\share\\dir"], "\\\\server\\share\\dir"],
+      [["//server/share", "rel"], "\\\\server\\share\\rel"],
+      [["//server//share"], "\\\\server\\share\\"],
+      [["\\\\server\\\\share//dir"], "\\\\server\\share\\dir"],
+      // A drive from a drive-relative path, then a root on that drive.
+      [["C:\\abs", "C:rel"], "C:\\abs\\rel"],
+      [["c:\\abs", "C:rel"], "C:\\abs\\rel"],
+      [["C:\\abs", "c:rel"], "c:\\abs\\rel"],
+      // A path on another device is not applicable. It does not end the walk.
+      [["C:\\abs", "D:\\other", "C:rel"], "C:\\abs\\rel"],
+      [["C:\\abs", "//server/share", "C:rel"], "C:\\abs\\rel"],
+      [["C:\\abs", "D:rel", "C:rel"], "C:\\abs\\rel"],
+      // A root without a device, then a device.
+      [["C:\\abs", "\\rooted"], "C:\\rooted"],
+      [["C:rel", "\\rooted"], "C:\\rooted"],
+      [["//server/share", "/rooted"], "\\\\server\\share\\rooted"],
+      [["C:\\abs", "//dir"], "C:\\dir"],
+      [["C:\\abs", "C:rel", "\\rooted"], "C:\\rooted"],
+      [["C:rel", "\\"], "C:\\"],
+      [["C:rel", "/"], "C:\\"],
+      [["//server/share", "/"], "\\\\server\\share\\"],
+      // Latin-1 and UTF-16 strings.
+      [["C:\\caf\u00e9", "rel"], "C:\\caf\u00e9\\rel"],
+      [["C:\\\u4e2d\u6587", "rel\u6587"], "C:\\\u4e2d\u6587\\rel\u6587"],
+      [["//s\u00e9rver/sh\u4e2dre/dir"], "\\\\s\u00e9rver\\sh\u4e2dre\\dir"],
+      [["C:\\abs", "\u4e2d:rel"], "C:\\abs\\\u4e2d:rel"],
+    ])("the walk ends inside %j", (args, expected) => {
+      expect(path.win32.resolve(...args)).toBe(expected);
+      for (const value of notStrings) {
+        expect(path.win32.resolve(value, ...args)).toBe(expected);
+      }
+      expect(path.win32.resolve("Z:\\unread", null, ...args)).toBe(expected);
+    });
+
+    // The expected value is the path with "C:\\base" in front of the arguments.
+    test.each([
+      [[], "C:\\base"],
+      [[""], "C:\\base"],
+      [["rel"], "C:\\base\\rel"],
+      [["a"], "C:\\base\\a"],
+      [["rel", "..", "other"], "C:\\base\\other"],
+      // A root without a device.
+      [["\\"], "C:\\"],
+      [["/"], "C:\\"],
+      [["\\abs"], "C:\\abs"],
+      [["/abs", "rel"], "C:\\abs\\rel"],
+      [["\\foo\\bar"], "C:\\foo\\bar"],
+      // A server without a share is not a UNC root.
+      [["//dir"], "C:\\dir"],
+      [["//server"], "C:\\server"],
+      [["//server/"], "C:\\server"],
+      [["//server//"], "C:\\server"],
+      // A device without a root.
+      [["C:rel"], "C:\\base\\rel"],
+      [["C:"], "C:\\base"],
+      [["c:rel", "C:other"], "C:\\base\\rel\\other"],
+      [["C:rel", "a"], "C:\\base\\rel\\a"],
+      [["C:rel", "."], "C:\\base\\rel"],
+      // A path on another device, after a drive-relative path.
+      [["D:\\other", "C:rel"], "C:\\base\\rel"],
+      [["//server/share", "C:rel"], "C:\\base\\rel"],
+      [["D:rel", "C:rel"], "C:\\base\\rel"],
+      // Not a drive letter. U+212A KELVIN SIGN has the lower case "k".
+      [["\u00e9:\\abs"], "C:\\base\\\u00e9:\\abs"],
+      [["\u212a:\\abs"], "C:\\base\\\u212a:\\abs"],
+      [["1:\\abs"], "C:\\base\\1:\\abs"],
+      // Code units whose low byte is "C", ":", "\\" or "/".
+      [["\u0143\u013a\u015cabs"], "C:\\base\\\u0143\u013a\u015cabs"],
+      [["C\u013a\\abs"], "C:\\base\\C\u013a\\abs"],
+      [["C:\u015cabs"], "C:\\base\\\u015cabs"],
+      [["\u012fabs"], "C:\\base\\\u012fabs"],
+      [["\u015c\u015cserver\u015cshare"], "C:\\base\\\u015c\u015cserver\u015cshare"],
+    ])("the walk reaches the argument before %j", (args, expected) => {
+      expect(path.win32.resolve("C:\\base", ...args)).toBe(expected);
+      for (const value of notStrings) {
+        expect(() => path.win32.resolve(value, ...args)).toThrow(named(0));
+      }
+    });
+
+    test("the error names the last argument that is not a string, of those that are read", () => {
+      expect(() => path.win32.resolve("C:\\abs", 123)).toThrow(named(1));
+      expect(() => path.win32.resolve(null, 123, "rel")).toThrow(named(1));
+      expect(() => path.win32.resolve(null, "C:\\abs", 123, "rel")).toThrow(named(2));
+      expect(() => path.win32.resolve(null, "D:\\other", {}, "C:rel")).toThrow(named(2));
+      expect(path.win32.resolve(null, 123, "C:\\abs", "", "rel")).toBe("C:\\abs\\rel");
+    });
+
+    test("more than 8 arguments", () => {
+      const rels = Array.from({ length: 12 }, (_, i) => "r" + i);
+      expect(path.win32.resolve(123, "C:\\abs", ...rels)).toBe("C:\\abs\\" + rels.join("\\"));
+      expect(path.win32.resolve(...rels.map(() => 123), "C:\\abs", "rel")).toBe("C:\\abs\\rel");
+      expect(() => path.win32.resolve(123, "\\abs", ...rels)).toThrow(named(0));
+    });
+
+    test("posix.resolve validates every argument up to the first absolute one", () => {
+      expect(() => path.posix.resolve(undefined, "C:\\abs")).toThrow(named(0));
+      expect(() => path.posix.resolve(null, 123, "rel")).toThrow(named(1));
+      expect(path.posix.resolve(undefined, 123, "/abs", "rel")).toBe("/abs/rel");
+    });
+  });
+
   test("very long paths", () => {
     // Regression test: buffer overflow with very long paths
     // This used to panic because the buffer didn't account for the null terminator

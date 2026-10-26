@@ -2163,7 +2163,34 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
 
 /// Based on Node v21.6.1 path.win32.resolve:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L162
+#[inline]
 pub fn resolve_windows_t<'a, T: PathCharCwd>(
+    paths: &[&[T]],
+    buf: &'a mut [T],
+    buf2: &mut [T],
+) -> MaybeSlice<'a, T> {
+    resolve_windows_walk_t::<T, false>(paths, buf, buf2)
+}
+
+/// [`resolve_windows_t`] without the working directory. `None` when the walk reads every path
+/// and the resolved path still has no root or no device. `path.win32.resolve` then reads the
+/// argument before `paths`, so Node validates that argument only in this case.
+pub fn resolve_windows_in_paths_t<'a, T: PathCharCwd>(
+    paths: &[&[T]],
+    buf: &'a mut [T],
+    buf2: &mut [T],
+) -> Option<MaybeSlice<'a, T>> {
+    match resolve_windows_walk_t::<T, true>(paths, buf, buf2) {
+        Ok(resolved) if resolved.is_empty() => None,
+        resolved => Some(resolved),
+    }
+}
+
+/// The walk of [`resolve_windows_t`]. With `IN_PATHS`, it does not read the working directory:
+/// when it has read every path, it returns an empty path. A resolved path is never empty.
+///
+/// `IN_PATHS` is a const so that `resolve_windows_t` is the walk without this test.
+fn resolve_windows_walk_t<'a, T: PathCharCwd, const IN_PATHS: bool>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
@@ -2218,6 +2245,8 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             }
             path_ptr = p.as_ptr();
             path_len = p.len();
+        } else if IN_PATHS {
+            return Ok(&[]);
         } else if resolved_device_len == 0 {
             // cwd is limited to MAX_PATH_BYTES.
             cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();

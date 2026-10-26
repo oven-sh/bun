@@ -12,8 +12,8 @@ use bun_node_path::{
     extname_windows_t, format_t, is_absolute_posix_t, is_absolute_windows_t, join_buf_len,
     join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_t, normalize_windows_t,
     parse_posix_t, parse_windows_t, path_size, relative_buf_len, relative_posix_t,
-    relative_windows_t, resolve_buf_len, resolve_posix_t, resolve_windows_t,
-    to_namespaced_path_buf_len, to_namespaced_path_windows_t,
+    relative_windows_t, resolve_buf_len, resolve_posix_t, resolve_windows_in_paths_t,
+    resolve_windows_t, to_namespaced_path_buf_len, to_namespaced_path_windows_t,
 };
 use bun_paths::MAX_PATH_BYTES;
 
@@ -769,16 +769,57 @@ fn resolve_windows_js_t<T: PathCharCwd>(
     }
 }
 
+/// Throws `ERR_INVALID_ARG_TYPE` for the argument of `resolve` at `index`, which is not a string.
+#[cold]
+fn throw_path_not_a_string(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+    index: usize,
+) -> crate::jsc::JsError {
+    validate_string(global_object, value, format_args!("paths[{}]", index)).unwrap_err()
+}
+
+/// `path.win32.resolve` when the argument at `index` is not a string and `paths` are the
+/// arguments after it. Node validates an argument when its walk reads it, so this throws for
+/// `value` only when the walk does not stop inside `paths`.
+#[cold]
+fn resolve_windows_after_non_string_js_t<T: PathCharCwd>(
+    global_object: &JSGlobalObject,
+    paths: &[&[T]],
+    buf: &mut [T],
+    buf2: &mut [T],
+    index: usize,
+    value: JSValue,
+) -> JsResult<JSValue> {
+    match resolve_windows_in_paths_t(paths, buf, buf2) {
+        Some(Ok(r)) => create_js_string_t::<T>(global_object, r),
+        Some(Err(e)) => Ok(e.to_js(global_object)),
+        None => Err(throw_path_not_a_string(global_object, value, index)),
+    }
+}
+
 fn resolve_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
     pool: &mut RarePathBuf,
     is_windows: bool,
     paths: &[&[T]],
+    not_a_string: Option<(usize, JSValue)>,
 ) -> JsResult<JSValue> {
     // Carve buf/buf2 from one pooled slab.
     let buf_len = resolve_buf_len(is_windows, paths);
     let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
+    if let Some((index, value)) = not_a_string {
+        debug_assert!(is_windows);
+        return resolve_windows_after_non_string_js_t(
+            global_object,
+            paths,
+            buf,
+            buf2,
+            index,
+            value,
+        );
+    }
     if is_windows {
         resolve_windows_js_t(global_object, paths, buf, buf2)
     } else {
@@ -801,6 +842,8 @@ fn resolve(
     // POSIX path; reverse the borrowed views before handing to `resolve_*_t`.
     let mut views: SmallVec<[JSStringView<'_>; 8]> = SmallVec::new();
     let mut resolved_root = false;
+    // The last argument of `path.win32.resolve` that is not a string, and its index.
+    let mut not_a_string: Option<(usize, JSValue)> = None;
 
     let mut i = args_len;
     while i > 0 {
@@ -811,7 +854,15 @@ fn resolve(
         }
 
         let path = args[i as usize];
-        validate_string(global_object, path, format_args!("paths[{}]", i))?;
+        if !path.is_string() {
+            if is_windows {
+                // Node validates this argument only when the walk of `path.win32.resolve`
+                // reads it. The walk over the arguments after it tells.
+                not_a_string = Some((i, path));
+                break;
+            }
+            return Err(throw_path_not_a_string(global_object, path, i));
+        }
         let path_str = path.to_js_string_view(global_object)?;
         if path_str.is_empty() {
             continue;
@@ -841,7 +892,7 @@ fn resolve(
     }
 
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
-    resolve_js_t::<u8>(global_object, pool, is_windows, &paths)
+    resolve_js_t::<u8>(global_object, pool, is_windows, &paths, not_a_string)
 }
 
 fn to_namespaced_path_windows_js_t<T: PathCharCwd>(

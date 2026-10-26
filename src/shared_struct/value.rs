@@ -101,8 +101,8 @@ impl Retired {
         if !self.is_block {
             return Err(self);
         }
-        let addr = self.addr;
-        std::mem::forget(self);
+        // Not dropped: the count moves to the `Arc` made below.
+        let addr = std::mem::ManuallyDrop::new(self).addr;
         // SAFETY: `own` made `self` from the `Arc::into_raw` pointer of an `Arc<SharedBlock>` (`is_block`), whose count it now has.
         Ok(unsafe { Arc::from_raw(addr as *const SharedBlock) })
     }

@@ -651,7 +651,7 @@ pub use bun_alloc::{
 pub use Global::*;
 pub use bun_opaque::{FfiLayout, assert_ffi_discr, assert_ffi_layout};
 pub use error::{Error, Error as CrateError, Result as CrateResult};
-pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
+pub use ffi::{Zeroable, boxed_zeroed};
 pub use result::coreutils_error_map;
 pub use tty::Winsize;
 pub use util::*;
@@ -2483,18 +2483,6 @@ pub mod ffi {
     #[inline]
     pub fn boxed_zeroed<T: Zeroable>() -> Box<T> {
         // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
-        unsafe { Box::<T>::new_zeroed().assume_init() }
-    }
-
-    /// Heap-allocate a `T` filled with zero bytes without the [`Zeroable`]
-    /// bound. Prefer [`boxed_zeroed`]; this is for orphan-rule cases where the
-    /// caller cannot `unsafe impl Zeroable` for a foreign type.
-    ///
-    /// # Safety
-    /// `T` must be valid at the all-zero bit pattern.
-    #[inline]
-    pub unsafe fn boxed_zeroed_unchecked<T>() -> Box<T> {
-        // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
         unsafe { Box::<T>::new_zeroed().assume_init() }
     }
 

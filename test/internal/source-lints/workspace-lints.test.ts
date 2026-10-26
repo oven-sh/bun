@@ -32,15 +32,34 @@ test("every member of the workspace is below src/", () => {
 // Cargo.toml, which does not list the crate, and every cargo command in it then fails with "current package believes
 // it's in a workspace when it's not". Such a crate needs an empty `[workspace]` table of its own, or a parent crate
 // whose `[workspace]` table names it in `members`. Cargo decides here: a regex does not know its rules for the root.
+//
+// On most machines `cargo` is a rustup proxy. In the repo root it applies rust-toolchain.toml in full: before it runs,
+// it installs each component and target of that file that the machine lacks (scripts/build/tools.ts: about 2.4 GB).
+// A lint must install nothing. With the channel in RUSTUP_TOOLCHAIN the proxy takes the toolchain as it is, and the
+// test is skipped where that toolchain is missing.
 const cargo = Bun.which("cargo");
-test.skipIf(!cargo)("every crate outside the workspace loads on its own", () => {
+const channel = /^\s*channel\s*=\s*"([^"]+)"/m.exec(
+  readFileSync(path.join(repoRoot, "rust-toolchain.toml"), "utf8"),
+)![1];
+const cargoEnv = {
+  ...process.env,
+  CARGO_TERM_COLOR: "never",
+  RUSTUP_TOOLCHAIN: process.env.RUSTUP_TOOLCHAIN || channel,
+  RUSTUP_AUTO_INSTALL: "0",
+};
+const cargoRuns =
+  cargo !== null &&
+  Bun.spawnSync({ cmd: [cargo, "--version"], env: cargoEnv, stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+
+test.skipIf(!cargoRuns)("every crate outside the workspace loads on its own", () => {
   const tracked = Bun.spawnSync({
     cmd: ["git", "ls-files", "-z", "--", ":(glob)**/Cargo.toml", ":(exclude)Cargo.toml", ":(exclude)src"],
     cwd: repoRoot,
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect({ stderr: tracked.stderr.toString(), exitCode: tracked.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  if (tracked.exitCode !== 0)
+    throw new Error(`git ls-files failed (${tracked.exitCode}): ${tracked.stderr.toString()}`);
   const manifests = tracked.stdout.toString().split("\0").filter(Boolean);
   // Guards against a pathspec that matches nothing making the check below vacuous.
   expect(manifests.length).toBeGreaterThan(0);
@@ -51,7 +70,7 @@ test.skipIf(!cargo)("every crate outside the workspace loads on its own", () => 
     const { exitCode, stderr } = Bun.spawnSync({
       cmd: [cargo!, "metadata", "--no-deps", "--offline", "--format-version", "1", "--manifest-path", manifest],
       cwd: repoRoot,
-      env: { ...process.env, CARGO_TERM_COLOR: "never" },
+      env: cargoEnv,
       stdout: "ignore",
       stderr: "pipe",
     });

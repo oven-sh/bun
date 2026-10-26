@@ -3,8 +3,7 @@ edition = "2021"
 name = "bun-mdx-rs"
 version = "0.0.0"
 
-# Standalone crate: opt out of the repo-root [workspace], so that this builds
-# in place with its own Cargo.lock and [profile.release].
+# Standalone crate: opt out of the repo-root [workspace].
 [workspace]
 
 [lib]

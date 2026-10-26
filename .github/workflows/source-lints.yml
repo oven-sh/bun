@@ -87,10 +87,10 @@ jobs:
       # bare checkout is sufficient.
       #
       # workspace-lints.test.ts runs `cargo metadata` on the crates outside the
-      # workspace, and skips that test where there is no cargo: `cargo --version`
-      # fails this step first. The runner's stable cargo can load those crates.
-      # Without RUSTUP_TOOLCHAIN, rustup first installs the nightly and every
-      # target that rust-toolchain.toml names.
+      # workspace, and skips that test where no cargo runs: `cargo --version`
+      # fails this step first. The test takes RUSTUP_TOOLCHAIN from here. The
+      # stable cargo of the runner image can load those crates, so the job does
+      # not install the nightly that rust-toolchain.toml pins.
       - name: Run source lints
         env:
           RUSTUP_TOOLCHAIN: stable

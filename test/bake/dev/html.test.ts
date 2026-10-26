@@ -707,12 +707,45 @@ devTest("stylesheet that an onResolve plugin resolves comes back after a failed 
     await c.style("body").color.expect.toBe("red");
   },
 });
+// A `[serve.static]` plugin that holds the index.html that says "World" until another file of the
+// same rebuild has resolved its imports. The signal is the load of `marker`, which that file imports.
+const holdHtmlRebuildUntilLoaded = (marker: string) => ({
+  "bunfig.toml": `
+    [serve.static]
+    plugins = ["./plugin.ts"]
+  `,
+  "plugin.ts": `
+    export default {
+      name: "hold-html-rebuild",
+      setup(build) {
+        const markerLoaded = Promise.withResolvers();
+        build.onLoad({ filter: /${marker.replace(".", "[.]")}$/ }, () => {
+          markerLoaded.resolve();
+        });
+        build.onLoad({ filter: /index[.]html$/ }, async args => {
+          const contents = await Bun.file(args.path).text();
+          if (contents.includes("World")) {
+            await markerLoaded.promise;
+            console.log("index.html waited for ${marker}");
+          }
+          return { contents, loader: "html" };
+        });
+      },
+    };
+  `,
+});
 devTest("html link to a file that a stylesheet of the same rebuild also uses keeps its asset URL", {
   files: {
+    ...holdHtmlRebuildUntilLoaded("marker.css"),
     "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./styles.css"><link rel="icon" href="./shared.txt"></head><body><h1>Hello</h1></body></html>`,
     "styles.css": `
       body {
         background: url(./shared.txt);
+        color: red;
+      }
+    `,
+    "marker.css": `
+      h1 {
         color: red;
       }
     `,
@@ -723,15 +756,11 @@ devTest("html link to a file that a stylesheet of the same rebuild also uses kee
     expect(await iconHref()).toStartWith("/_bun/asset/");
     {
       await using _batch = await dev.batchChanges();
-      // The padding makes the stylesheet finish first, so shared.txt is in the rebuild before index.html resolves it.
-      await dev.write(
-        "index.html",
-        `<!DOCTYPE html><html><head><link rel="stylesheet" href="./styles.css"><link rel="icon" href="./shared.txt"></head><body><h1>World</h1><!--${Buffer.alloc(256 * 1024, "x").toString()}--></body></html>`,
-        { dedent: false },
-      );
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
       await dev.write(
         "styles.css",
         `
+          @import "./marker.css";
           body {
             background: url(./shared.txt);
             color: blue;
@@ -739,6 +768,8 @@ devTest("html link to a file that a stylesheet of the same rebuild also uses kee
         `,
       );
     }
+    // The stylesheet put shared.txt in the rebuild before index.html resolved it.
+    await dev.output.waitForLine(/index\.html waited for marker\.css/);
     const href = await iconHref();
     expect(href).toStartWith("/_bun/asset/");
     await dev.fetch(href!).expect.toBe("SHARED");
@@ -747,6 +778,7 @@ devTest("html link to a file that a stylesheet of the same rebuild also uses kee
 });
 devTest("html file and a saved script that start to use the same script in one rebuild", {
   files: {
+    ...holdHtmlRebuildUntilLoaded("marker.ts"),
     "index.html": emptyHtmlFile({
       scripts: ["./first.ts"],
       body: "<h1>Hello</h1>",
@@ -761,26 +793,26 @@ devTest("html file and a saved script that start to use the same script in one r
     "second.ts": `
       console.log("second");
     `,
+    "marker.ts": `
+      export {};
+    `,
   },
   async test(dev) {
     await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
     {
       await using _batch = await dev.batchChanges();
-      // The padding makes dep.ts finish first, so second.ts is in the rebuild before index.html resolves it.
-      await dev.write(
-        "index.html",
-        emptyHtmlFile({ scripts: ["./first.ts", "./second.ts"], body: "<h1>World</h1>" }) +
-          `<!--${Buffer.alloc(256 * 1024, "x").toString()}-->`,
-        { dedent: false },
-      );
+      await dev.write("index.html", emptyHtmlFile({ scripts: ["./first.ts", "./second.ts"], body: "<h1>World</h1>" }));
       await dev.write(
         "dep.ts",
         `
           import "./second.ts";
+          import "./marker.ts";
           console.log("dep v2");
         `,
       );
     }
+    // dep.ts put second.ts in the rebuild before index.html resolved it.
+    await dev.output.waitForLine(/index\.html waited for marker\.ts/);
     // previously: Failed to load bundled module './second.ts'
     await using c = await dev.client("/");
     await c.expectMessage("second", "dep v2", "first");

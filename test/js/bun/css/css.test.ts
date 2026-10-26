@@ -8963,6 +8963,12 @@ describe("css tests", () => {
     );
   });
 
+  // Two colors with `none` in the same channel are equal, so shorthands and rules merge.
+  describe("a color with a missing channel equals itself", () => {
+    minify_test(".a { border: 1px solid oklch(10% 0 none) }", ".a{border:1px solid oklch(10% 0 none)}");
+    minify_test(".a { border: 1px solid rgb(0 0 0 / none) }", ".a{border:1px solid #0000}");
+  });
+
   describe("page", () => {
     minify_test("@page { margin: 1em }", "@page{margin:1em}");
     minify_test("@page :left { margin: 1em }", "@page:left{margin:1em}");

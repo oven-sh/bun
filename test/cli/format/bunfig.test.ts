@@ -648,7 +648,6 @@ export function add(a, b) {}
     expect(second.stderr).toBe("");
     expect(second.exitCode).toBe(0);
   });
-
 });
 
 describe.concurrent("svelte", () => {

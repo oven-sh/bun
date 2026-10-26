@@ -427,14 +427,14 @@ mod tests {
         let order = Arc::new(StdMutex::new(Vec::new()));
         let mut threads = Vec::new();
         for id in 0..3u64 {
-            let (m, c, order) = (m.clone(), c.clone(), order.clone());
+            let (waiter_m, waiter_c, waiter_order) = (m.clone(), c.clone(), order.clone());
             threads.push(std::thread::spawn(move || {
-                m.lock(None, &Never).unwrap();
-                let outcome = c.wait(&m, Some(Duration::from_secs(2)), &Never);
+                waiter_m.lock(None, &Never).unwrap();
+                let outcome = waiter_c.wait(&waiter_m, Some(Duration::from_secs(2)), &Never);
                 if outcome == WaitOutcome::Notified {
-                    order.lock().unwrap().push(id);
+                    waiter_order.lock().unwrap().push(id);
                 }
-                m.unlock();
+                waiter_m.unlock();
             }));
             while c.seq.lock().unwrap().waiting.len() < usize::try_from(id).unwrap() + 1 {
                 std::thread::sleep(Duration::from_millis(2));

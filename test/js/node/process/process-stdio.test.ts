@@ -495,6 +495,71 @@ describe.concurrent.skipIf(isWindows)(
       expect(exitCode).toBe(0);
     });
 
+    // A service that writes a line on every tick, with an 'uncaughtException' handler and no 'error' listener on the
+    // stream. Three writes after the handler first ran, it stops and reports on `reportFd` what the handler was told.
+    const tickingService = (name: "stdout" | "stderr", reportFd: 1 | 2) =>
+      `const told = [];
+       process.on("uncaughtException", (err, origin) => told.push(err.code + " from " + origin));
+       let writesAfter = 0;
+       const timer = setInterval(() => {
+         process.${name}.write("tick\\n");
+         if (told.length > 0 && ++writesAfter === 3) {
+           clearInterval(timer);
+           require("fs").writeSync(${reportFd}, JSON.stringify([...new Set(told)]) + "\\n");
+         }
+       }, 1);`;
+    const toldEpipe = JSON.stringify(["EPIPE from uncaughtException"]) + "\n";
+
+    // The reader takes the first chunk and leaves. As in node, the EPIPE of a later write is thrown from a tick when
+    // the stream has no 'error' listener, so the handler gets it and the service runs on.
+    test.each(["stdout", "stderr"] as const)(
+      "an EPIPE on process.%s over a socket with no 'error' listener goes to the uncaughtException handler",
+      async name => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", tickingService(name, name === "stdout" ? 2 : 1)],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const reader = proc[name].getReader();
+        await reader.read();
+        await reader.cancel();
+        const [report, exitCode] = await Promise.all([
+          proc[name === "stdout" ? "stderr" : "stdout"].text(),
+          proc.exited,
+        ]);
+        expect(report).toBe(toldEpipe);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // The same over a real pipe(2) whose reader is `head -n 1`. The service reports on sh's stderr, then sh adds its
+    // exit code.
+    test.each([
+      ["stdout", `"$0" -e "$1"`],
+      ["stderr", `"$0" -e "$1" 3>&2 2>&1 1>&3`],
+    ] as const)(
+      "an EPIPE on process.%s over a pipe with no 'error' listener goes to the uncaughtException handler",
+      async (name, run) => {
+        await using proc = spawn({
+          cmd: [
+            "sh",
+            "-c",
+            `{ ${run}; echo "exit code $?" >&2; } | head -n 1`,
+            bunExe(),
+            tickingService(name, name === "stdout" ? 2 : 1),
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("tick\n");
+        expect(stderr).toBe(toldEpipe + "exit code 0\n");
+        expect(exitCode).toBe(0);
+      },
+    );
+
     // A throw from the callback of a held write, or from a 'drain' listener, is an uncaughtException as in node.
     test.each(["callback", "drain"])("a throw from the %s of a held write is an uncaughtException", async where => {
       await using proc = spawn({

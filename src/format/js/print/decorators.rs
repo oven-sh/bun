@@ -6,8 +6,8 @@ use smallvec::SmallVec;
 /// The decorators of a class, a member or a parameter, and the space or the line break after them.
 pub(crate) struct FormatDecorators<'a> {
     decorators: SmallVec<[Expr<'a>; 2]>,
-    /// What has them. For a class whose decorators are written before `export`, the
-    /// `ExportNamedDeclaration` or the `ExportDefaultDeclaration`.
+    /// The decorated node. For a class whose decorators come before `export`, it's the `ExportNamedDeclaration` or the
+    /// `ExportDefaultDeclaration`.
     parent: AstNodes<'a>,
 }
 
@@ -19,11 +19,11 @@ impl<'a> FormatDecorators<'a> {
         }
     }
 
-    pub(crate) fn of_param(param: Param<'a>) -> Self {
+    pub(crate) fn from_param(param: Param<'a>) -> Self {
         Self::new(param.decorators(), param.as_ast_nodes())
     }
 
-    pub(crate) fn of_member(member: Member<'a>) -> Self {
+    pub(crate) fn from_member(member: Member<'a>) -> Self {
         Self::new(member.decorators(), member.as_ast_nodes())
     }
 
@@ -32,7 +32,7 @@ impl<'a> FormatDecorators<'a> {
         (self.decorators.first()).is_some_and(|first| first.span().end <= self.parent.span().start)
     }
 
-    /// Whether one of them is followed by a line break in the source.
+    /// True if one of them is followed by a line break in the source.
     fn should_expand(&self, f: &Formatter<'a>) -> bool {
         (self.decorators.iter()).any(|it| {
             f.source_text()
@@ -41,7 +41,7 @@ impl<'a> FormatDecorators<'a> {
     }
 }
 
-/// Of a member of a class. Prettier does not.
+/// Only for a class member's decorators. Prettier doesn't keep them.
 fn keeps_empty_lines_between_decorators(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -122,7 +122,7 @@ impl<'a> Format<'a> for FormatDecorator<'a> {
         let expression = self.0;
         let node = AstNodes::Decorator(expression);
         format_node(node, f, |f| {
-            // `@a`, `@a.b`, `@a.b()` are written as they are. Anything else is in parentheses.
+            // `@a`, `@a.b`, `@a.b()` are printed bare. Anything else gets parentheses.
             let needs_parentheses = match expression.as_ast_nodes() {
                 AstNodes::IdentifierReference(_) => false,
                 AstNodes::CallExpression(call) => !call

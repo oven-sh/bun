@@ -19,20 +19,17 @@ public:
     // Every member is an owned `IsoSubspace*`; one loop instead of ~300 inlined unique_ptr destructors.
     ~DOMIsoSubspaces();
     /*-- BUN --*/
-    IsoSubspace* m_subspaceForBunClassConstructor { nullptr };
     IsoSubspace* m_subspaceForFFIFunction { nullptr };
     IsoSubspace* m_subspaceForWrappingFunction { nullptr };
     IsoSubspace* m_subspaceForNapiClass { nullptr };
     IsoSubspace* m_subspaceForJSSQLStatement { nullptr };
+    IsoSubspace* m_subspaceForJSSQLDatabase { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteDatabaseSync { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteStatementSync { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteStatementSyncIterator { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteSession { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteLimits { nullptr };
     IsoSubspace* m_subspaceForNodeSqliteTagStore { nullptr };
-    IsoSubspace* m_subspaceForJSSinkConstructor { nullptr };
-    IsoSubspace* m_subspaceForJSSinkController { nullptr };
-    IsoSubspace* m_subspaceForJSSink { nullptr };
     IsoSubspace* m_subspaceForStringDecoder { nullptr };
     IsoSubspace* m_subspaceForPendingVirtualModuleResult { nullptr };
     IsoSubspace* m_subspaceForCallSite { nullptr };
@@ -40,7 +37,6 @@ public:
     IsoSubspace* m_subspaceForImportMeta { nullptr };
     IsoSubspace* m_subspaceForBundlerPlugin { nullptr };
     IsoSubspace* m_subspaceForNodeVMGlobalObject { nullptr };
-    IsoSubspace* m_subspaceForNodeVMSpecialSandbox { nullptr };
     IsoSubspace* m_subspaceForNodeVMScript { nullptr };
     IsoSubspace* m_subspaceForNodeVMSourceTextModule { nullptr };
     IsoSubspace* m_subspaceForNodeVMSyntheticModule { nullptr };
@@ -59,14 +55,13 @@ public:
     IsoSubspace* m_subspaceForJSModuleGraph { nullptr };
     IsoSubspace* m_subspaceForJSSocketHandlers { nullptr };
     IsoSubspace* m_subspaceForTTYWrapObject { nullptr };
-    IsoSubspace* m_subspaceForNapiHandleScopeImpl { nullptr };
+    IsoSubspace* m_subspaceForHandleScopeImpl { nullptr };
     IsoSubspace* m_subspaceForStrongRootBlock { nullptr };
     IsoSubspace* m_subspaceForNapiTypeTag { nullptr };
     IsoSubspace* m_subspaceForNativePromiseContext { nullptr };
     IsoSubspace* m_subspaceForObjectTemplate { nullptr };
     IsoSubspace* m_subspaceForInternalFieldObject { nullptr };
     IsoSubspace* m_subspaceForV8GlobalInternals { nullptr };
-    IsoSubspace* m_subspaceForHandleScopeBuffer { nullptr };
     IsoSubspace* m_subspaceForFunctionTemplate { nullptr };
     IsoSubspace* m_subspaceForJSMIMEType { nullptr };
     IsoSubspace* m_subspaceForJSMIMEParams { nullptr };
@@ -76,7 +71,6 @@ public:
     IsoSubspace* m_subspaceForJSNodePerformanceHooksHistogram { nullptr };
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
-#include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /*-- BUN --*/
 

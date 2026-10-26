@@ -4,11 +4,12 @@ use bun_lint::prelude::*;
 /// Disallow specified warning terms in comments.
 pub struct NoWarningComments {
     terms: Vec<Term>,
-    /// They are looked for at the start of a comment, and not anywhere in it.
+    /// True if the terms only match at the start of a comment, not anywhere in it.
     is_at_start: bool,
-    /// What can be before them at the start beside whitespace, without capitals.
+    /// The characters, lowercased, that may precede a term at the start, in addition to whitespace.
     decoration: Vec<u8>,
-    /// What each starts with, without capitals, if they are looked for at the start and none takes a regular expression.
+    /// Each term's first byte, lowercased. `None` unless the terms match at the start and none needs a regular
+    /// expression.
     first_bytes: Option<Vec<u8>>,
 }
 
@@ -17,9 +18,9 @@ struct Term {
     matcher: Matcher,
 }
 
-/// What tells that a comment has a term in the configured location.
+/// Tests whether a comment has a term in the configured location.
 enum Matcher {
-    /// The term without capitals. It and the decoration are of ASCII, so it takes no regular expression.
+    /// The lowercased term. It and the decoration are ASCII, so no regular expression is needed.
     Ascii(Vec<u8>),
     Pattern(Box<Regex>),
 }
@@ -50,42 +51,42 @@ fn is_self_config(value: &[u8]) -> bool {
     false
 }
 
-/// The words of `comment` with one space between them, as many as fit in `CHAR_LIMIT`.
+/// Returns the words of `comment` joined by single spaces, as many as fit in `CHAR_LIMIT`.
 fn comment_to_display(comment: &[u8]) -> Vec<u8> {
-    let mut shown = Vec::new();
-    let mut shown_len = 0;
+    let mut display = Vec::new();
+    let mut display_len = 0;
     let mut rest = strings::trim_js_whitespace(comment);
     while !rest.is_empty() {
         let mut characters = strings::wtf8_codepoints(rest);
         let end = characters.find(|it| strings::is_js_whitespace(it.1)).map_or(rest.len(), |it| it.0);
         let (word, after) = rest.split_at(end);
-        let len = shown_len + u32::from(!shown.is_empty()) + strings::wtf8_len_utf16(word);
+        let len = display_len + u32::from(!display.is_empty()) + strings::wtf8_len_utf16(word);
         if len > CHAR_LIMIT {
-            shown.extend_from_slice(b"...");
+            display.extend_from_slice(b"...");
             break;
         }
-        if !shown.is_empty() {
-            shown.push(b' ');
+        if !display.is_empty() {
+            display.push(b' ');
         }
-        shown.extend_from_slice(word);
-        shown_len = len;
+        display.extend_from_slice(word);
+        display_len = len;
         rest = strings::trim_js_whitespace_start(after);
     }
-    shown
+    display
 }
 
 /// `/^term\b/iu`, with the `\b` if `term` ends with a `\w`.
-fn is_here(term: &[u8], rest: &[u8]) -> bool {
+fn starts_with_term(term: &[u8], rest: &[u8]) -> bool {
     text::strip_prefix_ignoring_case(rest, term)
         .is_some_and(|after| !(is_word_character(term.last()) && text::starts_with_word_ignoring_case(after)))
 }
 
 /// `/\bterm\b/iu`, each `\b` if there is a `\w` on that side of `term`.
-fn is_anywhere(term: &[u8], value: &[u8]) -> bool {
+fn contains_term(term: &[u8], value: &[u8]) -> bool {
     let Some(first) = term.first() else {
         return true;
     };
-    // The bytes that a character starts with that is `first` but for its case.
+    // The first bytes of the characters that equal `first` ignoring case.
     let starts = [*first, first.to_ascii_uppercase(), text::first_byte_of_other_case(*first)];
     let mut at = 0;
     while let Some(found) = strings::index_of_any(value.get(at..).unwrap_or_default(), &starts) {
@@ -93,7 +94,7 @@ fn is_anywhere(term: &[u8], value: &[u8]) -> bool {
         let Some((before, rest)) = value.split_at_checked(at) else {
             return false;
         };
-        if !(is_word_character(Some(first)) && text::ends_with_word_ignoring_case(before)) && is_here(term, rest) {
+        if !(is_word_character(Some(first)) && text::ends_with_word_ignoring_case(before)) && starts_with_term(term, rest) {
             return true;
         }
         at += 1;
@@ -102,7 +103,7 @@ fn is_anywhere(term: &[u8], value: &[u8]) -> bool {
 }
 
 impl NoWarningComments {
-    /// `rest` without the one `/[\s<decoration>]/iu` that it starts with.
+    /// Strips one leading `/[\s<decoration>]/iu` from `rest`.
     fn after_space_or_decoration<'t>(&self, rest: &'t [u8]) -> Option<&'t [u8]> {
         match strings::js_whitespace_len(rest) {
             0 => (self.decoration.iter()).find_map(|c| text::strip_prefix_ignoring_case(rest, std::slice::from_ref(c))),
@@ -113,7 +114,7 @@ impl NoWarningComments {
     /// `/^[\s<decoration>]*term\b/iu`
     fn starts_with(&self, term: &[u8], value: &[u8]) -> bool {
         let mut rest = value;
-        while !is_here(term, rest) {
+        while !starts_with_term(term, rest) {
             rest = match self.after_space_or_decoration(rest) {
                 Some(rest) => rest,
                 None => return false,
@@ -122,7 +123,7 @@ impl NoWarningComments {
         true
     }
 
-    /// Whether after `/^[\s<decoration>]*/iu` there can be a term in `value`, by its first byte.
+    /// Fast check: true if, judging by the first byte, a term may follow `/^[\s<decoration>]*/iu` in `value`.
     fn may_start_with_a_term(&self, first_bytes: &[u8], value: &[u8]) -> bool {
         let mut rest = value;
         while let Some(first) = rest.first() {
@@ -140,7 +141,7 @@ impl NoWarningComments {
     fn has(&self, term: &Term, value: &[u8]) -> bool {
         match &term.matcher {
             Matcher::Ascii(term) if self.is_at_start => self.starts_with(term, value),
-            Matcher::Ascii(term) => is_anywhere(term, value),
+            Matcher::Ascii(term) => contains_term(term, value),
             Matcher::Pattern(pattern) => pattern.test(value),
         }
     }
@@ -198,7 +199,7 @@ impl Rule for NoWarningComments {
             if comment.kind() == TokenKind::Shebang {
                 continue;
             }
-            // With the `*/` of a block, which can only make it look closer.
+            // `rest` includes a block comment's `*/`, which can only cause a false positive here.
             if let (Some(first_bytes), [b'/', b'/' | b'*', rest @ ..]) = (&self.first_bytes, comment.text())
                 && !self.may_start_with_a_term(first_bytes, rest)
             {
@@ -209,13 +210,13 @@ impl Rule for NoWarningComments {
             if matches.peek().is_none() || ast_utils::is_directive_comment(&comment) && is_self_config(value) {
                 continue;
             }
-            let shown = comment_to_display(value);
-            // oxlint says one thing about a comment.
+            let display = comment_to_display(value);
+            // oxlint reports a comment only once.
             let count = if cx.language().is_oxlint { 1 } else { usize::MAX };
             for term in matches.take(count) {
                 cx.report(comment, UNEXPECTED_COMMENT)
                     .data("matchedTerm", term.text.clone())
-                    .data("comment", shown.clone());
+                    .data("comment", display.clone());
             }
         }
     }

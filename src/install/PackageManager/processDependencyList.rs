@@ -7,7 +7,7 @@ use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
 use crate::dependency::{TagExt as _, VersionTag};
-use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext};
+use crate::lockfile_real::package::{Diff, Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
@@ -19,7 +19,7 @@ use crate::{
     PackageID, Resolution, TaskCallbackContext, dependency,
 };
 
-/// What a package.json depends on, parsed into a lockfile of its own. `LookAhead` reads it to
+/// The dependencies of a package.json, parsed into a separate lockfile. `LookAhead` reads it to
 /// request manifests for a package before the package is resolved.
 #[derive(Default)]
 pub(crate) struct ListedDependencies {
@@ -195,6 +195,12 @@ impl PackageManager {
                     ),
                 );
             }
+            Diff::keep_while_refreshing(
+                self,
+                existing_id,
+                existing.dependencies,
+                package.dependencies,
+            );
             existing.dependencies = package.dependencies;
             existing.resolutions = package.resolutions;
             existing.bin = package.bin;
@@ -491,8 +497,9 @@ impl PackageManager {
         }
     }
 
-    /// Whether the package that `task_id` has downloaded waits for its turn, see `RemotePackages`.
-    /// The runtime's auto-install writes no lockfile, and an import waits for its package alone.
+    /// Returns true if the package that `task_id` downloaded has to wait for its turn. See
+    /// `RemotePackages`. The runtime's auto-install writes no lockfile, and an import only waits
+    /// for its own package.
     pub(crate) fn defers_remote_package(&self, task_id: Task::Id, resolution: &Resolution) -> bool {
         !self.options.runtime_auto_install
             && matches!(
@@ -502,7 +509,7 @@ impl PackageManager {
                     | ResolutionTag::LocalTarball
                     | ResolutionTag::RemoteTarball
             )
-            // `bun pm fetch` downloads what bun.lock has, and no dependency is resolved by that.
+            // `bun pm fetch` downloads what's in bun.lock and doesn't resolve any dependency.
             && self.task_queue.get(&task_id).is_some_and(|waiting| {
                 (waiting.iter()).any(|waiter| matches!(waiter, TaskCallbackContext::Dependency(_)))
             })
@@ -520,7 +527,7 @@ impl PackageManager {
         if let Some(json) = &data.json {
             let source = bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
             let mut listed = ListedDependencies::default();
-            // What is wrong with the package.json is reported when the package is added.
+            // Errors in the package.json are reported when the package is added.
             let parsed = listed.package.parse(
                 &mut listed.lockfile,
                 self,
@@ -549,9 +556,9 @@ impl PackageManager {
         let _ = self.remote_packages.arrived.insert(task_id, arrived);
     }
 
-    /// For each task that fetches a git, GitHub or tarball package: the lowest dependency that
-    /// waits for it. A task that has failed is skipped, and so is one that was never started,
-    /// which is what a deferred peer waits for.
+    /// Returns, for each task that fetches a git, GitHub or tarball package, the lowest dependency
+    /// that's waiting for it. Skips a task that failed, and a task that was never started, which is
+    /// what a deferred peer waits for.
     fn remote_rows_waiting(&self) -> impl core::iter::Iterator<Item = (DependencyID, Task::Id)> {
         self.remote_packages.tasks.iter().filter_map(|&task_id| {
             if !self.network_dedupe_map.contains_key(&task_id)
@@ -569,7 +576,7 @@ impl PackageManager {
         })
     }
 
-    /// Whether a git, GitHub or tarball package is still to be added to the lockfile.
+    /// Returns true if a git, GitHub or tarball package still has to be added to the lockfile.
     pub(crate) fn waits_for_remote_package(&self) -> bool {
         !self.remote_packages.tasks.is_empty()
             // With nothing running and nothing downloaded, none of them can be added any more.
@@ -577,9 +584,9 @@ impl PackageManager {
             && self.remote_rows_waiting().next().is_some()
     }
 
-    /// Adds the git, GitHub or tarball package whose turn it is to the lockfile, and resolves the
-    /// dependencies that waited for it. Call this when the queue is empty: what the package
-    /// depends on is queued. Returns false if no package was added.
+    /// Adds the next git, GitHub or tarball package to the lockfile and resolves the dependencies
+    /// that were waiting for it. Only call this when the queue is empty, because it queues the
+    /// package's own dependencies. Returns false if no package was added.
     #[cold]
     pub(crate) fn append_next_remote_package(&mut self, turn: RemoteTurn) -> bool {
         if self.remote_packages.arrived.is_empty() {
@@ -676,24 +683,25 @@ impl PackageManager {
         Ok(())
     }
 
-    /// Whether `process_peer_dependency_list` has something to do. The peers that were found while
-    /// the queue was being resolved wait until it is empty, so that they all see the same tree.
-    /// A git, GitHub or tarball package brings dependencies of its own, so they wait for it too.
+    /// Returns true if `process_peer_dependency_list` has something to do. The peers that were
+    /// found while the queue was being resolved wait until it's empty, so that they all see the
+    /// same tree. A git, GitHub or tarball package brings its own dependencies, so the peers wait
+    /// for it too.
     pub(crate) fn has_peers_to_process(&self) -> bool {
         self.peer_dependencies.readable_length() > 0
             && self.lockfile.scratch.dependency_list_queue.is_empty()
             && !self.waits_for_remote_package()
     }
 
-    /// Whether the deferred peers are all that is left to resolve, and are worth resolving.
+    /// Returns true if the deferred peers are all that's left to resolve, and are worth resolving.
     pub(crate) fn is_ready_for_peers(&self) -> bool {
         self.has_peers_to_process()
             // An error ends the install, so the peers are not worth their requests.
             && !self.log_mut().has_errors()
     }
 
-    /// Queues the deferred peers for `drain_dependency_list`, in `peer_batch_order`: the first row
-    /// of a name to resolve decides what the others bind to.
+    /// Queues the deferred peers for `drain_dependency_list`, in `peer_batch_order`. The first
+    /// dependency on a name to be resolved decides what the others bind to.
     pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
         if !self.has_peers_to_process() {
             return Ok(());
@@ -735,7 +743,8 @@ impl PackageManager {
         let names = lockfile.packages.items_name();
         let resolutions = lockfile.packages.items_resolution();
         let dependencies = lockfile.buffers.dependencies.as_slice();
-        // The project's own ranges decide first; a package's peer then takes what they resolved to.
+        // The project's own ranges are resolved first. A package's peer then uses what they
+        // resolved to.
         let rank = |owner: usize| match resolutions[owner].tag {
             ResolutionTag::Root => 0u8,
             ResolutionTag::Workspace => 1,

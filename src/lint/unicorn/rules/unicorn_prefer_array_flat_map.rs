@@ -25,19 +25,19 @@ fn is_ignored_call_expression(call: Call) -> bool {
     })
 }
 
-/// The `a.name` that `e` is. It is not `a?.name`, `a[name]` or `a.#name`.
+/// Returns `e` if it's `a.name`, but not `a?.name`, `a[name]` or `a.#name`.
 fn static_member<'a>(e: Expr<'a>, name: &str) -> Option<Expr<'a>> {
     get_inner_expression_unless_chain(e).filter(|it| {
         !it.is_optional() && !it.is_private_member() && it.member_name().is_some_and(|it| it.name().is(name))
     })
 }
 
-/// The `b` of `a(b)`. It is not `a?.(b)` or `a<T>(b)`.
+/// The `b` in `a(b)`, but not in `a?.(b)` or `a<T>(b)`.
 fn only_argument(call: Call<'_>) -> Option<Expr<'_>> {
     call.args().first().filter(|_| call.args().len() == 1 && !call.is_optional() && call.type_args().is_empty())
 }
 
-/// The `x` and the `e` of `x => e`.
+/// The `x` and `e` in `x => e`.
 fn simple_callback(argument: Expr<'_>) -> Option<(Name<'_>, Expr<'_>)> {
     let callback = argument.as_fn().filter(|it| it.is_arrow() && !it.is_async())?;
     if callback.return_type().is_some() || !callback.type_params().is_empty() || callback.params().len() != 1 {
@@ -58,7 +58,8 @@ fn is_indexed_collection(callee: Expr) -> bool {
     callee.as_ident().is_some_and(|it| it.is("Array") || it.is_any(&TYPED_ARRAYS)) && is_global_reference(callee)
 }
 
-/// It is, or is a constant that is declared with, what is neither an array nor a typed array.
+/// True if it's something that's neither an array nor a typed array, or a constant initialized with
+/// that.
 fn is_known_non_indexed_receiver(receiver: Expr) -> bool {
     let receiver = get_inner_expression(receiver);
     let initializer = match get_declaration_of_variable(receiver) {
@@ -115,7 +116,7 @@ fn check_filter_flat_map<'a>(e: Expr<'a>, call: Call<'a>, cx: &Cx<'a, PreferArra
     }
     cx.report(flat_map, PREFER_SINGLE_FLAT_MAP).suggest(REPLACE_FILTER_FLAT_MAP, |fixer| {
         let file = fixer.file();
-        // What cannot be the test of `a ? b : c` as it is.
+        // An expression that can't be the test of `a ? b : c` without parentheses.
         let needs_parentheses = !predicate.is_parenthesized()
             && (predicate.binary_op() == Some(BinOp::Comma)
                 || matches!(
@@ -195,10 +196,10 @@ impl Rule for PreferArrayFlatMap {
         if !is_method_call(map_call, None, Some(&["map"]), None, None) || is_ignored_call_expression(map_call) {
             return;
         }
-        // `.flat(1.5)` is `.flat(1)`.
-        let is_one =
+        // `.flat(1.5)` is the same as `.flat(1)`.
+        let is_depth_one =
             |it: Expr| !it.is_parenthesized() && matches!(it.kind(), ExprKind::Number(depth) if depth.floor() == 1.0);
-        if !flat_call.args().first().is_none_or(is_one) {
+        if !flat_call.args().first().is_none_or(is_depth_one) {
             return;
         }
         cx.report(e, PREFER_ARRAY_FLAT_MAP).fix(|fixer| {

@@ -22,7 +22,7 @@ pub struct NoMisleadingCharacterClass {
 const SUGGEST_UNICODE_FLAG: Message =
     Message::new("suggestUnicodeFlag", "Add unicode 'u' flag to regex.");
 
-/// ESLint's `kinds`, in the order in which they are reported.
+/// ESLint's `kinds`, in the order they're reported.
 const KINDS: [Message; 6] = [
     Message::new(
         "surrogatePairWithoutUFlag",
@@ -46,21 +46,21 @@ const ZERO_WIDTH_JOINER: u32 = 0x200D;
 const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
 
-/// A `Character` of regexpp.
+/// A regexpp `Character`.
 type Character<'r> = regex::Node<'r>;
 
-/// The first and the last character of what is reported.
+/// The first and last character of a reported sequence.
 type Match<'r> = (Character<'r>, Character<'r>);
 
-/// What is found of each of the [`KINDS`].
+/// The matches found for each of the [`KINDS`].
 type Found<'r> = [Vec<Match<'r>>; 6];
 
 fn value_of(char: Character) -> u32 {
     char.character().unwrap_or(0)
 }
 
-/// Whether anything can be found in `pattern`: it has a class, and a character beyond U+00FF, which
-/// is either written as such or as `\u..`.
+/// True if `pattern` could have anything to report: it has a class, and a character beyond U+00FF, written either
+/// literally or as `\u..`.
 fn may_be_misleading(pattern: &[u8]) -> bool {
     strings::contains_char(pattern, b'[')
         && (strings::first_non_ascii(pattern).is_some() || strings::contains(pattern, b"\\u"))
@@ -72,7 +72,7 @@ fn is_unicode_code_point_escape(char: Character) -> bool {
     digits.is_some_and(|it| !it.is_empty() && it.iter().all(u8::is_ascii_hexdigit))
 }
 
-/// The blocks of combining characters that oxlint knows.
+/// The combining character blocks that oxlint knows.
 fn is_combining_character_for_oxlint(value: u32) -> bool {
     matches!(
         value,
@@ -86,8 +86,8 @@ fn is_combining_character_for_oxlint(value: u32) -> bool {
     )
 }
 
-/// ESLint's `findCharacterSequences`, all kinds at once. In `chars` the characters that are not to
-/// be flagged are `None`.
+/// ESLint's `findCharacterSequences`, for all kinds at once. In `chars`, the characters that shouldn't be flagged are
+/// `None`.
 fn find_character_sequences<'r>(
     chars: &[Option<Character<'r>>],
     unfiltered_chars: &[Character<'r>],
@@ -135,7 +135,7 @@ fn find_character_sequences<'r>(
             && value_of(next) != ZERO_WIDTH_JOINER
         {
             zwj_sequence = Some(match zwj_sequence {
-                // oxlint reports each joiner with what is before and after it.
+                // oxlint reports each joiner with the characters before and after it.
                 Some((first, last)) if last == previous && !is_oxlint => (first, next),
                 Some(finished) => {
                     found[ZWJ].push(finished);
@@ -148,8 +148,8 @@ fn find_character_sequences<'r>(
     found[ZWJ].extend(zwj_sequence);
 }
 
-/// ESLint's `checkForAcceptableEscape`: whether `source`, which is what the character `value` is
-/// written as, is an escape sequence other than backslashes before the character itself.
+/// ESLint's `checkForAcceptableEscape`: true if `source`, the source text of the character `value`, is an escape
+/// sequence other than backslashes before the character itself.
 fn check_for_acceptable_escape(value: u32, source: &[u8]) -> bool {
     let backslashes = source.iter().take_while(|it| **it == b'\\').count();
     if backslashes == 0 {
@@ -158,7 +158,7 @@ fn check_for_acceptable_escape(value: u32, source: &[u8]) -> bool {
     // `/(?<=^\\+).$/su`
     let escaped = match source.get(backslashes..).unwrap_or_default() {
         [] => (backslashes > 1).then_some(u32::from(b'\\')),
-        // The first half of a character outside the BMP, which can only stand for itself.
+        // The first half of a character outside the BMP, which can only represent itself.
         [0xF0..=0xFF, _] => Some(value),
         rest => {
             let mut code_points = strings::wtf8_codepoints(rest).map(|it| it.1);
@@ -168,14 +168,13 @@ fn check_for_acceptable_escape(value: u32, source: &[u8]) -> bool {
     escaped != Some(value)
 }
 
-/// Whether the source of `unit` in `literal` ends with a character outside the BMP: `unit` is one
-/// half of it, and the other half has the same source.
+/// True if `unit`'s source text in `literal` ends with a character outside the BMP. Then `unit` is one half of it, and
+/// the other half has the same source text.
 fn is_half_of_character(literal: &[u8], unit: CharInfo) -> bool {
     unit.end >= unit.start + 4 && literal.get(unit.end as usize - 4).is_some_and(|it| *it >= 0xF0)
 }
 
-/// ESLint's `codeUnit.start`. Between the halves of a character is its offset plus 2, as in
-/// [`regex::ast`].
+/// ESLint's `codeUnit.start`. The position between a character's halves is its offset plus 2, as in [`regex::ast`].
 fn start_of_unit(literal: &[u8], unit: CharInfo) -> u32 {
     match unit.code_unit {
         0xDC00..=0xDFFF if is_half_of_character(literal, unit) => unit.end - 2,
@@ -191,8 +190,8 @@ fn end_of_unit(literal: &[u8], unit: CharInfo) -> u32 {
     }
 }
 
-/// TODO(api): replace by integrator::File::position, once it takes the offset of a character
-/// outside the BMP plus 2 for the position between its two UTF-16 code units. It does with plus 1.
+/// TODO(api): replace by integrator::File::position, once it accepts the offset of a character outside the BMP plus 2
+/// as the position between its two UTF-16 code units. It does with plus 1.
 fn reportable_offset(text: &[u8], offset: u32) -> u32 {
     let start = (offset as usize).checked_sub(2);
     let is_between_halves = start.and_then(|it| text.get(it)).is_some_and(|it| *it >= 0xF0);
@@ -207,10 +206,10 @@ enum LiteralKind {
     Template,
 }
 
-/// The node that a pattern is the value of.
+/// The node whose value is a pattern.
 struct PatternNode<'a> {
     node: Expr<'a>,
-    /// `None`: where a character of the pattern is written is not known.
+    /// `None` if the source location of the pattern's characters isn't known.
     literal: Option<LiteralKind>,
     code_units: OnceCell<Vec<CharInfo>>,
 }
@@ -229,10 +228,10 @@ impl<'a> PatternNode<'a> {
         }
     }
 
-    /// Where the characters from `first` to `last` are written, from the start of the node.
+    /// Returns the source range of the characters from `first` to `last`, relative to the start of the node.
     fn range_of(&self, first: Character, last: Character) -> Option<(u32, u32)> {
         let parse = match self.literal? {
-            // After the slash.
+            // Skip the slash.
             LiteralKind::Regex => return Some((first.start() + 1, last.end() + 1)),
             LiteralKind::String => parse_string_literal,
             LiteralKind::Template => parse_template_token,
@@ -253,8 +252,8 @@ impl<'a> PatternNode<'a> {
     }
 }
 
-/// oxlint reads a pattern that is a string or a template without substitutions, not the value of `String.raw` or of a
-/// constant.
+/// oxlint reads a pattern that's a string or a template without substitutions, but not the value of `String.raw` or of
+/// a constant.
 fn oxlint_can_read(pattern: Expr) -> bool {
     match pattern.skip_type_wrappers().kind() {
         ExprKind::String(_) => true,
@@ -272,7 +271,7 @@ impl NoMisleadingCharacterClass {
         find_character_sequences(&chars, unfiltered_chars, found, node.node.file().language().is_oxlint);
     }
 
-    /// `unicode_fixer`: adds the `u` flag.
+    /// `unicode_fixer` adds the `u` flag.
     fn verify<'a>(
         &self,
         node: Expr<'a>,
@@ -284,14 +283,15 @@ impl NoMisleadingCharacterClass {
         if !may_be_misleading(pattern) {
             return;
         }
-        let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default())
+        let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::from_flags(flags), regex::Options::default())
         else {
             return;
         };
         let node = PatternNode::new(node);
         let mut found = Found::default();
         for class in ast.root().descendants().filter(|it| it.ty() == NodeType::CharacterClass) {
-            // A range takes a part of a sequence of characters, which this gives back.
+            // A range swallows the characters at its ends. This puts `min` back at the end of one sequence and `max` at
+            // the start of the next.
             let mut sequence: SmallVec<[Character; 8]> = SmallVec::new();
             for element in class.elements() {
                 match element.kind() {
@@ -315,8 +315,8 @@ impl NoMisleadingCharacterClass {
             let Some(&message) = KINDS.get(kind) else {
                 return;
             };
-            // Two kinds start together only at an escape that is two code units, and the kind that is about that alone is the
-            // first of `KINDS`: the shorter first.
+            // Two kinds can only start at the same offset at an escape that's two code units long. The kind that covers
+            // only that escape is first in `KINDS`, so the shorter report goes first.
             let report = cx
                 .report(span, message)
                 .shorter_first()
@@ -349,7 +349,7 @@ impl Rule for NoMisleadingCharacterClass {
         .recommended()
         .hints();
     const ON: On = On::new().exprs(&[ExprTag::Regex]).finish();
-    /// The regular expression literals in which something can be found.
+    /// The regular expression literals that could have something to report.
     type State<'a> = Vec<Expr<'a>>;
 
     fn new(options: &Options) -> Self {
@@ -375,7 +375,7 @@ impl Rule for NoMisleadingCharacterClass {
         let ecma_version = file.language().ecma_version;
         let is_valid_with_u = |pattern: &[u8]| is_valid_with_unicode_flag(ecma_version, pattern, UnicodeFlag::U);
 
-        // The literals whose flags are replaced by those given to `RegExp`.
+        // The literals whose flags are replaced by the ones passed to `RegExp`.
         let mut checked_pattern_nodes: IdSet<Expr<'a>> = IdSet::new();
         for reference in references {
             let (Some(ref_node), Some(call)) = (reference.expr(), reference.call()) else {
@@ -403,7 +403,7 @@ impl Rule for NoMisleadingCharacterClass {
             };
             let flags = match flags_node {
                 None => Cow::Borrowed(&b""[..]),
-                // For oxlint flags that it cannot read are not there, but for a template with substitutions.
+                // oxlint treats flags it can't read as absent, except for a template with substitutions.
                 Some(flags_node) if file.language().is_oxlint && !oxlint_can_read(flags_node) => {
                     match (flags_node.skip_type_wrappers().kind(), pattern_node.kind()) {
                         (ExprKind::Template(_), _) => continue,
@@ -416,7 +416,7 @@ impl Rule for NoMisleadingCharacterClass {
                     None => continue,
                 },
             };
-            // The same for each of the characters that are reported.
+            // The result is the same for every reported character.
             let is_valid = OnceCell::new();
             let unicode_fixer = |fixer: Fixer<'a>| {
                 if !*is_valid.get_or_init(|| is_valid_with_u(&pattern)) {
@@ -434,12 +434,12 @@ impl Rule for NoMisleadingCharacterClass {
                 matches!(flags_node.tag(), ExprTag::String | ExprTag::Template)
                     .then(|| fixer.insert_before(Span::empty(flags_node.span().end - 1), "u"))
             };
-            // oxlint finds the characters in what is written under an `as`.
-            let written = match file.language().is_oxlint {
+            // oxlint finds the characters in the source text under an `as`.
+            let source_node = match file.language().is_oxlint {
                 true => pattern_node.skip_type_wrappers(),
                 false => pattern_node,
             };
-            self.verify(written, &pattern, &flags, unicode_fixer, cx);
+            self.verify(source_node, &pattern, &flags, unicode_fixer, cx);
         }
 
         for e in std::mem::take(&mut cx.state) {

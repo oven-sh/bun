@@ -28,7 +28,8 @@ fn is_looped<'a>(node: Node<'a>, parent: Node<'a>) -> bool {
     if !parent.is_loop() {
         return false;
     }
-    // oxlint knows a body that is a block or an expression, and no test that is a member or has a type around it.
+    // oxlint only recognizes a body that's a block or an expression, and misses a test that's a member access or is
+    // wrapped in a type.
     let is_oxlint = parent.file().language().is_oxlint;
     let is_known = |e: Expr<'a>| {
         let tags = [
@@ -68,13 +69,13 @@ impl NoAwaitInLoop {
         });
         if is_in_loop == Some(true) {
             let whole = await_node.span();
-            // oxlint points at the keyword, which it takes to be four bytes after the start of a `for`.
-            let place = match (cx.language().is_oxlint, await_node) {
+            // oxlint reports at the keyword, which it assumes is four bytes after the start of a `for`.
+            let report_span = match (cx.language().is_oxlint, await_node) {
                 (false, _) => whole,
                 (true, Node::Stmt(it)) if it.tag() == StmtTag::ForOf => Span::new(whole.start + 4, whole.start + 9),
                 (true, _) => Span::new(whole.start, whole.start + 5),
             };
-            cx.report(place, UNEXPECTED_AWAIT);
+            cx.report(report_span, UNEXPECTED_AWAIT);
         }
     }
 }
@@ -82,7 +83,7 @@ impl NoAwaitInLoop {
 impl Rule for NoAwaitInLoop {
     const META: Meta = Meta::eslint("no-await-in-loop", Kind::Problem);
     const ON: On = On::new().exprs(&[ExprTag::Await]).stmts(&[StmtTag::ForOf]).var_decls();
-    /// Whether a node is in a loop.
+    /// Caches whether a node is in a loop.
     type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(_: &Options) -> Self {
@@ -104,7 +105,7 @@ impl Rule for NoAwaitInLoop {
         }
     }
 
-    /// The statement is validated with the first that it declares.
+    /// The statement is validated once, with its first declarator.
     #[inline]
     fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if declaration.var_kind() == VarKind::AwaitUsing

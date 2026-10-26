@@ -39,7 +39,7 @@ const UNEXPECTED_MIX: Message = Message::new(
     "Unexpected mix of shorthand and non-shorthand properties.",
 );
 
-/// What is wrong with a property.
+/// The problem found with a property.
 enum Finding<'a> {
     /// `{ x() {} }` should be written as `{ x: function() {} }`
     MethodLongform(Message, Func<'a>),
@@ -51,8 +51,7 @@ enum Finding<'a> {
     PropertyShorthand(Name<'a>),
 }
 
-/// ESLint's `isConstructor`: whether the first character of `name` after `_`, `$` and digits is a
-/// capital letter.
+/// ESLint's `isConstructor`: true if the first character of `name` after any `_`, `$` and digits is a capital letter.
 fn is_constructor(name: &[u8]) -> bool {
     let mut rest =
         strings::wtf8_codepoints(name).skip_while(|it| matches!(it.1, 0x5F | 0x24 | 0x30..=0x39));
@@ -75,7 +74,7 @@ fn can_have_shorthand(prop: Prop) -> bool {
 fn is_string_literal_key<'a>(key: Key<'a>, file: &File<'a>) -> bool {
     match key.kind() {
         KeyKind::String(_) => true,
-        // It is also what a template without substitutions is.
+        // A template without substitutions is a `ComputedString` too.
         KeyKind::ComputedString(_) => {
             file.text().get(key.inner_span(file).start as usize) != Some(&b'`')
         }
@@ -94,7 +93,7 @@ fn is_redundant(prop: Prop) -> bool {
     let (Some(key), Some(value)) = (prop.key(), prop.value()) else {
         return false;
     };
-    // oxlint does not look into parentheses.
+    // oxlint doesn't look into parentheses.
     if is_proto_key(key) || value.file().language().is_oxlint && value.is_parenthesized() {
         return false;
     }
@@ -107,8 +106,7 @@ fn is_redundant(prop: Prop) -> bool {
     }
 }
 
-/// Whether `e`, which is written `arguments`, refers to a variable of a function that is not an
-/// arrow function, or of the global scope.
+/// True if `e`, an identifier named `arguments`, refers to a variable of a non-arrow function or of the global scope.
 fn is_arguments_of_function(e: Expr) -> bool {
     let Some(symbol) = e.reference().and_then(Reference::symbol) else {
         return false;
@@ -121,8 +119,7 @@ fn is_arguments_of_function(e: Expr) -> bool {
     }
 }
 
-/// Whether there is a `this`, a `super`, a `new.target` or an `arguments` in `arrow` that means
-/// something else in a method.
+/// True if `arrow` has a `this`, `super`, `new.target` or `arguments` that would mean something else in a method.
 fn has_lexical_identifier(arrow: Func) -> bool {
     let mut pending = vec![Node::Func(arrow)];
     while let Some(node) = pending.pop() {
@@ -189,7 +186,7 @@ fn make_function_shorthand<'a>(fixer: Fixer<'a>, prop: Prop<'a>, func: Func<'a>)
             method.extend_from_slice(file.slice(Span::new(token_before_params.end, value.end)));
         }
         Some(arrow) => {
-            // The first token that is not `async`.
+            // The first token that isn't `async`.
             let start = file
                 .tokens_in(value)
                 .nth(usize::from(func.is_async()))?
@@ -283,7 +280,7 @@ impl ObjectShorthand {
             (PropKind::Init, Some(func), _) if self.applies_to_methods && func.name().is_none() => {
                 let name = ast_utils::get_static_key_name(key);
                 let name = name.as_deref();
-                // oxlint takes only a key that is written as a name for that of a constructor.
+                // For oxlint, only an identifier key can name a constructor.
                 let can_be_constructor =
                     !file.language().is_oxlint || matches!(key.kind(), KeyKind::Ident(_));
                 if (self.ignores_constructors
@@ -330,7 +327,8 @@ impl ObjectShorthand {
         }
     }
 
-    /// Whether [`ObjectShorthand::find`] can find something for a property of this kind with the value `value`.
+    /// Fast check: true if [`ObjectShorthand::find`] may find a problem with a property of this kind whose value is
+    /// `value`.
     #[inline]
     fn may_find(&self, prop: Prop, value: Expr) -> bool {
         match prop.kind() {
@@ -370,13 +368,13 @@ impl ObjectShorthand {
             }
             Finding::MethodShorthand(func) => {
                 // oxlint points at the function.
-                let place = if cx.language().is_oxlint {
+                let location = if cx.language().is_oxlint {
                     value.span()
                 } else {
                     prop.span()
                 };
                 let report = cx
-                    .report(place, EXPECTED_METHOD_SHORTHAND)
+                    .report(location, EXPECTED_METHOD_SHORTHAND)
                     .called_with(prop);
                 report.fix(|fixer| make_function_shorthand(fixer, prop, func));
             }

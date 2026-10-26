@@ -1,17 +1,17 @@
-//! Going on after a syntax error, as TypeScript's parser does: `parseErrorAt`, `parseList`,
+//! Error recovery that matches TypeScript's parser: `parseErrorAt`, `parseList`,
 //! `parseDelimitedList`, `abortParsingListOrMoveToNextToken`, `isInSomeParsingContext`,
 //! `parsingContextErrors`, `isListElement`, `isListTerminator`.
 //!
-//! Only with `Options::recovers`. Without it the first error ends the file, or the speculative parse
-//! that is going on: a text without errors pays one test of a flag at each list.
+//! Only with `Options::recovers`. Without it the first error ends the file, or the current
+//! speculative parse, so a text without errors only pays for one flag test per list.
 
 use super::{Checkpoint, Parser, ctx};
-use crate::Refusal;
+use crate::Rejection;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
-/// `GetViableKeywordSuggestions`: TypeScript's keywords of more than two letters.
+/// `GetViableKeywordSuggestions`: TypeScript's keywords longer than two letters.
 const KEYWORD_SUGGESTIONS: &[&[u8]] = &[
     b"abstract",
     b"accessor",
@@ -94,8 +94,8 @@ const KEYWORD_SUGGESTIONS: &[&[u8]] = &[
     b"await",
 ];
 
-/// The suggestion of `parseErrorForMissingSemicolonAfter` for `word`
-/// (`GetSpellingSuggestionForStrings`, `getSpaceSuggestion`).
+/// `parseErrorForMissingSemicolonAfter`'s suggestion for `word` (`GetSpellingSuggestionForStrings`,
+/// `getSpaceSuggestion`).
 #[cold]
 #[inline(never)]
 pub fn keyword_suggestion(word: &[u8]) -> Option<Vec<u8>> {
@@ -164,20 +164,20 @@ const ALL_LISTS: [ListKind; 23] = [
     ListKind::JsxChildren,
 ];
 
-/// What the token at the top of the loop of a list is to the list.
+/// How a list's loop treats the token it sees before an element.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ListStep {
     /// It starts an element.
     Element,
-    /// It was reported and skipped. The next one is looked at.
+    /// It was reported and skipped. Look at the next token.
     Skipped,
     /// The list ends before it.
     Over,
 }
 
-/// What oxc calls the token `token`, which is written `text`, in "Expected `,` but found `Identifier`".
+/// oxc's name for `token`, whose source text is `text`, as in "Expected `,` but found `Identifier`".
 #[inline(never)]
-pub(super) fn name_for_oxc(token: T, text: &[u8]) -> Vec<u8> {
+pub(super) fn oxc_token_name(token: T, text: &[u8]) -> Vec<u8> {
     let has_any = |of: &[u8]| bun_core::strings::index_of_any(text, of).is_some();
     let number: &[u8] = match text {
         [b'0', b'x' | b'X', ..] => b"hex",
@@ -195,10 +195,10 @@ pub(super) fn name_for_oxc(token: T, text: &[u8]) -> Vec<u8> {
         T::NoSubstitutionTemplate => b"${}".to_vec(),
         T::TemplateHead => b"${".to_vec(),
         T::PrivateIdentifier => b"#identifier".to_vec(),
-        // Keywords of its lexer alone.
+        // Only oxc's lexer treats these as keywords.
         T::Identifier if matches!(text, b"target" | b"meta" | b"source") => text.to_vec(),
         T::Identifier => b"Identifier".to_vec(),
-        // It splits these.
+        // oxc's lexer splits tokens that start with `>`.
         _ if text.starts_with(b">") => b">".to_vec(),
         _ => text.to_vec(),
     }
@@ -213,32 +213,33 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !self.recovers() {
             return self.fail();
         }
-        // A loop that is not written for recovery yet can stay at a token for ever. What is nested
-        // and not closed reports an error at one token for each level.
+        // A loop that doesn't handle recovery yet can get stuck on one token forever. The limit is
+        // high because unclosed nesting reports one error per level at the same token.
         match self.errors_at.0 == self.lx.start {
             true => self.errors_at.1 += 1,
             false => self.errors_at = (self.lx.start, 0),
         }
         if self.errors_at.1 > 1 << 17 {
-            return self.refuse(Refusal::Unsupported);
+            return self.reject(Rejection::Unsupported);
         }
-        self.take_errors_of_scanner();
+        self.take_scanner_errors();
         self.add_error(Diagnostic::new(DiagnosticKind::Parse, at, code, args));
     }
 
-    /// The end of `parseErrorAtRange`.
+    /// The tail of `parseErrorAtRange`.
     fn add_error(&mut self, error: Diagnostic) {
         // "Don't report another error if it would just be at the same location as the last error"
-        let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
-        let last = self.f.diagnostics.iter().rfind(is_of_parser);
+        let is_parse_error = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+        let last = self.f.diagnostics.iter().rfind(is_parse_error);
         if last.is_none_or(|last| last.start != error.start) {
             self.f.diagnostics.push(error);
         }
     }
 
-    /// `parseToplevelStatement`. `parsePropertyName` restores `statementHasAwaitIdentifier`, so that no statement is parsed
-    /// again for an `await` in a name: there it is a name. For another `await` `reparseTopLevelAwait` parses all of the
-    /// statement again, in the await context.
+    /// `parseToplevelStatement`. `parsePropertyName` restores `statementHasAwaitIdentifier`, so an `await` in a
+    /// property name stays a name and doesn't trigger a reparse. `parseBindingIdentifier` restores it too, which
+    /// matters for the first parameter of `(await) => {}`. Any other `await` identifier makes `reparseTopLevelAwait`
+    /// reparse the whole statement in the await context.
     #[cold]
     #[inline(never)]
     pub(crate) fn top_level_statement(&mut self) -> StmtId {
@@ -266,22 +267,26 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         statement
     }
 
-    /// After `statement`, which starts at `before` and has an `await` that can be a name, in a file that can still be a
-    /// script. That is how oxc reads it first, and what is wrong with that reading is what it says. Only when it is through
-    /// with the file does it try the operator.
+    /// Call after `statement`, which starts at `before` and has an `await` that could be a name, in a file that could
+    /// still be a script. oxc first parses such an `await` as a name and reports the errors of that parse. It only
+    /// tries `await` as an operator once it's through the whole file.
     #[cold]
     #[inline(never)]
     fn first_reading_of_oxc(&mut self, before: &Checkpoint, statement: StmtId) -> Option<StmtId> {
-        self.take_errors_of_scanner();
-        let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
-        let said_before = before.file.diagnostics as usize;
-        let said = self.f.diagnostics.get(said_before..).unwrap_or_default();
-        let gives_up =
+        self.take_scanner_errors();
+        let is_parse_error = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+        let diagnostics_before = before.file.diagnostics as usize;
+        let new_diagnostics = self
+            .f
+            .diagnostics
+            .get(diagnostics_before..)
+            .unwrap_or_default();
+        let is_fatal =
             |it: &&Diagnostic| matches!(it.kind, DiagnosticKind::Parse | DiagnosticKind::OxcFatal);
-        let second: Vec<Diagnostic> = said.iter().filter(gives_up).cloned().collect();
+        let second: Vec<Diagnostic> = new_diagnostics.iter().filter(is_fatal).cloned().collect();
         let start = self.f.stmts.get(statement.idx())?.start;
         let is_import_meta = |it: &Expr| it.pos < start && matches!(it.kind, ExprKind::ImportMeta);
-        if !second.iter().any(|it| is_of_parser(&it))
+        if !second.iter().any(|it| is_parse_error(&it))
             || self.has_failed()
             || self.f.exprs.iter().any(is_import_meta)
         {
@@ -289,16 +294,20 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         self.rollback(before);
         self.has_plain_top_level_await = false;
-        (self.has_await_in_statement, self.was_await_refused) = (false, false);
+        (self.has_await_in_statement, self.recovery_hit_await) = (false, false);
         self.reparses_rest_of_file = false;
         let saved = self.enter_context(0, ctx::AWAIT);
         let statement = self.statement();
         self.context = saved;
-        self.take_errors_of_scanner();
-        // `file_of` tries a script.
+        self.take_scanner_errors();
+        // Makes `file_of` try parsing the file as a script.
         self.has_top_level_await = true;
-        let said = self.f.diagnostics.get(said_before..).unwrap_or_default();
-        if !said.iter().any(|it| is_of_parser(&it)) {
+        let new_diagnostics = self
+            .f
+            .diagnostics
+            .get(diagnostics_before..)
+            .unwrap_or_default();
+        if !new_diagnostics.iter().any(|it| is_parse_error(&it)) {
             let end = self.prev_end();
             let mut found = Diagnostic::new(DiagnosticKind::OxcSecondReading, (start, end), 0, &[]);
             found.related = second;
@@ -307,29 +316,28 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         Some(statement)
     }
 
-    /// `scanError`: what the scanner has reported goes where the errors of the parser go, before
-    /// the next of them.
+    /// `scanError`: moves the scanner's errors into the parser's diagnostics, ahead of the parser's next error.
     #[inline(always)]
-    pub(crate) fn take_errors_of_scanner(&mut self) {
+    pub(crate) fn take_scanner_errors(&mut self) {
         if GENERAL && !self.lx.errors.is_empty() {
-            self.take_errors_of_scanner_slowly();
+            self.take_scanner_errors_slow();
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn take_errors_of_scanner_slowly(&mut self) {
+    fn take_scanner_errors_slow(&mut self) {
         for error in self.lx.take_errors() {
             self.add_error(error);
         }
     }
 
-    /// The token, a word with an escape, is taken as a name: as a keyword it would be an error.
+    /// The token is a word with an escape. It's used as a name, so drop the error it would get as a keyword.
     #[cold]
     #[inline(never)]
-    pub(crate) fn forget_escaped_keyword(&mut self) {
+    pub(crate) fn discard_escaped_keyword_error(&mut self) {
         let at = self.lx.start;
-        if self.recovers() && !self.lx.forget_escaped_keyword() {
+        if self.recovers() && !self.lx.discard_escaped_keyword_error() {
             (self.f.diagnostics).retain(|it| it.code != 1260 || it.start != at);
         }
     }
@@ -350,7 +358,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `parseExpected`, at another token.
+    /// `parseExpected`, when the current token isn't `token`.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -358,26 +366,26 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.expected_in_list(token, b"");
     }
 
-    /// The same. For oxc the diagnostic also has what it calls the token that is there and, after an element of a list, what
-    /// closes the list: "Expected `,` or `)` but found `Identifier`".
+    /// Like `expected`. For oxc the diagnostic also carries oxc's name for the current token and, after a list element,
+    /// the list's closing token: "Expected `,` or `)` but found `Identifier`".
     fn expected_in_list(&mut self, token: T, closer: &[u8]) {
         if !self.options.dialect.oxc {
             return self.error_at_token(1005, &[token.text()]);
         }
-        let found = name_for_oxc(self.token(), self.lx.text());
+        let found = oxc_token_name(self.token(), self.lx.text());
         match closer {
             b"" => self.error_at_token(1005, &[token.text(), &found]),
             _ => self.error_at_token(1005, &[token.text(), &found, closer]),
         }
     }
 
-    /// `parseExpectedMatchingBrackets`, at another token than `close`.
+    /// `parseExpectedMatchingBrackets`, when the current token isn't `close`.
     #[cold]
     #[inline(never)]
     #[track_caller]
     pub(crate) fn unmatched(&mut self, (open, close): (T, T), open_at: Option<u32>) {
-        // Otherwise one of them counts for the error that is reported here.
-        self.take_errors_of_scanner();
+        // Otherwise a scanner error could be mistaken for the error reported here.
+        self.take_scanner_errors();
         let before = self.f.diagnostics.len();
         self.expected(close);
         if let Some(open_at) = open_at
@@ -392,8 +400,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// Where TypeScript's parser reports nothing and leaves the token to its caller. Without recovery
-    /// the token is an error wherever it is left, and the parse ends here.
+    /// For places where TypeScript's parser reports nothing and leaves the token to its caller.
+    /// Some caller will report the token, so without recovery the parse fails right here.
     #[inline]
     #[track_caller]
     pub(crate) fn fail_unless_recovering(&mut self) {
@@ -402,19 +410,19 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `parseErrorAtRange`, about what is parsed all the same. Without recovery: `report`.
+    /// `parseErrorAtRange`, for text that's parsed normally despite the error. Without recovery: `report`.
     #[cold]
     #[inline(never)]
     #[track_caller]
-    pub(crate) fn error_and_go_on(&mut self, code: u32, at: (u32, u32), args: &[&[u8]]) {
+    pub(crate) fn error_and_continue(&mut self, code: u32, at: (u32, u32)) {
         match self.recovers() {
-            true => self.error(code, at, args),
+            true => self.error(code, at, &[]),
             false => self.report(),
         }
     }
 
-    /// `createIdentifierWithDiagnostic`, at a token that is no identifier for the caller: the name
-    /// that stands for it, and the start of the token. `code`: `diagnosticMessage`, or 0.
+    /// `createIdentifierWithDiagnostic`, at a token the caller doesn't accept as an identifier.
+    /// Returns the placeholder name and the token's start. `code`: `diagnosticMessage`, or 0.
     /// `code_of_private_name`: `privateIdentifierDiagnosticMessage`, or 0.
     #[cold]
     #[inline(never)]
@@ -452,7 +460,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         (known::empty, self.pos())
     }
 
-    /// `parseIdentifier`, at a token that is none: the name, and where the node is.
+    /// `parseIdentifier`, at a token that isn't an identifier. Returns the name and the node's position.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -460,11 +468,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let full = self.full_start();
         match self.missing_identifier(0, 0) {
             (name, _) if name == known::empty => (name, full),
-            written => written,
+            other => other,
         }
     }
 
-    /// `parseIdentifierWithDiagnostic(code)` as an expression, at a token that is no identifier.
+    /// `parseIdentifierWithDiagnostic(code)` as an expression, at a token that isn't an identifier.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -479,7 +487,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `TokenValue()`. `previous`: the one of the token before, which a punctuator leaves.
+    /// `TokenValue()`. `previous`: the previous token's value, which a punctuator leaves unchanged.
     fn token_value(&self, previous: &[u8]) -> Vec<u8> {
         match self.token() {
             T::Number => bun_sema::atom::number_to_string(self.lx.number),
@@ -502,7 +510,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let is_parenthesized = self.is_parenthesized(expression);
         match kind {
             ExprKind::TaggedTemplate(call) if !is_parenthesized => {
-                let template = self.f[call].template;
+                let template = self.f.template_of(call);
                 let from = self.f.exprs.get(template.idx()).map_or(pos, |it| it.pos);
                 self.error(1443, (from, end), &[]);
             }
@@ -513,11 +521,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `parseErrorForMissingSemicolonAfter`, of the identifier `name` from `pos` to `end`.
+    /// `parseErrorForMissingSemicolonAfter`, for the identifier `name` at `pos..end`.
     fn missing_semicolon_after_identifier(&mut self, name: Atom, (pos, end): (u32, u32)) {
         let word = self.lx.text_of(name).to_vec();
         let (here, token) = (self.range_of_token(), self.token());
-        // To oxc the word is a name like any other.
+        // oxc treats the word like any other name.
         if self.options.dialect.oxc && !word.is_empty() && token != T::Invalid {
             return self.error(1434, (pos, end), &[]);
         }
@@ -556,7 +564,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `parseSemicolonAfterPropertyName`. `name`: the name and its range, if it is an identifier.
+    /// `parseSemicolonAfterPropertyName`. `name`: the name and its range, if it's an identifier.
     #[cold]
     #[inline(never)]
     pub(crate) fn missing_semicolon_after_property(
@@ -586,8 +594,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The condition of the loop of `parseHeritageClauses`, which is a list only from the first
-    /// clause on.
+    /// `parseHeritageClauses`' loop condition. It only calls `parseList` once it has seen a first clause.
     pub(crate) fn is_at_heritage_clause(&mut self, is_first: bool) -> bool {
         if is_first || !self.recovers() {
             return matches!(self.token(), T::Extends | T::Implements);
@@ -595,9 +602,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.skip_to_element(ListKind::HeritageClauses)
     }
 
-    /// The condition of the loops of `parseList` and `parseDelimitedList`, before each element:
-    /// whether the list of `kind` goes on, after the tokens that are reported and skipped. Only
-    /// recovery asks: without it, what is no element is an error where it is parsed.
+    /// Loop condition of `parseList` and `parseDelimitedList`, checked before each element. Reports and skips invalid
+    /// tokens, then returns true if the `kind` list continues. Only recovery needs this. Without it, a token that can't
+    /// start an element fails where the element is parsed.
     #[inline(always)]
     pub(crate) fn is_at_element(&mut self, kind: ListKind) -> bool {
         !self.recovers() || self.skip_to_element(kind)
@@ -607,8 +614,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn skip_to_element(&mut self, kind: ListKind) -> bool {
         if kind == ListKind::SourceElements {
-            // The loop of `reparseTopLevelAwait` calls `parseStatement` whatever the token is, and
-            // goes to the next token if that has consumed nothing.
+            // `reparseTopLevelAwait`'s loop calls `parseStatement` at any token, and skips a token
+            // if that consumed nothing.
             if self.reparses_rest_of_file {
                 if self.lx.start == self.reparsed_at {
                     self.next();
@@ -617,7 +624,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 return self.token() != T::Eof;
             }
             self.has_await_in_statement = false;
-            self.was_await_refused = false;
+            self.recovery_hit_await = false;
         }
         loop {
             match self.list_step(kind) {
@@ -628,14 +635,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `recover_missing_comma`, which only recovery needs.
+    /// `recover_missing_comma`, which is only needed with recovery.
     #[inline(always)]
-    pub(crate) fn goes_on_without_comma(&mut self, kind: ListKind, element: u32) -> bool {
+    pub(crate) fn continues_without_comma(&mut self, kind: ListKind, element: u32) -> bool {
         self.recovers() && self.recover_missing_comma(kind, element)
     }
 
-    /// A list of `kind` is open from here on. Returns `lists` as the caller restores it after the
-    /// list.
+    /// Marks a `kind` list as open. Returns the previous `lists`, which the caller passes to
+    /// `leave_list` after the list.
     #[inline(always)]
     pub(crate) fn enter_list(&mut self, kind: ListKind) -> u32 {
         if !GENERAL {
@@ -646,7 +653,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         saved
     }
 
-    /// After the list: `lists` is what `enter_list` has returned.
+    /// Call after the list with the value `enter_list` returned.
     #[inline(always)]
     pub(crate) fn leave_list(&mut self, lists: u32) {
         if GENERAL {
@@ -654,7 +661,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// What the token is to the list of `kind`, which the loop of the list is at the top of.
+    /// Classifies the current token for the `kind` list, before an element.
     fn list_step(&mut self, kind: ListKind) -> ListStep {
         if self.is_list_element(kind, false) {
             return ListStep::Element;
@@ -665,8 +672,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         ListStep::Skipped
     }
 
-    /// The end of the loop of `parseDelimitedList`, after an element that starts at the full start
-    /// `element` and that no comma follows. Whether the list goes on.
+    /// The tail of `parseDelimitedList`'s loop, after an element whose full start is `element` and
+    /// that isn't followed by a comma. Returns true if the list continues.
     #[cold]
     #[inline(never)]
     fn recover_missing_comma(&mut self, kind: ListKind, element: u32) -> bool {
@@ -682,7 +689,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             _ => b"}",
         };
         match kind {
-            // oxc ends these lists where no comma follows.
+            // oxc ends these lists at a missing comma.
             ListKind::VariableDeclarations if self.options.dialect.oxc => {
                 self.expected(T::Semicolon);
                 return false;
@@ -711,7 +718,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `abortParsingListOrMoveToNextToken`, at a token that neither starts an element of `kind` nor
-    /// ends the list. Whether the list ends, because a list around it has a use for the token.
+    /// ends the list. Returns true if the list ends because an enclosing list can use the token.
     fn abort_list_or_skip(&mut self, kind: ListKind) -> bool {
         self.parsing_context_error(kind);
         if self.is_in_some_parsing_context() {
@@ -725,15 +732,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `isInSomeParsingContext`
     fn is_in_some_parsing_context(&mut self) -> bool {
         let mut open = self.lists;
-        // `reparseTopLevelAwait` parses a statement of the file that has an `await` again, and no
-        // list of statements is open then.
+        // `reparseTopLevelAwait` reparses a top-level statement that has an `await`, and no
+        // statement list is open during that reparse.
         if self.token() == T::Await
             && self.has_context(ctx::TOP_LEVEL)
             && self.has_context(ctx::AWAIT)
         {
             self.note_await();
             self.has_await_identifier = true;
-            self.was_await_refused = true;
+            self.recovery_hit_await = true;
         }
         if self.has_await_in_statement {
             open &= !(1 << ListKind::SourceElements as u32);
@@ -742,10 +749,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             open & 1 << kind as u32 != 0
                 && (self.is_list_element(kind, true) || self.is_list_terminator(kind))
         });
-        // The first parse has ended its statement at this token.
+        // The first parse ended its statement at this token.
         if !is_in_some
             && open != self.lists
-            && !self.was_await_refused
+            && !self.recovery_hit_await
             && self.is_list_element(ListKind::SourceElements, true)
         {
             self.reparses_rest_of_file = true;
@@ -762,7 +769,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn parsing_context_error(&mut self, kind: ListKind) {
         let word = self.lx.text();
         let code = match kind {
-            // `import;`, which oxc takes for a declaration.
+            // `import;`, which oxc parses as a declaration.
             ListKind::SourceElements | ListKind::BlockStatements
                 if self.token() == T::Import && self.options.dialect.oxc =>
             {
@@ -788,7 +795,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 let word = self.lx.text_of(self.lx.atom).to_vec();
                 return self.error_at_token(1389, &[&word]);
             }
-            // "Expression expected.", which is told in oxc's words.
+            // "Expression expected.", reported with oxc's message.
             ListKind::VariableDeclarations if self.options.dialect.oxc => 1109,
             ListKind::VariableDeclarations => 1134,
             ListKind::ObjectBindingElements => 1180,
@@ -992,7 +999,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             ListKind::ArgumentExpressions => token == T::DotDotDot || self.is_start_of_expression(),
             ListKind::Parameters => self.is_start_of_parameter(),
             ListKind::TypeArguments | ListKind::TupleElementTypes => {
-                token == T::Comma || self.is_start_of_type(false) || self.is_name_in_type_for_oxc()
+                token == T::Comma || self.is_start_of_type() || self.is_name_in_type_for_oxc()
             }
             ListKind::HeritageClauses => matches!(token, T::Extends | T::Implements),
             ListKind::ImportOrExportSpecifiers => {
@@ -1027,7 +1034,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             ListKind::HeritageClauseElement => {
                 matches!(token, T::OpenBrace | T::Extends | T::Implements)
             }
-            // "For better error recovery, if we see an '=>' then we just stop immediately." oxc does not.
+            // "For better error recovery, if we see an '=>' then we just stop immediately." oxc doesn't.
             ListKind::VariableDeclarations => {
                 self.can_parse_semicolon()
                     || matches!(token, T::In | T::Of)

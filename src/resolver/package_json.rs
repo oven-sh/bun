@@ -1,6 +1,7 @@
 use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
+use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
@@ -180,7 +181,8 @@ const INSTALLED_DEPENDENCY_GROUPS: [DependencyGroup; 2] =
     [DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL];
 
 impl PackageJSON {
-    /// Whether auto-install can look up the version of an imported package in this package.json.
+    /// Returns true if auto-install can look up the version of an imported package in this
+    /// package.json.
     pub(crate) fn lists_dependencies(&self) -> bool {
         self.dependencies.map.count() > 0
             || self.package_manager_package_id != INVALID_PACKAGE_ID
@@ -295,11 +297,14 @@ impl SideEffects {
 
 /// Thin extension trait that delegates to `bun_paths::resolve_path`.
 trait FileSystemPackageJsonExt {
-    fn join(&self, parts: &[&[u8]]) -> &'static [u8];
+    /// Returns a slice of `spill` if the result is too long for the thread-local join buffer.
+    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8];
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
-    fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Auto>(parts)
+    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8] {
+        resolve_path::resolve_path::join_spill::<resolve_path::resolve_path::platform::Auto>(
+            spill, parts,
+        )
     }
 }
 
@@ -722,6 +727,8 @@ impl PackageJSON {
                     }
                 }
 
+                let mut spill: Vec<u8> = Vec::new();
+
                 // If the array is empty, treat it as false (no side effects)
                 if !has_globs && !has_exact {
                     package_json.side_effects = SideEffects::False;
@@ -741,7 +748,7 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let pattern = r_fs.join(&joined);
+                            let pattern = r_fs.join(&mut spill, &joined);
 
                             if strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
@@ -778,7 +785,7 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let pattern = r_fs.join(&joined);
+                            let pattern = r_fs.join(&mut spill, &joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility
                             let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                 .unwrap_or_else(|_| pattern.to_vec());
@@ -795,8 +802,8 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            let _ =
-                                map.insert(StringHashMapUnownedKey::init(r_fs.join(&joined)), ());
+                            let pattern = r_fs.join(&mut spill, &joined);
+                            let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                         }
                     }
                     package_json.side_effects = SideEffects::Map(map);
@@ -1064,7 +1071,11 @@ impl ExportsMap {
         log: &mut bun_ast::Log,
         json: js_ast::Expr,
     ) -> Option<ExportsMap> {
-        let mut visitor = Visitor { source, log };
+        let mut visitor = Visitor {
+            source,
+            log,
+            stack_check: StackCheck::init(),
+        };
 
         let root = visitor.visit(json);
 
@@ -1079,6 +1090,7 @@ impl ExportsMap {
 pub(crate) struct Visitor<'a> {
     pub(crate) source: &'a bun_ast::Source,
     pub(crate) log: &'a mut bun_ast::Log,
+    stack_check: StackCheck,
 }
 
 impl<'a> Visitor<'a> {
@@ -1105,6 +1117,10 @@ impl<'a> Visitor<'a> {
         value: &js_ast::E::JsonValue,
         vloc: json_parser::ValueLocation<'_>,
     ) -> Entry {
+        if !self.stack_check.is_safe_to_recurse() {
+            let loc = vloc.resolve(&self.source.contents);
+            return self.too_deep(bun_ast::Range { loc, len: 1 });
+        }
         match value {
             js_ast::E::JsonValue::Null => Entry {
                 data: EntryData::Null,
@@ -1247,6 +1263,18 @@ impl<'a> Visitor<'a> {
             data: EntryData::Invalid,
         }
     }
+
+    #[cold]
+    fn too_deep(&mut self, first_token: bun_ast::Range) -> Entry {
+        self.log.add_range_warning(
+            Some(self.source),
+            first_token,
+            b"This value is nested too deeply",
+        );
+        Entry {
+            data: EntryData::Invalid,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1305,6 +1333,8 @@ pub type ConditionsMap = StringArrayHashMap<()>;
 pub(crate) struct ESModule<'a> {
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
+    /// `resolve_target` uses bigger stack frames than the JSON parser, so it can overflow on a target that parsed.
+    pub(crate) stack_check: StackCheck,
 }
 
 #[derive(Clone)]
@@ -1856,6 +1886,15 @@ impl<'a> ESModule<'a> {
         subpath: &[u8],
         internal: bool,
     ) -> Resolution {
+        if !self.stack_check.is_safe_to_recurse() {
+            if let Some(logs) = self.debug_logs.as_deref_mut() {
+                logs.add_note(b"The package target is nested too deeply".to_vec());
+            }
+            return Resolution {
+                status: Status::InvalidPackageConfiguration,
+                ..Default::default()
+            };
+        }
         match &target.data {
             EntryData::String(str) => {
                 let mb = module_bufs();

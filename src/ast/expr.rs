@@ -117,7 +117,7 @@ impl Expr {
         self.deep_clone_no_detach(bump, bun_core::StackCheck::init())
     }
     #[inline]
-    pub(crate) fn deep_clone_no_detach(
+    pub fn deep_clone_no_detach(
         &self,
         bump: &Bump,
         stack_check: bun_core::StackCheck,
@@ -1835,6 +1835,7 @@ impl Data {
                     properties,
                     has_decorators: el.has_decorators,
                     should_lower_standard_decorators: el.should_lower_standard_decorators,
+                    inner_class_ref: el.inner_class_ref,
                 });
                 Ok(Data::EClass(StoreRef::from_bump(item)))
             }

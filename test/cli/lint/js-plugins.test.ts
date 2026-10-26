@@ -45,7 +45,7 @@ async function lint(
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Where a run ends with an error, or dies, the assertion that fails is often about something else.
+  // If a run fails or crashes, the assertion that fails is often about something else, so print the real cause.
   if (exitCode !== 0 && exitCode !== 1) console.error(`bun lint ${args.join(" ")}: exit code ${exitCode}\n${stderr}`);
   return {
     raw: stdout,
@@ -62,9 +62,9 @@ const oxlintrc = (config: object) =>
 // Each thread that lints a file starts a VM, which takes seconds in a debug build.
 const timeout = isDebug || isASAN ? 120_000 : 10_000;
 
-// As under ESLint 10.12.0.
+// Same as under ESLint 10.12.0.
 test.concurrent(
-  "the .env of the project is not in `process.env` of a plugin, and what is inherited is",
+  "a plugin's `process.env` has the inherited variables but not the project's .env",
   async () => {
     const files = {
       ".env": "FROM_FILE=1\n",
@@ -81,7 +81,7 @@ test.concurrent(
   timeout,
 );
 
-// Reports every identifier called `foo`, with what the API has to say about it.
+// Reports every identifier called `foo`, using most of the report API.
 const noFoo = `
 export default {
   meta: { name: "eslint-plugin-demo" },
@@ -114,9 +114,9 @@ export default {
 };
 `;
 
-describe.concurrent("bun lint with plugins in JavaScript", () => {
+describe.concurrent("bun lint with JavaScript plugins", () => {
   test(
-    "jsPlugins of an .oxlintrc.json: messages, data, options with the defaults of the schema",
+    "jsPlugins in an .oxlintrc.json: messages, data, and options with the schema's defaults",
     async () => {
       const { stdout, exitCode } = await lint(
         {
@@ -146,7 +146,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "--fix applies the fixes of a rule, also behind characters that are not ASCII",
+    "--fix applies a rule's fixes, also after non-ASCII characters",
     async () => {
       const { files, exitCode } = await lint(
         {
@@ -165,7 +165,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
 
   // https://github.com/oven-sh/bun/issues/45154
   test(
-    "a package in jsPlugins whose `exports` has nothing but `import`",
+    "loads a package in jsPlugins whose `exports` only has an `import` condition",
     async () => {
       const { stdout, exitCode } = await lint(
         {
@@ -187,7 +187,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "comments disable and configure a rule of a plugin",
+    "comments disable and configure a plugin's rule",
     async () => {
       const { stdout, exitCode } = await lint(
         {
@@ -208,7 +208,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "selectors, :exit and the order of the listeners",
+    "supports selectors and :exit, and calls listeners in order",
     async () => {
       const plugin = `
       export default {
@@ -251,7 +251,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "tokens, comments, scopes and locations",
+    "provides tokens, comments, scopes and locations",
     async () => {
       const plugin = `
       export default {
@@ -330,9 +330,10 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As with oxlint 1.87: the mark is on the plugin's variable, and oxlint's own rules have their own.
+  // Same as oxlint 1.87: the mark is set on the plugin's copy of the variable, and oxlint's own rules have a separate
+  // one.
   test(
-    "a variable that a rule marks as used is still unused for oxlint's no-unused-vars",
+    "oxlint's no-unused-vars still reports a variable that a plugin's rule marks as used",
     async () => {
       const plugin = `
       export default {
@@ -369,7 +370,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "createOnce, before and after of oxlint's API",
+    "supports createOnce, before and after from oxlint's API",
     async () => {
       const plugin = `
       let created = 0;
@@ -416,9 +417,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // The two reports are oxlint 1.87's.
+  // oxlint 1.87 prints the same two reports.
   test(
-    "after runs once for a file, also when another rule's create threw for the file before it",
+    "after runs once per file, even if another rule's create threw for the previous file",
     async () => {
       const hooks = `
       let calls = 0;
@@ -474,7 +475,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "a plugin in TypeScript, one from a package, one with an alias",
+    "loads a TypeScript plugin, a plugin from a package, and a plugin with an alias",
     async () => {
       const rule = (message: string) =>
         `{ create(context) { return { Program(node) { context.report({ node, message: ${JSON.stringify(message)} }); } }; } }`;
@@ -503,9 +504,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As `react/jsx-one-expression-per-line` asks.
+  // `react/jsx-one-expression-per-line` calls it like this.
   test(
-    "isSpaceBetweenTokens looks into the text between two elements, isSpaceBetween does not",
+    "isSpaceBetweenTokens looks inside the text between two elements, and isSpaceBetween doesn't",
     async () => {
       const { stdout, exitCode } = await lint(
         {
@@ -534,7 +535,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // Nothing of it is built in.
+  // None of its rules are built in.
   test.each([
     [
       "eslint.config.mjs",
@@ -548,7 +549,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       "a.js:1:1: of the package [Error/regexp(no-dupe-disjunctions)]",
     ],
   ])(
-    "eslint-plugin-regexp is a plugin like any other, the package of the project runs: %s",
+    "eslint-plugin-regexp is treated like any other plugin, so the project's package runs: %s",
     async (name, configuration, printed) => {
       const { stdout, stderr, exitCode } = await lint(
         {
@@ -568,13 +569,14 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // To oxlint `n`, which a plugin can be called, and `node`, which is built in, are two plugins. What oxlint 1.87 prints, sorted.
-  const calledN = {
+  // To oxlint, a JavaScript plugin named `n` and the built-in `node` are two separate plugins. The expected lines are
+  // what oxlint 1.87 prints, sorted.
+  const pluginN = {
     "n.js": `const rule = message => ({ create: context => ({ BinaryExpression(node) { context.report({ node, message }); } }) });
       export default { meta: { name: "eslint-plugin-n" }, rules: { "no-path-concat": rule("of the package"), "only-there": rule("only there") } };`,
     "a.js": `export const p = __dirname + "/x";\n`,
   };
-  const besideNode = (more: object) =>
+  const withBuiltInNode = (more: object) =>
     JSON.stringify({ categories: { correctness: "off" }, plugins: ["node"], jsPlugins: ["./n.js"], ...more });
   test.each([
     [
@@ -587,7 +589,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       1,
     ],
     [
-      "both are on, the other way round",
+      "both are on, in the opposite order",
       { "rules": { "node/no-path-concat": "warn", "n/no-path-concat": "error" } },
       [
         "a.js:1:18: Use `path.join()` or `path.resolve()` instead of string concatenation [Warning/node(no-path-concat)]",
@@ -596,7 +598,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       1,
     ],
     [
-      "only what is built in",
+      "only the built-in rule is on",
       { "rules": { "node/no-path-concat": "warn" } },
       [
         "a.js:1:18: Use `path.join()` or `path.resolve()` instead of string concatenation [Warning/node(no-path-concat)]",
@@ -604,19 +606,19 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       0,
     ],
     [
-      "only the plugin's",
+      "only the plugin's rule is on",
       { "rules": { "n/no-path-concat": "warn" } },
       ["a.js:1:18: of the package [Warning/n(no-path-concat)]"],
       0,
     ],
     [
-      "node is not among the plugins",
+      "node isn't in `plugins`",
       { "plugins": [], "rules": { "n/no-path-concat": "warn", "node/no-path-concat": "error" } },
       ["a.js:1:18: of the package [Warning/n(no-path-concat)]"],
       0,
     ],
     [
-      "a category turns on what is built in",
+      "a category turns on the built-in rule",
       { "categories": { "correctness": "off", "restriction": "warn" }, "rules": { "n/only-there": "error" } },
       [
         "a.js:1:18: Use `path.join()` or `path.resolve()` instead of string concatenation [Warning/node(no-path-concat)]",
@@ -625,7 +627,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       1,
     ],
     [
-      "an override turns off what is built in",
+      "an override turns off the built-in rule",
       {
         "rules": { "n/no-path-concat": "error", "node/no-path-concat": "warn" },
         "overrides": [{ "files": ["*.js"], "rules": { "node/no-path-concat": "off" } }],
@@ -634,7 +636,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       1,
     ],
     [
-      "an override turns off the plugin's",
+      "an override turns off the plugin's rule",
       {
         "rules": { "n/no-path-concat": "error", "node/no-path-concat": "warn" },
         "overrides": [{ "files": ["*.js"], "rules": { "n/no-path-concat": "off" } }],
@@ -645,9 +647,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       0,
     ],
   ] as [string, object, string[], number][])(
-    "a plugin that is called n beside the node that is built in: %s",
+    "a plugin named n alongside the built-in node plugin: %s",
     async (_, more, expected, exitCode) => {
-      const result = await lint({ ...calledN, ".oxlintrc.json": besideNode(more) }, ["-f", "unix", "a.js"]);
+      const result = await lint({ ...pluginN, ".oxlintrc.json": withBuiltInNode(more) }, ["-f", "unix", "a.js"]);
       expect(
         result.stdout
           .split("\n")
@@ -659,12 +661,16 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As oxlint 1.87, three runs of three.
+  // Same as oxlint 1.87, in three runs out of three.
   test(
-    "at one place, what is built in comes before what a plugin reports",
+    "at the same position, built-in rules' reports come before a plugin's",
     async () => {
       const rules = { "n/no-path-concat": "error", "n/only-there": "warn", "node/no-path-concat": "warn" };
-      const { stdout } = await lint({ ...calledN, ".oxlintrc.json": besideNode({ rules }) }, ["-f", "unix", "a.js"]);
+      const { stdout } = await lint({ ...pluginN, ".oxlintrc.json": withBuiltInNode({ rules }) }, [
+        "-f",
+        "unix",
+        "a.js",
+      ]);
       expect([...stdout.matchAll(/^a\.js:1:18: .* \[\w+\/(.*)\]$/gm)].map(it => it[1])).toEqual([
         "node(no-path-concat)",
         "n(no-path-concat)",
@@ -675,34 +681,34 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "a plugin that is called n beside the node that is built in: --print-config has what is built in, as oxlint's",
+    "a plugin named n alongside the built-in node plugin: --print-config only lists the built-in rule, like oxlint",
     async () => {
       const rules = { "n/no-path-concat": "error", "node/no-path-concat": "warn" };
-      const { raw } = await lint({ ...calledN, ".oxlintrc.json": besideNode({ rules }) }, ["--print-config"]);
+      const { raw } = await lint({ ...pluginN, ".oxlintrc.json": withBuiltInNode({ rules }) }, ["--print-config"]);
       expect(JSON.parse(raw).rules).toEqual({ "node/no-path-concat": "warn" });
     },
     timeout,
   );
 
-  describe("a note says which rules ran in JavaScript that are built in", () => {
+  describe("the note about rules that ran in JavaScript although they're built in", () => {
     const rules = { "n/no-path-concat": "error" };
     const packaged = (version: string) => ({
-      "a.js": calledN["a.js"],
+      "a.js": pluginN["a.js"],
       "node_modules/eslint-plugin-n/package.json": JSON.stringify({
         name: "eslint-plugin-n",
         version,
         type: "module",
         main: "n.js",
       }),
-      "node_modules/eslint-plugin-n/n.js": calledN["n.js"],
+      "node_modules/eslint-plugin-n/n.js": pluginN["n.js"],
     });
     const notes = async (files: Record<string, string>, more: object, ...flags: string[]) =>
-      (await lint({ ...files, ".oxlintrc.json": besideNode(more) }, [...flags, "a.js"])).stderr
+      (await lint({ ...files, ".oxlintrc.json": withBuiltInNode(more) }, [...flags, "a.js"])).stderr
         .split("\n")
         .filter(it => it.startsWith("note: ") || it.startsWith("  To use "));
 
     test(
-      "a package, with its version",
+      "mentions a package with its version",
       async () => {
         const jsPlugins = ["eslint-plugin-n"];
         expect(await notes(packaged("17.16.2"), { jsPlugins, rules })).toEqual([
@@ -718,14 +724,14 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     );
 
     test(
-      "a file, and rules that are not built in",
+      "mentions a file, and says to keep it for rules that aren't built in",
       async () => {
         const more = { "n/no-new-require": "warn", "n/only-there": "error", "n/no-sync": "off" };
-        const plugin = calledN["n.js"].replace(
+        const plugin = pluginN["n.js"].replace(
           `"only-there"`,
           `"no-new-require": rule("new"), "no-sync": rule("sync"), "only-there"`,
         );
-        expect(await notes({ ...calledN, "n.js": plugin }, { rules: { ...rules, ...more } })).toEqual([
+        expect(await notes({ ...pluginN, "n.js": plugin }, { rules: { ...rules, ...more } })).toEqual([
           `note: 2 "n" rules ran in JavaScript from ./n.js, but bun lint has them built in (version 18.4.1)`,
           `  To use the built-in rules, rename them to "node/.." and add "node" to "plugins". Keep ./n.js for the other rule. Reports may differ.`,
         ]);
@@ -734,27 +740,28 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     );
 
     test(
-      "nothing where nobody reads it, and nothing where there is nothing to say",
+      "isn't printed in quiet or machine-readable output, if the run passes, or if no such rule ran",
       async () => {
         for (const flags of [["--quiet"], ["--silent"], ["-f", "json"], ["-f", "unix"], ["-f", "github"]]) {
-          expect([flags, await notes(calledN, { rules }, ...flags)]).toEqual([flags, []]);
+          expect([flags, await notes(pluginN, { rules }, ...flags)]).toEqual([flags, []]);
         }
-        expect(await notes(calledN, { rules: { "n/only-there": "error" } })).toEqual([]);
-        expect(await notes(calledN, { rules: { "n/no-path-concat": "off", "node/no-path-concat": "error" } })).toEqual(
+        expect(await notes(pluginN, { rules: { "n/no-path-concat": "warn" } })).toEqual([]);
+        expect(await notes(pluginN, { rules: { "n/only-there": "error" } })).toEqual([]);
+        expect(await notes(pluginN, { rules: { "n/no-path-concat": "off", "node/no-path-concat": "error" } })).toEqual(
           [],
         );
-        expect(await notes(calledN, { jsPlugins: [], rules })).toEqual([]);
+        expect(await notes(pluginN, { jsPlugins: [], rules })).toEqual([]);
       },
       timeout,
     );
   });
 
   test(
-    "a plugin that is called n beside the node that is built in: each has its name in oxlint-suppressions.json",
+    "a plugin named n alongside the built-in node plugin: each is listed under its own name in oxlint-suppressions.json",
     async () => {
       const rules = { "n/no-path-concat": "error", "node/no-path-concat": "error" };
       const { files } = await lint(
-        { ...calledN, ".oxlintrc.json": besideNode({ rules }) },
+        { ...pluginN, ".oxlintrc.json": withBuiltInNode({ rules }) },
         ["--suppress-all", "a.js"],
         ["oxlint-suppressions.json"],
       );
@@ -766,7 +773,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "options that the schema refuses, and a rule that does not exist",
+    "rejects options that the schema doesn't allow, and a rule that doesn't exist",
     async () => {
       const files = { "plugin.mjs": noFoo, "a.js": "1;\n" };
       const wrongOptions = await lint(
@@ -849,8 +856,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         lint(files, ["-f", "json", "a.js"]),
         lint(files, ["-f", "stylish", "a.js"]),
       ]);
-      const places = JSON.parse(json.raw)[0].messages.map((it: any) => [it.message, it.line, it.column]);
-      expect(places).toEqual([
+      const positions = JSON.parse(json.raw)[0].messages.map((it: any) => [it.message, it.line, it.column]);
+      expect(positions).toEqual([
         ["loc 1", null, null],
         ["loc 2", null, null],
         ["loc 4", null, 3],
@@ -869,9 +876,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As under ESLint 10.12.0.
+  // Same as under ESLint 10.12.0.
   test.concurrent(
-    "`-f json` has the `data` of a suggestion that has a `desc`",
+    "`-f json` includes the `data` of a suggestion that has a `desc`",
     async () => {
       const files = {
         "eslint.config.mjs": `
@@ -895,7 +902,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As under ESLint 10.12.0 with eslint-plugin-react-hooks 7.1.1, which passes `desc` and `fix` only.
+  // Same as under ESLint 10.12.0 with eslint-plugin-react-hooks 7.1.1, which only passes `desc` and `fix`.
   test.concurrent(
     "`-f json` has no `data` for a built-in rule's suggestion that only has a `desc` upstream",
     async () => {
@@ -917,9 +924,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // ESLint 10.12.0 and oxlint 1.87.0 call `fix`, and the `fix` of each suggestion, when a problem is reported, whoever reads what
-  // they return.
-  describe("a rule is asked for its fixes whatever is printed", () => {
+  // ESLint 10.12.0 and oxlint 1.87.0 call `fix`, and each suggestion's `fix`, as soon as a problem is reported, whether
+  // or not anything uses the result.
+  describe("a rule's fixers are called regardless of the output format", () => {
     const rules = `{
       "fix-throws": {
         meta: { fixable: "code" },
@@ -955,7 +962,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       "eslint.config.mjs": `export default [{ plugins: { demo: { rules: ${rules} } }, rules: { "demo/${rule}": "${severity}" } }];`,
       "a.js": "var a = 1;\n",
     });
-    // Named, for `--silent` is a flag of oxlint.
+    // Pass the config explicitly, because `--silent` is an oxlint flag.
     const eslint = (rule: string, flags: string[], severity?: string) =>
       lint(forEslint(rule, severity), ["-c", "eslint.config.mjs", ...flags, "a.js"]);
     const thrown = (rule: string, message: string) => ({
@@ -963,7 +970,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       stderr: `error: ${message}\nOccurred while linting <dir>/a.js:1\nRule: "demo/${rule}"`,
       exitCode: 2,
     });
-    const said = ({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof lint>>) => ({ stdout, stderr, exitCode });
+    const outcome = ({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof lint>>) => ({ stdout, stderr, exitCode });
 
     test.each([
       [[]],
@@ -973,14 +980,14 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       [["--silent"]],
       [["--quiet", "-f", "unix"]],
     ])(
-      "one that throws ends the run of ESLint's flavour: %j",
+      "with an ESLint config, a fixer that throws ends the run: %j",
       async flags => {
         const [fix, suggestion, notFixable] = await Promise.all(
           ["fix-throws", "suggestion-throws", "not-fixable"].map(rule => eslint(rule, flags)),
         );
-        expect(said(fix)).toEqual(thrown("fix-throws", "The fixer threw."));
-        expect(said(suggestion)).toEqual(thrown("suggestion-throws", "The suggestion threw."));
-        expect(said(notFixable)).toEqual(
+        expect(outcome(fix)).toEqual(thrown("fix-throws", "The fixer threw."));
+        expect(outcome(suggestion)).toEqual(thrown("suggestion-throws", "The suggestion threw."));
+        expect(outcome(notFixable)).toEqual(
           thrown("not-fixable", 'Fixable rules must set the `meta.fixable` property to "code" or "whitespace".'),
         );
       },
@@ -988,20 +995,20 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     );
 
     test(
-      "with --quiet a rule that warns does not run, unless the warnings are counted",
+      "with --quiet, a rule set to warn doesn't run unless --max-warnings counts the warnings",
       async () => {
         const [quiet, counted] = await Promise.all([
           eslint("fix-throws", ["--quiet", "-f", "unix"], "warn"),
           eslint("fix-throws", ["--quiet", "--max-warnings", "0", "-f", "unix"], "warn"),
         ]);
         expect({ stdout: quiet.stdout, exitCode: quiet.exitCode }).toEqual({ stdout: "", exitCode: 0 });
-        expect(said(counted)).toEqual(thrown("fix-throws", "The fixer threw."));
+        expect(outcome(counted)).toEqual(thrown("fix-throws", "The fixer threw."));
       },
       timeout,
     );
 
     test(
-      "what a fixer does shows in what the rule reports afterwards",
+      "a fixer's side effects are visible to the rule's later reports",
       async () => {
         const { stdout, exitCode } = await eslint("counts", ["-f", "unix"]);
         expect(stdout).toBe(
@@ -1013,7 +1020,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     );
 
     test.each([[[]], [["-f", "unix"]], [["-f", "json"]]])(
-      "one that throws is reported for the file in oxlint's flavour: %j",
+      "with an oxlint config, a fixer that throws is reported for the file: %j",
       async flags => {
         const { stdout, exitCode } = await lint(
           {
@@ -1030,13 +1037,13 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       timeout,
     );
 
-    // `supportsAutofix: false` is ESLint's `disableFixes`: then, and only then, no rule is asked.
+    // `supportsAutofix: false` sets ESLint's `disableFixes`, which is the only case where fixers aren't called.
     test.each([
       [true, 'fix={"range":[10,10],"text":"/**/"} suggestions=1', 'fix={"range":[0,3],"text":"let"} suggestions=0'],
       [false, "fix=null suggestions=0", "fix=null suggestions=0"],
     ])(
-      "`postprocess` is given the fixes whatever is printed: supportsAutofix: %j",
-      async (supportsAutofix, ofPlugin, builtIn) => {
+      "`postprocess` gets the fixes regardless of the output format: supportsAutofix: %j",
+      async (supportsAutofix, fromPlugin, builtIn) => {
         const files = {
           "eslint.config.mjs": `
             const fixes = {
@@ -1066,7 +1073,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.x"]);
         expect(stdout).toBe(
           [
-            `<dir>/a.x:1:1: bad ${ofPlugin} [Error/demo/fixes]`,
+            `<dir>/a.x:1:1: bad ${fromPlugin} [Error/demo/fixes]`,
             `<dir>/a.x:1:1: Unexpected var, use let or const instead. ${builtIn} [Error/no-var]`,
             "",
             "2 problems",
@@ -1079,7 +1086,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   });
 
   test(
-    "a plugin that cannot be loaded",
+    "reports a plugin that can't be loaded",
     async () => {
       const run = (plugin: string, specifier = "./broken.mjs") =>
         lint({ ".oxlintrc.json": oxlintrc({ jsPlugins: [specifier] }), "broken.mjs": plugin, "a.js": "1;\n" }, [
@@ -1114,7 +1121,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "what a plugin prints is printed, and process.exit() ends the run",
+    "a plugin's output is printed, and process.exit() ends the run",
     async () => {
       const plugin = `
       export default {
@@ -1149,7 +1156,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "the exit handlers of a plugin run after the report, once for each thread that has loaded it",
+    "a plugin's exit handlers run after the report, once for each thread that loaded it",
     async () => {
       const plugin = `
       let files = 0;
@@ -1192,7 +1199,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "what a plugin keeps about a file under its sourceCode or context is not there for the next file",
+    "each file gets a new sourceCode and context, so a plugin's caches keyed by them don't leak between files",
     async () => {
       const plugin = `
       const bySourceCode = new WeakMap();
@@ -1235,7 +1242,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "code paths, default options that are not JSON, and a plugin whose rules are in no fixed order",
+    "supports code paths, non-JSON default options, and a plugin whose rules have no fixed order",
     async () => {
       const plugin = `
       const rules = {};
@@ -1272,7 +1279,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         },
         ["-f", "unix"],
       );
-      // The events are what ESLint 10 gives this rule.
+      // ESLint 10 sends this rule the same events.
       const events = "start program s1_1 start function s2_1 s2_2 s2_4 unreachable s2_6";
       expect(stdout.split("\n").slice(0, 3)).toEqual([
         `a.js:1:1: paths/a a Infinity ${events} [Error/paths(a)]`,
@@ -1284,13 +1291,13 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "more files than threads: every file gets its reports, and nothing else is said",
+    "with more files than threads, every file gets exactly its own reports",
     async () => {
       const files: Record<string, string> = {
         ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/no-foo": "error" } }),
         "plugin.mjs": noFoo,
       };
-      // The file number `i` has `i % 5` of them.
+      // File number `i` has `i % 5` of them.
       for (let i = 0; i < 300; i++)
         files[`src/${i}.ts`] = `export const x: number = ${i};\n` + "foo();\n".repeat(i % 5);
       for (const threads of isDebug || isASAN ? ["3"] : ["1", "3", "16"]) {
@@ -1310,7 +1317,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "plugins of an eslint.config.js: imported, and defined in the file",
+    "plugins in an eslint.config.js can be imported or defined in the file",
     async () => {
       const { stdout, exitCode } = await lint(
         {
@@ -1349,7 +1356,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As much of the package as a configuration uses.
+  // A stand-in for the package with only what a config uses.
   const compat = {
     "node_modules/@eslint/compat/package.json": JSON.stringify({
       name: "@eslint/compat",
@@ -1368,7 +1375,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   };
 
   test(
-    "the configuration file is not run again for a plugin that a module exports, also through fixupPluginRules",
+    "doesn't run the config file again for a plugin that a module exports, even through fixupPluginRules",
     async () => {
       const { stdout, stderr, exitCode } = await lint(
         {
@@ -1394,7 +1401,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
 
         3 problems"
       `);
-      // What the process prints that evaluates the file is not shown.
+      // Output from the process that evaluates the config file isn't shown.
       expect(stderr).not.toContain("The configuration file runs.");
       expect(stderr).toMatch(/JavaScript: [12] engines loaded [12] modules, /);
       expect(exitCode).toBe(1);
@@ -1403,7 +1410,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "an engine runs the configuration file, for the files with a rule of a plugin that only it has",
+    "an engine runs the config file for files that need a plugin defined only in that file",
     async () => {
       const files: Record<string, string> = {
         "eslint.config.mjs": `
@@ -1436,7 +1443,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "a rule is loaded from the module that exports it, without the plugin and its other rules",
+    "loads a rule from the module that exports it, without the plugin and its other rules",
     async () => {
       const rule = (name: string) => `
         console.error("Loaded: the rule ${name}.");
@@ -1471,9 +1478,10 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // What a process has one of, like the caches of the resolver, is made with its first VM, and not for several threads at a time.
+  // Per-process state, like the resolver's caches, is created with the first VM, and that isn't safe on several threads
+  // at once.
   test.skipIf(!isDebug)(
-    "no other engine starts before the first is there",
+    "no other engine starts before the first one is ready",
     async () => {
       const files: Record<string, string> = {
         "eslint.config.mjs": `
@@ -1493,7 +1501,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       const steps = [...stdout.matchAll(/a VM (begins|is made)/g)].map(it => it[1]);
-      // How many there are depends on the number of cores.
+      // The number of engines depends on the number of cores.
       expect(steps.filter(it => it === "begins").length).toBe(steps.filter(it => it === "is made").length);
       expect(steps.slice(0, 2)).toEqual(["begins", "is made"]);
       expect(exitCode).toBe(1);
@@ -1502,7 +1510,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "what JSON cannot say: a RegExp in the options, a function in the settings. And rules can change their options",
+    "passes on non-JSON values (a RegExp in the options, a function in the settings), and rules can mutate their options",
     async () => {
       const { stdout, stderr, exitCode } = await lint(
         {
@@ -1548,9 +1556,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As `synckit` does it, which `eslint-plugin-prettier` is made with.
+  // This is what `synckit` does, which `eslint-plugin-prettier` is built on.
   test(
-    "a rule waits for a worker of its own on every thread that lints",
+    "a rule can block on its own worker on every linting thread",
     async () => {
       const files: Record<string, string> = {
         "eslint.config.mjs": `
@@ -1608,10 +1616,10 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As `@cspell/eslint-plugin` does it. With types the threads that lint begin anew for every project and every step of the
-  // checker, while the workers have Bun's pool read files.
+  // This is what `@cspell/eslint-plugin` does. With types, the linting threads are restarted for every project and
+  // every step of the checker, while the workers read files on Bun's thread pool.
   test(
-    "a rule waits for a worker of its own, which reads files, in projects with types",
+    "a rule can block on its own worker, which reads files, in projects with types",
     async () => {
       const files: Record<string, string> = {
         "eslint.config.mjs": `
@@ -1673,7 +1681,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       using dir = tempDir("bun-lint-js-plugins", files);
       await using proc = spawn({
         cmd: [bunExe(), "lint", "-f", "unix", "--threads", "4"],
-        // As many threads in a pool, however many cores there are.
+        // Fixes the thread pool's size, regardless of the number of cores.
         env: { ...env, GOMAXPROCS: "8" },
         cwd: String(dir),
         stdin: "ignore",
@@ -1682,18 +1690,18 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const reports = stdout.split("\n").filter(it => it.endsWith(": 5 [Error/demo/length]")).length;
-      // With what it says.
+      // Include stderr so that a failure shows it.
       expect({ reports, exitCode, stderr }).toEqual({ reports: 128, exitCode: 1, stderr: expect.any(String) });
     },
     timeout,
   );
 
   test(
-    "there are as many engines as pay, with types and without, and they report the same",
+    "starts only as many engines as are worth it, with and without types, and they report the same",
     async () => {
-      // `waits`: an engine stays in use with its first file until another engine has one. A thread only asks for an engine while
-      // the others are in use, and whether they are is otherwise up to how the threads happen to run.
-      const run = async (count: number, extension: string, size: number, threads: string, waits = false) => {
+      // With `blockFirstFile`, an engine stays busy with its first file until another engine has a file too. A thread
+      // only requests a new engine while the others are busy, which otherwise depends on thread scheduling.
+      const run = async (count: number, extension: string, size: number, threads: string, blockFirstFile = false) => {
         const files: Record<string, string> = {
           "engines/.keep": "",
           "tsconfig.json": JSON.stringify({ compilerOptions: { noLib: true, types: [] } }),
@@ -1712,7 +1720,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             import { readdirSync, writeFileSync } from "node:fs";
             const engines = new URL("./engines/", import.meta.url);
             // Each engine evaluates the module once.
-            let isFirst = ${waits};
+            let isFirst = ${blockFirstFile};
             export default { rules: { seen: { create: context => ({ Program(node) {
               if (isFirst) {
                 isFirst = false;
@@ -1723,17 +1731,18 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
               context.report({ node, message: "seen" });
             } }) } } };`,
         };
-        // One comment: thousands of them take a debug build minutes.
+        // A single comment, because thousands of them take a debug build minutes.
         const text = `foo;\n/*${Buffer.alloc(size, "x")}*/\n`;
         for (let i = 0; i < count; i++) files[`src/${i}.${extension}`] = text;
-        // How many engines fit depends on how much memory is free, which is up to the machine that runs this.
+        // The number of engines that fit depends on the machine's free memory, so set it explicitly.
         const variables = { BUN_LINT_MEMORY: String(64 * 2 ** 30) };
         const args = ["-f", "unix", "--timing", "--threads", threads, "src"];
         const { stdout, stderr, exitCode } = await lint(files, args, [], variables);
         expect(exitCode).toBe(1);
         return { stdout, engines: Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]) };
       };
-      // 24 files of 250 KB, which are not heavy yet, are 6 MB, which three engines are for.
+      // 24 files of 250 KB, which is just under the large-file limit, add up to 6 MB, which is enough for three
+      // engines.
       const [smallWithTypes, small, oneWithTypes, one, largeWithTypes, large] = await Promise.all([
         run(24, "ts", 0, "8"),
         run(24, "js", 0, "8"),
@@ -1755,7 +1764,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    'a rule written for ESLint 8, and a plugin that is an ES module with an export "module.exports"',
+    'runs a rule written for ESLint 8, and a plugin that\'s an ES module with a "module.exports" export',
     async () => {
       const { stdout, exitCode } = await lint(
         {
@@ -1805,9 +1814,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "a rule that asks for types is taken out, the rest runs, and the run ends with an error that names it",
+    "a rule that requests types is skipped, the rest runs, and the run ends with an error that lists the rule",
     async () => {
-      // As `getParserServices` of @typescript-eslint/utils does it.
+      // This is what `getParserServices` in @typescript-eslint/utils does.
       const services = `context => {
         if (context.sourceCode.parserServices.program == null) {
           throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file. See https://tseslint.com/typed-linting for enabling linting with type information.\\nParser: (unknown)");
@@ -1853,9 +1862,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As `eslint-plugin-import` does it to read the modules that a file imports.
+  // This is how `eslint-plugin-import` parses the modules that a file imports.
   test.each(["parser", "* as parser"])(
-    "a rule parses a text of its own with languageOptions.parser, which is loaded when it is called: import %s",
+    "a rule can parse other text with languageOptions.parser, which is loaded on first call: import %s",
     async imported => {
       const { stdout, exitCode } = await lint(
         {
@@ -1896,9 +1905,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As `eslint-plugin-rulesdir` and the plugin of nodejs/node: without the assignment the plugin has no rules.
+  // Like `eslint-plugin-rulesdir` and nodejs/node's plugin: without the assignment, the plugin has no rules.
   test(
-    "a plugin that the configuration file tells where its rules are",
+    "a plugin whose rules directory is set by the config file",
     async () => {
       const rule = (message: string) =>
         `module.exports = { create: context => ({ Program(node) { context.report({ node, message: "${message}" }); } }) };`;
@@ -1944,9 +1953,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // As `indent` of typescript-eslint 5, which hands ESLint's `indent` an object literal for a mapped type.
+  // Like typescript-eslint 5's `indent`, which passes ESLint's `indent` a made-up object literal for a mapped type.
   test(
-    "the nodes that typescript-estree makes for deprecated properties, and nodes that a rule makes up",
+    "supports the nodes typescript-estree creates for deprecated properties, and nodes that a rule makes up",
     async () => {
       const { stdout, exitCode } = await lint(
         {
@@ -1993,9 +2002,10 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // `require()` refuses such a module, and some without `await`: the rules of eslint-plugin-import-x in vitejs/vite.
+  // `require()` rejects a module like this, and some without `await`, such as eslint-plugin-import-x's rules in
+  // vitejs/vite.
   test(
-    "the module of a rule is loaded by import(), and alone",
+    "a rule's module is loaded with import(), and nothing else is loaded",
     async () => {
       const rule = (message: string) =>
         `await 0;\nexport default { create: context => ({ Program(node) { context.report({ node, message: "${message}" }); } }) };`;
@@ -2022,7 +2032,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "a plugin that waits for what never comes is an error",
+    "a plugin that awaits a promise that never settles is an error",
     async () => {
       const { stdout, stderr, exitCode } = await lint(
         {
@@ -2039,7 +2049,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
-    "a plugin that waits is loaded after a rule has left a rejection that nobody handles",
+    "a plugin with a top-level await still loads after a rule leaves an unhandled rejection",
     async () => {
       const reports = (message: string, before = "") =>
         `{ create: context => ({ Program(node) { ${before} context.report({ node, message: "${message}" }); } }) }`;
@@ -2070,7 +2080,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
 
   // The rows are what oxlint 1.87.0 and ESLint 10.12 report for these files with this plugin.
   test(
-    "a rule gets the text in JSX as it is written under oxlint, and with what `&amp;` stands for under ESLint",
+    "a rule gets raw JSX text with an oxlint config, and text with `&amp;` decoded with an ESLint config",
     async () => {
       const text = String.raw`export const a = (
   <div title="a &amp; b" data-single='&apos; &#183; &#xB7;' data-none="&zzqx; &amp" data-lines="one
@@ -2104,7 +2114,7 @@ export default {
   },
 };
 `;
-      const written = String.raw`
+      const rawText = String.raw`
 2:14 attribute-written matches
 2:14 strings Literal "a &amp; b" raw "\"a &amp; b\"" JSXText "\"a &amp; b\""
 2:38 strings Literal "&apos; &#183; &#xB7;" raw "'&apos; &#183; &#xB7;'" JSXText "'&apos; &#183; &#xB7;'"
@@ -2148,9 +2158,9 @@ export default {
             .filter(it => it.filename === name)
             .map(it => ({ ...it.labels[0].span, rule: it.code, message: it.message })),
         );
-      expect(of("a.tsx")).toBe(sorted(written));
-      expect(of("a.jsx")).toBe(sorted(written));
-      expect(of("crlf.tsx")).toBe(sorted(written.replaceAll("\\n", "\\r\\n")));
+      expect(of("a.tsx")).toBe(sorted(rawText));
+      expect(of("a.jsx")).toBe(sorted(rawText));
+      expect(of("crlf.tsx")).toBe(sorted(rawText.replaceAll("\\n", "\\r\\n")));
 
       const configuration = `
         import shows from "./plugin.mjs";
@@ -2163,9 +2173,9 @@ export default {
     timeout,
   );
 
-  // What `@rushstack/eslint-patch` does when `eslint-config-next` loads it, in a package that is laid out as it is.
+  // This is what `@rushstack/eslint-patch` does when `eslint-config-next` loads it, in a package with the same layout.
   test(
-    "a configuration that looks for ESLint among the modules that have loaded it finds that of the project",
+    "a config that searches its parent modules for ESLint finds the project's ESLint",
     async () => {
       const files = {
         "node_modules/eslint/package.json": `{ "name": "eslint", "version": "9.0.0" }`,
@@ -2197,7 +2207,7 @@ export default {
           import { createRequire } from "node:module";
           export default [createRequire(import.meta.url)("eslint-config-mine")];`,
         "eslint.config.cjs": `module.exports = [require("eslint-config-mine")];`,
-        // An engine runs this one too: nothing else has the plugin.
+        // An engine runs this config file too, because the plugin is only defined there.
         "eslint.config.js": `module.exports = [require("eslint-config-mine"), { plugins: { own: ${own} }, rules: { "own/program": "error" } }];`,
       };
       for (const [name, configuration] of Object.entries(configurations)) {
@@ -2210,10 +2220,10 @@ export default {
     timeout,
   );
 
-  // ESLint in Node.js gives up at 740: "Not enough stack space to parse input". So does the parser here between 300 and 400 in a
-  // debug build, whose frames are larger.
+  // ESLint in Node.js gives up at 740: "Not enough stack space to parse input". Bun's parser gives up between 300 and
+  // 400 in a debug build, which has larger stack frames.
   test(
-    "a rule goes through a tree that is 2,000 deep",
+    "a rule can traverse a tree that's 2,000 levels deep",
     async () => {
       const depth = isDebug || isASAN ? 200 : 2000;
       const { stdout, exitCode } = await lint(
@@ -2236,7 +2246,7 @@ export default {
     timeout,
   );
 
-  test("a path reaches a rule as the system writes it, also on Windows", async () => {
+  test("a rule gets paths with the system's separators, also on Windows", async () => {
     const source = readFileSync(join(import.meta.dir, "../../../src/lint/js_plugin/worker/paths.js"), "utf8");
     const paths = ["C:/proj/src/a.js", "C:/proj/a.md/0_x.js", "//server/share/a.js", "/proj/a\\b.js"];
     await using proc = spawn({
@@ -2265,9 +2275,9 @@ export default {
     expect(exitCode).toBe(0);
   });
 
-  // What eslint-plugin-turbo does with them: `physicalFilename.startsWith(directoryOfTheWorkspace)`.
+  // eslint-plugin-turbo relies on this: `physicalFilename.startsWith(directoryOfTheWorkspace)`.
   test(
-    "context.filename and context.physicalFilename are what node:path makes of context.cwd",
+    "context.filename and context.physicalFilename are spelled like node:path joins from context.cwd",
     async () => {
       const where = `{
         rules: {
@@ -2294,8 +2304,8 @@ export default {
         },
       }`;
       const imports = `import { join, relative, sep } from "node:path";`;
-      // The format is one that is the same whosever the configuration is.
-      const [ofOxlint, ofEslint] = await Promise.all([
+      // This format is the same with either tool's config.
+      const [withOxlint, withEslint] = await Promise.all([
         lint(
           {
             ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "where/is": "error" } }),
@@ -2318,21 +2328,21 @@ export default {
           ["-f", "json-with-metadata", "src"],
         ),
       ]);
-      const said = ({ raw }: { raw: string }) =>
+      const messagesOf = ({ raw }: { raw: string }) =>
         (JSON.parse(raw).results as { messages: { message: string }[] }[]).flatMap(it =>
           it.messages.map(it => JSON.parse(it.message)),
         );
       const all = { isJoined: true, isInside: true, isPhysicalJoined: true, methods: true };
       const file = { ...all, filename: ["src", "deep", "a.js"], physicalFilename: ["src", "deep", "a.js"] };
       const block = { ...all, filename: ["src", "b.txt", "0_x.js"], physicalFilename: ["src", "b.txt"] };
-      expect(said(ofOxlint)).toEqual([file]);
-      expect(said(ofEslint)).toEqual([block, file]);
+      expect(messagesOf(withOxlint)).toEqual([file]);
+      expect(messagesOf(withEslint)).toEqual([block, file]);
     },
     timeout,
   );
 
   test(
-    "fixes that take, give and replace the byte order mark",
+    "fixes can remove, add and replace the byte order mark",
     async () => {
       const rule = (test: string, fix: string) =>
         `{ meta: { fixable: "code" }, create: context => ({ Program(node) { if (${test}) context.report({ node, message: "mark", fix: fixer => ${fix} }); } }) }`;
@@ -2362,7 +2372,7 @@ export default {
   );
 
   test(
-    "what is no UTF-8 is as long for the places of nodes as in the text",
+    "node ranges count invalid UTF-8 the same way as the decoded text",
     async () => {
       const files = {
         "eslint.config.mjs": `const p = { rules: { r: { meta: { fixable: "code" }, create: context => ({ VariableDeclarator({ id }) {
@@ -2377,7 +2387,7 @@ export default {
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
       const [{ message, line, column }] = JSON.parse(raw)[0].messages;
-      // What ESLint 10.12 says.
+      // This is what ESLint 10.12 reports.
       expect({ message, line, column }).toEqual({ message: "oldName 35,42 oldName 35", line: 2, column: 7 });
       expect(exitCode).toBe(1);
       const fixed = await lint(files, ["--fix", "a.js"], ["a.js"]);
@@ -2387,7 +2397,7 @@ export default {
   );
 
   test(
-    "what is no UTF-8 is as long for columns and for the fixes of native rules as in the text",
+    "columns and native rules' fix ranges count invalid UTF-8 the same way as the decoded text",
     async () => {
       const files = {
         "eslint.config.mjs": `export default [{ rules: { "no-var": "error", "no-debugger": "error" } }];`,
@@ -2397,7 +2407,7 @@ export default {
         ),
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
-      // What ESLint 10.12 says.
+      // This is what ESLint 10.12 reports.
       expect(JSON.parse(raw)[0].messages.map(it => [it.ruleId, it.column, it.endColumn, it.fix?.range])).toEqual([
         ["no-debugger", 21, 30, undefined],
         ["no-var", 31, 41, [30, 33]],
@@ -2408,7 +2418,7 @@ export default {
   );
 
   test(
-    "without rules in JavaScript there is no engine",
+    "doesn't start an engine if no rule runs in JavaScript",
     async () => {
       const { stderr, exitCode } = await lint(
         { "eslint.config.mjs": `export default [{ rules: { "no-debugger": "error" } }];`, "a.js": "debugger;\n" },
@@ -2420,9 +2430,9 @@ export default {
     timeout,
   );
 
-  // The first regular expression of a configuration starts JavaScriptCore, before anybody knows how many VMs there are going to be.
+  // The first regular expression in a config initializes JavaScriptCore, before the number of VMs is known.
   test.skipIf(!isLinux || availableParallelism() < 2)(
-    "threads that compile beside a VM: with a few VMs, not with many, and as BUN_JSC_useConcurrentJIT says",
+    "concurrent JIT threads are on with a few VMs, off with many, and BUN_JSC_useConcurrentJIT overrides that",
     async () => {
       const files = (count: number) => ({
         "eslint.config.mjs": `
@@ -2451,13 +2461,13 @@ export default {
         export default {
           rules: { helpers: { create: context => ({ Program: node => context.report({ node, message: "" + helpers() }) }) } },
         };`,
-        // 200 of them are 16 MB, which five engines are for.
+        // 200 of them add up to 16 MB, which is enough for five engines.
         ...Object.fromEntries(
           Array.from({ length: count }, (_, i) => [`f${i}.js`, `1;\n/*${Buffer.alloc(80_000, "x")}*/\n`]),
         ),
       });
       const helpers = async (count: number, variables?: Record<string, string>) => {
-        // As on a machine with 8 cores.
+        // Behave as on a machine with 8 cores.
         const { raw } = await lint(files(count), ["--threads", "8", "-f", "json"], [], {
           GOMAXPROCS: "8",
           ...variables,
@@ -2466,18 +2476,18 @@ export default {
         const reported = results.flatMap(it => it.messages.filter(message => message.ruleId === "threads/helpers"));
         return [...new Set(reported.map(it => it.message))];
       };
-      const [few, many, asked] = await Promise.all([
+      const [few, many, forcedOn] = await Promise.all([
         helpers(2),
         helpers(200),
         helpers(200, { BUN_JSC_useConcurrentJIT: "1" }),
       ]);
-      expect([few, many, asked]).toEqual([["1"], ["0"], ["1"]]);
+      expect([few, many, forcedOn]).toEqual([["1"], ["0"], ["1"]]);
     },
     timeout,
   );
 
   test(
-    "files of 256 KB and more all go to one engine, with types and without, however many threads there are",
+    "files of 256 KB or more all go to one engine, with and without types, with any number of threads",
     async () => {
       const run = async (heavy: number, extension: string, threads: string) => {
         const files: Record<string, string> = {
@@ -2501,7 +2511,7 @@ export default {
         const text = (size: number) => `foo;\n/*${Buffer.alloc(size, "x")}*/\n`;
         for (let i = 0; i < heavy; i++) files[`src/heavy${i}.${extension}`] = text(270_000);
         for (let i = 0; i < 24; i++) files[`src/light${i}.${extension}`] = text(250_000);
-        // Not as JSON, which has the text of each file in it.
+        // Not `-f json`, which includes each file's text.
         const { raw, exitCode } = await lint(files, ["-f", "unix", "--threads", threads, "src"]);
         expect(exitCode).toBe(1);
         const realmsOf = (name: string) =>
@@ -2525,9 +2535,9 @@ export default {
     timeout,
   );
 
-  // A VM takes seconds to start in a debug build: beside the first no other pays for files like these.
+  // A VM takes seconds to start in a debug build, so a second one isn't worth it there for files like these.
   test.skipIf(isDebug || isASAN)(
-    "engines that grow over the memory that is for them are freed, and every file is linted",
+    "engines that outgrow their memory budget are freed, and every file is still linted",
     async () => {
       const run = async (count: number, threads: string) => {
         const files: Record<string, string> = {
@@ -2564,7 +2574,7 @@ export default {
         };
         const text = `foo;\n/*${Buffer.alloc(250_000, "x")}*/\n`;
         for (let i = 0; i < count; i++) files[`src/${i}.js`] = text;
-        // Half of it is planned for the engines, and above three quarters one is freed.
+        // Half of this is budgeted for the engines, and above three quarters an engine is freed.
         const variables = { BUN_LINT_MEMORY: String(1 << 30) };
         const { raw, stderr, exitCode } = await lint(
           files,
@@ -2586,7 +2596,7 @@ export default {
   );
 
   test(
-    "a file in which nothing occurs that is listened to: no listener is called, and who asks for the tree has it",
+    "in a file without any node a rule listens for, no listener is called, and `after` can still read the tree",
     async () => {
       const run = async (count: number, threads: string) => {
         const files: Record<string, string> = {
@@ -2640,7 +2650,7 @@ export default {
   );
 
   test(
-    "a suggestion has the data that the rule gave, also if that is empty",
+    "a suggestion has the data the rule passed, even if it's empty",
     async () => {
       const { raw, exitCode } = await lint(
         {
@@ -2672,7 +2682,7 @@ export default {
   );
 
   test(
-    "the settings that a rule sees are those of the configuration, with oxlint's too",
+    "a rule sees the config's settings, with an oxlint config too",
     async () => {
       const { stdout, exitCode } = await lint(
         {
@@ -2695,7 +2705,7 @@ export default {
   );
 
   test.each(["--disallow-code-generation-from-strings", "--disallow-code-generation-from-strings=strict"])(
-    "bun %s lint: plugins run, and neither they nor the configuration file make code from a string",
+    "bun %s lint: plugins run, and neither they nor the config file can evaluate code from a string",
     async flag => {
       using dir = tempDir("bun-lint-js-plugins", {
         "eslint.config.mjs": `
@@ -2720,9 +2730,9 @@ export default {
     timeout,
   );
 
-  // As nodejs/node makes a selector of them, and as rules tell `import "ws"` from `import "fs"`.
+  // nodejs/node builds a selector from this list, and rules use it to tell `import "ws"` from `import "fs"`.
   test(
-    "the modules that are built in are those of Node.js, for a configuration file and for a rule",
+    "a config file and a rule see Node.js's list of builtin modules",
     async () => {
       const { stdout, exitCode } = await lint(
         {
@@ -2746,9 +2756,9 @@ export default {
     timeout,
   );
 
-  // As `merge(...tseslint.configs.recommended, other)` of lodash does.
+  // lodash's `merge(...tseslint.configs.recommended, other)` does this.
   test(
-    "a plugin that the configuration file has put into what a package exports",
+    "loads a plugin that the config file merged into an object that a package exports",
     async () => {
       const { stdout, exitCode } = await lint(
         {
@@ -2773,9 +2783,9 @@ export default {
     timeout,
   );
 
-  // The other tests name a number of threads. A user does not.
+  // The other tests set the number of threads. Users don't.
   test(
-    "a thread for each core, and more files than that",
+    "lints every file with one thread per core and more files than threads",
     async () => {
       const count = 2 * availableParallelism() + 1;
       const files: Record<string, string> = {
@@ -2792,13 +2802,13 @@ export default {
   );
 
   test(
-    "no registry is asked for what a plugin imports or requires",
+    "never contacts a registry for a package that a plugin imports or requires",
     async () => {
-      const asked: string[] = [];
+      const requests: string[] = [];
       using registry = Bun.serve({
         port: 0,
         fetch(request) {
-          asked.push(new URL(request.url).pathname);
+          requests.push(new URL(request.url).pathname);
           return new Response("{}", { status: 404 });
         },
       });
@@ -2824,7 +2834,7 @@ export default {
       expect(imported.stdout).toContain("Cannot find package 'is-not-installed-anywhere'");
       expect(required.stdout).toContain("Cannot find module 'is-not-installed-anywhere'");
       expect(awaited.exitCode).toBe(0);
-      expect(asked).toEqual([]);
+      expect(requests).toEqual([]);
     },
     timeout,
   );
@@ -2886,14 +2896,14 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
         "b.js": "b;",
       };
       const { raw, stderr, exitCode } = await lint(files, ["--threads", "1", "-f", "json", "a.js", "b.js"]);
-      const said = JSON.parse(raw).map((result: any) =>
+      const messages = JSON.parse(raw).map((result: any) =>
         result.messages.map((it: any) => [it.message, it.line, it.column, it.endLine, it.endColumn, it.fix]),
       );
-      expect(said).toEqual([
+      expect(messages).toEqual([
         [["first", 1, 1, 4, 1, undefined]],
         [
           ["the node of a.js", 1, 1, 4, 1, undefined],
-          // The text between the two insertions is that of b.js.
+          // The text between the two insertions comes from b.js.
           ["a copy from a.js", 1, 1, 1, 7, { range: [0, 6], text: "(b;)" }],
           ['the fixer of a.js: {"range":[0,6],"text":"x"}', 1, 1, 1, 3, undefined],
           ["first", 1, 1, 1, 3, undefined],
@@ -2908,15 +2918,16 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
     timeout,
   );
 
-  describe("a `loc` that is not in the file", () => {
+  describe("a `loc` outside the file", () => {
     const outOfRange = "RangeError: Line/column pair translates to an out of range offset";
     const noLine = (line: number) =>
       `RangeError: Line number out of range (line ${line} requested). Line numbers should be 1-based, and less than or equal to number of lines in file (5).`;
     const notIntegers = "TypeError: Expected an object with integer `line` and `column` properties";
     type Place = (number | null)[];
-    // The `loc`. Then `line`, `column`, `endLine` and `endColumn` of ESLint 10.12.0. Then the line and column of oxlint 1.87.0, or
-    // what it says the rule threw. Then the same as for ESLint without a config, if that is something else.
-    const places: Record<string, [string, Place, string, Place?]> = {
+    // Each entry has the `loc`, then ESLint 10.12.0's `line`, `column`, `endLine` and `endColumn`, then oxlint 1.87.0's
+    // line and column or the error it says the rule threw, then the same fields as for ESLint without a config, if they
+    // differ.
+    const locCases: Record<string, [string, Place, string, Place?]> = {
       "line-0": ["{ line: 0, column: 0 }", [0, 1], "1:1", [1, 1]],
       "line-0-column-5": ["{ line: 0, column: 5 }", [0, 6], noLine(0), [1, 1]],
       "line-0-column-100": ["{ line: 0, column: 100 }", [0, 101], noLine(0), [1, 1]],
@@ -2977,11 +2988,11 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
         "TypeError: `loc.end` must be an object or null/undefined",
       ],
     };
-    const names = Object.keys(places);
+    const names = Object.keys(locCases);
     const all = names.map(name => `${name}.js`);
     const files = {
-      // The rule reports at the place that the file is called after.
-      "plugin.mjs": `const places = { ${names.map(name => `"${name}": ${places[name][0]}`).join(", ")} };
+      // The rule reports at the `loc` that the file is named after.
+      "plugin.mjs": `const places = { ${names.map(name => `"${name}": ${locCases[name][0]}`).join(", ")} };
         const nameOf = context => context.filename.replace(/^.*[\\\\/]/, "").replace(".js", "");
         const create = context => ({
           "Program:exit": () => context.report({ message: nameOf(context), loc: places[nameOf(context)] }),
@@ -3000,7 +3011,7 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
       ...files,
       ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/at": "error" } }),
     };
-    const alone = {
+    const withBunfig = {
       ...files,
       "bunfig.toml": `[lint]\nplugins = ["./plugin.mjs"]\nignorePatterns = ["plugin.mjs"]\n[lint.rules]\n"demo/at" = "error"\n`,
     };
@@ -3016,7 +3027,7 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
       );
 
     test(
-      "with an ESLint config it is passed on, as in ESLint",
+      "with an ESLint config, it's printed unchanged, as in ESLint",
       async () => {
         const some = ["line-0.js", "line-below-0.js", "column-far-below-0.js"];
         const [json, stylish, unix] = await Promise.all([
@@ -3024,7 +3035,7 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
           lint(eslint, ["-f", "stylish", ...some]),
           lint(eslint, ["-f", "unix", ...some]),
         ]);
-        expect(inJson(json.raw)).toEqual(Object.fromEntries(names.map(name => [name, [places[name][1]]])));
+        expect(inJson(json.raw)).toEqual(Object.fromEntries(names.map(name => [name, [locCases[name][1]]])));
         expect(stylish.stdout.split("\n").filter(line => line.includes("error  "))).toEqual([
           "  1  -4  error  column-far-below-0  demo/at",
           "  0:1  error  line-0  demo/at",
@@ -3041,7 +3052,7 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
     );
 
     test(
-      "with an ESLint config, a comment does not disable what is reported before it",
+      "with an ESLint config, a comment doesn't disable a report located before it",
       async () => {
         const text = "/* eslint-disable */\nfoo();\n/* eslint-enable */\nbar();\n";
         const { raw, exitCode } = await lint(
@@ -3056,7 +3067,7 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
           },
           ["-f", "json", "a.js"],
         );
-        // As ESLint 10.12.0.
+        // Same as ESLint 10.12.0.
         expect(JSON.parse(raw)[0].messages.map((it: any) => it.message)).toEqual(["line -1", "line 0", "line 4"]);
         expect(exitCode).toBe(1);
       },
@@ -3064,18 +3075,18 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
     );
 
     test(
-      "with an oxlint config it is where oxlint has it, and the rule throws where it does in oxlint",
+      "with an oxlint config, it's moved or rejected the same way as in oxlint",
       async () => {
         const [json, pretty, agent] = await Promise.all([
           lint(oxlint, ["-f", "json", ...all]),
           lint(oxlint, ["line-0.js"]),
           lint(oxlint, ["-f", "agent", "line-0.js"]),
         ]);
-        const said = JSON.parse(json.raw).diagnostics.map((it: any) => {
+        const found = JSON.parse(json.raw).diagnostics.map((it: any) => {
           const span = it.labels[0]?.span;
           return [nameOf(it.filename), span ? `${span.line}:${span.column}` : it.message.split("\n")[2]];
         });
-        expect(Object.fromEntries(said)).toEqual(Object.fromEntries(names.map(name => [name, places[name][2]])));
+        expect(Object.fromEntries(found)).toEqual(Object.fromEntries(names.map(name => [name, locCases[name][2]])));
         expect(pretty.stdout).toStartWith(`1 | export const a = 1;
     ^
 error: line-0  demo/at
@@ -3088,11 +3099,14 @@ error: line-0  demo/at
     );
 
     test(
-      "without a config, what is before the first line is at the start of the file",
+      "without a config, a `loc` before the first line is moved to the start of the file",
       async () => {
-        const [json, pretty] = await Promise.all([lint(alone, ["-f", "json", ...all]), lint(alone, ["line-0.js"])]);
+        const [json, pretty] = await Promise.all([
+          lint(withBunfig, ["-f", "json", ...all]),
+          lint(withBunfig, ["line-0.js"]),
+        ]);
         expect(inJson(json.raw)).toEqual(
-          Object.fromEntries(names.map(name => [name, [places[name][3] ?? places[name][1]]])),
+          Object.fromEntries(names.map(name => [name, [locCases[name][3] ?? locCases[name][1]]])),
         );
         expect(pretty.stdout).toStartWith(`1 | export const a = 1;
     ^
@@ -3104,10 +3118,10 @@ error: line-0  demo/at
       timeout,
     );
 
-    describe("and the comments that disable rules", () => {
+    describe("and disable comments", () => {
       const found = "demo/line-0";
-      // The text. Then what ESLint 10.12.0 has, what oxlint 1.87.0 has, and what there is without a config, where a report is
-      // compared with the comments at the place where it is shown.
+      // Each entry has the text, then what ESLint 10.12.0 reports, what oxlint 1.87.0 reports, and what's reported
+      // without a config, where disable comments are matched against the position the report is shown at.
       const texts: Record<string, [string, string[], string[], string[]]> = {
         "none": ["export {};\n", [`${found} 0:1`], [`${found} 1:1`], [`${found} 1:1`]],
         "block": [
@@ -3169,7 +3183,7 @@ error: line-0  demo/at
         ...Object.fromEntries(names.map(name => [`${name}.js`, texts[name][0]])),
       };
       const expected = (at: 1 | 2 | 3) => Object.fromEntries(names.map(name => [name, texts[name][at]]));
-      const said = (raw: string) =>
+      const messagesOf = (raw: string) =>
         Object.fromEntries(
           JSON.parse(raw).map((result: any) => [
             nameOf(result.filePath),
@@ -3178,19 +3192,19 @@ error: line-0  demo/at
         );
 
       test(
-        "with an ESLint config no comment disables a report at line 0, as in ESLint",
+        "with an ESLint config, no comment disables a report at line 0, as in ESLint",
         async () => {
           const config = `import demo from "./plugin.mjs";
             export default [{ files: ["*.js"], plugins: { demo }, rules: { "demo/line-0": "error" } }];`;
           const { raw, exitCode } = await lint({ ...files, "eslint.config.mjs": config }, args);
-          expect(said(raw)).toEqual(expected(1));
+          expect(messagesOf(raw)).toEqual(expected(1));
           expect(exitCode).toBe(1);
         },
         timeout,
       );
 
       test(
-        "with an oxlint config no comment disables it either, as in oxlint",
+        "with an oxlint config, no comment disables it either, as in oxlint",
         async () => {
           const config = oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/line-0": "error" } });
           const { raw, exitCode } = await lint({ ...files, ".oxlintrc.json": config }, args);
@@ -3210,13 +3224,13 @@ error: line-0  demo/at
         async () => {
           const config = `[lint]\nplugins = ["./plugin.mjs"]\n[lint.rules]\n"demo/line-0" = "error"\n`;
           const { raw, exitCode } = await lint({ ...files, "bunfig.toml": config }, args);
-          expect(said(raw)).toEqual(expected(3));
+          expect(messagesOf(raw)).toEqual(expected(3));
           expect(exitCode).toBe(1);
         },
         timeout,
       );
 
-      describe("of the built-in rules that report about the whole file", () => {
+      describe("for built-in rules that report the whole file", () => {
         const files = {
           "tsconfig.json": JSON.stringify({ compilerOptions: { strictNullChecks: false } }),
           "reported.ts": "export const a = 1;\n",
@@ -3244,14 +3258,14 @@ error: line-0  demo/at
           expect(exitCode).toBe(1);
         });
 
-        test("with an oxlint config they have no place and no comment disables them, as in oxlint", async () => {
+        test("with an oxlint config, they have no location and no comment disables them, as in oxlint", async () => {
           const config = oxlintrc({ plugins: ["vitest"], rules: { [rules[1]]: "error" } });
           const project = { ...files, ".oxlintrc.json": config };
           const [json, agent] = await Promise.all([
             lint(project, [...args, "reported.spec.js", "disabled.spec.js"]),
             lint(project, ["-f", "agent", "reported.spec.js"]),
           ]);
-          // As oxlint 1.87.0.
+          // Same as oxlint 1.87.0.
           expect(
             JSON.parse(json.raw)
               .diagnostics.map((it: any) => [it.filename, it.code ?? "unused", it.labels.length])
@@ -3267,12 +3281,12 @@ error: line-0  demo/at
       });
     });
 
-    // ESLint has none of these formats.
+    // ESLint doesn't have any of these formats.
     test.each([
       ["an ESLint config", eslint],
-      ["no config", alone],
+      ["no config", withBunfig],
     ])(
-      "the other formats have it in the file, with %s",
+      "the other formats clamp it to a position in the file, with %s",
       async (_, config) => {
         const some = ["line-0.js", "line-below-0.js", "column-far-below-0.js", "huge-column.js", "huge-end.js"];
         const [pretty, agent, github, junit] = await Promise.all(
@@ -3285,7 +3299,7 @@ error: line-0  demo/at
           "    at line-0.js:1:1",
           "    at line-below-0.js:1:1",
         ]);
-        // The mark is no further right than the end of the line.
+        // The `^` doesn't go past the end of the line.
         expect(pretty.stdout).toContain("1 | export const a = 1;\n                       ^\nerror: huge-column");
         expect(agent.stdout.split("\n").filter(line => line.startsWith("<error") || line.includes("^"))).toEqual([
           `<error file="column-far-below-0.js" line="1" column="0" rule="demo/at">`,
@@ -3326,7 +3340,7 @@ error: line-0  demo/at
 
 // Recorded with ESLint 10.12.0 and @typescript-eslint/parser 8.71.1 by record.mjs in that directory.
 test.concurrent(
-  "the listeners of several rules are called in ESLint's order, for types, selectors, exits and code path events",
+  "several rules' listeners are called in ESLint's order, for node types, selectors, exits and code path events",
   async () => {
     const oracle = join(import.meta.dir, "oracle", "jsplugins", "calls");
     const expected: Record<string, string> = JSON.parse(
@@ -3360,7 +3374,7 @@ test.concurrent(
   timeout,
 );
 
-describe.concurrent("the nodes in JavaScript plugins", () => {
+describe.concurrent("AST nodes in JavaScript plugins", () => {
   const oracle = join(import.meta.dir, "oracle", "jsplugins", "trees");
   const dump = readFileSync(join(oracle, "dump.cjs"), "utf8");
   // Recorded with ESLint 10.12.0, @typescript-eslint/parser 8.71.1 and oxlint 1.87.0 by record.mjs in that directory.
@@ -3369,7 +3383,7 @@ describe.concurrent("the nodes in JavaScript plugins", () => {
   );
 
   test(
-    "they have the properties, the order, the attributes and the classes that espree and typescript-estree give them",
+    "have the same properties, property order, attributes and classes as in espree and typescript-estree",
     async () => {
       const config = `const dump = require("./dump.cjs");
         module.exports = [
@@ -3386,7 +3400,7 @@ describe.concurrent("the nodes in JavaScript plugins", () => {
         ...Object.keys(treeCases),
       ]);
       const results: { filePath: string; messages: { message: string }[] }[] = JSON.parse(raw);
-      // One node to a line, so that a difference can be read.
+      // One node per line, so that a diff is readable.
       const lines = (tree: string | undefined) => tree?.split(/(?<=[[ ])(?=(?:Node )?\{ type: )/);
       for (const file of Object.keys(treeCases)) {
         const result = results.find(it => it.filePath.replaceAll("\\", "/").endsWith(`/${file}`));
@@ -3401,7 +3415,7 @@ describe.concurrent("the nodes in JavaScript plugins", () => {
   );
 
   test(
-    "they are laid out as in oxlint with its configuration",
+    "have oxlint's layout with an oxlint config",
     async () => {
       const config = { ignorePatterns: ["dump.cjs"], jsPlugins: ["./dump.cjs"], rules: { "dump/shapes": "error" } };
       const files = Object.keys(expected.oxlint);
@@ -3470,7 +3484,7 @@ describe.concurrent("scopes in JavaScript plugins", () => {
 
   // ESLint 8 counts them among the configured globals, and its `addDeclaredGlobals` treats them the same.
   test(
-    "the global scope has the variables of /* eslint-env */ comments with an ESLint 8 configuration",
+    "with an ESLint 8 config, the global scope has the variables from /* eslint-env */ comments",
     async () => {
       const plugin = `const show = it =>
           it && [it.name, it.writeable, it.eslintImplicitGlobalSetting, it.eslintExplicitGlobal, it.references.length].join(" ");
@@ -3507,9 +3521,9 @@ describe.concurrent("scopes in JavaScript plugins", () => {
     timeout,
   );
 
-  // The messages under ESLint 10.12.0.
+  // ESLint 10.12.0 prints the same messages.
   test(
-    "a global variable has what ESLint sets on it when a rule gets to it through reference.resolved first",
+    "a global variable has ESLint's extra properties even if a rule first reaches it through reference.resolved",
     async () => {
       const config = `const show = it =>
           it &&
@@ -3553,10 +3567,9 @@ describe.concurrent("scopes in JavaScript plugins", () => {
     timeout,
   );
 
-  // From then on JavaScriptCore stores every array of the realm in another way.
-  // What is expected is what ESLint 10.12.0 with @typescript-eslint/parser 8.71.1 reports.
+  // The expected output is what ESLint 10.12.0 with @typescript-eslint/parser 8.71.1 reports.
   test(
-    "what the libraries of TypeScript define is in the global scope whichever way a rule looks at it first",
+    "the global scope has TypeScript's lib globals, however a rule first accesses it",
     async () => {
       const config = `
         const flagsOf = (object, key) => {
@@ -3629,9 +3642,9 @@ describe.concurrent("scopes in JavaScript plugins", () => {
     timeout,
   );
 
-  // What is expected is what ESLint 10.12.0 with @typescript-eslint/parser 8.71.1 reports.
+  // The expected output is what ESLint 10.12.0 with @typescript-eslint/parser 8.71.1 reports.
   test(
-    "what a plugin writes to the global scope and its variables stays, and nothing of it is trusted",
+    "a plugin's writes to the global scope and its variables persist, and bun lint doesn't trust them",
     async () => {
       const config = `
         const summary = it => [it.variables.length, it.set.size, typeof it.set.get("Array"), it.set.has("mine"), it.set.has("Promise")];
@@ -3718,11 +3731,12 @@ describe.concurrent("scopes in JavaScript plugins", () => {
     timeout,
   );
 
-  // The ids are what oxlint 1.87.0 gives the rule, in a run for each row: it has no two plugins of one name in a run.
+  // The ids are what oxlint 1.87.0 passes to the rule, with one run per row, because it rejects two plugins with the
+  // same name in one run.
   test(
-    "the name of a plugin, and of the plugin in the name of a rule, without eslint-plugin and oxlint-plugin as oxlint takes them off",
+    "strips eslint-plugin and oxlint-plugin from a plugin's name and from rule keys like oxlint",
     async () => {
-      // `meta.name`, the plugin in the key of the rule, `context.id`.
+      // `meta.name`, the plugin part of the rule's key, and `context.id`.
       const cases = [
         ["eslint-plugin-foo", "eslint-plugin-foo", "foo/r"],
         ["eslint-plugin-foo", "foo", "foo/r"],
@@ -3761,7 +3775,7 @@ describe.concurrent("scopes in JavaScript plugins", () => {
         [`${directory}a.js`]: "a;\n",
       });
       const directory = (i: number) => `d${String(i).padStart(2, "0")}/`;
-      const [accepted, ...refused] = await Promise.all([
+      const [accepted, ...rejected] = await Promise.all([
         lint(Object.assign({}, ...cases.map(([name, key], i) => project(directory(i), name, key))), [
           "-f",
           "json",
@@ -3774,7 +3788,7 @@ describe.concurrent("scopes in JavaScript plugins", () => {
       const results: { filePath: string; messages: { message: string; ruleId: string }[] }[] = JSON.parse(accepted.raw);
       const found = results.flatMap(it => it.messages.map(({ message, ruleId }) => [message, ruleId]));
       expect(found).toEqual(cases.map(([, , id]) => [id, id]));
-      expect(refused.map(it => [it.stderr.split("\n")[0], it.exitCode])).toEqual([
+      expect(rejected.map(it => [it.stderr.split("\n")[0], it.exitCode])).toEqual([
         ["error: 1 rule in .oxlintrc.json is not supported: foo/bar/r", 2],
         ["error: 1 rule in .oxlintrc.json is not supported: @scope/x/y/r", 2],
       ]);
@@ -3782,9 +3796,9 @@ describe.concurrent("scopes in JavaScript plugins", () => {
     timeout,
   );
 
-  // ESLint 10.12.0 reports the same for `both`, and refuses `once`: "Rule must be an object with a `create` method".
+  // ESLint 10.12.0 reports the same for `both`, and rejects `once`: "Rule must be an object with a `create` method".
   test(
-    "with a configuration of ESLint a rule with create is created for each file, and the context of createOnce is that of the file being linted",
+    "with an ESLint config, create runs for each file, and createOnce's context reflects the file being linted",
     async () => {
       const files = {
         "plugin.mjs": `const name = path => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\\\")) + 1);
@@ -3840,7 +3854,7 @@ export default {
         `c.js p/both | create p/both c.js c.js ["all"] all module c;`,
         `c.js p/once | after c.js`,
       ];
-      // In one realm, where the third file comes after two others, and in several.
+      // Once in a single realm, where the third file comes after two others, and once in several realms.
       const runs = await Promise.all(
         ["1", "3"].map(threads => lint(files, ["--threads", threads, "-f", "json", "a.js", "b.js", "c.js"])),
       );
@@ -3858,9 +3872,9 @@ export default {
     timeout,
   );
 
-  // As under ESLint 10.12.0.
+  // Same as under ESLint 10.12.0.
   test(
-    "a range with a hole is read like any other object",
+    "a range array with a hole is read like any other object",
     async () => {
       const config = `
         const rule = {
@@ -3890,7 +3904,7 @@ export default {
   );
 
   test(
-    "whatever a plugin throws, and wherever, the run ends with an error that can be read",
+    "whatever a plugin throws, and wherever it throws, the run ends with a readable error",
     async () => {
       const config = `
         const thrown = {
@@ -3942,7 +3956,7 @@ export default {
         ["listener", "proxy", "from a proxy"],
         ["listener", "revoked", "Proxy has already been revoked. No more operations are allowed to be performed on it"],
         ["listener", "toString", "from toString"],
-        // As in ESLint 10.12, which puts the rule into `message`.
+        // Same as ESLint 10.12, which adds the rule to `message`.
         ["create", "bare", "Error while loading rule 'own/rule': undefined"],
         ["path", "noLoc", "real error"],
         ["fix", "getter", "2"],
@@ -3966,7 +3980,7 @@ export default {
   );
 
   test(
-    "a plugin gets at nothing of the host through caller or through what it has put on Array.prototype",
+    "a plugin can't reach host internals through `caller` or through accessors it puts on Array.prototype",
     async () => {
       const config = `
         const seen = [];
@@ -4009,8 +4023,9 @@ export default {
     timeout,
   );
 
+  // An indexed accessor on Array.prototype makes JavaScriptCore switch every array in the realm to slow-put storage.
   test(
-    "nodes, scopes and code paths are right after a plugin has put an accessor with an index for a name on Array.prototype",
+    "nodes, scopes and code paths are still correct after a plugin defines an indexed accessor on Array.prototype",
     async () => {
       const plugin = `Object.defineProperty(Array.prototype, "4294967290", { get() {}, set() {}, configurable: true });
         const rule = {
@@ -4050,7 +4065,7 @@ export default {
   );
 
   test(
-    "with an oxlint config the scopes follow the kind of file: strict scopes of TypeScript, and arguments in CommonJS",
+    "with an oxlint config, scopes depend on the kind of file: strict scopes in TypeScript, and `arguments` in CommonJS",
     async () => {
       const plugin = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
         Program(node) {
@@ -4074,7 +4089,7 @@ export default {
       const declared = "I:1:0,C:1:0,M:1:0,E:1:0,N:1:0,g:1:0";
       const inner =
         "type![T:1:1] functionType![x:1:0] type![T:1:1] conditionalType![U:1:1] type![T:1:2] mappedType![K:1:1] tsEnum![A:1:0] tsModule![f:1:0] function![arguments:0:0]";
-      // What oxlint 1.87 says.
+      // This is what oxlint 1.87 reports.
       const expected = {
         "types.ts": `global[${declared}] ${inner} function[arguments:0:0]`,
         "types.cts": `global[] function[arguments:0:0,${declared}] ${inner} function[arguments:0:0]`,
@@ -4094,19 +4109,19 @@ export default {
         "implicit.cjs": "var first;\narguments;\n",
       };
       const { raw, exitCode } = await lint(files, ["-f", "json"]);
-      const said = JSON.parse(raw).diagnostics.map((it: { filename: string; message: string }) => [
+      const found = JSON.parse(raw).diagnostics.map((it: { filename: string; message: string }) => [
         it.filename,
         it.message,
       ]);
-      expect(Object.fromEntries(said)).toEqual(expected);
+      expect(Object.fromEntries(found)).toEqual(expected);
       expect(exitCode).toBe(1);
     },
     timeout,
   );
 
-  // What oxlint 1.87 says. Its own no-unused-vars doesn't see the mark.
+  // This is what oxlint 1.87 reports. Its own no-unused-vars doesn't see the mark.
   test(
-    "with an oxlint config markVariableAsUsed marks the variable it names in every kind of file",
+    "with an oxlint config, markVariableAsUsed marks the named variable in every kind of file",
     async () => {
       const plugin = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
         Program(node) {
@@ -4127,11 +4142,11 @@ export default {
         "c.mjs": code,
       };
       const { raw, exitCode } = await lint(files, ["-f", "json"]);
-      const said = JSON.parse(raw).diagnostics.map(
+      const found = JSON.parse(raw).diagnostics.map(
         (it: { filename: string; message: string }) =>
           `${it.filename} ${it.message.match(/'(\w+)'/)?.[1] ?? it.message}`,
       );
-      expect(said.sort()).toEqual(
+      expect(found.sort()).toEqual(
         ["a.cjs", "b.js", "c.mjs"].flatMap(file => [
           `${file} first`,
           `${file} second`,
@@ -4147,7 +4162,7 @@ export default {
 describe.concurrent("what a JavaScript plugin sees with an oxlint config", () => {
   const oracle = join(import.meta.dir, "oracle", "jsplugins", "oxlint");
   const dump = readFileSync(join(oracle, "dump.cjs"), "utf8");
-  // By the name of a file. Recorded with oxlint 1.87.0 by record.mjs in that directory.
+  // Keyed by file name. Recorded with oxlint 1.87.0 by record.mjs in that directory.
   const expected: Record<string, string> = JSON.parse(
     Buffer.from(Bun.zstdDecompressSync(readFileSync(join(oracle, "expected.json.zst")))).toString(),
   );
@@ -4155,7 +4170,7 @@ describe.concurrent("what a JavaScript plugin sees with an oxlint config", () =>
   const slashes = (path: string) => path.replaceAll("\\", "/");
 
   test(
-    "trees with their values, the traversal, scopes, and what sourceCode says about each node are oxlint's in every kind of file",
+    "trees and their values, traversal order, scopes and sourceCode's answers for each node match oxlint in every kind of file",
     async () => {
       const config = { ignorePatterns: ["dump.cjs"], jsPlugins: ["./dump.cjs"], rules: { "dump/all": "error" } };
       const files = { "dump.cjs": dump, ".oxlintrc.json": oxlintrc(config), ...oxlintCases };
@@ -4171,9 +4186,10 @@ describe.concurrent("what a JavaScript plugin sees with an oxlint config", () =>
     timeout,
   );
 
-  // In a JavaScript file nothing can fill in the fields of TypeScript, so they aren't made for each node, and an empty list is only made
-  // when it's read. A plugin must not be able to tell. All of this is what the same plugin says under oxlint 1.87.
-  describe("the fields of TypeScript in a JavaScript file", () => {
+  // In a JavaScript file the TypeScript-only fields are always empty, so they aren't created for each node, and an
+  // empty list is only created when it's read. A plugin must not be able to tell. The expected output is what the same
+  // plugin reports under oxlint 1.87.
+  describe("TypeScript-only fields in a JavaScript file", () => {
     const plugin = String.raw`const describe = (object, key) => { const it = Object.getOwnPropertyDescriptor(object, key); return it && JSON.stringify(it); };
 const rule = { create: context => { const ids = []; return { Identifier(node) { ids.push(node); }, "Program:exit"(program) {
   const next = () => ids.pop();
@@ -4223,7 +4239,7 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
         { files: ["kinds.jsx"], rules: { "lazy/kinds": "error" } },
       ],
     });
-    const said = async (file: string, text: string) => {
+    const messagesFor = async (file: string, text: string) => {
       const files = { "plugin.mjs": plugin, ".oxlintrc.json": config, [file]: text };
       const { raw, exitCode } = await lint(files, ["-f", "json", file]);
       const diagnostics: Diagnostic[] = JSON.parse(raw).diagnostics;
@@ -4232,10 +4248,10 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
     };
 
     test(
-      "`decorators` of an Identifier is a plain property with an array of its own, whatever is done to it first",
+      "an Identifier's `decorators` is a plain property with its own array, however it's first accessed",
       async () => {
         const text = Array.from({ length: 40 }, (_, i) => `i${i}`).join("; ") + ";\n";
-        const [message, ...more] = await said("ids.js", text);
+        const [message, ...more] = await messagesFor("ids.js", text);
         expect(JSON.parse(message)).toEqual({
           "keys": "type,decorators,name,optional,typeAnnotation,start,end,range,parent",
           "forIn": "type,decorators,name,optional,typeAnnotation,start,end,range,parent,loc",
@@ -4274,11 +4290,11 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
     );
 
     test(
-      "every type that has them has oxlint's values in oxlint's order",
+      "every node type that has them has oxlint's values in oxlint's order",
       async () => {
         const text =
           'import { a as b } from "a";\nexport { b as c };\nexport * from "d";\nexport default b;\nexport const e = ({ f }, [g], h = 1, ...i) => j(f)`k`;\nnew L();\nvar m;\nfunction n() {}\n(function () {});\n({ o: 1, p() {} });\n<Q r />;\n';
-        const [message, ...more] = await said("kinds.jsx", text);
+        const [message, ...more] = await messagesFor("kinds.jsx", text);
         expect(message.split("\n")).toEqual([
           'ImportSpecifier {"type":"ImportSpecifier","imported":"{}","local":"{}","importKind":"value","start":9,"end":15,"range":2,"parent":"{}"}',
           'ExportNamedDeclaration {"type":"ExportNamedDeclaration","declaration":null,"specifiers":1,"source":null,"exportKind":"value","attributes":0,"start":28,"end":46,"range":2,"parent":"{}"}',
@@ -4382,9 +4398,10 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
       export default { meta: { name: "p" }, rules: { api, globals } };`;
   const base = { jsPlugins: ["../plugin.mjs"], rules: { "p/globals": "error" } };
 
-  // What oxlint 1.87 says. It goes through `env` and `globals` in the order of a hash map, so the plugin sorts what it prints.
+  // This is what oxlint 1.87 reports. It iterates over `env` and `globals` in hash map order, so the plugin sorts its
+  // output.
   test(
-    "scopeManager, languageOptions and parserServices are the frozen objects of oxlint, the same for all files",
+    "scopeManager, languageOptions and parserServices are frozen objects shared by all files, as in oxlint",
     async () => {
       const config = {
         ...base,
@@ -4408,7 +4425,7 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
       // One thread, so that one VM sees all the files.
       const { raw, exitCode } = await lint(files, ["-f", "json", "--threads", "1"]);
       const diagnostics: Diagnostic[] = JSON.parse(raw).diagnostics;
-      const said = Object.fromEntries(diagnostics.map(it => [slashes(it.filename), it.message.split("\n")]));
+      const found = Object.fromEntries(diagnostics.map(it => [slashes(it.filename), it.message.split("\n")]));
       const inScript = [
         "scopeManager frozen scopes:get,globalScope:get,getDeclaredVariables,acquire",
         "getDeclaredVariables/1,acquire/2",
@@ -4428,7 +4445,7 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
       ];
       const options = ([sourceType, jsx, globalReturn, impliedStrict]: (string | boolean)[]) =>
         JSON.stringify({ sourceType, ecmaFeatures: { jsx, globalReturn, impliedStrict } });
-      expect(said).toEqual(
+      expect(found).toEqual(
         Object.fromEntries(
           Object.entries(kinds).map(([file, kind]) => [
             `api/${file}`,
@@ -4443,9 +4460,10 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
     timeout,
   );
 
-  // What oxlint 1.87 says: how many variables the global scope has, a sum over their names, `env`, `globals`, and some variables.
+  // This is what oxlint 1.87 reports: the number of variables in the global scope, a checksum of their names, `env`,
+  // `globals`, and some variables.
   test(
-    "the globals are those of the envs that are on and of globals: builtin only without env, overrides merge, extends doesn't count",
+    "globals come from the enabled envs and `globals`: builtin only without env, overrides merge, extends is ignored",
     async () => {
       const everyEnv =
         "amd applescript astro atomtest audioworklet browser builtin bun commonjs embertest es2015 es2016 es2017 es2018 es2019 es2020 es2021 es2022 es2023 es2024 es2025 es2026 es6 greasemonkey jasmine jest jquery meteor mocha mongo nashorn node phantomjs prototypejs protractor qunit serviceworker shared-node-browser shelljs svelte vitest vue webextensions worker";
@@ -4532,10 +4550,10 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
     timeout,
   );
 
-  // What oxlint 1.87 says, and ESLint 10.12 with @typescript-eslint/parser 8.71.1: the same.
+  // oxlint 1.87 and ESLint 10.12 with @typescript-eslint/parser 8.71.1 both report this.
   test.each(["oxlint", "eslint"])(
-    "reference.maybeImplicitGlobal is typescript-eslint's: an object, null or undefined, with a config of %s",
-    async whose => {
+    "reference.maybeImplicitGlobal matches typescript-eslint (an object, null or undefined) with an %s config",
+    async tool => {
       const rule = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
         Program(node) {
           const said = context.sourceCode.scopeManager.scopes.flatMap(scope =>
@@ -4574,29 +4592,29 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
       };
       const files = {
         "plugin.mjs": rule,
-        ...configs[whose as keyof typeof configs],
+        ...configs[tool as keyof typeof configs],
         "script.js": `${code}\n`,
         "script.ts": `${code}${types}\n`,
         "module.mts": `${code}${types} export { a };\n`,
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", ...Object.keys(expected)]);
-      const said: [string, string][] =
-        whose === "oxlint"
+      const found: [string, string][] =
+        tool === "oxlint"
           ? JSON.parse(raw).diagnostics.map((it: Diagnostic) => [it.filename, it.message])
           : JSON.parse(raw).map((it: { filePath: string; messages: { message: string }[] }) => [
               slashes(it.filePath).split("/").at(-1),
               it.messages.map(message => message.message).join("|"),
             ]);
-      expect(Object.fromEntries(said)).toEqual(expected);
+      expect(Object.fromEntries(found)).toEqual(expected);
       expect(exitCode).toBe(1);
     },
     timeout,
   );
 
-  // What oxlint 1.87 says, and ESLint 10.12 with @typescript-eslint/parser 8.71.1: the same.
+  // oxlint 1.87 and ESLint 10.12 with @typescript-eslint/parser 8.71.1 both report this.
   test.each(["oxlint", "eslint"])(
-    "the index of `a[b]!` in a pattern is referred to before the object, like that of `a[b]`, with a config of %s",
-    async whose => {
+    "in a pattern, the reference to the index of `a[b]!` comes before the object's, as for `a[b]`, with an %s config",
+    async tool => {
       const rule = `export default { meta: { name: "p" }, rules: { rule: { create: context => ({
         "Program:exit"(node) {
           const lines = {};
@@ -4638,24 +4656,24 @@ export default { meta: { name: "lazy" }, rules: { rule, kinds } };
       };
       const files = {
         "plugin.mjs": rule,
-        ...configs[whose as keyof typeof configs],
+        ...configs[tool as keyof typeof configs],
         "a.ts": rows.map(it => `${it[0]}\n`).join(""),
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
       const message: string =
-        whose === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
-      expect(message.split("|").map((said, i) => [rows[i][0], said])).toEqual(rows);
+        tool === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
+      expect(message.split("|").map((cell, i) => [rows[i][0], cell])).toEqual(rows);
       expect(exitCode).toBe(1);
     },
     timeout,
   );
 
-  // `loc`, `decorators`, `ast.tokens` and the properties of `sourceCode` are made when they're read. It must not show who reads them first, in
-  // which realm or in which tier of the engine: they belong to the plugin's realm and stay the same objects.
-  // This is what oxlint 1.87 and ESLint 10.12 say, where all of it is plain data.
+  // `loc`, `decorators`, `ast.tokens` and `sourceCode`'s properties are created when they're first read. It must not
+  // matter what reads them first, in which realm, or in which JIT tier: they belong to the plugin's realm and stay the
+  // same objects. This is what oxlint 1.87 and ESLint 10.12 report, where all of it is plain data.
   test.each(["oxlint", "eslint"])(
-    "what is made on first read is the same from a node:vm context and in hot code, with a config of %s",
-    async whose => {
+    "lazily created properties are the same from a node:vm context and in hot code, with an %s config",
+    async tool => {
       const plugin = String.raw`import vm from "node:vm";
 const keys = ["decorators", "loc", "range"];
 // The same functions for each realm. A loop is as long as it takes the JIT compilers to get to it.
@@ -4753,13 +4771,13 @@ export default { meta: { name: "p" }, rules: { rule } };
       };
       const files = {
         "plugin.mjs": plugin,
-        ...configs[whose as keyof typeof configs],
+        ...configs[tool as keyof typeof configs],
         "a.js": "// c\n" + Array.from({ length: 3002 }, (_, i) => `v${i};\n`).join(""),
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
       const message: string =
-        whose === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
-      expect(message.split("\n")).toEqual(expected[whose as keyof typeof expected]);
+        tool === "oxlint" ? JSON.parse(raw).diagnostics[0].message : JSON.parse(raw)[0].messages[0].message;
+      expect(message.split("\n")).toEqual(expected[tool as keyof typeof expected]);
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -4767,7 +4785,7 @@ export default { meta: { name: "p" }, rules: { rule } };
 });
 
 test.concurrent(
-  "getAncestors returns every ancestor after a plugin has put an accessor with an index for a name on Array.prototype",
+  "getAncestors returns every ancestor after a plugin defines an indexed accessor on Array.prototype",
   async () => {
     const plugin = `Object.defineProperty(Array.prototype, "4294967290", { get() {}, set() {}, configurable: true });
       const rule = {
@@ -4795,7 +4813,7 @@ test.concurrent(
 );
 
 test.concurrent(
-  "context.sourceCode is laid out and answers as in ESLint: text, lines, locations, indices, ancestors, scopes, directive comments, bad input",
+  "context.sourceCode matches ESLint: layout, text, lines, locations, indices, ancestors, scopes, directive comments, bad input",
   async () => {
     const oracle = join(import.meta.dir, "oracle", "jsplugins", "source-code");
     const { texts } = require(join(oracle, "plugin.cjs"));
@@ -4809,14 +4827,14 @@ test.concurrent(
       ...texts,
     };
     const { raw, exitCode } = await lint(files, ["-f", "json", ...Object.keys(texts)]);
-    const said = Object.fromEntries(
+    const found = Object.fromEntries(
       JSON.parse(raw).map((result: any) => [
         result.filePath.replaceAll("\\", "/").split("/").at(-1),
         JSON.parse(result.messages.find((it: any) => it.ruleId === "demo/all").message),
       ]),
     );
     // Recorded with ESLint 10.12.0 and @typescript-eslint/parser 8.71.1 by record.mjs in that directory.
-    expect(said).toEqual(JSON.parse(readFileSync(join(oracle, "expected.json"), "utf8")));
+    expect(found).toEqual(JSON.parse(readFileSync(join(oracle, "expected.json"), "utf8")));
     expect(exitCode).toBe(1);
   },
   timeout,
@@ -4833,7 +4851,7 @@ describe.concurrent("code paths in JavaScript plugins", () => {
   const slashes = (path: string) => path.replaceAll("\\", "/");
 
   test(
-    "events, graphs, traverseSegments and the properties of the objects match ESLint in JavaScript files",
+    "events, graphs, traverseSegments and the objects' properties match ESLint in JavaScript files",
     async () => {
       const cases = codePathCases.filter(it => !isTypeScript(it));
       const config = `const trace = require("./trace.cjs");
@@ -4857,7 +4875,7 @@ describe.concurrent("code paths in JavaScript plugins", () => {
           traces: [expected[it.name]],
         });
       }
-      // The message under ESLint 10.12.0.
+      // ESLint 10.12.0 prints the same message.
       expect(messagesOf("layout.js")?.map(it => it.split("\n"))).toEqual([
         [
           "CodePath own(id:value:wec,origin:value:wec,upper:value:wec,childCodePaths:value:wec,internal:value:) prototype(constructor:value:wc,initialSegment:getter:c,finalSegments:getter:c,returnedSegments:getter:c,thrownSegments:getter:c,traverseSegments:value:wc) keys(id,origin,upper,childCodePaths)",
@@ -4894,9 +4912,9 @@ describe.concurrent("code paths in JavaScript plugins", () => {
     timeout,
   );
 
-  // ESLint 9 removed `currentSegments`. The first test checks that it's gone with a flat configuration.
+  // ESLint 9 removed `currentSegments`. The first test checks that it's gone with a flat config.
   test(
-    "codePath.currentSegments follows the traversal with an ESLint 8 configuration",
+    "codePath.currentSegments follows the traversal with an ESLint 8 config",
     async () => {
       const plugin = `module.exports = { rules: { paths: { create(context) {
         const seen = [];
@@ -4928,7 +4946,7 @@ describe.concurrent("code paths in JavaScript plugins", () => {
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.js", "b.js"]);
       const results: { messages: { message: string }[] }[] = JSON.parse(raw);
-      // From ESLint's analyzer with the listeners called while it runs, as ESLint 8 calls them.
+      // Recorded from ESLint's analyzer with the listeners called while it runs, as ESLint 8 does.
       expect(results.map(result => result.messages.map(it => it.message))).toEqual([
         [
           "+s1_1 [s1_1] +s2_1 [s2_1] -s2_1 [s2_1] +s2_2 [s2_2] return [s2_2] -s2_2 [s2_2] +s2_4 [s2_4] statement [s2_4] -s2_4 [s2_4] +s2_5 [s2_5] statement [s2_5] exit [s2_5] -s2_5 [s2_5] end [] -s1_1 [s1_1] end []",
@@ -4943,7 +4961,7 @@ describe.concurrent("code paths in JavaScript plugins", () => {
   );
 
   test(
-    "an error thrown from a code path listener or a traverseSegments callback names the rule",
+    "an error thrown from a code path listener or a traverseSegments callback mentions the rule",
     async () => {
       const plugin = `const fail = () => { throw new Error("thrown on purpose"); };
         module.exports = { meta: { name: "throws" }, rules: {
@@ -4969,7 +4987,8 @@ describe.concurrent("code paths in JavaScript plugins", () => {
 });
 
 describe.concurrent("JavaScript plugins and threads", () => {
-  // A file that's linted with types, and standard input, are parsed on a thread that has no VM. A thread that has one parses them again.
+  // A file that's linted with types, and standard input, are parsed on a thread without a VM. A thread with a VM then
+  // parses them again.
   test(
     "markVariableAsUsed reaches no-unused-vars in files with types, files without, and standard input",
     async () => {
@@ -5012,12 +5031,12 @@ describe.concurrent("JavaScript plugins and threads", () => {
           exitCode,
         };
       };
-      const [ofFiles, ofStdin] = await Promise.all([
+      const [fromFiles, fromStdin] = await Promise.all([
         run(["plain", "typed"], "ignore"),
         run(["--stdin", "--stdin-filename", "plain/b.js"], Buffer.from(code)),
       ]);
-      expect(ofFiles).toEqual({ names: ["a.js lostInner", "a.js lost", "a.ts lostInner", "a.ts lost"], exitCode: 1 });
-      expect(ofStdin).toEqual({ names: ["b.js lostInner", "b.js lost"], exitCode: 1 });
+      expect(fromFiles).toEqual({ names: ["a.js lostInner", "a.js lost", "a.ts lostInner", "a.ts lost"], exitCode: 1 });
+      expect(fromStdin).toEqual({ names: ["b.js lostInner", "b.js lost"], exitCode: 1 });
     },
     timeout,
   );
@@ -5098,7 +5117,7 @@ describe.concurrent("JavaScript plugins and threads", () => {
   );
 
   test(
-    "--threads 1 has one VM, also when a file of 256 KB and more is among the files",
+    "--threads 1 uses one VM, even if one of the files is 256 KB or more",
     async () => {
       const files: Record<string, string> = {
         "eslint.config.mjs": `
@@ -5116,9 +5135,9 @@ describe.concurrent("JavaScript plugins and threads", () => {
     timeout,
   );
 
-  // As ESLint 10.12.0, which lints one file after the other.
+  // Same as ESLint 10.12.0, which lints one file at a time.
   test(
-    "if a rule throws in several files, the error for the first path is reported, however many threads there are",
+    "if a rule throws in several files, the error for the first path is reported, with any number of threads",
     async () => {
       const files: Record<string, string> = {
         "eslint.config.mjs": `
@@ -5128,7 +5147,7 @@ describe.concurrent("JavaScript plugins and threads", () => {
           Program() { if (context.filename.endsWith("7.js")) throw new Error("thrown on purpose"); },
         }) } } };`,
       };
-      // 6 MB, which is work for several VMs.
+      // 6 MB, which is enough work for several VMs.
       const text = `foo;\n/*${Buffer.alloc(250_000, "x")}*/\n`;
       for (let i = 0; i < 24; i++) files[`src/${i}.js`] = text;
       const run = async (threads: string) => {
@@ -5163,13 +5182,13 @@ describe.concurrent("JavaScript plugins and threads", () => {
         stderr: "pipe",
       });
       const reader = proc.stderr.getReader();
-      let said = "";
-      while (!said.includes("spinning")) {
+      let output = "";
+      while (!output.includes("spinning")) {
         const { value, done } = await reader.read();
         if (done) break;
-        said += new TextDecoder().decode(value);
+        output += new TextDecoder().decode(value);
       }
-      expect(said).toContain("spinning");
+      expect(output).toContain("spinning");
       proc.kill("SIGTERM");
       await proc.exited;
       expect(proc.signalCode).toBe("SIGTERM");
@@ -5207,7 +5226,7 @@ describe.concurrent("tokens and comments in JavaScript plugins", () => {
         "json",
       ]);
       const results: { filePath: string; messages: { message: string }[] }[] = JSON.parse(raw);
-      // Left out: methods that ESLint 10 doesn't have any more.
+      // Skips the methods that ESLint 10 removed.
       const wanted = /^(?:[BDNE]:|L:(?:program|store|shape|parts|lists) )/;
       for (const it of tokenCases) {
         const file = `/${tokenFileOf(it)}`;
@@ -5223,7 +5242,7 @@ describe.concurrent("tokens and comments in JavaScript plugins", () => {
   );
 
   test(
-    "the objects match oxlint with its configuration",
+    "the objects match oxlint with an oxlint config",
     async () => {
       const config = { ignorePatterns: ["dump.cjs"], jsPlugins: ["./dump.cjs"], rules: { "tokens/all": "error" } };
       const { raw, exitCode } = await lint({ "dump.cjs": dump, ".oxlintrc.json": oxlintrc(config), ...sources }, [
@@ -5231,7 +5250,7 @@ describe.concurrent("tokens and comments in JavaScript plugins", () => {
         "json",
       ]);
       const diagnostics: { filename: string; message: string }[] = JSON.parse(raw).diagnostics;
-      // oxlint has other values or types for a few tokens in these two.
+      // oxlint has different values or types for a few tokens in these two.
       for (const it of tokenCases.filter(it => it.name !== "escapes.ts" && it.name !== "jsx-names")) {
         const found = diagnostics.filter(diagnostic => diagnostic.filename.replaceAll("\\", "/") === tokenFileOf(it));
         expect({
@@ -5248,7 +5267,7 @@ describe.concurrent("tokens and comments in JavaScript plugins", () => {
   );
 
   test(
-    "odd arguments, receivers and filters do what they do in ESLint",
+    "odd arguments, receivers and filters behave as in ESLint",
     async () => {
       const plugin = `
         const show = value =>
@@ -5314,7 +5333,7 @@ describe.concurrent("tokens and comments in JavaScript plugins", () => {
       const files = { "plugin.cjs": plugin, "eslint.config.cjs": config, "a.js": "a = b; // c\nd(e);\n" };
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
       const [{ messages }]: { messages: { message: string }[] }[] = JSON.parse(raw);
-      // What ESLint 10.12.0 reports when Bun runs it.
+      // This is what ESLint 10.12.0 reports when Bun runs it.
       expect(messages.map(it => it.message.split("\n"))).toEqual([
         [
           "inherited: ;",

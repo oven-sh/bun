@@ -1918,31 +1918,27 @@ impl<'a> Resolver<'a> {
             // Imports like "process/" need to resolve to the filesystem, not a builtin
             && !import_path.ends_with(b"/")
             {
-                let mut query = import_path;
-                loop {
-                    if self.opts.external.node_modules.contains(query) {
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "The path \"{}\" was marked as external by the user",
-                                bstr::BStr::new(query)
-                            ));
-                        }
-                        return ResultUnion::Success(Result {
-                            path_pair: PathPair {
-                                primary: Path::init(query),
-                                secondary: None,
-                            },
-                            flags: ResultFlags::IS_EXTERNAL,
-                            ..Default::default()
-                        });
+                // An external "fs" also covers "node:fs".
+                let external = self.user_external(import_path).or_else(|| {
+                    import_path
+                        .strip_prefix(b"node:")
+                        .and_then(|bare| self.user_external(bare))
+                });
+                if let Some(query) = external {
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note_fmt(format_args!(
+                            "The path \"{}\" was marked as external by the user",
+                            bstr::BStr::new(query)
+                        ));
                     }
-
-                    // If the module "foo" has been marked as external, we also want to treat
-                    // paths into that module such as "foo/bar" as external too.
-                    let Some(slash) = strings::last_index_of_char(query, b'/') else {
-                        break;
-                    };
-                    query = &query[0..slash];
+                    return ResultUnion::Success(Result {
+                        path_pair: PathPair {
+                            primary: Path::init(query),
+                            secondary: None,
+                        },
+                        flags: ResultFlags::IS_EXTERNAL,
+                        ..Default::default()
+                    });
                 }
             }
 
@@ -5121,6 +5117,18 @@ impl<'a> Resolver<'a> {
             b"",
             out,
         )
+    }
+
+    /// The user's external entry that covers `import_path`: the path itself, or
+    /// the package it is a path into ("foo" covers "foo/bar").
+    fn user_external<'p>(&self, import_path: &'p [u8]) -> Option<&'p [u8]> {
+        let mut query = import_path;
+        loop {
+            if self.opts.external.node_modules.contains(query) {
+                return Some(query);
+            }
+            query = &query[..strings::last_index_of_char(query, b'/')?];
+        }
     }
 
     /// Checks a package subpath (`require("pkg/foo/bar")`) against the package's

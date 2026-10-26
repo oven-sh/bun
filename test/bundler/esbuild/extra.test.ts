@@ -411,6 +411,9 @@ describe("bundler", () => {
       "entry.js": `import v from 'pkg'; console.log(JSON.stringify([typeof v, v]), require('pkg'))`,
       ...disabledModuleEntry,
     },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("(disabled):");
+    },
     run: { stdout: `["string","main"] main` },
   });
 

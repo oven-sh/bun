@@ -1647,7 +1647,7 @@ pub mod parse_worker {
                 break 'brk false;
             }
 
-            if file_path.namespace == b"node" {
+            if file_path.namespace == b"node" || file_path.is_disabled {
                 break 'brk false;
             }
             true

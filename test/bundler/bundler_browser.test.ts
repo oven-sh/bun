@@ -1,5 +1,8 @@
 import assert from "assert";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync } from "node:fs";
+import path from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -214,6 +217,15 @@ describe("bundler", () => {
     target: "browser",
     splitting: true,
     outdir: "/out",
+    onAfterBundle(api) {
+      // Two chunks besides the entry: one per disabled module.
+      const chunks = readdirSync(api.outdir).filter(name => name !== "entry.js");
+      expect(chunks.length).toBe(2);
+      for (const chunk of chunks) {
+        api.expectFile("/out/entry.js").toInclude(`import("./${chunk}")`);
+        api.expectFile(`/out/${chunk}`).toInclude("(disabled):");
+      }
+    },
     run: {
       file: "/out/entry.js",
       stdout: `
@@ -416,18 +428,20 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         import fs from "fs";
+        import fsPrefixed from "node:fs";
         import path from "path";
-        console.log(typeof fs.readFileSync, typeof path.join);
+        console.log(typeof fs.readFileSync, typeof fsPrefixed.readFileSync, typeof path.join);
       `,
     },
     target: "browser",
     external: ["fs", "path"],
     onAfterBundle(api) {
       api.expectFile("out.js").toInclude(`from "fs"`);
+      api.expectFile("out.js").toInclude(`from "node:fs"`);
       api.expectFile("out.js").toInclude(`from "path"`);
     },
     run: {
-      stdout: "function function",
+      stdout: "function function function",
     },
   });
 
@@ -471,6 +485,80 @@ describe("bundler", () => {
         stdout: `["object","object","object",true]`,
       },
     };
+  });
+
+  // An onLoad plugin never gets a disabled module. Its filter matches the real
+  // path, so loading it would put the Node-only file back into the bundle, and
+  // a disabled bare name has no file to load at all.
+  itBundled("browser/BrowserFieldDisabledModuleSkipsOnLoadPlugin", ({ root }) => {
+    const loaded: string[] = [];
+    return {
+      files: {
+        "/entry.js": `console.log(require("pkg").join(" "));`,
+        "/node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false, "nodeonly": false } }`,
+        "/node_modules/pkg/index.js": `module.exports = [JSON.stringify(require("./node.js")), JSON.stringify(require("nodeonly"))];`,
+        "/node_modules/pkg/node.js": `module.exports = "node-only contents";`,
+      },
+      target: "browser",
+      plugins: [
+        {
+          name: "read-from-disk",
+          setup(builder) {
+            builder.onLoad({ filter: /.*/ }, async args => {
+              loaded.push(path.relative(root, args.path).replaceAll("\\", "/"));
+              return { contents: await Bun.file(args.path).text(), loader: "js" };
+            });
+          },
+        },
+      ],
+      onAfterBundle() {
+        expect(loaded.sort()).toEqual(["entry.js", "node_modules/pkg/index.js"]);
+      },
+      run: {
+        stdout: "{} {}",
+      },
+    };
+  });
+
+  // Only a JavaScript import of a disabled path becomes the empty module. A
+  // stylesheet that names one keeps the "@import" and the "url()" as written.
+  itBundled("browser/BrowserFieldDisabledCssImportStaysAsWritten", {
+    files: {
+      "/entry.js": `import "pkg";`,
+      "/node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.css": false, "./img.png": false } }`,
+      "/node_modules/pkg/index.js": `import "./style.css";`,
+      "/node_modules/pkg/style.css": `@import "./node.css";\n.a { color: red; background: url("./img.png"); }`,
+      "/node_modules/pkg/node.css": `.node { color: blue; }`,
+      "/node_modules/pkg/img.png": `x`,
+    },
+    target: "browser",
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      expect(css).toContain(`@import "./node.css";`);
+      expect(css).toContain(`url("./img.png")`);
+      expect(css).not.toContain("blue");
+    },
+  });
+
+  // `--check` checks the file as written. The empty module that stands in for a
+  // disabled file in the bundle has no exports, and is not what the types are of.
+  test("browser/BrowserFieldDisabledModuleIsTypeCheckedAsWritten", async () => {
+    using dir = tempDir("browser-field-check", {
+      "package.json": JSON.stringify({ name: "project", browser: { "./src/node-only.ts": false } }),
+      "src/node-only.ts": `export const x: number = 1;`,
+      "entry.ts": `import { x } from "./src/node-only";\nexport const y: number = x;\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--check", "--target=browser", "entry.ts", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).not.toContain("TS2305");
+    expect(exitCode).toBe(0);
   });
 
   // #4928: a package.json "browser": {"<builtin>": false} must win over the

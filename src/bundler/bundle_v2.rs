@@ -2576,9 +2576,12 @@ pub mod bv2_impl {
                     );
                 }
             }
+            // A disabled module is empty in the bundle only. Its file is checked as written.
             let mut entry_points = (named.iter().copied())
                 .filter(|&index| {
-                    loaders[index].is_javascript_like() && sources[index].path.is_file()
+                    loaders[index].is_javascript_like()
+                        && sources[index].path.is_file()
+                        && !sources[index].path.is_disabled
                 })
                 .map(|index| sources[index].path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
@@ -2587,6 +2590,7 @@ pub mod bv2_impl {
                 .filter(|((source, loader), flags)| {
                     loader.is_javascript_like_or_json()
                         && source.path.is_file()
+                        && !source.path.is_disabled
                         && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                             && bun_sys::exists(source.path.text))
                 })
@@ -2923,21 +2927,26 @@ pub mod bv2_impl {
             // borrowck: a `&mut` into `resolve_result` can't be held while
             // also reading other fields and re-borrowing `self`,
             // so we clone the active path out and operate on an owned value.
-            if self.dev_server.is_some() && resolve_result.path_pair.primary.is_disabled {
-                // See `resolve_import_records`.
-                match resolve_result.path_pair.secondary {
-                    Some(secondary) if !secondary.is_disabled => {
-                        resolve_result.path_pair.primary = secondary;
-                        resolve_result.path_pair.secondary = None;
-                    }
-                    _ => {
-                        let record: &mut ImportRecord =
-                            &mut self.graph.ast.items_import_records_mut()
-                                [import_record.importer_source_index as usize]
-                                .as_mut_slice()
-                                [import_record.import_record_index as usize];
-                        record.path.is_disabled = true;
-                        return;
+            if resolve_result.path_pair.primary.is_disabled {
+                let importer = import_record.importer_source_index as usize;
+                let record_index = import_record.import_record_index as usize;
+                let importer_loader = self.graph.input_files.items_loader()[importer];
+                let kind =
+                    self.graph.ast.items_import_records()[importer].as_slice()[record_index].kind;
+                if !self.disabled_import_is_empty_module(importer_loader, kind) {
+                    // See `resolve_import_records`.
+                    match resolve_result.path_pair.secondary {
+                        Some(secondary) if !secondary.is_disabled => {
+                            resolve_result.path_pair.primary = secondary;
+                            resolve_result.path_pair.secondary = None;
+                        }
+                        _ => {
+                            self.graph.ast.items_import_records_mut()[importer].as_mut_slice()
+                                [record_index]
+                                .path
+                                .is_disabled = true;
+                            return;
+                        }
                     }
                 }
             }
@@ -6411,6 +6420,10 @@ pub mod bv2_impl {
         }
 
         pub(crate) fn enqueue_on_load_plugin_if_needed(&mut self, parse: &mut ParseTask) -> bool {
+            // A disabled module is the empty module. No plugin loads its path.
+            if parse.path.is_disabled {
+                return false;
+            }
             let had_matches = self.enqueue_on_load_plugin_if_needed_impl(parse);
             if had_matches {
                 return true;
@@ -6489,6 +6502,18 @@ pub mod bv2_impl {
                 bump,
             )?;
             Ok(out)
+        }
+
+        /// Like esbuild, a JavaScript import of a disabled path is an empty CommonJS
+        /// module. Every other import of one (CSS, HTML, `require.resolve`) stays
+        /// external, and so does every import in the DevServer.
+        fn disabled_import_is_empty_module(&self, importer: Loader, kind: ImportKind) -> bool {
+            self.dev_server.is_none()
+                && importer.is_javascript_like()
+                && matches!(
+                    kind,
+                    ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic
+                )
         }
 
         /// `(disabled):<path relative to the project>`, the spelling esbuild uses.
@@ -7217,9 +7242,11 @@ pub mod bv2_impl {
                 // would lock the whole struct while the loop body still needs to
                 // read other `resolve_result` fields (`.flags`, `.path_pair`,
                 // `.primary_side_effects_data`, `.jsx`). Detach via raw ptr.
-                if self.dev_server.is_some() && resolve_result.path_pair.primary.is_disabled {
-                    // The DevServer keeps a disabled import external. A disabled "module"
-                    // entry with a live "main" uses "main".
+                if resolve_result.path_pair.primary.is_disabled
+                    && !self.disabled_import_is_empty_module(loader, import_record.kind)
+                {
+                    // The import stays external. A disabled "module" entry with a live
+                    // "main" uses "main".
                     match resolve_result.path_pair.secondary {
                         Some(secondary) if !secondary.is_disabled => {
                             resolve_result.path_pair.primary = secondary;
@@ -7232,9 +7259,9 @@ pub mod bv2_impl {
                         }
                     }
                 }
-                // Like esbuild, a disabled import is an empty CommonJS module. When the
-                // "browser" field disables the "module" entry, "main" stays the secondary:
-                // `scan_for_secondary_paths` redirects to it once a `require()` bundles it.
+                // When the "browser" field disables the "module" entry, "main" stays the
+                // secondary: `scan_for_secondary_paths` redirects to it once a `require()`
+                // bundles it.
                 // SAFETY: `resolve_result` outlives this borrow; see note above.
                 let path: &mut Fs::Path = unsafe {
                     bun_ptr::detach_lifetime_mut::<Fs::Path>(&mut resolve_result.path_pair.primary)

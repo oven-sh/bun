@@ -9,7 +9,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
-pub struct Script {
+pub(crate) struct Script {
     pub(crate) base: Base,
     /// Back-reference into the bumpalo-allocated AST (`ShellArgs::__arena`).
     /// The arena outlives every state node (it's dropped only when the
@@ -20,7 +20,7 @@ pub struct Script {
     pub(crate) state: ScriptState,
 }
 
-pub enum ScriptState {
+pub(crate) enum ScriptState {
     Normal { idx: usize },
 }
 
@@ -95,7 +95,7 @@ impl Script {
             let ScriptState::Normal { idx } = me.state;
             (idx, Self::stmt_count_of(me))
         };
-        if idx >= len {
+        if idx >= len || interp.interrupted(this) {
             return Self::finish(interp, this, exit_code);
         }
         Self::next(interp, this)
@@ -124,16 +124,7 @@ impl Script {
                 me.base.shell = core::ptr::null_mut();
             }
         }
-        me.base.end_scope();
         // free_node is done by the caller (Interpreter::deinit_node).
-    }
-
-    pub(crate) fn deinit_from_interpreter(interp: &Interpreter, this: NodeId) {
-        log!("Script {} deinitFromInterpreter", this);
-        let me = interp.as_script_mut(this);
-        // io.deinit() — IO Drop handles it.
-        // Let the interpreter deinitialize the root shell state.
-        me.base.end_scope();
     }
 
     // ── AST helpers ────────────────────────────────────────────────────────

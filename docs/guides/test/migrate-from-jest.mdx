@@ -107,7 +107,16 @@ Many other Jest settings are irrelevant in `bun test`.
 
 ---
 
-Many other settings have an equivalent in the `[test]` section of `bunfig.toml`, for example `setupFiles`/`setupFilesAfterEnv` → `preload`, `testPathIgnorePatterns` → `pathIgnorePatterns`, `rootDir` → `root`, `coverageDirectory` → `coverageDir`, `coverageReporters` → `coverageReporter`, and `coverageThreshold` → `coverageThreshold` (as a fraction like `0.9`, not a percentage). See [Test configuration](/test/configuration). Settings without an equivalent are not supported. [File a feature request](https://github.com/oven-sh/bun) if something you need is missing.
+Many other settings have an equivalent in the `[test]` section of `bunfig.toml`. For example:
+
+- `setupFiles`/`setupFilesAfterEnv` → `preload`
+- `testPathIgnorePatterns` → `pathIgnorePatterns`
+- `rootDir` → `root`
+- `coverageDirectory` → `coverageDir`
+- `coverageReporters` → `coverageReporter`
+- `coverageThreshold` → `coverageThreshold` (as a fraction like `0.9`, not a percentage)
+
+See [Test configuration](/test/configuration). Settings without an equivalent are not supported. [File a feature request](https://github.com/oven-sh/bun/issues/new?template=4-feature-request.yml) if something you need is missing.
 
 ---
 

@@ -23,7 +23,6 @@ type DWORD_PTR = usize;
 pub type UINT = c_uint;
 pub type ULONG = c_ulong;
 pub type LONG = c_long;
-pub type ULONGLONG = u64;
 pub type LARGE_INTEGER = i64;
 pub type WCHAR = u16;
 pub type CHAR = c_char;
@@ -270,7 +269,6 @@ pub const PATH_MAX_WIDE: usize = 32767;
 
 // `SetFilePointer` move methods.
 pub const FILE_BEGIN: DWORD = 0;
-pub const FILE_CURRENT: DWORD = 1;
 pub const FILE_END: DWORD = 2;
 
 // `DuplicateHandle` options.
@@ -284,17 +282,10 @@ pub const FILE_SHARE_DELETE: ULONG = 0x0000_0004;
 // File attribute flags (`winnt.h`).
 pub const FILE_ATTRIBUTE_READONLY: DWORD = 0x0000_0001;
 pub const FILE_ATTRIBUTE_HIDDEN: DWORD = 0x0000_0002;
-pub const FILE_ATTRIBUTE_SYSTEM: DWORD = 0x0000_0004;
 pub const FILE_ATTRIBUTE_DIRECTORY: DWORD = 0x0000_0010;
-pub const FILE_ATTRIBUTE_ARCHIVE: DWORD = 0x0000_0020;
-pub const FILE_ATTRIBUTE_DEVICE: DWORD = 0x0000_0040;
 pub const FILE_ATTRIBUTE_NORMAL: DWORD = 0x0000_0080;
 pub const FILE_ATTRIBUTE_TEMPORARY: DWORD = 0x0000_0100;
-pub const FILE_ATTRIBUTE_SPARSE_FILE: DWORD = 0x0000_0200;
 pub const FILE_ATTRIBUTE_REPARSE_POINT: DWORD = 0x0000_0400;
-pub const FILE_ATTRIBUTE_COMPRESSED: DWORD = 0x0000_0800;
-pub const FILE_ATTRIBUTE_OFFLINE: DWORD = 0x0000_1000;
-pub const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED: DWORD = 0x0000_2000;
 
 // `NtCreateFile` CreateDisposition (`ntifs.h`).
 pub const FILE_OPEN: ULONG = 1;
@@ -305,8 +296,6 @@ pub const FILE_OVERWRITE_IF: ULONG = 5;
 
 // `NtCreateFile` CreateOptions (`ntifs.h`).
 pub const FILE_DIRECTORY_FILE: ULONG = 0x0000_0001;
-pub const FILE_WRITE_THROUGH: ULONG = 0x0000_0002;
-pub const FILE_SEQUENTIAL_ONLY: ULONG = 0x0000_0004;
 pub const FILE_SYNCHRONOUS_IO_NONALERT: ULONG = 0x0000_0020;
 pub const FILE_NON_DIRECTORY_FILE: ULONG = 0x0000_0040;
 pub const FILE_OPEN_REPARSE_POINT: ULONG = 0x0020_0000;
@@ -345,7 +334,6 @@ pub const fn is_reparse_tag_name_surrogate(tag: DWORD) -> bool {
 // `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
 pub const PIPE_ACCESS_INBOUND: DWORD = 0x0000_0001;
 pub const PIPE_ACCESS_OUTBOUND: DWORD = 0x0000_0002;
-pub const PIPE_ACCESS_DUPLEX: DWORD = 0x0000_0003;
 pub const PIPE_TYPE_BYTE: DWORD = 0x0000_0000;
 pub const PIPE_READMODE_BYTE: DWORD = 0x0000_0000;
 pub const PIPE_WAIT: DWORD = 0x0000_0000;
@@ -389,7 +377,7 @@ pub struct FILE_DIRECTORY_INFORMATION {
 pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
-    pub const FileBasicInformation: Self = Self(4);
+    pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
@@ -834,7 +822,6 @@ pub mod kernel32 {
         pub Type: u32,
     }
     pub const MEM_COMMIT: u32 = 0x1000;
-    pub const MEM_FREE: u32 = 0x10000;
 
     pub const PAGE_NOACCESS: u32 = 0x01;
     pub const PAGE_READONLY: u32 = 0x02;
@@ -844,6 +831,10 @@ pub mod kernel32 {
     pub const PAGE_EXECUTE_READWRITE: u32 = 0x40;
     pub const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;
     pub const PAGE_GUARD: u32 = 0x100;
+
+    // `LockFileEx` dwFlags (`minwinbase.h`).
+    pub const LOCKFILE_FAIL_IMMEDIATELY: DWORD = 0x0000_0001;
+    pub const LOCKFILE_EXCLUSIVE_LOCK: DWORD = 0x0000_0002;
 
     #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
@@ -895,18 +886,15 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
-        /// `SetFileTime` (`fileapi.h`). Any of the three `FILETIME` pointers
-        /// may be null to leave that timestamp unchanged.
-        pub fn SetFileTime(
+        /// `lpOverlapped` is required even for synchronous handles: its `Offset` is the range start.
+        pub fn LockFileEx(
             hFile: HANDLE,
-            lpCreationTime: *const FILETIME,
-            lpLastAccessTime: *const FILETIME,
-            lpLastWriteTime: *const FILETIME,
+            dwFlags: DWORD,
+            dwReserved: DWORD,
+            nNumberOfBytesToLockLow: DWORD,
+            nNumberOfBytesToLockHigh: DWORD,
+            lpOverlapped: *mut OVERLAPPED,
         ) -> BOOL;
-        /// `SetHandleInformation` (`handleapi.h`). No pointer preconditions:
-        /// `hObject` is an opaque kernel handle (validated kernel-side; bad
-        /// handle → `FALSE` + `GetLastError`), `dwMask`/`dwFlags` are by-value.
-        pub safe fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
         /// `CreateProcessW` (`processthreadsapi.h`).
         pub fn CreateProcessW(
             lpApplicationName: LPCWSTR,
@@ -999,23 +987,6 @@ pub const INFINITE: DWORD = 0xFFFF_FFFF;
 pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
 
-#[cfg_attr(windows, link(name = "kernel32"))]
-unsafe extern "system" {
-    #[link_name = "WaitForSingleObject"]
-    fn WaitForSingleObject_raw(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
-}
-/// SAFETY: `handle` must be a valid waitable kernel object.
-pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Win32Error> {
-    // SAFETY: caller contract guarantees `handle` is a valid waitable kernel
-    // object; `ms` is a by-value DWORD with no pointer preconditions.
-    let rc = unsafe { WaitForSingleObject_raw(handle, ms) };
-    if rc == WAIT_FAILED {
-        Err(Win32Error::get())
-    } else {
-        Ok(rc)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // NTSTATUS — a transparent newtype so unmapped codes round-trip.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1062,10 +1033,6 @@ impl NTSTATUS {
     pub const fn from_raw(raw: u32) -> Self {
         NTSTATUS(raw)
     }
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
 }
 
 #[inline]
@@ -1078,7 +1045,6 @@ pub const fn NT_SUCCESS(status: NTSTATUS) -> bool {
 pub const fn NT_ERROR(status: NTSTATUS) -> bool {
     (status.0 >> 30) == 3
 }
-pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
 
 #[cfg_attr(windows, link(name = "ntdll"))]
 unsafe extern "system" {
@@ -1123,27 +1089,7 @@ pub mod ws2_32 {
             res: *mut *mut addrinfo,
         ) -> c_int;
         pub fn freeaddrinfo(ai: *mut addrinfo);
-        /// `WSAStartup` (`winsock2.h`). 0 on success; non-zero is a `WSAE*`.
-        pub fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int;
     }
-
-    /// `WSADATA` (`winsock2.h`, **`_WIN64` layout** — on 64-bit Windows
-    /// `iMaxSockets`/`iMaxUdpDg`/`lpVendorInfo` come *before* the
-    /// `szDescription`/`szSystemStatus` arrays; the 32-bit header swaps that
-    /// order). Only ever read back from `WSAStartup`; callers zero-initialise
-    /// and never project fields beyond `wVersion`.
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct WSADATA {
-        pub wVersion: u16,
-        pub wHighVersion: u16,
-        pub iMaxSockets: u16,
-        pub iMaxUdpDg: u16,
-        pub lpVendorInfo: *mut u8,
-        pub szDescription: [u8; 257],
-        pub szSystemStatus: [u8; 129],
-    }
-    const _: () = assert!(core::mem::size_of::<WSADATA>() == 408);
 
     /// `SOCKADDR_STORAGE` (`ws2def.h`). 128 bytes, 8-aligned.
     #[repr(C)]
@@ -1197,13 +1143,6 @@ pub mod ws2_32 {
 
     #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
-        /// Raw `WSAGetLastError`. The `Option<SystemErrno>` wrapper lives in `errno`
-        /// because `SystemErrno` is a higher-tier type. No preconditions; reads
-        /// thread-local Winsock error slot.
-        pub safe fn WSAGetLastError() -> c_int;
-        /// No preconditions; writes the thread-local Winsock error slot.
-        pub safe fn WSASetLastError(err: c_int);
-        pub fn closesocket(s: usize) -> c_int;
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
         pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
         /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,
@@ -1223,8 +1162,6 @@ pub mod ws2_32 {
     /// `POLLWRNORM` (`winsock2.h`).
     pub const POLLWRNORM: i16 = 0x0010;
 }
-pub use ws2_32::WSAGetLastError;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Win32Error — a transparent newtype with associated consts so unmapped
 // codes round-trip and `match` on consts works (structural equality). Only the subset referenced by lower-tier
@@ -1273,6 +1210,7 @@ impl Win32Error {
     pub const SIGNAL_REFUSED: Win32Error = Win32Error(156);
     pub const BAD_PATHNAME: Win32Error = Win32Error(161);
     pub const ALREADY_EXISTS: Win32Error = Win32Error(183);
+    pub const BAD_EXE_FORMAT: Win32Error = Win32Error(193);
     pub const ENVVAR_NOT_FOUND: Win32Error = Win32Error(203);
     pub const NO_SIGNAL_SENT: Win32Error = Win32Error(205);
     pub const FILENAME_EXCED_RANGE: Win32Error = Win32Error(206);
@@ -1348,9 +1286,22 @@ impl Win32Error {
     pub const WSANO_DATA: Win32Error = Win32Error(11004);
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
 
+    /// `GetLastError()` (see [`from_u32`](Self::from_u32)).
     #[inline]
     pub fn get() -> Win32Error {
-        Win32Error(kernel32::GetLastError() as u16)
+        Self::from_u32(kernel32::GetLastError() as u32)
+    }
+
+    /// Win32 error codes fit in 16 bits. An `HRESULT` that wraps one
+    /// (`FACILITY_WIN32`, `0x8007xxxx`) is unwrapped to it; any other larger
+    /// value saturates to `0xFFFF`, which no code uses.
+    #[inline]
+    pub const fn from_u32(code: u32) -> Win32Error {
+        if code <= u16::MAX as u32 || code & 0xFFFF_0000 == 0x8007_0000 {
+            Win32Error(code as u16)
+        } else {
+            Win32Error(u16::MAX)
+        }
     }
 
     #[inline]
@@ -1365,7 +1316,7 @@ impl Win32Error {
 
     #[inline]
     pub fn from_ntstatus(status: NTSTATUS) -> Win32Error {
-        Win32Error(RtlNtStatusToDosError(status) as u16)
+        Self::from_u32(RtlNtStatusToDosError(status) as u32)
     }
     /// Snake-cased alias for [`from_ntstatus`] (matches `bun_sys::windows`
     /// callers — `from_nt_status`).
@@ -1382,11 +1333,6 @@ impl Win32Error {
 
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
-
-#[cfg_attr(windows, link(name = "shell32"))]
-unsafe extern "system" {
-    pub fn CommandLineToArgvW(lpCmdLine: LPCWSTR, pNumArgs: *mut c_int) -> *mut LPWSTR;
-}
 
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
@@ -1484,13 +1430,6 @@ unsafe extern "system" {
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
 
-    pub fn SetFileInformationByHandle(
-        file: HANDLE,
-        fileInformationClass: FILE_INFO_BY_HANDLE_CLASS,
-        fileInformation: LPVOID,
-        bufferSize: DWORD,
-    ) -> BOOL;
-
     pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
 
     pub fn SetEnvironmentVariableW(lpName: LPCWSTR, lpValue: LPCWSTR) -> BOOL;
@@ -1509,9 +1448,6 @@ unsafe extern "system" {
         hJob: HANDLE,     // [in]
         hProcess: HANDLE, // [in]
     ) -> BOOL;
-
-    pub fn ResumeThread(hJob: HANDLE, // [in]
-    ) -> DWORD;
 
     pub fn SetInformationJobObject(
         hJob: HANDLE,
@@ -1667,8 +1603,6 @@ pub struct CURDIR {
     pub DosPath: UNICODE_STRING,
     pub Handle: HANDLE,
 }
-/// CamelCase alias (`bun_core` callers).
-pub type Curdir = CURDIR;
 
 /// `RTL_USER_PROCESS_PARAMETERS` (`winternl.h`) — minimal view.
 #[repr(C)]
@@ -1681,8 +1615,8 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
     /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. `Fd::cwd()`
-    /// reads the handle so `openat(Fd::cwd(), …)` resolves relative paths
-    /// against the live process cwd via `NtCreateFile`'s `RootDirectory`.
+    /// decodes to this handle so `openat(Fd::cwd(), …)` resolves relative
+    /// paths against the live process cwd via `NtCreateFile`'s `RootDirectory`.
     pub CurrentDirectory: CURDIR,
     pub DllPath: UNICODE_STRING,
     pub ImagePathName: UNICODE_STRING,
@@ -1717,8 +1651,6 @@ pub struct PEB {
     // reference would assert false immutability to the optimizer (UB).
     pub ProcessParameters: *const RTL_USER_PROCESS_PARAMETERS,
 }
-/// Legacy alias (former `bun_core::windows_sys` name).
-pub type PebView = PEB;
 
 /// `TEB` (`winternl.h`) — minimal view; only `ProcessEnvironmentBlock` is read.
 #[repr(C)]
@@ -1796,8 +1728,6 @@ pub fn peb() -> *const PEB {
 pub const CTRL_C_EVENT: DWORD = 0;
 pub const CTRL_BREAK_EVENT: DWORD = 1;
 pub const CTRL_CLOSE_EVENT: DWORD = 2;
-pub const CTRL_LOGOFF_EVENT: DWORD = 5;
-pub const CTRL_SHUTDOWN_EVENT: DWORD = 6;
 
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {

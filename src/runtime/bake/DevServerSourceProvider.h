@@ -10,8 +10,8 @@ namespace Bake {
 class DevServerSourceProvider;
 
 // Implemented on the Rust side to register the source provider.
-extern "C" void Bun__addDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, BunString* specifier);
-extern "C" void Bun__removeDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, BunString* specifier);
+extern "C" void Bun__addDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, const BunString* specifier);
+extern "C" void Bun__removeDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, const BunString* specifier);
 
 class DevServerSourceProvider final : public JSC::StringSourceProvider {
 public:

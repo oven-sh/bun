@@ -272,7 +272,8 @@ const reflectStatics = {
 const loweredMarker = "/*bun:structs*/";
 
 // A declaration starts a statement: `struct Name`, `shared struct Name`, optionally after `export`.
-const structDeclaration = /(?:^|[\n\r;{}]|\*\/)[ \t]*(?:export[ \t]+)?(?:shared[ \t]+)?struct[ \t]+[\p{L}$_\\]/u;
+const structDeclaration =
+  /(?:^|[\n\r;{}:]|\*\/)[ \t]*(?:export[ \t]+(?:default[ \t]+)?)?(?:shared[ \t]+)?struct(?:[ \t]*\{|[ \t]+[\p{L}$_\\])/u;
 const runtimeImport = /^import[ \t]*\{([^}]*)\}[ \t]*from[ \t]*["']bun:wrap["'];?[ \t]*\r?\n?/m;
 const functionBodyName = "__bunVmFunctionBody__";
 

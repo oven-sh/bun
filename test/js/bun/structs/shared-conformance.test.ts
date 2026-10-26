@@ -191,6 +191,96 @@ describe("the native structs cannot be replaced by a script", () => {
   });
 });
 
+describe("huge and long structures", () => {
+  test("a SharedArray longer than the memory is a RangeError, not a crash", () => {
+    expect(() => new SharedArray(2 ** 32 - 1)).toThrow(RangeError);
+    expect(() => new SharedArray(2 ** 31)).toThrow(RangeError);
+    expect(new SharedArray(1000).length).toBe(1000);
+  });
+
+  test("dropping a long chain of shared structs does not overflow the stack", () => {
+    shared struct Link {
+      next;
+    }
+    let head: any = new Link();
+    let tail = head;
+    for (let i = 0; i < 100_000; i++) {
+      const link = new Link();
+      tail.next = link;
+      tail = link;
+    }
+    expect(tail.next).toBeUndefined();
+    head = tail = undefined;
+    Bun.gc(true);
+  });
+});
+
+describe("timeouts and notifications", () => {
+  test("a timeout longer than the clock can count waits for ever instead of crashing", async () => {
+    const m = new Atomics.Mutex();
+    const c = new Atomics.Condition();
+    const free = Atomics.Mutex.lockIfAvailable(m, 1e22);
+    expect(free).not.toBeNull();
+    free!.unlock();
+    using token = Atomics.Mutex.lock(m);
+    expect(Atomics.Condition.waitFor(c, token, 1e22, () => true)).toBe(true);
+    const src = `
+      self.onmessage = ({ data: { m, c } }) => {
+        const token = Atomics.Mutex.lock(m);
+        Atomics.Condition.notify(c);
+        token.unlock();
+        postMessage("notified");
+      };
+    `;
+    const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+    const worker = new Worker(url);
+    const done = new Promise<string>(resolve => (worker.onmessage = e => resolve(e.data)));
+    worker.postMessage({ m, c });
+    // The worker gets the lock when this wait gives it up, and then notifies the condition.
+    expect(Atomics.Condition.waitFor(c, token, 1e22)).toBe(true);
+    expect(await done).toBe("notified");
+    worker.terminate();
+  });
+
+  test("a notification is not kept for a waiter that arrives later", () => {
+    const m = new Atomics.Mutex();
+    const c = new Atomics.Condition();
+    expect(Atomics.Condition.notify(c, 1)).toBe(0);
+    using token = Atomics.Mutex.lock(m);
+    expect(Atomics.Condition.waitFor(c, token, 30)).toBe(false);
+  });
+
+  test("a worker that waits to take a mutex back can still be terminated", async () => {
+    shared struct State {
+      waiting;
+    }
+    const state = new State();
+    state.waiting = 0;
+    const m = new Atomics.Mutex();
+    const c = new Atomics.Condition();
+    const src = `
+      self.onmessage = ({ data: { state, m, c } }) => {
+        const token = Atomics.Mutex.lock(m);
+        state.waiting = 1;
+        Atomics.Condition.wait(c, token);
+        postMessage("woke");
+      };
+    `;
+    const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+    const worker = new Worker(url);
+    worker.postMessage({ state, m, c });
+    while (state.waiting === 0) await Bun.sleep(1);
+    // This thread gets the lock once the worker waits, and keeps it, so the worker cannot take it back after the notification.
+    using token = Atomics.Mutex.lock(m);
+    expect(Atomics.Condition.notify(c)).toBe(1);
+    const closed = new Promise<void>(resolve => worker.addEventListener("close", () => resolve()));
+    await Bun.sleep(30);
+    worker.terminate();
+    await closed;
+    expect(token.locked).toBe(true);
+  });
+});
+
 describe("shared struct exotic object", () => {
   test("[[Delete]] is false for every key and [[Set]] ignores the receiver", () => {
     shared struct S {

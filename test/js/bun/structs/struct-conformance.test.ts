@@ -299,6 +299,38 @@ describe("struct constructors", () => {
     expect(b.plain.ok).toBe(true);
   });
 
+  test("super() calls the parent of the struct it is written in, whenever and wherever it runs", () => {
+    struct A {
+      a;
+      constructor() {
+        this.a = 1;
+      }
+    }
+    struct Later extends A {
+      stash;
+      constructor() {
+        this.stash = () => super();
+      }
+    }
+    const later = new Later();
+    expect(later.a).toBeUndefined();
+    later.stash();
+    expect(later.a).toBe(1);
+
+    struct Other {
+      constructor(run) {
+        run();
+      }
+    }
+    struct Inside extends A {
+      constructor() {
+        // Runs while the constructor of Other is the running one.
+        new Other(() => super());
+      }
+    }
+    expect(new Inside().a).toBe(1);
+  });
+
   test("super() with no struct parent is a TypeError", () => {
     struct A {
       constructor() {
@@ -338,6 +370,18 @@ describe("struct constructors", () => {
     expect(new T() instanceof S).toBe(true);
     // A failed attempt does not leave the struct unusable.
     expect(Object.keys(new T())).toEqual(["x"]);
+  });
+
+  test("a failed construction does not leave the struct open to another new.target", () => {
+    struct P {
+      x = (() => {
+        throw new Error("boom");
+      })();
+    }
+    struct D extends P {}
+    expect(() => new D()).toThrow("boom");
+    expect(() => Reflect.construct(P, [], D)).toThrow(TypeError);
+    expect(() => new D()).toThrow("boom");
   });
 
   test("a struct can only extend a struct, not a subclass of one", () => {
@@ -424,12 +468,23 @@ describe("struct definitions", () => {
     expect(Object.isExtensible(S.prototype)).toBe(false);
   });
 
-  test("the prototype keeps the constructor property", () => {
+  test("the prototype has no constructor property, as the proposal defines it", () => {
     struct S {
       v;
     }
-    expect(S.prototype.constructor).toBe(S);
-    expect(new S().constructor).toBe(S);
+    expect(Object.hasOwn(S.prototype, "constructor")).toBe(false);
+    expect(new S().constructor).toBe(Object);
+  });
+
+  test("a method that a computed name calls constructor is kept and is a method like the others", () => {
+    struct S {
+      ["constructor"]() {
+        return 1;
+      }
+    }
+    const s = new S();
+    expect(s.constructor()).toBe(1);
+    expect(() => S.prototype.constructor.call({})).toThrow(TypeError);
   });
 
   test("eval and new Function do not know the struct syntax (a limit of lowering at build time)", () => {
@@ -444,7 +499,7 @@ describe("struct definitions", () => {
       constructor() {}
       m() {}
     }
-    expect(Reflect.ownKeys(S.prototype)).toEqual(["constructor", "m"]);
+    expect(Reflect.ownKeys(S.prototype)).toEqual(["m"]);
     expect(Reflect.ownKeys(S).sort()).toEqual(["length", "name", "prototype"]);
   });
 
@@ -468,6 +523,30 @@ describe("struct definitions", () => {
     expect(Object.hasOwn(S.prototype.m, "prototype")).toBe(false);
     expect(S.prototype.m.name).toBe("m");
     new S().m(1, 2);
+  });
+
+  test("generator and async methods are told apart from plain ones without Symbol.toStringTag", () => {
+    const key = Symbol.toStringTag;
+    Object.defineProperty(Function.prototype, key, { value: "Changed", configurable: true });
+    try {
+      struct S {
+        m() {
+          return 1;
+        }
+        *gen() {
+          yield 2;
+        }
+        async am() {
+          return 3;
+        }
+      }
+      expect(() => S.prototype.m.call({})).toThrow(TypeError);
+      expect([...S.prototype.gen.call({})]).toEqual([2]);
+      expect(S.prototype.am.call({})).toBeInstanceOf(Promise);
+      expect(new S().m()).toBe(1);
+    } finally {
+      delete (Function.prototype as any)[key];
+    }
   });
 
   test("methods accept an instance of a subclass struct", () => {
@@ -499,6 +578,13 @@ describe("struct definitions", () => {
 
   test("a constructor declared twice is an early error", () => {
     expect(() => new vm.Script("struct S { constructor() {} constructor() {} }")).toThrow(SyntaxError);
+  });
+
+  test("the constructor of a shared struct cannot use private names", () => {
+    expect(
+      () => new vm.Script("shared struct S { static #p = 1; constructor() { return S.#p; } }"),
+    ).toThrow(SyntaxError);
+    expect(() => new vm.Script("struct S { static #p = 1; constructor() { return S.#p; } }")).not.toThrow();
   });
 
   test("a struct field cannot be an auto-accessor", () => {

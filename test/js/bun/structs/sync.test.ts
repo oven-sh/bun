@@ -62,6 +62,17 @@ describe("Atomics.Mutex", () => {
   });
 });
 
+describe("UnlockToken", () => {
+  test("a token made for another new.target still has the UnlockToken prototype", () => {
+    const { UnlockToken } = Atomics.Mutex;
+    const token = Reflect.construct(UnlockToken, [], Object);
+    expect(Object.getPrototypeOf(token)).toBe(UnlockToken.prototype);
+    expect(token.locked).toBe(false);
+    class Sub extends UnlockToken {}
+    expect(Object.getPrototypeOf(new Sub())).toBe(UnlockToken.prototype);
+  });
+});
+
 describe("Atomics.Condition", () => {
   test("waitFor times out and reports false", () => {
     const m = new Atomics.Mutex();

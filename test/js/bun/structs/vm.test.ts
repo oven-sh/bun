@@ -320,6 +320,17 @@ p.x`);
     ).toBe("true,1,2");
   });
 
+  test("a declaration after a case label and a default export are found", async () => {
+    expect(vm.runInNewContext("switch (1) { case 1: struct S { x; } globalThis.keys = Object.keys(new S()).join(); }")).toBe("x");
+    const { SourceTextModule } = vm as unknown as { SourceTextModule: new (code: string, options: object) => any };
+    const module = new SourceTextModule("export default struct { a; b; }", { context: vm.createContext({}) });
+    await module.link(() => {
+      throw new Error("no imports");
+    });
+    await module.evaluate();
+    expect(Object.keys(new module.namespace.default())).toEqual(["a", "b"]);
+  });
+
   test("a source that only mentions the word runs unchanged", () => {
     expect(vm.runInNewContext("const struct = 1; struct + 1")).toBe(2);
     expect(vm.runInNewContext("var struct = { shared: 2 }; struct.shared")).toBe(2);

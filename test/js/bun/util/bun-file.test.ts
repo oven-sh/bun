@@ -150,7 +150,12 @@ test.concurrent.each([
     failFastWorker: ["worker", "failFastWorker", "asyncFramesOf"],
     cycleBehindRejectFunction: ["worker"],
   };
-  expect({ result: stdout && JSON.parse(stdout), stderr }).toEqual({
+  // The raw stdout if it is not JSON, so that a crash shows what the fixture printed.
+  let result: unknown = stdout;
+  try {
+    result = JSON.parse(stdout);
+  } catch {}
+  expect({ result, stderr, exitCode }).toEqual({
     result: {
       "before": frames,
       "before, in AsyncLocalStorage.run()": frames,
@@ -158,8 +163,8 @@ test.concurrent.each([
       "after, in AsyncLocalStorage.run()": frames,
     },
     stderr: "",
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });
 
 test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async () => {

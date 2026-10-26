@@ -25,6 +25,8 @@ pub(crate) struct QuantizeResult {
 unsafe extern "C" {
     fn bun_image_nearest_palette(palette: *const u8, k: u32, r: i32, g: i32, b: i32, a: i32)
     -> u32;
+    /// Copies the pixels that are not fully transparent to `dst`. Returns how many that is.
+    fn bun_image_shown_compact(dst: *mut u8, src: *const u8, n: usize) -> usize;
 }
 
 #[derive(Clone, Copy)]
@@ -88,9 +90,12 @@ fn try_filled<T: Clone + Default>(len: usize) -> Result<Vec<T>, AllocError> {
     Ok(v)
 }
 
-/// A fully transparent pixel shows no colour: in an image that does not fit, it is `[0; 4]`.
+/// What every fully transparent pixel shows: no colour.
+const CLEAR: [u8; 4] = [0; 4];
+
+/// A fully transparent pixel shows no colour: in an image that does not fit, it is `CLEAR`.
 fn shown(pixel: [u8; 4]) -> [u8; 4] {
-    if pixel[3] == 0 { [0; 4] } else { pixel }
+    if pixel[3] == 0 { CLEAR } else { pixel }
 }
 
 /// One slot of an open-addressing table from a colour to its palette index plus 1.
@@ -148,6 +153,20 @@ struct Moments {
 }
 
 impl Moments {
+    /// `count` pixels of one colour.
+    fn of(pixel: [u8; 4], count: u64) -> Moments {
+        let mut out = Moments {
+            n: count,
+            ..Moments::default()
+        };
+        for c in 0..4usize {
+            let v = u64::from(pixel[c]);
+            out.sum[c] = count * v;
+            out.sq[c] = count * v * v;
+        }
+        out
+    }
+
     fn add(&mut self, pixel: [u8; 4]) {
         self.n += 1;
         for c in 0..4usize {
@@ -222,16 +241,26 @@ impl ColorBox {
 /// Split the pixels into `want` boxes (fewer if each is one colour). Each box gives one entry.
 fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
     // The boxes are ranges of a copy. A cut is a value of a channel: equal colours stay together.
-    let mut pixels: Vec<[u8; 4]> = {
-        let mut copy = Vec::new();
+    // Fully transparent pixels are not copied: box 0 has `clear` more, below every cut of it.
+    let (mut pixels, clear) = {
+        let mut copy: Vec<[u8; 4]> = Vec::new();
         copy.try_reserve_exact(pixels.len())
             .map_err(|_| AllocError)?;
-        copy.extend(pixels.iter().map(|&pixel| shown(pixel)));
-        copy
+        // SAFETY: `copy` has room for `pixels.len()` pixels, and the kernel writes inside that.
+        let kept = unsafe {
+            bun_image_shown_compact(
+                copy.as_mut_ptr().cast(),
+                pixels.as_ptr().cast(),
+                pixels.len(),
+            )
+        };
+        // SAFETY: the kernel wrote the first `kept` pixels.
+        unsafe { copy.set_len(kept) };
+        (copy, (pixels.len() - kept) as u64)
     };
     // Sums per value of the split channel. `cut` leaves it zero.
     let mut at_value: Vec<Sums> = try_filled(256)?;
-    let mut all = Moments::default();
+    let mut all = Moments::of(CLEAR, clear);
     for &pixel in &pixels {
         all.add(pixel);
     }
@@ -241,7 +270,7 @@ fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
         // The box with the most squared error: its index, `error_times_n` and `n`.
         let mut pick: Option<(usize, u128, u64)> = None;
         for (i, b) in boxes.iter().enumerate() {
-            if b.hi - b.lo < 2 {
+            if b.moments.n < 2 {
                 continue;
             }
             // error_b / n_b > error_p / n_p, cross-multiplied (< 2^114).
@@ -255,33 +284,61 @@ fn split_boxes(pixels: &[[u8; 4]], want: usize) -> Result<Vec<u8>, AllocError> {
         let b = boxes[pick];
         let ch = b.moments.channel_to_split();
         let slice = &mut pixels[b.lo..b.hi];
+        let clear_here = if pick == 0 { clear } else { 0 };
         // A box of one colour has no cut, and then no other box has error.
-        let Some(value) = cut(slice, ch, &b.moments, &mut at_value) else {
+        let Some((value, below)) = cut(slice, ch, &b.moments, &mut at_value, clear_here) else {
             break;
         };
-        // The pixels below `value` go first.
-        let mut at: usize = 0;
-        let mut left = Moments::default();
-        for i in 0..slice.len() {
-            if slice[i][ch] < value {
-                left.add(slice[i]);
-                slice.swap(at, i);
-                at += 1;
+        // Part two starts `below` pixels in: only a pixel on the wrong side of that changes places.
+        let at = usize::try_from(below - clear_here).expect("int cast");
+        let (first, second) = slice.split_at_mut(at);
+        let mut from: usize = 0;
+        for pixel in first.iter_mut() {
+            if pixel[ch] >= value {
+                while second[from][ch] >= value {
+                    from += 1;
+                }
+                core::mem::swap(pixel, &mut second[from]);
+                from += 1;
             }
         }
+        debug_assert!(first.iter().all(|pixel| pixel[ch] < value));
+        debug_assert!(second.iter().all(|pixel| pixel[ch] >= value));
+        // Only the shorter part is summed. The other part is the rest of the box.
+        let sum_first = first.len() <= second.len();
+        let (summed, clear_summed) = if sum_first {
+            (&*first, clear_here)
+        } else {
+            (&*second, 0)
+        };
+        let mut part = Moments::of(CLEAR, clear_summed);
+        for &pixel in summed {
+            part.add(pixel);
+        }
+        let rest = b.moments.minus(&part);
+        let (left, right) = if sum_first {
+            (part, rest)
+        } else {
+            (rest, part)
+        };
         boxes[pick] = ColorBox::new(b.lo, b.lo + at, &left);
-        boxes.push(ColorBox::new(b.lo + at, b.hi, &b.moments.minus(&left)));
+        boxes.push(ColorBox::new(b.lo + at, b.hi, &right));
     }
     let mut palette: Vec<u8> = Vec::with_capacity(boxes.len() * 4);
-    for b in &boxes {
-        let entry = majority(&pixels[b.lo..b.hi]).unwrap_or_else(|| b.moments.mean());
+    for (i, b) in boxes.iter().enumerate() {
+        let clear_here = if i == 0 { clear } else { 0 };
+        let entry = majority(&pixels[b.lo..b.hi], clear_here).unwrap_or_else(|| b.moments.mean());
         palette.extend_from_slice(&entry);
     }
     Ok(palette)
 }
 
-/// The colour that more than half of `pixels` have: a flat background stays exact.
-fn majority(pixels: &[[u8; 4]]) -> Option<[u8; 4]> {
+/// The colour on over half of a box (`pixels` and `clear` fully transparent ones): a flat background stays exact.
+fn majority(pixels: &[[u8; 4]], clear: u64) -> Option<[u8; 4]> {
+    let n = pixels.len() as u64 + clear;
+    if clear * 2 > n {
+        return Some(CLEAR);
+    }
     // One vote per pixel finds the only colour that can have more than half. A count confirms it.
     let (mut colour, mut votes) = ([0u8; 4], 0usize);
     for &pixel in pixels {
@@ -294,8 +351,8 @@ fn majority(pixels: &[[u8; 4]]) -> Option<[u8; 4]> {
             votes -= 1;
         }
     }
-    let count = pixels.iter().filter(|&&pixel| pixel == colour).count();
-    (count * 2 > pixels.len()).then_some(colour)
+    let count = pixels.iter().filter(|&&pixel| pixel == colour).count() as u64;
+    (count * 2 > n).then_some(colour)
 }
 
 /// Pixel count and channel sums of the pixels that have one value of a channel.
@@ -305,10 +362,22 @@ struct Sums {
     sum: [u64; 4],
 }
 
-/// The cut of `pixels` along `ch` with the least squared error, as the value that starts part two.
-fn cut(pixels: &[[u8; 4]], ch: usize, total: &Moments, at_value: &mut [Sums]) -> Option<u8> {
+/// The least-error cut of a box (`pixels` and `clear` fully transparent ones): the value that starts part two, and the count below it.
+fn cut(
+    pixels: &[[u8; 4]],
+    ch: usize,
+    total: &Moments,
+    at_value: &mut [Sums],
+    clear: u64,
+) -> Option<(u8, u64)> {
     // One bit per value of `ch` that the box has: a box of a few pixels has few of the 256.
     let mut has = [0u64; 4];
+    if clear != 0 {
+        let value = usize::from(CLEAR[ch]);
+        has[value >> 6] |= 1 << (value & 63);
+        at_value[value].n = clear;
+        at_value[value].sum = CLEAR.map(|v| clear * u64::from(v));
+    }
     // One step per run of equal pixels: a flat area would write the same sums once per pixel.
     for run in pixels.chunk_by(|a, b| a == b) {
         let pixel = run[0];
@@ -323,7 +392,7 @@ fn cut(pixels: &[[u8; 4]], ch: usize, total: &Moments, at_value: &mut [Sums]) ->
     }
     // The sum of squares is fixed: least error is the largest L²/nL + R²/nR over the parts' sums.
     let mut left = Sums::default();
-    let mut best: Option<(u128, u8)> = None;
+    let mut best: Option<(u128, u8, u64)> = None;
     for (word, mut bits) in has.into_iter().enumerate() {
         while bits != 0 {
             let value = word * 64 + bits.trailing_zeros() as usize;
@@ -346,12 +415,12 @@ fn cut(pixels: &[[u8; 4]], ch: usize, total: &Moments, at_value: &mut [Sums]) ->
             // 32 fraction bits (< 2^115 in all): whole units tie in a box of a few pixels.
             let score = (left_sq << 32) / u128::from(left.n)
                 + (right_sq << 32) / u128::from(total.n - left.n);
-            if best.is_none_or(|(s, _)| score > s) {
-                best = Some((score, u8::try_from(value + 1).expect("int cast")));
+            if best.is_none_or(|(s, _, _)| score > s) {
+                best = Some((score, u8::try_from(value + 1).expect("int cast"), left.n));
             }
         }
     }
-    best.map(|(_, value)| value)
+    best.map(|(_, value, below)| (value, below))
 }
 
 /// Index of the palette entry nearest to the colour `key`, the first one on a tie.

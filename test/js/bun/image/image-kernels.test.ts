@@ -573,6 +573,41 @@ describe("png({palette:true}) keeps the colours that fit and splits the rest by 
     });
   });
 
+  // In an image that does not fit, the fully transparent pixels are a count on
+  // the first box, not pixels of its range. These pin the places that read it.
+  describe("fully transparent pixels as a count", () => {
+    // A different colour under alpha 0 for every i.
+    const hidden = (i: number): Rgba => [...colourAt(i)].fill(0, 3) as Rgba;
+
+    test("a box of the count and one pixel can be split", async () => {
+      // 60 fully transparent, one white at alpha 8, one red and two green.
+      const rest: Rgba[] = [
+        [255, 255, 255, 8],
+        [255, 0, 0, 255],
+        [0, 255, 0, 255],
+        [0, 255, 0, 255],
+      ];
+      const pixel = (x: number, y: number): Rgba => (y * 8 + x < 60 ? hidden(y * 8 + x) : rest[y * 8 + x - 60]);
+      const out = await new Bun.Image(makePng(8, 8, pixel)).png({ palette: true, colors: 4 }).bytes();
+      expect(pngPalette(out)).toEqual([[0, 0, 0, 0], rest[2], rest[1], rest[0]]);
+    });
+
+    test("more than half of a box counts the count", async () => {
+      // 40 fully transparent, 50 black at alpha 10 and 10 at alpha 20 share
+      // a box. Alpha 10 has half of the 100, not more: the entry is the
+      // mean, alpha 7.
+      const pixel = (x: number, y: number): Rgba => {
+        const i = y * 20 + x;
+        return i < 40 ? hidden(i) : i < 90 ? [0, 0, 0, 10] : i < 100 ? [0, 0, 0, 20] : [255, 255, 255, 255];
+      };
+      const out = await new Bun.Image(makePng(20, 10, pixel)).png({ palette: true, colors: 2 }).bytes();
+      expect(pngPalette(out)).toEqual([
+        [0, 0, 0, 7],
+        [255, 255, 255, 255],
+      ]);
+    });
+  });
+
   test("the next box to split is the one with the most squared error, not the widest", async () => {
     // Three greys share almost every pixel. Four single pixels are
     // saturated colours: the widest box is always one that holds them.

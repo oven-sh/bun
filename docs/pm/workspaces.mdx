@@ -72,7 +72,7 @@ Each workspace has its own `package.json`. To reference another package in the m
 
 A workspace needs a `"name"`. Bun skips a matched `package.json` that has no `"name"`, such as a test fixture containing only `{ "type": "module" }`. Bun does not link the skipped directory into `node_modules` and does not install its dependencies. If the skipped `package.json` declares dependencies, `bun install` prints a warning that names the directory.
 
-A workspace can be outside the directory of the root `package.json`, for example `"../shared"` or a symlink that leads there. Other packages can depend on it, and `bun.lock` lists it. Like npm, `bun install` does not install its dependencies or run its scripts. Reached by its own path, that directory is a project of its own: `bun install` works there unless it has `workspace:` or `catalog:` dependencies. Reached through the symlink, commands that install (`bun install`, `bun add`, `bun remove`, `bun update`) end with an error and change nothing.
+A workspace can be outside the directory of the root `package.json`, for example `"../shared"` or a symlink that points there. It works like any other workspace: other packages can depend on it, `bun.lock` lists it, and `bun install` installs its dependencies and runs its scripts. Another project may own that directory, so [`bun prune`](/pm/cli/prune) doesn't clean its `node_modules`, and switching linkers doesn't move it aside.
 
 `bun install` installs dependencies for all workspaces in the monorepo, de-duplicating packages if possible. To install dependencies for specific workspaces only, use the `--filter` flag.
 

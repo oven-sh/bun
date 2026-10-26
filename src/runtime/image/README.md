@@ -7,7 +7,7 @@ off the JS thread.
 
 | file                                  | owns                                                                                                            | touch when                               |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `Image.classes.ts`                    | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
+| `Image.bind.ts`                       | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
 | `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                  | new options, new chainable, new terminal |
 | `codecs.rs`                           | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
 | `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
@@ -34,9 +34,8 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
    overwrite, there is no op list) and a stage in `PipelineTask.applyPipeline`
    at the right point in the fixed `rotate → flip/flop → resize → modulate`
    order.
-2. Add a `do<Name>` method that parses args, writes the slot, returns
-   `callframe.this()`.
-3. Add it to `proto:` in `Image.classes.ts`.
+2. Add a method that parses args, writes the slot, returns `this_value`.
+3. Add it to `proto:` in `Image.bind.ts`.
 4. If it needs a kernel, put the C ABI in `image_resize.cpp` and the `extern`
    in `codecs.rs`.
 

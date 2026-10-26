@@ -1,8 +1,7 @@
-//! The children of an element. Prettier's `printJsxChildren` and what `printJsxElementInternal`
-//! does with the result.
+//! An element's children: Prettier's `printJsxChildren`, plus what `printJsxElementInternal` does with the result.
 
 use super::FormatJsxChild;
-use crate::cursor::around_jsx_children;
+use crate::cursor::with_jsx_children_marks;
 use crate::ir::element::{Group as GroupTag, GroupMode};
 use crate::js::utils::jsx::{
     JsxRawSpace, JsxSpace, has_line_break, is_jsx_whitespace, is_meaningful_jsx_text,
@@ -13,10 +12,10 @@ use crate::prelude::*;
 use crate::write;
 use smallvec::SmallVec;
 
-/// What can be between two children.
+/// The separators that can appear between two children.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum Separator {
-    /// A space. At the end of a line it has to be written as `{" "}`.
+    /// A space. At the end of a line it has to be printed as `{" "}`.
     JsxWhitespace,
     Line,
     SoftLine,
@@ -36,16 +35,16 @@ impl<'a> Format<'a> for Separator {
 
 #[derive(Copy, Clone)]
 enum Item<'a> {
-    /// A word of a text.
+    /// One word of a text.
     Word(&'a [u8]),
     /// An element, or something in braces.
     Node(Expr<'a>),
 }
 
-/// An entry of Prettier's `children`. As in a fill, contents and separators take turns.
+/// An entry of Prettier's `children`. Contents and separators alternate, as in a fill.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum Part {
-    /// `items[start..end]`. Empty, it is Prettier's `""`.
+    /// `items[start..end]`. An empty range is Prettier's `""`.
     Content {
         start: u32,
         end: u32,
@@ -67,7 +66,7 @@ impl Part {
     }
 }
 
-/// A child as it is in ESTree, after `{" "}` has been made a text.
+/// A child as ESTree has it, after `{" "}` has been turned into text.
 #[derive(Copy, Clone)]
 enum Child<'a> {
     Text(&'a [u8]),
@@ -82,16 +81,16 @@ impl Child<'_> {
     }
 }
 
-/// The only character of `word`.
+/// Returns `word`'s character if it has exactly one.
 fn single_character(word: &[u8]) -> Option<char> {
     let mut chars = bstr::ByteSlice::chars(word);
     chars.next().filter(|_| chars.next().is_none())
 }
 
-/// What oxfmt has for [`Children::push_separator_with_whitespace`] before `text`, which starts with a word: a letter with
-/// more words after it is the start of a sentence, `A dog`, and stays on its line. What follows the text only counts if
-/// the text is that one word.
-fn is_joined_to_what_is_before_it(text: &[u8], is_before_self_closing_element: bool) -> bool {
+/// oxfmt's version of [`Children::push_separator_with_whitespace`] before `text`, which starts with a word. A single
+/// letter followed by more words starts a sentence, like `A dog`, and stays on its line. The node after the text only
+/// matters if the text is that one word.
+fn is_joined_to_previous_child(text: &[u8], is_before_self_closing_element: bool) -> bool {
     let (word, after_word) = split_first_word(text);
     let (whitespace, rest) = split_leading_whitespace(after_word);
     single_character(word).is_some_and(|c| match rest.is_empty() {
@@ -113,11 +112,11 @@ fn split_first_word(text: &[u8]) -> (&[u8], &[u8]) {
 
 #[derive(Copy, Clone, Default)]
 struct ChildrenMeta {
-    /// There is an element or a fragment.
+    /// Has an element or a fragment.
     contains_tag: bool,
-    /// There is more than one `{e}`.
+    /// Has more than one `{e}`.
     contains_multiple_expressions: bool,
-    /// There is text that is not only white space with a line break, or `{" "}`.
+    /// Has `{" "}`, or text that isn't just whitespace with a line break.
     contains_text: bool,
 }
 
@@ -125,10 +124,10 @@ struct ChildrenMeta {
 struct Children<'a> {
     items: SmallVec<[Item<'a>; 16]>,
     parts: SmallVec<[Part; 32]>,
-    /// `<fbt>`: Facebook's translation tag, in which white space is kept as it is.
+    /// `<fbt>`: Facebook's translation tag, which preserves whitespace.
     is_facebook_translation_tag: bool,
-    /// See `FormatOptions::is_mdx_jsx`. For Prettier, the white space is `line` then, the same as what is between
-    /// two words. Here both are [`Separator::JsxWhitespace`], which is written as a line.
+    /// See `FormatOptions::is_mdx_jsx`. Prettier then uses `line` for the whitespace, the same as between two words.
+    /// Here both are [`Separator::JsxWhitespace`], which is printed as a line.
     is_mdx_block: bool,
     is_oxfmt: bool,
     meta: ChildrenMeta,
@@ -152,12 +151,12 @@ impl<'a> Children<'a> {
         self.parts.push(Part::Content { start: at, end: at });
     }
 
-    /// `word.length === 1` for Prettier, which counts UTF-16. For oxfmt an emoji is one character too.
+    /// Prettier checks `word.length === 1`, which counts UTF-16 units. oxfmt also counts an emoji as one character.
     fn is_single_character(&self, word: &[u8]) -> bool {
         single_character(word).is_some_and(|c| self.is_oxfmt || c.len_utf16() == 1)
     }
 
-    /// Prettier's `separatorNoWhitespace`. `word`: the word next to the place.
+    /// Prettier's `separatorNoWhitespace`. `word` is the word next to the separator.
     fn push_separator_no_whitespace(&mut self, word: &[u8], is_next_to_self_closing_element: bool) {
         if self.is_facebook_translation_tag {
             return;
@@ -170,7 +169,7 @@ impl<'a> Children<'a> {
         );
     }
 
-    /// Prettier's `separatorWithWhitespace`. `word`: the word next to the place.
+    /// Prettier's `separatorWithWhitespace`. `word` is the word next to the separator.
     fn push_separator_with_whitespace(
         &mut self,
         word: &[u8],
@@ -188,7 +187,7 @@ impl<'a> Children<'a> {
 
     fn push_text(&mut self, text: &'a [u8], next: Option<Child<'a>>) {
         if !is_meaningful_jsx_text(text) {
-            // Up to one empty line between two children is kept.
+            // Keep at most one empty line between two children.
             if bun_core::strings::split_crlf_lines(text).count() > 2 {
                 self.push_line(Separator::HardLine);
             }
@@ -201,7 +200,7 @@ impl<'a> Children<'a> {
         if !leading_whitespace.is_empty() {
             match has_line_break(leading_whitespace) {
                 true if self.is_oxfmt && !self.is_facebook_translation_tag => self.push_line(
-                    match is_joined_to_what_is_before_it(rest, is_before_self_closing_element) {
+                    match is_joined_to_previous_child(rest, is_before_self_closing_element) {
                         true => Separator::SoftLine,
                         false => Separator::HardLine,
                     },
@@ -287,11 +286,10 @@ impl<'a> Children<'a> {
         children
     }
 
-    /// Several separators in a row, with nothing between them, are made one. Those at the start and
-    /// at the end are removed.
+    /// Merges consecutive separators with nothing between them into one, and removes leading and trailing ones.
     ///
-    /// Prettier goes from the end to the start and splices. Here what is kept is put on a stack,
-    /// whose top is the part after the one that is looked at.
+    /// Prettier walks from the end to the start and splices. Here the kept parts go on a stack, whose top is the part
+    /// after the current one.
     fn remove_redundant_separators(&mut self) {
         use Separator::{HardLine, JsxWhitespace, SoftLine};
         let contains_text = self.meta.contains_text;
@@ -358,7 +356,7 @@ impl<'a> Children<'a> {
     }
 }
 
-/// `{/* prettier-ignore */}`. `empty_expression`: what is in the braces.
+/// `{/* prettier-ignore */}`. `empty_expression` is the content of the braces.
 fn has_ignore_comment<'a>(empty_expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     let comments = f.comments();
     (comments
@@ -379,7 +377,7 @@ fn empty_line_ends_ignore_comment(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Formats the children of `jsx`. `forced_break`: it is known that they are on lines of their own.
+/// Formats `jsx`'s children. `forced_break` means they're already known to go on their own lines.
 pub(super) fn format_children<'a>(
     jsx: Jsx<'a>,
     forced_break: bool,
@@ -406,7 +404,7 @@ pub(super) fn format_children<'a>(
         disabled: forced_break,
     };
     let mut multiline = MultilineBuilder::new(meta.contains_text, f);
-    // The last child that is not white space with a line break is `{/* prettier-ignore */}`.
+    // True if the last child that isn't whitespace with a line break is `{/* prettier-ignore */}`.
     let mut is_after_ignore_comment = false;
 
     let parts = &children.parts[..];
@@ -425,7 +423,7 @@ pub(super) fn format_children<'a>(
                         }
                         Item::Node(node) => FormatJsxChild(node),
                     };
-                    // For Prettier it is about an element or a fragment. For oxfmt about `{e}` too.
+                    // Prettier applies it to an element or a fragment only. oxfmt also applies it to `{e}`.
                     let is_suppressed = is_after_ignore_comment
                         && (matches!(node.0.kind(), ExprKind::Jsx(_)) || children.is_oxfmt);
                     is_after_ignore_comment =
@@ -457,7 +455,7 @@ pub(super) fn format_children<'a>(
             is_after_ignore_comment = false;
             if index == 1 && previous(1).is_some_and(Part::is_empty_content) {
                 match parts.len() {
-                    // There is nothing else.
+                    // The whitespace is the only child.
                     2 => multiline.write_content(&JsxRawSpace, f),
                     _ => multiline.write_separator(
                         &format_with(|f| write!(f, [JsxRawSpace, hard_line_break()])),
@@ -477,7 +475,7 @@ pub(super) fn format_children<'a>(
             flat.disabled = true;
         }
         match separator == Separator::HardLine && is_after_line_break {
-            // The printer makes one line break of two in a row.
+            // The printer collapses two line breaks in a row into one, so print an empty line.
             true => {
                 is_after_ignore_comment &= !empty_line_ends_ignore_comment(f);
                 multiline.write_separator(&empty_line(), f);
@@ -501,20 +499,20 @@ pub(super) fn format_children<'a>(
 }
 
 pub(super) enum FormatChildrenResult<'a> {
-    /// The children are on lines of their own.
+    /// The children go on their own lines.
     ForceMultiline(FormatMultilineChildren),
-    /// They are on the line of the tags if that fits.
+    /// The children go on the tags' line if that fits.
     BestFitting {
         flat_children: FormatFlatChildren,
         expanded_children: FormatMultilineChildren,
     },
-    /// There is one child and nothing else. It is not formatted yet.
+    /// Exactly one child and nothing else. It isn't formatted yet.
     SingleChild(FormatSingleChild<'a>),
 }
 
-/// The children, for when they are on lines of their own: Prettier's `multilineChildren`.
+/// The children's layout when they're on their own lines: Prettier's `multilineChildren`.
 struct MultilineBuilder {
-    /// There is text: as many children are on each line as fit. Otherwise each is on its own line.
+    /// With text, each line gets as many children as fit. Without text, each child is on its own line.
     is_fill: bool,
     result: Vec<FormatElement>,
 }
@@ -566,7 +564,7 @@ impl MultilineBuilder {
 pub(super) struct FormatMultilineChildren {
     is_fill: bool,
     elements: Option<FormatElement>,
-    /// Where the element starts whose children they are.
+    /// The start of the element that owns the children.
     element: u32,
 }
 
@@ -595,16 +593,17 @@ impl<'a> Format<'a> for FormatMultilineChildren {
             return write!(f, [hard_line_break(), empty_line()]);
         }
         let format_inner = format_with(|f| self.fmt_content(f));
-        let format_inner =
-            format_with(|f| around_jsx_children(self.element, false, f, |f| format_inner.fmt(f)));
+        let format_inner = format_with(|f| {
+            with_jsx_children_marks(self.element, false, f, |f| format_inner.fmt(f))
+        });
         write!(f, block_indent(&format_inner));
     }
 }
 
-/// The children, for when they are on the line of the tags.
+/// The children's layout when they're on the tags' line.
 struct FlatBuilder {
     result: Vec<FormatElement>,
-    /// It is known that they are not going to be.
+    /// This layout is already ruled out.
     disabled: bool,
 }
 
@@ -638,19 +637,19 @@ impl<'a> Format<'a> for FormatFlatChildren {
     }
 }
 
-/// With only one child, a group whose line breaks are around the child does what Prettier's choice
-/// between the two layouts does.
+/// With only one child, a group with line breaks around the child has the same effect as Prettier's choice between the
+/// two layouts.
 pub(super) struct FormatSingleChild<'a> {
     item: Item<'a>,
     forced_break: bool,
-    /// Where the element starts whose child it is.
+    /// The start of the element that owns the child.
     element: u32,
 }
 
 impl<'a> Format<'a> for FormatSingleChild<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let format_inner = format_with(|f| {
-            around_jsx_children(self.element, !self.forced_break, f, |f| match self.item {
+            with_jsx_children_marks(self.element, !self.forced_break, f, |f| match self.item {
                 Item::Word(word) => text_without_whitespace(word).fmt(f),
                 Item::Node(node) => FormatJsxChild(node).fmt(f),
             });

@@ -498,7 +498,7 @@ impl JSValue {
     /// when the consumer round-trips through `f64::to_bits` / `as_number` and
     /// must see the original bit pattern (e.g. [`from_ptr_address`]).
     #[inline]
-    pub(crate) fn js_double_number(n: f64) -> JSValue {
+    pub fn js_double_number(n: f64) -> JSValue {
         const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
         JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
@@ -669,44 +669,6 @@ impl JSValue {
         })?;
         Ok(Some(value))
     }
-    /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
-    /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
-    /// a heap BigInt, so wrapped in `from_js_host_call` for exception checking.
-    pub fn from_timeval_no_truncate(
-        global: &JSGlobalObject,
-        nsec: i64,
-        sec: i64,
-    ) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || {
-            JSC__JSValue__fromTimevalNoTruncate(global, nsec, sec)
-        })
-    }
-    /// `JSValue.bigIntSum` — `a + b` where both are BigInt.
-    pub fn big_int_sum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue {
-        JSC__JSValue__bigIntSum(global, a, b)
-    }
-    /// `JSValue.fromEntries` — build a plain object from
-    /// parallel `keys`/`values` `EncodedSlice` arrays. When `clone` is true the
-    /// C++ side copies the string bytes (caller may free `keys`/`values`).
-    pub fn from_entries(
-        global: &JSGlobalObject,
-        keys: &mut [bun_core::EncodedSlice],
-        values: &mut [bun_core::EncodedSlice],
-        clone: bool,
-    ) -> JsResult<JSValue> {
-        debug_assert_eq!(keys.len(), values.len());
-        // SAFETY: `global` is live; `keys`/`values` are valid for `keys.len()`
-        // elements; the C++ binding only reads (and optionally clones) them.
-        crate::call_zero_is_throw(global, || unsafe {
-            JSC__JSValue__fromEntries(
-                global,
-                keys.as_mut_ptr(),
-                values.as_mut_ptr(),
-                keys.len(),
-                clone,
-            )
-        })
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -845,15 +807,17 @@ impl JSValue {
             .map(|p| JSString::opaque_ref(p.as_ptr()))
     }
     /// [`to_js_string`] plus a borrowed view of its characters, in one FFI
-    /// call. The returned guard keeps the cell alive while in scope.
+    /// call. The returned guard keeps the characters' owner cell alive while in scope.
     #[track_caller]
     pub fn to_js_string_view<'a>(self, global: &'a JSGlobalObject) -> JsResult<JSStringView<'a>> {
         let mut view = bun_core::StringView::EMPTY;
+        let mut owner: *const JSString = core::ptr::null();
         crate::call_null_is_throw(global, || {
-            JSC__JSValue__toJSStringView(self, global, &mut view)
+            JSC__JSValue__toJSStringView(self, global, &mut view, &mut owner)
         })
         .map(|p| JSStringView {
             cell: JSString::opaque_ref(p.as_ptr()),
+            owner: JSString::opaque_ref(owner),
             view,
         })
     }
@@ -897,7 +861,8 @@ impl JSValue {
     pub fn js_type_string<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
         let cell = JSString::opaque_ref::<'a>(JSC__jsTypeStringForValue(global, self));
         crate::validation_scope!(scope, global);
-        let view = crate::js_string::JSC__JSString__view(cell, global);
+        let mut owner: *const JSString = cell;
+        let view = crate::js_string::JSC__JSString__view(cell, global, &mut owner);
         scope.assert_no_exception();
         view
     }
@@ -952,7 +917,7 @@ impl JSValue {
     /// Returns `Some(&T)` when `self` wraps a live `T` cell. The borrow is
     /// sound because JSC's conservative stack scanner keeps the cell alive
     /// while `self` (the encoded `JSValue`) is on the stack, and the
-    /// `#[JsClass]` payload is pinned at a stable address inside the GC cell
+    /// [`JsClass`] struct is pinned at a stable address inside the GC cell
     /// for its lifetime — so a `&T` derived from `from_js`'s pointer is valid
     /// for as long as the caller holds `self`.
     ///
@@ -979,7 +944,7 @@ impl JSValue {
     }
 
     /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),
-    /// for `m_ctx` payloads that are intrusively refcounted: lets the caller
+    /// for payloads that are intrusively refcounted: lets the caller
     /// take its own ref (`RefPtr::from_this`) or dispatch into a
     /// `ThisPtr`-taking entry point. Same frame-scoped validity.
     #[inline]
@@ -1194,9 +1159,19 @@ impl JSValue {
         global: &JSGlobalObject,
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<bun_core::String>> {
+        Ok(self
+            .get_stringish_allow_empty(global, property)?
+            .filter(|s| !s.is_empty()))
+    }
+    /// `get_stringish`, for a property that "" is a value of.
+    pub fn get_stringish_allow_empty(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<bun_core::String>> {
         let property = property.as_ref();
         // `get(prop)`, filter null/false → None,
-        // reject symbols, otherwise coerce via `toBunString` and filter "" → None.
+        // reject symbols, otherwise coerce via `toBunString`.
         let Some(prop) = self.get(global, property)? else {
             return Ok(None);
         };
@@ -1213,8 +1188,7 @@ impl JSValue {
                 bstr::BStr::new(property),
             )));
         }
-        let s = prop.to_bun_string(global)?;
-        if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
+        Ok(Some(prop.to_bun_string(global)?))
     }
     /// Own/prototype lookup,
     /// `null`/`undefined` → `None`, non-string → `ERR_INVALID_ARG_TYPE`,
@@ -1363,19 +1337,6 @@ impl JSValue {
             return Ok(None);
         }
         Ok(Some(prop))
-    }
-    /// Own property lookup by key value (index or `toPropertyKey`). `None` when
-    /// absent; the C++ side also returns empty when a getter or `toPropertyKey`
-    /// throws, so the exception state is what tells the two apart.
-    pub fn get_own_by_value(
-        self,
-        global: &JSGlobalObject,
-        property_value: JSValue,
-    ) -> JsResult<Option<JSValue>> {
-        let v = crate::call_check_slow(global, || {
-            JSC__JSValue__getOwnByValue(self, global, property_value)
-        })?;
-        Ok(if v.is_empty() { None } else { Some(v) })
     }
     /// `Object.hasOwnProperty(key)`. `self` **must** be an object — the C++ side
     /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
@@ -2016,19 +1977,6 @@ unsafe extern "C" {
         ptr: *const u8,
         len: usize,
     ) -> JSValue;
-    safe fn JSC__JSValue__fromTimevalNoTruncate(
-        global: &JSGlobalObject,
-        nsec: i64,
-        sec: i64,
-    ) -> JSValue;
-    safe fn JSC__JSValue__bigIntSum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
-    fn JSC__JSValue__fromEntries(
-        global: *const JSGlobalObject,
-        keys: *mut bun_core::EncodedSlice,
-        values: *mut bun_core::EncodedSlice,
-        strings_count: usize,
-        clone: bool,
-    ) -> JSValue;
     safe fn JSC__JSValue__toBoolean(this: JSValue) -> bool;
     safe fn JSC__JSValue__toInt32(this: JSValue) -> i32;
     safe fn JSC__JSValue__toInt64(this: JSValue) -> i64;
@@ -2064,11 +2012,6 @@ unsafe extern "C" {
         buf: &mut [u8; 64],
     ) -> i32;
     safe fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
-    safe fn JSC__JSValue__getOwnByValue(
-        this: JSValue,
-        global: &JSGlobalObject,
-        key: JSValue,
-    ) -> JSValue;
     safe fn JSC__JSValue__hasOwnPropertyValue(
         this: JSValue,
         global: &JSGlobalObject,
@@ -2131,6 +2074,7 @@ unsafe extern "C" {
         this: JSValue,
         global: &'a JSGlobalObject,
         view: &mut bun_core::StringView<'a>,
+        owner: &mut *const JSString,
     ) -> *mut JSString;
     safe fn JSC__JSValue__asString(this: JSValue) -> *mut JSString;
     safe fn JSC__jsTypeStringForValue(global: &JSGlobalObject, value: JSValue) -> *mut JSString;
@@ -2304,25 +2248,6 @@ impl JSValue {
     /// `JSValue.toNumber` — full ECMA `ToNumber` (`+value`); may throw.
     pub fn to_number(self, global: &JSGlobalObject) -> JsResult<f64> {
         host_fn::from_js_host_call_generic(global, || Bun__JSValue__toNumber(self, global))
-    }
-
-    /// `JSValue.toPortNumber` — Node `validatePort` semantics:
-    /// numeric, non-NaN, integer-truncated `0..=65535`, else `ERR_SOCKET_BAD_PORT`.
-    pub fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16> {
-        if self.is_number() {
-            let double = self.to_number(global)?;
-            if double.is_nan() {
-                return Err(crate::ErrorCode::SOCKET_BAD_PORT
-                    .throw(global, format_args!("Invalid port number")));
-            }
-            let port = self.to_int64();
-            if (0..=65535).contains(&port) {
-                return Ok(port.max(0) as u16);
-            }
-            return Err(crate::ErrorCode::SOCKET_BAD_PORT
-                .throw(global, format_args!("Port number out of range: {port}")));
-        }
-        Err(crate::ErrorCode::SOCKET_BAD_PORT.throw(global, format_args!("Invalid port number")))
     }
 
     /// `JSValue.coerce(f64)` — fast-path doubles, else `ToNumber`.

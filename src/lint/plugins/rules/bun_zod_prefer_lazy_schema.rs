@@ -4,9 +4,9 @@ use bun_lint::rule::Plugin;
 use bun_lint::source::mention_bit;
 use bun_lint_oxlint::ast_util::get_declaration_of_variable;
 
-/// Disallow building a validation schema while the module is evaluated.
+/// Disallow building a validation schema while the module loads.
 ///
-/// By default what starts with `z`, as Zod's documentation imports it.
+/// By default that's any call chain that starts with `z`, the name Zod's docs import it under.
 pub struct ZodPreferLazySchema {
     roots: Box<[Box<[u8]>]>,
     methods: Box<[Box<[u8]>]>,
@@ -24,7 +24,7 @@ const EAGER_SCHEMA_WITH_WRAPPER: Message = Message::new(
 );
 
 impl ZodPreferLazySchema {
-    /// `z`, if that is imported or a global variable.
+    /// `z`, if it's imported or a global variable.
     fn is_root(&self, e: Expr) -> bool {
         use Declaration::{ImportDefault, ImportNamespace, ImportSpec};
         e.as_ident()
@@ -34,7 +34,8 @@ impl ZodPreferLazySchema {
             })
     }
 
-    /// Whether `node` is a call that makes a schema, and all of its chain: not the `z.string()` of `z.string().min(1)`.
+    /// True if `node` is a call that builds a schema and is the end of its chain: not the `z.string()` in
+    /// `z.string().min(1)`.
     fn builds_schema(&self, node: Node) -> bool {
         let Some((e, callee)) = node.as_expr().and_then(|e| Some((e, e.callee()?))) else {
             return false;
@@ -58,7 +59,7 @@ impl ZodPreferLazySchema {
     }
 }
 
-/// `z.lazy(..)`, which builds nothing yet.
+/// `z.lazy(..)`, which doesn't build anything yet.
 fn is_lazy(node: Node) -> bool {
     let callee = node.as_expr().and_then(Expr::callee).map(Expr::kind);
     matches!(callee, Some(ExprKind::Dot { obj, name, .. }) if name.name().is("lazy") && obj.tag() == ExprTag::Ident)
@@ -69,7 +70,8 @@ impl Rule for ZodPreferLazySchema {
     const ON: On = On::new()
         .enter(NodeTags::new().exprs(&[ExprTag::Call]))
         .exit(NodeTags::new().exprs(&[ExprTag::Call]));
-    /// In how many calls that make a schema the walk is: what another schema is made of is not reported beside it.
+    /// The number of schema-building calls around the current node. A schema nested in another one isn't reported
+    /// separately.
     type State<'a> = (u32, RunsLater<'a>);
 
     fn new(options: &Options) -> Self {
@@ -84,9 +86,9 @@ impl Rule for ZodPreferLazySchema {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let mut names = self.roots.iter().chain(self.methods.iter());
-        let may_build_one =
+        let may_build_schema =
             self.factory_suffix.is_some() || names.any(|it| file.mentions_bit(mention_bit(it)));
-        may_build_one.then(|| (0, RunsLater::default()))
+        may_build_schema.then(|| (0, RunsLater::default()))
     }
 
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {

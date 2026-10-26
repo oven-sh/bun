@@ -78,7 +78,8 @@ impl PackageManager {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
                     return PreinstallState::Done;
                 }
-                // Per dependency: the state stays, so that a regular dependency still installs it.
+                // This only applies to this dependency. The state isn't changed, so a regular
+                // dependency on the package still installs it.
                 if !pkg
                     .meta
                     .libc
@@ -355,7 +356,8 @@ impl PackageManager {
         )?;
 
         let mut parent: Option<&[u8]> = Some(cwd);
-        // An untrusted package can link a `node` or `sh` into a shared `.bin`: searched last.
+        // An untrusted package can link a `node` or `sh` into a shared `.bin`, so that directory is
+        // searched last.
         let mut inherited_path = list.is_dependency.then_some(original_path.as_slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
@@ -440,7 +442,8 @@ impl PackageManager {
     }
 }
 
-/// The `npm_package_*` subset `bun run` exports, replacing what a `bun run` above this install set.
+/// Sets the same `npm_package_*` variables as `bun run`, replacing the ones that a `bun run` above
+/// this install set.
 fn put_npm_package_env(
     script_env: &mut bun_dotenv::Map,
     package_dir: &[u8],

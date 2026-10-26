@@ -1,3 +1,4 @@
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
@@ -195,6 +196,25 @@ test("blob: can reliable get type from fetch #10072", async () => {
 test("new Blob(new Uint8Array()) is supported", async () => {
   const blob = new Blob(Buffer.from("1234") as any);
   expect(await blob.text()).toBe("1234");
+});
+
+test("estimateShallowMemoryUsageOf(new File()) is at least that of a Blob", () => {
+  expect(estimateShallowMemoryUsageOf(new File(["1234"], "file.txt"))).toBeGreaterThanOrEqual(
+    estimateShallowMemoryUsageOf(new Blob(["1234"])),
+  );
+});
+
+test("new File reads new.target.prototype before it looks for the realm of new.target", () => {
+  const { proxy, revoke } = Proxy.revocable(function () {}, {});
+  revoke();
+  const keys: PropertyKey[] = [];
+  const newTarget = new Proxy(proxy, {
+    get(target, key) {
+      keys.push(key);
+    },
+  });
+  expect(() => Reflect.construct(File, [[], "file.txt"], newTarget)).toThrow(TypeError);
+  expect(keys).toEqual(["prototype"]);
 });
 
 // https://github.com/oven-sh/bun/issues/13049

@@ -46,7 +46,8 @@ pub struct SkippedSection<'a> {
     /// Byte offset of the section's first line in the patch file.
     pub offset: usize,
     pub path: Option<&'a [u8]>,
-    /// The section says `Binary files a/x and b/x differ`, so the patch lacks the new content.
+    /// The section says `Binary files a/x and b/x differ`, so the patch doesn't have the new
+    /// content.
     pub is_binary: bool,
 }
 
@@ -98,7 +99,7 @@ fn create_file(patch_dir: Fd, creation: &FileCreation<'_>) -> sys::Result<()> {
         creation.mode.to_bun_mode(),
     )?;
     let _close = sys::CloseOnDrop::new(fd);
-    // No `O_TRUNC`: a target that is rejected must not have been emptied first.
+    // `O_TRUNC` isn't used, so that a target that gets rejected hasn't already been emptied.
     sys::ftruncate(fd, 0)?;
 
     // A `@@ -0,0 +0,0 @@` header with no body parses to a hunk with zero parts.
@@ -120,7 +121,7 @@ fn patch_file(patch_dir: Fd, patch: &FilePatch<'_>) -> Result<(), ApplyError> {
 fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     let (parent, base) = resolve_target(patch_dir, change.path, None)?;
     let (fd, _) = open_target_file(parent.fd, &base, sys::O::RDONLY, 0)?;
-    // On Windows `fchmod` needs a CRT-backed fd; closing that one also closes the HANDLE.
+    // On Windows, `fchmod` needs a CRT-backed fd. Closing that fd also closes the HANDLE.
     let fd = fd.make_libuv_owned().map_err(|()| {
         fd.close();
         sys::Error::from_code(sys::E::EMFILE, sys::Tag::chmod)
@@ -129,7 +130,8 @@ fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
     sys::fchmod(fd, change.new_mode.to_bun_mode())
 }
 
-/// Hunks are placed by matching their `-` side, as `git apply` does; `+` starts can be stale.
+/// Hunks are placed by matching their `-` side, like `git apply` does, because the `+` line numbers
+/// can be stale.
 fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), ApplyError> {
     // One fd for the read and the write-back, so nothing can be swapped in between them.
     let (file_fd, stat) = open_target_file(parent, base, sys::O::RDWR, 0)?;
@@ -278,7 +280,8 @@ fn hunk_matches_at(hunk: &Hunk<'_>, lines: &[&[u8]], start: usize) -> bool {
 /// A larger `st_size` is an error rather than an unbounded allocation.
 const MAX_PATCH_TARGET_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
-/// A new file's header mode describes only the file; a directory given 0o644 cannot be entered.
+/// A new file's header mode only describes the file. A directory created with 0o644 couldn't be
+/// entered.
 const CREATED_DIR_MODE: sys::Mode = 0o755;
 
 /// `patch_dir` itself for single-component paths (not closed), an owned fd otherwise.
@@ -347,7 +350,7 @@ fn reject_reparse_point(dir: Fd, name: &ZStr) -> sys::Result<()> {
         Ok(attrs) if attrs.is_reparse_point => {
             Err(sys::Error::from_code(sys::E::ELOOP, sys::Tag::open))
         }
-        // Nonexistent or unreadable: the open that follows reports the real error.
+        // It doesn't exist or can't be read. The open that follows reports the real error.
         _ => Ok(()),
     }
 }
@@ -369,7 +372,7 @@ fn open_dir_component(
     };
     match sys::mkdirat(dir, component, mode) {
         Ok(()) => {}
-        // Lost a creation race; the open below verifies whatever is there now.
+        // Another process created it first. The open below verifies whatever is there now.
         Err(e) if e.get_errno() == sys::E::EEXIST => {}
         Err(e) => return Err(e),
     }
@@ -389,7 +392,8 @@ fn symlink_component_err(dir: Fd, component: &ZStr, e: sys::Error) -> sys::Error
     e
 }
 
-/// A regular file with one hard link: a second may reach the inode from outside the patch dir.
+/// Only accepts a regular file with one hard link, because a second link could reach the inode from
+/// outside the patch directory.
 fn open_target_file(
     parent: Fd,
     base: &ZStr,
@@ -908,7 +912,8 @@ fn patch_file_second_pass<'a>(
                         hash: file.before_hash,
                     })));
             }
-            // The patch does not have the content, and an empty file is not what it asks for.
+            // The patch doesn't have the content, and creating an empty file isn't what it asks
+            // for.
             PatchFilePartKind::FileCreation if file.is_binary => {}
             PatchFilePartKind::FileCreation => {
                 let path = file
@@ -986,7 +991,8 @@ pub fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
         && !strings::contains_char(path, 0)
         && !paths::is_absolute_loose(path)
-        // On Windows, openat strips a drive prefix from a component: `C:..` resolves a real `..`.
+        // On Windows, openat strips a drive prefix from a component, so `C:..` resolves to a real
+        // `..`.
         && !(cfg!(windows) && strings::contains_char(path, b':'))
         && !strings::split_any(path, b"/\\").any(|part| part == b"..")
 }
@@ -1254,7 +1260,7 @@ fn split_ascii_digits(text: &[u8]) -> (&[u8], &[u8]) {
     text.split_at(text.iter().take_while(|c| c.is_ascii_digit()).count())
 }
 
-/// `100,32 ` or `100 `: the range, and the rest from the space on.
+/// Parses `100,32 ` or `100 `. Returns the range and the rest of the text, starting at the space.
 fn parse_header_range(text: &[u8]) -> Result<(HeaderRange, &[u8]), ParseErr> {
     let (start, mut rest) = split_ascii_digits(text);
     let mut len: &[u8] = b"1";
@@ -1374,7 +1380,7 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
 // spawnOpts / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
-/// What `Options.envp` points into.
+/// The storage that `Options.envp` points into.
 pub struct GitDiffEnv {
     _envp: Vec<*const core::ffi::c_char>,
     _path: Option<Vec<u8>>,
@@ -1446,7 +1452,8 @@ pub fn spawn_opts(
         cwd: cwd.as_bytes().into(),
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // `spawn` derefs `windows.loop_` unconditionally; `WindowsOptions::default()` is zeroed.
+        // `spawn` dereferences `windows.loop_` unconditionally, and `WindowsOptions::default()` is
+        // zeroed.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
             // `as_handle` owns the handle conversion so variant internals

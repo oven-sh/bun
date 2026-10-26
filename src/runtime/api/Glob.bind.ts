@@ -19,11 +19,14 @@ export const GlobScanArgument = b.union({
 
 export const Glob = b.class({
   rustPath: "crate::api::glob::Glob",
-  configurable: false,
   construct: {
     args: { pattern: b.string.utf8.owned },
   },
   proto: {
+    match: {
+      args: { str: b.string.utf8 },
+      returns: b.bool,
+    },
     scan: {
       builtin: true,
       length: 1,
@@ -33,22 +36,18 @@ export const Glob = b.class({
       length: 1,
     },
     __scan: {
-      privateSymbol: "pull",
       args: { options: GlobScanArgument.nullable },
       returns: b.any,
       capability: "js",
       throws: true,
+      privateSymbol: "globScan",
     },
     __scanSync: {
-      privateSymbol: "resolveSync",
       args: { options: GlobScanArgument.nullable },
       returns: b.any,
       capability: "heap",
       throws: true,
-    },
-    match: {
-      args: { str: b.string.utf8 },
-      returns: b.bool,
+      privateSymbol: "globScanSync",
     },
   },
 });

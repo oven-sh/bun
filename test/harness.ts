@@ -75,8 +75,21 @@ function detectASAN(): boolean {
   return basename(process.execPath).includes("bun-asan");
 }
 
+// A release build is not one. `--revision` can't tell for a debug build, which prints "-debug" either way.
+export const isCanary = detectCanary();
+
+function detectCanary(): boolean {
+  try {
+    return require("bun:internal-for-testing").crash_handler.getFeatureData().is_canary;
+  } catch {}
+  return Bun.spawnSync({ cmd: [process.execPath, "--revision"] }).stdout.includes("canary");
+}
+
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
+  // Windows spells PATH `Path`. `{ ...bunEnv, PATH }` would then hold both, and which one a child
+  // process gets depends on the other variables.
+  ...(isWindows && { Path: undefined, PATH: process.env.PATH }),
   // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
   // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
   JSC_useJIT: undefined,
@@ -163,23 +176,34 @@ export function bunExe() {
  * kernel drops every later SYN. Needs listen(2) with the smallest backlog that admits
  * exactly one connection (macOS treats 0 as unlimited), which Bun's own listeners do
  * not expose, so the listener is a raw libc socket.
+ *
+ * On macOS the listener is bound to lo0. With SYN cookies on (net.inet.tcp.syncookie),
+ * XNU answers the SYN for a full accept queue and resets the connection when its ACK
+ * arrives, except for a listener bound to a loopback interface, which gets no SYN cookies.
  */
 export const blackholePortSource = `
 const net = require("node:net");
 const { dlopen, ptr } = require("bun:ffi");
 const darwin = process.platform === "darwin";
 const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
-  socket:      { args: ["int", "int", "int"],  returns: "int" },
-  bind:        { args: ["int", "ptr", "int"],  returns: "int" },
-  listen:      { args: ["int", "int"],         returns: "int" },
-  getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
+  socket:         { args: ["int", "int", "int"],               returns: "int" },
+  if_nametoindex: { args: ["ptr"],                             returns: "u32" },
+  setsockopt:     { args: ["int", "int", "int", "ptr", "int"], returns: "int" },
+  bind:           { args: ["int", "ptr", "int"],               returns: "int" },
+  listen:         { args: ["int", "int"],                      returns: "int" },
+  getsockname:    { args: ["int", "ptr", "ptr"],               returns: "int" },
 });
-const AF_INET = 2, SOCK_STREAM = 1;
+const AF_INET = 2, SOCK_STREAM = 1, IPPROTO_IP = 0, IP_BOUND_IF = 25;
 const addr = new Uint8Array(16);
 if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
 addr.set([127, 0, 0, 1], 4);
 const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
-if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
+if (fd < 0) throw new Error("socket failed");
+if (darwin) {
+  const lo0 = new Uint32Array([libc.symbols.if_nametoindex(ptr(Buffer.from("lo0\\0")))]);
+  if (lo0[0] === 0 || libc.symbols.setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, ptr(lo0), 4) !== 0) throw new Error("IP_BOUND_IF failed");
+}
+if (libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
 const len = new Uint32Array([16]);
 if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
 const port = (addr[2] << 8) | addr[3];
@@ -191,6 +215,22 @@ await new Promise((resolve, reject) => filler.on("connect", resolve).on("error",
 
 export function nodeExe(): string | null {
   return which("node") || null;
+}
+
+/**
+ * `nodeExe()`, or null when that Node.js is older than `version` or does not run. For a reference run whose expected
+ * output is that of a later release: the macOS CI hosts can have an older Node.js than the one Bun reports.
+ */
+export function nodeExeAtLeast(version: string): string | null {
+  const node = nodeExe();
+  if (!node) return null;
+  try {
+    const probe = spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+    return probe.exitCode === 0 && Bun.semver.satisfies(probe.stdout.toString().trim(), `>=${version}`) ? node : null;
+  } catch {
+    // A file that cannot be started at all: a script whose interpreter is gone, a binary of another architecture.
+    return null;
+  }
 }
 
 let abiMatchingNode: Promise<string> | undefined;
@@ -597,10 +637,29 @@ export function tempDirWithFiles(
 
 class DisposableString extends String {
   [Symbol.dispose]() {
-    fs.rmSync(this + "", { recursive: true, force: true });
+    // On Windows a process that was just killed can hold the folder for a moment: a child that a job
+    // object ends after its parent, for one. `rmSync` does not act on `maxRetries`.
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        fs.rmSync(this + "", { recursive: true, force: true });
+        return;
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        sleepSync(50);
+      }
+    }
   }
-  [Symbol.asyncDispose]() {
-    return fs.promises.rm(this + "", { recursive: true, force: true });
+  async [Symbol.asyncDispose]() {
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        return await fs.promises.rm(this + "", { recursive: true, force: true });
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        await Bun.sleep(50);
+      }
+    }
   }
 }
 
@@ -1328,6 +1387,13 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 }
+
+/** Can `ensure(service)` from test/docker/index.ts provide this service here? Same order as `ensure()`. */
+export function isDockerServiceEnabled(service: string): boolean {
+  // isDockerEnabled() throws on Linux CI without docker, so it comes last.
+  return !!process.env["BUN_TEST_SERVICE_" + service] || !!process.env.BUN_DOCKER_COORDINATOR || isDockerEnabled();
+}
+
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;
@@ -1412,10 +1478,7 @@ export async function describeWithContainer(
     }
   }
 
-  // Skip only when no env override, no coordinator, and docker is unavailable.
-  // isDockerEnabled() may throw when docker is required but absent, so the
-  // env-override and coordinator checks must short-circuit before it.
-  if (!process.env["BUN_TEST_SERVICE_" + actualService] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
+  if (!isDockerServiceEnabled(actualService)) {
     describe.todo(label);
     return;
   }
@@ -1633,21 +1696,24 @@ export function joinP(...paths: string[]) {
  * we need to do case-insensitive stuff within our Bun.spawn implementation
  *
  * Windows has case-insensitive environment variables, so sometimes an
- * object like { Path: "...", PATH: "..." } will be passed. Bun lets
- * the first one win, but we really want the LAST one to win.
+ * object like { Path: "...", PATH: "..." } will be passed. Which one a
+ * child gets depends on the other variables, but we really want the LAST
+ * one to win.
  *
  * This is mostly needed if you want to override env vars, such like:
  *   env: {
- *     ...bunEnv,
+ *     ...env,
  *     PATH: "my path override here",
  *   }
  * becomes
  *   env: mergeWindowEnvs([
- *     bunEnv,
+ *     env,
  *     {
  *       PATH: "my path override here",
  *     },
  *   ])
+ *
+ * bunEnv spells PATH that way on every platform and does not need it for that.
  */
 export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   const keys: Record<string, string | undefined> = {};

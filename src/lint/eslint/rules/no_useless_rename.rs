@@ -11,7 +11,7 @@ pub struct NoUselessRename {
 const UNNECESSARILY_RENAMED: Message =
     Message::new("unnecessarilyRenamed", "{{type}} {{name}} unnecessarily renamed.");
 
-/// What is reported: the node, and the part of it that is left after the fix.
+/// A problem to report: the node, and the part of it that the fix keeps.
 #[derive(Copy, Clone)]
 struct Renamed<'a> {
     node: Span,
@@ -23,7 +23,7 @@ struct Renamed<'a> {
     is_type_only: bool,
 }
 
-/// The name that a key which is not computed has as a string.
+/// Returns a non-computed key's name as a string.
 fn name_of_key(key: Key<'_>) -> Option<Name<'_>> {
     match key.kind() {
         KeyKind::Ident(name) | KeyKind::String(name) => Some(name),
@@ -34,11 +34,11 @@ fn name_of_key(key: Key<'_>) -> Option<Name<'_>> {
 impl NoUselessRename {
     fn report<'a>(cx: &Cx<'a, Self>, renamed: Renamed<'a>) {
         let Renamed { node, replacement, name, kind, is_fixable, is_type_only } = renamed;
-        // Of an import and an export, oxlint points at the local name.
-        let place = if cx.language().is_oxlint && kind != "Destructuring assignment" { replacement } else { node };
-        cx.report(place, UNNECESSARILY_RENAMED).data("name", name).data("type", kind).fix(|fixer| {
+        // For an import or an export, oxlint points at the local name.
+        let location = if cx.language().is_oxlint && kind != "Destructuring assignment" { replacement } else { node };
+        cx.report(location, UNNECESSARILY_RENAMED).data("name", name).data("type", kind).fix(|fixer| {
             let file = fixer.file();
-            // oxlint does not look for comments, and keeps the `type`.
+            // oxlint doesn't check for comments, and keeps the `type`.
             if file.language().is_oxlint && is_fixable {
                 let modifier: &[u8] = if is_type_only { b"type " } else { b"" };
                 return Some(fixer.replace(node, [modifier, file.slice(replacement)].concat()));
@@ -50,7 +50,7 @@ impl NoUselessRename {
         });
     }
 
-    /// A `Property` of an `ObjectPattern` that is assigned to.
+    /// Checks a `Property` of an `ObjectPattern` in an assignment target.
     fn check_property<'a>(prop: Prop<'a>, cx: &Cx<'a, Self>) {
         if prop.kind() != PropKind::Init || prop.is_jsx_attribute() {
             return;
@@ -78,7 +78,8 @@ impl NoUselessRename {
         });
     }
 
-    /// `target`: what an assignment, a `for`-`in` or a `for`-`of` assigns to. The way down of [`Expr::is_assignment_target`].
+    /// `target` is what an assignment, a `for`-`in` or a `for`-`of` assigns to. This is the top-down counterpart of
+    /// [`Expr::is_assignment_target`].
     fn check_target<'a>(target: Expr<'a>, cx: &Cx<'a, Self>) {
         if !matches!(target.tag(), ExprTag::Object | ExprTag::Array | ExprTag::Spread) {
             return;
@@ -136,7 +137,7 @@ impl Rule for NoUselessRename {
         on
     }
 
-    /// An `ObjectPattern` in a declaration or a parameter.
+    /// Checks an `ObjectPattern` in a declaration or a parameter.
     fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let PatKind::Object(props) = pat.kind() else {
             return;

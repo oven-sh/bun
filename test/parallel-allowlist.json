@@ -499,8 +499,6 @@
     "js/node/worker_threads/worker_threads.test.ts",
     "js/node/zlib/leak.test.ts",
     "js/sql/local-sql.test.ts",
-    "js/sql/postgres-binary-numeric-digit-range.test.ts",
-    "js/sql/postgres-binary-numeric.test.ts",
     "js/sql/postgres-datestyle.test.ts",
     "js/sql/postgres-listen-notify.test.ts",
     "js/sql/postgres-multi-statement-fields.test.ts",

@@ -1395,6 +1395,12 @@ impl Status {
     pub(crate) fn is_undefined(self) -> bool {
         matches!(self, Status::Undefined | Status::UndefinedNoConditionsMatch)
     }
+
+    /// Whether `pkg/x.js` may be retried as `pkg/x` after an "exports" lookup ended with this status.
+    #[inline]
+    pub(crate) fn allows_js_retry(self) -> bool {
+        self != Status::PackagePathDisabled
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1873,8 +1879,9 @@ impl<'a> ESModule<'a> {
             ));
         }
 
+        // Not `Null`: that is a matched key whose target is null.
         Resolution {
-            status: Status::Null,
+            status: Status::Undefined,
             ..Default::default()
         }
     }

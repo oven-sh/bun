@@ -1853,6 +1853,60 @@ describe("bundler", () => {
       ],
     },
   });
+  // Bun-specific: `pkg/name.js` is looked up again as `pkg/name` when its
+  // lookup gives no file, but not when the lookup ends at a null target.
+  itBundled("packagejson/ExportsNullTargetNotRetriedWithoutJs", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import 'pkg1/b/q.js'
+        import 'pkg2/name.js'
+        import 'pkg3/name.js'
+      `,
+      "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
+        { "exports": { "./b/*": "./dir/*", "./b/*.js": null } }
+      `,
+      "/Users/user/project/node_modules/pkg1/dir/q.js": `console.log('FAILURE')`,
+      "/Users/user/project/node_modules/pkg2/package.json": /* json */ `
+        { "exports": { "./name.js": null, "./name": "./name.js" } }
+      `,
+      "/Users/user/project/node_modules/pkg2/name.js": `console.log('FAILURE')`,
+      "/Users/user/project/node_modules/pkg3/package.json": /* json */ `
+        { "exports": { "./name.js": { "import": null }, "./name": "./name.js" } }
+      `,
+      "/Users/user/project/node_modules/pkg3/name.js": `console.log('FAILURE')`,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg1/b/q.js". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg2/name.js". Maybe you need to "bun install"?`,
+        `Could not resolve: "pkg3/name.js". Maybe you need to "bun install"?`,
+      ],
+    },
+  });
+  itBundled("packagejson/ExportsRetriedWithoutJs", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import 'pkg1/name.js'
+        import 'pkg2/foo.js'
+        import 'pkg3/name.js'
+      `,
+      "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
+        { "exports": { "./name": "./name.js" } }
+      `,
+      "/Users/user/project/node_modules/pkg1/name.js": `console.log('no key')`,
+      "/Users/user/project/node_modules/pkg2/package.json": /* json */ `
+        { "exports": { "./*": "./dist/*.js" } }
+      `,
+      "/Users/user/project/node_modules/pkg2/dist/foo.js": `console.log('no file')`,
+      "/Users/user/project/node_modules/pkg3/package.json": /* json */ `
+        { "exports": { "./name.js": { "nope": "./name.js" }, "./name": "./name.js" } }
+      `,
+      "/Users/user/project/node_modules/pkg3/name.js": `console.log('no condition')`,
+    },
+    run: {
+      stdout: `no key\nno file\nno condition`,
+    },
+  });
   itBundled("packagejson/Imports", {
     files: {
       "/Users/user/project/src/foo/entry.js": /* js */ `

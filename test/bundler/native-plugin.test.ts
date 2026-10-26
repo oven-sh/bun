@@ -757,9 +757,11 @@ values;`,
   // threads
   //
   // Serial and last on purpose. Every Bun.build in the process queues on one
-  // bundle thread. With the builds of the concurrent tests queued ahead, the
-  // loop below ends before a bundler thread first uses the filter, and nothing
-  // overlaps.
+  // bundle thread. Here that thread is idle when Bun.build() is called, so it
+  // matches the filter against index and stuff.ts while the loop below runs.
+  // In the concurrent group the builds of the other tests would be queued
+  // ahead, the loop would end before the bundler first used the filter, and
+  // nothing would overlap.
   it.serial(
     "doesn't explode when there are a lot of concurrent files AND the filter regex is used on the JS thread",
     async () => {

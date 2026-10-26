@@ -2,9 +2,6 @@ use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_core::String as BunString;
-
-use crate::jsc::JSGlobalObject;
 
 pub(crate) struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
@@ -17,8 +14,8 @@ pub(crate) struct EVP {
 // The `Algorithm` enum + `md()` live in
 // `bun_sha_hmac::evp` so lower-tier crates (`bun_csrf`, `bun_sha_hmac::hmac`)
 // can name it without depending upward on bun_runtime. Re-export the canonical
-// enum here; the higher-tier extras (`names`, `lookup`, `tag_cstr`) that need
-// bun_str live below as an extension trait / free fns on the re-exported type.
+// enum here; the higher-tier extras (`lookup`, `tag_cstr`) live below as an
+// extension trait / free fns on the re-exported type.
 // ──────────────────────────────────────────────────────────────────────────
 pub(crate) use bun_sha_hmac::evp::Algorithm;
 
@@ -28,10 +25,6 @@ pub(crate) trait AlgorithmExt: Copy + Sized {
     /// NUL-terminated tag name. Needed for `EVP_get_digestbyname` which reads
     /// a C string.
     fn tag_cstr(self) -> &'static CStr;
-
-    /// `bun.String` view of every algorithm tag name; returned as a flat slice
-    /// since the enum is foreign and cannot derive `enum_map::Enum`.
-    fn names() -> &'static [BunString];
 }
 
 impl AlgorithmExt for Algorithm {
@@ -61,20 +54,11 @@ impl AlgorithmExt for Algorithm {
             _ => unreachable!("unhandled EVP algorithm variant"),
         }
     }
-
-    fn names() -> &'static [BunString] {
-        static NAMES: std::sync::OnceLock<[BunString; ALL.len()]> = std::sync::OnceLock::new();
-        NAMES
-            .get_or_init(|| {
-                core::array::from_fn(|i| BunString::static_(ALL[i].tag_cstr().to_bytes()))
-            })
-            .as_slice()
-    }
 }
 
 /// Stable iteration order over every `Algorithm` variant — the lowered enum is
 /// foreign + `#[non_exhaustive]`, so we can't derive an iterator for it.
-const ALL: [Algorithm; 19] = [
+pub(crate) const ALL: [Algorithm; 19] = [
     Algorithm::Blake2b256,
     Algorithm::Blake2b512,
     Algorithm::Blake2s256,
@@ -302,22 +286,6 @@ impl EVP {
         }
 
         None
-    }
-
-    pub(crate) fn by_name(name: &[u8], global: &JSGlobalObject) -> Option<EVP> {
-        // `RareData::boring_engine()` returns `*mut` to bun_jsc's local opaque `ENGINE`
-        // stub (bun_jsc has no bun_boringssl_sys dep). Both name the same C `ENGINE`
-        // struct, so cast to the real bindgen type for the FFI call.
-        // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
-        // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
-        let engine = global
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .boring_engine()
-            .cast::<boringssl::ENGINE>();
-        // SAFETY: `boring_engine()` returns the VM's lazily-initialized ENGINE (valid or null).
-        Self::by_name_and_engine(engine, name)
     }
 }
 

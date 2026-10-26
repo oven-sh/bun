@@ -220,7 +220,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
  */
 export interface RustBuildInputs {
   /**
-   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist (`generated_classes.rs`
+   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist (`generated_host_exports.rs`
    * and friends are undeclared side effects of the scripts producing these). Order-only for the crate edges:
    * they must exist before a workspace crate compiles, and from then on rustc's dep-info names exactly the
    * files each crate read, so a changed one rebuilds just its includers.
@@ -325,6 +325,9 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");
+  // The one of `hardeningFlags` (flags.ts) rustc has and does not already do:
+  // its stack probes are inline on this target with or without this.
+  if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
   // Parallel frontend: rustc's default is single-threaded for parse / macro
   // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
   // sits on one core while the rest idle. With this, independent compiler

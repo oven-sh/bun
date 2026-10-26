@@ -12,13 +12,13 @@ const USELESS_LENGTH_CHECK: Message = Message::new("", "Found a useless array le
 
 #[derive(Copy, Clone)]
 enum Operand<'a> {
-    /// `array.length === 0` beside `||`, `array.length !== 0` or `array.length > 0` beside `&&`.
+    /// `array.length === 0` next to `||`, `array.length !== 0` or `array.length > 0` next to `&&`.
     LengthCheck(Name<'a>, Span),
-    /// `array.every(..)` beside `||`, `array.some(..)` beside `&&`.
+    /// `array.every(..)` next to `||`, `array.some(..)` next to `&&`.
     Call(Name<'a>),
 }
 
-/// The `array` of `array.length`.
+/// The `array` in `array.length`.
 fn array_of(member: Expr<'_>) -> Option<Name<'_>> {
     get_inner_expression(member.object()?).as_ident()
 }
@@ -77,19 +77,19 @@ impl Rule for NoUselessLengthCheck {
         if matches!(root.parent(), Node::Expr(parent) if parent.binary_op() == Some(operator)) {
             return;
         }
-        // oxlint looks at the operands of `a && b && c` once for each `&&` that they are under: two neighbours are
-        // reported as often as there are `&&` around both.
+        // oxlint checks the operands of `a && b && c` once for each `&&` above them, so two neighbors are reported once
+        // for every `&&` that contains both.
         let mut pending: SmallVec<[(Expr<'a>, u32); 8]> = SmallVec::new();
-        let (mut at, mut depth, mut around_both) = (root, 0, 0);
+        let (mut at, mut depth, mut enclosing_both) = (root, 0, 0);
         let mut previous = None;
-        // The `&&` around where it is, from the outside in. oxlint's rule is called with each.
-        let mut around: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
+        // The `&&` expressions around the current operand, outermost first. oxlint's rule is called with each.
+        let mut enclosing: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
         loop {
             while let ExprKind::Binary { op, left, right } = at.kind()
                 && op == operator
             {
-                around.truncate(depth as usize);
-                around.push(at);
+                enclosing.truncate(depth as usize);
+                enclosing.push(at);
                 depth += 1;
                 pending.push((right, depth));
                 at = left;
@@ -100,7 +100,7 @@ impl Rule for NoUselessLengthCheck {
                 (previous, current)
                 && array == called
             {
-                for called_with in around.iter().take(around_both as usize) {
+                for called_with in enclosing.iter().take(enclosing_both as usize) {
                     let report = cx
                         .report(span, USELESS_LENGTH_CHECK)
                         .called_with(*called_with);
@@ -117,7 +117,7 @@ impl Rule for NoUselessLengthCheck {
                 return;
             };
             (at, depth) = next;
-            around_both = depth;
+            enclosing_both = depth;
         }
     }
 }

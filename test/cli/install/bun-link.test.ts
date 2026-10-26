@@ -996,8 +996,8 @@ describe.each(["link", "unlink"])("bun %s", command => {
 });
 
 describe("global bin dir", () => {
-  // What a bin named `name` occupies in a bin dir: the symlink itself on POSIX, the `.exe` half
-  // of the `.exe` + `.bunx` shim pair on Windows.
+  // Returns the file that a bin named `name` creates in a bin directory: the symlink itself on POSIX, and the `.exe`
+  // half of the `.exe` + `.bunx` shim pair on Windows.
   const binEntry = (name: string) => (isWindows ? `${name}.exe` : name);
   const linkTarget = (pkg: string, ...file: string[]) => join("..", "install", "global", "node_modules", pkg, ...file);
   const pkgFiles = (name: string, bin: Record<string, string>) => ({
@@ -1018,7 +1018,7 @@ describe("global bin dir", () => {
     return { out, err, exitCode };
   }
 
-  it("bun link leaves what bun did not put there alone", async () => {
+  it("bun link doesn't touch files that bun didn't create", async () => {
     using bunInstall = tempDir("link-global", {
       // A regular file, which is what `bun` itself is in this directory.
       [`bin/${binEntry("bun")}`]: "the bun binary",
@@ -1222,8 +1222,8 @@ describe.each(["hoisted", "isolated"] as const)("when a package fails to install
     await expectExit1(cmd, dependencies, stdin);
   });
 
-  // Not concurrent: this command runs the bundler, which is slow on a debug build.
-  // `--analyze` exits from inside the bundler's scan, also when it succeeds, and LeakSanitizer reports what the scan holds.
+  // Not concurrent, because this command runs the bundler, which is slow on a debug build. `--analyze` exits from
+  // inside the bundler's scan, even when it succeeds, and LeakSanitizer reports what the scan has allocated.
   it.skipIf(isASAN)("bun install --analyze entry.js exits 1", async () => {
     await expectExit1("install --analyze entry.js");
   });

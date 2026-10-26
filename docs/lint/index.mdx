@@ -5,6 +5,10 @@ description: "Bun's fast, built-in linter for JavaScript, TypeScript, and JSX"
 
 import Lint from "/snippets/cli/lint.mdx";
 
+<Note>
+  `bun lint` is only in [canary builds](/installation#canary-builds) of Bun. Run `bun upgrade --canary` to get one.
+</Note>
+
 Bun ships with a fast, built-in linter. There's nothing to install and nothing to configure.
 
 - 1,000+ rules from ESLint, typescript-eslint, React, import, unicorn, jsx-a11y, Jest, Vitest, and more
@@ -46,6 +50,12 @@ To lint specific files, pass paths or globs.
 bun lint src "test/**/*.test.ts"
 ```
 
+An argument that starts with `!` leaves files out of what the other arguments select, as it does for `bun fmt`. This holds with an ESLint or oxlint config too.
+
+```bash terminal icon="terminal"
+bun lint src "!src/generated" "!**/*.test.ts"
+```
+
 The exit code is `1` if there are errors and `0` if there are only warnings.
 
 ## Fix problems
@@ -55,6 +65,8 @@ Many rules can fix what they report. `--fix` applies those fixes and writes the 
 ```bash terminal icon="terminal"
 bun lint --fix
 ```
+
+`--fix` is for changes that keep what your program does and keep your comments. Where a rule's fix is known to alter behavior or drop a comment, the problem is still reported, but only `--fix-suggestions` or `--fix-dangerously` applies the fix, even if ESLint or oxlint apply it with `--fix`. Each rule's page says which flag it needs.
 
 ## Default rules
 
@@ -85,7 +97,7 @@ Each rule's page says what differs and how to change it.
 
 ## Configure rules
 
-Rules live in `bunfig.toml`. Every built-in rule works the same way, with nothing to install.
+Rules live in `bunfig.toml`. Every built-in rule works the same way, with nothing to install. The exceptions are the rules for [JSON and Markdown](/lint/plugins#other-languages), which need an ESLint config.
 
 ```toml bunfig.toml icon="settings"
 [lint.rules]
@@ -162,6 +174,27 @@ Use `*` as the rule name to turn off every rule of a plugin. A setting for a sin
 ignorePatterns = ["vendor/", "**/*.gen.ts"]
 ```
 
+The patterns use `.gitignore` syntax and are relative to `bunfig.toml`. With an `eslint.config.*` file they're [ESLint `ignores`](/runtime/bunfig#lint-ignorepatterns) instead.
+
+## ES modules and CommonJS
+
+`bun lint` works out whether a file is an ES module or CommonJS from the file itself, the way Node.js does:
+
+- `.mjs` and `.mts` files are modules. `.cjs` and `.cts` files are CommonJS.
+- Any other file is a module if the nearest `package.json` has `"type": "module"`.
+- Otherwise, a file with an `import`, an `export`, `import.meta` or a top-level `await` is a module. A file with none of them is CommonJS.
+
+A CommonJS file can `return` at the top level, and it's only in strict mode if it starts with `"use strict"`.
+
+To decide for every file yourself, set `sourceType` to `"module"`, `"commonjs"` or `"script"`:
+
+```toml bunfig.toml icon="settings"
+[lint.parserOptions]
+sourceType = "commonjs"
+```
+
+Next to an `eslint.config.js`, ESLint's defaults apply instead: `.js` and `.mjs` files are modules and `.cjs` files are CommonJS, unless `languageOptions.sourceType` says otherwise.
+
 ## Disable a rule in code
 
 `bun lint` uses ESLint's comments, so existing ones keep working. oxlint's `oxlint-disable` comments mean the same, except next to an ESLint config, where they are ordinary comments as in ESLint.
@@ -235,6 +268,10 @@ With an oxlint config, `--tsconfig` does what it does in oxlint. It sets the `ts
 bun lint --staged --fix
 ```
 
+If a file has both staged and unstaged changes, Bun lints the staged version, which is what the commit gets. `--fix` doesn't write such a file, because staging it again would commit the rest. If it has something to fix, Bun names the file and exits with code `2`.
+
+The same goes for the files that a staged file imports, which the type-aware rules and the `import` rules read. A file you staged and then deleted is still linted. Config files, such as `bunfig.toml` and `eslint.config.js`, are read from disk.
+
 `--changed` lints the files that differ from your default branch. Pass a ref to compare with something else.
 
 ```bash terminal icon="terminal"
@@ -268,7 +305,7 @@ Already have an `eslint.config.js`, `.eslintrc`, or `.oxlintrc.json`? `bun lint`
 }
 ```
 
-If `package.json` has a `lint` script, `bun lint` runs that script. Inside the script, `bun lint` is the linter.
+If `package.json` has a `lint` script, `bun lint` runs that script. Inside the script, `bun lint` is the linter. If `package.json` has `"lint"` in it but can't be parsed, as in the middle of a merge, `bun lint` can't tell whether that is a script: it lints nothing and exits with code 2.
 
 Writing a tool that calls Bun in projects you don't control? Pass `--no-script`: `bun lint --no-script` is always the linter.
 

@@ -1,7 +1,7 @@
 // Tests for `bun lint --init` and `bun fmt --init`.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
@@ -127,11 +127,11 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
     ["a = 1\nb = \n", "bunfig.toml:2:5"],
     [`[${command}]\nnothing = 1\n`, "bunfig.toml:2:1"],
     [`${command} = 1\n`, `bunfig.toml:1:${command.length + 4}`],
-  ])("an invalid bunfig.toml is an error and is left unchanged: %j", async (before, place) => {
+  ])("an invalid bunfig.toml is an error and is left unchanged: %j", async (before, location) => {
     using dir = tempDir("bun-init-section", { "bunfig.toml": before });
     const result = await run(String(dir), command, "--init");
     expect(result.stderr).toContain("error: ");
-    expect(result.stderr).toContain(place);
+    expect(result.stderr).toContain(location);
     expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 2 });
     expect(readFileSync(join(String(dir), "bunfig.toml"), "utf8")).toBe(before);
   });
@@ -172,9 +172,7 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
     chmodSync(join(String(dir), "bunfig.toml"), 0o200);
     expect(await run(String(dir), command, "--init")).toEqual({
       stdout: "",
-      stderr: expect.stringMatching(
-        /^warn: .+\nignoring settings in .+\nerror: Cannot read bunfig\.toml: EACCES: .+\n$/,
-      ),
+      stderr: expect.stringMatching(/^error: Cannot read bunfig\.toml: EACCES: .+\n$/),
       exitCode: 2,
     });
     chmodSync(join(String(dir), "bunfig.toml"), 0o644);
@@ -205,13 +203,44 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
     }
   });
 
+  describe.skipIf(isWindows)("a bunfig.toml that is a symlink", () => {
+    const project = { "project/.git/HEAD": "ref: refs/heads/main\n", "project/a.js": "a;\n" };
+
+    test("isn't written if it points outside the repository", async () => {
+      using dir = tempDir("bun-init-section", { ...project, "outside/existing.toml": "a = 1\n" });
+      const link = join(String(dir), "project", "bunfig.toml");
+      for (const target of ["existing.toml", "new.toml", "new/directory/new.toml"]) {
+        symlinkSync(join(String(dir), "outside", target), link);
+        expect(await run(join(String(dir), "project"), command, "--init")).toEqual({
+          stdout: "",
+          stderr: expect.stringContaining(
+            "error: Cannot write bunfig.toml: it is a symlink to a file outside the repository\n",
+          ),
+          exitCode: 2,
+        });
+        rmSync(link);
+      }
+      expect(readdirSync(join(String(dir), "outside"))).toEqual(["existing.toml"]);
+      expect(readFileSync(join(String(dir), "outside", "existing.toml"), "utf8")).toBe("a = 1\n");
+    });
+
+    test("is written through the symlink if it points inside the repository", async () => {
+      using dir = tempDir("bun-init-section", { ...project, "project/config/a.js": "a;\n" });
+      symlinkSync(join("config", "bunfig.toml"), join(String(dir), "project", "bunfig.toml"));
+      expect(await run(join(String(dir), "project"), command, "--init")).toEqual({
+        stdout: `Created bunfig.toml with a [${command}] section\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(readFileSync(join(String(dir), "project", "config", "bunfig.toml"), "utf8")).toBe(section);
+    });
+  });
+
   test("a directory called bunfig.toml is an error", async () => {
     using dir = tempDir("bun-init-section", { "bunfig.toml/a.js": "a;\n" });
     expect(await run(String(dir), command, "--init")).toEqual({
       stdout: "",
-      stderr: expect.stringMatching(
-        /^warn: .+\nignoring settings in .+\nerror: Cannot read bunfig\.toml: E[A-Z]+: .+\n$/,
-      ),
+      stderr: expect.stringMatching(/^error: Cannot read bunfig\.toml: E[A-Z]+: .+\n$/),
       exitCode: 2,
     });
   });
@@ -229,7 +258,7 @@ describe.concurrent.each(["lint", "fmt"] as const)("bun %s --init", command => {
   });
 });
 
-describe.concurrent("writes nothing if another tool's config file is in use", () => {
+describe.concurrent("--init in a project with another tool's config", () => {
   const flat = "export default [];\n";
   test.each<[Command, Record<string, string>, string[], string]>([
     ["lint", { "eslint.config.js": flat }, [], "eslint.config.js"],
@@ -247,10 +276,10 @@ describe.concurrent("writes nothing if another tool's config file is in use", ()
     ["fmt", { ".oxfmtrc.json": "{}" }, [], ".oxfmtrc.json"],
     ["fmt", { ".oxfmtrc.jsonc": "{}", "sub/a.js": "" }, ["--cwd", "sub"], "../.oxfmtrc.jsonc"],
     ["fmt", { "config/mine.json": "{}" }, ["--config", "config/mine.json"], "config/mine.json"],
-  ])("bun %s: %j %j", async (command, files, args, shown) => {
+  ])("bun %s writes nothing if the config file is in use: %j %j", async (command, files, args, configName) => {
     using dir = tempDir("bun-init-section", files);
     expect(await run(String(dir), command, "--init", ...args)).toEqual({
-      stdout: `Using ${shown}. bunfig.toml is not needed.\n`,
+      stdout: `Using ${configName}. bunfig.toml is not needed.\n`,
       stderr: "",
       exitCode: 0,
     });
@@ -266,7 +295,7 @@ describe.concurrent("writes nothing if another tool's config file is in use", ()
     ["fmt", { "package.json": '{ "devDependencies": { "prettier": "3.0.0" } }' }],
     ["fmt", { ".editorconfig": "root = true\n" }],
     ["fmt", { ".prettierrc": "{}", "args": "--no-config" }],
-  ])("still writes bunfig.toml, bun %s: %j", async (command, { args, ...files }) => {
+  ])("bun %s still writes bunfig.toml if no config file is in use: %j", async (command, { args, ...files }) => {
     using dir = tempDir("bun-init-section", files);
     const result = await run(String(dir), command, "--init", ...(args ? [args] : []));
     expect(result.stdout).toBe(`Created bunfig.toml with a [${command}] section\n`);
@@ -285,7 +314,7 @@ describe.concurrent("writes nothing if another tool's config file is in use", ()
 });
 
 // Uncomments each commented-out line, one at a time and then all together.
-describe.concurrent("the commented-out lines work when uncommented", () => {
+describe.concurrent("the commented-out lines that --init writes work when uncommented", () => {
   const commented = (text: string) => text.split("\n").flatMap((line, at) => (line.startsWith("# ") ? [at] : []));
   const variants = (text: string) =>
     [[], ...commented(text).map(at => [at]), commented(text)].map(lines => {

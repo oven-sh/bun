@@ -9,11 +9,10 @@ use enumset::EnumSet;
 
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
+use crate::generated_bindgen::response::js_Request as js;
 use crate::webcore::BlobExt as _;
 use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
-use crate::webcore::jsc::{
-    CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
-};
+use crate::webcore::jsc::{HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
@@ -29,7 +28,8 @@ use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
-use bun_jsc::generated::JSRequest as js_gen;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_ptr::RefPtr;
 use bun_ptr::weak_ptr::WeakPtrData;
 use core::mem::ManuallyDrop;
 
@@ -41,45 +41,30 @@ impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
 
-// Hand-rolled `JsClass` impl (proc-macro `#[bun_jsc::JsClass]`
-// not yet wired for Request). Routes through the codegen'd
-// `crate::generated_classes::js_Request` wrappers — no local extern decls.
-const _: () = {
-    use crate::generated_classes::js_Request as js;
-
-    impl bun_jsc::JsClass for Request {
-        fn from_js(value: bun_jsc::JSValue) -> Option<*mut Self> {
-            js::from_js(value).map(|p| p.as_ptr())
-        }
-        fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
-            js::from_js_direct(value).map(|p| p.as_ptr())
-        }
-        fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
-            // Route through the inherent `Request::to_js` so generic
-            // `<T: JsClass>::to_js` callers also run `calculate_estimated_byte_size`,
-            // `js_ref = .init_weak(...)`, and `check_body_stream_ref` —
-            // otherwise the wrapper reports size 0 and any Locked-body
-            // ReadableStream is never migrated into the GC slot.
-            let ptr = bun_core::heap::into_raw(Box::new(self));
-            // SAFETY: `ptr` is a freshly-leaked heap allocation; the inherent
-            // `to_js` hands it to the C++ wrapper which takes ownership (freed
-            // via `RequestClass__finalize`). Same pattern as `do_clone`.
-            unsafe { Request::to_js(&*ptr, global) }
-        }
-        fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
-            js::get_constructor(global)
-        }
+impl bun_jsc::JsClass for Request {
+    fn from_js(value: JSValue) -> Option<*mut Self> {
+        js::from_js(value).map(|p| p.as_ptr())
     }
-};
+    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+        js::from_js_direct(value).map(|p| p.as_ptr())
+    }
+    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+        let ptr = Request::new(self);
+        // SAFETY: `ptr` is a new heap allocation; the wrapper made by the inherent `to_js` adopts its ref.
+        unsafe { Request::to_js(ptr, global) }
+    }
+}
 
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Request` (not
+/// Every JS-facing member takes `&Request` (not
 /// `&mut Request`) so re-entrant JS calls cannot stack two `&mut` to the same
-/// instance. Fields mutated by host-fns are wrapped in `Cell` (Copy scalars)
+/// instance. Fields the members mutate are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
 /// field layout is unchanged. `method`/`flags`/`request_context`/`body`/
 /// `weak_ptr_data` are only written during construction or via raw-ptr
-/// `finalize`, so stay plain.
+/// `destroy`, so stay plain.
 #[repr(C)]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Request::destroy)]
 pub(crate) struct Request {
     pub(crate) url: JsCell<BunString>,
 
@@ -92,21 +77,23 @@ pub(crate) struct Request {
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. The
     /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
     /// hold their own `+1` on the same slot. `ManuallyDrop` because
-    /// `finalize()` decouples from `Box` and must release this handle exactly
+    /// `destroy()` decouples from `Box` and must release this handle exactly
     /// once before `Box::from_raw().drop()` (which would otherwise re-run it).
     body: ManuallyDrop<BodyHiveHandle>,
     js_ref: JsCell<JsRef>,
     pub method: Method,
     pub(crate) flags: Flags,
     pub(crate) request_context: AnyRequestContext,
+    /// The JS wrapper holds the only ref, so `destroy` runs when it is collected.
+    ref_count: Cell<u32>,
+    /// Bun.serve's RequestContext holds a weak reference, which can outlive the wrapper.
     pub(crate) weak_ptr_data: WeakPtrData,
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
 }
 
 // A `#[repr(C)]` 4-byte struct for direct
-// field access — `Request` is only ever passed to C++ by **pointer** with size
-// reported via the codegen'd `Request__ZigStructSize`, so the absolute size is
+// field access — `Request` is only ever passed to C++ by **pointer**, so the absolute size is
 // not ABI-locked. `#[repr(C)]` + `assert_ffi_layout!` make the layout
 // deterministic and grep-discoverable.
 #[repr(C)]
@@ -133,9 +120,10 @@ impl Default for Flags {
 
 // Heap-allocates via Box::new (global mimalloc).
 impl Request {
+    /// The caller owns the one ref, which the JS wrapper adopts in `to_js`.
     #[inline]
-    pub(crate) fn new(v: Request) -> Box<Request> {
-        Box::new(v)
+    pub(crate) fn new(v: Request) -> *mut Request {
+        bun_core::heap::into_raw(Box::new(v))
     }
 }
 
@@ -148,19 +136,19 @@ impl crate::webcore::body::BodyOwnerJs for Request {
     }
     #[inline]
     fn body_get_cached(this: JSValue) -> Option<JSValue> {
-        js_gen::body_get_cached(this)
+        js::body_get_cached(this)
     }
     #[inline]
     fn body_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        js_gen::body_set_cached(this, global, value)
+        js::body_set_cached(this, global, value)
     }
     #[inline]
     fn stream_get_cached(this: JSValue) -> Option<JSValue> {
-        js_gen::stream_get_cached(this)
+        js::stream_get_cached(this)
     }
     #[inline]
     fn stream_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        js_gen::stream_set_cached(this, global, value)
+        js::stream_set_cached(this, global, value)
     }
 }
 
@@ -267,7 +255,7 @@ impl Request {
                             // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
                             // for as long as the readable stream exists; we only read
                             // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { (*blob).content_type.as_slice() };
+                            let ct: &[u8] = unsafe { (*blob).content_type.get().as_slice() };
                             Some(std::ptr::from_ref::<[u8]>(ct))
                         }
                         _ => None,
@@ -312,7 +300,8 @@ impl Request {
     }
 
     /// This should only be called by the JS code. use getFetchHeaders to get the current headers or ensureFetchHeaders to get the headers and create them if they don't exist.
-    pub(crate) fn get_headers(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_headers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
         Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
     }
 
@@ -367,8 +356,7 @@ impl Request {
 
 impl Request {
     pub(crate) fn memory_cost(&self) -> usize {
-        core::mem::size_of::<Request>()
-            + self.request_context.memory_cost()
+        self.request_context.memory_cost()
             + self.url.get().byte_slice().len()
             + self.body_value().memory_cost()
     }
@@ -383,11 +371,11 @@ impl Request {
     /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
     /// so it needs the same fetch-spec step-1 usability check.
     #[bun_uws::uws_callback(export = "Request__clone")]
-    pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
+    pub(crate) fn ffi_clone(&self, global_this: &JSGlobalObject) -> Option<NonNull<Request>> {
         self.throw_if_body_unusable(global_this).ok()?;
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
         let cx = global_this.js_thread_of_caller_no_frame();
-        self.clone(&cx).ok()
+        NonNull::new(self.clone(&cx).ok()?)
     }
 
     /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a
@@ -429,6 +417,7 @@ impl Request {
             method,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
+            ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         }
@@ -455,11 +444,8 @@ impl Request {
 
     #[bun_uws::uws_callback(export = "Bun__JSRequest__calculateEstimatedByteSize")]
     pub(crate) fn calculate_estimated_byte_size(&self) {
-        self.reported_estimated_size.set(
-            self.body_value().estimated_size()
-                + self.size_of_url()
-                + core::mem::size_of::<Request>(),
-        );
+        self.reported_estimated_size
+            .set(self.body_value().estimated_size() + self.size_of_url());
     }
 }
 
@@ -469,31 +455,26 @@ impl Request {
         <Self as BodyMixin>::get_body_readable_stream(self)
     }
 
-    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        self.calculate_estimated_byte_size();
-        // R-2: `to_js_unchecked` stores `self` as the C++ `m_ctx` payload (an
-        // opaque `void*` never deref'd as `&mut Request` on the C++ side), so
-        // forming `*mut` from `&self` here is provenance-safe.
-        let js_value = js_gen::to_js_unchecked(
-            global_object,
-            std::ptr::from_ref::<Request>(self).cast_mut().cast::<()>(),
-        );
-        self.js_ref.set(JsRef::init_weak(js_value));
+    /// # Safety
+    /// `this` is from [`Request::new`] and the caller owns its ref, which the wrapper adopts.
+    pub(crate) unsafe fn to_js(this: *mut Self, global_object: &JSGlobalObject) -> JSValue {
+        // SAFETY: fn contract.
+        let request = unsafe { &*this };
+        request.calculate_estimated_byte_size();
+        let js_value = js::to_js(this, global_object);
+        request.js_ref.set(JsRef::init_weak(js_value));
 
-        self.check_body_stream_ref(global_object);
+        request.check_body_stream_ref(global_object);
         js_value
     }
 }
 
-// Request is opaque on the C++ side; see note on the JsClass extern block above.
 // C++ side defines `extern "C" SYSV_ABI` (JSBunRequest.cpp).
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     #[link_name = "Bun__JSRequest__createForBake"]
     // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `request_ptr` is stored opaquely as `void* m_ctx` (module-private —
-    // sole caller forwards `from_ref(self)`). Matches the `*__createObject`
-    // precedent.
+    // `request_ptr` is stored opaquely as `void*`.
     safe fn Bun__JSRequest__createForBake(
         global_object: &JSGlobalObject,
         request_ptr: *mut Request,
@@ -501,13 +482,13 @@ bun_jsc::jsc_abi_extern! {
 }
 
 impl Request {
-    pub(crate) fn to_js_for_bake(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    /// The wrapper adopts the ref of `this`, which is from [`Request::new`].
+    pub(crate) fn to_js_for_bake(
+        this: *mut Self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_object, || {
-            // C++ stores `self` as opaque `void* m_ctx`; see `to_js` note.
-            Bun__JSRequest__createForBake(
-                global_object,
-                std::ptr::from_ref::<Request>(self).cast_mut(),
-            )
+            Bun__JSRequest__createForBake(global_object, this)
         })
     }
 }
@@ -609,7 +590,10 @@ impl Request {
             writer.write_str(
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ").as_ref(),
             )?;
-            let headers_js = self.get_headers(formatter.global_this()).map_err(js_err)?;
+            let headers_js = self
+                .ensure_fetch_headers(formatter.global_this())
+                .map_err(js_err)?
+                .to_js(formatter.global_this());
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
                     bun_jsc::FormatTag::Private,
@@ -663,20 +647,20 @@ impl Request {
         Ok(())
     }
 
-    pub(crate) fn get_cache(&self, global_this: &JSGlobalObject) -> JSValue {
-        fetch_cache_mode_to_js(self.flags.cache, global_this)
+    pub(crate) fn get_cache(&self, cx: &mut JsScope<'_>) -> JSValue {
+        fetch_cache_mode_to_js(self.flags.cache, cx.global())
     }
 
-    pub(crate) fn get_credentials(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        global_this.common_strings().include()
+    pub(crate) fn get_credentials(&self, cx: &mut JsScope<'_>) -> JSValue {
+        cx.global().common_strings().include()
     }
 
-    pub(crate) fn get_destination(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        JSValue::js_empty_string(global_this)
+    pub(crate) fn get_destination(&self, cx: &mut JsScope<'_>) -> JSValue {
+        JSValue::js_empty_string(cx.global())
     }
 
-    pub(crate) fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        JSValue::js_empty_string(global_this)
+    pub(crate) fn get_integrity(&self, cx: &mut JsScope<'_>) -> JSValue {
+        JSValue::js_empty_string(cx.global())
     }
 
     /// The `AbortSignal` this request was constructed with or lazily created
@@ -685,7 +669,8 @@ impl Request {
         self.signal.get().as_ref()
     }
 
-    pub(crate) fn get_signal(&self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_signal(&self, cx: &mut JsScope<'_>) -> JSValue {
+        let global_this = cx.global();
         // Already have a C++ instance
         if let Some(signal) = self.signal.get() {
             return signal.to_js(global_this);
@@ -700,12 +685,12 @@ impl Request {
         js_signal
     }
 
-    pub(crate) fn get_method(&self, global_this: &JSGlobalObject) -> JSValue {
-        self.method.to_js(global_this)
+    pub(crate) fn get_method(&self, cx: &mut JsScope<'_>) -> JSValue {
+        self.method.to_js(cx.global())
     }
 
-    pub(crate) fn get_mode(&self, global_this: &JSGlobalObject) -> JSValue {
-        fetch_request_mode_to_js(self.flags.mode, global_this)
+    pub(crate) fn get_mode(&self, cx: &mut JsScope<'_>) -> JSValue {
+        fetch_request_mode_to_js(self.flags.mode, cx.global())
     }
 
     pub(crate) fn finalize_without_deinit(&mut self) {
@@ -718,16 +703,13 @@ impl Request {
         self.signal.set(None);
     }
 
-    pub(crate) fn finalize(self: Box<Self>) {
-        // weak_ptr_data may have outstanding refs aliasing this allocation;
-        // hand ownership back to the raw pointer FIRST so a panic in the work
-        // below leaks instead of Box-drop UAF-ing those weak holders.
-        let this = bun_core::heap::release(self);
+    fn destroy(this: *mut Request) {
         // Release the request's `+1` on the body slot. `ManuallyDrop` so the
         // hot-path `Box::from_raw().drop()` below cannot re-run this.
         // SAFETY: `this` is live and this is the sole release point for `body`.
-        unsafe { ManuallyDrop::drop(&mut this.body) };
-        if this.weak_ptr_data.on_finalize() {
+        unsafe { ManuallyDrop::drop(&mut (*this).body) };
+        // SAFETY: ref_count hit 0; any remaining `WeakPtr` only touches `weak_ptr_data`, on this thread.
+        if unsafe { (*this).weak_ptr_data.on_finalize() } {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
             // `drop_in_place` over every field (headers / url / signal /
@@ -740,16 +722,20 @@ impl Request {
             // Cold path: weak_ptr_data still has outstanding refs — keep the
             // allocation alive, but release inner resources now so they aren't
             // pinned until the last `WeakPtr` drops.
-            this.js_ref.with_mut(|r| r.finalize());
-            this.finalize_without_deinit();
+            // SAFETY: as above.
+            unsafe {
+                (*this).js_ref.with_mut(|r| r.finalize());
+                (*this).finalize_without_deinit();
+            }
         }
     }
 
-    pub(crate) fn get_redirect(&self, global_this: &JSGlobalObject) -> JSValue {
-        fetch_redirect_to_js(self.flags.redirect, global_this)
+    pub(crate) fn get_redirect(&self, cx: &mut JsScope<'_>) -> JSValue {
+        fetch_redirect_to_js(self.flags.redirect, cx.global())
     }
 
-    pub(crate) fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_referrer(&self, cx: &mut JsScope<'_>) -> JSValue {
+        let global_object = cx.global();
         if let Some(headers_ref) = self.headers_mut().as_mut() {
             if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
                 return referrer.to_js(global_object);
@@ -759,13 +745,13 @@ impl Request {
         JSValue::js_empty_string(global_object)
     }
 
-    pub(crate) fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        JSValue::js_empty_string(global_this)
+    pub(crate) fn get_referrer_policy(&self, cx: &mut JsScope<'_>) -> JSValue {
+        JSValue::js_empty_string(cx.global())
     }
 
-    pub(crate) fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_url(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.ensure_url()?;
-        self.url.get().to_js(global_object)
+        self.url.get().to_js(cx.global())
     }
 
     pub(crate) fn size_of_url(&self) -> usize {
@@ -976,10 +962,10 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    pub(crate) fn construct_into(
+    fn construct_into(
         cx: &bun_jsc::JsThread<'_>,
-        arguments: &[JSValue],
-        this_value: JSValue,
+        url_or_object: JSValue,
+        init: JSValue,
     ) -> JsResult<Request> {
         let mut success = false;
         // SAFETY: bun_vm() yields the live per-thread VM singleton.
@@ -992,10 +978,11 @@ impl Request {
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
-            js_ref: JsCell::new(JsRef::init_weak(this_value)),
+            js_ref: JsCell::new(JsRef::empty()),
             method: Method::GET,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
+            ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         };
@@ -1027,17 +1014,12 @@ impl Request {
             }};
         }
 
-        if arguments.is_empty() {
-            bail!(Err(cx.global().throw(format_args!(
-                "Failed to construct 'Request': 1 argument required, but only 0 present."
-            ))));
-        } else if arguments[0].is_empty_or_undefined_or_null() || !arguments[0].is_cell() {
+        if !url_or_object.is_cell() {
             bail!(Err(cx.global().throw(format_args!(
                 "Failed to construct 'Request': expected non-empty string or object, got undefined"
             ))));
         }
 
-        let url_or_object = arguments[0];
         let url_or_object_type = url_or_object.js_type();
         let mut fields: EnumSet<Fields> = EnumSet::empty();
 
@@ -1048,7 +1030,7 @@ impl Request {
             bun_jsc::DOMURL::cast_(url_or_object, cx.global().vm()).is_some();
 
         if is_first_argument_a_url {
-            let str = match BunString::from_js(arguments[0], cx.global()) {
+            let str = match BunString::from_js(url_or_object, cx.global()) {
                 Ok(s) => s,
                 Err(e) => bail!(Err(e)),
             };
@@ -1064,8 +1046,8 @@ impl Request {
         }
 
         let values_to_try_: [JSValue; 2] = [
-            if arguments.len() > 1 && arguments[1].is_object() {
-                arguments[1]
+            if init.is_object() {
+                init
             } else if is_first_argument_a_url {
                 JSValue::UNDEFINED
             } else {
@@ -1077,8 +1059,8 @@ impl Request {
                 url_or_object
             },
         ];
-        let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
-            + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
+        let values_to_try =
+            &values_to_try_[0..((!is_first_argument_a_url) as usize + init.is_object() as usize)];
 
         for &value in values_to_try {
             let value_type = value.js_type();
@@ -1087,7 +1069,7 @@ impl Request {
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
-                    // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
+                    // SAFETY: as_direct returns the wrapper's live *mut Request
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
                         match Request::clone_into(
@@ -1427,41 +1409,39 @@ impl Request {
         }
 
         req.calculate_estimated_byte_size();
-        req.check_body_stream_ref(cx.global());
         success = true;
 
         cleanup(&mut req, body_seed_ptr, success);
         Ok(req)
     }
 
-    pub(crate) fn constructor(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-        this_value: JSValue,
-    ) -> JsResult<Box<Request>> {
-        let arguments = callframe.arguments();
-
-        let request = Self::construct_into(
-            &global_this.js_thread_of_caller(callframe),
-            arguments,
-            this_value,
-        )?;
-        Ok(Request::new(request))
+    pub(crate) fn constructor<'a>(
+        cx: &mut JsScope<'a>,
+        structure: JsStructure<'a, Self>,
+        input: JsLocal<'a>,
+        init: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        let request = Self::construct_into(&cx.js_thread(), input.to_js(), init.to_js())?;
+        let request = RefPtr::new(request);
+        let this = request.this_ptr();
+        let this_value = structure.create(&cx.heap, request);
+        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
+        this.check_body_stream_ref(cx.global());
+        Ok(this_value)
     }
 
     pub(crate) fn do_clone(
         &self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
     ) -> JsResult<JSValue> {
+        let cx = cx.js_thread();
+        let global_this = cx.global();
         self.throw_if_body_unusable(global_this)?;
-        let this_value = callframe.this();
-        let cloned = self.clone(&global_this.js_thread_of_caller(callframe))?;
-
-        let cloned_ptr = bun_core::heap::into_raw(cloned);
-        // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
-        let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };
-        self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
+        let cloned_ptr = self.clone(&cx)?;
+        // SAFETY: `clone` just allocated it; the wrapper adopts its ref in `to_js`.
+        let js_wrapper = unsafe { Request::to_js(cloned_ptr, global_this) };
+        self.sync_cloned_body_stream_caches(this_value.to_js(), js_wrapper, global_this);
         Ok(js_wrapper)
     }
 
@@ -1507,6 +1487,7 @@ impl Request {
                     method: self.method,
                     flags: self.flags,
                     request_context: AnyRequestContext::NULL,
+                    ref_count: Cell::new(1),
                     weak_ptr_data: WeakPtrData::EMPTY,
                     reported_estimated_size: Cell::new(0),
                 },
@@ -1520,7 +1501,7 @@ impl Request {
         Ok(())
     }
 
-    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Box<Request>> {
+    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<*mut Request> {
         // allocator param dropped (global mimalloc)
         // `clone_into` `ptr::write`s the new fields over the seed
         // without reading or dropping it.
@@ -1539,12 +1520,13 @@ impl Request {
             method: Method::GET,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
+            ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
         self.clone_into(&mut req, cx, false)?;
-        Ok(req)
+        Ok(bun_core::heap::into_raw(req))
     }
 }
 
@@ -1568,6 +1550,7 @@ impl Request {
                 ..Flags::default()
             },
             request_context,
+            ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         }

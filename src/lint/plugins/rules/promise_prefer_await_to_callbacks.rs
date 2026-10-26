@@ -18,7 +18,7 @@ impl Rule for PreferAwaitToCallbacks {
         Kind::Suggestion,
     );
     const ON: On = On::new().exprs(&[ExprTag::Call]).funcs();
-    /// Whether something is in a `yield` or an `await`.
+    /// Caches whether a node is inside a `yield` or an `await`.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(_: &Options) -> Self {
@@ -101,7 +101,7 @@ impl Rule for PreferAwaitToCallbacks {
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        // Not what an interface or a type has.
+        // Not the signatures in an interface or a type.
         let is_function = match func.kind() {
             FnKind::Decl | FnKind::Expr | FnKind::Arrow => true,
             FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {

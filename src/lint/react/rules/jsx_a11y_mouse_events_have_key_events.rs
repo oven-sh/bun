@@ -45,7 +45,7 @@ impl Rule for MouseEventsHaveKeyEvents {
     }
 }
 
-/// It has a value, which is neither `undefined` nor `null`.
+/// True if it has a value other than `undefined` or `null`.
 fn has_handler_value(attribute: Prop) -> bool {
     match get_prop_value(attribute) {
         Some(AttributeValue::ExpressionContainer(e)) if !e.is_missing() => {
@@ -57,7 +57,7 @@ fn has_handler_value(attribute: Prop) -> bool {
     }
 }
 
-/// The first of `handlers` that the element has with a value needs `companion`.
+/// Reports if the first of `handlers` that the element has with a value lacks its `companion`.
 fn check<'a>(
     jsx_opening_el: Jsx<'a>,
     handlers: &[String],

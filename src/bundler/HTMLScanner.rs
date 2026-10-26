@@ -73,7 +73,7 @@ impl<'a> HTMLScanner<'a> {
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
             resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir,
+                fs::FileSystem::instance().top_level_dir(),
                 &[&input_path[1..]],
             )
         }
@@ -377,9 +377,10 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         let settings = lol_html::Settings {
             element_content_handlers,
             encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
+            // lol_html only buffers the unparsed tail of each write, so the default preallocation is enough.
             memory_settings: lol_html::MemorySettings {
-                preallocated_parsing_buffer_size: (input.len() / 4).max(1024),
-                max_allowed_memory_usage: 1024 * 1024 * 10,
+                max_allowed_memory_usage: u32::MAX as usize,
+                ..lol_html::MemorySettings::new()
             },
             strict: false,
             ..lol_html::Settings::new()

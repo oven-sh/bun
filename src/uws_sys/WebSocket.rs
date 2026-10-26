@@ -92,6 +92,12 @@ impl AnyWebSocket {
         c::uws_ws_close(ssl, ws)
     }
 
+    /// Closes the connection with 1011 after failing to allocate a copy of an incoming message.
+    pub fn fail_out_of_memory(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_fail_out_of_memory(ssl, ws)
+    }
+
     pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
@@ -602,6 +608,7 @@ pub mod c {
         ) -> *mut WebSocketUpgradeContext;
         pub(crate) safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
         pub(crate) safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) safe fn uws_ws_fail_out_of_memory(ssl: i32, ws: &mut RawWebSocket);
         pub(crate) fn uws_ws_send_with_options(
             ssl: i32,
             ws: *mut RawWebSocket,

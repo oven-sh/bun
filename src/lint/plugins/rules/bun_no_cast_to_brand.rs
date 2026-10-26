@@ -4,21 +4,21 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::{SmallVec, smallvec};
 
-/// Disallow a cast to a branded type outside the module that declares it, and the import of what mints it where that is
-/// not listed.
+/// Disallow casts to a branded type outside the module that declares it, and imports of its minting functions in files
+/// that aren't listed.
 pub struct NoCastToBrand {
     brands: Box<[Brand]>,
 }
 
 /// An element of `branded`.
 struct Brand {
-    /// `module`: the end of the path of the file that declares the type, without the extension.
+    /// `module`: a suffix of the path of the file that declares the type, without the extension.
     module: Box<str>,
     /// `type`
     name: Box<str>,
-    /// `mint`: the functions of the module that make a value of the type of any value.
+    /// `mint`: the module's functions that turn any value into a value of the type.
     mint: Box<[Box<str>]>,
-    /// `mintedIn`: the ends of the paths of the files that may import them.
+    /// `mintedIn`: path suffixes of the files that may import them.
     minted_in: Box<[Box<str>]>,
 }
 
@@ -32,14 +32,14 @@ const MINT: Message = Message::new(
 );
 
 impl Brand {
-    /// Whether `path`, with or without an extension, is that of the module.
+    /// True if `path`, with or without an extension, is the module's path.
     fn is_at(&self, path: &[u8]) -> bool {
         let stem = path.strip_suffix(paths::extname(path)).unwrap_or(path);
         let directory = stem.strip_suffix(b"/index").unwrap_or(stem);
         [path, stem, directory].iter().any(|it| is_end_of_path(it, self.module.as_bytes()))
     }
 
-    /// Whether `specifier` is the module where it is written in `file`.
+    /// True if `specifier`, written in `file`, refers to the module.
     fn is_imported_as(&self, specifier: Name, file: &File) -> bool {
         match specifier.bytes() {
             relative @ [b'.', ..] => self.is_at(&paths::resolve(paths::dirname(file.path()), relative)),
@@ -60,7 +60,7 @@ impl Brand {
     }
 }
 
-/// What the name of a type stands for.
+/// How a type name resolves.
 enum Named<'a, 'r> {
     Brand(&'r Brand),
     Alias(TypeNode<'a>),
@@ -70,7 +70,7 @@ enum Named<'a, 'r> {
 }
 
 impl NoCastToBrand {
-    /// The brand that is called `name` in the module `specifier`.
+    /// The brand named `name` in the module `specifier`.
     fn brand(&self, name: Name, specifier: Name, file: &File) -> Option<&Brand> {
         self.brands.iter().find(|it| name.is(&it.name) && it.is_imported_as(specifier, file))
     }
@@ -90,10 +90,10 @@ impl NoCastToBrand {
         brand.map_or(Named::Other, Named::Brand)
     }
 
-    /// The brand that `ty` is, or that the elements of `ty` are.
+    /// The brand that `ty` is, or that `ty`'s elements are.
     fn brand_in<'a>(&self, ty: TypeNode<'a>, file: &File) -> Option<&Brand> {
         let mut pending: SmallVec<[TypeNode<'a>; 8]> = smallvec![ty];
-        // An alias can be its own.
+        // An alias can refer to itself.
         let mut seen = rustc_hash::FxHashSet::default();
         while let Some(ty) = pending.pop() {
             if !seen.insert(ty) {
@@ -115,10 +115,10 @@ impl NoCastToBrand {
         None
     }
 
-    /// The brands of the module `specifier` whose functions `file` may not import.
+    /// The brands in the module `specifier` whose minting functions `file` may not import.
     fn guarded<'r, 'a>(&'r self, specifier: Name<'a>, file: &'a File<'a>) -> impl Iterator<Item = &'r Brand> {
-        let of_module = self.brands.iter().filter(move |it| it.is_imported_as(specifier, file));
-        of_module.filter(move |it| !it.may_be_minted_in(file))
+        let module_brands = self.brands.iter().filter(move |it| it.is_imported_as(specifier, file));
+        module_brands.filter(move |it| !it.may_be_minted_in(file))
     }
 }
 

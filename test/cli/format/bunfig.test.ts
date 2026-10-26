@@ -531,6 +531,12 @@ export function add(a, b) {}
       example(["  ```", "  add(1,2)", "  ```"]),
     ],
     [
+      "an example with a hashbang",
+      "jsdoc = true",
+      example(["#!/usr/bin/env bun", "if (x) {", "  y()", "}"]),
+      example(["  #!/usr/bin/env bun", "  if (x) {", "    y();", "  }"]),
+    ],
+    [
       "a fenced example with a caption",
       "jsdoc = true",
       "/**\n * @example <caption>Sum</caption>\n * ```ts\n * add(1,2)\n * ```\n */\nlet a;\n",

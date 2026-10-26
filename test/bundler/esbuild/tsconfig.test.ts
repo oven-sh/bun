@@ -1,4 +1,4 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1120,6 +1120,42 @@ import {} from "xyz";
       stdout: "side effect\ninline type\nentry 1",
     },
   });
+  // The dev server's module format scans the imports of a file with its hot-reload transform,
+  // which merges the statements of one path. The modules that a file asks for are the same.
+  for (const [name, tsconfig, modules] of [
+    ["VerbatimModuleSyntaxDevServerFormat", `{ "compilerOptions": { "verbatimModuleSyntax": true } }`, "abcdef"],
+    ["NoSettingDevServerFormat", `{}`, "bc"],
+  ] as const) {
+    itBundled(`tsconfig/${name}`, {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* ts */ `
+          import { unused } from "./a"
+          import {} from "./b"
+          import { value } from "./b"
+          import { other } from "./c"
+          import { type T } from "./c"
+          import { type U } from "./d"
+          export {} from "./e"
+          export { type V } from "./f"
+          import type { W } from "./g"
+          const x: T | U | W = 1
+          console.log(value, other, x)
+        `,
+        ...Object.fromEntries(
+          [..."abcdefg"].map(file => [
+            `/${file}.ts`,
+            `console.log("module ${file}"); export const unused = 1, value = 2, other = 3; export type T = number; export type U = T; export type V = T; export type W = T;`,
+          ]),
+        ),
+        "/tsconfig.json": tsconfig,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect([..."abcdefg"].filter(file => output.includes(`console.log("module ${file}")`)).join("")).toBe(modules);
+      },
+    });
+  }
   return;
   itBundled("tsconfig/NestedJSX", {
     // GENERATED

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
 import path from "node:path";
 
 test("use strict causes CommonJS", () => {
@@ -366,6 +367,17 @@ describe("tsconfig unused imports", () => {
       });
     });
 
+    // `--minify-identifiers` renames every binding, so no unused name is printed.
+    test.concurrent("bun build --no-bundle --minify-identifiers", async () => {
+      using dir = tempDir("ts-unused-imports-no-bundle-minify", { ...files, "tsconfig.json": tsconfig });
+      const kept = output.split("\n").slice(0, -2);
+      expect(await run(String(dir), ["build", "--no-bundle", "--minify-identifiers", "entry.ts"])).toEqual({
+        stdout: kept.map(name => `import"./${name}";\n`).join("") + `const o = 1;\nconsole.log("entry", o);\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test.concurrent("extends inherits the setting, and the child can turn it off", async () => {
       const off = Object.fromEntries(
         Object.keys(compilerOptions).map(key => [key, key === "importsNotUsedAsValues" ? "remove" : false]),
@@ -384,6 +396,52 @@ describe("tsconfig unused imports", () => {
         exitCode: 0,
       });
     });
+  });
+
+  // `extends` merges each key by itself: `verbatimModuleSyntax: false` in the child does not
+  // turn off the `importsNotUsedAsValues` of the base.
+  test.concurrent("extends merges the three settings key by key", async () => {
+    using dir = tempDir("ts-unused-imports-extends-keys", {
+      ...files,
+      "base.json": JSON.stringify({ compilerOptions: { importsNotUsedAsValues: "preserve" } }),
+      "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: { verbatimModuleSyntax: false } }),
+      "own/plain.json": "{}",
+      "own/tsconfig.json": JSON.stringify({ extends: "./plain.json", compilerOptions: { verbatimModuleSyntax: true } }),
+      "own/own.ts": `import { unused } from "../effect"; console.log("own");`,
+    });
+    expect(await run(String(dir), ["entry.ts"])).toEqual({ stdout: keepStatement, stderr: "", exitCode: 0 });
+    expect(await run(path.join(String(dir), "own"), ["own.ts"])).toEqual({
+      stdout: "effect\nown\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `bun build --no-bundle` prints a kept name as written. What runs the output links it, so
+  // the name must be a real export there. `bun run` and a bundle drop the name instead.
+  test.concurrent("the output of bun build --no-bundle runs when each kept name is an export", async () => {
+    using dir = tempDir("ts-unused-imports-no-bundle-run", {
+      "tsconfig.json": verbatim,
+      "effect.ts": files["effect.ts"],
+      "types.ts": files["types.ts"],
+      "value.ts": `import { unused } from "./effect"; console.log("value");`,
+      "type.ts": `import { SomeType } from "./types"; const x: SomeType = 1; console.log("type", x);`,
+    });
+    const build = await run(String(dir), [
+      "build",
+      "--no-bundle",
+      "--outdir=out",
+      "value.ts",
+      "type.ts",
+      "effect.ts",
+      "types.ts",
+    ]);
+    expect(build.exitCode).toBe(0);
+    expect(await run(String(dir), ["out/value.js"])).toEqual({ stdout: "effect\nvalue\n", stderr: "", exitCode: 0 });
+    const linked = await run(String(dir), ["out/type.js"]);
+    expect(linked.stderr).toContain("Export named 'SomeType' not found");
+    expect(linked.exitCode).toBe(1);
+    expect(await run(String(dir), ["type.ts"])).toEqual({ stdout: "types\ntype 1\n", stderr: "", exitCode: 0 });
   });
 
   test.concurrent("no setting removes the imports", async () => {
@@ -441,15 +499,25 @@ describe("tsconfig unused imports", () => {
         "serve.ts": `
           import page from "./index.html";
           using server = Bun.serve({ port: 0, development: true, routes: { "/": page } });
-          const html = await (await fetch(server.url)).text();
-          const src = html.match(/src="(\\/_bun\\/client\\/[^"]+)"/)![1];
-          const script = await (await fetch(new URL(src, server.url))).text();
           const modules = ["effect", "type-only", "types", "erased"];
-          console.log(modules.filter(name => script.includes('console.log("' + name + '")')).join(" "));
+          async function bundled(marker: string) {
+            for (;;) {
+              const html = await (await fetch(server.url)).text();
+              const src = html.match(/src="(\\/_bun\\/client\\/[^"]+)"/)![1];
+              const script = await (await fetch(new URL(src, server.url))).text();
+              if (script.includes(marker))
+                return modules.filter(name => script.includes('console.log("' + name + '")')).join(" ");
+            }
+          }
+          console.log(await bundled('"entry"'));
+          // A save bundles the file again, and asks for it by its real path.
+          const source = await Bun.file("entry.ts").text();
+          await Bun.write("entry.ts", source.replace('"entry"', '"entry saved"'));
+          console.log(await bundled('"entry saved"'));
         `,
       });
       const { stdout, exitCode } = await run(String(dir), ["serve.ts"]);
-      expect(stdout).toBe("effect type-only types\n");
+      expect(stdout).toBe("effect type-only types\neffect type-only types\n");
       expect(exitCode).toBe(0);
     });
   });
@@ -588,6 +656,228 @@ describe("tsconfig unused imports", () => {
         exitCode: 0,
       });
     });
+
+    test.concurrent("a path in node_modules that a plugin resolved takes no setting", async () => {
+      using dir = tempDir("ts-unused-imports-plugin-resolved", {
+        "tsconfig.json": verbatim,
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "./index.ts" }),
+        "node_modules/dep/index.ts": importer("dep"),
+        "node_modules/dep/effect.ts": effect("dep"),
+        "entry.ts": `import "alias:dep";`,
+        "bundle.ts": `
+          import path from "node:path";
+          const build = await Bun.build({
+            entrypoints: ["./entry.ts"],
+            target: "bun",
+            plugins: [{
+              name: "alias",
+              setup(build) {
+                build.onResolve({ filter: /^alias:/ }, () => ({ path: path.join(import.meta.dir, "node_modules/dep/index.ts") }));
+              },
+            }],
+          });
+          await Bun.write("out.mjs", await build.outputs[0].text());
+          await import("./out.mjs");
+        `,
+      });
+      expect(await run(String(dir), ["bundle.ts"])).toEqual({ stdout: "dep\n", stderr: "", exitCode: 0 });
+    });
+
+    // `Bun.build({ files })` hands the bundler a source that no directory holds, as a plugin does.
+    test.concurrent("a Bun.build({ files }) entry takes the tsconfig.json of the working directory", async () => {
+      using dir = tempDir("ts-unused-imports-files", {
+        "tsconfig.json": verbatim,
+        "disk.ts": `console.log("disk");`,
+        ...Object.fromEntries(
+          ["replaced", "memory", "nowhere", "dep"].map(name => [`effect-${name}.ts`, effect(name)]),
+        ),
+        "bundle.ts": `
+          import path from "node:path";
+          const here = import.meta.dir;
+          const source = (name: string) =>
+            "import { unused } from " + JSON.stringify(path.join(here, "effect-" + name + ".ts")) + '; console.log("' + name + '");';
+          const dependency = path.join(here, "node_modules", "dep", "index.ts");
+          const build = await Bun.build({
+            entrypoints: [path.join(here, "entry.ts")],
+            target: "bun",
+            files: {
+              [path.join(here, "entry.ts")]:
+                'import "./disk.ts"; import "./memory.ts"; import "/nowhere/memory.ts"; import ' + JSON.stringify(dependency) + ";",
+              [path.join(here, "disk.ts")]: source("replaced"),
+              [path.join(here, "memory.ts")]: source("memory"),
+              "/nowhere/memory.ts": source("nowhere"),
+              [dependency]: source("dep"),
+            },
+          });
+          await Bun.write("out.mjs", await build.outputs[0].text());
+          await import("./out.mjs");
+        `,
+      });
+      expect(await run(String(dir), ["bundle.ts"])).toEqual({
+        stdout: "replaced effect\nreplaced\nmemory effect\nmemory\nnowhere effect\nnowhere\ndep\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The `tsconfig` of one build replaces the tsconfig.json of every directory, for that build only.
+    test.concurrent("Bun.build({ tsconfig }) decides for that build", async () => {
+      using dir = tempDir("ts-unused-imports-api-override", {
+        "tsconfig.json": off,
+        "on.json": verbatim,
+        "off.json": off,
+        "effect.ts": effect("root"),
+        "a.ts": importer("a"),
+        "pkg/tsconfig.json": verbatim,
+        "pkg/effect.ts": effect("pkg"),
+        "pkg/b.ts": importer("b"),
+        "build.ts": `
+          const build = async (entry: string, tsconfig?: string) => {
+            const { outputs } = await Bun.build({ entrypoints: [entry], target: "bun", tsconfig });
+            return / effect"\\)/.test(await outputs[0].text());
+          };
+          console.log(
+            JSON.stringify({
+              first: await build("./pkg/b.ts", "./off.json"),
+              without: [await build("./pkg/b.ts"), await build("./a.ts")],
+              with: [await build("./a.ts", "./on.json"), await build("./pkg/b.ts", "./off.json")],
+              atOnce: await Promise.all([
+                build("./a.ts", "./on.json"),
+                build("./a.ts"),
+                build("./pkg/b.ts", "./off.json"),
+                build("./pkg/b.ts"),
+              ]),
+            }),
+          );
+          await import("./a.ts");
+          await import("./pkg/b.ts");
+        `,
+      });
+      expect(await run(String(dir), ["build.ts"])).toEqual({
+        stdout:
+          JSON.stringify({
+            first: false,
+            without: [true, false],
+            with: [true, false],
+            atOnce: [true, false, false, true],
+          }) + "\na\npkg effect\nb\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("an override that cannot be read leaves no setting", async () => {
+      using dir = tempDir("ts-unused-imports-override-missing", {
+        "tsconfig.json": verbatim,
+        "effect.ts": effect("root"),
+        "entry.ts": importer("entry"),
+      });
+      const { stdout, exitCode } = await run(String(dir), ["--tsconfig-override=nowhere.json", "entry.ts"]);
+      expect(stdout).toBe("entry\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // A package with `module` and `main` resolves to two files. The one that is parsed decides.
+    test.concurrent.each([
+      [off, verbatim, "esm\n"],
+      [verbatim, off, "esm effect\nesm\n"],
+    ])("a package with two entry files takes the tsconfig.json of the one that is parsed", async (esm, cjs, stdout) => {
+      using dir = tempDir("ts-unused-imports-dual", {
+        "tsconfig.json": "{}",
+        "entry.ts": `import "./pkg";`,
+        "pkg/package.json": JSON.stringify({ name: "pkg", module: "./esm/index.ts", main: "./cjs/index.ts" }),
+        "pkg/esm/tsconfig.json": esm,
+        "pkg/esm/index.ts": importer("esm"),
+        "pkg/esm/effect.ts": effect("esm"),
+        "pkg/cjs/tsconfig.json": cjs,
+        "pkg/cjs/index.ts": importer("cjs"),
+        "pkg/cjs/effect.ts": effect("cjs"),
+      });
+      const build = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "entry.ts"]);
+      expect(build.stderr).toBe("");
+      expect(await run(String(dir), ["out.js"])).toEqual({ stdout, stderr: "", exitCode: 0 });
+    });
+
+    // These reach the transpiler with no directory of their own, or with no loader yet.
+    test.concurrent.each([
+      ["./script", "root effect\nscript\n"],
+      ["extension.cjs", "root effect\nfoo\n"],
+      ["blob.mjs", "root effect\nblob 1\n"],
+    ])("a module with no known extension or no directory: %s", async (entry, stdout) => {
+      using dir = tempDir("ts-unused-imports-fallbacks", {
+        "tsconfig.json": verbatim,
+        "effect.ts": effect("root"),
+        "script": importer("script"),
+        "module.foo": importer("foo"),
+        "extension.cjs": `require.extensions[".foo"] = require.extensions[".ts"]; require("./module.foo");`,
+        "blob.mjs": `
+          const source = 'import { unused } from ' + JSON.stringify(import.meta.dir + "/effect.ts") + '; const x: number = 1; console.log("blob", x);';
+          await import(URL.createObjectURL(new Blob([source], { type: "application/typescript" })));
+        `,
+      });
+      expect(await run(String(dir), [entry])).toEqual({ stdout, stderr: "", exitCode: 0 });
+    });
+
+    // A workspace package is a link in node_modules to a directory of the project. The file is
+    // loaded from that directory, so its tsconfig.json decides: in `bun run` and in `bun build`,
+    // by whichever path the file is reached first. With `--preserve-symlinks` the file is loaded
+    // from node_modules, and an installed package takes no setting.
+    describe("a workspace package that is linked into node_modules", () => {
+      const workspace = {
+        "tsconfig.json": verbatim,
+        "packages/ui/package.json": JSON.stringify({
+          name: "ui",
+          exports: { ".": "./index.ts", "./button": "./button.ts" },
+        }),
+        "packages/ui/index.ts": `export * from "./button";`,
+        "packages/ui/button.ts": `import { unused } from "./effect"; export const button = "button";`,
+        "packages/ui/effect.ts": effect("ui"),
+        "app/page.ts": `import { button } from "ui/button"; export const page = "page " + button;`,
+        "app/main.ts": `import { page } from "./page"; import { button } from "ui"; console.log(page, button);`,
+      };
+      function link(dir: string) {
+        symlinkSync(
+          path.join(dir, "packages", "ui"),
+          path.join(dir, "app", "node_modules", "ui"),
+          isWindows ? "junction" : "dir",
+        );
+      }
+      const files = { ...workspace, "app/node_modules/.keep": "" };
+      const kept = "ui effect\npage button button\n";
+
+      test.concurrent("bun run", async () => {
+        using dir = tempDir("ts-unused-imports-workspace-run", files);
+        link(String(dir));
+        expect(await run(path.join(String(dir), "app"), ["main.ts"])).toEqual({
+          stdout: kept,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      test.concurrent("bun build gives one bundle, with the answer of bun run", async () => {
+        using dir = tempDir("ts-unused-imports-workspace-build", files);
+        link(String(dir));
+        const app = path.join(String(dir), "app");
+        const builds = await Promise.all(
+          Array.from({ length: 4 }, () => run(app, ["build", "--target=bun", "main.ts"])),
+        );
+        const outputs = new Set(builds.map(build => build.stdout));
+        expect(outputs.size).toBe(1);
+        await Bun.write(path.join(app, "out.js"), [...outputs][0]);
+        expect(await run(app, ["out.js"])).toEqual({ stdout: kept, stderr: "", exitCode: 0 });
+      });
+
+      test.concurrent("--preserve-symlinks", async () => {
+        using dir = tempDir("ts-unused-imports-workspace-preserve", files);
+        link(String(dir));
+        expect(await run(path.join(String(dir), "app"), ["--preserve-symlinks", "main.ts"])).toEqual({
+          stdout: "page button button\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
   });
 
   // A file that assigns `module.exports` becomes CommonJS, which cannot hold an import
@@ -610,6 +900,34 @@ describe("tsconfig unused imports", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // A kept statement is an import statement, so a file that has one is an ES module. `require`,
+  // `__dirname` and "use strict" do not make it CommonJS, as they do not with `import { T }`.
+  test.concurrent.each([
+    [
+      "__dirname",
+      `import { type T } from "./type-only"; const x: T = 1; console.log(typeof __dirname, x);`,
+      "string 1",
+    ],
+    [
+      "require",
+      `import { type T } from "./type-only"; console.log(typeof require("node:fs").readFileSync);`,
+      "function",
+    ],
+    ["use strict", `"use strict";\nimport {} from "./type-only";\nconsole.log("strict");`, "strict"],
+  ])("a kept import with %s runs its module in bun run and in bun build", async (_, source, printed) => {
+    using dir = tempDir("ts-unused-imports-module-kind", {
+      ...files,
+      "tsconfig.json": verbatim,
+      "package.json": JSON.stringify({ name: "app" }),
+      "main.ts": source,
+    });
+    const stdout = `type-only\n${printed}\n`;
+    expect(await run(String(dir), ["main.ts"])).toEqual({ stdout, stderr: "", exitCode: 0 });
+    const build = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "main.ts"]);
+    expect(build.stderr).toBe("");
+    expect(await run(String(dir), ["out.js"])).toEqual({ stdout, stderr: "", exitCode: 0 });
   });
 
   // Each statement asks for its module exactly where tsc emits a statement for it.
@@ -680,10 +998,10 @@ describe("tsconfig unused imports", () => {
   });
 
   // TypeScript emits nothing for a declaration file, so its imports ask for no module.
-  test.concurrent("a declaration file keeps no import", async () => {
+  test.concurrent.each(["d.ts", "d.mts", "d.cts"])("a .%s file keeps no import", async extension => {
     using dir = tempDir("ts-unused-imports-dts", {
       "tsconfig.json": verbatim,
-      "globals.d.ts": `
+      [`globals.${extension}`]: `
         import { Model } from "./models";
         import { type Other } from "./missing";
         declare global {
@@ -691,7 +1009,7 @@ describe("tsconfig unused imports", () => {
         }
       `,
       "models.d.ts": `export interface Model { id: number }`,
-      "main.ts": `import "./globals.d.ts"; console.log("main");`,
+      "main.ts": `import "./globals.${extension}"; console.log("main");`,
     });
     expect(await run(String(dir), ["main.ts"])).toEqual({ stdout: "main\n", stderr: "", exitCode: 0 });
     const build = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "main.ts"]);
@@ -729,5 +1047,79 @@ describe("tsconfig unused imports", () => {
     const build = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "main.ts"]);
     expect(build.stderr).toBe("");
     expect(await run(String(dir), ["out.js"])).toEqual({ stdout: "main\n", stderr: "", exitCode: 0 });
+  });
+
+  // A kept import is a request for its module, at its place in the file. These programs run
+  // without the setting. With it they do what the output of tsc does in Node.
+  describe("what a kept import asks for", () => {
+    // `./config` and what it imports run before `./setup`, which comes later in the file.
+    test.concurrent("its module runs at the place of the statement", async () => {
+      const order = {
+        "config.ts": `import "./db"; export type Config = { url: string };`,
+        "db.ts": `console.log("db reads", globalThis.SETUP ?? "nothing");`,
+        "setup.ts": `globalThis.SETUP = "the setup";`,
+        "main.ts": `import { type Config } from "./config";\nimport "./setup";\nimport "./db";\nconst config: Config = { url: "" };\nconsole.log("main", config.url);`,
+      };
+      using kept = tempDir("ts-unused-imports-order", { ...order, "tsconfig.json": verbatim });
+      expect(await run(String(kept), ["main.ts"])).toEqual({
+        stdout: "db reads nothing\nmain \n",
+        stderr: "",
+        exitCode: 0,
+      });
+      using removed = tempDir("ts-unused-imports-order-off", { ...order, "tsconfig.json": "{}" });
+      expect(await run(String(removed), ["main.ts"])).toEqual({
+        stdout: "db reads the setup\nmain \n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The module must exist. A declaration file is not a module, and `@types/x` is not the package `x`.
+    test.concurrent.each([
+      ["a sibling declaration file", `import { type T } from "./types";`, "./types"],
+      ["a package that has only its types", `import { type Handler } from "only-types";`, "only-types"],
+      ["a name that is not marked as a type", `import { Handler } from "only-types";`, "only-types"],
+    ])("%s does not resolve", async (_, statement, specifier) => {
+      using dir = tempDir("ts-unused-imports-missing", {
+        "tsconfig.json": verbatim,
+        "types.d.ts": `export type T = number;`,
+        "node_modules/@types/only-types/package.json": JSON.stringify({
+          name: "@types/only-types",
+          types: "index.d.ts",
+        }),
+        "node_modules/@types/only-types/index.d.ts": `export type Handler = () => void;`,
+        "main.ts": `${statement}\nconsole.log("main");`,
+      });
+      const ran = await run(String(dir), ["main.ts"]);
+      expect(ran.stderr).toContain(`Cannot find ${specifier.startsWith(".") ? "module" : "package"} '${specifier}'`);
+      expect(ran.exitCode).toBe(1);
+      const build = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "main.ts"]);
+      expect(build.stderr).toContain(`error: Could not resolve: "${specifier}"\n`);
+      expect(build.stderr).toContain(
+        `note: No value uses this import. tsconfig.json keeps it ("verbatimModuleSyntax"), so the module must exist. Write "import type" to drop it.`,
+      );
+      expect(build.exitCode).toBe(1);
+    });
+
+    test.concurrent("a declaration file that is named in full is a declaration file", async () => {
+      using dir = tempDir("ts-unused-imports-dts-named", {
+        "tsconfig.json": verbatim,
+        "types.d.ts": `export type T = number;`,
+        "main.ts": `import { type T } from "./types.d.ts";\nconst x: T = 1;\nconsole.log("main", x);`,
+      });
+      expect(await run(String(dir), ["main.ts"])).toEqual({ stdout: "main 1\n", stderr: "", exitCode: 0 });
+    });
+
+    // A value import that fails gets the usual hint, not the note.
+    test.concurrent("an import that a value uses keeps the hint of bun build", async () => {
+      using dir = tempDir("ts-unused-imports-missing-used", {
+        "tsconfig.json": verbatim,
+        "main.ts": `import { handler } from "not-installed";\nconsole.log(handler);`,
+      });
+      const build = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "main.ts"]);
+      expect(build.stderr).toContain(`Could not resolve: "not-installed". Maybe you need to "bun install"?`);
+      expect(build.stderr).not.toContain("note:");
+      expect(build.exitCode).toBe(1);
+    });
   });
 });

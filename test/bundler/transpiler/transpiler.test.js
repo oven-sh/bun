@@ -1998,7 +1998,7 @@ class Test extends Bar {
           untrimmed.keepStatement,
           trimmed.keepStatement,
         ],
-      ])("%j", (compilerOptions, expectedUntrimmed, expectedTrimmed) => {
+      ])("%j", async (compilerOptions, expectedUntrimmed, expectedTrimmed) => {
         for (const [options, expected] of [
           [{}, expectedUntrimmed],
           [{ trimUnusedImports: true }, expectedTrimmed],
@@ -2006,6 +2006,7 @@ class Test extends Bar {
         ]) {
           const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig: { compilerOptions }, ...options });
           expect(inputs.map(input => transpiler.transformSync(input))).toEqual(expected);
+          expect(await Promise.all(inputs.map(input => transpiler.transform(input)))).toEqual(expected);
           // `scan` and `scanImports` report a module exactly when the output asks for it.
           const requests = expected.map(output => (output ? [{ path: "foo", kind: "import-statement" }] : []));
           expect(inputs.map(input => transpiler.scan(input).imports)).toEqual(requests);
@@ -2021,6 +2022,48 @@ class Test extends Bar {
         });
         expect(transpiler.transformSync("import { unused } from 'foo'")).toBe("");
         expect(transpiler.transformSync("import {} from 'foo'")).toBe(bare);
+      });
+
+      // A `declare` block is dropped whole: no statement in it is an import of its module.
+      it.each([
+        {},
+        { importsNotUsedAsValues: "preserve" },
+        { preserveValueImports: true },
+        { verbatimModuleSyntax: true },
+      ])("a declare block asks for no module: %j", compilerOptions => {
+        const blocks = [
+          'declare module "m" { import { T } from "foo"; }',
+          'declare module "m" { import { type T } from "foo"; }',
+          'declare module "m" { import "foo"; }',
+          'declare module "m" { export * from "foo"; }',
+          'declare module "m" { export { a } from "foo"; }',
+          'declare global { import { T } from "foo"; }',
+          'declare namespace N { import { T } from "foo"; }',
+        ];
+        for (const options of [{}, { trimUnusedImports: true }, { treeShaking: true }]) {
+          const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig: { compilerOptions }, ...options });
+          expect(blocks.map(block => transpiler.transformSync(block))).toEqual(blocks.map(() => ""));
+          expect(blocks.map(block => transpiler.scan(block).imports)).toEqual(blocks.map(() => []));
+          expect(blocks.map(block => transpiler.scanImports(block))).toEqual(blocks.map(() => []));
+        }
+      });
+
+      // `exports.eliminate` deletes an export and the imports that only it used. An import that
+      // tsconfig keeps goes with a deleted export that used it, and not for the option alone.
+      it("an export deleted on request takes only the imports that it used", () => {
+        const source = `import { register } from "./register";\nimport { db } from "./db";\nexport const kept = 1;\nexport const gone = () => db;`;
+        const transform = exports =>
+          new Bun.Transpiler({
+            loader: "ts",
+            trimUnusedImports: true,
+            tsconfig: { compilerOptions: { verbatimModuleSyntax: true } },
+            ...(exports ? { exports } : {}),
+          }).transformSync(source);
+        const used =
+          'import"./register";\nimport { db } from "./db";\nexport const kept = 1;\nexport const gone = () => db;\n';
+        expect(transform()).toBe(used);
+        expect(transform({ eliminate: ["absent"] })).toBe(used);
+        expect(transform({ eliminate: ["gone"] })).toBe('import"./register";\nexport const kept = 1;\n');
       });
     });
 

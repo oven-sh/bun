@@ -1071,16 +1071,14 @@ describe("the results of new Script() are own properties of the instance", () =>
   const source = "1 + 1\n//# sourceURL=foo.js\n//# sourceMappingURL=a.map";
   type Results = Record<string, unknown>;
 
-  // The child is killed before the test times out, so that a child that never returns is not left running.
-  const childTimeout = 20_000;
-  const testTimeout = childTimeout + 10_000;
   async function run(code: string) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", code],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: childTimeout,
+      // A child that never returns is killed, so that the test fails instead of waiting for it.
+      timeout: 20_000,
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1304,120 +1302,107 @@ describe("the results of new Script() are own properties of the instance", () =>
         exitCode: 0,
       });
     },
-    testTimeout,
   );
 
   // Each of these never returned. Script.prototype had four accessors that threw, for a receiver that is not a
   // Script, an error whose message rendered the receiver. Rendering the receiver read the four accessors again.
   describe.concurrent("a receiver that is not a Script", () => {
-    test(
-      "a read of each result returns",
-      async () => {
-        const code = /*js*/ `
-          const vm = require("node:vm");
-          const names = ["sourceURL", "sourceMapURL", "cachedData", "cachedDataProduced", "cachedDataRejected"];
-          const script = new vm.Script("1\\n//# sourceMappingURL=a.map", { produceCachedData: true });
-          class Sub extends vm.Script {}
-          const receivers = {
-            "Script.prototype": vm.Script.prototype,
-            "an object that inherits from Script.prototype": Object.create(vm.Script.prototype),
-            "the prototype of a subclass": Sub.prototype,
-            "an object that inherits from a Script": Object.create(script),
-            "a Proxy of a Script": new Proxy(script, {}),
-          };
-          for (const [label, receiver] of Object.entries(receivers)) {
-            console.log(label + ": " + names.map(name => (Buffer.isBuffer(receiver[name]) ? "Buffer" : String(receiver[name]))).join(" "));
-          }
-          // A data property of the prototype does not hide the result of an instance.
-          vm.Script.prototype.sourceMapURL = "from the prototype";
-          console.log("with a value on the prototype: " + new vm.Script("1").sourceMapURL + " " + vm.Script.prototype.sourceMapURL);
-        `;
-        expect(await run(code)).toEqual({
-          stdout: [
-            "Script.prototype: undefined undefined undefined undefined undefined",
-            "an object that inherits from Script.prototype: undefined undefined undefined undefined undefined",
-            "the prototype of a subclass: undefined undefined undefined undefined undefined",
-            "an object that inherits from a Script: undefined a.map Buffer true undefined",
-            "a Proxy of a Script: undefined a.map Buffer true undefined",
-            "with a value on the prototype: undefined from the prototype",
-          ],
-          stderr: "",
-          signalCode: null,
-          exitCode: 0,
-        });
-      },
-      testTimeout,
-    );
+    test("a read of each result returns", async () => {
+      const code = /*js*/ `
+        const vm = require("node:vm");
+        const names = ["sourceURL", "sourceMapURL", "cachedData", "cachedDataProduced", "cachedDataRejected"];
+        const script = new vm.Script("1\\n//# sourceMappingURL=a.map", { produceCachedData: true });
+        class Sub extends vm.Script {}
+        const receivers = {
+          "Script.prototype": vm.Script.prototype,
+          "an object that inherits from Script.prototype": Object.create(vm.Script.prototype),
+          "the prototype of a subclass": Sub.prototype,
+          "an object that inherits from a Script": Object.create(script),
+          "a Proxy of a Script": new Proxy(script, {}),
+        };
+        for (const [label, receiver] of Object.entries(receivers)) {
+          console.log(label + ": " + names.map(name => (Buffer.isBuffer(receiver[name]) ? "Buffer" : String(receiver[name]))).join(" "));
+        }
+        // A data property of the prototype does not hide the result of an instance.
+        vm.Script.prototype.sourceMapURL = "from the prototype";
+        console.log("with a value on the prototype: " + new vm.Script("1").sourceMapURL + " " + vm.Script.prototype.sourceMapURL);
+      `;
+      expect(await run(code)).toEqual({
+        stdout: [
+          "Script.prototype: undefined undefined undefined undefined undefined",
+          "an object that inherits from Script.prototype: undefined undefined undefined undefined undefined",
+          "the prototype of a subclass: undefined undefined undefined undefined undefined",
+          "an object that inherits from a Script: undefined a.map Buffer true undefined",
+          "a Proxy of a Script: undefined a.map Buffer true undefined",
+          "with a value on the prototype: undefined from the prototype",
+        ],
+        stderr: "",
+        signalCode: null,
+        exitCode: 0,
+      });
+    });
 
-    test(
-      "printing, serializing and walking Script.prototype return",
-      async () => {
-        const code = /*js*/ `
-          const vm = require("node:vm");
-          const util = require("node:util");
-          const assert = require("node:assert");
-          const p = vm.Script.prototype;
-          console.log(p);
-          console.log(typeof util.inspect(p, { getters: true }));
-          console.log(JSON.stringify(p));
-          const read = [];
-          for (const key in p) read.push(typeof p[key]);
-          console.log(read.every(type => type === "function"));
-          assert.deepStrictEqual(p, p);
-          console.log(util.isDeepStrictEqual(p, Object.create(p)));
-        `;
-        // The first lines are Script.prototype in the format of console.log.
-        const { stdout, ...rest } = await run(code);
-        expect({ stdout: stdout.slice(-4), ...rest }).toEqual({
-          stdout: ["string", "{}", "true", "false"],
-          stderr: "",
-          signalCode: null,
-          exitCode: 0,
-        });
-      },
-      testTimeout,
-    );
+    test("printing, serializing and walking Script.prototype return", async () => {
+      const code = /*js*/ `
+        const vm = require("node:vm");
+        const util = require("node:util");
+        const assert = require("node:assert");
+        const p = vm.Script.prototype;
+        console.log(p);
+        console.log(typeof util.inspect(p, { getters: true }));
+        console.log(JSON.stringify(p));
+        const read = [];
+        for (const key in p) read.push(typeof p[key]);
+        console.log(read.every(type => type === "function"));
+        assert.deepStrictEqual(p, p);
+        console.log(util.isDeepStrictEqual(p, Object.create(p)));
+      `;
+      // The first lines are Script.prototype in the format of console.log.
+      const { stdout, ...rest } = await run(code);
+      expect({ stdout: stdout.slice(-4), ...rest }).toEqual({
+        stdout: ["string", "{}", "true", "false"],
+        stderr: "",
+        signalCode: null,
+        exitCode: 0,
+      });
+    });
 
-    test(
-      "an error about Script.prototype is thrown",
-      async () => {
-        const code = /*js*/ `
-          const vm = require("node:vm");
-          const p = vm.Script.prototype;
-          const calls = {
-            "p.runInThisContext()": () => p.runInThisContext(),
-            "p.runInContext(context)": () => p.runInContext(vm.createContext({})),
-            "p.createCachedData()": () => p.createCachedData(),
-            "createContext({}, { microtaskMode: p })": () => vm.createContext({}, { microtaskMode: p }),
-            "new Script(code, { lineOffset: p })": () => new vm.Script("1", { lineOffset: p }),
-            "script.runInContext(p)": () => new vm.Script("1").runInContext(p),
-          };
-          for (const [label, call] of Object.entries(calls)) {
-            try {
-              call();
-              console.log(label + ": returned");
-            } catch (e) {
-              console.log(label + ": " + e.name + " " + e.code);
-            }
+    test("an error about Script.prototype is thrown", async () => {
+      const code = /*js*/ `
+        const vm = require("node:vm");
+        const p = vm.Script.prototype;
+        const calls = {
+          "p.runInThisContext()": () => p.runInThisContext(),
+          "p.runInContext(context)": () => p.runInContext(vm.createContext({})),
+          "p.createCachedData()": () => p.createCachedData(),
+          "createContext({}, { microtaskMode: p })": () => vm.createContext({}, { microtaskMode: p }),
+          "new Script(code, { lineOffset: p })": () => new vm.Script("1", { lineOffset: p }),
+          "script.runInContext(p)": () => new vm.Script("1").runInContext(p),
+        };
+        for (const [label, call] of Object.entries(calls)) {
+          try {
+            call();
+            console.log(label + ": returned");
+          } catch (e) {
+            console.log(label + ": " + e.name + " " + e.code);
           }
-        `;
-        // Node throws a TypeError for each call. The codes of the first three are Bun's.
-        expect(await run(code)).toEqual({
-          stdout: [
-            "p.runInThisContext(): TypeError ERR_INVALID_ARG_VALUE",
-            "p.runInContext(context): TypeError ERR_INVALID_ARG_VALUE",
-            "p.createCachedData(): TypeError ERR_INVALID_ARG_VALUE",
-            "createContext({}, { microtaskMode: p }): TypeError ERR_INVALID_ARG_VALUE",
-            "new Script(code, { lineOffset: p }): TypeError ERR_INVALID_ARG_TYPE",
-            "script.runInContext(p): TypeError ERR_INVALID_ARG_TYPE",
-          ],
-          stderr: "",
-          signalCode: null,
-          exitCode: 0,
-        });
-      },
-      testTimeout,
-    );
+        }
+      `;
+      // Node throws a TypeError for each call. The codes of the first three are Bun's.
+      expect(await run(code)).toEqual({
+        stdout: [
+          "p.runInThisContext(): TypeError ERR_INVALID_ARG_VALUE",
+          "p.runInContext(context): TypeError ERR_INVALID_ARG_VALUE",
+          "p.createCachedData(): TypeError ERR_INVALID_ARG_VALUE",
+          "createContext({}, { microtaskMode: p }): TypeError ERR_INVALID_ARG_VALUE",
+          "new Script(code, { lineOffset: p }): TypeError ERR_INVALID_ARG_TYPE",
+          "script.runInContext(p): TypeError ERR_INVALID_ARG_TYPE",
+        ],
+        stderr: "",
+        signalCode: null,
+        exitCode: 0,
+      });
+    });
   });
 });
 

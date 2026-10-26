@@ -482,7 +482,7 @@ describe("a MIMEType accessor read on a receiver that is not a MIMEType", () => 
       }
       console.log(typeof Bun.inspect(receiver));
     `;
-    // The child is killed before the test times out, so that a child that never returns is not left running.
+    // A child that never returns is killed, so that the test fails instead of waiting for it.
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", code],
       env: bunEnv,
@@ -498,7 +498,7 @@ describe("a MIMEType accessor read on a receiver that is not a MIMEType", () => 
       signalCode: null,
       exitCode: 0,
     });
-  }, 30_000);
+  });
 });
 
 test("MIMEType releases its type and subtype strings when garbage-collected", async () => {

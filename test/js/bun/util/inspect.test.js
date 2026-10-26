@@ -1557,7 +1557,8 @@ it("Bun.inspect() and a read of each key return for the prototype of every expor
     }
     writeSync(1, "visited " + visited + "\\n");
   `;
-  // The child is killed before the test times out, so that a child that never returns is not left running.
+  // A debug build takes about 5 s for the sweep, which is the default timeout of a test. The child is killed before
+  // the test times out, so that a child that never returns is not left running.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", code],
     // Some of the keys are deprecated, and a read of one prints a warning.

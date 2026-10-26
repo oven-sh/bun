@@ -175,7 +175,10 @@ impl ProgramContext {
         };
 
         // Babel's generateUid loop: `_<name>`, `_<name>2`, `_<name>3`, ... until a name is free.
-        let next_suffix = self.next_uid_suffix.entry(uid_base.to_owned()).or_insert(1);
+        let next_suffix = self
+            .next_uid_suffix
+            .entry(uid_base.to_owned())
+            .or_insert_with(|| 1);
         let uid = loop {
             let uid = if *next_suffix > 1 {
                 format!("_{uid_base}{next_suffix}")

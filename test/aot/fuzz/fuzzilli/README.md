@@ -105,11 +105,58 @@ bun test/aot/fuzz/fuzzilli/run-batch.ts --bun <the Bun to test> --programs /tmp/
 `run-batch.ts` takes `--count` programs out of the folder. Several of them can share a folder. It writes one file for each `--group` programs, with an `import()` of each, and builds one executable with those files as entry points behind `run-each-program-in-a-worker.ts`. That file starts a Worker for each program, which imports that program alone, and ends the Worker after `--milliseconds` (default 250) or 512 MB. The executable runs all programs, `bun run` of the same files runs them again, and the two are compared by what each program printed and how it ended.
 
 - A program that the compiler refuses leaves, and the rest is built again.
-- When the process ends in the middle, the program it was in gets the blame and the rest run in a new process.
+- When the process ends in the middle, the program it was in gets the blame and the rest run in a new process. `stopped-before.txt` holds the programs that the runner had stopped earlier in that process: their threads can outlive them.
 - The programs that differ run a second time, both ways, with twenty times the time. The rules for what counts are those in the table above.
+- They also run in an executable that is built without `--aot`, each as a group of its own. A program that prints and ends there as in the `--aot` executable is counted as "as an executable without --aot" and not kept.
+- A file that `bun run` refuses when it loads it is counted as "bun run refuses the file", and a program whose objects only list a member under a symbol in another place as "symbol keys in another order". Neither is kept.
 - A program that still differs is built alone. If it no longer differs, its neighbors are halved while the difference stays: the programs of a group are analyzed together, so what one does to a built-in can change how another is compiled. `report.txt` says which it was and holds the neighbors.
 
 What it keeps under `--finds` is laid out as under `BUN_FUZZILLI_FINDS`. It prints a line for each batch: programs a second of processor time, the time and peak memory of the build and of the two runs, and how many programs ended in which way.
+
+## TypeScript
+
+Fuzzilli writes JavaScript. With `BUN_FUZZILLI_TYPES` set, it writes TypeScript (`BunTypeScript.swift`, and the part of `fuzzilli.patch` that changes `JavaScriptLifter.swift`). What a program prints doesn't depend on its types, so the comparison with `bun run` stays the same.
+
+```sh
+BUN_FUZZILLI_TYPES=mixed BUN_FUZZILLI_PRINTS_VALUES=0 BUN_FUZZILLI_ENTRY_POINT=/tmp/fuzzilli/program.ts \
+  .build/release/FuzzilliCli --profile=bunCompiler --jobs=32 --storagePath=<storage> --resume <bun>/build/fuzzilli/bun-asan
+```
+
+The extension of the entry point makes Bun read the programs as TypeScript. The programs declare `printValue` and print their variables themselves, because `// @ts-nocheck` only counts on the first line. `FuzzILTool --liftCorpusToJS` writes TypeScript too. Rename its files to `.ts`.
+
+Fuzzilli's typer has a type for every variable. It runs twice over a program: the first run collects what each function is called with, and the second one uses that for the parameters. From those types come annotations on parameters, return values, `let` and `const`, and class fields, and an `interface` for each object literal.
+
+Each annotation is one of four kinds.
+
+| Kind     | What is written                                                                                                                                |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `absent` | nothing                                                                                                                                        |
+| `right`  | the type from the typer                                                                                                                        |
+| `wider`  | a union with more members, `any`, `unknown`, `object`, a base interface, `Readonly<T>`, `Partial<T>`, `Same<T>`, `T & {}`, a `readonly` array  |
+| `wrong`  | another primitive, another interface or class of the program, an array of other elements, a tuple, the type without its `null` and `undefined` |
+
+A type error stops the build, and a program that doesn't build tests nothing. So for each program, one of three things makes the checker accept it.
+
+- **Casts.** A small model follows what the checker knows about each expression. Where it can show that an operation is accepted, the operation is written as it is. Everywhere else the operands are cast to `any`, or the line gets `// @ts-ignore`. A value reaches a declaration of another type through `as any`, `as unknown as T`, `!`, or one of the detours below.
+- **`// @ts-ignore` above every line.** Nothing is cast.
+- **`// @ts-nocheck`.** Nothing is cast.
+
+A detour is a generic function that returns its argument: through `pass<T>`, a generic class, a `Map<K, V>`, a callback of `Array.prototype.map`, `T[K]`, mapped and conditional types, type parameters with defaults and constraints, a `switch` over a discriminated union, a type predicate that is always true or always false, overloads, or `JSON.parse` declared as the type. There are also enums for whole numbers, tuples for short arrays, `satisfies`, and `int32` for parameters and constants.
+
+`BUN_FUZZILLI_TYPES` is `mixed`, `right`, `wider`, `wrong` or `absent`, or a list such as `right=70,wrong=30,generic=50`.
+
+| Setting                             | Default        | Meaning                                                                       |
+| ----------------------------------- | -------------- | ----------------------------------------------------------------------------- |
+| `absent`, `right`, `wider`, `wrong` | 15, 45, 20, 20 | weights of the four kinds                                                     |
+| `unchecked-file`                    | 10             | percent of programs with `// @ts-nocheck`                                     |
+| `every-line-ignored`                | 10             | percent of programs with `// @ts-ignore` above every line                     |
+| `ignored-line`                      | 25             | percent of operations that get `// @ts-ignore` and no casts                   |
+| `generic`                           | 25             | percent of annotated variables whose value takes a detour                     |
+| `declared`                          | 50             | percent of expressions that get a variable of their own and aren't inlined    |
+| `int32`                             | 10             | percent of `number` annotations that become `int32` where the build allows it |
+| `seed`                              | 0              | changes every choice                                                          |
+
+The choices are drawn from a hash of the program, so a program always becomes the same text, and Fuzzilli can reduce a finding. The profile turns off `with`, which TypeScript doesn't allow.
 
 ## Try one program without Fuzzilli
 

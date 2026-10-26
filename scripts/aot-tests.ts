@@ -152,10 +152,13 @@ export function getAotFileDraw({ os, distro, profile }: AotLane, aot: AotTests):
 }
 
 // What a lane runs whatever it draws.
-export function getAotAlwaysDrawn({ os, arch, profile }: AotLane, hasOnlyLibraryChanges: boolean): string[] {
+export function getAotAlwaysDrawn(
+  { os, arch, profile }: AotLane,
+  hasLibraryChangesWithoutAotChanges: boolean,
+): string[] {
   const isMacOnArm = os === "darwin" && arch === "aarch64";
   return [
-    ...(hasOnlyLibraryChanges ? libraryAotGroups : []),
+    ...(hasLibraryChangesWithoutAotChanges ? libraryAotGroups : []),
     // The engine's own CI tests Linux alone: nothing else runs its tests on macOS.
     ...(isMacOnArm ? ["aot/engine-tests"] : []),
     ...(profile === "asan" ? ["aot/exception-checks"] : []),
@@ -205,10 +208,10 @@ export function getAotStepArguments(
   lane: AotLane,
   aot: AotTests,
   takes: AotTakes,
-  hasOnlyLibraryChanges: boolean,
+  hasLibraryChangesWithoutAotChanges: boolean,
 ): string[] {
   const draw = getAotFileDraw(lane, aot);
-  const alwaysDrawn = getAotAlwaysDrawn(lane, hasOnlyLibraryChanges);
+  const alwaysDrawn = getAotAlwaysDrawn(lane, hasLibraryChangesWithoutAotChanges);
   const args: string[] = [];
   if (draw === 1) args.push(...aotTests.map(group => `--include=${group}`), `--aot-takes=${takes}`);
   else if (takes === "fixed") args.push(...alwaysDrawn.map(group => `--include=${group}`), "--aot-takes=fixed");

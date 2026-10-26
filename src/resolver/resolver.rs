@@ -1118,11 +1118,12 @@ impl<'a> Resolver<'a> {
 
     // var tracing_start: i128 — unused; dropped.
 
-    /// The module of the executable that `specifier` names from `source_dir`, found as `bun run` finds a file: as spelled, with each extension, then the index file of a directory.
+    /// The module of the executable that `specifier` names from `source_dir`, found as `bun run` finds a file: as spelled, with each extension, then the main file or the index file of a directory.
     pub fn resolve_embedded_module(
         &self,
         source_dir: &[u8],
         specifier: &[u8],
+        kind: ast::ImportKind,
     ) -> Option<&'static [u8]> {
         let search = crate::compiled_program::ExtensionSearch {
             extensions: self.opts.ext_order_slice(self.extension_order),
@@ -1133,8 +1134,12 @@ impl<'a> Resolver<'a> {
                 })
             },
         };
-        self.standalone_module_graph?
-            .resolve_module(source_dir, specifier, &search)
+        self.standalone_module_graph?.resolve_module(
+            source_dir,
+            specifier,
+            is_require(kind),
+            &search,
+        )
     }
 
     /// The module of the executable that a bare `specifier` names from `source_dir`: an entry point, by the name of its package.
@@ -1153,16 +1158,21 @@ impl<'a> Resolver<'a> {
                 })
             },
         };
-        let is_require = matches!(
-            kind,
-            ast::ImportKind::Require | ast::ImportKind::RequireResolve
-        );
-        self.standalone_module_graph?
-            .resolve_package(source_dir, specifier, is_require, &search)
+        self.standalone_module_graph?.resolve_package(
+            source_dir,
+            specifier,
+            is_require(kind),
+            &search,
+        )
     }
 
     /// What an executable compiled in place holds under the path that `specifier` names from `source_dir`: a compiled module, then a file that `--asset` gave it.
-    fn resolve_at_source_path(&self, source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
+    fn resolve_at_source_path(
+        &self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<&'static [u8]> {
         use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
         let graph = self.standalone_module_graph?;
         let program = graph
@@ -1187,8 +1197,12 @@ impl<'a> Resolver<'a> {
                 })
             },
         };
+        let how = crate::compiled_program::HowNamed {
+            names_directory: Self::import_path_names_directory(specifier),
+            is_require: is_require(kind),
+        };
         program
-            .resolve_module_at_source_path(path, &search)
+            .resolve_module_at_source_path(path, how, &search)
             .or_else(|| graph.file_at_source_path(path))
     }
 
@@ -1456,7 +1470,7 @@ impl<'a> Resolver<'a> {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
-                let embedded = self.resolve_embedded_module(source_dir, import_path);
+                let embedded = self.resolve_embedded_module(source_dir, import_path, kind);
                 if let Some(file_name) = embedded
                     .or_else(|| self.resolve_embedded_package(source_dir, import_path, kind))
                 {
@@ -1544,7 +1558,8 @@ impl<'a> Resolver<'a> {
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
         if matches!(tmp, ResultUnion::NotFound)
-            && let Some(path) = self.resolve_at_source_path(source_dir_normalized, import_path)
+            && let Some(path) =
+                self.resolve_at_source_path(source_dir_normalized, import_path, kind)
         {
             self.extension_order = original_order;
             return ResultUnion::Success(Result {
@@ -2206,7 +2221,7 @@ impl<'a> Resolver<'a> {
 
     /// Whether an import specifier explicitly names a directory: a trailing
     /// separator, `.`, `..`, or a path ending in `/.` or `/..`.
-    fn import_path_names_directory(import_path: &[u8]) -> bool {
+    pub(crate) fn import_path_names_directory(import_path: &[u8]) -> bool {
         let Some(&last) = import_path.last() else {
             return false;
         };
@@ -7160,6 +7175,13 @@ bun_core::comptime_string_map! {
 #[inline]
 pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
+}
+
+fn is_require(kind: ast::ImportKind) -> bool {
+    matches!(
+        kind,
+        ast::ImportKind::Require | ast::ImportKind::RequireResolve
+    )
 }
 
 /// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This

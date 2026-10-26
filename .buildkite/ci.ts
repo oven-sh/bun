@@ -963,7 +963,7 @@ const isLibrarySource = (file: string) =>
   file.endsWith(".bind.ts") || librarySources.some(source => file.startsWith(source));
 
 let libraryChanges: boolean | undefined;
-function hasOnlyLibraryChanges(options: PipelineOptions): boolean {
+function hasLibraryChangesWithoutAotChanges(options: PipelineOptions): boolean {
   if (hasAotChanges(options)) return false;
   return (libraryChanges ??= options.changedFiles?.length
     ? options.changedFiles.some(isLibrarySource)
@@ -1011,7 +1011,7 @@ function getAotParallelism(platform: Platform, options: PipelineOptions, aot: Ao
   const windows = arch === "x64" ? "windows" : "windows-aarch64";
   const lane = profile === "asan" ? "asan" : abi === "musl" ? "musl" : os === "windows" ? windows : "default";
   const excludes = getAotExcludes(platform, aot);
-  const alwaysDrawn = getAotAlwaysDrawn(platform, hasOnlyLibraryChanges(options));
+  const alwaysDrawn = getAotAlwaysDrawn(platform, hasLibraryChangesWithoutAotChanges(options));
   const draw = getAotFileDraw(platform, aot);
   const sample = spellSample(aotSample, getAotShare(platform));
   const alwaysInDrawnStep = getAotAlwaysInDrawnStep(platform, aot);
@@ -1047,7 +1047,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     args.push(
       "--retries=1",
       "--vendor=false",
-      ...getAotStepArguments(platform, aot, aotTakes, hasOnlyLibraryChanges(options)),
+      ...getAotStepArguments(platform, aot, aotTakes, hasLibraryChangesWithoutAotChanges(options)),
     );
   } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
@@ -1095,7 +1095,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // The compiler's tests do not hold up work that touches neither the compiler nor what it compiles.
     ...(platform.tier === "beta" ||
     aotTakes === "drawn" ||
-    (aot && !(hasAotChanges(options) || hasOnlyLibraryChanges(options)))
+    (aot && !(hasAotChanges(options) || hasLibraryChangesWithoutAotChanges(options)))
       ? { soft_fail: true }
       : {}),
     // The beta lane runs the whole suite as one shard on one box (~35 min).

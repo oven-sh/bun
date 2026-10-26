@@ -32,8 +32,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         let element_count = pattern.map(|shape| shape.element_count);
         let has_rest = pattern.is_some_and(|shape| shape.has_rest);
-        self.builder
-            .iterator_open(iterable, kind, element_count, pattern.is_some(), has_rest)
+        self.builder.iterator_open(
+            iterable,
+            kind,
+            element_count,
+            pattern.is_some(),
+            has_rest,
+            false,
+        )
     }
 
     pub(crate) fn emit_iterator_step(

@@ -3,7 +3,7 @@ mod type_of;
 
 use bun_sema::atom::known;
 use bun_sema::bind::Parent;
-use bun_sema::hir::{BinOp, ExprId, ExprKind, StmtKind, UnOp};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, IdList, StmtKind, UnOp};
 use bun_sema::module_format::main_module_operand;
 use smallvec::SmallVec;
 
@@ -207,10 +207,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut operand = expression;
         while let Parent::Expr(parent) = self.file.bound.parent_of_expr(operand) {
             match hir[parent].kind {
-                ExprKind::Binary { op, left, .. } => {
-                    let shares_position =
-                        op != BinOp::Comma && !needs_parentheses(op, inner, left == operand);
-                    return shares_position.then_some(parent);
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    right,
+                } => {
+                    if right != operand || !self.file.is_removed_when_unused(left) {
+                        return None;
+                    }
+                    operand = parent;
+                }
+                ExprKind::Binary { op, left, right } => {
+                    let is_left_operand = self.file.printed_operands(op, left, right).0 == operand;
+                    return (!needs_parentheses(op, inner, is_left_operand)).then_some(parent);
                 }
                 _ if hir.type_assertion_operand(parent).is_some() => operand = parent,
                 _ => return None,
@@ -225,12 +234,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut first = expression;
         loop {
             let (next, outer) = match hir[first].kind {
-                ExprKind::Binary { op, left, .. } => (left, Some(op)),
+                ExprKind::Binary { op, left, right } => {
+                    (self.file.printed_operands(op, left, right).0, Some(op))
+                }
                 ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (obj, None),
                 ExprKind::Call(site) => (hir[site].callee, None),
                 _ => return false,
             };
-            let next = self.file.skip_type_syntax(next);
+            let next = self.file.skip_unprinted_syntax(next);
             match (hir[next].kind, outer) {
                 (ExprKind::Binary { op: inner, .. }, Some(outer)) => {
                     if inner == BinOp::Comma || needs_parentheses(outer, inner, true) {
@@ -245,25 +256,70 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    // The operand, argument or element that stands in front of `expression` in a list whose members stand in the order of the text.
+    fn find_member_in_front_of(
+        &self,
+        members: IdList<ExprId>,
+        expression: ExprId,
+    ) -> Option<ExprId> {
+        let hir = self.file.hir;
+        let members = &hir.ids[members.range()];
+        let position = hir[expression].pos;
+        let index = members.partition_point(|&member| hir[ExprId::from(member)].pos < position);
+        let is_found = members
+            .get(index)
+            .is_some_and(|&member| ExprId::from(member) == expression);
+        (is_found && index > 0).then(|| ExprId::from(members[index - 1]))
+    }
+
     // The last position that the source map knows in front of an expression.
     fn find_position_in_front_of(&self, expression: ExprId) -> Option<u32> {
         let hir = self.file.hir;
-        match self.file.bound.parent_of_expr(expression) {
-            Parent::Stmt(statement) => match hir[statement].kind {
-                StmtKind::Return(_)
-                | StmtKind::Throw(_)
-                | StmtKind::While { .. }
-                | StmtKind::Switch { .. } => Some(hir[statement].start),
-                _ => None,
-            },
-            Parent::FnBody(function) => Some(self.file.parameters_position(function)),
-            Parent::Expr(parent) => match hir[parent].kind {
-                ExprKind::Assign { target, value, .. } if value == expression => {
-                    Some(self.file.last_mapped_position(target))
+        let file = &*self.file;
+        let mut first = expression;
+        loop {
+            let parent = match file.bound.parent_of_expr(first) {
+                Parent::Stmt(statement) => {
+                    return match hir[statement].kind {
+                        StmtKind::Return(_)
+                        | StmtKind::Throw(_)
+                        | StmtKind::If { .. }
+                        | StmtKind::While { .. }
+                        | StmtKind::Switch { .. } => Some(hir[statement].start),
+                        _ => None,
+                    };
                 }
-                _ => None,
-            },
-            _ => None,
+                Parent::FnBody(function) => return Some(file.parameters_position(function)),
+                Parent::VarInit(declaration) => return Some(hir[hir[declaration].pat].pos),
+                Parent::Prop(property) => return Some(hir[property].pos),
+                Parent::Expr(parent) => parent,
+                _ => return None,
+            };
+            match hir[parent].kind {
+                ExprKind::Assign { target, value, .. } if value == first => {
+                    return Some(file.last_mapped_position(target));
+                }
+                ExprKind::Binary { op, left, right } => {
+                    let printed_left = file.printed_operands(op, left, right).0;
+                    let is_dropped = op == BinOp::Comma && file.is_removed_when_unused(left);
+                    if printed_left != first && !is_dropped {
+                        return Some(file.last_mapped_position(printed_left));
+                    }
+                }
+                ExprKind::Call(site) | ExprKind::New(site) if hir[site].callee != first => {
+                    let before = self.find_member_in_front_of(hir[site].args, first);
+                    return Some(file.last_mapped_position(before.unwrap_or(hir[site].callee)));
+                }
+                ExprKind::Array(elements) => {
+                    return Some(match self.find_member_in_front_of(elements, first) {
+                        Some(before) => file.last_mapped_position(before),
+                        None => hir[parent].pos,
+                    });
+                }
+                _ if hir.type_assertion_operand(parent).is_some() => {}
+                _ => return None,
+            }
+            first = parent;
         }
     }
 
@@ -305,7 +361,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let mut spine: SmallVec<[(BinOp, ExprId); 8]> = SmallVec::new();
         spine.push((op, right));
+        let mut innermost_operator = expression;
         let mut innermost = left;
+        // The operators from here on stand in parentheses that Bun's transpiler prints.
+        let mut first_in_parentheses = None;
         while let ExprKind::Binary { op, left, right } = hir[innermost].kind {
             let is_spine_operator = match classify_operator(op) {
                 OperatorClass::Plain | OperatorClass::Ordering => true,
@@ -319,21 +378,139 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             {
                 break;
             }
+            let outer = spine[spine.len() - 1].0;
+            if first_in_parentheses.is_none() && needs_parentheses(outer, op, true) {
+                first_in_parentheses = Some(spine.len());
+            }
             spine.push((op, right));
+            innermost_operator = innermost;
             innermost = left;
         }
-        let first_position = self.find_operator_position(expression);
+        let outer_position = self.find_operator_position(expression);
+        let first_in_parentheses = first_in_parentheses.unwrap_or(spine.len());
+        let (mut inner_position, mut position_in_front) = (outer_position, outer_position);
+        if first_in_parentheses < spine.len() {
+            inner_position = self.file.first_position(innermost);
+            position_in_front = self
+                .find_position_in_front_of(expression)
+                .unwrap_or(inner_position);
+            if self.is_printed_in_parentheses_first(innermost_operator) {
+                inner_position = position_in_front;
+            }
+        }
         let mut value = self.lower_expression(innermost);
-        for &(node_op, node_right) in spine.iter().rev() {
+        let mut recorded = match spine.len() {
+            1 => self.find_last_record_in_front_of(op, innermost),
+            _ => None,
+        };
+        for (index, &(node_op, node_right)) in spine.iter().enumerate().rev() {
             let right_value = self.lower_expression(node_right);
-            // JSC reports `instanceof`, like `in`, where the right operand starts.
-            self.set_position(match node_op {
+            if index + 1 < spine.len() && needs_parentheses(node_op, spine[index + 1].0, true) {
+                inner_position = position_in_front;
+            }
+            let position = match node_op {
+                // JSC reports `instanceof`, like `in`, where the right operand starts.
                 BinOp::Instanceof => hir[node_right].pos,
-                _ => first_position,
-            });
+                BinOp::EqEq => {
+                    self.find_comparison_position(expression, node_op, left, node_right, recorded)
+                }
+                _ if index < first_in_parentheses => outer_position,
+                _ => inner_position,
+            };
+            self.set_position(position);
+            recorded = Some(position);
             value = self.emit_binary(node_op, value, right_value);
         }
         value
+    }
+
+    // JSC records no position for `==`, which is reported at the last position recorded before it.
+    pub(in crate::lower) fn find_comparison_position(
+        &mut self,
+        expression: ExprId,
+        op: BinOp,
+        left: ExprId,
+        right: ExprId,
+        recorded_in_front: Option<u32>,
+    ) -> u32 {
+        let recorded = match op {
+            BinOp::EqEq => self
+                .find_last_record_of_equality(expression, left, right)
+                .or(recorded_in_front),
+            _ => None,
+        };
+        recorded.unwrap_or_else(|| self.find_operator_position(expression))
+    }
+
+    // What `find_comparison_position` wants to know about the left operand, which has just been lowered.
+    pub(in crate::lower) fn find_last_record_in_front_of(
+        &self,
+        op: BinOp,
+        left: ExprId,
+    ) -> Option<u32> {
+        match op {
+            BinOp::EqEq => self.find_last_record(left),
+            _ => None,
+        }
+    }
+
+    // The position of the last record that JSC makes for an operand, which has just been lowered. A literal leaves none.
+    fn find_last_record(&self, operand: ExprId) -> Option<u32> {
+        let hir = self.file.hir;
+        let mut last = self.file.skip_unprinted_syntax(operand);
+        loop {
+            if self.file.is_literal_operand(last) {
+                return None;
+            }
+            let next = match hir[last].kind {
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma,
+                    right,
+                    ..
+                } => right,
+                ExprKind::Binary { .. } => return Some(self.position()),
+                ExprKind::Unary {
+                    op: UnOp::Void,
+                    operand,
+                } => operand,
+                ExprKind::Template { exprs } => hir.ids(exprs).last()?,
+                ExprKind::This | ExprKind::BigInt(_) | ExprKind::Fn(_) => return None,
+                _ => return Some(self.file.last_reported_position(last)),
+            };
+            last = self.file.skip_unprinted_syntax(next);
+        }
+    }
+
+    // JSC records a name where it ends. The source map takes that to a `)` or `]` that is printed right behind the name.
+    fn find_last_record_of_equality(
+        &self,
+        expression: ExprId,
+        left: ExprId,
+        right: ExprId,
+    ) -> Option<u32> {
+        let hir = self.file.hir;
+        let recorded = self.find_last_record(right)?;
+        let printed_right = self.file.printed_operands(BinOp::EqEq, left, right).1;
+        let printed_right = self.file.skip_unprinted_syntax(printed_right);
+        if !matches!(hir[printed_right].kind, ExprKind::Ident(_)) {
+            return Some(recorded);
+        }
+        let mut last = expression;
+        while let Parent::Expr(parent) = self.file.bound.parent_of_expr(last) {
+            match hir[parent].kind {
+                ExprKind::Call(site) | ExprKind::New(site)
+                    if hir.ids(hir[site].args).last() == Some(last) =>
+                {
+                    return Some(hir[site].close_pos);
+                }
+                ExprKind::Array(elements) if hir.ids(elements).last() == Some(last) => {
+                    return Some(self.file.last_token_position(parent));
+                }
+                _ if hir.type_assertion_operand(parent).is_some() => last = parent,
+                _ => break,
+            }
+        }
+        Some(recorded)
     }
 
     fn lower_in(&mut self, expression: ExprId, left: ExprId, right: ExprId) -> ValueId {

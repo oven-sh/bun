@@ -3192,20 +3192,24 @@ function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange): unk
       lastKeepAliveSecs = MathFloor(keepAliveTimeout / 1000);
       lastKeepAliveTimeout = keepAliveTimeout;
     }
-    if (lastKeepAliveSecs <= kMaxNativeKeepAliveSecs) {
+    const keepAliveSecs = lastKeepAliveSecs;
+    if (keepAliveSecs <= kMaxNativeKeepAliveSecs) {
+      // A header value's toString() can send another response, so the results are set after flatHeadersOf().
       if ((bits & HEADER_CONTENT_LENGTH) !== 0 || (!res._removedContLen && !exchange.isFrozenChunked)) {
+        const headers = flatHeadersOf(exchange);
         renderedAutoHeaders = AUTO_HEADER_DATE | AUTO_HEADER_CONN_KEEP_ALIVE | AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
-        renderedKeepAliveSecs = lastKeepAliveSecs;
-        return flatHeadersOf(exchange);
+        renderedKeepAliveSecs = keepAliveSecs;
+        return headers;
       }
       if (req.httpVersionMajor! >= 1 && req.httpVersionMinor! >= 1) {
+        const headers = flatHeadersOf(exchange);
         renderedAutoHeaders =
           AUTO_HEADER_DATE |
           AUTO_HEADER_CONN_KEEP_ALIVE |
           AUTO_HEADER_KEEP_ALIVE_TIMEOUT |
           AUTO_HEADER_TRANSFER_ENCODING_CHUNKED;
-        renderedKeepAliveSecs = lastKeepAliveSecs;
-        return flatHeadersOf(exchange);
+        renderedKeepAliveSecs = keepAliveSecs;
+        return headers;
       }
     }
   }

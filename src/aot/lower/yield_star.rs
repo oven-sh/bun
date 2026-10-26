@@ -23,7 +23,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             true => IteratorKind::Async,
             false => IteratorKind::Sync,
         };
-        let iterator = self.emit_iterator_open(iterable, kind, None);
+        let is_delegating = true;
+        let iterator =
+            (self.builder).iterator_open(iterable, kind, None, false, false, is_delegating);
         let resume_next = self.create_value_block();
         let resume_throw = self.create_value_block();
         let resume_return = self.create_value_block();

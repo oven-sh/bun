@@ -8,7 +8,11 @@ version=$(sed -n 's/.*"version": "\(.*\)".*/\1/p' "$here/source.json")
 sha256=$(sed -n 's/.*"sha256": "\(.*\)".*/\1/p' "$here/source.json")
 mkdir -p "$out"
 sources=${BUN_ICU_SOURCES:-$out/icu4c-$version-sources.tgz}
-[ -f "$sources" ] || curl -fsSL -o "$sources" "https://github.com/unicode-org/icu/releases/download/release-$version/icu4c-$version-sources.tgz"
+if [ ! -f "$sources" ]; then
+    curl -fsSL -o "$sources.partial" "https://github.com/unicode-org/icu/releases/download/release-$version/icu4c-$version-sources.tgz"
+    echo "$sha256  $sources.partial" | sha256sum --check --quiet
+    mv "$sources.partial" "$sources"
+fi
 echo "$sha256  $sources" | sha256sum --check --quiet
 rm -rf "$out/icu" "$out/lib"
 mkdir -p "$out/icu" "$out/lib"

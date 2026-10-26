@@ -25,12 +25,12 @@ const streamKeys = ObjectKeys(streamReturningOperators);
 for (let i = 0; i < streamKeys.length; i++) {
   const key = streamKeys[i];
   const op: (this: $Node.Readable, ...args: any[]) => AsyncIterable<unknown> = streamReturningOperators[key];
-  function fn(this: $Node.Readable, ...args: unknown[]) {
+  const fn = function (this: $Node.Readable, ...args: unknown[]) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
     return Stream.Readable.from(op.$apply(this, args));
-  }
+  };
   ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
   ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
   ObjectDefineProperty(Stream.Readable.prototype, key, {
@@ -45,12 +45,12 @@ const promiseKeys = ObjectKeys(promiseReturningOperators);
 for (let i = 0; i < promiseKeys.length; i++) {
   const key = promiseKeys[i];
   const op: (this: $Node.Readable, ...args: any[]) => Promise<unknown> = promiseReturningOperators[key];
-  function fn(this: $Node.Readable, ...args: unknown[]) {
+  const fn = function (this: $Node.Readable, ...args: unknown[]) {
     if (new.target) {
       throw $ERR_ILLEGAL_CONSTRUCTOR();
     }
     return Promise.$resolve().then(() => op.$apply(this, args));
-  }
+  };
   ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
   ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
   ObjectDefineProperty(Stream.Readable.prototype, key, {

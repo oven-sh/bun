@@ -1,4 +1,4 @@
-// Seed 653 of fuzz/values-that-end-before-a-suspension-beside-values-that-cross-it.ts, with an object that is last read before a loop of collections and waits.
+// Seed 653 of fuzz/values-that-end-before-a-suspension-beside-values-that-cross-it.ts, with an object that is last read before a loop of collections and waits; the coroutine waits for a timer before it makes the object, as the loop does.
 const lines = [];
 function show(value) {
   if (typeof value === "function") return "function>" + show(value());
@@ -428,6 +428,7 @@ const coroutine1 = async (first, second, depth) => {
   }
   note("before 50", kept1, sum);
   sum = mix(sum, Array.of(kept4, await answerLater(51), kept3, await null, kept4));
+  await Bun.sleep(0);
   let isCollected = false;
   {
     const watched = { name: "w" + pass(67) };

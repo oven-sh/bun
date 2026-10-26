@@ -579,6 +579,8 @@ export default b.declarations(
       runsOnlyOperandCode: true,
       uses: { path: pathOfAnyKind, options: b.hostOptionBag(["lastModified", ...s3Options]) },
       reads: [...viewHeaps, ...externalState],
+      // A view that is kept as the path gets an ArrayBuffer, and its bytes move there.
+      writes: ["TypedArrayStorage"],
       implementation: b.hostCall,
     },
   ]),

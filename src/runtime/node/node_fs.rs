@@ -7973,6 +7973,15 @@ impl NodeFS {
         // directly there but `usize` on POSIX. `bun_sys::readlink` is the
         // length-normalised wrapper on every platform.
         let link_len = match sys::readlink(path, &mut outbuf[..]) {
+            // An executable holds files and folders, no links.
+            Err(err)
+                if err.get_errno() == E::ENOENT
+                    && graph_in_front_of_disk(path.as_bytes())
+                        .is_some_and(|graph| graph.stat(path.as_bytes()).is_some()) =>
+            {
+                return Err(sys::Error::from_code(E::EINVAL, sys::Tag::readlink)
+                    .with_path(args.path.slice()));
+            }
             Err(err) => return Err(err.with_path(args.path.slice())),
             Ok(result) => result,
         };

@@ -834,7 +834,7 @@ pub(crate) trait PathLikeExt {
     fn from_js_resolved_by(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-        resolve: fn(bun_core::String) -> bun_core::String,
+        relative_paths: RelativePaths,
     ) -> JsResult<Option<PathLike<'static>>>
     where
         Self: Sized;
@@ -1081,7 +1081,7 @@ impl PathLikeExt for PathLike<'_> {
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Option<PathLike<'static>>> {
-        Self::from_js_resolved_by(ctx, arguments, from_working_directory_in_executable)
+        Self::from_js_resolved_by(ctx, arguments, RelativePaths::StartAtWorkingDirectory)
     }
 
     fn from_js_as_written(
@@ -1089,7 +1089,7 @@ impl PathLikeExt for PathLike<'_> {
         arguments: &mut ArgumentsSlice,
         name: &str,
     ) -> JsResult<PathLike<'static>> {
-        Self::from_js_resolved_by(ctx, arguments, |path| path)?.ok_or_else(|| {
+        Self::from_js_resolved_by(ctx, arguments, RelativePaths::StayAsWritten)?.ok_or_else(|| {
             ctx.throw_invalid_arguments(format_args!("{name} must be a string or TypedArray"))
         })
     }
@@ -1097,8 +1097,12 @@ impl PathLikeExt for PathLike<'_> {
     fn from_js_resolved_by(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-        resolve: fn(bun_core::String) -> bun_core::String,
+        relative_paths: RelativePaths,
     ) -> JsResult<Option<PathLike<'static>>> {
+        let resolve = |str: bun_core::String| match relative_paths {
+            RelativePaths::StartAtWorkingDirectory => from_working_directory_in_executable(str),
+            RelativePaths::StayAsWritten => str,
+        };
         let Some(arg) = arguments.next() else {
             return Ok(None);
         };
@@ -1119,7 +1123,12 @@ impl PathLikeExt for PathLike<'_> {
                 Valid::path_buffer(buffer.slice(), ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
                 arguments.eat();
-                PathLike::Buffer(buffer)
+                match join_onto_working_directory_in_executable(buffer.slice()) {
+                    Some(path) if relative_paths == RelativePaths::StartAtWorkingDirectory => {
+                        PathLike::Utf8(bun_core::Utf8Bytes::Owned(path))
+                    }
+                    _ => PathLike::Buffer(buffer),
+                }
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
@@ -1190,22 +1199,30 @@ impl PathLikeExt for PathLike<'_> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RelativePaths {
+    StartAtWorkingDirectory,
+    StayAsWritten,
+}
+
 /// The system resolves a relative path against its own working directory, which is never a folder of the executable.
-fn from_working_directory_in_executable(str: bun_core::String) -> bun_core::String {
+fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<Vec<u8>> {
     use bun_paths::resolve_path::{self, platform};
-    let Some(directory) = bun_core::working_directory_in_executable() else {
-        return str;
-    };
-    let utf8 = str.to_utf8();
-    let path = utf8.slice();
+    let directory = bun_core::working_directory_in_executable()?;
     if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
-        drop(utf8);
+        return None;
+    }
+    Some(resolve_path::join_abs_string::<platform::Auto>(directory, &[path]).to_vec())
+}
+
+fn from_working_directory_in_executable(str: bun_core::String) -> bun_core::String {
+    if bun_core::working_directory_in_executable().is_none() {
         return str;
     }
-    bun_core::String::clone_utf8(resolve_path::join_abs_string::<platform::Auto>(
-        directory,
-        &[path],
-    ))
+    match join_onto_working_directory_in_executable(str.to_utf8().slice()) {
+        Some(path) => bun_core::String::clone_utf8(&path),
+        None => str,
+    }
 }
 
 /// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).

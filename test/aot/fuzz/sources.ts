@@ -79,6 +79,12 @@
 //   values-that-end-before-a-suspension-beside-values-that-cross-it async functions, generators and async generators hold up to 520 values at once: some are last read before a suspension, others behind it, in a later turn of a loop, in a catch, in a finally, or when the caller throws in or returns (values-that-end-before-a-suspension-beside-values-that-cross-it.ts)
 //   tail-calls-between-the-program-and-functions-made-from-text a ring of strict functions, some in the program, some made from text at run time, some behind a Proxy without an apply trap, call one another in tail position in ten forms with fewer, as many or more arguments than the callee names, a hundred thousand times (tail-calls-between-the-program-and-functions-made-from-text.ts)
 //   int32-fields-read-under-keys-as-operands fields declared int32 are read with brackets under a key that is one of a few names, a symbol, an enum member, an element of a list of names or a parameter, as operands of operators and built-in functions; the objects come out of JSON.parse and may hold what is no int32 (int32-fields-read-under-keys-as-operands.ts)
+//   arguments-made-for-a-call-whose-callee-may-return-early a caller makes a rest array, an object literal or an array literal for a call; the callee tests something first and may return, throw or call on before it keeps, changes, returns, spreads, captures or compares that argument
+//   functions-handed-to-async-functions-and-used-around-their-awaits a caller hands a closure or a bound function over its own locals to an async function, which calls, keeps, stores, captures, passes on or returns it before and behind its awaits; the caller returns first, the stack is written over and a collection runs before the async function goes on (functions-handed-to-async-functions-and-used-around-their-awaits.ts)
+//   functions-that-return-before-they-touch-what-the-caller-made a function takes a rest parameter, or a parameter for which its callers write an object or a list, and may return, throw or go on before it touches it; what stands in front of the first use has effects, what the caller writes has effects too, and the switch that decides turns while the program runs (functions-that-return-before-they-touch-what-the-caller-made.ts)
+//   elements-stored-below-an-object-that-intercepts-them lists, objects and instances take elements by index, and at some time an object above them begins to intercept such stores: a Proxy in the chain, a setter or a value that cannot be written under an index; objects are made before and behind that time, collections run in between, classes are made by the hundred (elements-stored-below-an-object-that-intercepts-them.ts)
+//   sums-of-whole-numbers-at-the-edges-of-what-a-double-holds loops add and subtract whole numbers at the edges of 31, 32, 52 and 53 bits and cut the sum to 32 bits, to a whole number, or not at all; now and then a field holds what is no whole number (sums-of-whole-numbers-at-the-edges-of-what-a-double-holds.ts)
+//   objects-that-may-be-missing-hold-one-another two to four objects, each made under a try of its own, hold one another and something of their own; the last one leaves the function on some ways only (objects-that-may-be-missing-hold-one-another.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
@@ -550,6 +556,16 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
         : undefined;
     };
   }
+  if (existsSync(join(import.meta.dir, "objects-that-may-be-missing-hold-one-another.ts"))) {
+    const { generate } = await import("./objects-that-may-be-missing-hold-one-another.ts");
+    sources["objects-that-may-be-missing-hold-one-another"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "objects-that-may-be-missing-hold-one-another", seed, ...program, notes: "untyped" }
+        : undefined;
+    };
+  }
   if (existsSync(join(import.meta.dir, "functions-that-keep-very-many-values-alive.ts"))) {
     const { generate } = await import("./functions-that-keep-very-many-values-alive.ts");
     sources["functions-that-keep-very-many-values-alive"] = (seed, bed) => {
@@ -708,6 +724,11 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     "built-ins-called-often-through-unknown-values",
     "values-that-end-before-a-suspension-beside-values-that-cross-it",
     "tail-calls-between-the-program-and-functions-made-from-text",
+    "arguments-made-for-a-call-whose-callee-may-return-early",
+    "functions-handed-to-async-functions-and-used-around-their-awaits",
+    "functions-that-return-before-they-touch-what-the-caller-made",
+    "elements-stored-below-an-object-that-intercepts-them",
+    "sums-of-whole-numbers-at-the-edges-of-what-a-double-holds",
   ])
     if (existsSync(join(import.meta.dir, name + ".ts")))
       sources[name] = untypedForTheProduct(name, (await import(`./${name}.ts`)).generate);

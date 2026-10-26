@@ -1282,6 +1282,9 @@ impl NodeHTTPResponse {
             WholeBody::InPlace(bytes) => bytes,
             WholeBody::Converted(None) => &[],
             WholeBody::Converted(Some(StringOrJsBytes::String(string))) => {
+                if string.length() > PINNED_WRITE_THRESHOLD {
+                    return None;
+                }
                 utf8 = string.to_utf8();
                 utf8.slice()
             }

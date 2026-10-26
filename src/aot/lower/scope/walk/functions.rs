@@ -260,9 +260,7 @@ impl Walker<'_, '_> {
             CodeUnit::File | CodeUnit::FieldInitializer(_) => return,
         };
         let kind = self.hir.runtime_function_kind(function);
-        if kind != FnKind::StaticBlock {
-            self.record_eval_arguments_slots(eval, context, time);
-        }
+        self.record_eval_arguments_slots(eval, context, time);
         if kind == FnKind::Constructor {
             self.record_slot_store(context, scope, ScopeSlot::This);
             self.use_lexical_slot(context, ScopeSlot::Callee);

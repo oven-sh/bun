@@ -52,11 +52,13 @@ const mark = `=== ${Math.random().toString(36).slice(2)} ended`;
 const maxFindsIsolated = 8;
 
 type Spent = { cpuSeconds: number; wallSeconds: number; peakMegabytes: number };
-type Ended = { stdout: string; stderr: string; end: string };
+type Ended = { stdout: string; stderr: string; end: string; stoppedBefore?: number[] };
 const spent: Record<string, Spent> = {};
 
 async function spawn(stage: string, cmd: string[], cwd: string, env: Record<string, string>, seconds: number) {
   const [stdout, stderr] = [join(cwd, `${stage}.stdout`), join(cwd, `${stage}.stderr`)];
+  // A child writes over the start of a file that exists and leaves the rest.
+  for (const path of [stdout, stderr]) rmSync(path, { force: true });
   const started = performance.now();
   const child = Bun.spawn({
     cmd,
@@ -100,34 +102,56 @@ function layOut(folder: string, texts: string[], extension: string, inGroup: num
 }
 
 /** Builds the executable. Returns the programs that the errors name, or how the compiler stopped. */
-async function build(folder: string, programCount: number, extension: string, inGroup: number) {
+async function build(
+  folder: string,
+  programCount: number,
+  extension: string,
+  inGroup: number,
+  mode = ["--aot", ...buildFlags],
+) {
   const groups = Array.from(
     { length: Math.ceil(programCount / inGroup) },
     (_, group) => `./group-${group}${extension}`,
   );
   const ran = await spawn(
     "build",
-    [bun, "build", "--compile", "--aot", ...buildFlags, "./" + runner, ...groups, "--outfile", join(folder, "batch")],
+    [bun, "build", "--compile", ...mode, "./" + runner, ...groups, "--outfile", join(folder, "batch")],
     folder,
     {},
     60 + programCount,
   );
-  if (ran.exitCode === 0 && existsSync(join(folder, "batch")))
-    return { refused: new Set<number>(), stopped: undefined };
-  const stopped = ran.signal || /internal compiler error|panic|Stopped in/.test(ran.stderr);
-  const refused = new Set(
-    Array.from(ran.stderr.matchAll(/programs[\\/](\d+)\.[a-z]+:\d+/g), match => Number(match[1])),
-  );
+  // "error: .." or "warn: ..", and below it "at <file>:<line>:<column>".
+  const [refused, writesToBuiltins] = [new Set<number>(), new Set<number>()];
+  let header = "";
+  for (const line of ran.stderr.split("\n")) {
+    if (/^(error|warn|note)\b/.test(line)) header = line;
+    const [, index] = /^\s+at .*programs[\\/](\d+)\.[a-z]+:\d+/.exec(line) ?? [];
+    if (index === undefined) continue;
+    if (header.startsWith("error")) refused.add(Number(index));
+    if (header.includes("read-only in a compiled executable")) writesToBuiltins.add(Number(index));
+  }
+  if (ran.exitCode === 0 && existsSync(join(folder, "batch"))) return { refused: new Set<number>(), writesToBuiltins };
+  const [reason, ...named] =
+    /internal compiler error.*?(?:programs[\\/](\d+)\.[a-z]+:\d+.*)?$|Stopped while compiling.*?(?:programs[\\/](\d+)\.[a-z]+:\d+.*)?$/m.exec(
+      ran.stderr,
+    ) ?? [];
+  if (!ran.signal && reason === undefined && refused.size) return { refused, writesToBuiltins };
+  const culprit = named.find(index => index !== undefined);
   return {
     refused,
-    stopped:
-      stopped || refused.size === 0
-        ? `${ran.signal ?? `exit code ${ran.exitCode}`}\n${ran.stderr.slice(-4000)}`
-        : undefined,
+    writesToBuiltins,
+    stopped: {
+      reason: `${ran.signal ?? `exit code ${ran.exitCode}`}: ${reason ?? "the errors name no program"}`,
+      culprit: culprit === undefined ? undefined : Number(culprit),
+      stderr: ran.stderr.slice(-8000),
+    },
   };
 }
 
-/** Runs the programs one after the other in one process. When the process ends early, the program it was in gets the blame and the rest run in a new process. */
+/**
+ * Runs the programs one after the other in one process. When the process ends early, the program it was in gets the blame and the rest run in a new process.
+ * The thread of a program that the runner stopped can outlive its mark, so the blamed program also lists those.
+ */
 async function run(
   stage: string,
   command: string[],
@@ -151,17 +175,21 @@ async function run(
     const split = (text: string) => text.split(new RegExp(`\\n${mark} (\\d+) (\\S+)\\n`));
     const [stdout, stderr] = [split(ran.stdout), split(ran.stderr)];
     const ended = (Math.min(stdout.length, stderr.length) / 3) | 0;
-    for (let position = 0; position < ended; position++)
+    for (let position = 0; position < ended; position++) {
+      if (Number(stdout[3 * position + 1]) !== left[position] || Number(stderr[3 * position + 1]) !== left[position])
+        throw new Error(`Expected the mark of program ${left[position]} at position ${position} of ${stage}`);
       results.set(left[position], {
         stdout: stdout[3 * position],
         stderr: stderr[3 * position],
         end: stdout[3 * position + 2],
       });
+    }
     if (ended < left.length)
       results.set(left[ended], {
-        stdout: stdout.at(-1)!,
-        stderr: stderr.at(-1)!.slice(-4000),
+        stdout: stdout[3 * ended],
+        stderr: stderr[3 * ended].slice(-4000),
         end: `the process ended: ${ran.signal ?? `exit code ${ran.exitCode}`}`,
+        stoppedBefore: left.slice(0, ended).filter(index => isLimit(results.get(index)!)),
       });
     left = left.slice(ended + 1);
   }
@@ -191,16 +219,32 @@ const documentedNames = [
   ".raw",
 ];
 
+// What `bun run` says when it refuses a file that the compiler builds.
+const refusalsOfBunRun = ["is a constant", "Left side of assignment is not a reference", "Unexpected token '...'"];
+
 /** `console.log(error)` prints lines of the source, which an executable doesn't have, a message, whose words can differ, and a stack. */
 const removeDetailsOfErrors = (output: string) =>
   output
+    .replace(/^(\w+) \d+ \| .*\n(?:\s*\d+ \| .*\n|[\^~ ]+\n)*/gm, "$1 ")
     .split("\n")
     .filter(line => !/^\s*(\d+ \| |[\^~ ]+$|at )/.test(line))
-    .map(line => line.replace(/Error: .*/, "Error").replace(/\[Function: [^\]]*\]/g, "[Function]"))
+    .map(line => line.replace(/Error: .*/, "Error").replace(/\[(\w*Function): [^\]]*\]/g, "[$1]"))
     .join("\n");
 const agree = (a: Ended, b: Ended) =>
   a.end === b.end && removeDetailsOfErrors(a.stdout) === removeDetailsOfErrors(b.stdout);
 const isLimit = ({ end }: Ended) => end === "time" || end === "memory";
+/** Whether both print the same lines and only members of objects stand in another order, one of them under a symbol. */
+function differInOrderOfSymbolKeys(a: Ended, b: Ended) {
+  const [left, right] = [removeDetailsOfErrors(a.stdout).split("\n"), removeDetailsOfErrors(b.stdout).split("\n")];
+  const moved = left.filter((line, index) => line !== right[index]);
+  return (
+    a.end === b.end &&
+    moved.every(line => /^\s/.test(line)) &&
+    moved.some(line => line.includes("[Symbol(")) &&
+    left.toSorted().join("\n") === right.toSorted().join("\n")
+  );
+}
+const classOfError = ({ stderr }: Ended) => /\b\w*Error\b/.exec(stderr)?.[0];
 
 function keepFind(kind: string, summary: string, files: Record<string, string>) {
   const group = `${kind}-${Bun.hash
@@ -229,11 +273,8 @@ async function differsAmong(
   index: number,
 ): Promise<boolean | undefined> {
   layOut(folder, texts, extension, texts.length);
-  if (
-    (await build(folder, texts.length, extension, texts.length)).stopped !== undefined ||
-    !existsSync(join(folder, "batch"))
-  )
-    return undefined;
+  await build(folder, texts.length, extension, texts.length);
+  if (!existsSync(join(folder, "batch"))) return undefined;
   const compiled = (
     await run("compiled", [join(folder, "batch")], folder, extension, texts.length, [index], milliseconds * 20)
   ).get(index)!;
@@ -252,6 +293,36 @@ async function differsAmong(
   return !agree(compiled, plain);
 }
 const plainEnv: Record<string, string> = hidesFunctionText ? { BUN_FUZZILLI_HIDES_FUNCTION_TEXT: "1" } : {};
+
+/**
+ * The programs in an executable that is built without --aot. What differs from `bun run` there in the same way belongs to executables as such.
+ * Each program is a group of its own: that build makes one module of a group, and a program that cannot be part of a module would fail its neighbors.
+ * Leaves out the programs that the build refuses.
+ */
+async function runInOrdinaryExecutable(indexes: number[], texts: string[], extension: string) {
+  const folder = join(work, `ordinary-${process.pid}`);
+  const results = new Map<number, Ended>();
+  let left = indexes;
+  while (left.length) {
+    layOut(
+      folder,
+      left.map(index => texts[index]),
+      extension,
+      1,
+    );
+    const { refused } = await build(folder, left.length, extension, 1, []);
+    if (existsSync(join(folder, "batch"))) {
+      const positions = left.map((_, position) => position);
+      const ran = await run("ordinary", [join(folder, "batch")], folder, extension, 1, positions, milliseconds * 20);
+      left.forEach((index, position) => results.set(index, ran.get(position)!));
+      break;
+    }
+    if (refused.size === 0) break;
+    left = left.filter((_, position) => !refused.has(position));
+  }
+  rmSync(folder, { recursive: true, force: true });
+  return results;
+}
 
 /** Waits until it has `count` programs. A rename decides which of several processes gets a file. */
 async function takePrograms(): Promise<string[]> {
@@ -284,20 +355,31 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
   const counts: Record<string, number> = { taken: texts.length };
   const add = (kind: string, by = 1) => (counts[kind] = (counts[kind] ?? 0) + by);
 
-  // The programs that the compiler refuses leave, and the rest is built again.
-  for (let round = 0; ; round++) {
+  // The programs that the compiler refuses leave, and so does one that it stops at. The rest is built again.
+  let writesToBuiltins = new Set<number>();
+  for (;;) {
     layOut(folder, texts, extension, groupSize);
-    const { refused, stopped } = await build(folder, texts.length, extension, groupSize);
-    if (stopped !== undefined) {
-      keepFind("build-stopped", stopped.slice(0, 300), {
-        "programs.txt": texts.map((text, index) => `// ---- ${index}\n${text}`).join("\n"),
-        "compiler.stderr": stopped,
+    const { refused, stopped, ...built } = await build(folder, texts.length, extension, groupSize);
+    writesToBuiltins = built.writesToBuiltins;
+    if (stopped) {
+      const first = (stopped.culprit ?? 0) - ((stopped.culprit ?? 0) % groupSize);
+      const group = stopped.culprit === undefined ? texts : texts.slice(first, first + groupSize);
+      keepFind("build-stopped", stopped.reason, {
+        ["program" + extension]: stopped.culprit === undefined ? "" : texts[stopped.culprit],
+        "programs.txt": group.map((text, offset) => `// ---- ${offset}\n${text}`).join("\n"),
+        "report.txt": `${stopped.reason}\n${bun} build --compile --aot ${buildFlags.join(" ")}\nprograms.txt holds the group, and the program is number ${(stopped.culprit ?? 0) - first} in it\n`,
+        "compiler.stderr": stopped.stderr,
       });
-      add("in a build that stopped", texts.length);
-      texts = [];
+      add("stopped the build");
+      if (stopped.culprit === undefined) {
+        add("in a build that stopped and named no program", texts.length);
+        texts = [];
+        break;
+      }
+      refused.add(stopped.culprit);
     }
-    if (refused.size === 0 || stopped !== undefined) break;
-    add("refused", refused.size);
+    if (refused.size === 0) break;
+    add("refused", refused.size - (stopped ? 1 : 0));
     texts = texts.filter((_, index) => !refused.has(index));
   }
   const all = texts.map((_, index) => index);
@@ -314,6 +396,7 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
     await runCompiled(differing, milliseconds * 20),
     await runPlain(differing, milliseconds * 20),
   ];
+  const ordinary = await runInOrdinaryExecutable(differing, texts, extension);
   let isolated = 0;
   for (const index of differing) {
     const [first, second, reference, referenceAgain] = [
@@ -322,6 +405,7 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
       plain.get(index)!,
       plainAgain.get(index)!,
     ];
+    const inOrdinary = ordinary.get(index);
     const says = (message: string) => second.stderr.includes(message) || second.stdout.includes(message);
     const showsFunctionText = !hidesFunctionText && /function|=>|class /.test(referenceAgain.stdout + second.stdout);
     const kind = referenceAgain.end.startsWith("the process ended")
@@ -336,15 +420,24 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
               : "unsteady"
             : second.end.startsWith("the process ended")
               ? "signal"
-              : documentedMessages.some(says) || documentedNames.some(name => texts[index].includes(name))
+              : documentedMessages.some(says) ||
+                  documentedNames.some(name => texts[index].includes(name)) ||
+                  writesToBuiltins.has(index)
                 ? "documented difference"
-                : showsFunctionText
-                  ? "function text"
-                  : isLimit(second)
-                    ? "limit"
-                    : second.end !== referenceAgain.end
-                      ? "exit-code"
-                      : "stdout";
+                : referenceAgain.stdout === "" &&
+                    refusalsOfBunRun.some(message => referenceAgain.stderr.includes(message))
+                  ? "bun run refuses the file"
+                  : differInOrderOfSymbolKeys(second, referenceAgain)
+                    ? "symbol keys in another order"
+                    : inOrdinary && agree(second, inOrdinary) && classOfError(second) === classOfError(inOrdinary)
+                      ? "as an executable without --aot"
+                      : showsFunctionText
+                        ? "function text"
+                        : isLimit(second)
+                          ? "limit"
+                          : second.end !== referenceAgain.end
+                            ? "exit-code"
+                            : "stdout";
     add(kind);
     if (!["bun-run-signal", "unsteady", "signal", "limit", "exit-code", "stdout"].includes(kind)) continue;
     const summary = `compiled: ${second.end}\nbun run:  ${referenceAgain.end}\n${firstDifference(second.stdout, referenceAgain.stdout)}`;
@@ -376,9 +469,15 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
       }
       rmSync(subset, { recursive: true, force: true });
     }
+    const stoppedBefore = [...(second.stoppedBefore ?? []), ...(referenceAgain.stoppedBefore ?? [])];
     keepFind(kind, summary, {
       ["program" + extension]: texts[index],
-      "report.txt": `${kind}, one of ${texts.length} programs in groups of ${groupSize}\n${bun} build --compile --aot ${buildFlags.join(" ")}\n${summary}${where}\n`,
+      ...(stoppedBefore.length && {
+        "stopped-before.txt": stoppedBefore
+          .map(other => `// ---- stopped by the runner earlier in the process\n${texts[other]}`)
+          .join("\n"),
+      }),
+      "report.txt": `${kind}, one of ${texts.length} programs in groups of ${groupSize}\n${bun} build --compile --aot ${buildFlags.join(" ")}\n${summary}without --aot: ${inOrdinary?.end ?? "that build refuses it"}\n${where}\n`,
       "compiled.stdout": second.stdout,
       "compiled.stderr": second.stderr,
       "bun-run.stdout": referenceAgain.stdout,

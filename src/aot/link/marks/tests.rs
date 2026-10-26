@@ -514,11 +514,31 @@ fn expected_result_keeps_its_layouts() {
         let (retained, dropped) = (expected_results[0], expected_results[1]);
         unit.define_body(|builder| {
             let callee = builder.undefined();
-            builder.call(callee, None, &[], None, None, Some(retained), false, false);
+            builder.call(
+                callee,
+                None,
+                &[],
+                None,
+                None,
+                Some(retained),
+                false,
+                false,
+                false,
+            );
         });
         unit.define_function(1, |builder| {
             let callee = builder.undefined();
-            builder.call(callee, None, &[], None, None, Some(dropped), false, false);
+            builder.call(
+                callee,
+                None,
+                &[],
+                None,
+                None,
+                Some(dropped),
+                false,
+                false,
+                false,
+            );
         });
 
         let marked = mark_fragments(projects, [unit.finish()]);

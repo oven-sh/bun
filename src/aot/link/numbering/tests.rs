@@ -147,7 +147,7 @@ fn emit_references(builder: &mut FunctionBuilder, names: &[Reference]) {
             Reference::TypeSite(id) => builder.check(value, TypeTable::NUMBER, Some(id)),
             Reference::EvalScope(id) => builder.direct_eval(id, value, value, None, &[]),
             Reference::ExpectedResult(id) => {
-                builder.call(value, None, &[], None, None, Some(id), false, false)
+                builder.call(value, None, &[], None, None, Some(id), false, false, false)
             }
             Reference::Data(id) => builder.data(id),
             Reference::Module(id, ModuleReferenceKind::Target) => {

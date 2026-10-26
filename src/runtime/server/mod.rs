@@ -3460,9 +3460,8 @@ mod trampoline {
     ) {
         // What leaves with the route alone is about as much as the smallest group of the trimmable link. Below that it leaves with the command line, under that name, or stays.
         if bun_removable_features::is_removed(bun_removable_features::Feature::BunInfo) {
-            bun_removable_features::abort_for_removed_feature(
-                bun_removable_features::Feature::BunInfo,
-            );
+            bun_opaque::opaque_deref_mut(req).set_yield(true);
+            return;
         }
         // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
         // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.

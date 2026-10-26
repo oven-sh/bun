@@ -284,7 +284,17 @@ fn build_body_with_references(offset: usize) -> Body {
         builder.data(DataId::new(83 + offset));
         let expected_result = ExpectedResultId::new(84 + offset);
         let (name, expected_result) = (Some(string(21)), Some(expected_result));
-        builder.call(operand, None, &[], None, name, expected_result, true, true);
+        builder.call(
+            operand,
+            None,
+            &[],
+            None,
+            name,
+            expected_result,
+            true,
+            true,
+            false,
+        );
         builder.new_template_object(&template_strings);
         builder.throw_module_failure(ModuleFailureId::new(81 + offset), false);
         let next = builder.create_block(None);

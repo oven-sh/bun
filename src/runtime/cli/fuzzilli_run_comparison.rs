@@ -221,9 +221,7 @@ impl Program<'_> {
 }
 
 fn first_difference<'a>(a: &'a [u8], b: &'a [u8]) -> (&'a [u8], &'a [u8]) {
-    let mut lines = a
-        .split(|byte| *byte == b'\n')
-        .zip(b.split(|byte| *byte == b'\n'));
+    let mut lines = strings::split(a, b"\n").zip(strings::split(b, b"\n"));
     lines.find(|(a, b)| a != b).unwrap_or((b"", b""))
 }
 
@@ -424,7 +422,7 @@ fn run(
 /// `console.log(error)` prints lines of the source, which an executable doesn't have, a message, whose words can differ, and a stack.
 fn remove_details_of_errors(output: &[u8]) -> Vec<u8> {
     let mut kept = Vec::with_capacity(output.len());
-    for line in output.split(|byte| *byte == b'\n') {
+    for line in strings::split(output, b"\n") {
         let text = line.trim_ascii_start();
         let digits = text.iter().take_while(|byte| byte.is_ascii_digit()).count();
         let is_source_line = digits > 0 && text[digits..].starts_with(b" | ");
@@ -465,7 +463,7 @@ pub(crate) fn find_top_level_names(text: &[u8]) -> Vec<&[u8]> {
         Some(keyword.len())
     };
     let mut names = Vec::new();
-    for line in text.split(|byte| *byte == b'\n') {
+    for line in strings::split(text, b"\n") {
         let Some(start) = name_of(line) else { continue };
         let rest = &line[start..];
         let length = rest

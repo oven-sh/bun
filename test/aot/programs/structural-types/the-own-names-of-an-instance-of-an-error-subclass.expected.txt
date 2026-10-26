@@ -1,2 +1,2 @@
-code column line message originalColumn originalLine sourceURL stack
+code column line message stack
 column line message originalColumn originalLine sourceURL stack

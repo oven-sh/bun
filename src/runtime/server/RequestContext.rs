@@ -3422,7 +3422,7 @@ where
             graph.compiled_program.is_some() && graph.contains_file(&bytes.stored_name)
         }) || blob.offset.get() != 0
             || blob.size.get() != total
-            || (self.method != Method::GET && self.method != Method::HEAD)
+            || self.method != Method::GET
         {
             return true;
         }

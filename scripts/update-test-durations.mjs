@@ -50,6 +50,8 @@ const lanes = {
 };
 
 const aotStepOf = stepKey => stepKey.replace(/-test-bun$/, "-test-aot");
+// getTestBunStep in .buildkite/ci.ts splits test/aot between these two.
+const aotStepsOf = stepKey => [aotStepOf(stepKey), `${aotStepOf(stepKey)}-drawn`];
 export const isAotTest = path => aotTests.some(group => path.startsWith(group));
 
 const api = async path => {
@@ -157,7 +159,7 @@ async function collect(build, stepKey, into) {
   const ranAllOfAot = stepKey !== lanes["windows-aarch64"] && allJobs.some(j => j.step_key === aotStepOf(lanes.asan));
   const jobs = allJobs.filter(
     j =>
-      (j.step_key === stepKey || (ranAllOfAot && j.step_key === aotStepOf(stepKey))) &&
+      (j.step_key === stepKey || (ranAllOfAot && aotStepsOf(stepKey).includes(j.step_key))) &&
       j.started_at &&
       j.finished_at &&
       j.state !== "canceled",

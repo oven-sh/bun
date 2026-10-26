@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
-import { countTurn, functionsOf, type Turn } from "./impostors-keep-their-fast-paths/look";
+import { countTurn, functionsOf, manyTurns, type Turn } from "./impostors-keep-their-fast-paths/look";
 import { whyInstructionsCannotBeCounted } from "./instruction-counts/count-instructions";
 import { built, slot, spawned, unsupported } from "./run-programs";
 import { installSmallRenderer } from "./typed-packages/small-renderer/install";
@@ -49,7 +49,14 @@ describe.skipIf(!!unsupported || !!whyNotCounted)("compile/aot/int32-lanes-cost-
           built(build);
           // TS100066 says that an `int32` is tested when the program runs.
           expect(build.stdout + build.stderr).not.toMatch(/TS100066|compiled (untyped|without (its |their )?types)/);
-          seen[way] = await countTurn(bunExe(), join(folder, way), functionsOf(readFileSync(map, "utf8")), way, bunEnv);
+          seen[way] = await countTurn(
+            bunExe(),
+            join(folder, way),
+            functionsOf(readFileSync(map, "utf8")),
+            way,
+            bunEnv,
+            manyTurns,
+          );
         }
       }),
     600_000,
@@ -57,7 +64,7 @@ describe.skipIf(!!unsupported || !!whyNotCounted)("compile/aot/int32-lanes-cost-
 
   test("both print the same", () => {
     expect(seen.int32!.stdout).toBe(seen.number!.stdout);
-    expect(seen.int32!.stdout).toStartWith("60 ");
+    expect(seen.int32!.stdout).toStartWith("110 ");
   });
 
   test("a turn costs less with int32 than with number", () => {

@@ -216,6 +216,37 @@ console.log((await import(path.join(import.meta.dirname, ["note", "txt"].join(".
   }
 }, 120_000);
 
+test("every kind of open creates an embedded file that is not on disk", async () => {
+  using dir = tempDir("aot-in-place-open-for-writing", {
+    "app/public/sync.txt": "embedded\n",
+    "app/public/promise.txt": "embedded\n",
+    "app/public/callback.txt": "embedded\n",
+    "app/public/stream.txt": "embedded\n",
+    "app/public/untouched.txt": "embedded\n",
+    "app/start.cjs": `const fs = require("node:fs");
+const path = require("node:path");
+const file = name => path.join(__dirname, "public", name);
+(async () => {
+  fs.closeSync(fs.openSync(file("sync.txt"), "w"));
+  await (await fs.promises.open(file("promise.txt"), "w")).close();
+  await new Promise((done, fail) => fs.open(file("callback.txt"), "w", (error, fd) => (error ? fail(error) : fs.close(fd, done))));
+  await new Promise((done, fail) => fs.createWriteStream(file("stream.txt")).on("error", fail).end("", done));
+  for (const name of ["sync", "promise", "callback", "stream", "untouched"]) console.log(name, JSON.stringify(fs.readFileSync(file(name + ".txt"), "utf8")));
+})().catch(error => console.log("failed", error.code, error.syscall));
+`,
+  });
+  const app = join(String(dir), "app");
+  const built = await build(app, "./start.cjs", "--asset", "./public");
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  renameSync(app, join(String(dir), "moved-away"));
+  mkdirSync(join(app, "public"), { recursive: true });
+  expect(await run(String(dir), ["./built.exe"])).toEqual({
+    stdout: `sync ""\npromise ""\ncallback ""\nstream ""\nuntouched "embedded\\n"\n`,
+    stderr: "",
+    exitCode: 0,
+  });
+}, 120_000);
+
 test("assets open and stream like files on disk", async () => {
   using dir = tempDir("aot-in-place-opened-asset", {
     "app/public/hello.txt": "a public file\n",

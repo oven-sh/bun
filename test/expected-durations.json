@@ -6172,6 +6172,9 @@
     "asan": 11637,
     "windows": 5811
   },
+  "aot/reading-a-property-of-null-throws-whatever-signals-the-program-listens-for.test.ts": {
+    "default": 2800
+  },
   "aot/reads-through-class-objects-avoid-runtime.test.ts": {
     "default": 412,
     "windows": 66

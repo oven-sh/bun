@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
-import { countTurn, functionsOf, type Turn } from "./impostors-keep-their-fast-paths/look";
+import { countTurn, functionsOf, manyTurns, type Turn } from "./impostors-keep-their-fast-paths/look";
 import { whyInstructionsCannotBeCounted } from "./instruction-counts/count-instructions";
 import { built, slot, spawned, unsupported } from "./run-programs";
 import { installPackage } from "./typed-packages/install-package";
@@ -66,6 +66,7 @@ describe.skipIf(!!unsupported)(
                 functionsOf(readFileSync(map, "utf8")),
                 way,
                 bunEnv,
+                manyTurns,
               );
           }
         }),
@@ -99,7 +100,7 @@ describe.skipIf(!!unsupported)(
 
     test.skipIf(!!whyNotCounted)("both print the same", () => {
       expect(seen.typed.turn!.stdout).toBe(seen.erased.turn!.stdout);
-      expect(seen.typed.turn!.stdout).toStartWith("60 ");
+      expect(seen.typed.turn!.stdout).toStartWith("110 ");
     });
     test.skipIf(!!whyNotCounted)("the instructions of a turn have not risen against the erased build", () =>
       expectAtMost(known.instructionsOfATurn),

@@ -89,7 +89,7 @@ impl Resolver<'_> {
         position.map(|index| index as u32)
     }
 
-    /// The names that lead to one of `entry_points` from one of `folders`, the folders of the compiled files. Each name once.
+    /// The names that lead to one of `entry_points` from one of `folders`, the folders of the compiled files, and each folder above an entry point whose `package.json` names its main file. Each name once.
     pub fn find_package_names(
         &mut self,
         entry_points: &[BuildPaths<'_>],
@@ -101,9 +101,6 @@ impl Resolver<'_> {
             .collect();
         packages.sort_unstable();
         packages.dedup();
-        if packages.is_empty() {
-            return Vec::new();
-        }
         let mut places: Vec<BuildPaths<'_>> = folders
             .iter()
             .copied()
@@ -119,6 +116,49 @@ impl Resolver<'_> {
         // A bundler takes `module` where it can. `bun run`, whose answers these are, takes `main`.
         let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
         let mut names = Vec::new();
+        // Only a folder above an entry point can lead to one.
+        let mut folders_of_entry_points: Vec<BuildPaths<'_>> = entry_points
+            .iter()
+            .filter_map(|file| {
+                Some(BuildPaths {
+                    source_path: parent(file.source_path)?,
+                    public_path: parent(file.public_path)?,
+                })
+            })
+            .flat_map(with_folders_above)
+            .collect();
+        folders_of_entry_points.sort_unstable();
+        folders_of_entry_points.dedup();
+        for place in &folders_of_entry_points {
+            let names_main_file = self
+                .read_dir_info_ignore_error(place.source_path)
+                .and_then(|directory| directory.package_json())
+                .is_some_and(|manifest| manifest.main_fields.count() > 0);
+            if !names_main_file {
+                continue;
+            }
+            let folder = place.source_path;
+            names.push(PackageName {
+                public_path: [place.public_path, b"/"]
+                    .concat()
+                    .into_iter()
+                    .map(normalize_separator)
+                    .collect(),
+                required: self.find_entry_point_named(
+                    folder,
+                    b"./",
+                    ImportKind::Require,
+                    entry_points,
+                ),
+                imported: self.find_entry_point_named(
+                    folder,
+                    b"./",
+                    ImportKind::Dynamic,
+                    entry_points,
+                ),
+                hides_other_paths: false,
+            });
+        }
         for (place, package) in places
             .iter()
             .flat_map(|place| packages.iter().map(move |package| (place, &package[..])))

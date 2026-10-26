@@ -117,9 +117,10 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   every function through B3 and once with `flags`, runs both and compares what each program printed. It is for a way of generating
   code that every function can take: `joined-programs-predictions-fail-*`,
   `joined-programs-validated-*` (`--aot-validate`), `joined-programs-proofs-checked-*`. All groups validated: `AOT_SHARE=all TEST_PART=aot/joined-programs-validated bun test ./test/aot/parts.test.ts`, nine minutes. A red
-  names the programs that differ or stopped the executable; each is then run alone with the same flags.
+  names the programs that differ or stopped the executable; each is then run alone with the same flags. In a group a program begins when the event loop is empty, so what the one
+  before it left to a later turn, a tick, a stream or another thread is printed under its own name.
   `joined-programs-limits-lowered-*` builds one group a file, of half the size, with all limits of the compiler at 0, 1 and 2 and with five single limits lowered, and each program
-  prints what it prints in plain Bun. What fails with one limit today is marked in the `.json` beside the program, `"failsWithLimit": { "<limit>:<value>": "<what happens>" }`: such a
+  prints what it prints in plain Bun. So it does in the build with no flag at all: a program that prints something else there or stops the executable is red. What fails with one limit today is marked in the `.json` beside the program, `"failsWithLimit": { "<limit>:<value>": "<what happens>" }`: such a
   program is built by itself, apart from its group, and a mark that no longer holds is red. Each group prints a line `TIME:` with its seconds. A file of joined programs that is told nothing
   ends by its own clock a minute before the runner's limit and prints `SHARE: .. were not run to the end`: that line means the file needs more parts.
 - **Every program in every commit.** `every-program-<part>` (`programs-as-entry-points.ts`) makes the programs of a part, some 600, the entry points of one executable and runs each in a

@@ -418,7 +418,7 @@ WTF::String formatStackTrace(
 
                 bool showsSourcePosition = remappedFrame.remapped;
 #if ENABLE(AOT)
-                showsSourcePosition |= frame.isCompiledFrame() && !frame.isBuiltinFunction() && !JSC::AOT::FunctionDescription(frame.compiledFrame().function).isInRuntimeModule();
+                showsSourcePosition |= frame.isCompiledFrame() && !frame.isBuiltinFunction() && !sourceURLForFrame.isEmpty();
 #endif
                 if (showsSourcePosition) {
                     if (errorInstance) {

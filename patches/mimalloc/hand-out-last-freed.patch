@@ -14,7 +14,7 @@
  void          _mi_process_fork_prepare(void);
  extern mi_decl_hidden bool _mi_process_is_initialized;
  extern mi_decl_hidden bool _mi_process_is_forked_child;
-+extern mi_decl_hidden bool _mi_hands_out_last_freed;
++extern mi_decl_hidden _Atomic(uintptr_t) _mi_hands_out_last_freed;
  void          _mi_process_fork_parent(void);
  void          _mi_process_fork_child(void);
  void          _mi_thread_locals_fork_prepare(void);
@@ -27,7 +27,7 @@
 +  { 0,   MI_OPTION_UNINIT, MI_OPTION(hand_out_last_freed) },
  };
 +
-+mi_decl_hidden bool _mi_hands_out_last_freed = false;
++mi_decl_hidden _Atomic(uintptr_t) _mi_hands_out_last_freed;  // = 0
  
  static void mi_option_init(mi_option_desc_t* desc);
  
@@ -35,7 +35,7 @@
    }
    mi_max_error_count = mi_option_get(mi_option_max_errors);
    mi_max_warning_count = mi_option_get(mi_option_max_warnings);
-+  _mi_hands_out_last_freed = mi_option_is_enabled(mi_option_hand_out_last_freed);
++  mi_atomic_store_release(&_mi_hands_out_last_freed, (uintptr_t)mi_option_is_enabled(mi_option_hand_out_last_freed));
    #if MI_GUARDED
    if (mi_option_get(mi_option_guarded_sample_rate) > 0) {
      if (mi_option_is_enabled(mi_option_allow_large_os_pages)) {
@@ -43,7 +43,7 @@
    mi_option_desc_t* desc = &mi_options[option];
    mi_assert(desc->option == option);  // index should match the option
    mi_option_desc_set(desc, value, MI_OPTION_INITIALIZED);
-+  if (desc->option == mi_option_hand_out_last_freed) { _mi_hands_out_last_freed = (value != 0); }
++  if (desc->option == mi_option_hand_out_last_freed) { mi_atomic_store_release(&_mi_hands_out_last_freed, (uintptr_t)(value != 0)); }
    // ensure min/max range; be careful to not recurse.
    if (desc->option == mi_option_guarded_min && _mi_option_get_fast(mi_option_guarded_max) < value) {
      mi_option_set(mi_option_guarded_max, value);
@@ -51,7 +51,7 @@
    mi_option_desc_t* desc = &mi_options[option];
    if (desc->init != MI_OPTION_INITIALIZED) {
      desc->value = value;
-+    if (option == mi_option_hand_out_last_freed) { _mi_hands_out_last_freed = (value != 0); }
++    if (option == mi_option_hand_out_last_freed) { mi_atomic_store_release(&_mi_hands_out_last_freed, (uintptr_t)(value != 0)); }
    }
  }
  
@@ -86,7 +86,7 @@
    #endif
    
    // actual free: push on the local free list
-+  if mi_unlikely(_mi_hands_out_last_freed) {
++  if mi_unlikely(mi_atomic_load_relaxed(&_mi_hands_out_last_freed) != 0) {
 +    mi_free_block_local_to_hand_out_next(page, block, check_full);
 +    return;
 +  }

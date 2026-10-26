@@ -3,6 +3,7 @@ use bun_sema::bind::{
     has_simple_parameter_list,
 };
 use bun_sema::check::aot::ClassRef;
+use bun_sema::hir::Flags;
 use smallvec::SmallVec;
 
 use super::{BindingRef, ScopeSlot, dead_zone};
@@ -216,9 +217,14 @@ fn this_position(file: &mut FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> Dec
         }
         ScopeKind::FieldInitializer(member) => {
             let class = bound.member_class(member);
+            let class = class.expect("a field initializer belongs to a member of a class");
+            let is_static = file.hir[member].flags.contains(Flags::STATIC);
+            if !is_static && class::is_called_by_evaluated_text(file, class) {
+                return DeclaredType::untyped();
+            }
             let class = ClassRef {
                 file: file.file,
-                class: class.expect("a field initializer belongs to a member of a class"),
+                class,
             };
             file.class_this_type(class, Some(member))
         }

@@ -1,1 +1,0 @@
-Two lines of the stack traces differ: where one function calls next() and then return() on a generator it made, and the body throws while it ends, the caller's frame has the line of the call of next(); plain Bun has the line of the call of return(). The other frames are the same.

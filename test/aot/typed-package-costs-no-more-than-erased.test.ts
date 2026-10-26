@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isArm64, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { join } from "path";
-import { countTurn, functionsOf, type Turn } from "./impostors-keep-their-fast-paths/look";
+import { countTurn, functionsOf, manyTurns, type Turn } from "./impostors-keep-their-fast-paths/look";
 import { whyInstructionsCannotBeCounted } from "./instruction-counts/count-instructions";
 import { built, slot, spawned, unsupported } from "./run-programs";
 import { installSmallRenderer } from "./typed-packages/small-renderer/install";
@@ -15,7 +15,7 @@ const whyNotCounted = unsupported
     ? "the counts are those of a release build"
     : await whyInstructionsCannotBeCounted();
 
-// A turn of the build costs 0.986 times the instructions of the erased build. The build has 1.10 times its bytes. The code of the package has 1.11 times its bytes on x64 and
+// A turn of the build costs 0.96 times the instructions of the erased build. The build has 1.10 times its bytes. The code of the package has 1.11 times its bytes on x64 and
 // 1.18 times on ARM64, where a type test takes more bytes. No share may pass these. The bytes belong at 1 or below: the two todo tests.
 const known = { instructionsOfATurn: 1, bytesOfCode: 1.12, bytesOfPackage: isArm64 ? 1.2 : 1.12 };
 // The bytes of code are whole pages of the image and the constants behind them.
@@ -84,6 +84,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-package-costs-no-more-than-era
               functionsOf(readFileSync(map, "utf8")),
               way,
               bunEnv,
+              manyTurns,
             );
         }
       }),
@@ -112,8 +113,13 @@ describe.skipIf(!!unsupported)("compile/aot/typed-package-costs-no-more-than-era
   }
 
   test.skipIf(!!whyNotCounted)("both print what plain Bun prints", async () => {
-    const plain = await spawned([bunExe(), "run", "terminal.ts", "plain", "20", "20", "5", "15"], folder, bunEnv);
-    expect(plain.stdout).toStartWith("60 61 <root><screen><transcript><message plain><gutter>12</gutter>");
+    const { before, fewer, more } = manyTurns;
+    const plain = await spawned(
+      [bunExe(), "run", "terminal.ts", "plain", ...[...before, fewer, more].map(String)],
+      folder,
+      bunEnv,
+    );
+    expect(plain.stdout).toStartWith("110 111 <root><screen><transcript><message plain><gutter>22</gutter>");
     expect(seen.typed.turn!.stdout).toBe(plain.stdout);
     expect(seen.erased.turn!.stdout).toBe(plain.stdout);
   });

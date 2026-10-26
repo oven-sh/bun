@@ -54,6 +54,7 @@ for (const seed of seeds)
         threads: 2,
         buildSeconds: 300,
         runSeconds: 20,
+        validatedRunSeconds: 60,
       });
       const summary = await fuzz({
         beds: [{ bed, jobs: Math.max(1, availableParallelism() >> 1) }],

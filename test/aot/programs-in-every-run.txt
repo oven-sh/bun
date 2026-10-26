@@ -71,6 +71,7 @@ async-and-generators/a-generator-spread-by-its-maker-rounds-a-number-by-an-eleme
 async-and-generators/a-generator-that-has-begun-where-the-stack-ends-is-also-left
 async-and-generators/a-process-prints-what-comes-after-its-last-timer
 async-and-generators/a-variable-is-an-object-in-the-first-turn-and-a-number-afterwards-across-an-await
+async-and-generators/a-word-last-read-between-two-awaits-does-not-hold-what-is-allocated-later
 async-and-generators/an-async-function-takes-its-options-apart-and-closes-a-resource-in-finally-in-a-validating-build
 async-and-generators/an-async-generator-reads-in-its-catch-what-was-sent-in
 async-and-generators/an-object-in-the-frame-on-one-way-and-an-await-on-another-meet-in-a-handler
@@ -190,6 +191,7 @@ calls/a-function-whose-names-were-listed-is-called-through-a-table
 calls/a-generator-method-is-looped-over-and-what-is-no-function-is-called
 calls/a-list-too-long-for-the-stack-fails-inside-the-try-around-the-call
 calls/a-number-bound-to-a-plain-function-is-there-when-it-is-called-and-when-it-is-constructed
+calls/a-property-is-bound-and-the-one-function-stored-under-its-name-is-stored-behind-a-call-that-always-throws
 calls/a-small-function-calls-an-async-function-that-takes-the-rest-of-its-arguments-at-every-level-on-the-way-up-from-the-end-of-the-stack
 calls/a-spread-call-of-a-method-that-returns-this
 calls/a-spread-resolved-behind-the-last-round
@@ -244,6 +246,9 @@ calls/rest-arrays-handed-to-rest-parameters
 calls/results-specialized-by-caller
 calls/stack-across-vm-entries
 calls/stack-traces-name-no-function-of-the-prelude
+calls/stack-traces-under-built-ins-in-tail-position
+calls/tail-call-positions
+calls/tail-call-positions-untyped
 calls/tail-calls-into-and-out-of-code-made-at-run-time/a-function-and-code-from-new-function-call-each-other
 calls/tail-calls-into-and-out-of-code-made-at-run-time/an-exception-leaves-the-chain
 calls/tail-calls-into-and-out-of-code-made-at-run-time/calls-that-are-no-tail-calls-keep-their-frames
@@ -326,6 +331,7 @@ classes-below-functions/a-setter-of-new-target-takes-the-store-of-an-object-in-t
 classes-below-functions/a-setter-of-new-target-takes-the-store-when-reflect-construct-is-called-through-call
 classes-below-functions/reflect-construct-after-the-class-was-wrapped-in-a-proxy
 classes/a-definition-that-throws-leaves-the-fields-defined-before-it
+classes/a-field-and-a-derived-constructor-both-evaluate-text
 classes/a-field-declared-by-a-base-class-holds-integers-in-the-class-below
 classes/a-method-is-called-on-a-parameter-without-a-type
 classes/a-name-that-looks-like-a-number-is-stored-to-the-prototype-object-of-a-class
@@ -365,11 +371,13 @@ classes/unread-field-is-stored-below-a-replaced-parent
 classes/what-a-loop-reads-is-changed-inside-the-loop-without-naming-it
 closed-world/a-member-of-bun-is-named-on-a-copy-of-bun-behind-many-calls
 closed-world/a-member-of-bun-is-named-on-a-parameter-that-took-another-value-first
+closed-world/a-member-of-bun-is-named-on-a-proxy-of-bun
 closed-world/a-member-of-bun-is-named-on-an-object-below-bun
 closed-world/a-member-of-bun-is-named-on-bun-read-off-the-global-object
 closed-world/a-member-of-bun-is-named-on-what-a-promise-is-settled-with
 closed-world/a-member-of-bun-is-named-on-what-an-async-function-returns
 closed-world/a-member-of-bun-is-replaced-behind-many-calls
+closed-world/a-member-of-bun-is-replaced-through-a-parameter-behind-many-calls
 closed-world/a-name-asked-of-an-instance-and-of-primitives
 closed-world/a-name-asked-of-process-and-of-other-things
 closed-world/a-polyfill-installed-by-assign-on-computed-targets
@@ -389,6 +397,8 @@ closed-world/functions-native-code-calls/timer-delay-known-at-run-time
 closed-world/import-of-text-refused
 closed-world/members-of-built-in-objects-are-redefined-by-closures-handed-on-through-a-spread-beside-evaluated-text
 closed-world/members-of-process-are-listed-once-a-value-has-carried-it-out
+closed-world/members-of-process-are-listed-through-a-proxy-of-process
+closed-world/members-of-process-are-read-under-computed-keys-once-process-arrives-behind-many-calls
 closed-world/package-outside-sees-no-module-object-of-the-program
 closed-world/replaceable-members-out-of-a-table-beside-an-external-package
 closed-world/script-declarations-over-every-global
@@ -408,6 +418,7 @@ closure-factories/closures-of-one-factory-look-alike-and-are-distinct
 closure-factories/each-call-of-a-factory-keeps-its-own-state
 closure-factories/factories-called-in-loops-in-functions-and-through-other-names
 closure-factories/helpers-define-members-under-written-names
+closure-factories/members-defined-in-a-loop-over-written-names
 closure-factories/members-that-helpers-defined-are-changed-later
 closure-factories/modules-that-another-bundler-wrapped
 closure-factories/modules-that-another-bundler-wrapped-in-a-commonjs-file
@@ -422,6 +433,13 @@ collector/eval-constants-at-heap-limit
 collector/flags-kept-out-of-line-are-read-by-the-last-holder-of-their-object-in-a-loop-that-makes-texts
 collector/large-constants-at-heap-limit
 collector/narrow-reference-held-across-integer-operations
+collector/objects-held-only-by-a-captured-variable-that-is-only-stored-stay-alive
+collector/objects-held-only-by-a-class-field-nobody-reads-stay-alive
+collector/objects-held-only-by-a-field-nobody-reads-answer-their-weak-references
+collector/objects-held-only-by-a-field-of-a-class-made-in-a-callback-stay-alive
+collector/objects-held-only-by-a-module-variable-that-a-function-stores-stay-alive
+collector/objects-held-only-by-an-object-that-is-read-in-part-stay-alive
+collector/objects-held-only-by-places-nobody-reads-stay-alive
 collector/objects-with-many-new-names-are-made-while-a-collection-marks
 collector/text-made-at-run-time-adds-properties-behind-full-collections
 collector/weak-maps-that-grew-old-keep-what-is-added-between-young-collections
@@ -442,6 +460,7 @@ commonjs/a-commonjs-file-requires-the-entry-point-whose-first-import-takes-anoth
 commonjs/a-commonjs-file-requires-the-es-module-that-an-import-call-is-loading
 commonjs/a-commonjs-file-requires-the-es-module-that-hands-on-all-its-names
 commonjs/a-constructor-function-that-only-unseen-code-constructs
+commonjs/a-file-of-a-deeper-module-runs-before-a-required-graph-fails-for-a-missing-name
 commonjs/a-file-that-a-function-requires-takes-names-out-of-a-built-in-module-by-a-pattern
 commonjs/a-function-stored-as-push-on-the-list-of-children-is-called-for-each-file-required
 commonjs/a-module-imports-a-name-stored-on-the-exports-object-that-the-file-replaced-with-a-function
@@ -454,6 +473,7 @@ commonjs/a-module-imports-a-name-through-a-star-export-of-a-file-that-stores-it-
 commonjs/a-module-imports-a-name-through-two-star-exports-of-a-file-that-never-stores-it
 commonjs/a-module-re-exports-a-name-through-a-star-export-of-a-file-that-never-stores-it
 commonjs/a-pattern-over-require-reads-names-that-an-es-module-passes-on-from-a-commonjs-file
+commonjs/a-required-module-is-imported-by-what-it-imports-while-it-is-evaluated
 commonjs/a-typescript-entry-point-re-exports-a-name-that-the-file-never-stores
 commonjs/a-typescript-module-re-exports-a-name-that-the-file-never-stores
 commonjs/a-typescript-module-re-exports-a-name-that-the-file-stores
@@ -496,7 +516,9 @@ commonjs/symbols-of-a-module-that-is-seen-half-evaluated
 commonjs/tests-that-never-hold-around-the-only-require-or-module-exports
 commonjs/the-children-are-stored-under-a-key-made-at-run-time
 commonjs/the-entry-point-is-a-bundle-in-the-commonjs-format-of-bun-build
+commonjs/the-importer-of-a-file-runs-inside-the-files-require-of-a-module-that-imports-the-file
 commonjs/top-level-this-is-the-receiver
+commonjs/two-imports-at-once-of-which-one-names-a-module-of-the-entry-points-graph
 conditions-of-passes/a-busy-worker-is-ended-1
 conditions-of-passes/a-busy-worker-is-ended-2
 conditions-of-passes/a-function-that-waits-holds-values-that-nothing-else-holds
@@ -515,7 +537,10 @@ const-and-dead-zones/a-large-var-read-only-where-a-parameter-has-another-type-th
 const-and-dead-zones/texts-joined-from-constants-that-are-read-in-their-dead-zones
 constructor-functions/a-factory-makes-a-constructor-below-another-and-the-chain-changes
 constructor-functions/a-factory-makes-two-constructors-of-one-text
+constructor-functions/constructor-functions-store-through-this-in-code-that-is-not-strict
 constructor-functions/this-is-a-mapped-type-over-an-interface
+constructor-functions/this-of-a-callback-that-is-not-strict
+constructor-functions/this-of-a-function-that-is-not-strict-is-a-primitive-or-nothing
 copied-properties/a-copy-born-in-the-cell-of-its-holder
 copied-properties/a-copy-born-in-the-cell-of-its-holder-is-kept-by-closures-over-one-variable
 copied-properties/a-literal-with-members-takes-the-spread-of-its-own-kind-from-text-made-at-run-time
@@ -597,6 +622,8 @@ errors/a-read-through-super-under-a-null-prototype-quotes-the-expression
 errors/capture-stack-trace-on-objects-that-take-no-new-properties
 errors/classes-that-extend-error
 errors/every-kind-of-place-that-throws
+errors/iterating-what-is-not-iterable
+errors/own-property-names-of-errors-made-in-programs-classes-and-built-in-modules
 errors/places-that-throw-with-another-text-or-column
 errors/reads-of-null-with-many-values-in-registers
 errors/stack-frames-of-classes-called-without-new
@@ -604,6 +631,7 @@ errors/stack-frames-of-default-constructors
 errors/stack-frames-of-reflect-construct-by-the-way-it-is-called
 errors/stack-frames-under-reflect-construct
 errors/stack-frames-where-reflect-construct-is-not-written-as-a-call-of-it
+errors/stack-frames-where-the-initializer-of-a-field-throws
 errors/stack-lines-after-types-over-several-lines
 errors/stack-lines-of-expressions-written-over-several-lines
 errors/stack-positions-after-types-on-the-same-line
@@ -611,6 +639,7 @@ errors/stack-positions-of-callers
 errors/stack-positions-of-callers-that-step-a-generator
 errors/stack-positions-of-expressions-that-throw
 errors/stack-positions-of-expressions-that-throw-in-commonjs
+errors/stack-positions-of-operators-beside-parentheses-and-literals
 errors/stack-positions-of-operators-in-chains
 errors/traces-of-many-places-asked-round-after-round
 errors/what-a-program-can-ask-about-a-stack
@@ -648,11 +677,13 @@ escape-analysis/find-over-an-array-literal-that-a-function-answers-and-every-pas
 escape-analysis/find-over-one-of-two-array-literals-and-every-pass-is-verified
 escape-analysis/five-objects-that-leave-on-one-way-are-candidates-for-one-variable
 escape-analysis/loop-over-an-arguments-object-or-undefined
+escape-analysis/objects-filled-under-tries-hold-one-another-and-leave-on-one-way
 escape-analysis/objects-that-refer-to-each-other-built-on-one-path
 escape-analysis/pairs-of-numbers-that-are-only-read-and-pairs-that-somebody-looks-at
 escape-analysis/pairs-of-numbers-that-are-only-read-and-pairs-that-somebody-looks-at-untyped
 escape-analysis/results-forwarded-by-functions
 escape-analysis/returns-the-last-of-many-local-objects
+escape-analysis/three-pairs-that-may-fail-to-be-made-hold-one-another-and-leave-on-one-way
 every-member-of-a-host-object/every-getter-is-read-by-evaluated-text-in-a-program-that-names-none
 function-prototypes/a-bound-plain-function-is-constructed-and-the-function-went-through-a-call
 function-prototypes/a-constructor-function-called-without-new-hands-this-to-its-catch-block-ahead-of-the-test
@@ -913,6 +944,7 @@ language/replaced-console-log-keeps-its-arguments
 language/super-call-in-evaluated-text
 language/super-call-in-the-text-of-a-direct-eval
 language/switch-cases-share-targets
+language/text-evaluated-in-a-static-block
 language/the-copies-at-the-end-of-a-block-outnumber-the-registers
 language/the-flow-analysis-is-at-rest-when-it-ends
 language/the-global-object-is-asked-for-another-prototype-and-then-for-its-own-names
@@ -956,6 +988,8 @@ modules/a-commonjs-file-throws-after-a-module-it-required-imported-it
 modules/a-computed-path-is-required-again-and-again
 modules/a-cycle-of-modules-one-of-which-throws-is-asked-for-in-a-worker
 modules/a-file-without-an-extension-lies-beside-a-computed-path
+modules/a-folder-and-a-file-of-one-name-are-loaded-under-computed-names
+modules/a-folder-whose-package-json-names-its-main-file-is-loaded-under-a-computed-name
 modules/a-late-module-reaches-what-is-not-installed-through-a-module-that-the-entry-point-imports
 modules/a-member-of-a-cycle-that-another-member-requires-stays-evaluated-when-the-cycle-throws
 modules/a-module-resumed-inside-require-awaits-a-number
@@ -997,6 +1031,7 @@ modules/imported-require-made-by-create-require
 modules/jobs-of-the-caller-wait-while-require-runs-a-module-with-top-level-await
 modules/names-imported-from-node-process-hold-what-they-held-at-the-load
 modules/namespace-object-protocol
+modules/one-of-four-modules-imported-on-demand-stores-a-function-under-a-computed-key-behind-a-call-that-always-throws
 modules/paths-of-files-in-nested-directories
 modules/reactions-and-the-entry-point-wait-for-a-promise-that-require-settles
 modules/require-and-resolve
@@ -1075,6 +1110,7 @@ native-callbacks/species-getter-runs-for-slice-kept-in-a-parsed-array
 native-callbacks/species-getter-runs-for-splice-kept-in-a-parsed-array
 native-callbacks/species-getter-runs-for-split-kept-in-a-parsed-array
 native-callbacks/species-getter-runs-for-then-kept-in-a-parsed-array
+native-callbacks/the-json-directive-of-console-calls-the-to-json-of-a-bigint
 native-callbacks/what-code-of-an-operand-hands-back-is-used
 node-http-probes/frozen-sealed-and-closed-heirs
 node-http-probes/frozen-sealed-and-closed-objects
@@ -1349,6 +1385,7 @@ strings/pattern-texts-that-the-build-knows
 strings/patterns-made-at-run-time-are-refused-when-they-are-made
 strings/regexp-empty-groups-fixed-count
 strings/regexp-literals-made-at-first-read
+strings/regexp-literals-nested-deep-are-kept-in-variables-closures-and-fields
 strings/regexp-run-time-pattern-frame-limit
 strings/regexp-too-long-to-build-throws-where-it-is-created
 strings/regexps-from-constant-templates

@@ -93,6 +93,7 @@ describe.concurrent.each([6, 14])("the class that a module of Bun makes, behind 
     ],
     ["named on what a promise resolves to", "", `async () => new (await Promise.resolve(Bun)).SQL(${url})`],
     ["named on what a reaction takes", "", `() => Promise.resolve(Bun).then(bun => new bun.SQL(${url}))`],
+    ["named on a proxy of Bun", "", `() => new (new Proxy(Bun, {}).SQL)(${url})`],
     gap(notCompiled, [
       "named on what Promise.all() resolves to",
       "",
@@ -156,10 +157,10 @@ async function membersUsed(text: string) {
     .map(line => line.slice(prefix.length));
 }
 
-// TODO: the members that let in code from outside the executable are still missed where they are named late: Bun.ModuleGraph always, the functions where a built-in reads them.
+// TODO: the members that let in code from outside the executable are still missed where a built-in reads them late.
 const letInOutsideCode = ["ModuleGraph", "Transpiler", "build", "plugin"];
 test.concurrent.each([
-  ["its name", (name: string) => `Bun.${name}`, ["ModuleGraph"]],
+  ["its name", (name: string) => `Bun.${name}`, []],
   ["Reflect.get", (name: string) => `Reflect.get(Bun, "${name}")`, letInOutsideCode],
   [
     "Reflect.getOwnPropertyDescriptor",

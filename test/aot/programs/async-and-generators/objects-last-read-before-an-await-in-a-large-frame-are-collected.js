@@ -1,4 +1,4 @@
-// Each coroutine makes an object and many short-lived values, hands each value to a call of its own, reads the object, and then collects in a loop that awaits.
+// Each coroutine waits for a timer, as its loop does later, makes an object and many short-lived values, hands each value to a call of its own, reads the object, and then collects in a loop that awaits.
 const registry = new FinalizationRegistry(markCollected => markCollected());
 const maxRounds = 300;
 
@@ -45,6 +45,7 @@ function report(label, isCollected, sum) {
 
 async function makeThirtyValues(first) {
   let sum = mix(first, await pass(1));
+  await Bun.sleep(0);
   let isCollected = false;
   {
     const watched = { name: "w" + pass(2) };
@@ -120,6 +121,7 @@ async function makeThirtyValues(first) {
 
 async function makeSixtyValues(first) {
   let sum = mix(first, await pass(1));
+  await Bun.sleep(0);
   let isCollected = false;
   {
     const watched = { name: "w" + pass(2) };
@@ -255,6 +257,7 @@ async function makeSixtyValues(first) {
 
 async function makeTwoHundredValues(first) {
   let sum = mix(first, await pass(1));
+  await Bun.sleep(0);
   let isCollected = false;
   {
     const watched = { name: "w" + pass(2) };

@@ -71,7 +71,8 @@ let bunCompilerProfile = Profile(
     additionalProgramTemplates: WeightedList<ProgramTemplate>([]),
 
     // A compiled program can't replace a built-in, and a built-in named here can be a call of require().
-    disabledCodeGenerators: ["BuiltinOverwriteGenerator"] + disabledByTheEnvironment,
+    disabledCodeGenerators: ["BuiltinOverwriteGenerator"] + disabledByTheEnvironment
+        + (TypeScriptSettings.fromEnvironment == nil ? [] : ["WithStatementGenerator"]),
 
     // They read what the program writes with fuzzilli('FUZZILLI_PRINT', ..), which a compiled program doesn't have.
     disabledMutators: ["ExplorationMutator", "ProbingMutator"],

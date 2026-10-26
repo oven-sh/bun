@@ -1,4 +1,9 @@
 {
+  "a built-in is given operands that run code of the program": [
+    "Bun.file, inherited",
+    "console.error, inherited",
+    "console.log, inherited"
+  ],
   "a class with very many members": [
     "4095: public fields of a class and private fields of its heir.",
     "4096: a large class with a large heir and a small one.",

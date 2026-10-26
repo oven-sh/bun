@@ -89,6 +89,8 @@ export function functionsOf(map: string): CompiledFunction[] {
 }
 
 export const turns = { before: [20, 20], fewer: 5, more: 15 };
+// The collector is off while turns are counted, so every block of cells is a new one, and a new block costs a tenth of a turn. Over sixty turns the blocks even out.
+export const manyTurns = { ...turns, more: 65 };
 
 export interface Turn {
   compiled: number;
@@ -107,11 +109,12 @@ export async function countTurn(
   functions: CompiledFunction[],
   name: string,
   env: Record<string, string | undefined>,
+  { before, fewer, more } = turns,
 ): Promise<Turn> {
   const request: Request = {
-    command: [executable, name, ...[...turns.before, turns.fewer, turns.more].map(String)],
+    command: [executable, name, ...[...before, fewer, more].map(String)],
     env: { ...env, BUN_JSC_useGC: "0" },
-    marksBeforeTheFirstWindow: turns.before.length,
+    marksBeforeTheFirstWindow: before.length,
     numberOfWindows: 2,
     functions,
   };
@@ -130,7 +133,7 @@ export async function countTurn(
   const perTurn = [...new Set([...few.keys(), ...many.keys()])]
     .map(where => ({
       where,
-      instructions: ((many.get(where) ?? 0) - (few.get(where) ?? 0)) / (turns.more - turns.fewer),
+      instructions: ((many.get(where) ?? 0) - (few.get(where) ?? 0)) / (more - fewer),
     }))
     .filter(share => Math.abs(share.instructions) >= 0.5)
     .sort((a, b) => b.instructions - a.instructions || (a.where < b.where ? -1 : 1));

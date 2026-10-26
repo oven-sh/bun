@@ -9,7 +9,7 @@
 //   bun scripts/verify-baseline.ts --binary ./bun --arch x64 --emulator /usr/bin/qemu-x86_64
 //   bun scripts/verify-baseline.ts --binary ./bun.exe --arch x64 --emulator ./sde.exe
 
-import { copyFileSync, mkdtempSync, readdirSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { markBuildkiteStepReported } from "./buildkite.ts";
@@ -242,9 +242,15 @@ if (values["skip-emulation"]) {
   const aotDir = mkdtempSync(join(tmpdir(), "verify-baseline-aot-"));
   const aotProgram = join(aotDir, "baseline-cpu.ts");
   const aotExecutable = join(aotDir, isWindows ? "baseline-cpu.exe" : "baseline-cpu");
-  copyFileSync(join(repoRoot, "test", "aot", "programs", "language", "baseline-cpu.ts"), aotProgram);
-  if (await runTest("Ahead-of-time compiler", ["build", "--compile", "--aot", aotProgram, "--outfile", aotExecutable]))
-    await runTest("Ahead-of-time compiled program", [], { executable: aotExecutable });
+  try {
+    copyFileSync(join(repoRoot, "test", "aot", "programs", "language", "baseline-cpu.ts"), aotProgram);
+    if (
+      await runTest("Ahead-of-time compiler", ["build", "--compile", "--aot", aotProgram, "--outfile", aotExecutable])
+    )
+      await runTest("Ahead-of-time compiled program", [], { executable: aotExecutable });
+  } finally {
+    rmSync(aotDir, { recursive: true, force: true });
+  }
 }
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)

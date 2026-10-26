@@ -3,7 +3,7 @@ const listFrames = error =>
   error.stack
     .split("\n")
     .slice(1, 5)
-    .map(line => line.trim().replace(/\(?[^\s()]*[\\/]/, "("))
+    .map(line => line.trim().replace(/\(?[^\s()]*[\\/]/, "(").replace(/native:\d+:\d+/, "native"))
     .join(" | ");
 function show(label, call) {
   try {

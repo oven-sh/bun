@@ -2,8 +2,9 @@
 // function can take is tried on thousands of programs for the price of a few dozen. joined() builds each group twice, once with every function through B3 and once with
 // the flags under test, runs both and compares what each program printed. Nothing is stored: the first build is the measure of the second.
 //
-// A group is a module that imports its programs one after the other, prints a line in front of each and catches what it throws. After a crash the executable is started
-// again behind the program that crashed, so one fault does not hide the programs behind it.
+// A group is a module that imports its programs one after the other, prints a line in front of each and catches what it throws. A program begins when the event loop is empty, so
+// whatever the one before it left to a later turn, a tick, a stream or another thread is printed under its own name. After a crash the executable is started again behind the
+// program that crashed, so one fault does not hide the programs behind it.
 //
 // Left out: a program of several files; one with a file beside it (it needs flags, or differs from plain Bun on purpose; a .json that holds "failsWithLimit" alone does not count); and whatever cannot share a process with others
 // or says something else each time: its own path or arguments, stack texts, the clock, random numbers, timers, files, sockets, processes, an exit, a change to a built-in.
@@ -51,12 +52,12 @@ const cannotBeJoined = new RegExp(
   [
     String.raw`process\.exit|process\.argv|import\.meta|__filename|__dirname|Bun\.main|\.stack\b|captureStackTrace|prepareStackTrace|Date\.now|new Date\(\)|performance\.now|Math\.random|hrtime|nanoseconds`,
     String.raw`\.prototype\.\w+\s*=[^=]|\.prototype\[|Object\.defineProperty\(\s*\w+\.prototype|setPrototypeOf\(\s*(Array|Object|Function|String|Number|Map|Set|Promise|RegExp|Symbol|Error)\b`,
-    String.raw`globalThis\.|globalThis\[|\beval\b|new Function|Function\(|new Worker|process\.on\(|uncaughtException|unhandledRejection|setTimeout|setInterval|setImmediate|Bun\.sleep|Bun\.serve|Bun\.spawn|child_process`,
+    String.raw`globalThis\.|globalThis\[|\beval\b|new Function|Function\(|new Worker|process\.on\(|uncaughtException|unhandledRejection|setTimeout|setInterval|setImmediate|AbortSignal\.timeout|Bun\.sleep|Bun\.serve|Bun\.spawn|child_process`,
     String.raw`process\.stdout|process\.stderr|process\.env|Bun\.env|console\.(error|warn|trace|table|time|count|group|dir)|require\.cache|require\.main|module\.|Symbol\.for\(|FinalizationRegistry|WeakRef|Bun\.gc|\bgc\(|edenGC|fullGC`,
     String.raw`delete\s+(Array|Object|Function|String|Number|Math|JSON|Reflect)\.|\b(Array|Object|Function|String|Number|Math|JSON|Reflect|Promise|Map|Set|Symbol)\.\w+\s*=[^=]|jsc-shell-functions|bun:jsc|bun:internal`,
     String.raw`node:fs|["']fs["']|fs/promises|Bun\.write|Bun\.file|node:net|node:https?|node:http2|["']https?["']|node:os|fetch\(|Bun\.connect|Bun\.listen|node:dgram|node:tls|node:dns|Bun\.\$|mkdtemp|tmpdir|homedir`,
     String.raw`node:worker_threads|node:cluster|bun:sqlite|bun:ffi|Bun\.openInEditor|Bun\.which|node:readline|node:repl|node:inspector|node:vm|WebSocket|Bun\.udpSocket|Bun\.dns|process\.chdir|process\.kill|process\.abort`,
-    String.raw`^\s*(import|export)\b.*from\s+["']\.|require\(\s*["']\.|import\(\s*["']\.`,
+    String.raw`^\s*(import|export)\b.*from\s+["']\.|^\s*import\s+["']\.|require\(\s*["']\.|import\(\s*["']\.`,
   ].join("|"),
   "m",
 );
@@ -78,7 +79,6 @@ const tooSlowBesideOthers = new Set([
   "arrays/a-spread-of-an-array-longer-than-any-storage-is-out-of-memory-at-once.js",
   "async-and-generators/a-generator-that-has-begun-where-the-stack-ends-is-also-left.js",
 ]);
-
 const isOneFile = (name: string) => /^[^/]+\/[^/]+(?<!\.d)\.(ts|tsx|js)$/.test(name);
 
 /** By their paths alone: what a program says is read only where its group is taken, and what a script writes is written there. */
@@ -129,31 +129,26 @@ function groupsOf(paths: string[], names = namesInGroup): string[][] {
 }
 
 function textOfGroup(names: string[]): string {
-  const lines = [
-    `const from = Number(process.env.FROM ?? 0);`,
-    `function starts(index: number, name: string): boolean {`,
-    `  if (index < from) return false;`,
-    `  console.log("==", index, name);`,
-    `  return true;`,
-    `}`,
-    `async function ends(error?: unknown) {`,
-    `  if (error !== undefined) console.log("threw", String(error));`,
-    `  for (let turn = 0; turn < 8; turn++) await null;`,
-    `}`,
-  ];
-  names.forEach((name, index) => {
-    lines.push(`if (starts(${index}, ${JSON.stringify(name)})) {`, `  try {`);
-    if (name.endsWith(".js")) lines.push(`    // @ts-ignore`);
-    lines.push(
-      `    await import(${JSON.stringify("./programs/" + name)});`,
-      `    await ends();`,
-      `  } catch (error) {`,
-      `    await ends(error ?? null);`,
-      `  }`,
-      `}`,
-    );
-  });
-  return [...lines, `console.log("== end");`, `export {};`, ``].join("\n");
+  const lines = [`const programs: [string, () => Promise<unknown>][] = [`];
+  for (const name of names) {
+    if (name.endsWith(".js")) lines.push(`  // @ts-ignore`);
+    lines.push(`  [${JSON.stringify(name)}, () => import(${JSON.stringify("./programs/" + name)})],`);
+  }
+  return [
+    ...lines,
+    `];`,
+    `let index = Number(process.env.FROM ?? 0);`,
+    `process.on("beforeExit", () => {`,
+    `  if (index > programs.length) return;`,
+    `  if (index === programs.length) return void (index++, console.log("== end"));`,
+    `  const [name, load] = programs[index];`,
+    `  console.log("==", index++, name);`,
+    `  load().catch(error => console.log("threw", String(error ?? null)));`,
+    `  setImmediate(() => {});`,
+    `});`,
+    `export {};`,
+    ``,
+  ].join("\n");
 }
 
 /** What each program of a group printed, by its name. */
@@ -513,12 +508,17 @@ async function compareWays(
       .map(match => `${match[1]} ${match[2]}`)
       .join(", "),
   );
-  // What a program does otherwise than in plain Bun with no flag at all is not what the flags did. Other tests are there for it.
-  const otherwiseAnyway = new Set([
-    ...differing(usual, made.names).map(line => line.slice(0, line.indexOf(","))),
-    ...[...plain.stopped, ...usual.stopped].map(stop => stop.slice(0, stop.lastIndexOf(": "))),
-  ]);
-  for (const name of otherwiseAnyway) console.error(says("usual", `${name}: not as in plain Bun`));
+  // With no flag at all each program does what it does in plain Bun beside the same neighbors. Where the clock of this file ended one of the two runs, what was not reached says nothing.
+  const otherwiseAnyway = new Map<string, string>();
+  const nameOfStop = (stop: string) => stop.slice(0, stop.lastIndexOf(": "));
+  if (!plain.isCut && !usual.isCut) {
+    for (const line of differing(usual, made.names)) otherwiseAnyway.set(line.slice(0, line.indexOf(",")), line);
+    for (const stop of usual.stopped.filter(stop => !plain.stopped.includes(stop)))
+      otherwiseAnyway.set(nameOfStop(stop), `stopped in ${stop}`);
+    for (const stop of plain.stopped.filter(stop => !usual.stopped.includes(stop)))
+      otherwiseAnyway.set(nameOfStop(stop), `plain Bun stopped in ${stop}`);
+  }
+  for (const what of otherwiseAnyway.values()) reds.push(says("usual", what));
   const names = made.names.filter(name => !otherwiseAnyway.has(name));
 
   const tryWay = async (way: Way) => {
@@ -572,7 +572,9 @@ async function compareWays(
     // Past a limit a program is slower, by how much nobody says: what the clock ended is not judged.
     const byClock = ran.stopped.filter(stop => stop.endsWith(": SIGKILL"));
     const found = [
-      ...ran.stopped.filter(stop => !byClock.includes(stop)).map(stop => `stopped in ${stop}`),
+      ...ran.stopped
+        .filter(stop => !byClock.includes(stop) && !plain.stopped.includes(stop))
+        .map(stop => `stopped in ${stop}`),
       ...differing(
         ran,
         names.filter(name => !byClock.some(stop => stop.startsWith(name + ": "))),

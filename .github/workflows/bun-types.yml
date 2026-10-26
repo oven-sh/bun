@@ -50,7 +50,8 @@ jobs:
           version=$(sed -n 's/^export const WEBKIT_VERSION = "\(.*\)";$/\1/p' scripts/build/deps/webkit.ts)
           release="https://github.com/oven-sh/WebKit/releases/download/autobuild-${version#autobuild-}"
           mkdir -p vendor/WebKit
-          { curl -fsSL --retry 3 "$release/bun-webkit-aot-sources.tar.gz" || curl -fsSL --retry 3 "$release/bun-webkit-linux-amd64-lto.tar.gz"; } |
-            tar -xz -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-aot-sources.tar.gz" ||
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-linux-amd64-lto.tar.gz"
+          tar -xzf "$RUNNER_TEMP/engine.tar.gz" -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
       - name: Check types
         run: bun test test/integration/bun-types/bun-types.test.ts

@@ -912,8 +912,7 @@ impl WebWorker {
             Ok(p) => p,
             Err(_) => {
                 // process.exit() may have run during load; don't clobber its code.
-                // Nor is the parent's terminate() the entry's failure.
-                if !self.exit_called.load(Ordering::Relaxed) && !self.was_terminated_by_parent() {
+                if !self.exit_called.load(Ordering::Relaxed) {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -1105,13 +1104,6 @@ impl WebWorker {
             exit_code,
             self.stopped_by_parent(),
         );
-    }
-
-    /// `request_termination` publishes the flag first and says whose stop it is
-    /// second, both under the handle's lock.
-    fn was_terminated_by_parent(&self) -> bool {
-        let _published = self.vm_handle.lock();
-        self.terminated_by_parent.load(Ordering::Relaxed)
     }
 
     /// worker.terminate() from the parent, and the worker did not also exit on
@@ -1325,7 +1317,8 @@ unsafe fn resolve_entry_point_specifier<'s>(
         // SAFETY: as above.
         && let Some(module) = unsafe {
             let root = graph.base_public_path_with_default_suffix();
-            (*parent).transpiler.resolver.resolve_embedded_module(root, str)
+            let resolver = &(*parent).transpiler.resolver;
+            resolver.resolve_embedded_module(root, str, bun_ast::ImportKind::Stmt)
         }
         && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
     {

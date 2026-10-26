@@ -1,5 +1,6 @@
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { bunEnv, bunExe } from "harness";
+import { endAtMemoryLimit, memoryLimit } from "../harness/memory-limit";
 
 export type Cost = { instructions?: number; peakBytes: number };
 
@@ -57,11 +58,14 @@ export async function measureCommand(cwd: string, command: string[], killAfter =
     timeout: killAfter,
     killSignal: "SIGKILL",
   });
+  // Several commands are measured at once. On Linux the shell becomes the command, so the child is what holds the memory.
+  using held = endAtMemoryLimit(child);
   const readInstructions = isDarwin ? undefined : openInstructionCounter(child.pid);
   child.stdin.write("\n");
   child.stdin.end();
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   const instructions = isDarwin ? Number(/(\d+)\s+instructions retired/.exec(stderr)?.[1]) || undefined : readInstructions?.();
+  if (held.exceeded) throw new Error(`${command.join(" ")}: killed at its memory limit of ${Math.round(memoryLimit / 2 ** 20)} MB`);
   if (exitCode !== expectedExitCode) throw new Error(`${command.join(" ")}: exit code ${exitCode}, signal ${child.signalCode}\n${stdout}${stderr}`);
   const peakBytes = isDarwin ? Number(/(\d+)\s+maximum resident set size/.exec(stderr)?.[1]) : child.resourceUsage()!.maxRSS;
   return { instructions, peakBytes, stdout, stderr };

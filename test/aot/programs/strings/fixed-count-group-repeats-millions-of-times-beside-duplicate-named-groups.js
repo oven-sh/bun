@@ -30,3 +30,13 @@ for (const [front, behind, flags] of kinds) {
     );
   }
 }
+
+// The counts are not known until the program runs.
+const none = process.argv.length - process.argv.length;
+for (const [head, count, one] of [
+  ["(?:ab){", 2, "abab"],
+  ["c(?:ab){", 3, "cababab"],
+]) {
+  const source = "(?:(?<n>x)|(?<n>y))(?:" + head + (count + none) + "})*";
+  console.log(source, lengths(new RegExp(source).exec("x" + one.repeat(turns / 2))));
+}

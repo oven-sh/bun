@@ -216,17 +216,17 @@
 # CHECK-NEXT: }
 # CHECK-NEXT: function f14 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}]
 # CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
-# CHECK-NEXT: v3 = Call v0, v1, v2, v2 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=43 callees=[f2, builtin(MathMax), ..] [isAnnotatedPure, isNeverInlined, isDemotedTailCall]
+# CHECK-NEXT: v3 = Call v0, v1, v2, v2 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=43 callees=[f2, builtin(MathMax), ..] [isAnnotatedPure, isNeverInlined] @0 tail
 # CHECK-NEXT: v4 = Call v0
 # CHECK-NEXT: v5 = Call v0, -, v2
 # CHECK-NEXT: v6 = Construct v0, v1, v2 calleeName="C" accessSite=44 callees=[f2, builtin(MathMax), ..] [isAnnotatedPure]
 # CHECK-NEXT: v7 = Construct v0
 # CHECK-NEXT: v8 = NewArray v2 contents=anything
-# CHECK-NEXT: v9 = CallList v0, v1, v8 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=45 callees=[f2, builtin(MathMax), ..] [isDemotedTailCall]
+# CHECK-NEXT: v9 = CallList v0, v1, v8 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=45 callees=[f2, builtin(MathMax), ..] @0 tail
 # CHECK-NEXT: v10 = CallList v0, -, v8
 # CHECK-NEXT: v11 = ConstructList v0, v1, v8 calleeName="C" accessSite=46 callees=[f2, builtin(MathMax), ..]
 # CHECK-NEXT: v12 = ConstructList v0, -, v8
-# CHECK-NEXT: v13 = CallDirect v1, v2 function=f5 accessSite=47 [isNeverInlined, isAlwaysInlined, isAfterInlinedHead, isConstruction, isDemotedTailCall]
+# CHECK-NEXT: v13 = CallDirect v1, v2 function=f5 accessSite=47 [isNeverInlined, isAlwaysInlined, isAfterInlinedHead, isConstruction] @0 tail
 # CHECK-NEXT: v14 = ResultAt v13 index=1
 # CHECK-NEXT: v15 = ResultAt v13
 # CHECK-NEXT: v16 = CallDirect function=f6
@@ -671,17 +671,17 @@ function f13 module=m0 thisType={type=anything} parameters=[{type=anything}, {ty
 }
 function f14 module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
-    v3 = Call v0, v1, v2, v2 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=43 callees=[f2, builtin(MathMax), ..] [isAnnotatedPure, isNeverInlined, isDemotedTailCall]
+    v3 = Call v0, v1, v2, v2 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=43 callees=[f2, builtin(MathMax), ..] [isAnnotatedPure, isNeverInlined] @0 tail
     v4 = Call v0
     v5 = Call v0, -, v2
     v6 = Construct v0, v1, v2 calleeName="C" accessSite=44 callees=[f2, builtin(MathMax), ..] [isAnnotatedPure]
     v7 = Construct v0
     v8 = NewArray v2 contents=anything
-    v9 = CallList v0, v1, v8 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=45 callees=[f2, builtin(MathMax), ..] [isDemotedTailCall]
+    v9 = CallList v0, v1, v8 calleeKey="m" calleeName="o.m" expectedResult=x0 accessSite=45 callees=[f2, builtin(MathMax), ..] @0 tail
     v10 = CallList v0, -, v8
     v11 = ConstructList v0, v1, v8 calleeName="C" accessSite=46 callees=[f2, builtin(MathMax), ..]
     v12 = ConstructList v0, -, v8
-    v13 = CallDirect v1, v2 function=f5 accessSite=47 [isNeverInlined, isAlwaysInlined, isAfterInlinedHead, isConstruction, isDemotedTailCall]
+    v13 = CallDirect v1, v2 function=f5 accessSite=47 [isNeverInlined, isAlwaysInlined, isAfterInlinedHead, isConstruction] @0 tail
     v14 = ResultAt v13 index=1
     v15 = ResultAt v13
     v16 = CallDirect function=f6

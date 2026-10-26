@@ -7,7 +7,12 @@ function make(key) {
       return 1;
     }
   }
-  const literal = { [key]() {}, [key + " function"]: function () {}, [key + " arrow"]: () => 1, [key + " class"]: class {} };
+  const literal = {
+    [key]() {},
+    [key + " function"]: function () {},
+    [key + " arrow"]: () => 1,
+    [key + " class"]: class {},
+  };
   const defined = function () {};
   Object.defineProperty(defined, "name", { value: key + " defined" });
   return Made.prototype[key].name.length + literal[key + " class"].name.length + defined.name.length;

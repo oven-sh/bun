@@ -1,4 +1,5 @@
 use bun_sema::atom::{Atom, known, written_name};
+use bun_sema::bind::Binding;
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
     BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, MemberKey, StmtKind, UnOp,
@@ -198,6 +199,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
+fn is_equality(op: BinOp) -> bool {
+    matches!(
+        op,
+        BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
+    )
+}
+
 impl FileLowering<'_, '_, '_, '_> {
     // JSC reports a call at the end of its callee, which the source map takes back to this token.
     pub(in crate::lower) fn last_mapped_position(&self, expression: ExprId) -> u32 {
@@ -214,7 +222,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     left,
                     right,
                 } if self.is_joined_with_text_on_the_left(left, right) => left,
-                ExprKind::Binary { right, .. } => right,
+                ExprKind::Binary { op, left, right } => self.printed_operands(op, left, right).1,
                 ExprKind::Assign { value, .. } => value,
                 ExprKind::Cond { test, branches } => match self.find_printed_condition(test) {
                     Some(true) => hir.branches(branches).yes,
@@ -243,7 +251,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // An expression that no file holds has no end.
-    fn last_token_position(&self, expression: ExprId) -> u32 {
+    pub(in crate::lower) fn last_token_position(&self, expression: ExprId) -> u32 {
         let node = self.hir[expression];
         match node.end {
             0 => node.pos,
@@ -255,12 +263,33 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn first_position(&self, expression: ExprId) -> u32 {
         let hir = self.hir;
         let mut first = self.skip_type_syntax(expression);
+        // The result of an operator that the transpiler computes stands where the operator's expression is written.
+        let mut is_computed = false;
         loop {
             let next = match hir[first].kind {
-                ExprKind::Binary { left, .. } => left,
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    right,
+                } => match !is_computed && self.is_removed_when_unused(left) {
+                    true => right,
+                    false => left,
+                },
+                ExprKind::Binary { op, left, right } => {
+                    let (printed_left, printed_right) = self.printed_operands(op, left, right);
+                    let is_behind_comma = self.skip_unprinted_syntax(printed_left)
+                        != self.skip_type_syntax(printed_left);
+                    is_computed |= is_behind_comma
+                        && self.is_literal_operand(printed_right)
+                        && self.is_printed_as_literal(first);
+                    printed_left
+                }
                 ExprKind::Cond { test, .. } => test,
                 ExprKind::Assign { target, .. } => target,
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+                ExprKind::Index { obj, index, .. } => {
+                    self.find_printed_element(obj, index).unwrap_or(obj)
+                }
+                ExprKind::Dot { obj, .. } => obj,
                 ExprKind::Call(site) | ExprKind::TaggedTemplate(site) => hir[site].callee,
                 ExprKind::Unary {
                     op: UnOp::PostInc | UnOp::PostDec,
@@ -291,8 +320,9 @@ impl FileLowering<'_, '_, '_, '_> {
                         | BinOp::Comma
                         | BinOp::In
                         | BinOp::Instanceof
-                ) && self.is_literal_operand(left)
-                    && self.is_literal_operand(right)
+                ) && self.is_literal_operand(right)
+                    && self.is_literal_operand(left)
+                    && (!is_equality(op) || self.have_one_literal_type(left, right))
             }
             ExprKind::Template { exprs } => {
                 let mut substitutions = hir.ids(exprs);
@@ -302,8 +332,93 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn is_literal_operand(&self, expression: ExprId) -> bool {
+    // Bun's transpiler drops the left operand of a comma if evaluating it does nothing.
+    pub(in crate::lower) fn is_removed_when_unused(&self, expression: ExprId) -> bool {
         let inner = self.skip_type_syntax(expression);
+        match self.hir[inner].kind {
+            ExprKind::Ident(_) => !matches!(self.bound.binding(inner), Binding::Free),
+            ExprKind::This | ExprKind::BigInt(_) | ExprKind::Fn(_) => true,
+            _ => self.is_literal_operand(inner),
+        }
+    }
+
+    // An expression without what Bun's transpiler does not print: type syntax, and a comma whose left operand it drops.
+    pub(in crate::lower) fn skip_unprinted_syntax(&self, expression: ExprId) -> ExprId {
+        let mut printed = self.skip_type_syntax(expression);
+        loop {
+            let inner = match self.hir[printed].kind {
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    right,
+                } if self.is_removed_when_unused(left) => right,
+                ExprKind::Index { obj, index, .. } => match self.find_printed_element(obj, index) {
+                    Some(element) => element,
+                    None => return printed,
+                },
+                _ => return printed,
+            };
+            printed = self.skip_type_syntax(inner);
+        }
+    }
+
+    // `[a, b][1]` is printed `b` if evaluating the other elements does nothing.
+    fn find_printed_element(&self, list: ExprId, index: ExprId) -> Option<ExprId> {
+        let hir = self.hir;
+        let ExprKind::Array(elements) = hir[self.skip_type_syntax(list)].kind else {
+            return None;
+        };
+        let ExprKind::Number(_) = hir[self.skip_type_syntax(index)].kind else {
+            return None;
+        };
+        let FoldedValue::Constant(Constant::Number(index)) = self.decisions().constant(hir, index)
+        else {
+            return None;
+        };
+        let is_plain = |element: ExprId| {
+            !matches!(hir[element].kind, ExprKind::Missing | ExprKind::Spread(_))
+                && self.is_removed_when_unused(element)
+        };
+        let element = hir.ids(elements).nth(index as usize)?;
+        (index.fract() == 0.0 && index >= 0.0 && hir.ids(elements).all(is_plain)).then_some(element)
+    }
+
+    fn have_one_literal_type(&self, left: ExprId, right: ExprId) -> bool {
+        let type_of = |operand| {
+            let operand = self.skip_unprinted_syntax(operand);
+            match self.decisions().constant(self.hir, operand) {
+                FoldedValue::Constant(constant) => Some(std::mem::discriminant(&constant)),
+                _ => None,
+            }
+        };
+        type_of(left).is_some() && type_of(left) == type_of(right)
+    }
+
+    // Bun's transpiler moves a literal on the left of an equality operator to the right.
+    pub(in crate::lower) fn printed_operands(
+        &self,
+        op: BinOp,
+        left: ExprId,
+        right: ExprId,
+    ) -> (ExprId, ExprId) {
+        let is_moved = |operand| {
+            let printed = self.skip_unprinted_syntax(operand);
+            match self.hir[printed].kind {
+                ExprKind::BigInt(_) => true,
+                ExprKind::Ident(name) => {
+                    name == known::undefined && matches!(self.bound.binding(printed), Binding::Free)
+                }
+                _ => self.is_literal_operand(printed),
+            }
+        };
+        match is_equality(op) && is_moved(left) && !is_moved(right) {
+            true => (right, left),
+            false => (left, right),
+        }
+    }
+
+    pub(in crate::lower) fn is_literal_operand(&self, expression: ExprId) -> bool {
+        let inner = self.skip_unprinted_syntax(expression);
         match self.hir[inner].kind {
             ExprKind::Null
             | ExprKind::True

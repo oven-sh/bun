@@ -132,7 +132,10 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 // A super call in evaluated text hands the initializer whatever the parent returned.
-fn is_called_by_evaluated_text(file: &mut FileLowering<'_, '_, '_, '_>, class: ClassId) -> bool {
+pub(in crate::lower) fn is_called_by_evaluated_text(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    class: ClassId,
+) -> bool {
     let evals = file.bound.runtime.eval_scopes();
     if evals.is_empty() || !is_derived_class(file.hir, class) {
         return false;

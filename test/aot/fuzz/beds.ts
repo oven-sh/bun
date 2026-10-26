@@ -217,6 +217,8 @@ export class ProductBed implements Bed {
       memory?: number;
       /** The executable's time, where it is not the plain run's: a collection at every few allocations takes long. */
       compiledRunSeconds?: number;
+      /** The executable's time where it was built with --aot-validate: its checks walk what they check. */
+      validatedRunSeconds?: number;
       /** For the run of the executable alone. */
       runEnvironment?: Record<string, string>;
       /** Only these modes. */
@@ -386,7 +388,8 @@ export class ProductBed implements Bed {
 
   #run(folder: string, cmd: string[], flags: string[]) {
     const drawn = flags.filter(flag => flag.startsWith(inTheRun)).map(flag => flag.slice(inTheRun.length).split("="));
-    return spawned(cmd, folder, this.options.compiledRunSeconds ?? this.options.runSeconds, { ...this.options.runEnvironment, ...Object.fromEntries(drawn) }, this.options.memory);
+    const seconds = (flags.includes("--aot-validate") ? this.options.validatedRunSeconds : undefined) ?? this.options.compiledRunSeconds ?? this.options.runSeconds;
+    return spawned(cmd, folder, seconds, { ...this.options.runEnvironment, ...Object.fromEntries(drawn) }, this.options.memory);
   }
 
   #build(folder: string, entry: string, flags: string[]) {

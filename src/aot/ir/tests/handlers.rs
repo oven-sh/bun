@@ -9,7 +9,7 @@ use crate::ir::testing::{build_function, create_catch_handler, enter_block};
 use crate::ir::types::TypeTable;
 
 pub(super) fn emit_call(builder: &mut FunctionBuilder, callee: ValueId) -> ValueId {
-    builder.call(callee, None, &[], None, None, None, false, false)
+    builder.call(callee, None, &[], None, None, None, false, false, false)
 }
 
 fn enter_landing_block(builder: &mut FunctionBuilder, handler: Handler) {
@@ -509,7 +509,8 @@ function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] resu
 fn roles_and_subject() {
     assert_graph(&[TypeTable::ANYTHING], ITERATION_CLEANUP, |builder| {
         let iterable = builder.parameter(0);
-        let iterator = builder.iterator_open(iterable, IteratorKind::Sync, None, false, false);
+        let iterator =
+            builder.iterator_open(iterable, IteratorKind::Sync, None, false, false, false);
         let cleanup = builder.create_handler(BlockRole::IterationCleanup, Some(iterator), None);
         enter_block(builder, Some(cleanup));
         let (kind, mode) = (IteratorKind::Sync, ResumeMode::Next);

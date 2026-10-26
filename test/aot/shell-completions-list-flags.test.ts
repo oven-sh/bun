@@ -23,3 +23,18 @@ test("the table of flags for shell completions lists every --aot flag of bun bui
   expect(inTable.filter(name => name === "admit" || name === "aot-type-errors" || name === "aot-audit")).toEqual([]);
   expect(exitCode).toBe(0);
 });
+
+test.each(["bun.bash", "bun.fish", "bun.zsh"])("%s offers every --aot flag of bun compile", async file => {
+  await using compile = Bun.spawn({
+    cmd: [bunExe(), "compile", "--help"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [help, errors, exitCode] = await Promise.all([compile.stdout.text(), compile.stderr.text(), compile.exited]);
+  const inHelp = [...new Set([...(help + errors).matchAll(/^\s+--(aot-[a-z-]+)(?![a-z-])/gm)].map(match => match[1]))];
+  expect(inHelp).toContain("aot-huge-heap");
+  const completions = await Bun.file(join(import.meta.dir, "..", "..", "completions", file)).text();
+  expect(inHelp.filter(name => !completions.includes(name))).toEqual([]);
+  expect(exitCode).toBe(0);
+});

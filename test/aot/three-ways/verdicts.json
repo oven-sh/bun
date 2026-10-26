@@ -26,7 +26,7 @@
   "import-of-each-kind": "as bun run",
   "json-as-a-module": "as the bundle",
   "names-given-by-assignment": "alone: a|b|c|d|e|f|g1|h|i|j|l|n|o|#p||s|a||default",
-  "names-in-heap-snapshots": "alone: Link:true counter:true next:true label:false payload:false shared:\ntrue next:true label:false payload:false inner:false",
+  "names-in-heap-snapshots": "alone: Link:true counter:true next:true label:false payload:true shared:\ntrue next:true label:false payload:true inner:true",
   "names-in-stacks-and-messages": "as bun run",
   "names-of-commonjs-are-read-each-time": "as bun run",
   "names-of-exports": "as bun run",

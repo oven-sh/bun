@@ -32,9 +32,18 @@ show("readSync at a position", () => {
   return bytes.toString("utf8", 0, fs.readSync(descriptor, bytes, 0, 4, 2));
 });
 fs.closeSync(descriptor);
+show("readlinkSync of the file", () => fs.readlinkSync(note));
+show("readlinkSync of its folder", () => fs.readlinkSync(path.dirname(note)));
+show("readlinkSync of what is not there", () => fs.readlinkSync(note + ".none"));
 (async () => {
   const handle = await fs.promises.open(note, "r");
-  console.log("handle.write:", await handle.write("changed").then(() => "done", error => "rejected " + error.code));
+  console.log(
+    "handle.write:",
+    await handle.write("changed").then(
+      () => "done",
+      error => "rejected " + error.code,
+    ),
+  );
   console.log("handle.readFile:", (await handle.readFile("utf8")).trim());
   await handle.close();
   show("readFileSync", () => fs.readFileSync(note, "utf8").trim());

@@ -29,8 +29,10 @@ console.log(add([1, 2, 3]), [..."abc"].map(letter => letter.toUpperCase()).join(
         "program.ts": `class Point {
   constructor(public x: number, public y: number) {}
 }
+const points: Point[] = [];
+for (let i = 0; i < 1000; i++) points.push(new Point(i, 1));
 let sum = 0;
-for (let i = 0; i < 1000; i++) sum += new Point(i, 1).x;
+for (const point of points) sum += point.x;
 console.log(sum);
 `,
       });

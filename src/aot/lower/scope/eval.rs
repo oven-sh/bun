@@ -194,12 +194,11 @@ fn compute_function_flags(kind: FnKind, is_derived: bool) -> EvalScopeFlags {
     let method = function | EvalScopeFlags::ALLOWS_SUPER_PROPERTY;
     match kind {
         FnKind::Decl | FnKind::Expr => function,
-        FnKind::Method | FnKind::Getter | FnKind::Setter => method,
+        FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::StaticBlock => method,
         FnKind::Constructor if is_derived => {
             method | EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR | EvalScopeFlags::ALLOWS_SUPER_CALL
         }
         FnKind::Constructor => method,
-        FnKind::StaticBlock => compute_initializer_flags(),
         _ => {
             debug_assert!(false, "this function kind is not a lexical owner");
             EvalScopeFlags::default()

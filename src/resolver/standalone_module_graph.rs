@@ -7,6 +7,7 @@ pub use crate::compiled_program::{
     CompiledEntryPoint, CompiledProgram, ExtensionSearch, ImageFile, ModuleLookup,
     compare_source_paths,
 };
+use crate::resolver::Resolver;
 
 /// How many regions a bytecode payload laid out by an order file has (`JSC::BytecodeLinkRegions`): heads of evaluated
 /// modules, the function bodies the recorded run decoded, the ones its build did not have, heads of modules known not
@@ -120,12 +121,16 @@ pub trait StandaloneModuleGraph: Send + Sync {
         &self,
         source_dir: &[u8],
         specifier: &[u8],
+        is_require: bool,
         search: &ExtensionSearch<'_>,
     ) -> Option<&'static [u8]> {
         use bun_options_types::standalone_path::is_bun_standalone_file_path;
-        let file = match is_bun_standalone_file_path(specifier)
-            || is_bun_standalone_file_path(source_dir)
-        {
+        let is_embedded =
+            is_bun_standalone_file_path(specifier) || is_bun_standalone_file_path(source_dir);
+        // `resolve` adds `.js` to `./a/.`.
+        let is_left_to_program =
+            self.compiled_program().is_some() && Resolver::import_path_names_directory(specifier);
+        let file = match is_embedded && !is_left_to_program {
             true => self.resolve(source_dir, specifier),
             false => None,
         };
@@ -136,7 +141,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
         module.or_else(|| {
             let program = self.compiled_program()?;
             let public_root = self.base_public_path_with_default_suffix();
-            program.resolve_module(public_root, source_dir, specifier, search)
+            program.resolve_module(public_root, source_dir, specifier, is_require, search)
         })
     }
     /// `CompiledProgram::resolve_package`.
@@ -216,7 +221,11 @@ mod tests {
 
     const ROOT: &[u8] = b"/$bunfs/root/";
     const ENTRY_POINT: &[u8] = b"/$bunfs/root/worker.js";
-    const COMPILED_MODULES: [&[u8]; 2] = [b"/$bunfs/root/worker.ts", b"/$bunfs/root/lib.ts"];
+    const COMPILED_MODULES: [&[u8]; 3] = [
+        b"/$bunfs/root/worker.ts",
+        b"/$bunfs/root/lib.ts",
+        b"/$bunfs/root/worker/index.ts",
+    ];
 
     struct FakeGraph {
         program: Option<CompiledProgram>,
@@ -275,7 +284,7 @@ mod tests {
             extra_extensions: &[],
             rewritten_extensions: &|_, _| &[],
         };
-        graph.resolve_module(source_dir, specifier, &search)
+        graph.resolve_module(source_dir, specifier, true, &search)
     }
 
     #[test]
@@ -293,6 +302,19 @@ mod tests {
             resolve_module(&graph, ENTRY_POINT),
             Some(COMPILED_MODULES[0])
         );
+    }
+
+    #[test]
+    fn name_of_directory_beside_entry_point_of_same_name() {
+        let graph = graph_with_compiled_program();
+        for specifier in [&b"./worker/"[..], b"./worker/.", b"./lib/../worker/"] {
+            assert_eq!(resolve_module(&graph, specifier), Some(COMPILED_MODULES[2]));
+        }
+        assert_eq!(
+            resolve_module(&graph, b"/$bunfs/root/worker/"),
+            Some(COMPILED_MODULES[2])
+        );
+        assert_eq!(resolve_module(&graph, b"./lib/"), None);
     }
 
     #[test]

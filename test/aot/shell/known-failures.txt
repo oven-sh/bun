@@ -235,7 +235,6 @@ calls-fast-paths/nested-inlining-follows-small-function	// IR= 1 copiesEachWithA
 calls-fast-paths/nested-inlining-follows-small-function	// IR= 1 smallWithoutALoop CallDirect
 calls-fast-paths/nested-inlining-follows-small-function	// IR= 2 copiesTwoLevels CallDirect
 calls-fast-paths/new-as	// IR+ ^layout (L[0-9]+) .*name="Links" [\s\S]*: =?\1 = (NewObject|CreateThis) 
-calls-fast-paths/new-class-annotated	// IR- : =?L[0-9]+ = (NewObject|CreateThis) 
 calls-fast-paths/new-class-annotated	// IRM= 1  = Integer integer=2 .*#[0-9]+$
 calls-fast-paths/new-class-annotated	// IRM= 1  = Integer integer=3 .*#[0-9]+$
 calls-fast-paths/new-in-try-without-handler	// IR= 3 seenFirst Invoke
@@ -435,7 +434,6 @@ data-from-outside/dictionary-delete-keeps-layouts	// IR+ : number = PropGet v\d+
 data-from-outside/dictionary-delete-keeps-layouts	// IR+ ^layout L\d+ .*name="Looks" .* representation=Typed
 data-from-outside/generic-wrapper-used-from-javascript	// IR+ ^layout (L\d+) .*name="Wrapper" [\s\S]*^function f\d+ "make" Plain .* -> (undefined\|null\|)?=?\1!?( |$)
 data-from-outside/generic-wrapper-used-from-javascript	// IR+ ^layout L\d+ .*name="Wrapper" .* representation=Typed
-data-from-outside/json-into-class-containers	// IR- ^layout (L\d+) .*name="NeverGiven" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 data-from-outside/json-into-class-containers	// IR- ^layout (L\d+) .*name="WithAPrivateField" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 data-from-outside/json-into-class-containers	// IR- ^layout (L\d+) .*name="WithAPrivateName" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 data-from-outside/json-parse-into-a-union-of-records-stays-compiled	// IR+ ^ .*JSONParseString
@@ -445,7 +443,6 @@ data-from-outside/json-parse-type-argument-keys-in-another-order-stay-in-line	//
 data-from-outside/json-parse-type-argument-undeclared-keys-stay-compiled	// IR+ ^ .*JSONKeyOrderApply
 data-from-outside/parsed-objects-changed-by-untyped-code	// IR+ ^ .* = JSONSourceOpen v
 data-from-outside/plain-objects-into-class-types	// IR+ ^layout (L\d+) .*name="GivenToAReducer" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-data-from-outside/plain-objects-into-class-types	// IR- ^layout (L\d+) .*name="CastFromATypedValue" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 data-from-outside/spread-literal-returned-by-a-callback-over-rows	// IR+ ^layout (L\d+) .*name="Hit" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
 data-from-outside/spread-literal-returned-by-a-callback-over-rows	// IR+ ^layout (L\d+) .*name="Marked" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
 data-from-outside/spread-literal-returned-by-a-callback-over-rows	// IR+ ^layout (L\d+) .*name="Numbered" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
@@ -856,7 +853,6 @@ typed-objects/spread-off-usual-path-is-one-call	// CALLS+ withId CopyTypedObject
 typed-objects/spread-off-usual-path-is-one-call	// CALLS+ withName CloneObjectAndExtend
 typed-objects/spread-opaque-source	// CALLS+ rename CloneObjectAndExtend
 typed-objects/spread-opaque-source-stores-number-field	// CALLS+ resize CloneObjectAndExtendWithNumber
-typed-objects/subclassed-constructor-returns-literal-stays-closed	// IR- ^layout (L\d+) .*name="Counter" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 typed-objects/symbol-keyed-fields	// IR+ ^layout L[0-9]+ .*\{name=UniqueSymbol "[^"]*handle" declared=number
 typed-objects/symbol-keyed-fields	// IR= 1 bump : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*count"
 typed-objects/symbol-keyed-fields	// IR= 1 bump : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*handle"

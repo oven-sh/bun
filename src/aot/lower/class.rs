@@ -19,6 +19,7 @@ use super::member::PropertyName;
 use crate::ir::{LayoutId, PropertyKeyId, StringId, ValueId};
 
 pub(in crate::lower) use self::accessors::{AccessorFunction, declare_accessor_function};
+pub(in crate::lower) use self::fields::is_called_by_evaluated_text;
 pub(crate) use self::fields::static_field_position;
 pub(crate) use self::plan::class_slots;
 pub(in crate::lower) use self::plan::{

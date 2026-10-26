@@ -36,9 +36,9 @@ function writeLocalsCarriedAroundLoop(localCount: number): Program {
 }
 
 test.skipIf(isSlowBuild || isWindows)(
-  "the instructions of a build are nearly linear in the number of locals carried around a loop",
+  "the instructions of a build are linear in the number of locals carried around a loop",
   async () => {
-    await expectLinearInstructionCount(2_000, writeLocalsCarriedAroundLoop, 6.5);
+    await expectLinearInstructionCount(2_000, writeLocalsCarriedAroundLoop, 4.5);
   },
   240_000,
 );

@@ -14,7 +14,7 @@ const ends: Record<string, () => unknown> = {
   "self.onerror returns true": () => { self.onerror = () => (postMessage("seen there"), true); setTimeout(() => { throw new Error("handled there"); }, 1); setTimeout(() => process.exit(0), 20); },
   "an error listener prevents the default": () => { addEventListener("error", event => (event.preventDefault(), postMessage("prevented: " + (event as ErrorEvent).message.split("\n").find(line => /^\w*(Error|error): /.test(line))))); setTimeout(() => { throw new Error("prevented there"); }, 1); setTimeout(() => process.exit(0), 20); },
   "nothing left to do": () => 0,
-  "a listener keeps it alive until it is terminated": () => { addEventListener("message", () => {}); postMessage("terminate me"); },
+  "a listener keeps it alive until it is terminated": () => { addEventListener("message", () => {}); setTimeout(() => postMessage("terminate me"), 20); },
 };
 declare var self: Worker & { close(): void; onerror: any };
 

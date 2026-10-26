@@ -4,26 +4,31 @@ const terminal = ["ExternalState"];
 
 const formatted = b.printedByFormatter("colors", "depth");
 
-const logging = [
-  {
-    args: { values: b.primitiveValue.rest },
-    capability: "heap",
-    throws: true,
-    reads: terminal,
-    writes: terminal,
-    implementation: b.hostCall,
-  },
-  {
-    args: { values: b.any.rest },
-    capability: "js",
-    throws: true,
-    runsOnlyOperandCode: true,
-    uses: { values: [formatted] },
-    reads: terminal,
-    writes: terminal,
-    implementation: b.hostCall,
-  },
-] satisfies b.FunctionField[];
+const printing = (withoutCode: b.TableType) =>
+  [
+    {
+      args: { values: withoutCode.rest },
+      capability: "heap",
+      throws: true,
+      reads: terminal,
+      writes: terminal,
+      implementation: b.hostCall,
+    },
+    {
+      args: { values: b.any.rest },
+      capability: "js",
+      throws: true,
+      runsOnlyOperandCode: true,
+      uses: { values: [formatted] },
+      reads: terminal,
+      writes: terminal,
+      implementation: b.hostCall,
+    },
+  ] satisfies b.FunctionField[];
+
+const listing = printing(b.primitiveValue);
+// "%j" calls the toJSON that a bigint inherits.
+const logging = printing(b.union(b.null, b.bool, b.f64, b.string, b.symbol));
 
 const labeled = (label: b.TableType) =>
   ({
@@ -59,13 +64,13 @@ export default b.declarations(
     error: logging,
     debug: logging,
     trace: logging,
-    dir: logging,
+    dir: listing,
     dirxml: logging,
-    table: logging,
+    table: listing,
     assert: logging,
     group: logging,
     groupCollapsed: logging,
-    timeLog: logging,
+    timeLog: listing,
     groupEnd: withoutOperands,
     clear: withoutOperands,
     count: withDefaultLabel,

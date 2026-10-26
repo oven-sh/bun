@@ -13,7 +13,7 @@ console.log(said(() => (0, eval)(decoded("process.stdin.resume()"))));
 console.log(said(() => (0, eval)(decoded("process.stdin['res' + 'ume']()"))));
 // Compiled code comes to the member only under a key put together at run time. Where it tests the callee it has no receiver at hand, so it says what it always says.
 const key = ["std", "in"].join("");
-const holder = new Proxy({}, { get() { return process; } }).anything;
+const holder = (0, eval)(decoded("process"));
 const member = holder[key];
 console.log(typeof member);
 console.log(said(() => member.resume()));

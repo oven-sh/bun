@@ -4,6 +4,8 @@ use std::sync::OnceLock;
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_paths::is_sep_native;
 
+use crate::resolver::Resolver;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ImageFile {
     /// A `HANDLE` on Windows.
@@ -20,10 +22,10 @@ pub struct CompiledEntryPoint {
     pub module_path: &'static [u8],
 }
 
-/// A name that leads to an entry point and is not the path of its file: the name of a package, or a key of its `exports`.
+/// A name that leads to an entry point and is not the path of its file: the name of a package, a key of its `exports`, or a folder whose `package.json` names its main file.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CompiledPackageName {
-    /// The public path that the name would have as a file: `<folder>/node_modules/<name>`.
+    /// The public path that the name would have as a file: `<folder>/node_modules/<name>`. That of a folder ends in `/`.
     pub path: &'static [u8],
     /// Indices into `entry_points`: what `require` finds under the name, and what `import` finds.
     pub required: Option<u32>,
@@ -63,6 +65,13 @@ pub struct ExtensionSearch<'a> {
     pub rewritten_extensions: &'a dyn Fn(&[u8], &[u8]) -> &'static [&'static [u8]],
 }
 
+#[derive(Copy, Clone)]
+pub struct HowNamed {
+    /// The specifier was written as the name of a directory, like `./a/`.
+    pub names_directory: bool,
+    pub is_require: bool,
+}
+
 /// In a public path, a `..` that leaves the root directory of the build.
 const PARENT_OF_ROOT: &[u8] = b"_.._";
 
@@ -75,7 +84,8 @@ fn is_relative_specifier(specifier: &[u8]) -> bool {
 
 fn split_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
     let path = bun_paths::string_paths::without_nt_prefix::<u8>(path);
-    path.split(|&byte| is_sep_native(byte))
+    // `bun run` takes a backslash for a separator on every host.
+    path.split(|&byte| bun_paths::is_sep_any(byte))
 }
 
 /// `..` removes the segment before it. Where there is none it stays, as `PARENT_OF_ROOT`.
@@ -157,10 +167,15 @@ fn find_with_extensions(
 
 fn find_file(
     path: &[u8],
+    names_directory: bool,
     search: &ExtensionSearch<'_>,
     lookup: ModuleLookup,
 ) -> Option<&'static [u8]> {
-    let found = lookup(path).or_else(|| find_with_extensions(path, search, lookup));
+    let with_extension = || match names_directory {
+        true => None,
+        false => find_with_extensions(path, search, lookup),
+    };
+    let found = lookup(path).or_else(with_extension);
     if found.is_some() {
         return found;
     }
@@ -172,21 +187,6 @@ fn find_file(
     let (stem, extension) = path.split_at(dot);
     let mut rewritten = (search.rewritten_extensions)(extension, path).iter();
     rewritten.find_map(|&extension| lookup(&[stem, extension].concat()))
-}
-
-/// The order of `bun run`: the file as spelled, with each extension, with a TypeScript extension in place of the written one, then the index file of the directory.
-fn find_file_or_index(
-    path: &[u8],
-    search: &ExtensionSearch<'_>,
-    lookup: ModuleLookup,
-) -> Option<&'static [u8]> {
-    // A program that runs in place has the paths of the host.
-    let index: &[u8] = match cfg!(windows) && bun_core::strings::contains_char(path, b'\\') {
-        true => b"\\index",
-        false => b"/index",
-    };
-    find_file(path, search, lookup)
-        .or_else(|| find_with_extensions(&[path, index].concat(), search, lookup))
 }
 
 #[inline]
@@ -312,6 +312,7 @@ impl CompiledProgram {
         public_root: &[u8],
         source_dir: &[u8],
         specifier: &[u8],
+        is_require: bool,
         search: &ExtensionSearch<'_>,
     ) -> Option<&'static [u8]> {
         if self.preserves_source_paths {
@@ -319,7 +320,11 @@ impl CompiledProgram {
         }
         let lookup = *self.module_lookup.get()?;
         let path = join_public_path(public_root, source_dir, specifier)?;
-        find_file_or_index(&path, search, lookup)
+        let how = HowNamed {
+            names_directory: Resolver::import_path_names_directory(specifier),
+            is_require,
+        };
+        self.find_file_or_directory(&path, how, search, lookup)
     }
 
     /// `Some(None)`: the build wrote the name down, and loaded that way it leads to no entry point.
@@ -335,6 +340,28 @@ impl CompiledProgram {
             name.imported
         };
         Some(entry_point.map(|index| self.entry_points[index as usize].module_path))
+    }
+
+    /// The order of `bun run`: the file as spelled, with each extension, with a TypeScript extension in place of the written one, then the directory: the main file that its `package.json` names, then its index file. No extension is added to a name that was written as that of a directory, like `./a/`.
+    fn find_file_or_directory(
+        &self,
+        path: &[u8],
+        how: HowNamed,
+        search: &ExtensionSearch<'_>,
+        lookup: ModuleLookup,
+    ) -> Option<&'static [u8]> {
+        if let Some(file) = find_file(path, how.names_directory, search, lookup) {
+            return Some(file);
+        }
+        if let Some(listed) = self.find_package_name(&[path, b"/"].concat(), how.is_require) {
+            return listed;
+        }
+        // A program that runs in place has the paths of the host.
+        let index: &[u8] = match cfg!(windows) && bun_core::strings::contains_char(path, b'\\') {
+            true => b"\\index",
+            false => b"/index",
+        };
+        find_with_extensions(&[path, index].concat(), search, lookup)
     }
 
     fn hides_other_paths(&self, package: &[u8]) -> bool {
@@ -361,6 +388,11 @@ impl CompiledProgram {
             return None;
         }
         let lookup = *self.module_lookup.get()?;
+        // Below `node_modules`, `bun run` reads `pkg/lib/.` as `pkg/lib`.
+        let how = HowNamed {
+            names_directory: specifier.last().is_some_and(|&byte| is_sep_native(byte)),
+            is_require,
+        };
         let mut folders = segments_below_public_root(public_root, source_dir, b"")?;
         loop {
             if folders.last() != Some(&&b"node_modules"[..]) {
@@ -372,17 +404,27 @@ impl CompiledProgram {
                         .chain(split_path(specifier)),
                 );
                 let path = [public_root, &segments.join(&b"/"[..])].concat();
-                if let Some(listed) = self.find_package_name(&path, is_require) {
-                    return listed;
-                }
                 let name_length = if specifier.starts_with(b"@") { 2 } else { 1 };
                 let package = segments
                     .get(..folders.len() + 1 + name_length)?
                     .join(&b"/"[..]);
-                if self.hides_other_paths(&[public_root, &package[..]].concat()) {
+                let hides_other_paths =
+                    self.hides_other_paths(&[public_root, &package[..]].concat());
+                // A key of `exports` is written down without a separator at its end.
+                if hides_other_paths && how.names_directory {
                     return None;
                 }
-                if let Some(found) = find_file_or_index(&path, search, lookup) {
+                let folder = match how.names_directory {
+                    true => self.find_package_name(&[&path[..], b"/"].concat(), is_require),
+                    false => None,
+                };
+                if let Some(listed) = folder.or_else(|| self.find_package_name(&path, is_require)) {
+                    return listed;
+                }
+                if hides_other_paths {
+                    return None;
+                }
+                if let Some(found) = self.find_file_or_directory(&path, how, search, lookup) {
                     return Some(found);
                 }
             }
@@ -397,12 +439,13 @@ impl CompiledProgram {
     pub fn resolve_module_at_source_path(
         &self,
         path: &[u8],
+        how: HowNamed,
         search: &ExtensionSearch<'_>,
     ) -> Option<&'static [u8]> {
         if !self.preserves_source_paths {
             return None;
         }
-        find_file_or_index(path, search, *self.module_lookup.get()?)
+        self.find_file_or_directory(path, how, search, *self.module_lookup.get()?)
     }
 
     pub fn entry_point_by_source_path(&self, path: &[u8]) -> Option<&CompiledEntryPoint> {
@@ -520,7 +563,7 @@ mod tests {
         use super::*;
 
         const ROOT: &[u8] = b"/$bunfs/root/";
-        const MODULES: [&[u8]; 9] = [
+        const MODULES: [&[u8]; 10] = [
             b"/$bunfs/root/lib.cjs",
             b"/$bunfs/root/both.ts",
             b"/$bunfs/root/both.js",
@@ -530,6 +573,7 @@ mod tests {
             b"/$bunfs/root/plugins/index.ts",
             b"/$bunfs/root/plugins/first.js",
             b"/$bunfs/root/_.._/shared/util.js",
+            b"/$bunfs/root/plugins.js",
         ];
 
         fn find_module(path: &[u8]) -> Option<&'static [u8]> {
@@ -555,7 +599,7 @@ mod tests {
                 extra_extensions: &[],
                 rewritten_extensions: &rewrite,
             };
-            program.resolve_module(ROOT, source_dir, specifier, &search)
+            program.resolve_module(ROOT, source_dir, specifier, true, &search)
         }
 
         fn program_with_lookup(preserves_source_paths: bool) -> CompiledProgram {
@@ -650,8 +694,21 @@ mod tests {
 
         #[test]
         fn index_file_of_directory() {
-            assert_eq!(resolve(ROOT, b"./plugins"), Some(MODULES[6]));
-            assert_eq!(resolve(ROOT, b"./plugins/"), Some(MODULES[6]));
+            assert_eq!(resolve(ROOT, b"./plugins"), Some(MODULES[9]));
+            for directory in [
+                &b"./plugins/"[..],
+                b"./plugins//",
+                b"./plugins/.",
+                b"./plugins/./",
+                b"./plugins/first/..",
+                b"/$bunfs/root/plugins/",
+            ] {
+                assert_eq!(resolve(ROOT, directory), Some(MODULES[6]));
+            }
+            assert_eq!(resolve(ROOT, b"./plugins\\"), Some(MODULES[6]));
+            assert_eq!(resolve(ROOT, b"./plugins\\first.js"), Some(MODULES[7]));
+            assert_eq!(resolve(ROOT, b"./typed/"), None);
+            assert_eq!(resolve(ROOT, b"./typed.js/"), Some(MODULES[3]));
             assert_eq!(resolve(b"/$bunfs/root/plugins/", b"."), Some(MODULES[6]));
             assert_eq!(resolve(b"/$bunfs/root/plugins/", b".."), Some(MODULES[5]));
             assert_eq!(resolve(ROOT, b"./"), Some(MODULES[5]));
@@ -704,7 +761,7 @@ mod tests {
         mod package_names {
             use super::*;
 
-            const FILES: [&[u8]; 8] = [
+            const FILES: [&[u8]; 9] = [
                 b"/$bunfs/root/main.js",
                 b"/$bunfs/root/node_modules/driver/lib/entry.js",
                 b"/$bunfs/root/node_modules/driver/lib/extra.js",
@@ -713,6 +770,7 @@ mod tests {
                 b"/$bunfs/root/node_modules/orm/node_modules/driver/own.js",
                 b"/$bunfs/root/node_modules/@scope/closed/lib/feature.js",
                 b"/$bunfs/root/node_modules/@scope/closed/lib/inner.js",
+                b"/$bunfs/root/node_modules/orm/index.js",
             ];
 
             fn find_file(path: &[u8]) -> Option<&'static [u8]> {
@@ -727,7 +785,7 @@ mod tests {
                     module_path: path,
                 });
                 let order = (0..FILES.len() as u32).collect();
-                let names: [(&[u8], Option<u32>, Option<u32>, bool); 5] = [
+                let names: [(&[u8], Option<u32>, Option<u32>, bool); 7] = [
                     (b"/$bunfs/root/node_modules/@scope/closed", None, None, true),
                     (
                         b"/$bunfs/root/node_modules/@scope/closed/feature",
@@ -737,6 +795,8 @@ mod tests {
                     ),
                     (b"/$bunfs/root/node_modules/both", Some(4), Some(3), true),
                     (b"/$bunfs/root/node_modules/driver", Some(1), Some(1), false),
+                    (b"/$bunfs/root/node_modules/driver/", Some(2), None, false),
+                    (b"/$bunfs/root/node_modules/orm/", None, None, false),
                     (
                         b"/$bunfs/root/node_modules/orm/node_modules/driver",
                         Some(5),
@@ -824,11 +884,37 @@ mod tests {
                 assert_eq!(require(ROOT, b"driver/lib/extra"), Some(FILES[2]));
                 assert_eq!(require(ROOT, b"driver/lib/extra.js"), Some(FILES[2]));
                 assert_eq!(require(ROOT, b"driver/lib/../lib/extra"), Some(FILES[2]));
+                assert_eq!(require(ROOT, b"driver/lib/extra/."), Some(FILES[2]));
+                assert_eq!(require(ROOT, b"driver/lib/extra.js/"), Some(FILES[2]));
+                assert_eq!(require(ROOT, b"driver/lib/extra/"), None);
+            }
+
+            #[test]
+            fn folder_leads_to_the_main_file_that_was_written_down() {
+                let program = program(false);
+                let load = |specifier: &[u8], is_require| {
+                    let extensions = [&b".js"[..]].map(Box::<[u8]>::from);
+                    let search = ExtensionSearch {
+                        extensions: &extensions,
+                        extra_extensions: &[],
+                        rewritten_extensions: &rewrite,
+                    };
+                    program.resolve_module(ROOT, ROOT, specifier, is_require, &search)
+                };
+                assert_eq!(load(b"./node_modules/driver", true), Some(FILES[2]));
+                assert_eq!(load(b"./node_modules/driver/", true), Some(FILES[2]));
+                assert_eq!(load(b"./node_modules/driver", false), None);
+                assert_eq!(load(b"./node_modules/orm", true), None);
+                assert_eq!(load(b"./node_modules/orm/index", true), Some(FILES[8]));
+                assert_eq!(require(ROOT, b"driver/"), Some(FILES[2]));
+                assert_eq!(require(ROOT, b"driver"), Some(FILES[1]));
             }
 
             #[test]
             fn package_with_exports_has_only_its_written_names() {
                 assert_eq!(require(ROOT, b"@scope/closed/feature"), Some(FILES[6]));
+                assert_eq!(require(ROOT, b"@scope/closed/feature/"), None);
+                assert_eq!(require(ROOT, b"both/"), None);
                 assert_eq!(require(ROOT, b"@scope/closed"), None);
                 assert_eq!(require(ROOT, b"@scope/closed/lib/inner.js"), None);
                 assert_eq!(require(ROOT, b"@scope/closed/lib/feature"), None);

@@ -1601,28 +1601,46 @@ static int watchModeStickySignal = 0;
 extern "C" bool Bun__forwardSIGSYSToJS(bool enabled);
 #endif
 
-#if OS(LINUX)
-static struct sigaction faultActionsBeforeListeners[2];
+#if OS(LINUX) || OS(FREEBSD)
+extern "C" [[noreturn]] void Bun__raiseDefaultAction(int signalNumber);
 
-// Compiled code takes access faults on purpose: a listener of the program must not hide them from the engine's handler.
-static struct sigaction* faultActionBeforeListeners(int signalNumber)
+struct AccessFaultSignal {
+    struct sigaction actionBeforeListeners;
+    std::atomic<bool> hasListeners;
+};
+static AccessFaultSignal accessFaultSignals[2];
+
+// Compiled code takes access faults on purpose, on every thread: a listener of the program must not hide them from the engine's handler.
+static AccessFaultSignal* accessFaultSignalOfCompiledCode(int signalNumber)
 {
     if (!Bun::hasCompiledModules()) [[likely]]
         return nullptr;
     if (signalNumber == SIGSEGV)
-        return &faultActionsBeforeListeners[0];
+        return &accessFaultSignals[0];
     if (signalNumber == SIGBUS)
-        return &faultActionsBeforeListeners[1];
+        return &accessFaultSignals[1];
     return nullptr;
+}
+
+static bool isRaisedByAnInstruction(const siginfo_t& info)
+{
+#if OS(FREEBSD)
+    return info.si_code > 0 && info.si_code < SI_USER;
+#else
+    return info.si_code > 0;
+#endif
 }
 
 __attribute__((noinline)) static void forwardSignalUnlessFault(int signalNumber, siginfo_t* info, void* context)
 {
-    if (info->si_code <= 0) {
+    AccessFaultSignal& accessFault = *accessFaultSignalOfCompiledCode(signalNumber);
+    if (!isRaisedByAnInstruction(*info)) {
+        if (!accessFault.hasListeners.load(std::memory_order_relaxed))
+            Bun__raiseDefaultAction(signalNumber);
         Bun__onPosixSignal(signalNumber);
         return;
     }
-    struct sigaction before = *faultActionBeforeListeners(signalNumber);
+    const struct sigaction& before = accessFault.actionBeforeListeners;
     if (before.sa_handler == SIG_DFL || before.sa_handler == SIG_IGN) {
         signal(signalNumber, SIG_DFL);
         return;
@@ -1636,7 +1654,7 @@ __attribute__((noinline)) static void forwardSignalUnlessFault(int signalNumber,
 
 static bool isForwardSignalHandler(void (*handler)(int))
 {
-#if OS(LINUX)
+#if OS(LINUX) || OS(FREEBSD)
     if (handler == reinterpret_cast<void (*)(int)>(forwardSignalUnlessFault))
         return true;
 #endif
@@ -1655,13 +1673,18 @@ static void installForwardSignalHandler(int signalNumber)
     sigemptyset(&action.sa_mask);
     sigaddset(&action.sa_mask, signalNumber);
     action.sa_flags = SA_RESTART;
-#if OS(LINUX)
-    if (auto* before = faultActionBeforeListeners(signalNumber)) {
-        action.sa_sigaction = forwardSignalUnlessFault;
-        action.sa_flags = SA_RESTART | SA_SIGINFO | SA_ONSTACK;
+#if OS(LINUX) || OS(FREEBSD)
+    if (auto* accessFault = accessFaultSignalOfCompiledCode(signalNumber)) {
+        accessFault->hasListeners.store(true, std::memory_order_relaxed);
         struct sigaction current;
-        if (!sigaction(signalNumber, nullptr, &current) && !isForwardSignalHandler(current.sa_handler))
-            *before = current;
+        if (sigaction(signalNumber, nullptr, &current) || isForwardSignalHandler(current.sa_handler))
+            return;
+        // The handler that was there runs on the stack and under the mask it asked for.
+        accessFault->actionBeforeListeners = current;
+        action.sa_sigaction = forwardSignalUnlessFault;
+        action.sa_mask = current.sa_mask;
+        sigaddset(&action.sa_mask, signalNumber);
+        action.sa_flags = (current.sa_flags & ~SA_RESETHAND) | SA_RESTART | SA_SIGINFO;
     }
 #endif
     sigaction(signalNumber, &action, nullptr);
@@ -1673,14 +1696,17 @@ static void uninstallForwardSignalHandler(int signalNumber)
     if (signalNumber == SIGSYS && Bun__forwardSIGSYSToJS(false))
         return;
 #endif
-    if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); !isForwardSignalHandler(oldHandler)) {
+#if OS(LINUX) || OS(FREEBSD)
+    // The handler stays, so that no thread ever meets the signal without it.
+    if (auto* accessFault = accessFaultSignalOfCompiledCode(signalNumber)) {
+        accessFault->hasListeners.store(false, std::memory_order_relaxed);
+        return;
+    }
+#endif
+    if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
         // Don't uninstall the old handler if it's not the one we installed.
         signal(signalNumber, oldHandler);
     }
-#if OS(LINUX)
-    else if (auto* before = faultActionBeforeListeners(signalNumber))
-        sigaction(signalNumber, before, nullptr);
-#endif
 }
 
 extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)

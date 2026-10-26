@@ -4,23 +4,17 @@ use bun_paths::strings;
 
 use bun_alloc::{AllocError, Arena};
 use bun_collections::BoundedArray;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
 use bun_paths as paths;
 
 use super::*;
-
-/// `generated_js2native.rs` calls `js_framework_router::get_bindings`.
-pub(crate) use self::JSFrameworkRouter as js_framework_router;
-
-// ───────────────────────────────────────────────────────────────────────────
-// JSFrameworkRouter — .classes.ts payload
-// ───────────────────────────────────────────────────────────────────────────
+use crate::generated_bindgen::framework_router::{RoutePattern, RoutePatternKind};
 
 /// This binding is currently only intended for testing FrameworkRouter, and not
 /// production usage. It uses a slower but easier to use pattern for object
 /// creation. A production-grade JS api would be able to re-use objects.
-#[bun_jsc::JsClass(name = "FrameworkFileSystemRouter")]
 pub(crate) struct JSFrameworkRouter {
     pub(crate) files: Vec<bun_core::String>,
     pub(crate) router: FrameworkRouter,
@@ -34,43 +28,22 @@ pub(crate) struct StoredParseError {
 }
 
 impl JSFrameworkRouter {
-    pub(crate) fn get_bindings(global: &JSGlobalObject) -> JsResult<JSValue> {
-        let obj = JSValue::create_empty_object(global, 2);
-        obj.put(
-            global,
-            b"parseRoutePattern",
-            bun_jsc::JSFunction::create(
-                global,
-                "parseRoutePattern",
-                __jsc_host_parse_route_pattern,
-                1,
-                Default::default(),
-            ),
-        );
-        obj.put(global, b"FrameworkRouter", Self::get_constructor(global));
-        Ok(obj)
-    }
-
-    // Note: no `#[bun_jsc::host_fn]` — `#[bun_jsc::JsClass]` on the struct
-    // emits the construct shim that calls `<Self>::constructor(__g, __f)` directly.
-    pub(crate) fn constructor(
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<Box<JSFrameworkRouter>> {
-        let opts = callframe.arguments_as_array::<1>()[0];
-        if !opts.is_object() {
+    pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
+        let global = cx.global();
+        let options = options.to_js();
+        if !options.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "FrameworkRouter needs an object as it's first argument",
             )));
         }
 
-        let root: bun_core::Utf8Bytes = match opts.get(global, "root")? {
+        let root: bun_core::Utf8Bytes = match options.get(global, "root")? {
             Some(v) if !v.is_undefined_or_null() => v.to_utf8(global)?,
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
         let style = Style::from_js(
-            opts.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
+            options.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
             global,
         )?;
 
@@ -102,11 +75,11 @@ impl JSFrameworkRouter {
             ..Default::default()
         }]);
 
-        let mut jsfr = Box::new(JSFrameworkRouter {
+        let mut jsfr = JSFrameworkRouter {
             router: FrameworkRouter::init_empty(&abs_root, types)?,
             files: Vec::new(),
             stored_parse_errors: Vec::new(),
-        });
+        };
 
         let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
         // The handler only touches `files`/`stored_parse_errors`, so split-borrow
@@ -116,7 +89,7 @@ impl JSFrameworkRouter {
                 router,
                 files,
                 stored_parse_errors,
-            } = &mut *jsfr;
+            } = &mut jsfr;
             let mut ctx = JSFrameworkRouterScanCtx {
                 files,
                 stored_parse_errors,
@@ -142,19 +115,12 @@ impl JSFrameworkRouter {
         Ok(jsfr)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn r#match(
-        &self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let path_value = callframe.arguments_as_array::<1>()[0];
-        let path = path_value.to_utf8(global)?;
-
+    pub(crate) fn r#match(&self, cx: &mut JsScope<'_>, path: &[u8]) -> JsResult<JSValue> {
+        let global = cx.global();
         let mut params_out = MatchedParams {
             params: BoundedArray::default(),
         };
-        if let Some(index) = self.router.match_slow(path.slice(), &mut params_out) {
+        if let Some(index) = self.router.match_slow(path, &mut params_out) {
             let obj = JSValue::create_empty_object(global, 2);
             obj.put(
                 global,
@@ -183,13 +149,8 @@ impl JSFrameworkRouter {
         Ok(JSValue::NULL)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn to_json(
-        &self,
-        global: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        self.route_to_json(global, RouteIndex::init(0))
+    pub(crate) fn to_json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.route_to_json(cx.global(), RouteIndex::init(0))
     }
 
     fn route_to_json(&self, global: &JSGlobalObject, route_index: RouteIndex) -> JsResult<JSValue> {
@@ -258,29 +219,19 @@ impl JSFrameworkRouter {
         Ok(obj)
     }
 
-    pub(crate) fn parse_route_pattern(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn parse_route_pattern<'a>(
+        cx: &mut JsScope<'a>,
+        style: JsLocal<'a>,
+        filepath: &[u8],
+    ) -> JsResult<Option<RoutePattern>> {
+        let global = cx.global();
         let arena = Arena::new();
 
-        if frame.arguments_count() < 2 {
-            return Err(global
-                .throw_invalid_arguments(format_args!("parseRoutePattern takes two arguments")));
-        }
-
-        let [style_js, filepath_js] = frame.arguments_as_array::<2>();
-        let filepath = filepath_js.to_utf8(global)?;
-        let style = Style::from_js(style_js, global)?;
+        let style = Style::from_js(style.to_js(), global)?;
 
         let mut log = TinyLog::empty();
-        let parsed = match style.parse(
-            filepath.slice(),
-            paths::extension(filepath.slice()),
-            &mut log,
-            true,
-            &arena,
-        ) {
+        let parsed = match style.parse(filepath, paths::extension(filepath), &mut log, true, &arena)
+        {
             Err(crate::Error::InvalidRoutePattern) => {
                 return Err(global.throw(format_args!(
                     "{} ({}:{})",
@@ -290,25 +241,24 @@ impl JSFrameworkRouter {
                 )));
             }
             Err(e) => return Err(e.into()),
-            Ok(None) => return Ok(JSValue::NULL),
+            Ok(None) => return Ok(None),
             Ok(Some(p)) => p,
         };
 
-        let mut rendered: Vec<u8> = Vec::with_capacity(filepath.slice().len());
+        let mut rendered: Vec<u8> = Vec::with_capacity(filepath.len());
         for part in parsed.parts {
             part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
                 .expect("ByteFmtWriter is infallible");
         }
 
-        let out = bun_core::String::clone_utf8(&rendered);
-        let obj = JSValue::create_empty_object(global, 2);
-        obj.put(
-            global,
-            b"kind",
-            bun_core::String::static_(<&'static str>::from(parsed.kind)).to_js(global)?,
-        );
-        obj.put(global, b"pattern", out.into_js(global)?);
-        Ok(obj)
+        Ok(Some(RoutePattern {
+            kind: match parsed.kind {
+                ParsedPatternKind::Page => RoutePatternKind::Page,
+                ParsedPatternKind::Layout => RoutePatternKind::Layout,
+                ParsedPatternKind::Extra => RoutePatternKind::Extra,
+            },
+            pattern: rendered,
+        }))
     }
 
     fn part_to_js(global: &JSGlobalObject, part: &Part<'_>) -> JsResult<JSValue> {
@@ -328,13 +278,6 @@ impl JSFrameworkRouter {
         };
         self.files[id.get() as usize].to_js(global)
     }
-}
-
-// Note: free-function host-fn shim — `#[bun_jsc::host_fn]` (Free kind) emits a
-// shim that calls the bare ident, so this cannot live inside the `impl` block.
-#[bun_jsc::host_fn]
-fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    JSFrameworkRouter::parse_route_pattern(global, frame)
 }
 
 use bun_core::fmt::VecWriter as ByteFmtWriter;

@@ -18,6 +18,6 @@ To type check:
 bun check
 ```
 
-Run `bun lint` to find problems in the code and `bun fmt` to format it.
+{[tools]s}
 
 This project was created using `bun init` in bun v{[bunVersion]s}. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.

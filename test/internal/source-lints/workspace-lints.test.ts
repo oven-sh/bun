@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -33,25 +33,29 @@ test("every member of the workspace is below src/", () => {
 // it's in a workspace when it's not". Such a crate needs an empty `[workspace]` table of its own, or a parent crate
 // whose `[workspace]` table names it in `members`. Cargo decides here: a regex does not know its rules for the root.
 //
-// On most machines `cargo` is a rustup proxy. In the repo root it applies rust-toolchain.toml in full: before it runs,
-// it installs each component and target of that file that the machine lacks (scripts/build/tools.ts: about 2.4 GB).
-// A lint must install nothing. With the channel in RUSTUP_TOOLCHAIN the proxy takes the toolchain as it is, and the
-// test is skipped where that toolchain is missing.
-const cargo = Bun.which("cargo");
-const channel = /^\s*channel\s*=\s*"([^"]+)"/m.exec(
-  readFileSync(path.join(repoRoot, "rust-toolchain.toml"), "utf8"),
-)![1];
-const cargoEnv = {
-  ...process.env,
-  CARGO_TERM_COLOR: "never",
-  RUSTUP_TOOLCHAIN: process.env.RUSTUP_TOOLCHAIN || channel,
-  RUSTUP_AUTO_INSTALL: "0",
-};
-const cargoRuns =
-  cargo !== null &&
-  Bun.spawnSync({ cmd: [cargo, "--version"], env: cargoEnv, stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+// The `cargo` on PATH is a rustup proxy on most machines, and a proxy downloads what the machine lacks: the toolchain,
+// or in the repo root each component and target that rust-toolchain.toml names (scripts/build/tools.ts: about 2.4 GB).
+// A lint must install nothing, so this one runs no proxy. `rustup which --toolchain` gives the cargo of a toolchain
+// that is installed. RUSTUP_AUTO_INSTALL stops rustup 1.28.1 and later from installing one there, and earlier versions
+// never do. The test is skipped where that gives no cargo.
+const toolchain =
+  process.env.RUSTUP_TOOLCHAIN ||
+  /^\s*channel\s*=\s*"([^"]+)"/m.exec(readFileSync(path.join(repoRoot, "rust-toolchain.toml"), "utf8"))![1];
+const cargoEnv = { ...process.env, CARGO_TERM_COLOR: "never", RUSTUP_TOOLCHAIN: toolchain, RUSTUP_AUTO_INSTALL: "0" };
+const cargo = (() => {
+  const rustup = Bun.which("rustup");
+  // Without rustup, a `cargo` on PATH is not a proxy.
+  if (rustup === null) return Bun.which("cargo");
+  const which = Bun.spawnSync({
+    cmd: [rustup, "which", "--toolchain", toolchain, "cargo"],
+    env: cargoEnv,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return which.exitCode === 0 ? which.stdout.toString().trim() : null;
+})();
 
-test.skipIf(!cargoRuns)("every crate outside the workspace loads on its own", () => {
+test.skipIf(cargo === null)("every crate outside the workspace loads on its own", () => {
   const tracked = Bun.spawnSync({
     cmd: ["git", "ls-files", "-z", "--", ":(glob)**/Cargo.toml", ":(exclude)Cargo.toml", ":(exclude)src"],
     cwd: repoRoot,
@@ -60,21 +64,27 @@ test.skipIf(!cargoRuns)("every crate outside the workspace loads on its own", ()
   });
   if (tracked.exitCode !== 0)
     throw new Error(`git ls-files failed (${tracked.exitCode}): ${tracked.stderr.toString()}`);
-  const manifests = tracked.stdout.toString().split("\0").filter(Boolean);
+  const listed = tracked.stdout.toString().split("\0").filter(Boolean);
   // Guards against a pathspec that matches nothing making the check below vacuous.
-  expect(manifests.length).toBeGreaterThan(0);
+  expect(listed.length).toBeGreaterThan(0);
+  // The index also lists a manifest that a sparse checkout leaves out, or that is deleted and not yet staged.
+  const manifests = listed.filter(manifest => existsSync(path.join(repoRoot, manifest)));
 
+  const rootDir = realpathSync(repoRoot);
   const refused: Record<string, string> = {};
   for (const manifest of manifests) {
     // `--no-deps` stops once the workspace is loaded: it reads no registry and no Cargo.lock, and writes nothing.
-    const { exitCode, stderr } = Bun.spawnSync({
+    const { exitCode, stdout, stderr } = Bun.spawnSync({
       cmd: [cargo!, "metadata", "--no-deps", "--offline", "--format-version", "1", "--manifest-path", manifest],
       cwd: repoRoot,
       env: cargoEnv,
-      stdout: "ignore",
+      stdout: "pipe",
       stderr: "pipe",
     });
     if (exitCode !== 0) refused[manifest] = stderr.toString();
+    // A path dependency of a member makes a crate below the root a member too, with no entry in `members`.
+    else if (realpathSync(JSON.parse(stdout.toString()).workspace_root) === rootDir)
+      refused[manifest] = "is a member of the root workspace";
   }
   expect(refused).toEqual({});
 });

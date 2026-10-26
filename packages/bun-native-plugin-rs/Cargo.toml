@@ -6,7 +6,8 @@ version = "0.2.0"
 edition = "2021"
 
 # Standalone crates: opt out of the repo-root [workspace]. bun-macro is a
-# member, so it must not get a [workspace] table of its own.
+# member, so it must not get a [workspace] table of its own. A workspace that
+# holds a copy of this directory names the copy in its `workspace.exclude`.
 [workspace]
 members = ["bun-macro"]
 

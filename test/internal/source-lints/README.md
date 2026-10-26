@@ -20,9 +20,9 @@ only import built-ins, relative paths, and `harness` (resolved via
 `RUSTUP_TOOLCHAIN`), not the nightly that `rust-toolchain.toml` pins, and
 there is no `vendor/`. A test can ask cargo about a crate outside the
 workspace, as `workspace-lints.test.ts` does. It cannot build the workspace.
-A test that runs `cargo` passes `RUSTUP_TOOLCHAIN` on, or sets it to the
-pinned channel: a bare `cargo` in the repo root makes rustup install every
-component and target that `rust-toolchain.toml` names.
+A test must not run the `cargo` on `PATH`: it is a rustup proxy, and a proxy
+downloads the toolchain, components and targets that the machine lacks.
+`workspace-lints.test.ts` shows how to get the cargo of an installed toolchain.
 
 The workflow only triggers for the `paths:` listed in it. A lint that reads
 files outside those paths (for example `packages/bun-types/bun.d.ts` or the

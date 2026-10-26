@@ -772,7 +772,6 @@ pub(super) fn finalize_bundle(
                 server_modules,
                 dev.make_array_for_server_components_patch(global, added)?,
                 dev.make_array_for_server_components_patch(global, removed)?,
-                dev.make_array_of_reprinted_barrels(global)?,
             ],
         ) {
             Ok(v) => v,
@@ -1307,23 +1306,6 @@ pub(super) fn finalize_bundle(
 }
 
 impl DevServer {
-    /// The ids of the server modules of `current_chunk_reprinted_barrels`.
-    fn make_array_of_reprinted_barrels(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let barrels = &self.server_graph.current_chunk_reprinted_barrels;
-        if barrels.is_empty() {
-            return Ok(JSValue::NULL);
-        }
-        let arr = jsc::JSArray::create_empty(global, barrels.len())?;
-        for (i, barrel) in barrels.iter().enumerate() {
-            arr.put_index(
-                global,
-                u32::try_from(i).expect("int cast"),
-                bun_string_jsc::create_utf8_for_js(global, &barrel.id)?,
-            )?;
-        }
-        Ok(arr)
-    }
-
     fn make_array_for_server_components_patch(
         &mut self,
         global: &JSGlobalObject,

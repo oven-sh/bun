@@ -21,7 +21,6 @@ interface Exports {
     modules: any,
     componentManifestAdd: null | string[],
     componentManifestDelete: null | string[],
-    reprintedBarrels: null | string[],
   ) => void;
 }
 
@@ -71,9 +70,9 @@ server_exports = {
 
     return response;
   },
-  async registerUpdate(modules, componentManifestAdd, componentManifestDelete, reprintedBarrels) {
+  async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
     // A module that fails to load here fails the same way for the next request that needs it.
-    replaceModules(modules, undefined, reprintedBarrels).catch(err => console.error(err));
+    replaceModules(modules).catch(err => console.error(err));
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {

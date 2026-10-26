@@ -102,8 +102,10 @@ pub struct Ast<'a> {
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
-    /// Set by the HMR lowering: the statements that stay in the module function are all imports.
-    pub hmr_body_is_imports_only: bool,
+    /// Set by the HMR lowering: the module function has only imports, and a file outside
+    /// node_modules has a getter for each export. A file in node_modules has a copy of each
+    /// export, which no save changes if it is of a file in node_modules.
+    pub hmr_stable_reexports: bool,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -149,7 +151,7 @@ impl<'a> Ast<'a> {
             has_commonjs_export_names: false,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
-            hmr_body_is_imports_only: false,
+            hmr_stable_reexports: false,
         }
     }
 }

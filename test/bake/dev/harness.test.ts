@@ -59,6 +59,7 @@ devTest("expectElemText waits for a DOM update that lands after the ack", {
 });
 
 devTest("disposing a client reports a reload that the test did not expect", {
+  // The fixture does not do this check on Windows: see its comment at the check.
   skip: ["win32"],
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

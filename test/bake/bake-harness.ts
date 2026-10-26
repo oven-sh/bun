@@ -255,43 +255,6 @@ export class Dev extends EventEmitter {
     return connected.promise;
   }
 
-  /**
-   * Makes the harness socket a viewer of `route`, as the socket of an open page is: it takes hot
-   * updates, and the server knows which route it shows. `reloadedRoutes` gets one entry for each
-   * hot update from now on: the route bundles that the update tells their viewers to reload.
-   */
-  async viewRoute(route: string): Promise<{ routeBundleIndex: number; reloadedRoutes: number[][] }> {
-    const socket = this.socket!;
-    const reloadedRoutes: number[][] = [];
-    const routeBundleIndex = await new Promise<number>((resolve, reject) => {
-      // The server does not answer for a route that it does not know.
-      const timer = setTimeout(
-        () => reject(new Error(`Timeout waiting for the dev server to name the route bundle of ${route}`)),
-        2000 * WAIT_MULTIPLIER,
-      );
-      socket.addEventListener("close", () => reject(new Error(`The HMR socket closed while it viewed ${route}`)), {
-        once: true,
-      });
-      this.on("hmr", (frame: Uint8Array) => {
-        const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
-        if (frame[0] === "n".charCodeAt(0)) {
-          clearTimeout(timer);
-          resolve(view.getUint32(1, true));
-        } else if (frame[0] === "u".charCodeAt(0)) {
-          const routes: number[] = [];
-          for (let offset = 1; view.getInt32(offset, true) !== -1; offset += 4) {
-            routes.push(view.getInt32(offset, true));
-          }
-          reloadedRoutes.push(routes);
-        }
-      });
-      // "r" keeps the subscription of `connectSocket`.
-      socket.send("srh");
-      socket.send("n" + route);
-    });
-    return { routeBundleIndex, reloadedRoutes };
-  }
-
   fetch(url: string, init?: RequestInit) {
     return new DevFetchPromise(
       (resolve, reject) => fetch(new URL(url, this.baseUrl).toString(), init).then(resolve, reject),

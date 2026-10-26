@@ -1,6 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import { editCssArray, editCssContent } from "./client/css-reloader";
+import { editCssArray, editCssContent, lacksStylesheet } from "./client/css-reloader";
 import { DataViewReader } from "./client/data-view";
 import { inspect } from "./client/inspect";
 import { hasFatalError, onRuntimeError, onServerErrorPayload } from "./client/overlay";
@@ -84,6 +84,12 @@ const scriptTags: Map<string, PendingHmrQueue> =
   new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
 
+/**
+ * True when a server-side update of the route of this page had JavaScript for the browser. The page did not run it, or
+ * the framework did not load the page again for it, so the page can be out of date until it loads again.
+ */
+let routeUpdateHadModules = false;
+
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string, reprintedBarrels?: string[]) => {
   const queue = scriptTags.get(id);
   let entry = queue?.shift() ?? null;
@@ -104,7 +110,10 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string, reprintedBarrels?
   };
   addMapping(url, map);
   script.remove();
-  replaceModules(modules, map, reprintedBarrels).catch(e => {
+  // A page that is out of date, or that lacks a stylesheet, is right again when it loads again. Each barrel of the list
+  // is a changed module for that page, as before, so that this update can make it load again.
+  const keeps = reprintedBarrels && !routeUpdateHadModules && !lacksStylesheet();
+  replaceModules(modules, map, keeps ? reprintedBarrels : null).catch(e => {
     console.error(e);
     fullReload();
   });
@@ -196,6 +205,7 @@ const handlers = {
       return;
     }
     if (isServerSideRouteUpdate) {
+      routeUpdateHadModules ||= reader.hasMoreData();
       performRouteReload(config.route !== undefined && reader.hasMoreData());
       // When the pages also run here (`config.route`), the same edit comes as JavaScript too:
       // apply it, so Fast Refresh updates the page in place.

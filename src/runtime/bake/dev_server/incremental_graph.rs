@@ -186,7 +186,8 @@ pub(crate) struct CurrentChunkSourceMapData {
 // Method-argument types (formerly re-exported from `incremental_graph_body`)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A module of the current chunk that is in `IncrementalResult::barrels_bundled_again`.
+/// A module of the current client chunk with the text and the live import records of the last
+/// print of the file: see `barrel_print`.
 pub(crate) struct ReprintedBarrel<const SIDE: bake::Side> {
     pub(crate) file: FileIndex<SIDE>,
     /// The key of the module in the chunk.
@@ -302,6 +303,8 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) edges: Vec<Edge<SIDE>>,
     /// Freed edge slots for reuse by `new_edge`.
     pub(crate) edges_free_list: Vec<EdgeIndex>,
+    /// Client side: for each barrel, the hash that `barrel_print` made for its last print.
+    pub(crate) barrel_prints: ArrayHashMap<FileIndex<SIDE>, u64>,
     // ── per-bundle scratch (`current_chunk_*`) ─────────────────────────
     /// Total byte length of the current JS chunk being assembled.
     pub(crate) current_chunk_len: usize,
@@ -315,7 +318,7 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_chunk_source_maps: Vec<CurrentChunkSourceMapData>,
     /// Client side: CSS asset content-hashes referenced by the current chunk.
     pub(crate) current_css_files: Vec<u64>,
-    /// See `ReprintedBarrel`.
+    /// Client side: see `ReprintedBarrel`.
     pub(crate) current_chunk_reprinted_barrels: Vec<ReprintedBarrel<SIDE>>,
 }
 
@@ -408,6 +411,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         graph += self.edge_lists.capacity() * size_of::<EdgeLists>();
         graph += self.edges.capacity() * size_of::<Edge<SIDE>>();
         graph += self.edges_free_list.capacity() * size_of::<EdgeIndex>();
+        graph += self.barrel_prints.count() * (size_of::<FileIndex<SIDE>>() + size_of::<u64>());
         graph +=
             self.current_chunk_reprinted_barrels.capacity() * size_of::<ReprintedBarrel<SIDE>>();
         for barrel in &self.current_chunk_reprinted_barrels {
@@ -462,6 +466,55 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.current_chunk_reprinted_barrels
             .iter()
             .any(|barrel| barrel.file == file)
+    }
+
+    /// True if the file is a barrel that a page can keep (`InputFileFlags::IS_BARREL`), and its
+    /// last print had the same text and the same live import records. The hash of the two is
+    /// stored for the next print. Any other print of the file forgets it. A saved file is an
+    /// entry point of its build and no barrel there, so the print of a save is never the same.
+    /// The file of a live record is not in the hash: the caller looks at the import edges, and a
+    /// page at the module ids.
+    fn barrel_print(
+        &mut self,
+        ctx: &HotUpdateContext<'_>,
+        index: bun_ast::Index,
+        file_index: FileIndex<SIDE>,
+    ) -> Result<bool, crate::Error> {
+        let source = &ctx.sources[index.get() as usize];
+        let records = ctx.import_records[index.get() as usize].as_slice();
+        let is_live = |record: &bun_ast::ImportRecord| {
+            !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
+        };
+        // A barrel in node_modules has a copy of each export. No save changes a file there.
+        let is_barrel = ctx.input_file_flags[index.get() as usize]
+            .contains(InputFileFlags::IS_BARREL)
+            && (!source.path.is_node_module()
+                || records
+                    .iter()
+                    .filter(|record| is_live(record))
+                    .all(|record| {
+                        let path = if record.source_index.is_valid() {
+                            &ctx.sources[record.source_index.get() as usize].path
+                        } else {
+                            &record.path
+                        };
+                        !path.is_file() || path.is_node_module()
+                    }));
+        if !is_barrel {
+            if self.barrel_prints.count() > 0 {
+                self.barrel_prints.swap_remove(&file_index);
+            }
+            return Ok(false);
+        }
+        let mut hasher = bun_wyhash::Wyhash::init(bun_wyhash::hash(source.contents()));
+        for record in records {
+            hasher.update(&[u8::from(is_live(record))]);
+        }
+        let print = hasher.final_();
+        let gop = self.barrel_prints.get_or_put(file_index)?;
+        let same = gop.found_existing && *gop.value_ptr == print;
+        *gop.value_ptr = print;
+        Ok(same)
     }
 
     /// Grows `stale_files` to cover all currently-known files, filling new
@@ -627,17 +680,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edge_lists.push(EdgeLists::default());
         }
 
-        let graph = match SIDE {
-            Side::Client => bake::Graph::Client,
-            Side::Server if is_ssr_graph => bake::Graph::Ssr,
-            Side::Server => bake::Graph::Server,
-        };
-        let reprinted_barrel = ctx.input_file_flags[index.get() as usize]
-            .contains(InputFileFlags::IS_BARREL)
-            && self
-                .dev_incremental_result()
-                .barrels_bundled_again
-                .contains(&(graph, file_index.get()));
+        let reprinted_barrel =
+            matches!(SIDE, Side::Client) && self.barrel_print(ctx, index, file_index)?;
 
         if self.stale_files.bit_length > file_index.get() as usize {
             self.stale_files.unset(file_index.get() as usize);
@@ -819,12 +863,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     let line_count = strings::count_char(&code, b'\n') as u32;
                     self.current_chunk_code.push(code);
                     self.current_chunk_len += code_len;
-                    if reprinted_barrel {
-                        self.current_chunk_reprinted_barrels.push(ReprintedBarrel {
-                            file: file_index,
-                            id: Box::from(path.pretty),
-                        });
-                    }
 
                     let packed = match source_map {
                         Some(mut sm)
@@ -935,8 +973,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         self.edge_lists[file_index.get() as usize].first_import = new_imports;
 
-        // A barrel that the bundle only printed again, with the imports it had: no route changed.
-        if !lost_an_import
+        // A listed barrel that imports the files that it imported: no route has another script.
+        if matches!(SIDE, Side::Client)
+            && !lost_an_import
             && quick_lookup.count() == quick_lookup_values_to_care_len
             && self.is_reprinted_barrel(file_index)
         {

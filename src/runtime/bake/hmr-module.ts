@@ -41,6 +41,8 @@ const enum State {
   Stale,
   Loaded,
   Error,
+  /** Loaded, and `replaceModules` has a definition for the module that it did not load yet. */
+  Replaced,
 }
 const enum ESMProps {
   imports,
@@ -613,13 +615,18 @@ type HMREvent =
   | "bun:ws:disconnect"
   | "bun:ws:connect";
 
-/** Called when modules are replaced. `reprintedBarrels` names the barrels of `modules` that no save changed. */
+/**
+ * Called when modules are replaced. `reprintedBarrels` names the barrels of `modules` that the
+ * dev server printed again as they were, with no save.
+ */
 export async function replaceModules(
   modules: Record<Id, UnloadedModule>,
   sourceMapId?: SourceMapURL,
   reprintedBarrels?: Id[] | null,
 ) {
-  DEBUG.ASSERT(!reprintedBarrels || reprintedBarrels.every(id => id in modules));
+  // A barrel of this map stays as it is: it is not a changed module, and no importer has to accept
+  // it.
+  const kept = side === "client" && reprintedBarrels ? keptBarrels(modules, reprintedBarrels) : undefined;
   Object.assign(unloadedModuleRegistry, modules);
 
   emitEvent("bun:beforeUpdate", null);
@@ -629,7 +636,6 @@ export async function replaceModules(
     key: Id;
   };
   const toReload = new Set<HMRModule>();
-  let barrels: HMRModule[] | undefined;
   const toAccept: ToAccept[] = [];
   let failures: Set<Id> | null = null;
   const toDispose: HMRModule[] = [];
@@ -645,20 +651,10 @@ export async function replaceModules(
     }
 
     const existing = registry.get(key);
-    if (!existing) continue;
-
-    // No importer has to accept this barrel: it is evaluated again in place, after the modules below.
-    if (reprintedBarrels?.includes(key) && onlyGainsImports(existing, modules)) {
-      existing.state = State.Stale; // a reloaded module that imports it evaluates the new definition
-      (barrels ??= []).push(existing);
-      for (const importer of existing.importers) {
-        const cb = importer.depAccepts?.[key];
-        if (cb) toAccept.push({ cb, key });
-      }
-      continue;
-    }
+    if (!existing || kept?.has(existing)) continue;
 
     toReload.add(existing);
+    if (side === "client" && existing.state === State.Loaded) existing.state = State.Replaced;
 
     // Discover all HMR boundaries
     const visited = new Set<HMRModule>();
@@ -809,20 +805,6 @@ export async function replaceModules(
       );
     }
   }
-  if (barrels) {
-    // The barrels are evaluated also when a module above failed to load, as a changed module is.
-    await Promise.allSettled(promises);
-    for (const mod of barrels) {
-      if (mod.state === State.Pending) continue; // a load in flight evaluates the new definition
-      mod.state = State.Stale; // it copies what it re-exports with `export *` or from node_modules
-      try {
-        const modOrPromise = loadModuleAsync(mod.id, false, null);
-        if (modOrPromise !== mod) promises.push(modOrPromise as Promise<HMRModule>);
-      } catch (e) {
-        promises.push(Promise.reject(e));
-      }
-    }
-  }
   if (promises.length > 0) {
     await Promise.all(promises);
   }
@@ -845,20 +827,72 @@ export async function replaceModules(
   emitEvent("bun:afterUpdate", null);
 }
 
-/** True if the definition of `mod` in `update` imports what `mod` imported. On a page, a new import is in `update`. */
-function onlyGainsImports(mod: HMRModule, update: Record<Id, UnloadedModule>): boolean {
-  const definition = update[mod.id];
-  if (!mod.esm || !mod.imports || !Array.isArray(definition)) return false;
-  const imported = new Set<Id>();
-  for (const dep of mod.imports as HMRModule[]) imported.add(dep.id);
-  const deps = definition[ESMProps.imports];
-  let kept = 0;
-  for (let i = 0; i < deps.length; i += 2 + (deps[i + 1] as number)) {
-    if (imported.has(deps[i] as Id)) kept++;
-    // A page gets the stylesheet of a module with the update that has the module.
-    else if (side === "client" && !(deps[i] in update)) return false;
+/** The barrels of `reprintedBarrels` that stay as they are, each with true if it holds a copy of an export. */
+function keptBarrels(modules: Record<Id, UnloadedModule>, reprintedBarrels: Id[]) {
+  DEBUG.ASSERT(reprintedBarrels.every(id => id in modules));
+  const kept = new Map<HMRModule, boolean>();
+  for (const key of reprintedBarrels) {
+    const existing = registry.get(key);
+    const copies = existing ? keepsBarrel(existing, modules[key]) : null;
+    if (copies !== null) kept.set(existing!, copies);
   }
-  return kept === imported.size;
+  // A copy is out of date when the module that it is from loads again.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [mod, copies] of kept) {
+      if (!copies || !(mod.imports as HMRModule[]).some(dep => dep.id in modules && !kept.has(dep))) continue;
+      kept.delete(mod);
+      changed = true;
+    }
+  }
+  return kept;
+}
+
+/**
+ * For a barrel that the dev server printed again as it was. Returns null if `mod` has to load
+ * `definition` as a changed module. If not, `mod` stays as it is: it is loaded from a definition
+ * with the same lists, and `definition` evaluates to the exports that it has. The result is then
+ * true if `mod` holds a copy of an export (each re-export of a barrel in node_modules is one).
+ */
+function keepsBarrel(mod: HMRModule, definition: UnloadedModule): boolean | null {
+  const current = unloadedModuleRegistry[mod.id];
+  const deps = mod.imports as HMRModule[] | null;
+  if (mod.state !== State.Loaded || !deps || !Array.isArray(current) || !Array.isArray(definition)) return null;
+  // An update of a module binds its exports to the first place that it has in the imports.
+  if (new Set(deps).size !== deps.length) return null;
+  for (const dep of deps) {
+    if (dep.state !== State.Loaded) return null;
+  }
+  for (const list of [ESMProps.imports, ESMProps.exports, ESMProps.stars] as const) {
+    const a = current[list];
+    const b = definition[list];
+    if (a.length !== b.length) return null;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return null;
+    }
+  }
+  let copies = false;
+  try {
+    // Two evaluations on modules that are not in the registry. A value that is the same in both
+    // is a copy of an export. The other values are objects that the definition makes: the
+    // namespace of a re-export that the bundler deferred.
+    const [first, second] = [0, 1].map(() => {
+      const evaluated = new HMRModule(mod.id, false);
+      evaluated.imports = deps.map(getEsmExports);
+      definition[ESMProps.load](evaluated);
+      return Object.getOwnPropertyDescriptors(evaluated.exports);
+    });
+    const has = Object.getOwnPropertyDescriptors(mod.exports);
+    for (const name in first) {
+      const copy = first[name];
+      if (!("value" in copy) || !Object.is(copy.value, second[name].value)) continue;
+      if (!Object.is(copy.value, has[name].value)) return null;
+      copies = true;
+    }
+  } catch {
+    return null;
+  }
+  return copies;
 }
 
 function patchImporters(mod: HMRModule) {

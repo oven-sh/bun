@@ -1,4 +1,4 @@
-// Prints the bytes of enum members, static fields, defaults and compound assignments that are not numbers.
+// Prints the bytes of enum members, static fields, defaults and compound assignments that are not numbers. Where an assignment raises to one half, it prints them without the sign.
 const bytes = new Uint8Array(8),
   number = new Float64Array(bytes.buffer);
 const text = (value: number) => {
@@ -7,6 +7,7 @@ const text = (value: number) => {
     .reverse()
     .join("");
 };
+const withoutSign = (value: number) => (parseInt(text(value).slice(0, 1), 16) & 7).toString(16) + text(value).slice(1);
 enum Plain {
   Quotient = 0 / 0,
   Difference = Infinity - Infinity,
@@ -65,13 +66,15 @@ let a = 0,
   b = Infinity,
   c = 0,
   d = -1,
-  e = 1;
+  e = 1,
+  f = -1;
 a /= 0;
 b -= Infinity;
 c *= Infinity;
 d **= 0.5;
 e %= 0;
-console.log("assignments", text(a), text(b), text(c), text(d), text(e));
+f **= 1.5;
+console.log("assignments", text(a), text(b), text(c), withoutSign(d), text(e), text(f));
 console.log(
   "conversions",
   text(+undefined!),

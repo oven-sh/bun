@@ -1,11 +1,12 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::Binding;
+use bun_sema::bind::{Binding, Decl};
 use bun_sema::fold::Decision;
 use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, IdList, MemberKey, PropId, Span, UnOp};
 
 use super::ResultUsage;
 use super::logical::LogicalOperator;
 use crate::ir::ValueId;
+use crate::ir::generated::FunctionFlags;
 use crate::lower::member::{KeyConversion, PropertyName, Reference};
 use crate::lower::module::file_scope;
 use crate::lower::scope::BindingRef;
@@ -54,18 +55,6 @@ impl FileLowering<'_, '_, '_, '_> {
             | Decision::Data(_)
             | Decision::DeferredData => AssignmentTarget::Identifier { identifier, name },
         }
-    }
-
-    // JSC keeps a variable in a register unless a closure or `eval` sees it, or it belongs to the top of an ES module.
-    fn is_kept_in_register(&self, identifier: ExprId) -> bool {
-        let Binding::Symbol(symbol) = self.bound.binding(identifier) else {
-            return false;
-        };
-        let Some(placement) = self.scopes.placement(BindingRef::Symbol(symbol)) else {
-            return false;
-        };
-        let is_at_top_of_file = self.bound.symbol_scope(symbol) == file_scope(self);
-        !placement.is_shared && (!is_at_top_of_file || self.is_commonjs_module())
     }
 
     // JSC reports a plain store to a member at the end of the object, and every other store at the end of the target.
@@ -142,10 +131,29 @@ pub(super) fn lower_assignment(
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     // JSC records a position for the operator of `x += v` only where `x` lives in a scope object. Elsewhere the operator is reported at the last position recorded before it.
     // Nor does it record one for the read of `x` there, or for the test of `o` in `o[k] += v`, which follows a `k` that is no literal.
+    // JSC keeps a variable in a register unless a closure or `eval` sees it, it belongs to the top of an ES module, or it is a parameter of a generator,
+    // whose body is a function of its own.
+    pub(in crate::lower) fn is_kept_in_register(&self, binding: Binding) -> bool {
+        let Binding::Symbol(symbol) = binding else {
+            return false;
+        };
+        let file = &*self.file;
+        let Some(placement) = file.scopes.placement(BindingRef::Symbol(symbol)) else {
+            return false;
+        };
+        let is_at_top_of_file = file.bound.symbol_scope(symbol) == file_scope(file);
+        let mut declarations = file.bound.symbol(symbol).decls.iter();
+        let is_parameter = declarations.any(|declaration| matches!(declaration, Decl::Param(_)));
+        let flags = self.builder.function().flags;
+        !placement.is_shared
+            && (!is_at_top_of_file || file.is_commonjs_module())
+            && !(is_parameter && flags.contains(FunctionFlags::IS_GENERATOR))
+    }
+
     fn set_position_of_updated_read(&mut self, target: ExprId) {
         let has_no_record = match self.file.classify_assignment_target(target) {
             AssignmentTarget::Identifier { identifier, .. } => {
-                self.file.is_kept_in_register(identifier)
+                self.is_kept_in_register(self.file.bound.binding(identifier))
             }
             _ => match self.file.hir.member_key(self.file.skip_type_syntax(target)) {
                 Some((_, MemberKey::Computed(key))) => !self.file.is_literal_operand(key),
@@ -160,7 +168,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn set_update_position(&mut self, expression: ExprId, target: ExprId) {
         match self.file.classify_assignment_target(target) {
             AssignmentTarget::Identifier { identifier, .. }
-                if !self.file.is_kept_in_register(identifier) =>
+                if !self.is_kept_in_register(self.file.bound.binding(identifier)) =>
             {
                 self.set_position(self.file.hir[expression].pos);
             }
@@ -177,8 +185,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match self.file.classify_assignment_target(target) {
             AssignmentTarget::ArrayPattern(_) | AssignmentTarget::ObjectPattern(_) => {
                 let assigned = self.lower_expression(value);
-                let recorded = self.file.last_reported_position(value);
-                self.assign_pattern(target, assigned, Some(value), recorded);
+                self.assign_pattern(target, assigned, Some(value));
                 assigned
             }
             _ => {

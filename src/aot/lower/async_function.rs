@@ -14,8 +14,8 @@ pub(crate) fn lower_await(
     };
     lowering.note_what_an_awaited_parse_may_build(expression, operand);
     let awaited = lowering.lower_expression(operand);
-    // JSC records no position for an await, so a suspended function is shown where its operand ends.
-    lowering.set_position(lowering.file.last_reported_position(operand));
+    // JSC records no position for an await.
+    lowering.set_position_to_last_recorded();
     let value = lowering.emit_await(awaited);
     lowering.set_position(hir[expression].pos);
     // The type of the whole expression also covers an operand that is a promise only in some members of a union.

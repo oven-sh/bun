@@ -2,9 +2,11 @@
 //
 //   makers    functions that store to `this`, also under `length`, `size` and indices, that return an object, a list or a number, that ask for new.target or hand it on; arrows and methods, which refuse;
 //             classes with fields, private names and accessors; classes below Array, Map, Set, Error, lists of bytes and of fractions, Promise, RegExp, Function, Date and others, with and without
-//             fields, constructors and a species; the built-in classes themselves; functions whose `prototype` was replaced; bound functions and proxies of each
+//             fields, constructors and a species; classes below a function that returns another object; classes that answer instanceof themselves; classes that get another class above them;
+//             the built-in classes themselves; functions whose `prototype` was replaced; bound functions and proxies of each
 //   entered   new, Reflect.construct with and without a new target, super() of a class below the maker, Reflect.construct with the new.target of a function around it, call and apply on what
-//             Object.create made, Array.from and Array.of, Symbol.species, Object.setPrototypeOf, one shared function that constructs whatever it is handed
+//             Object.create made, Array.from and Array.of, the from, of and resolve that a class inherits, Symbol.species, Object.setPrototypeOf, __proto__ in a literal, one shared function that
+//             constructs whatever it is handed
 //   read      length, elements, size, fields, methods, push, pop, set, get, add, has, message, byteLength; instanceof, Array.isArray, the prototype; keys, own keys, JSON, spread, concat, slice, map
 //   shared    the functions that construct, read and show are called by the program alone, or by a listener of the host too
 //   how       once or in a loop of two thousand turns; on the expression itself, through a variable, in a closure, in a shared function, in a function that declares the class; typed or not
@@ -152,6 +154,7 @@ const reads = [
   "$.total()",
   "$.double",
   "$.reveal()",
+  "$.w",
   "Array.isArray($)",
   "Array.isArray($)",
   "Object.keys($).join()",
@@ -222,7 +225,7 @@ const reads = [
   "keysOf($)",
   "inherited($)",
   'String(typeof $ === "function" ? typeof $ : $)',
-  '$ + ""',
+  'String(typeof $ === "function" ? typeof $ : $ + "")',
   "$ == 0",
   "structuredClone($)",
   "Object.freeze($).length",
@@ -319,11 +322,12 @@ function declare(random: Random, typed: boolean, index: number, known: Entity[])
   const selfAlone = typed ? "this: any" : "";
   const cast = (name: string) => (typed ? `(${name} as any)` : name);
   const other = () => random.pick(known).name;
+  const wrapped = (text: string) => (typed ? `(${text} as any)` : `(${text})`);
   const plain = (name: string, text: string, given = ["1", "2.5", `"a"`, ""]) => ({
     text,
     entity: { name, arguments: given },
   });
-  const kind = random.below(30);
+  const kind = random.below(33);
   const name = (stem: string) => `${stem}${index}`;
   switch (kind) {
     case 0:
@@ -451,6 +455,32 @@ function declare(random: Random, typed: boolean, index: number, known: Entity[])
         `function ${name("Replaced")}(${self}a${any}) {\n  this.x = a;\n}\n${name("Replaced")}.prototype = ${replaced};`,
       );
     }
+    case 22: {
+      const over = name("Over");
+      return {
+        text: `class ${over} extends ${wrapped(`function (${self}a${any}) {\n  this.x = a;\n  return ${random.pick(["{ made: a }", "[a, 2.5]", "new Map([[1, a]])", "anchor", "Object.create(null)", "function () {}"])};\n}`)} {
+  w = 1;
+  #mark = 2;
+  static isMarked(o${any})${typed ? ": boolean" : ""} {
+    return #mark in o;
+  }
+}`,
+        entity: { name: over, arguments: ["1", "2.5"] },
+      };
+    }
+    case 23: {
+      const judge = name("Judge");
+      return {
+        text: `class ${judge} {
+  x = 1;
+  static [Symbol.hasInstance](o${any})${typed ? ": boolean" : ""} {
+    note("asked");
+    return o !== null && typeof o === "object" && ${random.pick([`"x" in o`, `"length" in o`, "Array.isArray(o)", "false", "true"])};
+  }
+}`,
+        entity: { name: judge, arguments: [""], declared: ["$.x", "($.x += 1)"] },
+      };
+    }
     case 21: {
       const base = random.pick(bases);
       return { text: "", entity: { name: base.name, arguments: base.arguments, runsText: base.name === "Function" } };
@@ -462,7 +492,7 @@ function declare(random: Random, typed: boolean, index: number, known: Entity[])
       const given = random.pick(base.arguments);
       const form = random.below(7);
       const species = () =>
-        `  static get [Symbol.species]()${any} {\n    return ${random.pick([base.name, "Array", "Object", ...known.map(each => each.name)])};\n  }\n`;
+        `  static get [Symbol.species]()${any} {\n    return ${random.pick([base.name, "Array", "Object", ...known.filter(each => !each.runsText).map(each => each.name)])};\n  }\n`;
       const between =
         form === 5
           ? `class ${name("Between")} extends ${parent} {\n  depth()${typed ? ": number" : ""} {\n    return 1;\n  }\n}\n`
@@ -536,6 +566,8 @@ function scene(random: Random, typed: boolean, index: number, entities: Entity[]
   const given = random.pick(maker.arguments);
   // What the object is meant to be an instance of, where a type says so.
   let meant: Entity = target;
+  // Where only a built-in function constructs what runs text, an executable refuses the text, as documented.
+  const seen = maker.runsText ? 0 : 1;
   const way = random.weighted<() => string>([
     [2, () => ((meant = maker), `new ${cast(M)}(${given})`)],
     [1, () => ((meant = maker), `Reflect.construct(${M}, [${given}])`)],
@@ -566,18 +598,23 @@ function scene(random: Random, typed: boolean, index: number, entities: Entity[]
       1,
       () => ((meant = maker), `${cast(maker.name.includes("Date") ? "Array.of" : "Array.from")}.call(${M}, [1, 2.5])`),
     ],
-    [1, () => ((meant = maker), `${cast("Array.of")}.call(${M}, 1, 2)`)],
+    [seen, () => ((meant = maker), `${cast("Array.of")}.call(${M}, 1, 2)`)],
     [2, () => `Object.setPrototypeOf(new ${cast(M)}(${given}), ${cast(N)}.prototype)`],
     [1, () => `Object.create(${cast(N)}.prototype)`],
+    [1, () => `({ __proto__: ${cast(N)}.prototype, x: 1, length: 2 })`],
+    [1, () => `Object.assign(Object.create(${cast(N)}.prototype), new ${cast(M)}(${given}))`],
+    [1, () => ((meant = maker), `${cast(M)}.from([1, 2.5])`)],
+    [seen, () => ((meant = maker), `${cast(M)}.of(1, 2)`)],
+    [seen, () => ((meant = maker), `${cast(M)}.resolve(1)`)],
     [
-      1,
+      seen,
       () => (
         (meant = maker),
         `((list${any}) => ((list.constructor = { [Symbol.species]: ${M} }), list.map((each${any}) => each)))([1, 2, 3])`
       ),
     ],
     [
-      1,
+      seen,
       () => (
         (meant = maker),
         `((list${any}) => ((list.constructor = { [Symbol.species]: ${M} }), list.slice(1)))(new ${cast(N)}(${random.pick(target.arguments)}))`
@@ -657,6 +694,16 @@ export function generate(random: Random, typed: boolean): string {
     if (entities.some(each => each.name === entity.name)) continue;
     if (text) declarations.push(text);
     entities.push(entity);
+  }
+  // A class gets another class above it before anything is constructed.
+  const classes = entities.filter(each => each.declared);
+  if (classes.length && random.chance(0.2)) {
+    const below = random.pick(classes).name;
+    const above = random.pick(entities).name;
+    const part = random.pick(["", ".prototype", ".prototype"]);
+    declarations.push(
+      `try {\n  Object.setPrototypeOf(${below}${part}, ${typed && part ? `(${above} as any)` : above}${part});\n} catch (error) {\n  say("stays below " + kindOf(error));\n}`,
+    );
   }
   const scenes = Array.from({ length: random.between(2, 6) }, (_, index) => scene(random, typed, index, entities));
   return [prelude(typed, isShownOutOfSight), ...declarations, ...scenes, "export {};"].join("\n") + "\n";

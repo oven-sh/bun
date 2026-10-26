@@ -176,6 +176,10 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   afterwards. CI tests `bun-profile`, which on Linux carries its debug information: three times the bytes of the Bun that ships. A
   test file that builds many programs builds them on a stripped copy: `...withoutDebugInformation()` of `run-programs.ts` after
   `--aot` in the build's command.
+- **What a generator writes and is only compiled shares executables** (`isOnlyCompiled` in `generated/run-generated.ts`): up to 32
+  programs with the same flags are the entry points of one build, and each runs in a Worker, in a process of its own. A new
+  executable is dear on some machines, whatever its program. The log of a file says `BUILT: <n> executables for <m> programs`, and
+  `AOT_GENERATED_IN_ONE_EXECUTABLE=1` builds each program alone.
 - **Shards.** `test/expected-durations.json` has no entry for `aot/` until the scheduled job that writes it has seen these files, and
   until then the runner takes each for an average file. `aot` is not among the directories of `test/parallel-allowlist.json`, so
   each file runs by itself.

@@ -3,7 +3,6 @@ use bun_sema::hir::{ExprId, PatId, PatKind, StmtId, StmtKind, VarKind};
 use smallvec::SmallVec;
 
 use super::control::{BreakTargetKind, CleanupLanding, CleanupPath};
-use super::pattern::PatternOrigin;
 use super::types::find_contents_type;
 use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::{
@@ -102,7 +101,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         self.lower_head_initializer(left);
         let object = self.lower_loop_subject(statement, expr);
-        self.set_position(self.file.last_reported_position(expr));
+        self.set_position_to_last_recorded();
         let enumerator = self.builder.for_in_open(object);
         let header = self.begin_loop(statement);
         let body_block = self.create_block();
@@ -224,11 +223,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         });
                     }
                     VarKind::Var | VarKind::Let | VarKind::Const => {
-                        let origin = PatternOrigin {
-                            mapped: hir[statement].start,
-                            recorded: self.file.last_mapped_head_position(statement, left),
-                        };
-                        self.bind_pattern(hir[declaration].pat, value, None, origin);
+                        let recorded = self.file.last_mapped_head_position(statement, left);
+                        self.builder.record_position(recorded);
+                        let mapped = hir[statement].start;
+                        self.bind_pattern(hir[declaration].pat, value, None, mapped);
                         self.lower_statement(body);
                     }
                 },
@@ -236,7 +234,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             },
             StmtKind::Expr(target) => {
                 let recorded = self.file.last_mapped_head_position(statement, left);
-                self.assign_pattern(target, value, None, recorded);
+                self.builder.record_position(recorded);
+                self.assign_pattern(target, value, None);
                 self.lower_statement(body);
             }
             _ => self.lower_statement(body),

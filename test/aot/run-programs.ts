@@ -406,12 +406,15 @@ const moreBuildFlags = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").filter(Boo
 const limitOfARun = 90_000;
 const limitWithASAN = 240_000;
 
+const verifiesEachPass = (flags: string[]) =>
+  flags.includes("--aot-check=verify-each-pass") || flags.includes("--aot-verify-each-pass");
+
 export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>, limit?: number) {
   const behindTheFlag = cmd.indexOf("--aot") + 1 || (cmd[1] === "compile" && !cmd.includes("--library") ? 2 : 0);
   if (moreBuildFlags.length && behindTheFlag) cmd = cmd.toSpliced(behindTheFlag, 0, ...moreBuildFlags);
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
   // A build that verifies the IR after every pass takes sixteen times as long as one that does not. --aot-validate checks each built-in module that a program holds: one that starts a Worker holds most of them, one that may load code from disk all.
-  const isLong = cmd.includes("--aot-check=verify-each-pass") || cmd.includes("--aot-validate");
+  const isLong = verifiesEachPass(cmd) || cmd.includes("--aot-validate");
   const timeout =
     limit ??
     (isLong || moreBuildFlags.length || isASAN
@@ -659,7 +662,7 @@ async function runCompiled(
   const build = await buildCompiled(program);
   try {
     // Nor does how long a build takes that verifies the IR after every pass: it has found nothing invalid in what it got to.
-    if (program.buildFlags.includes("--aot-check=verify-each-pass") && atWorkWhenTimeWasUp.has(build)) {
+    if (verifiesEachPass(program.buildFlags) && atWorkWhenTimeWasUp.has(build)) {
       console.error(`NOT THROUGH: the build of ${program.entryPoints[0]} was still at work when its time was up`);
       return;
     }

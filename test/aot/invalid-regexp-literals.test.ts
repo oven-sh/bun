@@ -16,6 +16,7 @@ const rows = [
   "function never() { return /a/gg; } console.log(typeof never);",
   "function never() { return /a/x; } console.log(typeof never);",
   "function never() { return /a/uv; } console.log(typeof never);",
+  "function never() { return /a/vu; } console.log(typeof never);",
   "function never() { return /\\k<n>/u; } console.log(typeof never);",
   "function never() { return /(?<n>a)\\k<m>/; } console.log(typeof never);",
   "function never() { return /[b-a]/; } console.log(typeof never);",
@@ -69,7 +70,7 @@ describe.skipIf(!!unsupported)("compile/aot/regular expression literals that the
             expect({
               signal: build.signal,
               exitCode: build.exitCode,
-              says: (build.stdout + build.stderr).includes("regular expression"),
+              says: /regular expression|Unicode Sets \(v\) flag/.test(build.stdout + build.stderr),
             }).toEqual({ signal: null, exitCode: 1, says: true });
             expect({ signal: fromSources.signal, exitCode: fromSources.exitCode, stdout: fromSources.stdout }).toEqual({
               signal: null,

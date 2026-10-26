@@ -9,7 +9,7 @@
  "sloppy-functions-in-blocks": "as the bundle",
  "sloppy-html-comments-and-legacy-syntax": "as the bundle",
  "sloppy-mapped-arguments": "as bun run",
- "sloppy-octal-literals": "alone: octal: 8 | 511 | 9 | 8.5 | 4 | \"A\" | \"\\u0000\" | \"\\u00008\" | \"8\"",
+ "sloppy-octal-literals": "as the bundle",
  "sloppy-stores-that-fail-in-silence": "alone: silence: 1 | undefined | false | 1 | undefined | \"ok\" | \"ok\" | \"ok\" | \"undefined\" | \"NaN:Infinity\" | \"function\"",
  "sloppy-this-is-the-global-or-a-wrapper": "as bun run",
  "sloppy-with": "as bun run"

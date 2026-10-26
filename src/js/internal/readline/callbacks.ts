@@ -115,18 +115,31 @@ function clearScreenDown(stream: Stream, callback?: Callback) {
   return stream.write(kClearScreenDown, callback);
 }
 
-interface Exports {
+interface Published {
   clearLine: typeof clearLine;
   clearScreenDown: typeof clearScreenDown;
   cursorTo: typeof cursorTo;
   moveCursor: typeof moveCursor;
 }
 
+interface Exports extends Published {
+  // The exports of `node:readline` once that module has been loaded, so that a function a program stores there is the one that runs. Until then, these four.
+  published: Published;
+}
+
+const published: Published = {
+  clearLine,
+  clearScreenDown,
+  cursorTo,
+  moveCursor,
+};
+
 __node_module__.exports = {
   clearLine,
   clearScreenDown,
   cursorTo,
   moveCursor,
+  published,
 };
 
 export default __node_module__.exports;

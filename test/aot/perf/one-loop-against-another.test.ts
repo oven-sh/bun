@@ -47,6 +47,34 @@ const rows: Row[] = [
   ["imported-by-default/main.mjs", [], "out of a module", "out of a CommonJS file", 3],
   ["a-list-that-is-emptied-now-and-then.ts", [], "kept to the end", "emptied every 256 turns", 3],
   ["a-list-that-is-emptied-now-and-then.ts", erased, "kept to the end", "emptied every 256 turns", 3],
+  [
+    "a-method-under-an-own-property-of-some-instances.ts",
+    [],
+    "a class that never stores",
+    "an instance without the own property",
+    1.2,
+  ],
+  [
+    "a-method-under-an-own-property-of-some-instances.ts",
+    erased,
+    "a class that never stores",
+    "an instance without the own property",
+    1.2,
+  ],
+  [
+    "a-method-under-an-own-property-of-some-instances.ts",
+    [],
+    "a class that never stores, handed in",
+    "an instance without the own property, handed in",
+    2,
+  ],
+  [
+    "a-method-under-an-own-property-of-some-instances.ts",
+    erased,
+    "a class that never stores, handed in",
+    "an instance without the own property, handed in",
+    3.5,
+  ],
 ];
 const [few, many] = [100_000, 400_000];
 

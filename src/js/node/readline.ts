@@ -587,6 +587,8 @@ __node_module__.exports = {
   moveCursor,
 };
 
+require("internal/readline/callbacks").published = __node_module__.exports;
+
 let promises: $BunModules["node:readline/promises"] | undefined;
 Object.defineProperty(__node_module__.exports, "promises", {
   __proto__: null,

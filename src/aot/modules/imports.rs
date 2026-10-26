@@ -9,7 +9,7 @@ use super::module_set::ModuleSet;
 use super::order::{EvaluationOrder, PlannedSites};
 use super::plan::Member;
 use super::requests::{FileScan, ScannedSite, Scans, import_phase, phase_towards};
-use super::synthetic_exports::SyntheticExports;
+use super::synthetic_exports::{KnownMembers, SyntheticExports};
 use super::{BindInput, DeferredExports, ModuleRef};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{
@@ -94,6 +94,7 @@ pub(super) fn bind_imports(
         files: input.files,
         builtin_names: input.builtin_names,
         deferred_exports: input.deferred_exports,
+        known_members: KnownMembers::new(input),
         platform: input.platform,
         scans,
         modules,
@@ -183,6 +184,7 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) files: &'a Files<'s>,
     pub(super) builtin_names: &'a BuiltinNames,
     deferred_exports: &'a DeferredExports,
+    known_members: KnownMembers<'a>,
     platform: Platforms,
     scans: &'a Scans,
     pub(super) modules: &'a ModuleSet,
@@ -395,6 +397,15 @@ impl<'a, 's> FileBinder<'a, 's> {
         is_deferred.then(|| RequiredName::new(ModuleRef::Runtime(module), name))
     }
 
+    // Only the run knows whether a module of the library has a name that its table does not list. The link of each module that binds the name looks for it, and fails alone.
+    fn find_unlisted_name(&self, module: ModuleRef, name: Atom) -> Option<RequiredName> {
+        let context = self.context;
+        let rule = context.modules.interop(module).export_rule;
+        let is_unlisted = rule == SyntheticExportRule::RuntimeModule
+            && !context.known_members.has(context.modules, module, name);
+        is_unlisted.then(|| RequiredName::new(module, name))
+    }
+
     fn bind_name(
         &mut self,
         exporter: ModuleRef,
@@ -403,7 +414,13 @@ impl<'a, 's> FileBinder<'a, 's> {
     ) -> PendingBinding {
         match self.resolve_name(exporter, name) {
             Ok((binding, required_name)) => {
-                if let Some(required_name) = required_name {
+                let unlisted_name = match binding {
+                    PendingBinding::Synthetic { module, name } => {
+                        self.find_unlisted_name(module, name)
+                    }
+                    PendingBinding::Bound(_) | PendingBinding::CapturedBuiltin { .. } => None,
+                };
+                for required_name in [required_name, unlisted_name].into_iter().flatten() {
                     self.add_required_name(required_name);
                 }
                 binding
@@ -456,8 +473,16 @@ impl<'a, 's> FileBinder<'a, 's> {
         }
         // The export table names the variable.
         for &(_, resolved) in self.context.tables.names(self.file) {
-            if let Some(deferred) = self.find_deferred_export(resolved.resolution) {
-                self.add_required_name(deferred);
+            let unlisted_name = match resolved.resolution {
+                Resolution::RuntimeMember { module, name } => {
+                    self.find_unlisted_name(ModuleRef::Runtime(module), name)
+                }
+                Resolution::Synthetic { module, name } => self.find_unlisted_name(module, name),
+                _ => None,
+            };
+            let deferred = self.find_deferred_export(resolved.resolution);
+            for required_name in [deferred, unlisted_name].into_iter().flatten() {
+                self.add_required_name(required_name);
             }
         }
     }

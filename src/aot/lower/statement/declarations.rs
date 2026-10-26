@@ -7,7 +7,6 @@ use bun_sema::hir::{
 use crate::ir::generated::TypeSiteKind;
 use crate::lower::expression::{Evaluation, Tail, TailCast};
 use crate::lower::member::PropertyName;
-use crate::lower::pattern::PatternOrigin;
 use crate::lower::{FileLowering, FunctionLowering, control, scope};
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -79,7 +78,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     name: Some(PropertyName::Constant(key).into()),
                     ..Evaluation::at_tail(tail)
                 };
-                self.lower_expression_in(initializer, evaluation)
+                let records = self.builder.number_of_records();
+                let value = self.lower_expression_in(initializer, evaluation);
+                let recorded = self.builder.last_recorded_position();
+                if let (Binding::Symbol(symbol), Some(recorded)) = (binding, recorded)
+                    && self.builder.number_of_records() != records
+                    && self.file.scopes.is_used_once(symbol)
+                {
+                    self.records_of_initializers.insert(initializer, recorded);
+                }
+                value
             }
             // The pattern takes each name from where the module keeps it, and nothing from what the call yields.
             PatKind::Object(_) if self.file.find_destructured_module(initializer).is_some() => {
@@ -100,9 +108,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.set_identifier_target(&target, value, Some(initializer));
             }
             None => {
-                let recorded = self.file.last_reported_position(initializer);
-                let origin = PatternOrigin { mapped, recorded };
-                self.bind_pattern(decl.pat, value, Some(initializer), origin);
+                self.bind_pattern(decl.pat, value, Some(initializer), mapped);
             }
         }
     }

@@ -140,15 +140,30 @@ export default b.declarations(
     uses: { object: [b.runs("OwnKeys"), b.readsContents()], filter: converted },
     implementation: b.hostCall,
   }),
-  // What a program has stored on an object of the table is in hands that nobody follows already: the row says that such code runs, and that it gets the receiver.
+  // It lists the own keys of the holder and asks first `except` and then the holder for the property under each: no getter of either runs. Of each function that the holder has for a value it reads `length`, and those without parameters it calls on the receiver. Of an object that such a call answers it asks whether it has @@iterator.
   b.static(cpp("BunCompiledModules.cpp", "jsFunctionCallOwnFunctionsWithoutParameters"), {
-    args: { holder: b.object, except: b.object, receiver: b.object },
+    args: { holder: b.object, except: b.object, receiver: b.any.optional },
     returns: b.instance("Array").fresh.dense,
     capability: "js",
     throws: true,
-    uses: { holder: [b.contentsStoredIn(b.resultSlot("element"))], except: b.inspected, receiver: [b.everything] },
+    uses: {
+      holder: [
+        b.runs("OwnKeys"),
+        b.runsOnContents(b.named("length")),
+        b.memberCalled([b.everyOwnValue], {
+          times: "Repeatedly",
+          this: b.operand("receiver"),
+          args: [],
+          result: "Escapes",
+        }),
+        b.contentsStoredIn(b.resultSlot("element")),
+      ],
+      except: b.ownPropertyTraps,
+      receiver: [b.everything],
+    },
     implementation: b.hostCall,
   }),
+  // It lists the own keys of the source and asks first the target, then the source and then `replacements` for the property under each: no getter of any runs. What the target lacks is defined on it as it stands on the source, a value with the value that `replacements` has under the key.
   b.static(cpp("BunCompiledModules.cpp", "jsFunctionDefineOwnPropertiesLeftOut"), {
     ...operandCodeOnly,
     args: { target: b.object, source: b.object, replacements: b.union(b.object, b.undefined) },

@@ -19,25 +19,17 @@ pub(super) enum PatternNode {
     Assignment(ExprId),
 }
 
-/// Where JSC and the source map of Bun's transpiler stand in front of a pattern.
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct PatternOrigin {
-    /// The last token before the pattern that the source map knows. A `[` that binds names is not one.
-    pub(crate) mapped: u32,
-    /// The last position JSC has recorded. An object pattern records none.
-    pub(crate) recorded: u32,
-}
-
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    /// `mapped`: the last token before the pattern that the source map of Bun's transpiler knows. A `[` that binds names is not one.
     pub(crate) fn bind_pattern(
         &mut self,
         pattern: PatId,
         value: ValueId,
         source: Option<ExprId>,
-        origin: PatternOrigin,
+        mapped: u32,
     ) {
         self.file.record_binding_pattern_flow(pattern, source);
-        self.destructure(PatternNode::Binding(pattern), value, source, origin);
+        self.destructure(PatternNode::Binding(pattern), value, source, mapped);
     }
 
     pub(crate) fn assign_pattern(
@@ -45,14 +37,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         target: ExprId,
         value: ValueId,
         source: Option<ExprId>,
-        recorded: u32,
     ) {
         if let Some(source) = source {
             self.file.record_assignment_pattern_flow(target, source);
         }
         let mapped = self.file.hir[target].pos;
-        let origin = PatternOrigin { mapped, recorded };
-        self.destructure(PatternNode::Assignment(target), value, source, origin);
+        self.destructure(PatternNode::Assignment(target), value, source, mapped);
     }
 
     fn destructure(
@@ -60,7 +50,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         node: PatternNode,
         value: ValueId,
         source: Option<ExprId>,
-        origin: PatternOrigin,
+        mapped: u32,
     ) {
         match self.file.node_shape(node) {
             NodeShape::Hole => {}
@@ -70,10 +60,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let value = self.convert_element(node, value);
                 match node {
                     PatternNode::Binding(pattern) => {
+                        // JSC records a store to a name that lies in a scope.
+                        let binding = self.file.bound.initialized_binding(pattern);
+                        if !self.is_kept_in_register(binding) {
+                            self.builder.record_position(position);
+                        }
                         self.initialize_pattern_name(pattern, value, source);
                     }
                     PatternNode::Assignment(target) => {
                         let reference = self.lower_reference(target, KeyConversion::AtAccess);
+                        self.set_position_of_lone_target(target);
                         self.put_reference(&reference, value, source);
                     }
                 }
@@ -87,17 +83,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                 } else if self.enter_pattern(node) {
                     let value = self.convert_element(node, value);
-                    self.destructure_object(node, value, origin.recorded);
+                    self.destructure_object(node, value, mapped);
                     self.leave_nesting();
                 }
             }
             NodeShape::Array => {
                 if self.enter_pattern(node) {
                     let value = self.convert_element(node, value);
-                    array::destructure_array(self, node, value, origin.mapped);
+                    array::destructure_array(self, node, value, mapped);
                     self.leave_nesting();
                 }
             }
+        }
+    }
+
+    // A target that no `[` and no `{` stands around: a name, or the member in the head of a loop, which is stored to as by `=`.
+    fn set_position_of_lone_target(&mut self, target: ExprId) {
+        let file = &*self.file;
+        match file.hir.member_key(file.skip_type_syntax(target)) {
+            Some((object, _)) => self.set_position(file.member_position(object)),
+            None if self.is_kept_in_register(file.bound.binding(target)) => {}
+            None => self.builder.record_position(file.hir[target].pos),
         }
     }
 
@@ -128,20 +134,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    // `member_store`: where the store is reported if the target is a member.
     fn finish_target(
         &mut self,
         target: PatternNode,
         prepared: Option<Reference>,
         value: ValueId,
-        origin: PatternOrigin,
+        mapped: u32,
+        member_store: u32,
     ) {
         match prepared {
             Some(reference) => {
-                let position = self.file.node_position(target);
-                self.set_position(position);
+                self.set_position(member_store);
                 self.put_reference(&reference, value, None);
             }
-            None => self.destructure(target, value, None, origin),
+            None => self.destructure(target, value, None, mapped),
         }
     }
 }

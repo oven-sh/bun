@@ -153,6 +153,7 @@ pub struct FunctionBuilder {
     // In the order of the values. Only a value that is written elsewhere than at its position has an entry.
     pub(super) written_positions: Vec<(ValueId, u32)>,
     recorded_position: Option<u32>,
+    number_of_records: u32,
     are_records_suspended: bool,
     is_at_recorded_position: bool,
     values_before_first_record: Vec<ValueId>,
@@ -216,6 +217,7 @@ impl FunctionBuilder {
             written_position: None,
             written_positions: Vec::new(),
             recorded_position: None,
+            number_of_records: 0,
             are_records_suspended: false,
             is_at_recorded_position: false,
             values_before_first_record: Vec::new(),
@@ -407,10 +409,6 @@ impl FunctionBuilder {
         }
     }
 
-    pub fn current_position(&self) -> u32 {
-        self.position.unwrap_or(0)
-    }
-
     // What Bun's transpiler does not print leaves no record. Returns what held before.
     pub fn suspend_records(&mut self, suspend: bool) -> bool {
         std::mem::replace(&mut self.are_records_suspended, suspend)
@@ -426,6 +424,21 @@ impl FunctionBuilder {
             }
         }
         self.recorded_position = Some(position);
+        self.number_of_records += 1;
+    }
+
+    pub fn number_of_records(&self) -> u32 {
+        self.number_of_records
+    }
+
+    pub fn last_recorded_position(&self) -> Option<u32> {
+        self.recorded_position
+    }
+
+    // JSC compiles what follows as a function of its own, with records of its own.
+    pub fn begin_code_with_records_of_its_own(&mut self) {
+        self.recorded_position = None;
+        self.values_before_first_record.clear();
     }
 
     // Until the next position: where the source text has what is emitted. The position is where an error is reported.

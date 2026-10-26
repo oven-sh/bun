@@ -1,4 +1,4 @@
-// Makes numbers that are not numbers of literals, of constants, of arguments and of values that are known only when it runs, and prints their bytes.
+// Makes numbers that are not numbers of literals, of constants, of arguments and of values that are known only when it runs, and prints their bytes. Where a function or Math.pow raises to one half, it prints them without the sign.
 const bytes = new Uint8Array(8),
   number = new Float64Array(bytes.buffer);
 const text = () =>
@@ -6,6 +6,10 @@ const text = () =>
     .reverse()
     .join("")
     .slice(0, 4) + (bytes.slice(0, 6).some(byte => byte !== 0) ? "+" : "");
+const textWithoutSign = () => {
+  bytes[7] &= 127;
+  return text();
+};
 const zero = 0,
   endless = Infinity,
   less = -1,
@@ -481,9 +485,9 @@ function made19(zero: number, endless: number, less: number, none: number, one: 
   number[0] = less ** 0.5;
   row.push(text());
   number[0] = made19(0, Infinity, -1, NaN, 1, 2);
-  row.push(text());
+  row.push(textWithoutSign());
   number[0] = made19(values[0], values[1], values[2], values[3], values[4], values[5]);
-  row.push(text());
+  row.push(textWithoutSign());
   boxes[0] = (-1) ** 0.5;
   number[0] = boxes[0] as number;
   row.push(text());
@@ -492,7 +496,7 @@ function made19(zero: number, endless: number, less: number, none: number, one: 
   row.push(text());
   boxes[0] = made19(values[0], values[1], values[2], values[3], values[4], values[5]);
   number[0] = boxes[0] as number;
-  row.push(text());
+  row.push(textWithoutSign());
   console.log("(-1) ** 0.5".padEnd(28), row.join(" "));
 }
 function made20(zero: number, endless: number, less: number, none: number, one: number, two: number) {
@@ -501,22 +505,22 @@ function made20(zero: number, endless: number, less: number, none: number, one: 
 {
   const row: string[] = [];
   number[0] = Math.pow(-1, 0.5);
-  row.push(text());
+  row.push(textWithoutSign());
   number[0] = Math.pow(less, 0.5);
-  row.push(text());
+  row.push(textWithoutSign());
   number[0] = made20(0, Infinity, -1, NaN, 1, 2);
-  row.push(text());
+  row.push(textWithoutSign());
   number[0] = made20(values[0], values[1], values[2], values[3], values[4], values[5]);
-  row.push(text());
+  row.push(textWithoutSign());
   boxes[0] = Math.pow(-1, 0.5);
   number[0] = boxes[0] as number;
-  row.push(text());
+  row.push(textWithoutSign());
   boxes[0] = Math.pow(less, 0.5);
   number[0] = boxes[0] as number;
-  row.push(text());
+  row.push(textWithoutSign());
   boxes[0] = made20(values[0], values[1], values[2], values[3], values[4], values[5]);
   number[0] = boxes[0] as number;
-  row.push(text());
+  row.push(textWithoutSign());
   console.log("Math.pow((-1), 0.5)".padEnd(28), row.join(" "));
 }
 function made21(zero: number, endless: number, less: number, none: number, one: number, two: number) {

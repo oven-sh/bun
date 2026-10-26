@@ -158,6 +158,7 @@ const beginDump = http.requestRoad.beginDump!;
 const makeExchange = http.responseRoad.makeExchange!;
 const storeHeader = http.responseRoad.storeHeader!;
 const spillHeaders = http.responseRoad.spillHeaders!;
+const spillHeadersReachedThrough = http.responseRoad.spillHeadersReachedThrough!;
 const hasHeaderUnderKey = http.responseRoad.hasHeaderUnderKey!;
 const flatHeadersOf = http.responseRoad.flatHeadersOf!;
 const headerEntriesOf = http.responseRoad.headerEntriesOf!;
@@ -2992,6 +2993,7 @@ function _writeHead(
       const length = keys.length;
       const setsHeadersItself =
         IS_COMPILED_AHEAD_OF_TIME &&
+        exchange.response === response &&
         !response._header &&
         response.setHeader === responseSetHeader &&
         outgoingSetHeaderIsOurs();
@@ -3234,6 +3236,7 @@ let lastKeepAliveTimeout = -1;
 let lastKeepAliveSecs = 0;
 
 function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange): unknown[] {
+  if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(res);
   const bits = exchange.headerBits;
   const keepAliveTimeout = res._keepAliveTimeout;
   const req = res.req;
@@ -3284,7 +3287,7 @@ function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange): unk
 function renderNativeHeadersInFull(res: $Node.ServerResponse, exchange: Exchange): unknown[] {
   let autoHeaders = 0;
   let keepAliveSecs = 0;
-  const entries = headerEntriesOf(exchange);
+  const entries = headerEntriesOf(exchange, res);
   const flat: unknown[] = [];
   let hasDate = false;
   let hasConnection = false;
@@ -3306,8 +3309,8 @@ function renderNativeHeadersInFull(res: $Node.ServerResponse, exchange: Exchange
     autoHeaders |= AUTO_HEADER_DATE;
   }
 
-  const hasTransferEncoding = hasHeaderUnderKey(exchange, "transfer-encoding", HEADER_TRANSFER_ENCODING);
-  const hasContentLength = hasHeaderUnderKey(exchange, "content-length", HEADER_CONTENT_LENGTH);
+  const hasTransferEncoding = hasHeaderUnderKey(exchange, res, "transfer-encoding", HEADER_TRANSFER_ENCODING);
+  const hasContentLength = hasHeaderUnderKey(exchange, res, "content-length", HEADER_CONTENT_LENGTH);
   let defectiveNoBodyResponse = false;
   if (hasTransferEncoding) {
     const statusCode = statusCodeToSend(res);
@@ -3997,7 +4000,7 @@ function outgoingSetHeaderIsOurs(): boolean {
 const responseSetHeader = function setHeader(this: $Node.ServerResponse, name: string, value: $Node.HttpHeaderValue) {
   const exchange = this.$exchange;
   if (exchange.headerState !== NodeHTTPHeaderState.none) throw $ERR_HTTP_HEADERS_SENT("set");
-  if (!IS_COMPILED_AHEAD_OF_TIME || !outgoingSetHeaderIsOurs()) {
+  if (!IS_COMPILED_AHEAD_OF_TIME || exchange.response !== this || !outgoingSetHeaderIsOurs()) {
     return OutgoingMessagePrototype.setHeader.$call(this, name, value);
   }
   if (this._header !== null && this._header) throw $ERR_HTTP_HEADERS_SENT("set");
@@ -5212,7 +5215,7 @@ ServerResponse.prototype.write = function (
     if (
       written > 0 &&
       (this.getHeader === outgoingGetHeader
-        ? !hasHeaderUnderKey(exchange, "content-length", HEADER_CONTENT_LENGTH)
+        ? !hasHeaderUnderKey(exchange, this, "content-length", HEADER_CONTENT_LENGTH)
         : this.getHeader("content-length") === undefined)
     ) {
       written += ((31 - Math.clz32(written)) >> 2) + 5;
@@ -5408,6 +5411,7 @@ const OriginalWriteHeadFn = (ServerResponse.prototype.writeHead = function (
 ) {
   const exchange = this.$exchange;
   if (exchange.headerState !== NodeHTTPHeaderState.none) throw $ERR_HTTP_HEADERS_SENT("writeHead");
+  if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   _writeHead(statusCode, statusMessage, headers, this, exchange);
 
   // Node.js renders the header block immediately in writeHead(), so mutating
@@ -5422,8 +5426,8 @@ const OriginalWriteHeadFn = (ServerResponse.prototype.writeHead = function (
   // here, so record the frozen choice for renderNativeHeaders.
   if (
     !exchange.isImplicitFromEnd &&
-    !hasHeaderUnderKey(exchange, "content-length", HEADER_CONTENT_LENGTH) &&
-    !hasHeaderUnderKey(exchange, "transfer-encoding", HEADER_TRANSFER_ENCODING)
+    !hasHeaderUnderKey(exchange, this, "content-length", HEADER_CONTENT_LENGTH) &&
+    !hasHeaderUnderKey(exchange, this, "transfer-encoding", HEADER_TRANSFER_ENCODING)
   ) {
     exchange.isFrozenChunked = this[kFramingFrozenChunked] = true;
   }

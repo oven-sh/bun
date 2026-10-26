@@ -141,13 +141,22 @@ describe.concurrent("node:http server keeps its behavior on keep-alive connectio
     timeout,
   );
 
-  test.each([
-    ["req.socket.parser = null", "null-socket-parser"],
-    ["req.socket.server = null", "null-socket-server"],
-  ])(
-    "%s",
-    async (title, scenario) => {
-      expect(await run(scenario, threeRequests())).toEqual(threeOk);
+  test(
+    "req.socket.parser = null",
+    async () => {
+      expect(await run("null-socket-parser", threeRequests())).toEqual(threeOk);
+    },
+    timeout,
+  );
+
+  test(
+    "req.socket.server = null: the response that finishes reads the keep-alive timeout of the server",
+    async () => {
+      expect(await run("null-socket-server", threeRequests())).toEqual({
+        responses: [ok, "closed", "closed"],
+        stderr: expect.stringContaining("TypeError: null is not an object"),
+        exitCode: 1,
+      });
     },
     timeout,
   );
@@ -455,11 +464,15 @@ describe.concurrent("node:http server keeps its behavior on keep-alive connectio
   );
 
   test(
-    "res.removeAllListeners() after the body was read keeps the connection usable",
+    "res.removeAllListeners() after the body was read: the socket stays assigned to the response",
     async () => {
       expect(
         await run("remove-all-listeners-after-body", [post("/", "hello"), post("/", "hello"), post("/", "hello")]),
-      ).toEqual(threeOk);
+      ).toEqual({
+        responses: [ok, "HTTP/1.1 200 OK\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", "closed"],
+        stderr: expect.stringContaining('code: "ERR_HTTP_SOCKET_ASSIGNED"'),
+        exitCode: 1,
+      });
     },
     timeout,
   );

@@ -980,8 +980,6 @@ _stream_readable[ReadableState][length] c-- number
 _stream_readable[ReadableState][name] c-- string
 _stream_readable[ReadableState][prototype] cew object
 _stream_readable[ReadableState][prototype]: object above=Object extensible=true
-_stream_readable[ReadableState][prototype][constructor] c-w function
-_stream_readable[ReadableState][prototype][constructor] = _stream_readable[ReadableState]
 _stream_readable[ReadableState][prototype][objectMode] --a accessor get=function set=function
 _stream_readable[ReadableState][prototype][ended] --a accessor get=function set=function
 _stream_readable[ReadableState][prototype][endEmitted] --a accessor get=function set=function
@@ -1114,8 +1112,6 @@ _stream_writable[WritableState][length] c-- number
 _stream_writable[WritableState][name] c-- string
 _stream_writable[WritableState][prototype] cew object
 _stream_writable[WritableState][prototype]: object above=Object extensible=true
-_stream_writable[WritableState][prototype][constructor] c-w function
-_stream_writable[WritableState][prototype][constructor] = _stream_writable[WritableState]
 _stream_writable[WritableState][prototype][objectMode] --a accessor get=function set=function
 _stream_writable[WritableState][prototype][finalCalled] --a accessor get=function set=function
 _stream_writable[WritableState][prototype][needDrain] --a accessor get=function set=function
@@ -2257,47 +2253,47 @@ net[Stream] cew function
 net[Stream] = net[Socket]
 path: object above=Object extensible=true
 path[resolve] cew function
-path[resolve]: function native name="resolve" length=1 above=Function extensible=true
+path[resolve]: function native name="bound resolve" length=1 above=Function extensible=true
 path[resolve][length] c-- number
 path[resolve][name] c-- string
 path[normalize] cew function
-path[normalize]: function native name="normalize" length=1 above=Function extensible=true
+path[normalize]: function native name="bound normalize" length=1 above=Function extensible=true
 path[normalize][length] c-- number
 path[normalize][name] c-- string
 path[isAbsolute] cew function
-path[isAbsolute]: function native name="isAbsolute" length=1 above=Function extensible=true
+path[isAbsolute]: function native name="bound isAbsolute" length=1 above=Function extensible=true
 path[isAbsolute][length] c-- number
 path[isAbsolute][name] c-- string
 path[join] cew function
-path[join]: function native name="join" length=1 above=Function extensible=true
+path[join]: function native name="bound join" length=1 above=Function extensible=true
 path[join][length] c-- number
 path[join][name] c-- string
 path[relative] cew function
-path[relative]: function native name="relative" length=1 above=Function extensible=true
+path[relative]: function native name="bound relative" length=1 above=Function extensible=true
 path[relative][length] c-- number
 path[relative][name] c-- string
 path[toNamespacedPath] cew function
-path[toNamespacedPath]: function native name="toNamespacedPath" length=1 above=Function extensible=true
+path[toNamespacedPath]: function native name="bound toNamespacedPath" length=1 above=Function extensible=true
 path[toNamespacedPath][length] c-- number
 path[toNamespacedPath][name] c-- string
 path[dirname] cew function
-path[dirname]: function native name="dirname" length=1 above=Function extensible=true
+path[dirname]: function native name="bound dirname" length=1 above=Function extensible=true
 path[dirname][length] c-- number
 path[dirname][name] c-- string
 path[basename] cew function
-path[basename]: function native name="basename" length=1 above=Function extensible=true
+path[basename]: function native name="bound basename" length=1 above=Function extensible=true
 path[basename][length] c-- number
 path[basename][name] c-- string
 path[extname] cew function
-path[extname]: function native name="extname" length=1 above=Function extensible=true
+path[extname]: function native name="bound extname" length=1 above=Function extensible=true
 path[extname][length] c-- number
 path[extname][name] c-- string
 path[format] cew function
-path[format]: function native name="format" length=1 above=Function extensible=true
+path[format]: function native name="bound format" length=1 above=Function extensible=true
 path[format][length] c-- number
 path[format][name] c-- string
 path[parse] cew function
-path[parse]: function native name="parse" length=1 above=Function extensible=true
+path[parse]: function native name="bound parse" length=1 above=Function extensible=true
 path[parse][length] c-- number
 path[parse][name] c-- string
 path[sep] cew string
@@ -2305,47 +2301,47 @@ path[delimiter] cew string
 path[win32] cew object
 path[win32]: object above=Object extensible=true
 path[win32][resolve] cew function
-path[win32][resolve]: function native name="resolve" length=1 above=Function extensible=true
+path[win32][resolve]: function native name="bound resolve" length=1 above=Function extensible=true
 path[win32][resolve][length] c-- number
 path[win32][resolve][name] c-- string
 path[win32][normalize] cew function
-path[win32][normalize]: function native name="normalize" length=1 above=Function extensible=true
+path[win32][normalize]: function native name="bound normalize" length=1 above=Function extensible=true
 path[win32][normalize][length] c-- number
 path[win32][normalize][name] c-- string
 path[win32][isAbsolute] cew function
-path[win32][isAbsolute]: function native name="isAbsolute" length=1 above=Function extensible=true
+path[win32][isAbsolute]: function native name="bound isAbsolute" length=1 above=Function extensible=true
 path[win32][isAbsolute][length] c-- number
 path[win32][isAbsolute][name] c-- string
 path[win32][join] cew function
-path[win32][join]: function native name="join" length=1 above=Function extensible=true
+path[win32][join]: function native name="bound join" length=1 above=Function extensible=true
 path[win32][join][length] c-- number
 path[win32][join][name] c-- string
 path[win32][relative] cew function
-path[win32][relative]: function native name="relative" length=1 above=Function extensible=true
+path[win32][relative]: function native name="bound relative" length=1 above=Function extensible=true
 path[win32][relative][length] c-- number
 path[win32][relative][name] c-- string
 path[win32][toNamespacedPath] cew function
-path[win32][toNamespacedPath]: function native name="toNamespacedPath" length=1 above=Function extensible=true
+path[win32][toNamespacedPath]: function native name="bound toNamespacedPath" length=1 above=Function extensible=true
 path[win32][toNamespacedPath][length] c-- number
 path[win32][toNamespacedPath][name] c-- string
 path[win32][dirname] cew function
-path[win32][dirname]: function native name="dirname" length=1 above=Function extensible=true
+path[win32][dirname]: function native name="bound dirname" length=1 above=Function extensible=true
 path[win32][dirname][length] c-- number
 path[win32][dirname][name] c-- string
 path[win32][basename] cew function
-path[win32][basename]: function native name="basename" length=1 above=Function extensible=true
+path[win32][basename]: function native name="bound basename" length=1 above=Function extensible=true
 path[win32][basename][length] c-- number
 path[win32][basename][name] c-- string
 path[win32][extname] cew function
-path[win32][extname]: function native name="extname" length=1 above=Function extensible=true
+path[win32][extname]: function native name="bound extname" length=1 above=Function extensible=true
 path[win32][extname][length] c-- number
 path[win32][extname][name] c-- string
 path[win32][format] cew function
-path[win32][format]: function native name="format" length=1 above=Function extensible=true
+path[win32][format]: function native name="bound format" length=1 above=Function extensible=true
 path[win32][format][length] c-- number
 path[win32][format][name] c-- string
 path[win32][parse] cew function
-path[win32][parse]: function native name="parse" length=1 above=Function extensible=true
+path[win32][parse]: function native name="bound parse" length=1 above=Function extensible=true
 path[win32][parse][length] c-- number
 path[win32][parse][name] c-- string
 path[win32][sep] cew string
@@ -4233,9 +4229,9 @@ PassThrough level 4: constructor:c-w destroy:cew _undestroy:cew _destroy:cew pus
 PassThrough level 5: constructor:c-w pipe:cew eventNames:cew
 PassThrough level 6: setMaxListeners:cew constructor:cew getMaxListeners:cew emit:cew addListener:cew on:cew prependListener:cew once:cew prependOnceListener:cew removeListener:cew off:cew removeAllListeners:cew listeners:cew rawListeners:cew listenerCount:cew eventNames:cew _eventsCount:cew Symbol(kCapture):cew
 ReadableState level 0: highWaterMark:cew buffer:cew bufferIndex:cew length:cew pipes:cew awaitDrainWriters:cew Symbol(kState):cew
-ReadableState level 1: constructor:c-w objectMode:--a ended:--a endEmitted:--a reading:--a constructed:--a sync:--a needReadable:--a emittedReadable:--a readableListening:--a resumeScheduled:--a errorEmitted:--a emitClose:--a autoDestroy:--a destroyed:--a closed:--a closeEmitted:--a multiAwaitDrain:--a readingMore:--a dataEmitted:--a errored:--a defaultEncoding:--a decoder:--a encoding:--a flowing:--a pipesCount:--a paused:--a Symbol(kOnConstructed):cew
+ReadableState level 1: objectMode:--a ended:--a endEmitted:--a reading:--a constructed:--a sync:--a needReadable:--a emittedReadable:--a readableListening:--a resumeScheduled:--a errorEmitted:--a emitClose:--a autoDestroy:--a destroyed:--a closed:--a closeEmitted:--a multiAwaitDrain:--a readingMore:--a dataEmitted:--a errored:--a defaultEncoding:--a decoder:--a encoding:--a flowing:--a pipesCount:--a paused:--a Symbol(kOnConstructed):cew
 WritableState level 0: highWaterMark:cew length:cew corked:cew onwrite:cew writelen:cew bufferedIndex:cew pendingcb:cew Symbol(kState):cew Symbol(kBufferedValue):cew
-WritableState level 1: constructor:c-w objectMode:--a finalCalled:--a needDrain:--a ending:--a ended:--a finished:--a destroyed:--a decodeStrings:--a writing:--a sync:--a bufferProcessing:--a constructed:--a prefinished:--a errorEmitted:--a emitClose:--a autoDestroy:--a closed:--a closeEmitted:--a allBuffers:--a allNoop:--a errored:--a writable:--a defaultEncoding:--a writecb:--a afterWriteTickInfo:--a buffered:--a getBuffer:cew bufferedRequestCount:--a Symbol(kOnConstructed):cew
+WritableState level 1: objectMode:--a finalCalled:--a needDrain:--a ending:--a ended:--a finished:--a destroyed:--a decodeStrings:--a writing:--a sync:--a bufferProcessing:--a constructed:--a prefinished:--a errorEmitted:--a emitClose:--a autoDestroy:--a closed:--a closeEmitted:--a allBuffers:--a allNoop:--a errored:--a writable:--a defaultEncoding:--a writecb:--a afterWriteTickInfo:--a buffered:--a getBuffer:cew bufferedRequestCount:--a Symbol(kOnConstructed):cew
 net.Socket level 0: _events:cew _readableState:cew _writableState:cew allowHalfOpen:cew _maxListeners:cew _parent:cew _parentWrap:cew bytesRead:cew connecting:cew _host:cew _port:cew timeout:cew _pendingData:cew _pendingEncoding:cew _hadError:cew isServer:cew _handle:cew server:cew _server:cew _peername:cew _sockname:cew _closeAfterHandlingError:cew _eventsCount:cew Symbol(shapeMode):cew Symbol(kCapture):cew Symbol(kupgraded):cew Symbol(kStandaloneWrap):cew Symbol(kOnUpgradedClose):cew Symbol(kOwesRawClose):cew Symbol(kSetNoDelay):cew Symbol(kSetKeepAlive):cew Symbol(kSetKeepAliveInitialDelay):cew Symbol(khandlers):cew Symbol(kDestroyOnRead):cew Symbol(kBytesWritten):cew Symbol(closed):cew Symbol(ended):cew Symbol(::buntlsconnectoptions::):cew Symbol(::buntimeout::):cew Symbol(writeCallback):cew Symbol(ksocket):cew
 net.Socket level 1: constructor:c-w address:cew _onTimeout:cew bufferSize:--a _bytesDispatched:--a bytesWritten:--a connect:cew end:cew _destroy:cew _final:cew localAddress:--a localFamily:--a localPort:--a _connecting:--a pending:--a resume:cew pause:cew read:cew _read:cew _reset:cew _getpeername:cew _getsockname:cew readyState:--a ref:cew remotePort:--a remoteAddress:--a remoteFamily:--a resetAndDestroy:cew setKeepAlive:cew setNoDelay:cew setTypeOfService:cew getTypeOfService:cew setTimeout:cew _unrefTimer:cew unref:cew destroySoon:cew _writev:cew _write:cew Symbol(kAttach):cew Symbol(kCloseRawConnection):cew Symbol(kReinitializeHandle):cew Symbol(::bunUpgradeServerTLS::):cew Symbol(kUpgradeClientTLS):cew
 net.Socket level 2: constructor:c-w destroy:cew write:cew cork:cew uncork:cew setDefaultEncoding:cew _write:cew _writev:cew end:cew writable:--a writableHighWaterMark:--a writableObjectMode:--a writableBuffer:--a writableLength:--a writableFinished:--a writableCorked:--a writableEnded:--a writableNeedDrain:--a destroyed:--a

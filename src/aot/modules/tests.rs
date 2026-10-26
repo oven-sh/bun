@@ -461,6 +461,62 @@ fn site_over_candidate_limit_is_a_loss() {
     });
 }
 
+fn library_names_required_by(
+    graph: &ModuleGraph,
+    input: &BindInput<'_, '_>,
+    file: &str,
+) -> Vec<String> {
+    let required_names = graph.required_names(file_named(input, file)).iter();
+    let mut names: Vec<String> = required_names
+        .map(|required| {
+            assert!(matches!(required.module, ModuleRef::Runtime(_)));
+            BStr::new(input.files.atoms.bytes(required.name)).to_string()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_module_says_which_names_it_binds_that_the_table_of_a_library_module_does_not_list() {
+    let program = [
+        (
+            "main.js",
+            "import { existsSync } from \"node:fs\";\nexistsSync(\"/\");\nimport(\"./binds.js\");\nimport(\"./barrel.js\");\nimport(\"./through.js\");\nimport(\"./members.js\");\nimport(\"./required.cjs\");\n",
+        ),
+        (
+            "binds.js",
+            "import { unlisted, statSync } from \"node:fs\";\nconsole.log(unlisted, statSync);\n",
+        ),
+        (
+            "barrel.js",
+            "export { handedOn, statSync } from \"node:fs\";\n",
+        ),
+        (
+            "through.js",
+            "import { handedOn } from \"./barrel.js\";\nconsole.log(handedOn);\n",
+        ),
+        // `undefined` where the module has no such name.
+        (
+            "members.js",
+            "import * as fs from \"node:fs\";\nconsole.log(fs.unlisted);\n",
+        ),
+        (
+            "required.cjs",
+            "const { unlisted } = require(\"node:fs\");\nconsole.log(unlisted);\n",
+        ),
+    ];
+    with_graph(&program, |graph, input| {
+        let names_bound_by = |file| library_names_required_by(graph, input, file);
+        assert_eq!(names_bound_by("main.js"), [""; 0]);
+        assert_eq!(names_bound_by("binds.js"), ["unlisted"]);
+        assert_eq!(names_bound_by("barrel.js"), ["handedOn"]);
+        assert_eq!(names_bound_by("through.js"), ["handedOn"]);
+        assert_eq!(names_bound_by("members.js"), [""; 0]);
+        assert_eq!(names_bound_by("required.cjs"), [""; 0]);
+    });
+}
+
 #[test]
 fn a_module_says_which_deferred_exports_of_the_library_it_binds() {
     let program = [
@@ -508,17 +564,7 @@ fn a_module_says_which_deferred_exports_of_the_library_it_binds() {
             let is_deferred = input.deferred_exports.contains(module, name.as_bytes());
             assert_eq!(is_deferred, expected, "{module:?} {name}");
         }
-        let names_bound_by = |file: &str| -> Vec<String> {
-            let required_names = graph.required_names(file_named(input, file)).iter();
-            let mut names: Vec<String> = required_names
-                .map(|required| {
-                    assert!(matches!(required.module, ModuleRef::Runtime(_)));
-                    BStr::new(input.files.atoms.bytes(required.name)).to_string()
-                })
-                .collect();
-            names.sort();
-            names
-        };
+        let names_bound_by = |file| library_names_required_by(graph, input, file);
         assert_eq!(names_bound_by("main.js"), [""; 0]);
         assert_eq!(names_bound_by("rest.js"), ["WriteStream", "promises"]);
         assert_eq!(names_bound_by("barrel.js"), ["ReadStream"]);

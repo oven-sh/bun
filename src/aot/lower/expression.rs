@@ -91,7 +91,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         self.set_position(position);
-        self.read_scopes_of_expression(expression);
         match self.file.decisions().decision(expression) {
             Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {}
             Decision::GlobalPath(_) => {
@@ -160,7 +159,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.builder.undefined();
         }
         self.set_position(position);
-        self.read_scopes_of_expression(expression);
         let value = self.lower_printed_part(expression, evaluation);
         let value = self.finish_expression(expression, value);
         self.leave_nesting();

@@ -105,6 +105,8 @@ function configure(buildDir: string): Configured {
     cppAll: [],
     internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
     internalModulesBin: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.bin"),
+    bundledNamesOfModules: resolve(cfg.codegenDir, "bundled_names_of_modules.txt"),
+    bundledHelpers: resolve(cfg.codegenDir, "runtime.out.js"),
     rootInstall: resolve(buildDir, "stamps", "install.stamp"),
   };
   return { cfg, n, o, dirStamp: resolve(cfg.codegenDir, ".dir") };
@@ -437,6 +439,12 @@ describe("emitBuiltinSources", () => {
     // A file that the table's step writes: ninja runs this step behind it.
     expect(edgeInputs(n, archive)).toContain(n.rel(engineFunctionsJson(cfg)));
     expect(edgeArgs(n, archive)).toContain(`--engine-functions=${engineFunctionsJson(cfg)}`);
+    // Files that the steps of src/js and of src/runtime.bun.js write.
+    expect(edgeInputs(n, archive)).toEqual(
+      expect.arrayContaining([o.bundledNamesOfModules, o.bundledHelpers, `${o.bundledHelpers}.map`].map(p => n.rel(p))),
+    );
+    expect(edgeArgs(n, archive)).toContain(`--bundled-names-of-modules=${o.bundledNamesOfModules}`);
+    expect(edgeArgs(n, archive)).toContain(`--bundled-helpers=${o.bundledHelpers}`);
   });
 });
 

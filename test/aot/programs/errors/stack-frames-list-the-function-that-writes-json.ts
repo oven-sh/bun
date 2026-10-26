@@ -4,7 +4,7 @@ const names = (error: Error): string =>
     .split("\n")
     .slice(1)
     .map(line => line.replace(/^\s*at /, "").replace(/[@ (].*$/, ""))
-    .map(name => (name.startsWith("/") ? "module" : name))
+    .map(name => (/[\\/]/.test(name) ? "module" : name))
     .join(" < ");
 let seen: string[] = [];
 function note(): number {

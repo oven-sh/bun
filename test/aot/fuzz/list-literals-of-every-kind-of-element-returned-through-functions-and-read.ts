@@ -345,13 +345,15 @@ function scene(random: Random, typed: boolean, index: number): string {
   const lastTakes =
     /handed(?:: ([^)]*\)?\[?\]?[^)]*))?\)/.exec(functions[functions.length - 1].split("\n")[0])?.[1] ?? "";
   const seen = random.pick(seenAs);
-  const hasEmpty = random.chance(0.6);
-  const hasSeen = hasEmpty && random.chance(0.7);
+  // Every third scene has all of it: the empty list, its second type, a read and a push of nothing, and both are shown.
+  const hasAll = random.chance(0.33);
+  const hasEmpty = hasAll || random.chance(0.75);
+  const hasSeen = hasAll || (hasEmpty && random.chance(0.8));
   const lines: string[] = [];
   if (hasEmpty) lines.push(`const empty${of("[]")} = [];`);
   if (hasSeen) lines.push(`const seen${of(seen)} = empty;`);
-  if (hasSeen && random.chance(0.5) && seen !== "[]") lines.push("const first = seen[0];");
-  if (hasEmpty && random.chance(0.4)) lines.push("const record = { y: empty.push() };");
+  if (hasSeen && (hasAll || random.chance(0.5)) && seen !== "[]") lines.push("const first = seen[0];");
+  if (hasEmpty && (hasAll || random.chance(0.6))) lines.push("const record = { y: empty.push() };");
   if (hasSeen && random.chance(0.25) && !seen.startsWith("readonly") && seen !== "[]")
     lines.push(`${as("seen", "any[]")}.push(${random.pick(["1.5", "1", `"a"`, "undefined", "-0", "n"])});`);
   const mayHandSeen =
@@ -365,7 +367,7 @@ function scene(random: Random, typed: boolean, index: number): string {
   ]);
   lines.push(`const made = ${last}(n, ${given});`);
   for (let i = random.below(3); i > 0; i--) lines.push(store("made"));
-  if (hasSeen && random.chance(0.6)) lines.push(`say("${index} seen " + show(seen));`);
+  if (hasSeen && (hasAll || random.chance(0.7))) lines.push(`say("${index} seen " + show(seen));`);
   if (hasEmpty && random.chance(0.2)) lines.push(`say("${index} empty " + show(empty));`);
   if (random.chance(0.15)) lines.push("Bun.gc(true);");
   lines.push("return made;");
@@ -402,7 +404,7 @@ isLoud = true;`;
 }
 
 export function generate(random: Random, typed: boolean): string {
-  const isShownOutOfSight = random.chance(0.5);
-  const scenes = Array.from({ length: random.between(1, 4) }, (_, index) => scene(random, typed, index));
+  const isShownOutOfSight = random.chance(0.6);
+  const scenes = Array.from({ length: random.between(2, 6) }, (_, index) => scene(random, typed, index));
   return [prelude(typed, isShownOutOfSight), ...scenes, "export {};"].join("\n") + "\n";
 }

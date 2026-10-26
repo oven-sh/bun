@@ -931,6 +931,15 @@ const keys = (process.env.NO_SUCH_VARIABLE ?? "children parent main mainModule")
 require("./child.cjs");
 console.log(typeof module[keys[0]], typeof require("./child.cjs").itself[keys[1]], typeof require[keys[2]], typeof process[keys[3]]);
 console.log(require[keys[2]] === module, module[keys[0]][0] === require("./child.cjs").itself, require("./child.cjs").itself[keys[1]] === module, process[keys[3]] === module);
+//// rulings/a-computed-key-on-require-shows-the-ways-whichever-file-starts-the-process/child.cjs
+exports.itself = module;
+//// rulings/a-computed-key-on-require-shows-the-ways-whichever-file-starts-the-process/main.cjs
+// No file spells `children`, `parent`, `require.main` or `process.mainModule`, and one reads `require` under a key that comes from outside. All four answer as under `bun run`, under computed keys too,
+// whichever file the process was started with: `require.main` and `process.mainModule` are one value, and it is this module or none.
+const keys = (process.env.NO_SUCH_VARIABLE ?? "children parent main mainModule").split(" ");
+require("./child.cjs");
+console.log(typeof module[keys[0]], typeof require("./child.cjs").itself[keys[1]], require[keys[2]] === process[keys[3]], [module, undefined].includes(require[keys[2]]));
+console.log(module[keys[0]].length, module[keys[0]][0] === require("./child.cjs").itself, require("./child.cjs").itself[keys[1]] === module);
 //// rulings/a-failure-that-is-outlived-then-a-require-at-the-top/bad.cjs
 exports.a = 1;
 throw new Error("x");

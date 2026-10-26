@@ -33,5 +33,9 @@ const forms = {
   localNamedReflectUsedTwice() { const Reflect = globalThis.Reflect; Reflect.has({}, "x"); const made = Reflect.construct(Thrower, []); return made; },
   parameterNamedReflect(Reflect = globalThis.Reflect) { const made = Reflect.construct(Thrower, []); return made; },
   written() { const made = Reflect.construct(Thrower, []); return made; },
+  writtenWithAConstantKey() { const key = "construct"; const made = Reflect[key](Thrower, []); return made; },
+  writtenWithAConstantKeyUsedTwice() { const key = "construct"; const made = Reflect[key](Thrower, [key]); return made; },
+  writtenWithAKeyThatChanges() { let key = "has"; key = "construct"; const made = Reflect[key](Thrower, []); return made; },
+  writtenWithAConstantKeyBehindACall() { String(1); const key = "construct"; const made = Reflect[key](Thrower, [key]); return made; },
 };
 for (const [name, form] of Object.entries(forms)) console.log(name, "|", listSites(form), "|", listNames(form));

@@ -2,7 +2,6 @@ use bun_sema::bind::ScopeId;
 use rustc_hash::FxHashMap;
 
 use super::BindingRef;
-use super::reads::ScopeRead;
 use crate::ir::{LocalVariable, ValueId};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -32,9 +31,6 @@ pub(crate) struct ScopeState {
     pub(in crate::lower) entry_this: Option<ValueId>,
     /// The captures of a function that gets them in one object, read out of it at entry.
     pub(in crate::lower) unpacked_captures: Vec<ValueId>,
-    pub(super) last_read: Option<ScopeRead>,
-    pub(super) stretch_of_reads: u32,
-    pub(super) scopes_with_shared_names: u32,
 }
 
 impl ScopeState {

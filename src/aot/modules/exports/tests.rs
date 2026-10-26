@@ -456,7 +456,8 @@ fn host_value_names_are_synthetic() {
             exports,
             [format!("x = synthetic external:{HOST_VALUE_MODULE} x")]
         );
-        assert!(lines_after("required ", &description).is_empty());
+        let required = lines_after("required ", &description);
+        assert_eq!(required, [format!("external:{HOST_VALUE_MODULE} x")]);
     });
     with_export_tables(&files, |tables, modules, input| {
         let module = external_of(input, "barrel.js", HOST_VALUE_MODULE);

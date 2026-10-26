@@ -16,7 +16,9 @@
 // Every read stands in a try, and an error prints its name alone: the words of an error are not compared.
 //
 // A program in which plain Bun runs a CommonJS module a second time, because it threw the first time, is counted and is no finding where the two part: an executable runs a module once.
-// So is one in which the two part where a module that threw is asked for again and the executable throws: plain Bun answers with the namespace object there if an ES module imported the file while it ran.
+// So is one in which the two part where a module that threw is asked for again, by itself or through a module that needs it, and the executable throws: plain Bun answers with the namespace object there if an ES module imported the file while it ran.
+//
+// Plain Bun reads files on several threads, and the order in which the texts arrive can show in what a program prints. The reference reads on one thread; an executable that prints what plain Bun prints on several, in one of forty runs, is counted and is no finding.
 //
 // Where the two part and --node is given, Node is asked: an executable that prints what Node prints is counted and is no finding.
 //
@@ -250,12 +252,19 @@ if (import.meta.main) {
     return new Set(begun).size < begun.length;
   };
 
-  // Where an ES module imported the file while it ran, plain Bun runs nothing again: the next request gets the namespace object of that import. An executable throws the same error there too.
-  const throwsForModuleThatThrew = (plain: string, compiled: string) => {
+  // Where an ES module imported the file while it ran, plain Bun runs nothing again: the next request gets the namespace object of that import. An executable throws the same error there too,
+  // also where the request is for a module that needs the file. Where nobody catches the error, the module that goes on under plain Bun never ends in the executable.
+  const throwsForModuleThatThrew = (plain: string, compiled: string, notes: string) => {
     const [expected, got] = [plain.split("\n"), compiled.split("\n")];
-    const parted = got[expected.findIndex((line, index) => line !== got[index])] ?? "";
-    const asked = /^m\d+ (?:early|late|late require|requires|then|late import) (m\d+)\b.* throws \w+$/.exec(parted)?.[1];
-    return asked !== undefined && expected.includes(`${asked} begins`) && !expected.includes(`${asked} ends`);
+    const at = expected.findIndex((line, index) => line !== got[index]);
+    const begun = expected.slice(0, at).flatMap(line => /^(m\d+) begins$/.exec(line)?.[1] ?? []);
+    const threw = new Set(begun.filter(name => !expected.includes(`${name} ends`)));
+    const needs = new Map(notes.split(" . ").map(each => [each.split(".")[0], each.split(" > ")[1].split(" ")]));
+    const reaches = (from: string, seen = new Set<string>()): boolean => threw.has(from) || (!seen.has(from) && (seen.add(from), (needs.get(from) ?? []).some(to => reaches(to, seen))));
+    const caught = /^m\d+ (?:early|late|late require|requires|then|late import) (m\d+)\b.* throws \w+$/.exec(got[at] ?? "")?.[1];
+    const goesOn = /^(m\d+) /.exec(expected[at] ?? "")?.[1];
+    const asked = caught ?? (goesOn !== undefined && !got.includes(`${goesOn} ends`) ? goesOn : undefined);
+    return asked !== undefined && reaches(asked);
   };
 
   // Whether the same graph without its awaits prints what plain Bun prints.
@@ -299,7 +308,11 @@ if (import.meta.main) {
     if (compiled.late) return finding("the executable hangs", folder, seed, notes, compiled.text);
     if (compiled.out === plain.out && compiled.code === plain.code) return void count("as plain");
     if (runsModuleAgain(plain.out)) return void count("a CommonJS module that threw runs again under plain Bun");
-    if (throwsForModuleThatThrew(plain.out, compiled.out)) return void count("a module that threw is asked for again and the executable throws");
+    if (throwsForModuleThatThrew(plain.out, compiled.out, notes)) return void count("a module that threw is asked for again and the executable throws");
+    for (let again = 0; again < 40; again++) {
+      const onSeveralThreads = await run([bun, "--no-install", entry], folder, 30);
+      if (onSeveralThreads.out === compiled.out && onSeveralThreads.code === compiled.code) return void count("as plain Bun where it reads files on several threads");
+    }
     if (node && !Object.keys(files).some(file => file.endsWith(".ts")) && (await run([node, entry], folder, 30)).out === compiled.out) return void count("plain Bun is by itself: the executable prints what Node prints");
     if (awaits && !(await agreesWithoutAwaits(seed, job))) return void count("prints something else without its awaits too");
     const [expected, got] = [plain.out.split("\n"), compiled.out.split("\n")];

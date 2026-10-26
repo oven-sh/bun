@@ -36,6 +36,28 @@ const programs: [entry: string, pairs: Pair[]][] = [
     [["methods assigned to the prototype of a function", "methods assigned to a variable that holds the prototype", 8]],
   ],
   ["names-in-a-list.js", [["a name found by a loop", "a name found by indexOf", 0]]],
+  [
+    "members-under-keys.js",
+    [
+      ["a method under a plain name", "a method under a symbol that the module creates", 4],
+      ["a method under a plain name", "a method under a symbol without a description", 4],
+      ["a method under a plain name", "a method under a registered symbol", 4],
+      ["a method under a plain name", "a method under a well-known symbol", 4],
+      ["a method under a plain name", "a method under a constant that holds a text", 4],
+      ["a method under a plain name", "a method under a symbol of another module", 4],
+      ["a method under a plain name", "a method under a text of another module", 4],
+      ["a getter under a plain name", "a getter under a symbol", 4],
+      ["a getter and a setter under a plain name", "a getter and a setter under a symbol", 4],
+      ["a static method under a plain name", "a static method under a symbol", 4],
+      ["a method of two classes under a plain name", "a method of two classes under a symbol", 4],
+      [
+        "a method that some objects have, read under a plain name and called",
+        "a method that some objects have, read under a symbol and called",
+        4,
+      ],
+      ["a field under a plain name", "a field under a symbol", 8],
+    ],
+  ],
   ["wrappers.js", [["a wrapper that is called", "a wrapper that is called through call", 4]]],
   ["errors.js", [["an error that is kept", "an error that is returned at once", 32]]],
   [

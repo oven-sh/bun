@@ -280,6 +280,30 @@ const wrongEntries: WrongEntry[] = [
       propertyActions: overload.propertyActions.filter(({ action }) => action !== "DescribesResult"),
     }),
   },
+  {
+    title: "a native function of the library that calls nothing of what its operand holds",
+    path: "native:NewCppFunction:BunCompiledModules.cpp:jsFunctionCallOwnFunctionsWithoutParameters",
+    mode: "Call",
+    column: "parameters[0].protocols",
+    applyTo: overload => ({ ...overload, handlerCalls: [] }),
+  },
+  {
+    title: "a native function of the library that leaves alone what its calls answer",
+    path: "native:NewCppFunction:BunCompiledModules.cpp:jsFunctionCallOwnFunctionsWithoutParameters",
+    mode: "Call",
+    column: "parameters[0].uses",
+    applyTo: overload => ({
+      ...overload,
+      handlerCalls: overload.handlerCalls.map(call => ({ ...call, resultUse: "Ignored" })),
+    }),
+  },
+  {
+    title: "a native function of the library that defines nothing of one operand on the other",
+    path: "native:NewCppFunction:BunCompiledModules.cpp:jsFunctionDefineOwnPropertiesLeftOut",
+    mode: "Call",
+    column: "parameters[0].uses",
+    applyTo: overload => ({ ...overload, propertyActions: [] }),
+  },
 ];
 
 function defineWrongEntryTests(): void {

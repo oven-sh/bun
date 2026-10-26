@@ -207,6 +207,13 @@
       "peakBytes": 6.5
     }
   },
+  "steps of a chain of calls that each add a class to one array, whose elements are read under many names": {
+    "millionInstructions": 7979,
+    "megabytes": 233,
+    "growth": {
+      "instructions": 4.8
+    }
+  },
   "a declaration where an expression belongs, nested in itself": {
     "millionInstructions": 6900,
     "megabytes": 280

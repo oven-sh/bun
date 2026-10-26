@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use bun_sema::bind::{Binding, Parent, SymbolId};
+use bun_sema::bind::{Binding, Decl, Parent, PatParent, SymbolId};
 use bun_sema::hir::{
     Chain, ExprId, ExprKind, FnBody, IdList, NameKind, PatKind, PropKey, PropKind, StmtId,
     StmtKind, UnOp, VarDeclId, VarKind,
@@ -55,6 +55,34 @@ impl FileLowering<'_, '_, '_, '_> {
             .get(LimitId::MaxStepsToPrintedInitializer);
         let budget = Budget(Cell::new(steps));
         Some(self.find_printed(name, &budget)?.initializer)
+    }
+
+    // The literal that Bun's transpiler prints in place of the name of a constant.
+    pub(in crate::lower) fn find_printed_value(&self, name: ExprId) -> Option<ExprId> {
+        let Binding::Symbol(symbol) = self.bound.binding(name) else {
+            return None;
+        };
+        let &[Decl::Var(pattern)] = self.bound.symbol(symbol).decls else {
+            return None;
+        };
+        let PatParent::Var(declaration) = self.bound.pat_parent[pattern.idx()] else {
+            return None;
+        };
+        self.is_replaced_by_its_value(declaration)
+            .then_some(self.hir[declaration].init)
+    }
+
+    pub(super) fn is_replaced_by_its_value(&self, declaration: VarDeclId) -> bool {
+        let statement = self.bound.var_stmt[declaration.idx()];
+        let Some(before) = self.find_earlier_statements(statement) else {
+            return false;
+        };
+        let steps = self
+            .inputs
+            .limits
+            .get(LimitId::MaxStepsToPrintedInitializer);
+        let budget = Budget(Cell::new(steps));
+        self.is_printed_as_its_value(declaration, before, &budget)
     }
 
     fn find_printed(&self, name: ExprId, budget: &Budget) -> Option<Printed> {
@@ -151,7 +179,9 @@ impl FileLowering<'_, '_, '_, '_> {
         loop {
             child = match bound.parent_of_expr(child) {
                 Parent::Expr(parent) => parent,
-                Parent::Prop(property) => bound.prop_owner[property.idx()],
+                Parent::Prop(property)
+                | Parent::PropKey(property)
+                | Parent::MethodKey(property) => bound.prop_owner[property.idx()],
                 Parent::Stmt(statement) => return Some(statement),
                 Parent::VarInit(declaration) => return Some(bound.var_stmt[declaration.idx()]),
                 _ => return None,
@@ -221,7 +251,31 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             _ => false,
         };
-        !is_operand_replaced && self.is_removed_when_unused(written)
+        !is_operand_replaced && self.can_be_removed_when_unused(written, budget)
+    }
+
+    // A list or an object literal does nothing if none of its parts does.
+    fn can_be_removed_when_unused(&self, expression: ExprId, budget: &Budget) -> bool {
+        let hir = self.hir;
+        if !budget.take_step() {
+            return false;
+        }
+        let written = self.find_written(expression, budget);
+        match hir[written].kind {
+            ExprKind::Missing => true,
+            ExprKind::Array(elements) => {
+                let mut elements = hir.ids(elements);
+                elements.all(|element| self.can_be_removed_when_unused(element, budget))
+            }
+            ExprKind::Object(properties) => properties.iter().all(|property| {
+                let property = hir[property];
+                !matches!(property.key, PropKey::Computed(_))
+                    && property.kind != PropKind::Spread
+                    && (property.value.is_none()
+                        || self.can_be_removed_when_unused(property.value, budget))
+            }),
+            _ => self.is_removed_when_unused(written),
+        }
     }
 
     fn substitute_in_each(
@@ -345,12 +399,16 @@ impl FileLowering<'_, '_, '_, '_> {
                 let mut found = Substitution::Continue;
                 for property in properties.iter() {
                     let property = hir[property];
-                    let is_computed = matches!(property.key, PropKey::Computed(_))
-                        || matches!(
-                            property.name_kind,
-                            NameKind::ComputedString | NameKind::ComputedNumber
-                        );
-                    if is_computed {
+                    if let PropKey::Computed(key) = property.key {
+                        return match one(key) {
+                            Substitution::Continue => Substitution::Failure,
+                            found => found,
+                        };
+                    }
+                    if matches!(
+                        property.name_kind,
+                        NameKind::ComputedString | NameKind::ComputedNumber
+                    ) {
                         return Substitution::Failure;
                     }
                     let is_value = matches!(
@@ -377,7 +435,7 @@ impl FileLowering<'_, '_, '_, '_> {
     // Whether the initializer may be evaluated behind the expression instead of in front of it.
     fn continue_behind(&self, expression: ExprId, replacement: &Replacement<'_>) -> Substitution {
         let changes_nothing = (replacement.can_be_removed
-            && self.is_removed_when_unused(expression))
+            && self.can_be_removed_when_unused(expression, replacement.budget))
             || self.is_literal_operand(expression);
         match changes_nothing {
             true => Substitution::Continue,

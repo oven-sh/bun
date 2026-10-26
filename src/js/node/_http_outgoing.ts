@@ -1250,7 +1250,7 @@ function removeShapedHeader(exchange: Exchange, name: string, key: string): void
   if (last === 0) exchange.wasEmptied = true;
 }
 
-function headerEntriesOf(exchange: Exchange): unknown[] {
+function headerEntriesOf(exchange: Exchange, message: $Node.OutgoingMessage): unknown[] {
   const entries: unknown[] = [];
   const shape = exchange.shape;
   if (shape !== spilledHeadersShape) {
@@ -1260,7 +1260,7 @@ function headerEntriesOf(exchange: Exchange): unknown[] {
       entries.push(keys[index], names[index], shapedValue(exchange, index));
     return entries;
   }
-  const headers = exchange.response[kOutHeaders];
+  const headers = message[kOutHeaders];
   if (headers !== null && headers !== undefined) {
     for (const key in headers) {
       const entry = headers[key];
@@ -1305,9 +1305,21 @@ function spillHeadersOf(message: $Node.OutgoingMessage): void {
   if (exchange !== undefined) spillHeaders(exchange);
 }
 
-function hasHeaderUnderKey(exchange: Exchange, key: string, bit: number): boolean {
+// An object that stands in the place of a message, a Proxy or an heir, sees each read and each store of the map of headers.
+function spillHeadersReachedThrough(receiver: $Node.OutgoingMessage): void {
+  const exchange = receiver.$exchange;
+  if (exchange === undefined) return;
+  const response = exchange.response;
+  if (response !== receiver && (exchange.shape.count !== 0 || exchange.wasEmptied)) {
+    ("unlikely");
+    spillHeaders(exchange);
+    outgoingIsLenientHeaderValidation.$call(response);
+  }
+}
+
+function hasHeaderUnderKey(exchange: Exchange, message: $Node.OutgoingMessage, key: string, bit: number): boolean {
   if (exchange.shape !== spilledHeadersShape) return (exchange.headerBits & bit) !== 0;
-  const headers = exchange.response[kOutHeaders];
+  const headers = message[kOutHeaders];
   return headers !== null && headers[key] !== undefined;
 }
 
@@ -1565,6 +1577,7 @@ function flatHeadersOf(exchange: Exchange): unknown[] {
 http.responseRoad.makeExchange = makeExchange;
 http.responseRoad.storeHeader = storeShapedHeader;
 http.responseRoad.spillHeaders = spillHeaders;
+http.responseRoad.spillHeadersReachedThrough = spillHeadersReachedThrough;
 http.responseRoad.hasHeaderUnderKey = hasHeaderUnderKey;
 http.responseRoad.flatHeadersOf = flatHeadersOf;
 http.responseRoad.headerEntriesOf = headerEntriesOf;
@@ -1575,11 +1588,11 @@ const outgoingSetHeader = function setHeader(this: $Node.OutgoingMessage, name: 
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
   const exchange = this.$exchange;
-  if (IS_COMPILED_AHEAD_OF_TIME) {
-    if (exchange !== undefined) storeShapedHeader(exchange, name, value);
-    else storeInDictionary(this, name, value);
+  if (IS_COMPILED_AHEAD_OF_TIME && exchange !== undefined && exchange.response === this) {
+    storeShapedHeader(exchange, name, value);
     return this;
   }
+  if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   if (exchange !== undefined) spillHeaders(exchange);
   const field = validatedLowercaseHeaderName(name);
   validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
@@ -1641,6 +1654,7 @@ OutgoingMessage.prototype.appendHeader = function appendHeader(
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("append");
   }
+  if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   const field = validatedLowercaseHeaderName(name);
   validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
 
@@ -1705,6 +1719,7 @@ OutgoingMessage.prototype.getHeader = function getHeader(this: $Node.OutgoingMes
 
 // Returns an array of the names of the current outgoing headers.
 OutgoingMessage.prototype.getHeaderNames = function getHeaderNames(this: $Node.OutgoingMessage) {
+  if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   const exchange = this.$exchange;
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (exchange !== undefined && exchange.shape !== spilledHeadersShape) return keysOf(exchange.shape).slice();
@@ -1713,6 +1728,7 @@ OutgoingMessage.prototype.getHeaderNames = function getHeaderNames(this: $Node.O
 
 // Returns an array of the names of the current outgoing raw headers.
 OutgoingMessage.prototype.getRawHeaderNames = function getRawHeaderNames(this: $Node.OutgoingMessage) {
+  if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   const exchange = this.$exchange;
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (exchange !== undefined && exchange.shape !== spilledHeadersShape) return namesOf(exchange.shape).slice();
@@ -1732,6 +1748,7 @@ OutgoingMessage.prototype.getRawHeaderNames = function getRawHeaderNames(this: $
 
 // Returns a shallow copy of the current outgoing headers.
 OutgoingMessage.prototype.getHeaders = function getHeaders(this: $Node.OutgoingMessage) {
+  if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   const headers = this[kOutHeaders];
   const ret = { __proto__: null } as $Node.Dictionary<$Node.HttpHeaderValue>;
   const exchange = this.$exchange;
@@ -1756,6 +1773,7 @@ OutgoingMessage.prototype.getHeaders = function getHeaders(this: $Node.OutgoingM
 
 OutgoingMessage.prototype.hasHeader = function hasHeader(this: $Node.OutgoingMessage, name: string) {
   validateString(name, "name");
+  if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   if (this[kOutHeaders] === null) {
     const exchange = this.$exchange;
     if (exchange === undefined) return false;
@@ -1789,6 +1807,7 @@ OutgoingMessage.prototype.removeHeader = function removeHeader(this: $Node.Outgo
       break;
   }
 
+  if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   const exchange = this.$exchange;
   if (exchange !== undefined && exchange.shape !== spilledHeadersShape) {
     removeShapedHeader(exchange, name, key);

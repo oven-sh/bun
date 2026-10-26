@@ -121,6 +121,19 @@ function layOut(folder: string, texts: string[], extension: string, inGroup: num
   copyFileSync(join(import.meta.dir, runner), join(folder, runner));
 }
 
+/** The programs in `folder` that import the file beside them, or a file that imports it. The names of such files are hashes. */
+function importersOf(file: string, folder: string) {
+  const texts = new Map(
+    readdirSync(join(folder, "programs")).map(name => [name, readFileSync(join(folder, "programs", name), "latin1")]),
+  );
+  const isProgram = (name: string) => /^\d+\./.test(name);
+  const importers = new Set([file]);
+  for (const imported of importers)
+    if (!isProgram(imported))
+      for (const [name, text] of texts) if (text.includes(imported.replace(/\.[a-z]+$/, ""))) importers.add(name);
+  return [...importers].filter(isProgram).map(name => parseInt(name));
+}
+
 /** Builds the executable. Returns the programs that the errors name, or how the compiler stopped. */
 async function build(
   folder: string,
@@ -145,10 +158,12 @@ async function build(
   let header = "";
   for (const line of ran.stderr.split("\n")) {
     if (/^(error|warn|note)\b/.test(line)) header = line;
-    const [, index] = /^\s+at .*programs[\\/](\d+)\.[a-z]+:\d+/.exec(line) ?? [];
-    if (index === undefined) continue;
-    if (header.startsWith("error")) refused.add(Number(index));
-    if (header.includes("read-only in a compiled executable")) writesToBuiltins.add(Number(index));
+    const [, file, index] = /^\s+at .*programs[\\/]((?:(\d+)\.)?[^\\/:]+):\d+/.exec(line) ?? [];
+    if (file === undefined) continue;
+    for (const program of index === undefined ? importersOf(file, folder) : [Number(index)]) {
+      if (header.startsWith("error")) refused.add(program);
+      if (header.includes("read-only in a compiled executable")) writesToBuiltins.add(program);
+    }
   }
   if (ran.exitCode === 0 && existsSync(join(folder, "batch"))) return { refused: new Set<number>(), writesToBuiltins };
   // Of several such lines, the first that names a program.
@@ -522,6 +537,28 @@ async function stoppedAtAnUnusedReadBeforeTheDeclaration(
   return agree(ran.get(0)!, reference);
 }
 
+/**
+ * Whether the two runs print the same but for the names of functions that the program declares in blocks.
+ * `bun run` makes a variable with a function expression of such a declaration, and the function has no name of its own then.
+ */
+async function agreesButForFunctionsDeclaredInBlocks(
+  folder: string,
+  extension: string,
+  text: string,
+  compiled: Ended,
+  reference: Ended,
+) {
+  layOut(folder, [text], extension, 1);
+  const rewritten = await spawn("rewrite", [bun, "build", "--no-bundle", `./programs/0${extension}`], folder, {}, 30);
+  const names = [...rewritten.stdout.matchAll(/\blet ([\w$]+) = (?:async )?function\b/g)]
+    .map(([, name]) => name.replaceAll("$", "\\$"))
+    .filter(name => new RegExp(`\\bfunction\\*? ?${name}\\b`).test(text));
+  if (names.length === 0 || compiled.end !== reference.end) return false;
+  const withoutThem = (output: string) =>
+    removeDetailsOfErrors(output).replace(new RegExp(`\\b(?:${names.join("|")})\\b ?`, "g"), "");
+  return withoutThem(compiled.stdout) === withoutThem(reference.stdout);
+}
+
 /** `[key]: value` in an object literal. Not `[key: string]: value` in a type. */
 const computedKeyOfAValue = /(?<=[{,]\s*|^\s*)\[(?![\w$]+\??: )((?:[^\[\]\n]|\[[^\[\]\n]*\])+)\](?=: )/gm;
 const withKeysConvertedBeforeValues = (text: string) =>
@@ -693,6 +730,8 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
       )
         kind = "documented difference";
       else if (await stoppedAtAnUnusedReadBeforeTheDeclaration(alone, extension, texts[index], said, referenceAgain))
+        kind = "documented difference";
+      else if (await agreesButForFunctionsDeclaredInBlocks(alone, extension, texts[index], second, referenceAgain))
         kind = "documented difference";
       rmSync(alone, { recursive: true, force: true });
     }

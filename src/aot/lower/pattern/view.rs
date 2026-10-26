@@ -3,7 +3,7 @@ use bun_sema::bind::{Binding, PatParent};
 use bun_sema::hir::{ExprId, ExprKind, NameKind, PatKind, PropKey, PropKind};
 use smallvec::SmallVec;
 
-use super::{PatternNode, PatternOrigin};
+use super::PatternNode;
 use crate::lower::FileLowering;
 use crate::lower::expression::AssignmentTarget;
 
@@ -52,20 +52,19 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // A property is printed as its key, its target and its default, and evaluated as its key, its default and its target.
-    pub(super) fn property_origin(
-        &self,
-        property: &PatternProperty,
-        recorded: u32,
-    ) -> PatternOrigin {
-        let key = match property.key {
-            PropKey::Computed(key) => Some(key),
-            PropKey::None | PropKey::Name(_) | PropKey::Private(_) => None,
-        };
-        let evaluated = property.default.some().or(key);
-        PatternOrigin {
-            mapped: key.map_or(property.position, |key| self.last_mapped_position(key)),
-            recorded: evaluated.map_or(recorded, |last| self.last_reported_position(last)),
+    // A property is printed as its key, its target and its default.
+    pub(super) fn last_mapped_key_position(&self, property: &PatternProperty) -> u32 {
+        match property.key {
+            PropKey::Computed(key) => self.last_mapped_position(key),
+            PropKey::None | PropKey::Name(_) | PropKey::Private(_) => property.position,
+        }
+    }
+
+    // JSC reports the store to a member of an object pattern at the end of the member.
+    pub(super) fn last_mapped_target_position(&self, target: PatternNode) -> u32 {
+        match target {
+            PatternNode::Binding(pattern) => self.hir[pattern].pos,
+            PatternNode::Assignment(target) => self.last_mapped_position(target),
         }
     }
 

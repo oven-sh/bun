@@ -88,7 +88,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !flags.intersects(can_be_suspended) || !self.builder.is_open() {
             return;
         }
-        self.read_scopes_of_names_under(removed);
         let hir = self.file.hir;
         let mut named: SmallVec<[ValueId; 4]> = SmallVec::new();
         let mut pending: SmallVec<[Node; 16]> = SmallVec::from_slice(&[removed]);

@@ -15,7 +15,6 @@ fn break_target(statement: u32, kind: BreakTargetKind) -> ControlEntry {
         statement: StmtId(statement),
         kind,
         block: BlockId::new(0),
-        scope_count: 0,
     }
 }
 
@@ -23,7 +22,6 @@ fn continue_target(statement: u32) -> ControlEntry {
     ControlEntry::ContinueTarget {
         statement: StmtId(statement),
         block: BlockId::new(0),
-        scope_count: 0,
     }
 }
 

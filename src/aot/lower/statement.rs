@@ -5,7 +5,8 @@ mod substitution;
 use bun_sema::bind::{Binding, ScopeId, SymbolId};
 use bun_sema::fold::Decision;
 use bun_sema::hir::{
-    ExprId, ExprKind, Flags, IdList, PatKind, StmtId, StmtKind, UnOp, VarDeclId, VarKind,
+    ExprId, ExprKind, Flags, FnBody, FnId, IdList, PatKind, StmtId, StmtKind, UnOp, VarDeclId,
+    VarKind,
 };
 
 use super::control::BreakTargetKind;
@@ -94,7 +95,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let mut mapped = joined_declarations_end.unwrap_or(stmt.start);
                 for declaration in declarations.iter() {
                     self.lower_variable_declaration(declaration, mapped);
-                    if has_pattern {
+                    if has_pattern && !self.file.is_replaced_by_its_value(declaration) {
                         mapped = self
                             .file
                             .last_mapped_declaration_position(declaration, mapped);
@@ -334,6 +335,10 @@ impl FileLowering<'_, '_, '_, '_> {
         match self.hir[statement].kind {
             StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty => false,
             StmtKind::Expr(expression) => !self.is_dropped_when_unused(expression),
+            StmtKind::Var(declarations) => {
+                let mut declarations = declarations.iter();
+                declarations.any(|declaration| !self.is_replaced_by_its_value(declaration))
+            }
             StmtKind::Block(statements) => {
                 let mut inner = self.hir.ids(statements);
                 inner.any(|inner| self.is_printed(inner))
@@ -344,6 +349,170 @@ impl FileLowering<'_, '_, '_, '_> {
                     || (no.is_some() && self.is_printed(no))
             }
             _ => true,
+        }
+    }
+
+    // The last token of a function that the source map of Bun's transpiler knows. It knows the `{` of a block and not its `}`.
+    pub(in crate::lower) fn last_mapped_function_position(&self, function: FnId) -> Option<u32> {
+        let hir = self.hir;
+        match hir[function].body {
+            FnBody::None => None,
+            FnBody::Expr(body) => Some(self.last_mapped_position(body)),
+            FnBody::Block(statements) => self.last_mapped_list_position(statements).or_else(|| {
+                let bodies = &hir.body_starts;
+                let found = bodies.binary_search_by_key(&function.0, |body| body.0.0);
+                found.ok().map(|index| bodies[index].1)
+            }),
+        }
+    }
+
+    // Behind a statement that leaves the list only the declarations of functions and of `var` variables are printed.
+    fn last_mapped_list_position(&self, statements: IdList<StmtId>) -> Option<u32> {
+        let hir = self.hir;
+        let leaves = |statement: StmtId| {
+            matches!(
+                hir[statement].kind,
+                StmtKind::Return(_)
+                    | StmtKind::Throw(_)
+                    | StmtKind::Break(_)
+                    | StmtKind::Continue(_)
+            )
+        };
+        let reached = match hir.ids(statements).position(leaves) {
+            Some(last) => last + 1,
+            None => statements.len as usize,
+        };
+        let mut unreached = hir.ids(statements).skip(reached).rev();
+        let hoisted = unreached.find_map(|statement| match hir[statement].kind {
+            StmtKind::Fn(function) => self.last_mapped_function_position(function),
+            StmtKind::Var(declarations) => {
+                let last = declarations.iter().last()?;
+                let is_var = self.bound.variable_kind(hir, last) == VarKind::Var;
+                self.last_mapped_pattern_position(is_var.then_some(hir[last].pat)?)
+            }
+            _ => None,
+        });
+        hoisted.or_else(|| {
+            let mut reached = hir.ids(statements).take(reached).rev();
+            reached.find_map(|statement| self.last_mapped_statement_position(statement))
+        })
+    }
+
+    // A block that belongs to its statement is printed even if it is empty.
+    fn last_mapped_block_position(&self, block: StmtId, open_brace: u32) -> u32 {
+        let inner = match self.hir[block].kind {
+            StmtKind::Block(statements) => self.last_mapped_list_position(statements),
+            _ => self.last_mapped_statement_position(block),
+        };
+        inner.unwrap_or(open_brace)
+    }
+
+    // The body of a loop, an `if` or a label. Nothing is mapped for an empty statement, which leaves `head`.
+    fn last_mapped_body_position(&self, body: StmtId, head: u32) -> u32 {
+        match self.hir[body].kind {
+            StmtKind::Empty => head,
+            _ => self.last_mapped_block_position(body, self.hir[body].start),
+        }
+    }
+
+    // None for a statement of which nothing is printed.
+    fn last_mapped_statement_position(&self, statement: StmtId) -> Option<u32> {
+        let hir = self.hir;
+        let stmt = hir[statement];
+        let last_of = |expression: ExprId| self.last_mapped_position(expression);
+        let is_printed = |inner: StmtId| self.last_mapped_statement_position(inner).is_some();
+        let position = match stmt.kind {
+            StmtKind::Empty
+            | StmtKind::Directive { .. }
+            | StmtKind::Interface(_)
+            | StmtKind::TypeAlias(_) => return None,
+            StmtKind::Expr(value) if self.is_removed_when_unused(value) => return None,
+            StmtKind::Expr(value) | StmtKind::Throw(value) => last_of(value),
+            StmtKind::Return(value) => value.some().map_or(stmt.start, last_of),
+            StmtKind::Var(declarations) => {
+                let mut declarations = declarations.iter().rev();
+                let last = declarations.find(|&last| !self.is_replaced_by_its_value(last))?;
+                self.last_mapped_declaration_position(last, stmt.start)
+            }
+            StmtKind::Fn(function) => return self.last_mapped_function_position(function),
+            StmtKind::If { test, yes, no } => match self.find_printed_condition(test) {
+                Some(true) => return self.last_mapped_statement_position(yes),
+                Some(false) => return self.last_mapped_statement_position(no.some()?),
+                None => match no.some().filter(|&no| is_printed(no)) {
+                    Some(no) => self.last_mapped_body_position(no, stmt.start),
+                    None if self.is_removed_when_unused(test) && !is_printed(yes) => return None,
+                    None => self.last_mapped_body_position(yes, last_of(test)),
+                },
+            },
+            StmtKind::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                let head = match (update.some(), test.some(), init.some()) {
+                    (Some(last), _, _) | (None, Some(last), _) => last_of(last),
+                    (None, None, Some(init)) => self
+                        .last_mapped_statement_position(init)
+                        .unwrap_or(stmt.start),
+                    (None, None, None) => stmt.start,
+                };
+                self.last_mapped_body_position(body, head)
+            }
+            StmtKind::ForIn { expr, body, .. } | StmtKind::ForOf { expr, body, .. } => {
+                self.last_mapped_body_position(body, last_of(expr))
+            }
+            StmtKind::While { test, body } => self.last_mapped_body_position(body, last_of(test)),
+            StmtKind::With { object, body } => {
+                self.last_mapped_body_position(body, last_of(object))
+            }
+            StmtKind::DoWhile { test, .. } => last_of(test),
+            StmtKind::Labeled { body, .. } => self.last_mapped_body_position(body, stmt.start),
+            // A block of its own keeps its braces, of which the `}` is mapped too, unless it holds one statement that declares nothing in it.
+            StmtKind::Block(statements) => {
+                let mut printed = hir.ids(statements).filter(|&inner| is_printed(inner));
+                match (printed.next()?, printed.next()) {
+                    (only, None) if !self.declares_in_block(only) => {
+                        return self.last_mapped_statement_position(only);
+                    }
+                    _ => stmt.loc.end - 1,
+                }
+            }
+            StmtKind::Switch { expr, cases } => match cases.iter().last() {
+                Some(case) => {
+                    let case = hir[case];
+                    let label = || case.test.some().map_or(case.pos, last_of);
+                    self.last_mapped_list_position(case.body)
+                        .unwrap_or_else(label)
+                }
+                None => last_of(expr),
+            },
+            StmtKind::Try {
+                handler, finalizer, ..
+            } => match finalizer.some() {
+                Some(finalizer) => {
+                    let keyword_end = hir[finalizer].start + "finally".len() as u32;
+                    let open_brace = self.next_token_position(keyword_end);
+                    self.last_mapped_block_position(finalizer, open_brace)
+                }
+                None => self.last_mapped_body_position(handler.some()?, stmt.start),
+            },
+            StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Debugger => stmt.start,
+            // The function that fills the object is called with its name.
+            StmtKind::Enum(declaration) => hir[declaration].name_pos,
+            _ => stmt.loc.end - 1,
+        };
+        Some(position)
+    }
+
+    fn declares_in_block(&self, statement: StmtId) -> bool {
+        match self.hir[statement].kind {
+            StmtKind::Var(declarations) => declarations
+                .iter()
+                .next()
+                .is_some_and(|first| self.bound.variable_kind(self.hir, first) != VarKind::Var),
+            StmtKind::Fn(_) | StmtKind::Class(_) | StmtKind::Enum(_) | StmtKind::Module(_) => true,
+            _ => false,
         }
     }
 
@@ -402,7 +571,8 @@ impl FileLowering<'_, '_, '_, '_> {
         let StmtKind::Var(declarations) = hir[previous].kind else {
             return None;
         };
-        let last = declarations.iter().last()?;
+        let mut declarations = declarations.iter().rev();
+        let last = declarations.find(|&last| !self.is_replaced_by_its_value(last))?;
         Some(self.last_mapped_declaration_position(last, hir[previous].start))
     }
 }

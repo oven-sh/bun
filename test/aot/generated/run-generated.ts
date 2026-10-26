@@ -9,10 +9,15 @@
 //   AOT_GENERATED=<text> bun test test/aot/generated-..      those whose name contains the text
 //   AOT_GENERATED_KEEP=<folder> bun test ..                  writes the programs there and leaves them
 //   AOT_GENERATED_FLAGS="--aot-threads=1" bun test ..        more flags for every build
+//   AOT_GENERATED_COLLECTS=all bun test ..                   every program collects inside its calls (../fuzz/collections-inside-calls.ts), not every third
+//   AOT_GENERATED_HANDS=all bun test ..                      every program hands its functions to the host (../fuzz/functions-the-host-could-call.ts), not every third
+//   AOT_GENERATED_IN_ONE_EXECUTABLE=1 bun test ..            an executable for each program, also where programs share one
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { dirname, join } from "path";
+import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { dirname, join, sep } from "path";
+import { withCollectionsInsideCalls } from "../fuzz/collections-inside-calls";
+import { withFunctionsTheHostCouldCall } from "../fuzz/functions-the-host-could-call";
 import { withTurnsNobodyKnows } from "../fuzz/turns-nobody-knows";
 import {
   built,
@@ -102,6 +107,50 @@ function stderrOfFailure(run: { stderr: string; signal: unknown; exitCode: numbe
   return run.exitCode === exitCode && run.signal === null ? {} : { stderr: run.stderr.slice(-4000) };
 }
 
+// A build writes an executable the size of Bun however small the program is, and a system may look at a new executable before it starts it for the first time. So the programs that are
+// only compiled share executables. Each is an entry point behind ../programs/run-each-in-a-worker.ts: an entry point begins a program of its own, so the compiler makes of it what it makes
+// of it alone. It runs in a Worker, a global of its own, in a process of its own, and so it does in plain Bun. What is not built together with the others is built alone, and so is
+// what once went wrong, wherever a run takes all of that. A debug or ASAN build of Bun takes too few programs to share anything.
+const programsInOneExecutable = Number(process.env.AOT_GENERATED_IN_ONE_EXECUTABLE) || 32;
+// A build of large programs is mostly their own work, and several small builds use the cores better than one large build.
+const bytesInOneExecutable = 64 * 1024;
+// What starts a Worker holds more of the library: its build costs as much as those of four small programs.
+const fewestInOneExecutable = 6;
+const executablesAtOnce = 8;
+const runner = "run-each-in-a-worker.ts";
+const mark = "=== the program above has ended with";
+const sharesAnExecutable = (program: Generated) =>
+  programsInOneExecutable > 1 &&
+  !isASAN &&
+  !isDebug &&
+  !!program.isOnlyCompiled &&
+  !(program.wasOnceWrong && takesWhatIsFixed) &&
+  !program.mayBeRefused &&
+  !program.groupsMayBeRefused &&
+  !program.leavesAnError &&
+  !program.exitsAsPlainBunDoes &&
+  !program.mayStopOutOfMemory &&
+  !program.plainEnv &&
+  !program.written &&
+  !program.linesDepartToday;
+
+type Run = Awaited<ReturnType<typeof spawned>>;
+/** What became of a program that shares an executable: its runs, `again` under each of `alsoUnder`, or why there are none. */
+type Shared =
+  | { entry: string; plain: Run; compiled: Run; again: Run[]; beside: number }
+  | "left out"
+  | "nothing to compare"
+  | "alone";
+
+/** What the one program of the process printed in its Worker, and the exit code of the Worker. A process that ended early has printed no mark and is answered as it is. */
+function inItsWorker(run: Run): Run {
+  const parts = (text: string) => text.split(new RegExp(`\\r?\\n${mark} (-?[0-9]+)\\r?\\n`));
+  const [stdout, exitCode] = parts(run.stdout);
+  return exitCode === undefined || run.exitCode !== 0 || run.signal !== null
+    ? run
+    : { ...run, stdout, stderr: parts(run.stderr)[0], exitCode: Number(exitCode) };
+}
+
 export function generated(title: string, given: Generated[]) {
   const listed = (onceWrong as Record<string, string[]>)[title] ?? [];
   const programs = given.map(program => (listed.includes(program.name) ? { ...program, wasOnceWrong: true } : program));
@@ -148,12 +197,229 @@ export function generated(title: string, given: Generated[]) {
   const mayBeLeftOut = (program: Generated) =>
     !wanted && !isToldWhatToTake && !(program.wasOnceWrong && takesWhatIsFixed);
   let leftOut = 0;
+  let executables = 0;
   afterAll(() => {
     if (leftOut)
       console.error(
         `SHARE: ${leftOut} of the ${chosen.length} programs that this run drew were not run: the file had run for 200 seconds`,
       );
+    if (executables) console.error(`BUILT: ${executables} executables for ${chosen.length} programs`);
   });
+
+  function write(program: Generated, folder: string) {
+    const { file, text, files, entryPoints = [] } = program.make();
+    // Every second program keeps its short loops as loops, every third collects inside its calls, and every third stores its functions where the host could find them.
+    // A program that is here for what it once showed stays as it is.
+    const staysAsItIs = !!program.wasOnceWrong || !!program.linesDepartToday || !!program.written;
+    const keepsItsLoops = !staysAsItIs && Bun.hash.crc32(`${title} ${program.name}`) % 2 === 1;
+    const collectsInsideCalls =
+      !staysAsItIs &&
+      !program.mayStopOutOfMemory &&
+      (process.env.AOT_GENERATED_COLLECTS === "all" || Bun.hash.crc32(`${program.name} ${title}`) % 3 === 0);
+    const handsItsFunctionsOn =
+      !staysAsItIs &&
+      (process.env.AOT_GENERATED_HANDS === "all" || Bun.hash.crc32(`${program.name}, ${title}`) % 3 === 0);
+    for (const [name, content] of Object.entries({ ...files, [file]: text })) {
+      mkdirSync(dirname(join(folder, name)), { recursive: true });
+      let written = content;
+      if (/\.[cm]?[jt]s$/.test(name)) {
+        const loader = name.endsWith("ts") ? "ts" : "js";
+        if (keepsItsLoops) written = withTurnsNobodyKnows(written);
+        if (collectsInsideCalls) written = withCollectionsInsideCalls(written, loader);
+        if (handsItsFunctionsOn) written = withFunctionsTheHostCouldCall(written, loader);
+      }
+      writeFileSync(join(folder, name), written);
+    }
+    // In an executable that programs share, each runs in a Worker.
+    const asksForItsThread = /\bisMainThread\b/.test(text);
+    return { file, entryPoints, project: files?.["tsconfig.json"], asksForItsThread };
+  }
+
+  /** Builds the programs into one executable in `folder` and runs each. */
+  async function runTogether(members: { program: Generated; index: number }[], folder: string) {
+    const shared = new Map<Generated, Shared>();
+    if (members.every(({ program }) => mayBeLeftOut(program)) && performance.now() > 200_000) {
+      for (const { program } of members) shared.set(program, "left out");
+      return shared;
+    }
+    mkdirSync(folder, { recursive: true });
+    copyFileSync(join(import.meta.dir, "..", "programs", runner), join(folder, runner));
+    const written = members.map(({ program, index }) => ({
+      program,
+      index,
+      cwd: join(folder, String(index)),
+      ...write(program, join(folder, String(index))),
+    }));
+    // The project of the first entry point governs a build.
+    const project = written[0].project;
+    if (project !== undefined) writeFileSync(join(folder, "tsconfig.json"), project);
+    type Member = (typeof written)[number];
+    const start = (command: string[], { index, file, cwd }: Member, env: Record<string, string | undefined>) => {
+      const tasks = join(folder, `tasks-${index}.json`);
+      writeFileSync(tasks, JSON.stringify([{ program: `./${index}/${file}`, cwd }]));
+      return slot(async () => inItsWorker(await spawned(command, cwd, { ...env, AOT_TASKS: tasks, AOT_MARK: mark })));
+    };
+    const plain = new Map<Member, Run>();
+    let together = written.filter(member => {
+      if (member.entryPoints.length === 0 && member.project === project && !member.asksForItsThread) return true;
+      shared.set(member.program, "alone");
+    });
+    await Promise.all(
+      together.map(async member =>
+        plain.set(member, await start([bunExe(), "run", join(folder, runner)], member, bunEnv)),
+      ),
+    );
+    together = together.filter(member => {
+      if (!member.program.mayBeUnjudgeable || plain.get(member)!.exitCode === 0) return true;
+      shared.set(member.program, "nothing to compare");
+    });
+    // A build stops at the first entry point that TypeScript rejects. `bun check` names them all at once, and each of them is built alone, where its build has the say.
+    if (together.some(({ file }) => /\.[cm]?tsx?$/.test(file))) {
+      const entries = together.map(({ index, file }) => `./${index}/${file}`);
+      const check = await slot(() => spawned([bunExe(), "check", "--no-pretty", "--all", ...entries], folder, bunEnv));
+      const errors = (check.stdout + check.stderr).matchAll(/^(\d+)[\\/][^(\n]+\(\d+,\d+\): error /gm);
+      const rejected = new Set(Array.from(errors, ([, index]) => Number(index)));
+      together = together.filter(member => {
+        if (!rejected.has(member.index)) return true;
+        shared.set(member.program, "alone");
+      });
+    }
+    const executable = join(folder, isWindows ? "programs.exe" : "programs");
+    const build = () =>
+      slot(() =>
+        spawned(
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            ...moreFlags,
+            ...(members[0].program.flags ?? []),
+            "./" + runner,
+            ...together.map(({ index, file }) => `./${index}/${file}`),
+            "--outfile",
+            executable,
+          ],
+          folder,
+          bunEnv,
+        ),
+      );
+    const isBuilt = ({ exitCode, stderr }: Run) => exitCode === 0 && !/^error\b/m.test(stderr);
+    try {
+      let result = together.length ? await build() : undefined;
+      // The programs that the errors point into leave, and the others are built once more.
+      while (result && !isBuilt(result)) {
+        const { stderr } = result;
+        const others = together.filter(({ index, file }) => !stderr.includes(`${sep}${index}${sep}${file}:`));
+        if (others.length === together.length) break;
+        for (const member of together) if (!others.includes(member)) shared.set(member.program, "alone");
+        together = others;
+        result = together.length ? await build() : undefined;
+      }
+      if (result && !isBuilt(result)) {
+        console.error(
+          `ALONE: ${together.length} programs, from ${together[0].program.name}: the build of all of them ended with ${result.signal ?? `exit code ${result.exitCode}`}: ${result.stderr.trim().split("\n").slice(-3).join(" | ").slice(0, 600)}`,
+        );
+        for (const { program } of together) shared.set(program, "alone");
+        return shared;
+      }
+      if (result) executables++;
+      await Promise.all(
+        together.map(async member => {
+          const compiled = await start([executable], member, { ...bunEnv, BUN_AOT_VERBOSE: "1" });
+          const again: Run[] = [];
+          for (const under of member.program.alsoUnder ?? [])
+            again.push(await start([executable], member, { ...bunEnv, ...under }));
+          shared.set(member.program, {
+            entry: `${member.index}/${member.file}`,
+            plain: plain.get(member)!,
+            compiled,
+            again,
+            beside: together.length - 1,
+          });
+        }),
+      );
+      return shared;
+    } finally {
+      rmSync(executable, { force: true });
+    }
+  }
+
+  const sharing = chosen
+    .map((program, index) => ({ program, index }))
+    .filter(({ program }) => !program.failsToday && sharesAnExecutable(program));
+  let started: Map<Generated, Promise<Map<Generated, Shared>>> | undefined;
+  /** The executables are begun when the first program asks, a few at a time, so that each looks at the clock when its turn has come. A test waits for its own. */
+  function sharedOf(program: Generated) {
+    if (!started) {
+      started = new Map();
+      const atWork: Promise<unknown>[] = Array(executablesAtOnce).fill(Promise.resolve());
+      let begun = 0;
+      let members: typeof sharing = [];
+      let bytes = 0;
+      const begin = () => {
+        const mine = members;
+        [members, bytes] = [[], 0];
+        let run: Promise<Map<Generated, Shared>>;
+        if (mine.length < fewestInOneExecutable)
+          run = Promise.resolve(new Map(mine.map(({ program }): [Generated, Shared] => [program, "alone"])));
+        else {
+          const turn = begun++ % executablesAtOnce;
+          const folder = join(root, title.replaceAll(" ", "-"), `together-${mine[0].index}`);
+          run = atWork[turn].then(() => runTogether(mine, folder));
+          atWork[turn] = run.catch(() => {});
+        }
+        for (const member of mine) started!.set(member.program, run);
+      };
+      // A flag holds for a whole build.
+      for (const alike of Map.groupBy(sharing, ({ program }) => (program.flags ?? []).join(" ")).values()) {
+        for (const member of alike) {
+          const size = member.program.make().text.length;
+          if (members.length === programsInOneExecutable || (members.length && bytes + size > bytesInOneExecutable))
+            begin();
+          members.push(member);
+          bytes += size;
+        }
+        if (members.length) begin();
+      }
+    }
+    return started.get(program)!.then(shared => shared.get(program)!);
+  }
+
+  function judgeShared(program: Generated, { entry, plain, compiled, again, beside }: Exclude<Shared, string>) {
+    try {
+      expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
+      expect(compiled.stderr.replaceAll("\\", "/").split(/\r?\n/)).toContainEqual(
+        expect.stringMatching(new RegExp(`^\\[aot\\] module: .*/${entry.replaceAll(".", "\\.")}$`)),
+      );
+      const [ours, theirs] = [compiled.stdout.split("\n"), plain.stdout.split("\n")];
+      const departing: string[] = [];
+      for (let i = 0; i < Math.max(ours.length, theirs.length) && departing.length < 20; i++) {
+        if (ours[i] !== theirs[i]) departing.push(`--aot: ${ours[i]}\nplain: ${theirs[i]}`);
+      }
+      expect({
+        departing,
+        signal: compiled.signal,
+        exitCode: compiled.exitCode,
+        lines: ours.length,
+        ...stderrOfFailure(compiled, 0),
+      }).toEqual({ departing: [], signal: null, exitCode: 0, lines: theirs.length });
+      for (const [index, under] of (program.alsoUnder ?? []).entries()) {
+        const { stdout, signal, exitCode } = again[index];
+        expect({ under, stdout, signal, exitCode, ...stderrOfFailure(again[index], 0) }).toEqual({
+          under,
+          stdout: plain.stdout,
+          signal: null,
+          exitCode: 0,
+        });
+      }
+    } catch (error) {
+      console.error(
+        `${program.name}: one of ${beside + 1} programs in an executable. AOT_GENERATED_IN_ONE_EXECUTABLE=1 builds it alone`,
+      );
+      throw error;
+    }
+  }
 
   describe.concurrent(`compile/aot/generated/${title}`, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
@@ -163,24 +429,15 @@ export function generated(title: string, given: Generated[]) {
       if (program.modeFailsToday) test.todo(`${program.name}, by bun run --aot`);
       test(
         program.name,
-        () =>
-          slot(async () => {
+        async () => {
+          const shared = sharesAnExecutable(program) ? await sharedOf(program) : "alone";
+          if (shared === "left out") return void leftOut++;
+          if (shared === "nothing to compare") return;
+          if (shared !== "alone") return judgeShared(program, shared);
+          await slot(async () => {
             if (mayBeLeftOut(program) && performance.now() > 200_000) return void leftOut++;
             const folder = join(root, title.replaceAll(" ", "-"), String(index));
-            const { file, text, files, entryPoints = [] } = program.make();
-            // Every second program keeps its short loops as loops. A program that is here for what it once showed stays as it is.
-            const keepsItsLoops =
-              !program.wasOnceWrong &&
-              !program.linesDepartToday &&
-              !program.written &&
-              Bun.hash.crc32(`${title} ${program.name}`) % 2 === 1;
-            for (const [name, content] of Object.entries({ ...files, [file]: text })) {
-              mkdirSync(dirname(join(folder, name)), { recursive: true });
-              writeFileSync(
-                join(folder, name),
-                keepsItsLoops && /\.[cm]?[jt]s$/.test(name) ? withTurnsNobodyKnows(content) : content,
-              );
-            }
+            const { file, entryPoints } = write(program, folder);
             const executable = join(folder, isWindows ? "program.exe" : "program");
             try {
               if (
@@ -212,6 +469,7 @@ export function generated(title: string, given: Generated[]) {
               if (program.mayBeRefused && build.exitCode === 1 && /^error\b/m.test(build.stderr))
                 return void (fromSources && expect(fromSources.exitCode).not.toBe(0));
               built(build);
+              executables++;
               const compiled = await spawned([executable], folder, { ...bunEnv, BUN_AOT_VERBOSE: "1" });
               if (fromSources)
                 expect({
@@ -278,7 +536,8 @@ export function generated(title: string, given: Generated[]) {
             } finally {
               rmSync(executable, { force: true });
             }
-          }),
+          });
+        },
         600_000,
       );
     });

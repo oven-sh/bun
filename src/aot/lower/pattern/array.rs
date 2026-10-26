@@ -1,5 +1,5 @@
+use super::PatternNode;
 use super::view::NodeShape;
-use super::{PatternNode, PatternOrigin};
 use crate::ir::generated::{BlockRole, IteratorCompletion, IteratorKind};
 use crate::ir::{Edge, TypeTable, ValueId};
 use crate::lower::FunctionLowering;
@@ -27,6 +27,7 @@ pub(super) fn destructure_array(
     };
     let iterator = lowering.emit_iterator_open(value, IteratorKind::Sync, Some(shape));
     let position = lowering.position();
+    lowering.builder.record_position(position);
     lowering.begin_cleanup(BlockRole::IterationCleanup, Some(iterator));
     let mut mapped = position;
     for (index, element) in elements.iter().enumerate() {
@@ -40,13 +41,13 @@ pub(super) fn destructure_array(
             }
             step.value
         };
+        lowering.builder.record_position(position);
         let read = super::apply_default(lowering, read, element.default, element.target);
-        let file = &*lowering.file;
-        let default = element.default.some();
-        let recorded = default.map_or(position, |default| file.last_reported_position(default));
-        let origin = PatternOrigin { mapped, recorded };
-        mapped = file.last_mapped_element_position(element).unwrap_or(mapped);
-        lowering.finish_target(element.target, prepared, read, origin);
+        let before = mapped;
+        let last = lowering.file.last_mapped_element_position(element);
+        mapped = last.unwrap_or(mapped);
+        // JSC records nothing for the store to a member behind the step.
+        lowering.finish_target(element.target, prepared, read, before, position);
     }
     lowering.end_cleanup_per_exit(CleanupLanding::KeepsException, &mut |lowering, path| {
         lowering.set_position(position);
@@ -57,6 +58,7 @@ pub(super) fn destructure_array(
         let builder = &mut lowering.builder;
         builder.iterator_close(iterator, IteratorKind::Sync, completion, &[]);
     });
+    lowering.builder.record_position(position);
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {

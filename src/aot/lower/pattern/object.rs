@@ -1,7 +1,7 @@
 use bun_sema::hir::PropKey;
 use smallvec::SmallVec;
 
-use super::{PatternNode, PatternOrigin};
+use super::PatternNode;
 use crate::ir::generated::RuntimeErrorKind;
 use crate::ir::{LayoutId, ValueId};
 use crate::lower::FunctionLowering;
@@ -9,15 +9,10 @@ use crate::lower::member::PropertyName;
 use crate::modules::ModuleRef;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // JSC records no position for what an object pattern reads, so it is reported where the destructured expression ends.
-    pub(super) fn destructure_object(
-        &mut self,
-        node: PatternNode,
-        value: ValueId,
-        source_position: u32,
-    ) {
+    // JSC records no position for what an object pattern tests and reads.
+    pub(super) fn destructure_object(&mut self, node: PatternNode, value: ValueId, mapped: u32) {
         let properties = self.file.pattern_properties(node);
-        self.set_position(source_position);
+        self.set_position_to_last_recorded();
         let error_name = self.file.nullish_error_name(&properties);
         let error_name = error_name.map(|name| self.file.intern_atom(name));
         let nullish = self.create_unlikely_block();
@@ -35,11 +30,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.set_position(property.position);
                 let layout = self.find_rest_layout(property.target);
                 let copy = self.emit_object_rest(object, &read_names, layout);
-                let origin = PatternOrigin {
-                    mapped: property.position,
-                    recorded: source_position,
+                // JSC records the copy at the pattern and nothing for the store. The `{` of an assignment is the start of an expression, which the source map knows.
+                let recorded = match node {
+                    PatternNode::Binding(_) => mapped,
+                    PatternNode::Assignment(_) => self.file.node_position(node),
                 };
-                self.finish_target(property.target, prepared, copy, origin);
+                self.builder.record_position(recorded);
+                self.finish_target(property.target, prepared, copy, property.position, recorded);
                 continue;
             }
             let name = match property.key {
@@ -52,12 +49,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             };
             let prepared = self.prepare_target(property.target);
-            self.set_position_of_text_elsewhere(source_position, property.position);
+            self.set_position_to_last_recorded();
+            self.builder.set_written_position(property.position);
             let read = self.emit_get(object, name);
             self.set_position(property.position);
             let read = super::apply_default(self, read, property.default, property.target);
-            let origin = self.file.property_origin(property, source_position);
-            self.finish_target(property.target, prepared, read, origin);
+            let mapped = self.file.last_mapped_key_position(property);
+            let member_store = self.file.last_mapped_target_position(property.target);
+            self.finish_target(property.target, prepared, read, mapped, member_store);
             if has_rest {
                 read_names.push(name);
             }
@@ -80,8 +79,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 None => self.builder.undefined(),
             };
             let read = super::apply_default(self, read, property.default, property.target);
-            let origin = self.file.property_origin(property, property.position);
-            self.finish_target(property.target, prepared, read, origin);
+            let mapped = self.file.last_mapped_key_position(property);
+            let member_store = self.file.last_mapped_target_position(property.target);
+            self.finish_target(property.target, prepared, read, mapped, member_store);
         }
     }
 

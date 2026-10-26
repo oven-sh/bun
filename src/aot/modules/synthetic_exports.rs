@@ -5,8 +5,8 @@ use super::imports::{FileImports, NamedMember, PendingBinding};
 use super::interop::ModuleKind;
 use super::module_set::ModuleSet;
 use super::{BindInput, ModuleRef, compare_code_units, compare_modules};
-use crate::builtins::{ModuleExport, find_module_export};
-use crate::load::SourceKind;
+use crate::builtins::{BuiltinNames, ModuleExport, Platforms, find_module_export};
+use crate::load::{SourceKind, Sources};
 use bun_sema::atom::Atom;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 
@@ -47,6 +47,7 @@ pub(super) fn number_synthetic_exports(
         let compare_names = || compare_code_units(atoms.bytes(a.1), atoms.bytes(b.1));
         compare_modules(a.0, b.0, atoms).then_with(compare_names)
     });
+    let known_members = KnownMembers::new(input);
     let create_export = |&(module, name): &SyntheticExportKey| {
         debug_assert!(
             !modules.is_uncompiled_code(module),
@@ -57,7 +58,7 @@ pub(super) fn number_synthetic_exports(
         SyntheticExport {
             module,
             name,
-            is_known_member: can_be_absent || is_known_member(input, modules, module, name),
+            is_known_member: can_be_absent || known_members.has(modules, module, name),
         }
     };
     let ids = (0..).map(SyntheticExportId);
@@ -169,26 +170,39 @@ fn collect_synthetic_export_keys(
     keys
 }
 
-fn is_known_member(
-    input: &BindInput<'_, '_>,
-    modules: &ModuleSet,
-    module: ModuleRef,
-    name: Atom,
-) -> bool {
-    let runtime_module = match module {
-        ModuleRef::Runtime(runtime_module) => runtime_module,
-        ModuleRef::File(file) if modules.interop(module).kind == ModuleKind::RuntimeSource => {
-            match input.sources.kind(file) {
-                SourceKind::RuntimeModule(runtime_module) => runtime_module,
-                _ => return false,
-            }
+/// The names that the table of built-ins says a module of the library has.
+#[derive(Copy, Clone)]
+pub(super) struct KnownMembers<'a> {
+    sources: &'a Sources,
+    builtin_names: &'a BuiltinNames,
+    platform: Platforms,
+}
+
+impl<'a> KnownMembers<'a> {
+    pub(super) fn new(input: &BindInput<'a, '_>) -> KnownMembers<'a> {
+        KnownMembers {
+            sources: input.sources,
+            builtin_names: input.builtin_names,
+            platform: input.platform,
         }
-        _ => return false,
-    };
-    !matches!(
-        find_module_export(input.builtin_names, runtime_module, name, input.platform),
-        ModuleExport::Absent | ModuleExport::Unknown
-    )
+    }
+
+    pub(super) fn has(self, modules: &ModuleSet, module: ModuleRef, name: Atom) -> bool {
+        let runtime_module = match module {
+            ModuleRef::Runtime(runtime_module) => runtime_module,
+            ModuleRef::File(file) if modules.interop(module).kind == ModuleKind::RuntimeSource => {
+                match self.sources.kind(file) {
+                    SourceKind::RuntimeModule(runtime_module) => runtime_module,
+                    _ => return false,
+                }
+            }
+            _ => return false,
+        };
+        !matches!(
+            find_module_export(self.builtin_names, runtime_module, name, self.platform),
+            ModuleExport::Absent | ModuleExport::Unknown
+        )
+    }
 }
 
 #[cfg(test)]
@@ -324,8 +338,9 @@ mod tests {
             let modules = collect_modules(input, &scan_files(input));
             let source = ModuleRef::File(file_named(input, "/$bun/js/node/path.ts"));
             let atom = |text: &str| input.files.atoms.intern(text.as_bytes());
-            assert!(is_known_member(input, &modules, source, atom("join")));
-            assert!(!is_known_member(input, &modules, source, atom("nope")));
+            let known_members = KnownMembers::new(input);
+            assert!(known_members.has(&modules, source, atom("join")));
+            assert!(!known_members.has(&modules, source, atom("nope")));
         });
     }
 }

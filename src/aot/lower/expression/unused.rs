@@ -99,8 +99,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn lower_properties_for_effect(&mut self, properties: Span<PropId>) {
         let hir = self.file.hir;
         for property in properties.iter() {
+            // Bun's transpiler prints `key + ""` for the key.
             if let PropKey::Computed(key) = hir[property].key {
+                let position = self.file.first_position(key);
                 let key = self.lower_expression(key);
+                self.set_position(position);
                 self.builder.to_property_key(key);
             }
             match hir[property].kind {

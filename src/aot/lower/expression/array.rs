@@ -129,7 +129,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         if !ends_in_list_literal(self.file, iterable) {
             // JSC reports the iteration at the end of `...`.
-            let position = hir[iterable].pos;
+            let position = self.file.first_position(iterable);
             let iterable = self.lower_expression(iterable);
             self.set_position(position);
             self.builder.append_spread(array, iterable);

@@ -478,6 +478,17 @@ export const shapes: Shape[] = [
     }),
   },
   {
+    name: "steps of a chain of calls that each add a class to one array, whose elements are read under many names",
+    counted: "steps, and a tenth of the names",
+    size: 40,
+    entry: "main.js",
+    write: size => ({
+      "main.js": size
+        ? `const all = [];\n${lines(size, index => `class C${index} { constructor() { this.own${index} = ${index}; } }`)}${lines(size, index => `const step${size - 1 - index} = { run() { all.push(new C${size - 1 - index}()); return ${index ? `step${size - index}` : "null"}; } };`)}let step = step0;\nwhile (step) step = step.run();\nconst pick = all[process.argv.length % all.length];\nlet sum = 0;\n${lines(10 * size, index => `if (pick.name${index} !== undefined) sum += ${index};`)}console.log(all.length, sum);\n`
+        : "console.log(0);\n",
+    }),
+  },
+  {
     name: "a declaration where an expression belongs, nested in itself",
     counted: "levels",
     size: 4000,

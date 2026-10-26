@@ -31,7 +31,7 @@ function observing(listener: RequestListener): RequestListener {
   };
 }
 
-function expressApplication(withMiddleware: boolean) {
+function expressApplication(withMiddleware: boolean): RequestListener {
   const app = express();
   if (withMiddleware) {
     app.use((req: IncomingMessage, res: ServerResponse, next: () => void) => {
@@ -60,7 +60,7 @@ function expressApplication(withMiddleware: boolean) {
   app.get("/users/:id", (req: any, res: any) => res.json({ id: req.params.id }));
   app.get("/redirect", (req: any, res: any) => res.redirect("/text"));
   app.post("/echo", withMiddleware ? [] : bodyParser.json(), (req: any, res: any) => res.json(req.body));
-  return app;
+  return app as unknown as RequestListener;
 }
 
 async function createServer(stack: string): Promise<Server> {

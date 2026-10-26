@@ -1,9 +1,9 @@
 // Makes strings out of strings held in 8 and in 16 bits and prints in how many bits each result is held.
-import { describe } from "bun:jsc";
+import { jscDescribe } from "bun:jsc";
 
 function widthOf(value: unknown): string {
   if (typeof value !== "string") return typeof value;
-  const found = /8Bit:\((\d)\),length:\((\d+)\)/.exec(describe(value));
+  const found = /8Bit:\((\d)\),length:\((\d+)\)/.exec(jscDescribe(value));
   return found ? `${found[1] === "1" ? 8 : 16}/${found[2]}` : "?";
 }
 

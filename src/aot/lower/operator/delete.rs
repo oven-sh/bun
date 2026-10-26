@@ -4,9 +4,9 @@ use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 
 use crate::ir::generated::RuntimeErrorKind;
 use crate::ir::{BlockId, ValueId};
-use crate::lower::FunctionLowering;
 use crate::lower::expression::ShortCircuit;
 use crate::lower::member::PropertyName;
+use crate::lower::{FileLowering, FunctionLowering};
 
 pub(super) fn lower_delete(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
@@ -42,6 +42,17 @@ pub(super) fn lower_delete(
     delete_member(lowering, target, None)
 }
 
+impl FileLowering<'_, '_, '_, '_> {
+    // JSC records a `delete` where its operand ends.
+    fn delete_position(&self, access: ExprId) -> u32 {
+        let closing = match self.runs_as_written() {
+            true => None,
+            false => self.find_closing_token_behind(access),
+        };
+        closing.unwrap_or_else(|| self.last_mapped_position(access))
+    }
+}
+
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn delete_global_path(&mut self, path: &[Atom]) -> ValueId {
         let last = self.lower_global_path_holder(path);
@@ -53,7 +64,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn delete_super_member(&mut self, access: ExprId, key: MemberKey) -> ValueId {
-        let hir = self.file.hir;
         self.get_this();
         match key {
             MemberKey::Computed(computed) => {
@@ -61,7 +71,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             MemberKey::Name(_) | MemberKey::PrivateName(_) => {}
         }
-        self.set_position(hir[access].pos);
+        self.set_position(self.file.delete_position(access));
         self.emit_throw_runtime_error(RuntimeErrorKind::DeleteSuperProperty, None);
         self.builder.boolean(true)
     }
@@ -82,6 +92,6 @@ fn delete_member(
         MemberKey::Name(_) | MemberKey::Computed(_) => lowering.lower_member_key(key),
         MemberKey::PrivateName(_) => return lowering.builder.boolean(true),
     };
-    lowering.set_position(lowering.file.last_mapped_position(access));
+    lowering.set_position(lowering.file.delete_position(access));
     lowering.emit_delete(base, name)
 }

@@ -190,11 +190,11 @@ Object.defineProperty(WriteStream, "prototype", {
     };
 
     WriteStream.prototype.clearLine = function (this: $Node.TTYWriteStream, dir: number, cb?: DoneCallback) {
-      return require("node:readline").clearLine(this, dir, cb);
+      return require("internal/readline/callbacks").published.clearLine(this, dir, cb);
     };
 
     WriteStream.prototype.clearScreenDown = function (this: $Node.TTYWriteStream, cb?: DoneCallback) {
-      return require("node:readline").clearScreenDown(this, cb);
+      return require("internal/readline/callbacks").published.clearScreenDown(this, cb);
     };
 
     WriteStream.prototype.cursorTo = function (
@@ -203,7 +203,7 @@ Object.defineProperty(WriteStream, "prototype", {
       y?: number | DoneCallback,
       cb?: DoneCallback,
     ) {
-      return require("node:readline").cursorTo(this, x, y, cb);
+      return require("internal/readline/callbacks").published.cursorTo(this, x, y, cb);
     };
 
     // The `getColorDepth` API got inspired by multiple sources such as
@@ -238,7 +238,7 @@ Object.defineProperty(WriteStream, "prototype", {
       dy: number,
       cb?: DoneCallback,
     ) {
-      return require("node:readline").moveCursor(this, dx, dy, cb);
+      return require("internal/readline/callbacks").published.moveCursor(this, dx, dy, cb);
     };
 
     // Add Symbol.asyncIterator to make tty.WriteStream compatible with code

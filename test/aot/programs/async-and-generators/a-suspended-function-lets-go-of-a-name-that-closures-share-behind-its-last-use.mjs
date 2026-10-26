@@ -1,4 +1,6 @@
-// A function declares a name that a closure names too, suspends, and collections run. What stands behind the suspension decides whether the function still holds what the name holds: a name from outside, a parameter, a closure that is made, the end of a block, a jump out of a block.
+// A function declares a name that a closure names too, suspends, and collections run. Nothing behind the suspension names it again, so an executable lets go of what it holds, whatever stands
+// there: a name from outside, a parameter, a closure that is made, the end of a block, a jump out of a block. `bun run` keeps the names that closures share in one object for each scope, and a
+// suspended function holds that object where the text behind the suspension reads the scope: docs/compiler/compatibility.mdx, "Memory".
 let last;
 let sink = 0;
 const nothing = globalThis[process.argv[2] ?? "nothing"];

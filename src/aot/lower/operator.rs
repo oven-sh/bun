@@ -476,7 +476,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         true => innermost,
                         false => spine[index + 1].1,
                     };
-                    self.set_position(self.file.instanceof_position(left, node_right));
+                    self.set_position(self.file.right_operand_position(left, node_right));
                 }
                 (BinOp::EqEq, _) | (_, SumOperator::Concatenated | SumOperator::Joined) => {
                     self.set_position_to_last_recorded();
@@ -521,7 +521,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let name = self.lower_computed_key(left);
         let object = self.lower_expression(right);
-        self.set_position(hir[right].pos);
+        self.set_position(self.file.right_operand_position(left, right));
         self.emit_has(object, name)
     }
 }

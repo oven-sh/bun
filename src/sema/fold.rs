@@ -134,7 +134,6 @@ pub struct Decisions<'s> {
     dead_functions: NodeBits<'s>,
     dead_exprs_in_bun_run: NodeBits<'s>,
     dead_stmts_in_bun_run: NodeBits<'s>,
-    folded_by_build_alone: NodeBits<'s>,
     short_circuited_links: NodeBits<'s>,
     truthy_without_effects: NodeBits<'s>,
     member_reads: NodeBits<'s>,
@@ -210,12 +209,6 @@ impl<'s> Decisions<'s> {
             dead_stmts: self.dead_stmts_in_bun_run,
             ..*self
         }
-    }
-
-    /// `bun run` evaluates the expression, which a build puts a value in place of.
-    #[inline]
-    pub fn is_folded_by_build_alone(&self, expr: ExprId) -> bool {
-        self.folded_by_build_alone.has(expr.idx())
     }
 
     #[inline]

@@ -31,6 +31,7 @@ arrays/arrays-of-the-greatest-length-are-read-and-stored-into
 arrays/computed-nans-written-by-index-into-float-views
 arrays/concat-called-on-a-primitive-wraps-it-in-an-object
 arrays/element-reads-with-double-keys
+arrays/elements-are-swapped-through-a-list-and-a-list-is-read-at-a-position-that-is-computed
 arrays/elements-of-frozen-arrays-that-fit-are-not-coerced
 arrays/empty-array-literals-adapt-their-capacity
 arrays/every-array-method-on-the-strings-of-a-tagged-template
@@ -98,10 +99,10 @@ async-and-generators/a-store-entered-in-a-resumed-function
 async-and-generators/a-store-entered-in-an-async-generator
 async-and-generators/a-store-entered-while-a-callback-runs-the-jobs-or-loads-a-module-that-awaits
 async-and-generators/a-suspended-function-holds-the-members-nobody-reads-of-an-object-that-it-reads-behind-the-suspension
-async-and-generators/a-suspended-function-holds-the-names-that-closures-share-where-its-text-reads-their-scope
 async-and-generators/a-suspended-function-holds-what-its-text-reads-behind-the-suspension
 async-and-generators/a-suspended-function-holds-what-text-that-only-a-build-removes-names
 async-and-generators/a-suspended-function-holds-what-text-under-a-false-constant-reads-behind-the-suspension
+async-and-generators/a-suspended-function-lets-go-of-a-name-that-closures-share-behind-its-last-use
 async-and-generators/a-variable-is-an-object-in-the-first-turn-and-a-number-afterwards-across-an-await
 async-and-generators/a-word-last-read-between-two-awaits-does-not-hold-what-is-allocated-later
 async-and-generators/an-async-function-takes-its-options-apart-and-closes-a-resource-in-finally-in-a-validating-build
@@ -156,6 +157,7 @@ async-and-generators/then-on-a-fulfilled-promise
 async-and-generators/two-requests-in-flight-enter-stores-behind-an-await
 async-and-generators/two-requests-of-node-http-in-flight-enter-stores-behind-an-await
 async-and-generators/what-a-call-made-and-dropped-is-released-while-its-async-caller-waits
+async-and-generators/what-a-function-reads-no-more-is-collected-while-a-function-that-waited-runs
 async-and-generators/what-a-function-reads-no-more-is-collected-while-the-functions-it-awaits-wait
 async-and-generators/what-a-suspended-function-holds
 async-and-generators/what-a-yield-answers-is-used-and-its-operand-rejects
@@ -225,6 +227,7 @@ calls-fast-paths/constructors-inlined-inside-try
 calls-fast-paths/intl-constant-formatters-in-every-flow
 calls-fast-paths/literal-for-destructured-parameter
 calls-fast-paths/methods-that-a-callee-named-at-run-time-may-take-are-bound
+calls-fast-paths/methods-that-get-other-names-later-are-bound
 calls-fast-paths/rest-read-in-typed-code
 calls-fast-paths/uncurry-this
 calls-of-proxies/a-call-through-more-proxies-than-the-stack-holds-is-a-range-error
@@ -426,9 +429,11 @@ classes/instances-with-symbols-between-names-are-printed
 classes/lazy-fields-of-escaped-instances
 classes/lists-of-every-length-are-spread-into-super-and-into-a-class-without-a-constructor
 classes/members-above-a-deleted-field-answer
+classes/members-under-computed-keys-are-defined-read-replaced-and-listed
 classes/names-that-built-ins-have-as-data-are-called-as-methods
 classes/objects-with-accessors-under-indexes-become-prototypes-forty-thousand-times
 classes/objects-with-elements-lie-below-prototypes-that-get-setters-under-indexes-later
+classes/own-property-tests-under-the-names-of-members
 classes/parameter-properties-beside-fields-under-computed-keys-where-fields-are-assigned
 classes/parameter-properties-beside-fields-under-computed-keys-where-fields-are-assigned-and-decorated
 classes/several-members-of-a-base-change-under-heirs
@@ -440,6 +445,7 @@ classes/static-fields-named-like-static-methods-and-accessors-are-listed
 classes/static-fields-whose-type-is-one-number-are-read-while-they-change
 classes/stores-to-a-function-below-another-function-strict
 classes/super-call-in-a-text-evaluated-by-the-constructor-of-a-class-without-a-parent
+classes/the-constructor-above-calls-a-method-before-the-fields-below-are-defined
 classes/the-constructor-above-lets-the-object-out-before-the-fields-below-are-defined
 classes/the-constructor-above-stores-under-an-inherited-accessor-before-the-field-below-is-defined
 classes/the-name-of-a-class-is-read-while-its-decorators-run
@@ -795,6 +801,8 @@ errors/stack-frames-list-next-where-it-is-called-on-an-async-generator
 errors/stack-frames-list-replace-above-its-callback
 errors/stack-frames-list-the-function-that-writes-json
 errors/stack-frames-name-each-function-object-of-a-factory
+errors/stack-frames-name-each-function-object-of-a-factory-at-every-depth-of-long-chains-of-calls
+errors/stack-frames-name-each-function-object-of-a-factory-behind-many-calls
 errors/stack-frames-of-async-functions-and-generators-that-take-their-names-from-where-they-are-stored
 errors/stack-frames-of-built-in-functions-above-their-callers
 errors/stack-frames-of-built-in-functions-that-call-a-mapper-or-a-trap
@@ -805,6 +813,7 @@ errors/stack-frames-of-classes-called-without-new
 errors/stack-frames-of-default-constructors
 errors/stack-frames-of-functions-called-through-an-await
 errors/stack-frames-of-functions-called-through-an-await-beside-entry-points-that-change-globalthis
+errors/stack-frames-of-functions-given-a-display-name-far-from-where-they-are-written
 errors/stack-frames-of-functions-in-evaluated-text-that-return-a-new-error
 errors/stack-frames-of-functions-named-by-copies-and-under-computed-keys-beside-an-import-named-at-run-time
 errors/stack-frames-of-functions-of-node-modules-that-one-place-makes-under-many-names
@@ -818,6 +827,7 @@ errors/stack-frames-of-functions-that-return-a-variable-behind-statements-that-l
 errors/stack-frames-of-functions-that-return-a-variable-used-once
 errors/stack-frames-of-functions-that-return-a-variable-with-a-type
 errors/stack-frames-of-functions-with-a-display-name-once-a-statement-has-looked-for-the-name
+errors/stack-frames-of-functions-with-typed-parameters-that-are-made-once-and-renamed
 errors/stack-frames-of-lists-that-are-filled-and-mapped
 errors/stack-frames-of-reflect-construct-by-the-way-it-is-called
 errors/stack-frames-of-renamed-async-functions-and-generators
@@ -1244,6 +1254,7 @@ library-modules/names-of-functions-that-modules-export-by-default-or-name-like-a
 library-modules/names-that-hold-no-function-of-the-module-are-imported
 library-modules/own-keys-of-responses-sockets-and-emitters-through-their-lives
 library-modules/the-cursor-functions-of-a-terminal-stream
+library-modules/what-a-program-adds-to-map-itself-is-found-on-the-class-of-library-modules-below-map
 library-modules/what-a-program-adds-to-set-and-map-is-found-on-the-sets-and-maps-of-library-modules
 library-modules/what-a-response-keeps-under-the-symbols-of-its-headers-and-its-socket
 literal-strings/a-collection-falls-while-a-list-of-very-many-keys-is-printed
@@ -1263,6 +1274,8 @@ modules/a-commonjs-file-throws-after-a-module-it-required-imported-it
 modules/a-computed-path-is-required-again-and-again
 modules/a-constant-import-of-a-data-url-admits-that-text-alone
 modules/a-cycle-of-modules-one-of-which-throws-is-asked-for-in-a-worker
+modules/a-file-requires-a-module-whose-import-is-in-flight
+modules/a-file-requires-a-module-whose-import-is-in-flight-and-that-imports-the-entry-point
 modules/a-file-that-is-gone-by-the-time-it-is-loaded-under-a-computed-path
 modules/a-file-without-an-extension-lies-beside-a-computed-path
 modules/a-folder-and-a-file-of-one-name-are-loaded-under-computed-names
@@ -1280,6 +1293,7 @@ modules/a-module-resumed-inside-require-queues-a-job-and-a-tick
 modules/a-module-resumed-inside-require-requires-another-module
 modules/a-module-resumed-inside-require-requires-the-same-module
 modules/a-module-resumed-inside-require-throws
+modules/a-module-that-binds-a-name-a-library-module-lacks-fails-alone
 modules/a-module-that-cannot-be-linked-exports-functions-and-classes
 modules/a-module-that-ended-on-a-cycle-whose-other-module-throws-is-imported-later
 modules/a-namespace-is-read-for-a-name-that-a-commonjs-file-lacks-and-another-module-imports
@@ -1310,9 +1324,11 @@ modules/functions-of-a-commonjs-file-are-called-through-its-namespace-and-read-t
 modules/functions-of-commonjs-files-are-called-through-namespaces-under-a-key-as-a-tag-and-behind-a-question-mark
 modules/glob-symlink-and-chdir-start-at-a-folder-of-the-executable
 modules/graphs-with-a-cycle-in-which-a-module-throws
+modules/import-is-called-during-a-require-on-a-commonjs-file-that-is-imported-back-while-it-runs
 modules/import-is-called-on-a-commonjs-entry-point-that-has-changed-its-exports-since-it-ran
 modules/import-is-called-on-a-module-of-the-graph-that-has-not-begun
 modules/import-meta-require-held-by-a-binding
+modules/import-of-an-evaluated-module-settles-before-a-graph-that-is-being-loaded-runs
 modules/imported-commonjs-files-run-in-the-order-they-are-loaded
 modules/imported-require-helper-called-before-its-file-ran
 modules/imported-require-helper-loads-files-and-packages
@@ -1416,10 +1432,12 @@ node-http-probes/frames-of-stores-that-closed-objects-refuse
 node-http-probes/frozen-sealed-and-closed-heirs
 node-http-probes/frozen-sealed-and-closed-objects
 node-http-probes/frozen-sealed-and-closed-streams
+node-http-probes/headers-of-a-response-through-a-proxy-and-an-heir
 node-http-probes/listeners-on-a-frozen-socket
 node-http-probes/objects-closed-in-other-ways
 node-http-probes/objects-closed-through-others
 node-http-probes/objects-closed-through-proxies-with-and-without-traps
+node-http-probes/own-keys-and-proxies
 node-http-probes/replaced-accessors
 node-http-probes/replaced-accessors-of-a-socket
 node-http-probes/replaced-call-pending-callbacks
@@ -1470,6 +1488,7 @@ objects/a-field-that-names-three-classes-gets-a-record
 objects/a-key-in-brackets-is-converted-before-the-value-beside-it-is-read
 objects/a-large-map-and-set-keep-one-entry-in-a-thousand-in-a-validating-build
 objects/a-literal-or-a-class-defines-one-accessor-twice
+objects/a-literal-that-begins-like-one-the-program-hands-out-gets-accessors-under-indexes
 objects/a-member-named-tojson-that-only-some-objects-get
 objects/a-member-of-what-object-create-made-is-read-twice-over-where-a-class-is-declared
 objects/a-name-of-an-object-filled-by-key-is-defined-anew-and-more-names-follow-across-collections
@@ -1651,6 +1670,7 @@ soundness/members-of-bun-named-on-bun-while-bun-is-in-unknown-hands
 soundness/members-of-bun-taken-from-its-own-values-under-unknown-names
 soundness/members-of-console-taken-from-its-own-values-under-unknown-names
 soundness/members-of-process-are-stored-where-process-stands-beside-a-hidden-value
+soundness/members-of-prototype-objects-are-changed-through-a-hidden-value
 soundness/module-suspended-at-await-leaves-a-const-in-its-dead-zone
 soundness/names-that-compiled-code-walks-past-are-added-later
 soundness/native-code-fills-what-a-constructor-of-the-program-returned
@@ -1686,6 +1706,7 @@ static-modules/five-names/path-join-replaced
 static-modules/five-names/path-join-slashes
 static-modules/five-names/require-main-is-only-tested
 static-modules/rulings/a-computed-key-on-require-shows-the-ways-to-everybody
+static-modules/rulings/a-computed-key-on-require-shows-the-ways-whichever-file-starts-the-process
 static-modules/rulings/the-cache-lists-no-module-of-the-executable
 static-modules/rulings/ways-under-a-computed-key-are-shown-to-nobody-where-no-file-names-one
 strings/a-block-reads-one-started-string-and-starts-another
@@ -1848,6 +1869,7 @@ typed-objects/constructor-function-throwing-argument
 typed-objects/detached-methods-many-lengths
 typed-objects/dispose-keyed-fields
 typed-objects/extra-properties-read-and-replaced-by-key
+typed-objects/fields-defined-as-undefined-that-the-cell-has-no-room-for
 typed-objects/generic-type-growing-several-ways
 typed-objects/getters-whose-type-goes-through-this-of-their-own-literal
 typed-objects/int32-union-takes-objects-and-null

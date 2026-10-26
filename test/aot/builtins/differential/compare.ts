@@ -50,11 +50,13 @@ const maxHeldDepth = 4;
 const maxHeldObjects = 200;
 const toPrimitiveKeys = ["@@toPrimitive", "valueOf", "toString"];
 const iterationKeys = ["@@iterator", "@@asyncIterator", "next", "return", "throw", "done", "value"];
+const membersMaking = { Iterator: [Symbol.iterator, Symbol.asyncIterator], IteratorResult: ["next", "return", "throw"] };
 const readingActions: readonly PropertyActionKind[] = ["ReadsByKey", "ReadsGetter", "ReadsSetter"];
 const storingActions: readonly PropertyActionKind[] = ["StoresByKey", "AssignsFrom"];
 const definingActions: readonly PropertyActionKind[] = [
   "StoresByKey",
   "AssignsFrom",
+  "DefinesFrom",
   "DefinesName",
   "TakesDescriptor",
   "TakesDescriptorMap",
@@ -62,6 +64,7 @@ const definingActions: readonly PropertyActionKind[] = [
   "DefinesSetter",
 ];
 const accessorActions: readonly PropertyActionKind[] = [
+  "DefinesFrom",
   "TakesDescriptor",
   "TakesDescriptorMap",
   "DefinesGetter",
@@ -161,7 +164,7 @@ class Comparison {
   }
 
   actionCoversKey(action: DumpedPropertyAction, key: PropertyKey): boolean {
-    if (action.action === "AssignsFrom" || action.action === "TakesDescriptorMap") return true;
+    if (action.action === "AssignsFrom" || action.action === "DefinesFrom" || action.action === "TakesDescriptorMap") return true;
     return keyCovers(action.key, key, operand => operandValuesOf(this.run, operand));
   }
 
@@ -509,6 +512,7 @@ class Comparison {
     if (content === "Thrown") return;
     const { protocols, roles } = parameter;
     if ((content === "Iterator" || content === "IteratorResult") && this.hasAnyProtocol(parameter, "Iterate", "CallsNamed")) return;
+    if ((content === "Iterator" || content === "IteratorResult") && membersMaking[content].some(maker => this.escapesFromMember(origin.operand, maker, depth))) return;
     if (key === "constructor" && protocols.includes("Species")) return;
     const eventKey = event.key === undefined ? undefined : spellingOf(event.key);
     const convertsMembers = protocols.includes("ToPrimitive") && !roles.includes("MembersAreOnlyInspected");
@@ -530,8 +534,18 @@ class Comparison {
       return;
     }
     if (this.hasAnyUse(parameter, "AppliesTransitively") || this.hasAnyProtocol(parameter, "ToJSON", "Iterate", "Species")) return;
+    if (callee.kind === "Content" && this.escapesFromMember(operand, callee.key, callee.depth)) return;
     const column = columnOf(this.overload, operand);
     this.report(`${column}.uses`, `the built-in works on what a member returned: ${describeEvent(event)}`);
+  }
+
+  // What a handler returns is in the hands of native code.
+  escapesFromMember(operand: OperandName, key: PropertyKey | undefined, depth: number): boolean {
+    return this.overload.handlerCalls.some(({ callee, resultUse }) => {
+      if (resultUse !== "Escapes" || callee.place !== "Member" || !covers(callee.operand, operand)) return false;
+      const last = callee.path[callee.path.length - 1];
+      return callee.path.length === depth && (last === null || (key !== undefined && last === spellingOf(key)));
+    });
   }
 
   checkEvent(event: LogEvent): void {

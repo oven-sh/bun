@@ -76,6 +76,20 @@ const programsThatNeedMoreOfTheLibrary: Record<string, { text: string; output: s
     text: `const choices = [${Array.from({ length: 100 }, (_, index) => `() => ${index}`).join(", ")}];\nconsole.log(choices[process.argv.length + 40]());\n`,
     output: "42\n",
   },
+  "one literal spreads the bun module and the program's own options, and build is called far from there": {
+    text: `import * as runtime from "bun";\nconst anything = (globalThis as any)[["Str", "ing"].join("")];\nconst withDefaults = (options: object): any => ({ verbose: false, ...options });\nconsole.log(anything(withDefaults(runtime)).length > 0);\nconst task = withDefaults({ build: () => "built" });\nconst step0 = { next: () => task.build() };\n${Array.from({ length: 7 }, (_, index) => `const step${index + 1} = { next: () => step${index}.next() };\n`).join("")}console.log(step7.next());\n`,
+    output: "true\nbuilt\n",
+  },
+};
+
+// Each of these makes one call that loads a module by a name the build can't know. The report lists that call and no other.
+const programsThatOpenAtOneCall: Record<string, { text: string; output: string; builtin: string; line: number }> = {
+  "node:module is copied member by member, and what createRequire of the copy returns is called": {
+    text: `import nodeModule from "node:module";\nconst copyOf = (source: any): any => {\n  const copy: any = {};\n  for (const key of Object.getOwnPropertyNames(source)) copy[key] = source[key];\n  return copy;\n};\nconst load = copyOf(nodeModule).createRequire(import.meta.url);\nconsole.log(typeof load(process.argv[5] ?? "node:net").Socket);\n`,
+    output: "function\n",
+    builtin: "%ModuleRequire%",
+    line: 8,
+  },
 };
 
 // The string is put together at run time, so the build can't know it.
@@ -142,6 +156,27 @@ describe.concurrent("compile/aot/small programs stay closed", () => {
             cause: "EvaluatesText",
             builtin: "eval",
             location: expect.objectContaining({ file: expect.stringMatching(/main\.ts$/), line: lineOfCall }),
+          });
+        }),
+      600_000,
+    );
+  }
+
+  for (const [name, { text, output, builtin, line }] of Object.entries(programsThatOpenAtOneCall)) {
+    test(
+      name,
+      () =>
+        slot(async () => {
+          const { report, stdout } = await compileAndRun(text);
+          expect({ stdout, unseenCode: report.unseenCode }).toEqual({
+            stdout: output,
+            unseenCode: [
+              {
+                cause: "LoadsModuleByName",
+                builtin,
+                location: expect.objectContaining({ file: expect.stringMatching(/main\.ts$/), line }),
+              },
+            ],
           });
         }),
       600_000,

@@ -17,10 +17,16 @@ pub(super) enum BindingRead {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_identifier(&mut self, identifier: ExprId) -> ValueId {
+        if self.record_printed_initializer(identifier) {
+            return self.read_identifier(identifier, BindingRead::Value);
+        }
         let position = self.position();
         let recorded = match self.file.bound.binding(identifier) {
             Binding::Symbol(_) => self.file.name_position(identifier),
-            _ => self.file.hir[identifier].pos,
+            _ => self
+                .file
+                .find_shorthand_name_position(identifier)
+                .unwrap_or(self.file.hir[identifier].pos),
         };
         self.builder.record_position(recorded);
         if recorded == position {
@@ -33,8 +39,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn lower_identifier_for_typeof(&mut self, identifier: ExprId) -> ValueId {
-        self.builder.record_position(self.file.hir[identifier].pos);
+        if !self.record_printed_initializer(identifier) {
+            self.builder.record_position(self.file.hir[identifier].pos);
+        }
         self.read_identifier(identifier, BindingRead::TypeOf)
+    }
+
+    // Where Bun's transpiler prints an initializer in place of the name, JSC records what the initializer records, and nothing for the name.
+    fn record_printed_initializer(&mut self, identifier: ExprId) -> bool {
+        let Some(initializer) = self.file.find_printed_initializer(identifier) else {
+            return false;
+        };
+        if let Some(&recorded) = self.records_of_initializers.get(&initializer) {
+            self.builder.record_position(recorded);
+        }
+        true
     }
 
     // What a store has just left in a variable. The source text has no read there.

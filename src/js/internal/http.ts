@@ -86,9 +86,15 @@ const responseRoad: {
   ) => $Node.HttpExchange;
   storeHeader?: (exchange: $Node.HttpExchange, name: string, value: $Node.HttpHeaderValue) => void;
   spillHeaders?: (exchange: $Node.HttpExchange) => void;
-  hasHeaderUnderKey?: (exchange: $Node.HttpExchange, key: string, bit: number) => boolean;
+  spillHeadersReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
+  hasHeaderUnderKey?: (
+    exchange: $Node.HttpExchange,
+    message: $Node.OutgoingMessage,
+    key: string,
+    bit: number,
+  ) => boolean;
   flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[];
-  headerEntriesOf?: (exchange: $Node.HttpExchange) => unknown[];
+  headerEntriesOf?: (exchange: $Node.HttpExchange, message: $Node.OutgoingMessage) => unknown[];
   pushRenderedHeader?: (
     flat: unknown[],
     message: $Node.OutgoingMessage,

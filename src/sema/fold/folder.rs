@@ -291,7 +291,6 @@ impl<'s> Folder<'_, 's> {
             dead_stmts,
             dead_exprs_in_bun_run,
             dead_stmts_in_bun_run,
-            folded_by_build_alone: NodeBits::freeze(&self.folded_by_build_alone, arena),
             dead_functions: NodeBits::freeze(&dead.functions, arena),
             short_circuited_links: NodeBits::freeze(&self.short_circuited_links, arena),
             truthy_without_effects: NodeBits::freeze(&self.collect_truthy_without_effects(), arena),

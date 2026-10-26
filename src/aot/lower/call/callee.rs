@@ -3,9 +3,10 @@ use bun_sema::bind::{Binding, BindingInitializer, BindingKind, FnOwner, Parent};
 use bun_sema::check::spans::skip_trivia;
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey,
-    StmtKind, UnOp, end_of_expr,
+    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnKind, IdList, MemberKey, PropKey,
+    PropKind, UnOp, end_of_expr,
 };
+use bun_sema::import_sites::ImportSiteKind;
 
 use super::Callee;
 use crate::builtins::Resolved;
@@ -222,8 +223,14 @@ impl FileLowering<'_, '_, '_, '_> {
             if self.is_printed_as_literal(last) {
                 return self.first_position(last);
             }
+            if let Some(value) = self.find_printed_member(last) {
+                last = self.skip_type_syntax(value);
+                continue;
+            }
             let next = match hir[last].kind {
-                ExprKind::Index { index, .. } => index,
+                ExprKind::Index { obj, index, .. } => {
+                    self.find_printed_element(obj, index).unwrap_or(index)
+                }
                 ExprKind::Binary {
                     op: BinOp::Add,
                     left,
@@ -241,16 +248,28 @@ impl FileLowering<'_, '_, '_, '_> {
                     None => return hir[last].pos,
                 },
                 ExprKind::Class(_) => return self.last_token_position(last),
+                ExprKind::New(site) if let Some(literal) = self.find_printed_literal(hir[site]) => {
+                    match literal {
+                        Some(last_part) => last_part,
+                        None => return hir[last].pos,
+                    }
+                }
                 ExprKind::New(site) if hir[site].close_pos == u32::MAX => hir[site].callee,
-                ExprKind::Fn(function) => match self.last_expression_of_body(function) {
-                    Some(expression) => expression,
-                    None => return self.last_token_position(last),
+                ExprKind::Fn(function) => match hir[function].body {
+                    FnBody::Expr(body) => body,
+                    FnBody::None | FnBody::Block(_) => {
+                        let position = self.last_mapped_function_position(function);
+                        return position.unwrap_or_else(|| self.last_token_position(last));
+                    }
                 },
                 ExprKind::Ident(_) => match self.find_printed_initializer(last) {
                     Some(initializer) => initializer,
                     None => return hir[last].pos,
                 },
                 ExprKind::Dot { .. } => return hir.name_pos(last),
+                ExprKind::Call(_) if self.is_require_of_literal(last) => {
+                    return self.first_position(last);
+                }
                 ExprKind::Call(site) | ExprKind::New(site) => return hir[site].close_pos,
                 ExprKind::Array(_) | ExprKind::Object(_) => {
                     return self.last_token_position(last);
@@ -297,12 +316,22 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.runs_as_written() {
             return hir[identifier].end;
         }
+        if let Some(position) = self.find_shorthand_name_position(identifier) {
+            return position;
+        }
+        self.find_closing_token_behind(identifier)
+            .unwrap_or(hir[identifier].pos)
+    }
+
+    // The `)` of a call or the `]` of a list that is printed right behind an expression.
+    pub(in crate::lower) fn find_closing_token_behind(&self, expression: ExprId) -> Option<u32> {
+        let hir = self.hir;
         let is_last = |list: IdList<ExprId>, member: ExprId| {
             hir.ids[list.range()]
                 .last()
                 .is_some_and(|&last| ExprId::from(last) == member)
         };
-        let mut last = identifier;
+        let mut last = expression;
         loop {
             let parent = match self.bound.parent_of_expr(last) {
                 Parent::Expr(parent) => parent,
@@ -318,12 +347,12 @@ impl FileLowering<'_, '_, '_, '_> {
             };
             last = match hir[parent].kind {
                 ExprKind::Call(site) | ExprKind::New(site) if is_last(hir[site].args, last) => {
-                    return hir[site].close_pos;
+                    return Some(hir[site].close_pos);
                 }
                 ExprKind::Array(elements) if is_last(elements, last) => {
                     match self.find_access_printed_as(parent, last) {
                         Some(access) => access,
-                        None => return self.last_token_position(parent),
+                        None => return Some(self.last_token_position(parent)),
                     }
                 }
                 ExprKind::Binary {
@@ -334,6 +363,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprKind::Binary { op, left, right } => {
                     let is_in_parentheses = match hir[self.skip_type_syntax(last)].kind {
                         ExprKind::Binary { op: inner, .. } => needs_parentheses(op, inner, false),
+                        ExprKind::Assign { .. } | ExprKind::Cond { .. } => op != BinOp::Comma,
                         _ => false,
                     };
                     if is_in_parentheses || self.printed_operands(op, left, right).1 != last {
@@ -342,6 +372,20 @@ impl FileLowering<'_, '_, '_, '_> {
                     parent
                 }
                 ExprKind::Unary { op, .. } if !matches!(op, UnOp::PostInc | UnOp::PostDec) => {
+                    match hir[self.skip_type_syntax(last)].kind {
+                        ExprKind::Assign { .. } | ExprKind::Cond { .. } => break,
+                        _ => parent,
+                    }
+                }
+                ExprKind::Assign { value, .. } if value == last => parent,
+                ExprKind::Cond { test, branches } => {
+                    let printed = match self.find_printed_condition(test) {
+                        Some(true) => hir.branches(branches).yes,
+                        Some(false) | None => hir.branches(branches).no,
+                    };
+                    if printed != last {
+                        break;
+                    }
                     parent
                 }
                 ExprKind::Spread(_) => parent,
@@ -349,17 +393,67 @@ impl FileLowering<'_, '_, '_, '_> {
                 _ => break,
             };
         }
-        hir[identifier].pos
+        None
     }
 
-    // JSC reports `instanceof` where the right operand starts. The source map knows no `(` around an arrow function, and takes that to the token in front.
-    pub(in crate::lower) fn instanceof_position(&self, left: ExprId, right: ExprId) -> u32 {
-        match self.hir[self.skip_type_syntax(right)].kind {
-            ExprKind::Fn(function) if self.hir[function].kind == FnKind::Arrow => {
-                self.last_mapped_position(left)
-            }
-            _ => self.hir[right].pos,
+    // JSC's parser starts the name of a shorthand member at the token behind it, and JSC records a name where it ends: as many characters behind
+    // the start of that token as the name has. The source map takes that back to the last token it knows. The source text stands for the printed
+    // text here, which has the same spaces if the source is formatted as Bun's transpiler prints it.
+    pub(in crate::lower) fn find_shorthand_name_position(&self, identifier: ExprId) -> Option<u32> {
+        let hir = self.hir;
+        let Parent::Prop(property) = self.bound.parent_of_expr(identifier) else {
+            return None;
+        };
+        if hir[property].kind != PropKind::Shorthand || self.runs_as_written() {
+            return None;
         }
+        let is_in_word =
+            |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..);
+        let name = hir[identifier];
+        let start = self.next_token_position(name.end) as usize;
+        let end = start + (name.end - name.pos) as usize;
+        let mut mapped = name.pos as usize;
+        let mut position = start;
+        while let Some(&byte) = hir.text.get(position).filter(|_| position <= end) {
+            match byte {
+                b'{' | b'}' | b')' | b']' => mapped = position,
+                b'"' | b'\'' | b'`' => {
+                    mapped = position;
+                    let rest = &hir.text[position + 1..];
+                    let length = rest.iter().position(|&next| next == byte);
+                    position += length.unwrap_or(rest.len()) + 1;
+                }
+                _ if is_in_word(byte) && !is_in_word(hir.text[position - 1]) => mapped = position,
+                _ => {}
+            }
+            position += 1;
+        }
+        Some(mapped as u32)
+    }
+
+    // JSC reports `instanceof` and `in` where the right operand starts. The source map knows no `(` that is printed around it, and takes that to the token in front.
+    pub(in crate::lower) fn right_operand_position(&self, left: ExprId, right: ExprId) -> u32 {
+        let is_in_parentheses = match self.hir[self.skip_to_printed_initializer(right)].kind {
+            ExprKind::Fn(function) => self.hir[function].kind == FnKind::Arrow,
+            ExprKind::Cond { test, .. } => self.find_printed_condition(test).is_none(),
+            ExprKind::Assign { .. } => true,
+            _ => false,
+        };
+        match is_in_parentheses {
+            true => self.last_mapped_position(left),
+            false => self.first_position(right),
+        }
+    }
+
+    // What Bun's transpiler prints in place of the only use of a variable.
+    fn skip_to_printed_initializer(&self, expression: ExprId) -> ExprId {
+        let mut printed = self.skip_type_syntax(expression);
+        while let ExprKind::Ident(_) = self.hir[printed].kind
+            && let Some(initializer) = self.find_printed_initializer(printed)
+        {
+            printed = self.skip_type_syntax(initializer);
+        }
+        printed
     }
 
     // `[n][0]`, of which only `n` is printed.
@@ -412,7 +506,11 @@ impl FileLowering<'_, '_, '_, '_> {
                         && self.is_printed_as_literal(first);
                     printed_left
                 }
-                ExprKind::Cond { test, .. } => test,
+                ExprKind::Cond { test, branches } => match self.find_printed_condition(test) {
+                    Some(true) => hir.branches(branches).yes,
+                    Some(false) => hir.branches(branches).no,
+                    None => test,
+                },
                 ExprKind::Assign { target, .. } => target,
                 ExprKind::Index { obj, index, .. } => {
                     self.find_printed_element(obj, index).unwrap_or(obj)
@@ -423,6 +521,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     op: UnOp::PostInc | UnOp::PostDec,
                     operand,
                 } => operand,
+                ExprKind::Ident(_) => match self.find_printed_initializer(first) {
+                    Some(initializer) => initializer,
+                    None => return hir[first].pos,
+                },
                 _ => return hir[first].pos,
             };
             first = self.skip_type_syntax(next);
@@ -434,11 +536,28 @@ impl FileLowering<'_, '_, '_, '_> {
         let hir = self.hir;
         match hir[self.skip_type_syntax(expression)].kind {
             ExprKind::Unary { op, operand } => {
-                matches!(
-                    op,
-                    UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof
-                ) && self.is_literal_operand(operand)
+                let name = self.skip_type_syntax(operand);
+                let is_number_name = match hir[name].kind {
+                    ExprKind::Ident(known::Infinity | known::NaN) => {
+                        matches!(op, UnOp::Plus | UnOp::Minus)
+                            && matches!(self.bound.binding(name), Binding::Free)
+                    }
+                    _ => false,
+                };
+                is_number_name
+                    || matches!(
+                        op,
+                        UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof
+                    ) && self.is_literal_operand(operand)
             }
+            ExprKind::Dot { obj, .. } => {
+                matches!(hir[self.skip_type_syntax(obj)].kind, ExprKind::String(_))
+                    && matches!(
+                        hir.member_key(self.skip_type_syntax(expression)),
+                        Some((_, MemberKey::Name(known::length)))
+                    )
+            }
+
             ExprKind::Binary { op, left, right } => {
                 !matches!(
                     op,
@@ -551,6 +670,82 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
+    // For `require("a")` and `require.resolve("a")` the source map of Bun's transpiler knows one token, where the call starts.
+    fn is_require_of_literal(&self, call: ExprId) -> bool {
+        let analysis = &self.compiled.analysis;
+        let Some(site) = analysis.import_site_of_call(call) else {
+            return false;
+        };
+        let site = analysis.import_sites[site];
+        matches!(
+            site.kind,
+            ImportSiteKind::Require(_) | ImportSiteKind::RequireResolve(_)
+        ) && site.specifier_node.is_some()
+            && self.is_literal_operand(site.specifier_node)
+    }
+
+    // `{ a: b }.a` is printed `b`, unless it is called.
+    fn find_printed_member(&self, access: ExprId) -> Option<ExprId> {
+        let hir = self.hir;
+        let (object, key) = hir.member_key(access)?;
+        let ExprKind::Object(properties) = hir[self.skip_type_syntax(object)].kind else {
+            return None;
+        };
+        let name = match key {
+            MemberKey::Name(name) => name,
+            MemberKey::Computed(key) => match hir[self.skip_type_syntax(key)].kind {
+                ExprKind::String(text) => text,
+                _ => return None,
+            },
+            MemberKey::PrivateName(_) => return None,
+        };
+        let mut properties = properties.iter().map(|property| hir[property]);
+        let (Some(only), None) = (properties.next(), properties.next()) else {
+            return None;
+        };
+        let is_called = match self.bound.parent_of_expr(access) {
+            Parent::Expr(parent) => match hir[parent].kind {
+                ExprKind::Call(site) | ExprKind::TaggedTemplate(site) => {
+                    self.skip_type_syntax(hir[site].callee) == access
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        let is_found = only.kind == PropKind::Init
+            && matches!(only.key, PropKey::Name(written) if written == name)
+            && self.is_removed_when_unused(only.value);
+        (is_found && !is_called).then_some(only.value)
+    }
+
+    // `new Object()` is printed `{}`, `new Object({ a })` is printed `{ a }`, `new Array()` is printed `[]` and `new Array(a, b)` is printed `[a, b]`.
+    // The last part of the literal, if it has one.
+    fn find_printed_literal(&self, site: Call) -> Option<Option<ExprId>> {
+        let hir = self.hir;
+        let callee = self.skip_type_syntax(site.callee);
+        let ExprKind::Ident(name) = hir[callee].kind else {
+            return None;
+        };
+        if !matches!(self.bound.binding(callee), Binding::Free) {
+            return None;
+        }
+        let mut arguments = hir.ids(site.args);
+        if arguments.any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_))) {
+            return None;
+        }
+        let last = hir.ids(site.args).last();
+        match (name, site.args.len) {
+            (known::Object | known::Array, 0) => Some(None),
+            (known::Object, 1) => last
+                .filter(|&only| {
+                    matches!(hir[self.skip_type_syntax(only)].kind, ExprKind::Object(_))
+                })
+                .map(Some),
+            (known::Array, 2..) => Some(last),
+            _ => None,
+        }
+    }
+
     // `[a, b][1]` is printed `b` if evaluating the other elements does nothing.
     fn find_printed_element(&self, list: ExprId, index: ExprId) -> Option<ExprId> {
         let hir = self.hir;
@@ -657,7 +852,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // Of `true ? a : b` Bun's transpiler prints `a`.
-    fn find_printed_condition(&self, test: ExprId) -> Option<bool> {
+    pub(in crate::lower) fn find_printed_condition(&self, test: ExprId) -> Option<bool> {
         let hir = self.hir;
         let test = self.skip_type_syntax(test);
         match hir[test].kind {
@@ -679,55 +874,19 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // An operation JSC records no position for is reported at the last position recorded before it, which belongs to the end of the operand.
-    pub(in crate::lower) fn last_reported_position(&self, operand: ExprId) -> u32 {
-        let hir = self.hir;
-        let mut last = self.skip_type_syntax(operand);
-        loop {
-            let next = match hir[last].kind {
-                ExprKind::Call(site) => return self.last_mapped_position(hir[site].callee),
-                ExprKind::New(_) => return self.construct_position(last),
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                    return self.last_mapped_position(obj);
-                }
-                ExprKind::Cond { branches, .. } => hir.branches(branches).no,
-                ExprKind::Binary {
-                    op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma,
-                    right,
-                    ..
-                } => right,
-                ExprKind::Assign { value, .. } => value,
-                ExprKind::Await(awaited) => awaited,
-                _ => return hir[last].pos,
-            };
-            last = self.skip_type_syntax(next);
-        }
-    }
-
-    fn last_expression_of_body(&self, function: FnId) -> Option<ExprId> {
-        let hir = self.hir;
-        let statement = match hir[function].body {
-            FnBody::None => return None,
-            FnBody::Expr(body) => return Some(body),
-            FnBody::Block(statements) => hir.ids(statements).last()?,
-        };
-        match hir[statement].kind {
-            StmtKind::Expr(value) | StmtKind::Throw(value) => Some(value),
-            StmtKind::Return(value) => value.is_some().then_some(value),
-            _ => None,
-        }
-    }
-
     // JSC's parser knows `Reflect.construct(target, list)` by these two names, whatever `Reflect` is bound to.
     pub(super) fn is_reflect_construct_syntax(&self, callee: ExprId) -> bool {
         let hir = self.hir;
         let Some((object, key)) = hir.member_key(self.skip_type_syntax(callee)) else {
             return false;
         };
-        // Bun's transpiler prints the initializer of a variable in place of its only use.
+        // Bun's transpiler prints the initializer of a variable in place of its only use, and a literal in place of the name of a constant.
         let name = match key {
             MemberKey::Name(name) => name,
-            MemberKey::Computed(key) => match self.find_printed_initializer(key) {
+            MemberKey::Computed(key) => match self
+                .find_printed_initializer(key)
+                .or_else(|| self.find_printed_value(key))
+            {
                 Some(printed) => match hir[self.skip_type_syntax(printed)].kind {
                     ExprKind::String(text) => text,
                     _ => return false,

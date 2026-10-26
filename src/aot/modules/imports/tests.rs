@@ -381,7 +381,9 @@ fn host_value_name_is_synthetic() {
             assert_eq!(export.name, name, "{local_name}");
             assert!(!export.is_known_member, "{local_name}");
         }
-        assert!(program.required_names("main.js").is_empty());
+        let required =
+            [known::default, program.atom("x")].map(|name| RequiredName::new(module, name));
+        assert_eq!(program.required_names("main.js"), required);
         assert!(program.graph.errors().is_empty());
     });
 }

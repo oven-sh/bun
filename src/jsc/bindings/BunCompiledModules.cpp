@@ -33,9 +33,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCallOwnFunctionsWithoutParameters, (JSC::JSGl
     JSObject* holder = callFrame->argument(0).getObject();
     JSObject* except = callFrame->argument(1).getObject();
     JSValue receiver = callFrame->argument(2);
-    MarkedArgumentBuffer makersOfIterators;
     if (!holder || !except)
-        RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), makersOfIterators)));
+        return throwVMTypeError(globalObject, scope, "The holder and the exceptions must be objects"_s);
+    MarkedArgumentBuffer makersOfIterators;
 
     PropertyNameArrayBuilder keys(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     holder->methodTable()->getOwnPropertyNames(holder, globalObject, keys, DontEnumPropertiesMode::Include);
@@ -85,8 +85,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineOwnPropertiesLeftOut, (JSC::JSGlobalObj
     JSObject* target = callFrame->argument(0).getObject();
     JSObject* source = callFrame->argument(1).getObject();
     JSObject* replacements = callFrame->argument(2).getObject();
-    if (!target || !source || !replacements)
-        return JSValue::encode(jsUndefined());
+    if (!target || !source || (!replacements && !callFrame->argument(2).isUndefined()))
+        return throwVMTypeError(globalObject, scope, "The target and the source must be objects, and the replacements an object or undefined"_s);
 
     PropertyNameArrayBuilder keys(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     source->methodTable()->getOwnPropertyNames(source, globalObject, keys, DontEnumPropertiesMode::Include);
@@ -105,14 +105,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineOwnPropertiesLeftOut, (JSC::JSGlobalObj
             RETURN_IF_EXCEPTION(scope, {});
             if (!isOwn)
                 continue;
-            if (replacements) {
-                PropertySlot slot(replacements, PropertySlot::InternalMethodType::GetOwnProperty);
-                bool isReplaced = replacements->getOwnPropertySlot(replacements, globalObject, key, slot);
+            if (replacements && descriptor.isDataDescriptor()) {
+                PropertyDescriptor replacement;
+                bool isReplaced = replacements->getOwnPropertyDescriptor(globalObject, key, replacement);
                 RETURN_IF_EXCEPTION(scope, {});
-                if (isReplaced) {
-                    descriptor.setValue(slot.getValue(globalObject, key));
-                    RETURN_IF_EXCEPTION(scope, {});
-                }
+                if (isReplaced && replacement.isDataDescriptor())
+                    descriptor.setValue(replacement.value());
             }
             target->methodTable()->defineOwnProperty(target, globalObject, key, descriptor, false);
             RETURN_IF_EXCEPTION(scope, {});

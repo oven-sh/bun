@@ -1,87 +1,34 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isDebug } from "harness";
-import path from "node:path";
-import { RawHttpConnection, get, post } from "./raw-http-client";
+import { bunExe, isASAN, isCI, isDebug } from "harness";
+import { type Coverage, fixture, measure, stacks } from "./node-http-fast-path-coverage";
 
 // The node:http server has a fast path for dispatching a request, a compact form for response headers and a finish that
 // takes a single process.nextTick(). This pins how many requests of ordinary applications take each of them, so that a
 // change which quietly pushes a framework onto the slow path fails here. The functions of the fast path have the names
 // of those they stand in for, so the fixture tells them apart by the place of the onNodeHTTPRequest frame, the kOutHeaders
 // symbol and the number of arguments of the emitResponseFinished tick: changing one means updating it.
+//
+// The compact form is for an executable built with --aot, which
+// test/aot/node-http-requests-on-a-keep-alive-connection-take-the-fast-path.test.ts measures with the same fixture.
+// Under `bun run` a response has its headers in the map under kOutHeaders from the first one that is stored.
 
-const fixture = path.join(import.meta.dir, "node-http-fast-path-coverage-fixture.ts");
 const timeout = (isASAN || isDebug) && !isCI ? 90_000 : undefined;
 
-const requests = [
-  get("/text"),
-  get("/json"),
-  get("/users/7"),
-  get("/redirect"),
-  get("/missing"),
-  post("/echo", '{"a":1}', "Content-Type: application/json\r\n"),
-];
+const routesThatStoreNoHeader: Record<string, string[]> = { "node:http": ["GET /text", "GET /missing"] };
 
-async function measure(stack: string) {
-  await using server = Bun.spawn({
-    cmd: [bunExe(), fixture, stack],
-    env: bunEnv,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const reader = server.stdout.getReader();
-  const decoder = new TextDecoder();
-  let stdout = "";
-  while (!stdout.includes("\n")) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    stdout += decoder.decode(value, { stream: true });
+function withHeadersInTheMap(stack: string, expected: Coverage): Coverage {
+  const result: Coverage = {};
+  for (const route in expected) {
+    result[route] = { ...expected[route], compactHeaders: routesThatStoreNoHeader[stack]?.includes(route) ? 10 : 0 };
   }
-  const port = Number(stdout.slice(0, stdout.indexOf("\n")));
-  stdout = stdout.slice(stdout.indexOf("\n") + 1);
-
-  {
-    using connection = await RawHttpConnection.connect(port);
-    await connection.request(get("/text", "Connection: close\r\n"));
-  }
-  for (const request of requests) {
-    using connection = await RawHttpConnection.connect(port);
-    for (let i = 0; i < 10; i++) await connection.request(request);
-  }
-
-  server.stdin.end();
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    stdout += decoder.decode(value, { stream: true });
-  }
-  return JSON.parse(stdout);
+  return result;
 }
 
-const usual = { requests: 10, fastDispatch: 10, compactHeaders: 10, singleTickFinish: 9 };
-const everyRoute = {
-  "GET /text": usual,
-  "GET /json": usual,
-  "GET /users/7": usual,
-  "GET /redirect": usual,
-  "GET /missing": usual,
-  "POST /echo": usual,
-};
-const finishesInSeveralTicks = { ...usual, singleTickFinish: 0 };
-
 describe.concurrent("requests on a keep-alive connection take the fast path", () => {
-  test.each([
-    ["node:http", { ...everyRoute, "POST /echo": finishesInSeveralTicks }],
-    ["express", { ...everyRoute, "GET /missing": finishesInSeveralTicks, "POST /echo": finishesInSeveralTicks }],
-    [
-      "express with middleware",
-      { ...everyRoute, "GET /missing": finishesInSeveralTicks, "POST /echo": finishesInSeveralTicks },
-    ],
-    ["fastify", { ...everyRoute, "POST /echo": { ...usual, singleTickFinish: 10 } }],
-  ])(
+  test.each(stacks)(
     "%s",
     async (stack, expected) => {
-      expect(await measure(stack)).toEqual(expected);
+      expect(await measure([bunExe(), fixture, stack])).toEqual(withHeadersInTheMap(stack, expected));
     },
     timeout,
   );

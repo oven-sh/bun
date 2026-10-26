@@ -7,8 +7,9 @@
 // CHECK: Return [[base]]
 // CHECK-LABEL: function {{*}}name="B" {{*}}kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee,
 // CHECK: [[parent]] = GetSuperBase [[callee]] @
-// CHECK: [[derived]] = SuperConstructList [[parent]], [[newTarget]], [[arguments]] layout=
-// CHECK: = CallDirect
+// CHECK: [[constructed]] = SuperConstructList [[parent]], [[newTarget]], [[arguments]] layout=[[derivedLayout]] @
+// CHECK-NEXT: [[derived]] = Convert [[constructed]] declared={type=[[derivedLayout]] flags=[IsFromCompiler]}
+// CHECK: = CallDirect [[derived]] function=
 // CHECK-NOT: TypeTest
 // CHECK: Return [[derived]]
 

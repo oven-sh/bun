@@ -473,7 +473,7 @@ export function generate(random: Random, mayWatch = false, countsRounds = false)
   parts.push(`function print() {
   note("registry", typeof registry.register);
   console.log(lines.slice(0, 600).join("\\n"));
-  console.log(lines.length, mix(lines));${countsRounds ? `\n  console.log("rounds", rounds);` : ""}
+  console.log(lines.length, mix(lines.filter(line => !line.startsWith("watched: "))));${countsRounds ? `\n  console.log("rounds", rounds);` : ""}
 }
 main().then(print, error => {
   note("main failed", error);

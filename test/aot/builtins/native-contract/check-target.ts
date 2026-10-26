@@ -50,8 +50,9 @@ const usesDescriptors = /NodeJSFS|node_fs_binding|\bfs\b/;
 
 // On a real object a definition shows as another value or as other attributes, like a store or a descriptor.
 const usesDeclaring = Object.fromEntries(operandUses.map(use => [use, [use]])) as Record<OperandUse, OperandUse[]>;
-usesDeclaring.StoresByKey.push("DefinesName");
+usesDeclaring.StoresByKey.push("DefinesName", "TakesDescriptor");
 usesDeclaring.TakesDescriptor.push("DefinesName");
+usesDeclaring.DefinesName.push("TakesDescriptor");
 
 type Outcome = { set: OperandSet; didReturn: boolean; message: string; eventCount: number };
 

@@ -28,7 +28,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn emit_closure(&mut self, function: FunctionId, home: Option<ValueId>) -> ValueId {
         let key = self.file.function_key(function);
         let values = self.collect_capture_values(key, home);
-        self.read_innermost_scope();
         self.builder.new_closure(function, &values)
     }
 

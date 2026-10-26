@@ -2143,9 +2143,15 @@ function invokeTestFn(fn: Function, arg: unknown) {
   return fn(arg);
 }
 
-// A promise that a test throws is the error of the test, so its own rejection is not reported.
+// Node prints a diagnostic when a thrown promise rejects (v26.3.0 lib/internal/test_runner/harness.js:118). bun:test would fail the test that runs then.
 function markThrownPromiseAsHandled(err: unknown) {
   if ($isPromise(err)) $pokePromiseAsHandled(err);
+}
+
+// `bun test` prints a rejected promise without its reason.
+function printableFailure(failure: unknown) {
+  if (!$isPromise(failure) || !$isPromiseRejected(failure)) return failure;
+  return $peekPromiseSettledValue(failure) ?? failure;
 }
 
 // A single timeout armed once per test and raced against both the body and
@@ -2355,7 +2361,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<TestOutcome>
         "subtestsFailed",
       );
       if (firstSubtestError !== undefined) {
-        (error as { cause?: unknown }).cause = firstSubtestError;
+        (error as { cause?: unknown }).cause = printableFailure(firstSubtestError);
       }
       failure = error;
     }
@@ -2396,13 +2402,14 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<TestOutcome>
   try {
     node.mockTracker?.reset();
   } catch (err) {
+    markThrownPromiseAsHandled(err);
     if (!acceptedXfail) failure ??= err;
   }
 
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   reportNodeToRunParent(node, started);
-  // In a box: an async function that returns a thenable settles as that thenable does.
+  // In an object with no prototype: an async function that returns a thenable settles as that thenable does.
   return failure === undefined ? undefined : { __proto__: null, failure };
 }
 
@@ -2565,7 +2572,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
           markCurrentResult(true, done);
         } else {
-          done(outcome?.failure);
+          done(printableFailure(outcome?.failure));
           return;
         }
         done(undefined);
@@ -2706,7 +2713,7 @@ function addSuite(
     // (Node's Suite.run awaits buildPromise before iterating subtests). The
     // callback has not returned yet so its promise does not exist; seed the
     // chain through a gate the callback's settlement opens.
-    const gate = Promise.withResolvers<unknown>();
+    const gate = Promise.withResolvers<void>();
     suite.subtestChain = runningNode.subtestChain.then(() => gate.promise);
     // Build the suite eagerly (Node also runs describe callbacks immediately),
     // collecting children onto the suite's own subtest chain.
@@ -2722,7 +2729,11 @@ function addSuite(
       // Attach a handler now: the real await happens when the suite's turn
       // comes, which can be many ticks later (no unhandled rejection).
       const openGate = () => gate.resolve();
-      (build as Promise<unknown>).then(openGate, openGate);
+      (build as Promise<unknown>).then(openGate, err => {
+        // The suite takes this failure in its turn, which can be after the report of unhandled rejections.
+        markThrownPromiseAsHandled(err);
+        openGate();
+      });
     } else {
       gate.resolve();
       build = undefined;
@@ -2826,12 +2837,7 @@ function before(arg0: unknown, arg1: unknown) {
     return;
   }
   const { beforeAll } = bunTest();
-  beforeAll((done: (error?: unknown) => void) => {
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
-      () => done(),
-      err => done(err ?? new Error("before hook failed")),
-    );
-  });
+  beforeAll((done: (error?: unknown) => void) => runHookForBunTest(hook, owner, done, "before hook failed"));
 }
 
 function after(arg0: unknown, arg1: unknown) {
@@ -2842,12 +2848,14 @@ function after(arg0: unknown, arg1: unknown) {
     return;
   }
   const { afterAll } = bunTest();
-  afterAll((done: (error?: unknown) => void) => {
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
-      () => done(),
-      err => done(err ?? new Error("after hook failed")),
-    );
-  });
+  afterAll((done: (error?: unknown) => void) => runHookForBunTest(hook, owner, done, "after hook failed"));
+}
+
+function runHookForBunTest(hook: Hook, owner: TestNode, done: (error?: unknown) => void, fallback: string) {
+  Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
+    () => done(),
+    err => done(printableFailure(err) ?? new Error(fallback)),
+  );
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {

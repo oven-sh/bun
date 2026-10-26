@@ -1306,8 +1306,9 @@ describe("the results of new Script() are own properties of the instance", () =>
 
   // Each of these never returned. Script.prototype had four accessors that threw, for a receiver that is not a
   // Script, an error whose message rendered the receiver. Rendering the receiver read the four accessors again.
-  describe.concurrent("a receiver that is not a Script", () => {
-    test("a read of each result returns", async () => {
+  // One at a time: the runner kills the child of a test that times out only when that test runs alone.
+  describe("a receiver that is not a Script", () => {
+    test.serial("a read of each result returns", async () => {
       const code = /*js*/ `
         const vm = require("node:vm");
         const names = ["sourceURL", "sourceMapURL", "cachedData", "cachedDataProduced", "cachedDataRejected"];
@@ -1342,7 +1343,7 @@ describe("the results of new Script() are own properties of the instance", () =>
       });
     });
 
-    test("printing, serializing and walking Script.prototype return", async () => {
+    test.serial("printing, serializing and walking Script.prototype return", async () => {
       const code = /*js*/ `
         const vm = require("node:vm");
         const util = require("node:util");
@@ -1367,7 +1368,7 @@ describe("the results of new Script() are own properties of the instance", () =>
       });
     });
 
-    test("an error about Script.prototype is thrown", async () => {
+    test.serial("an error about Script.prototype is thrown", async () => {
       const code = /*js*/ `
         const vm = require("node:vm");
         const p = vm.Script.prototype;

@@ -6,15 +6,18 @@
 // screenshot-like image (flat areas, antialiased text, a gradient banner), the
 // same with a banner of one colour per column (under 256 colours, so it fits
 // the default palette), a photo-like one (gradients with noise), a thumbnail
-// of it, a flat image with sparse marks (opaque and with alpha) and a sprite
-// on a transparent background. Pass PNG/JPEG paths to measure real files
-// instead. Run with --sharp to add a sharp column (requires `bun install` in
-// this dir first) and with --rounds=N for N timed rounds per row (default 7).
+// of it, a flat image with sparse marks (opaque and with alpha), a sprite on a
+// transparent background and faint greys. Pass PNG/JPEG paths to measure real
+// files instead. Run with --sharp to add a sharp column (requires `bun install`
+// in this dir first) and with --rounds=N for N timed rounds per row (default
+// 7).
 //
 // `error` is the mean squared difference per channel between the output and
 // the pixels Bun.Image decodes from the input, with colour multiplied by
-// alpha. `entries` is the palette size, as "different of all" when two entries
-// are the same colour.
+// alpha. `over black` and `over white` are the same for the three colour
+// channels as the two images show over that background: an opaque image has
+// one number for both. `entries` is the palette size, as "different of all"
+// when two entries are the same colour.
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -122,6 +125,15 @@ const marks = alpha => (x, y, px) => {
   c[ch] = 127 + ((k / channels) & 1 ? 1 : -1) * [127, 50, 20, 8, 3][(k / (channels * 2)) | 0];
   return set(px, c[0], c[1], c[2], c[3]);
 };
+// Faint greys: rows 0 to 46 are fully transparent, and below them grey 30 to
+// 240 runs across under alpha 0 to 48 down. A shadow or a glow on its own
+// layer looks like this.
+const faint = (x, y, px) => {
+  const u = x / 127;
+  const v = Math.round(u < 0.5 ? 30 + 98 * 2 * u : 128 + 112 * (2 * u - 1));
+  const a = y < 47 ? 0 : Math.round(48 * Math.sqrt((y - 47) / 80));
+  return a === 0 ? set(px, 0, 0, 0, 0) : set(px, v, v, v, a);
+};
 // A round sprite on a fully transparent background: a body with a gradient,
 // an antialiased edge and a soft shadow below it.
 const sprite = (x, y, px) => {
@@ -209,19 +221,23 @@ function decodePng(png) {
   }
   return { rgba, entries };
 }
-// Mean squared difference per channel, with colour multiplied by alpha.
+// Mean squared difference per channel, with colour multiplied by alpha: of
+// the four channels, and of the colour as it shows over black and over white.
 function errorOf(source, output) {
-  let sum = 0;
+  let [alpha, black, white] = [0, 0, 0];
   for (let i = 0; i < source.length; i += 4) {
     const sa = source[i + 3];
     const oa = output[i + 3];
     for (let c = 0; c < 3; c++) {
       const d = (((source[i + c] * sa + 127) / 255) | 0) - (((output[i + c] * oa + 127) / 255) | 0);
-      sum += d * d;
+      black += d * d;
+      // White shows through what the alpha leaves.
+      white += (d - sa + oa) * (d - sa + oa);
     }
-    sum += (sa - oa) * (sa - oa);
+    alpha += (sa - oa) * (sa - oa);
   }
-  return sum / source.length;
+  const colour = (source.length / 4) * 3;
+  return { error: (black + alpha) / source.length, black: black / colour, white: white / colour };
 }
 
 const args = process.argv.slice(2);
@@ -237,6 +253,7 @@ const fixtures = paths.length
       ["flat with sparse marks 1920×1080", makePng(1920, 1080, marks(false)), 1],
       ["flat with sparse marks 1920×1080, with alpha", makePng(1920, 1080, marks(true)), 1],
       ["sprite 1024×1024, with alpha", makePng(1024, 1024, sprite), 1],
+      ["faint greys 128×128, with alpha", makePng(128, 128, faint), 20],
     ];
 
 let sharp = null;
@@ -266,15 +283,15 @@ async function measure(fn, calls) {
 
 console.log(`\n### palette PNG, ${ROUNDS} rounds, ${process.platform}/${process.arch}, bun ${Bun.version}\n`);
 console.log(
-  `| input | output | min ms | median ms | bytes | vs truecolour | error | entries |${sharp ? " sharp ms | sharp bytes |" : ""}`,
+  `| input | output | min ms | median ms | bytes | vs truecolour | error | over black | over white | entries |${sharp ? " sharp ms | sharp bytes |" : ""}`,
 );
-console.log(`|---|---|---:|---:|---:|---:|---:|---:|${sharp ? "---:|---:|" : ""}`);
+console.log(`|---|---|---:|---:|---:|---:|---:|---:|---:|---:|${sharp ? "---:|---:|" : ""}`);
 for (const [name, buf, calls] of fixtures) {
   let source;
   try {
     source = decodePng(await new Bun.Image(buf).png().bytes()).rgba;
   } catch (e) {
-    console.log(`| ${name} | not decoded: ${e.message} | | | | | | |${sharp ? " | |" : ""}`);
+    console.log(`| ${name} | not decoded: ${e.message} | | | | | | | | |${sharp ? " | |" : ""}`);
     continue;
   }
   const truecolour = await measure(() => new Bun.Image(buf).png().bytes(), calls);
@@ -286,7 +303,7 @@ for (const [name, buf, calls] of fixtures) {
       // Once per row, outside the timed rounds.
       const { rgba, entries } = decodePng(await new Bun.Image(buf).png({ palette: true, colors, dither }).bytes());
       const different = new Set(entries.map(e => e.join())).size;
-      bun.error = errorOf(source, rgba);
+      bun.errors = errorOf(source, rgba);
       bun.entries = different === entries.length ? `${different}` : `${different} of ${entries.length}`;
       // sharp rounds colours up to 2, 4, 16 or 256.
       const other =
@@ -310,10 +327,10 @@ for (const [name, buf, calls] of fixtures) {
   ]);
   for (const [label, r, other] of rows) {
     const ratio = `${(truecolour.bytes / r.bytes).toFixed(2)}×`;
-    const error = r.error === undefined ? "" : r.error.toPrecision(4);
+    const errors = ["error", "black", "white"].map(key => r.errors?.[key].toPrecision(4) ?? "").join(" | ");
     const extra = sharp ? ` ${other ? other.min.toFixed(1) : ""} | ${other ? other.bytes : ""} |` : "";
     console.log(
-      `| ${name} | ${label} | ${r.min.toFixed(2)} | ${r.median.toFixed(2)} | ${r.bytes} | ${ratio} | ${error} | ${r.entries ?? ""} |${extra}`,
+      `| ${name} | ${label} | ${r.min.toFixed(2)} | ${r.median.toFixed(2)} | ${r.bytes} | ${ratio} | ${errors} | ${r.entries ?? ""} |${extra}`,
     );
   }
 }

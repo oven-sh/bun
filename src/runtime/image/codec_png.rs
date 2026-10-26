@@ -277,7 +277,7 @@ pub(crate) fn encode(
 }
 
 /// Quantize RGBA to ≤ `colors` and emit an indexed (colour-type 3) PNG
-/// with PLTE + tRNS. `icc_profile` is the source colour space: quantize.rs uses raw RGB numbers,
+/// with PLTE + tRNS. `icc_profile` is the source colour space: quantize.rs does not convert it,
 /// so the palette entries are still in that space and need the profile
 /// to be interpreted correctly — same contract as truecolour encode.
 pub(crate) fn encode_indexed(

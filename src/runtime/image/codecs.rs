@@ -549,7 +549,7 @@ pub(crate) fn encode(
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
         // PNG carries iCCP on both truecolour and indexed images — quantise
-        // operates on raw RGB numbers without converting colour spaces, so
+        // works on the RGB numbers without converting colour spaces, so
         // the palette entries are still in the source space and need the
         // profile to be interpreted correctly (see PNG spec §11.3.3.3).
         Format::Png => {

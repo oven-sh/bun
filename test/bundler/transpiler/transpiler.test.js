@@ -2238,6 +2238,36 @@ export default class {
           "export const a = [F.fn(), new F.C, F.C.s, F.plain(), F.fn.v, F.C.w, typeof F.fn, F.fn.name]",
         );
       });
+
+      // A later block of the merged namespace now has the gaps that a later block of a plain
+      // namespace has. Each row holds the value that tsc gives.
+      describe("a later block of the namespace", () => {
+        const merged = members => `namespace F { export function fn() {} export namespace fn { ${members} } }\n`;
+        const later = body => `namespace F { export namespace fn { ${body} } }`;
+
+        // A write to an export of the first block is not rewritten. It goes to the outer `x`.
+        it.todo("writes to a member of the first block", () => {
+          const code = `var x = "outer";\n${merged("export let x = 1")}${later("x = 5; x++; export const y = x")}`;
+          expect(run(code, "[F.fn.y, F.fn.x, x]")).toEqual([6, 6, "outer"]);
+        });
+
+        // Where no renamer runs, the closure argument and the parameter have the same name.
+        it.todo("reads a member of the first block under a parameter with the name of the namespace", () => {
+          const code = merged("export const x = 1") + later("export function g(fn: any) { return x }");
+          expect(run(code, `F.fn.g({ x: "param" })`)).toBe(1);
+        });
+
+        // A bare read of an enum of the first block stays a run-time read.
+        it.todo("counts on from a member of an enum of the first block", () => {
+          const code = merged("export enum E { A = 7 }") + later("export enum Y { P = E.A, R }");
+          expect(run(code, "F.fn.Y")).toEqual({ P: 7, R: 8, 7: "P", 8: "R" });
+        });
+
+        it.todo("reads an enum member of the first block under a parameter with the name of the namespace", () => {
+          const code = merged("export enum E { A = 7 }") + later("export function f(fn: any) { return E.A }");
+          expect(run(code, `F.fn.f({ E: { A: "param" } })`)).toBe(7);
+        });
+      });
     });
 
     const input4 = `export enum x { y }`;

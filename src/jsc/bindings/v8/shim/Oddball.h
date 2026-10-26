@@ -11,7 +11,6 @@ struct Oddball {
     enum class Kind : int {
         kUndefined = 4,
         kNull = 3,
-        kInvalid = 255,
         kTrue = 99,
         kFalse = 98,
     };

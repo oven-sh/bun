@@ -323,9 +323,6 @@ JSC_DECLARE_HOST_FUNCTION(jsSQLStatementFunctionIterateEnd);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows);
 
-JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnNames);
-JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnCount);
-
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSerialize);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementDeserialize);
 

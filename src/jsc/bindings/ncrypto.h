@@ -116,8 +116,6 @@ public:
 
     inline auto begin() const noexcept { return errors_.begin(); }
     inline auto end() const noexcept { return errors_.end(); }
-    inline auto rbegin() const noexcept { return errors_.rbegin(); }
-    inline auto rend() const noexcept { return errors_.rend(); }
 
     std::optional<WTF::String> pop_back();
 
@@ -267,9 +265,6 @@ private:
 
 class Cipher final {
 public:
-    static constexpr size_t MAX_KEY_LENGTH = EVP_MAX_KEY_LENGTH;
-    static constexpr size_t MAX_IV_LENGTH = EVP_MAX_IV_LENGTH;
-
     Cipher() = default;
     Cipher(const EVP_CIPHER* cipher)
         : cipher_(cipher)

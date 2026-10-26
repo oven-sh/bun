@@ -42,7 +42,6 @@
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>

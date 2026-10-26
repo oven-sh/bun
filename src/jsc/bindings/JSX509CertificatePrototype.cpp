@@ -311,10 +311,6 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIP, (JSGlobalObject * gl
     auto view = ipString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // ignore flags
-    // uint32_t flags = getFlags(vm, globalObject, scope, callFrame->argument(1));
-    // RETURN_IF_EXCEPTION(scope, {});
-
     auto check = thisObject->checkIP(globalObject, view);
     RETURN_IF_EXCEPTION(scope, {});
     if (!check) return JSValue::encode(jsUndefined());

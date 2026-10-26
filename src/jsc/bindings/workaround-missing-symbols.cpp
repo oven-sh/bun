@@ -43,12 +43,6 @@ extern "C" int kill(int pid, int sig)
 
 #endif
 
-#if !defined(WIN32)
-#ifndef UNLIKELY
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#endif
-#endif
-
 #if defined(__FreeBSD__) && !ASSERT_ENABLED
 // WTF references this counter from text/StringCommon.h under STRING_STATS;
 // Debug WebKit defines it (StringView.cpp); Release doesn't, but Bun's
@@ -82,7 +76,6 @@ std::atomic<int> wtfStringCopyCount;
 #include <sys/random.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-#include <dlfcn.h>
 
 #ifndef _STAT_VER
 #if defined(__aarch64__)

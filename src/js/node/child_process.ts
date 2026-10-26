@@ -1061,10 +1061,6 @@ function normalizeSpawnArguments(file, args, options?) {
   const env = options.env || process.env;
   const bunEnv = {};
 
-  // // process.env.NODE_V8_COVERAGE always propagates, making it possible to
-  // // collect coverage for programs that spawn with white-listed environment.
-  // copyProcessEnvToEnv(env, "NODE_V8_COVERAGE", options.env);
-
   let envKeys: string[] = [];
   for (const key in env) {
     ArrayPrototypePush.$call(envKeys, key);

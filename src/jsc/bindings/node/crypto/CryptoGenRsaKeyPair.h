@@ -9,7 +9,6 @@ namespace Bun {
 enum class RsaKeyVariant {
     RSA_SSA_PKCS1_v1_5,
     RSA_PSS,
-    RSA_OAEP,
 };
 
 struct RsaKeyPairJobCtx : KeyPairJobCtx {

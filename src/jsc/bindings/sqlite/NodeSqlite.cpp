@@ -478,8 +478,6 @@ static JSValue rowToObjectCached(JSGlobalObject* globalObject, ThrowScope& scope
 
 static JSValue rowToArray(JSGlobalObject* globalObject, ThrowScope& scope, sqlite3_stmt* stmt, int numCols, bool useBigInts)
 {
-    auto& vm = getVM(globalObject);
-    (void)vm;
     JSArray* row = constructEmptyArray(globalObject, nullptr, numCols);
     RETURN_IF_EXCEPTION(scope, {});
     for (int i = 0; i < numCols; ++i) {

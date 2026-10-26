@@ -38,8 +38,6 @@ public:
     size_t modulusLength;
     RefPtr<Uint8Array> publicExponent;
 
-    Class parametersClass() const override { return Class::RsaKeyGenParams; }
-
     const Vector<uint8_t>& publicExponentVector() const
     {
         if (!m_publicExponentVector.isEmpty() || !publicExponent->byteLength())
@@ -54,7 +52,5 @@ private:
 };
 
 } // namespace WebCore
-
-SPECIALIZE_TYPE_TRAITS_CRYPTO_ALGORITHM_PARAMETERS(RsaKeyGenParams)
 
 #endif // ENABLE(WEB_CRYPTO)

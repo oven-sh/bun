@@ -2509,7 +2509,6 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     $debug("close handle");
     const isException = err ? true : false;
     // `bytesRead` and `kBytesWritten` should be accessible after `.destroy()`
-    // this[kBytesRead] = this._handle.bytesRead;
     this[kBytesWritten] = this._handle.bytesWritten;
 
     const currentHandle = this._handle;
@@ -3503,7 +3502,6 @@ function internalConnectMultiple(context, canceled?) {
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
 
-  // const req = new TCPConnectWrap();
   const req: ConnectReq = {};
   req.oncomplete = afterConnectMultiple.bind(undefined, context, current);
   req.address = address;
@@ -4465,7 +4463,6 @@ function createServer(options, connectionListener) {
 }
 
 function normalizeArgs(args: unknown[]): [options: Record<PropertyKey, any>, cb: Function | null] {
-  // while (args.length && args[args.length - 1] == null) args.pop();
   let arr;
 
   if (args.length === 0) {

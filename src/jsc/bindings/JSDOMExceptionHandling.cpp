@@ -54,7 +54,6 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
 
     ErrorHandlingScope errorScope(lexicalGlobalObject->vm());
 
-    // auto callStack = Inspector::createScriptCallStackFromException(lexicalGlobalObject, exception);
     (void)scope.tryClearException();
     vm.clearLastException();
 

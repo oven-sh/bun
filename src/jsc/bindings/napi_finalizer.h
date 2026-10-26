@@ -21,7 +21,6 @@ public:
     void clear();
 
     inline napi_finalize callback() const { return m_callback; }
-    inline void* hint() const { return m_hint; }
 
 private:
     napi_finalize m_callback = nullptr;

@@ -6255,6 +6255,37 @@ it("hexadecimal, octal and binary literals are rounded to the nearest double", (
   expect(BigInt(0xb3c8bf81fdf2247) - 0xb3c8bf81fdf2247n).toBe(57n);
 });
 
+it("`+`, `-` and `~` of a string fold to `Number(text)`, whatever the string is stored as", () => {
+  // A define is an 8-bit string. A literal that is not ASCII is UTF-16.
+  const transpiler = new Bun.Transpiler({
+    loader: "ts",
+    define: { NBSP_ONE: '"\u00A01"', BOM_HEX: '"\uFEFF0x10"', NEL_ONE: '"\u00851"', HALF_OF_A_PAIR: '"\\ud800"' },
+  });
+  const printed = code => transpiler.transformSync(code).trim();
+  // White space is what `String.prototype.trim` takes off: U+00A0, U+FEFF and U+2028 are, U+0085 is not.
+  expect(printed(`x = [+NBSP_ONE, -BOM_HEX, +NEL_ONE, +HALF_OF_A_PAIR];`)).toBe("x = [1, -16, NaN, NaN];");
+  expect(printed(`x = [+"\\u00A01", -"\\uFEFF0x10\\u2028", +"\\u00A0", +"\\u00851", +"1\\u00E9", +"\\uD800"];`)).toBe(
+    "x = [1, -16, 0, NaN, NaN, NaN];",
+  );
+  expect(printed(`x = [+"0x+10", +"inf", -"Infinity", +" 12 "];`)).toBe("x = [NaN, NaN, -1 / 0, 12];");
+  // `~` folds where TypeScript has a constant, which the value of an enum member is. A member that is a string is
+  // inlined where it is read.
+  expect(printed(`enum E { A = ~"\\u00A05" }\nenum S { A = "\\u20287" }\nx = [E.A, +S.A];`)).toEndWith(
+    "x = [-6 /* A */, 7];",
+  );
+
+  // Digits after `0x`, `0o` and `0b` give the nearest double. `Number(text)` of JavaScriptCore is not it for all.
+  const wrong = [];
+  for (const [text, exact] of integersThatNeedRounding()) {
+    // No separator in the text of a number.
+    const nearest = text.includes("_") ? NaN : Number(exact);
+    const out = printed(`x = +"${text}";`);
+    const value = out === "x = 1 / 0;" ? Infinity : Number(out.slice("x = ".length, -1));
+    if (!Object.is(value, nearest)) wrong.push({ text, out, nearest });
+  }
+  expect(wrong).toEqual([]);
+});
+
 it("transformSync, scan and scanImports parse the original code when loader.toString() detaches it", async () => {
   const script = `
     const transpiler = new Bun.Transpiler({ loader: "js" });

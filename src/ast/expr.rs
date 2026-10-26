@@ -2497,30 +2497,12 @@ impl Data {
         match self {
             Data::ENull(_) => Some(0.0),
             Data::EUndefined(_) => Some(f64::NAN),
-            Data::EString(str) => {
-                if str.next.is_some() {
-                    return None;
-                }
-                if !str.is_utf8() {
-                    return None;
-                }
-                // +'1' => 1
-                Some(string_to_equivalent_number_value(str.slice8()))
-            }
+            Data::EString(str) => str.to_number(),
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(if b.value { 1.0 } else { 0.0 }),
             Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
                 Data::ENumber(num) => Some(num.value()),
-                Data::EString(str) => {
-                    if str.next.is_some() {
-                        return None;
-                    }
-                    if !str.is_utf8() {
-                        return None;
-                    }
-                    // +'1' => 1
-                    Some(string_to_equivalent_number_value(str.slice8()))
-                }
+                Data::EString(str) => str.to_number(),
                 _ => None,
             },
             _ => None,
@@ -2821,27 +2803,3 @@ pub mod data {
 /// Compatibility shim: callers in this file use `Store::method()`
 /// (impl-on-struct namespace). Forward to the real `data::Store` module.
 pub use data::Store;
-
-// ───────────────────────────────────────────────────────────────────────────
-// Helpers
-// ───────────────────────────────────────────────────────────────────────────
-
-/// `Number(str)`.
-pub fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
-    // +"" -> 0
-    if str.is_empty() {
-        return 0.0;
-    }
-    if !bun_core::is_all_ascii(str) {
-        return f64::NAN;
-    }
-    unsafe extern "C" {
-        // NOT `safe fn`: callee dereferences `ptr` for `len` bytes — caller must
-        // guarantee the (ptr,len) pair is a valid readable range.
-        fn JSC__jsToNumber(ptr: *const u8, len: usize) -> f64;
-    }
-    // SAFETY: `str` is a live `&[u8]`, so `as_ptr()` is non-null and readable for
-    // exactly `str.len()` bytes for the duration of this call; the C++ side reads
-    // only (no mutation, no retention past return).
-    unsafe { JSC__jsToNumber(str.as_ptr(), str.len()) }
-}

@@ -1042,22 +1042,32 @@ describe("bundler", () => {
         capture(+'\\u0030\\u002e\\u0031');
         capture(+'\\x30\\x2e\\x31');
         capture(+'NotANumber');
-        // not supported
+        // a string that is not ASCII is stored as UTF-16
         capture(+'æ');
+        capture(+'\\u00A01\\uFEFF');
+        capture(-'\\u20280x10');
+        capture(+'\\u00851');
       `,
     },
     minifySyntax: true,
-    capture: [
-      "1",
-      "-123.567",
-      "8.325",
-      "1e8",
-      "0.1",
-      "0.1",
-      "NaN",
-      // untouched
-      '+"æ"',
-    ],
+    capture: ["1", "-123.567", "8.325", "1e8", "0.1", "0.1", "NaN", "NaN", "1", "-16", "NaN"],
+  });
+  // A define is an 8-bit string, also when it is not ASCII.
+  itBundled("minify/ConstantFoldingUnaryPlusStringDefine", {
+    files: {
+      "/entry.ts": `
+        capture(+NBSP_ONE);
+        capture(-BOM_HEX);
+        capture(+NEL_ONE);
+      `,
+    },
+    define: {
+      NBSP_ONE: '"\u00A01"',
+      BOM_HEX: '"\uFEFF0x10"',
+      NEL_ONE: '"\u00851"',
+    },
+    minifySyntax: true,
+    capture: ["1", "-16", "NaN"],
   });
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {

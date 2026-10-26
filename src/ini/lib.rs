@@ -1065,7 +1065,7 @@ mod draft {
             return false;
         }
         // Like nopt: a numeric string is `!!Number(value)`, and any other string is true.
-        bun_ast::expr::string_to_equivalent_number_value(value) != 0.0
+        bun_core::fmt::js_string_to_number(value) != 0.0
     }
 
     /// Where the warnings and errors of a `.npmrc` go.

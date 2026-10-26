@@ -2868,10 +2868,20 @@ impl RunCommand {
                         bstr::BStr::new(target_name),
                     );
                     if ctx.debug.hot_reload == cli::command::HotReload::Watch {
+                        // Ctrl+C ends the wait as it ends a watch session: exit 0, also where SIGINT was inherited as ignored.
+                        #[cfg(unix)]
+                        bun_jsc::posix_signal_handle::enable_watch_mode_signals(
+                            ctx.debug.watch_kill_signal,
+                        );
+                        let clear_terminal =
+                            !this_transpiler.env().has_set_no_clear_terminal_on_reload(
+                                !Output::enable_ansi_colors_stdout(),
+                            );
                         Self::wait_for_entry_file(
-                            &this_transpiler.resolver,
+                            &mut this_transpiler.resolver,
                             fs_top_level_dir,
                             target_name,
+                            clear_terminal,
                         );
                     }
                 } else if !paths::extension(target_name).is_empty() {
@@ -2895,13 +2905,14 @@ impl RunCommand {
         Ok(false)
     }
 
-    /// Under --watch, waits until a file that `target` can resolve to exists, then restarts the process.
+    /// Under --watch, waits for a change to the files that `target` can resolve to, then restarts the process.
+    /// Returns when no save can end that wait.
     fn wait_for_entry_file(
-        resolver: &bun_resolver::Resolver<'_>,
+        resolver: &mut bun_resolver::Resolver<'_>,
         top_level_dir: &[u8],
         target: &[u8],
+        clear_terminal: bool,
     ) {
-        use bun_core::{FileKind, ZBox};
         let mut buf = bun_paths::path_buffer_pool::get();
         // With the start directory gone, `top_level_dir` is a fallback where the entry never was.
         if !paths::is_absolute(target) && bun_core::getcwd(&mut buf).is_err() {
@@ -2912,28 +2923,45 @@ impl RunCommand {
         >(top_level_dir, &mut buf[..], &[target]) else {
             return;
         };
-        let path = ZBox::from_bytes(path);
-        // A directory runs through its package.json, and nothing on disk shows when that starts to resolve.
-        if restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory) {
-            return;
-        }
-        let Some(dir) = paths::dirname(path.as_bytes()) else {
+        let Some(dir) = paths::dirname(path) else {
             return;
         };
-        let mut names: Vec<Box<[u8]>> = Vec::new();
-        resolver.for_each_entry_file_candidate(path.as_bytes(), |file| {
-            names.push(paths::basename(file).into())
+        let mut files: Vec<Box<[u8]>> = Vec::new();
+        resolver
+            .for_each_entry_file_candidate(path, |file| files.push(paths::basename(file).into()));
+        // If the target is a directory, the resolver goes on from one of these files in it.
+        let mut in_directory: Vec<Box<[u8]>> = vec![Box::from(&b"package.json"[..])];
+        resolver.for_each_entry_file_candidate(b"index", |file| {
+            if file != b"index" {
+                in_directory.push(file.into());
+            }
         });
-        let has_entry_file = || restart_on_change::dir_has_file(dir, &names);
-        // The resolver cannot list that directory either, so no save ends a wait there.
-        if has_entry_file()
-            .is_err_and(|err| !matches!(err.get_errno(), sys::E::ENOENT | sys::E::ENOTDIR))
-        {
+        let candidates = restart_on_change::Candidates::new(vec![
+            (dir.into(), files),
+            (path.into(), in_directory),
+        ]);
+        // `Err`: the resolver cannot list that directory either, so no save ends a wait there.
+        let Ok(before) = candidates.look() else {
+            return;
+        };
+        // A directory with a package.json runs through its `main`, which can name any file.
+        if before.iter().any(|file| file.is(1, b"package.json")) {
             return;
         }
-        restart_on_change::restart_when(path.as_bytes(), || {
-            restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory)
-                || has_entry_file().unwrap_or(false)
+        // The failed start looked before `before` was taken. This finds a file that came back in between.
+        resolver.bust_dir_cache(dir);
+        resolver.bust_dir_cache(path);
+        let with_dot = [b"./".as_slice(), target].concat();
+        let resolves_now = [target, &with_dot[..]].into_iter().any(|name| {
+            resolver
+                .resolve(top_level_dir, name, bun_ast::ImportKind::EntryPointRun)
+                .is_ok()
+        });
+        if resolves_now {
+            restart_on_change::restart(clear_terminal);
+        }
+        restart_on_change::restart_when(path, clear_terminal, || {
+            candidates.look().is_ok_and(|now| now != before)
         });
     }
 

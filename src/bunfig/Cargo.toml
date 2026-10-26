@@ -32,4 +32,3 @@ bun_options_types.workspace = true
 bun_paths.workspace = true
 bun_standalone_graph.workspace = true
 bun_sys.workspace = true
-bun_watcher.workspace = true

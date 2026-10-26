@@ -1,75 +1,80 @@
-//! Under `--watch`, a start that fails before the VM exists has no watcher: it waits here for its input.
+//! Under `--watch`, a start that fails before the VM exists has no watcher: it waits here for a change to the files it looked for.
 
 use core::time::Duration;
 
-use bun_core::{FileKind, Timespec, ZBox, ZStr};
+use bun_core::{FileKind, Timespec, ZBox};
 
-pub fn kind_of(path: &ZStr) -> Option<FileKind> {
-    Some(kind_from_stat(&bun_sys::stat(path).ok()?))
+/// The names that a start looked for, by directory. As in the resolver's directory lookup, ASCII letter case does not count.
+pub struct Candidates {
+    dirs: Vec<(Box<[u8]>, Vec<Box<[u8]>>)>,
 }
 
-fn kind_from_stat(stat: &bun_sys::Stat) -> FileKind {
-    bun_sys::kind_from_mode(bun_sys::PosixStat::init(stat).mode as bun_sys::Mode)
+/// A regular file with one of the names, and what a save changes.
+#[derive(PartialEq, Eq)]
+pub struct Found {
+    dir: usize,
+    name: Box<[u8]>,
+    stamp: (u64, u64, Timespec),
 }
 
-/// Whether `dir` has a regular file with one of `names`. As in the resolver's directory lookup, ASCII letter case does not count.
-pub fn dir_has_file(dir: &[u8], names: &[Box<[u8]>]) -> bun_sys::Maybe<bool> {
-    let dir = bun_sys::Dir::open(dir)?;
-    let mut entries = bun_sys::iterate_dir(dir.fd());
-    while let Some(entry) = entries.next()? {
-        let name = entry.name.slice_u8();
-        if !names.iter().any(|wanted| wanted.eq_ignore_ascii_case(name)) {
-            continue;
-        }
-        let kind = match entry.kind {
-            // The listing does not follow a link, and not every file system gives the kind.
-            FileKind::SymLink | FileKind::Unknown => {
-                bun_sys::fstatat(&dir, ZBox::from_bytes(name).as_zstr())
-                    .ok()
-                    .map(|stat| kind_from_stat(&stat))
+impl Found {
+    pub fn is(&self, dir: usize, name: &[u8]) -> bool {
+        self.dir == dir && self.name.eq_ignore_ascii_case(name)
+    }
+}
+
+impl Candidates {
+    pub fn new(dirs: Vec<(Box<[u8]>, Vec<Box<[u8]>>)>) -> Candidates {
+        Candidates { dirs }
+    }
+
+    /// `Err`: a directory is there and cannot be listed. A directory that is not there has no file.
+    pub fn look(&self) -> bun_sys::Maybe<Vec<Found>> {
+        let mut found = Vec::new();
+        for (index, (dir, names)) in self.dirs.iter().enumerate() {
+            let dir = match bun_sys::Dir::open(dir) {
+                Ok(dir) => dir,
+                Err(err) if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
+                    continue;
+                }
+                Err(err) => return Err(err),
+            };
+            let mut entries = bun_sys::iterate_dir(dir.fd());
+            while let Some(entry) = entries.next()? {
+                let name = entry.name.slice_u8();
+                if !names.iter().any(|wanted| wanted.eq_ignore_ascii_case(name)) {
+                    continue;
+                }
+                // This follows a link, as the resolver does to tell a file from a directory.
+                let Ok(stat) = bun_sys::fstatat(&dir, ZBox::from_bytes(name).as_zstr()) else {
+                    continue;
+                };
+                let stat = bun_sys::PosixStat::init(&stat);
+                if bun_sys::kind_from_mode(stat.mode as bun_sys::Mode) != FileKind::File {
+                    continue;
+                }
+                found.push(Found {
+                    dir: index,
+                    name: name.into(),
+                    stamp: (stat.ino, stat.size, stat.mtim),
+                });
             }
-            kind => Some(kind),
-        };
-        if kind == Some(FileKind::File) {
-            return Ok(true);
         }
-    }
-    Ok(false)
-}
-
-/// A file whose content the start could not use, stamped before the start read it so that no save is missed.
-pub struct Input {
-    path: ZBox,
-    seen: Option<(u64, u64, Timespec)>,
-}
-
-impl Input {
-    pub fn new(path: &ZStr) -> Input {
-        Input {
-            seen: Self::stamp(path),
-            path: ZBox::from_bytes(path.as_bytes()),
-        }
-    }
-
-    fn stamp(path: &ZStr) -> Option<(u64, u64, Timespec)> {
-        let stat = bun_sys::PosixStat::init(&bun_sys::stat(path).ok()?);
-        Some((stat.ino, stat.size, stat.mtim))
-    }
-
-    pub fn path(&self) -> &[u8] {
-        self.path.as_bytes()
-    }
-
-    pub fn changed(&self) -> bool {
-        Self::stamp(self.path.as_zstr()) != self.seen
+        // A directory gives its entries in no fixed order.
+        found.sort_by(|a, b| (a.dir, &a.name).cmp(&(b.dir, &b.name)));
+        Ok(found)
     }
 }
 
 // No watcher exists yet and the file may not exist, so there is nothing to give the OS watcher.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Blocks until `ready` returns true, then restarts the process. Call it after the error is printed.
-pub fn restart_when(waits_for: &[u8], mut ready: impl FnMut() -> bool) -> ! {
+/// Blocks until `changed` returns true, then restarts the process. Call it after the error is printed.
+pub fn restart_when(
+    waits_for: &[u8],
+    clear_terminal: bool,
+    mut changed: impl FnMut() -> bool,
+) -> ! {
     bun_core::pretty_errorln!(
         "<r><d>note<r><d>:<r> Bun restarts when {} changes",
         bun_core::fmt::quote(waits_for),
@@ -79,16 +84,25 @@ pub fn restart_when(waits_for: &[u8], mut ready: impl FnMut() -> bool) -> ! {
     // Sleep first: no sequence of failed starts can restart faster than this.
     loop {
         std::thread::sleep(POLL_INTERVAL);
-        if ready() {
+        if changed() {
             break;
         }
     }
+    restart(clear_terminal)
+}
 
+/// Starts the process again with the same arguments, as a watched file change does.
+pub fn restart(clear_terminal: bool) -> ! {
     #[cfg(windows)]
     if !bun_sys::windows::is_watcher_child() {
+        if clear_terminal {
+            bun_core::output::flush();
+            bun_core::output::disable_buffering();
+            bun_core::output::reset_terminal_all();
+        }
         // The first start has not become the watcher manager yet: no parent would spawn the next child.
         bun_sys::windows::become_watcher_manager();
     }
-    bun_core::reload_process(false, false);
+    bun_core::reload_process(clear_terminal, false);
     unreachable!()
 }

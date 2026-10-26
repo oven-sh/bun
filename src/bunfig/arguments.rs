@@ -8,12 +8,11 @@ use bun_bundler::options;
 use bun_core::ZStr;
 use bun_core::{self, Global, Output, env_var};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
-use bun_options_types::context::{Context, HotReload};
+use bun_options_types::context::Context;
 use bun_options_types::schema::api;
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
-use bun_watcher::restart_on_change;
 
 use crate::bunfig::{Bunfig, Counts};
 
@@ -150,7 +149,7 @@ pub fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) {
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
         if let Err(err) = load_bunfig(cmd, ConfigFile::User, path, ctx, None, Counts::Everything) {
-            report_bunfig_load_failure(cmd, ctx.log, err, None);
+            report_bunfig_load_failure(cmd, ctx.log, err);
         }
     }
 }
@@ -241,25 +240,18 @@ fn load_config_path_for_tool(
     load_bunfig(cmd, file, config_path, ctx, tool, Counts::Everything)
 }
 
-/// Under `--watch`, `watched` is the config file: wait for its next save instead of exiting.
 #[cold]
-fn report_bunfig_load_failure(
-    cmd: CommandTag,
-    log: *mut bun_ast::Log,
-    err: crate::Error,
-    watched: Option<restart_on_change::Input>,
-) -> ! {
-    report_bunfig_load_failure_as(cmd, log, err, None, watched)
+fn report_bunfig_load_failure(cmd: CommandTag, log: *mut bun_ast::Log, err: crate::Error) -> ! {
+    report_bunfig_load_failure_as(cmd, log, err, None)
 }
 
-/// `shown`: what the file is called, if that is not its name. `watched`: as for [`report_bunfig_load_failure`].
+/// `shown`: what the file is called, if that is not its name.
 #[cold]
 fn report_bunfig_load_failure_as(
     cmd: CommandTag,
     log: *mut bun_ast::Log,
     err: crate::Error,
     shown: Option<&[u8]>,
-    watched: Option<restart_on_change::Input>,
 ) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *log };
@@ -279,9 +271,6 @@ fn report_bunfig_load_failure_as(
         Output::print_error("\n");
     }
     Output::err(err, "failed to load bunfig", ());
-    if let Some(config) = watched {
-        restart_on_change::restart_when(config.path(), || config.changed());
-    }
     Global::exit(exit_code_of_failure(cmd));
 }
 
@@ -377,10 +366,8 @@ pub fn load_config_for_tool(
         );
     };
 
-    let watched = (ctx.debug.hot_reload == HotReload::Watch)
-        .then(|| restart_on_change::Input::new(config_path));
     if let Err(err) = load_config_path_for_tool(cmd, auto_loaded, config_path, ctx, tool) {
-        report_bunfig_load_failure(cmd, ctx.log, err, watched);
+        report_bunfig_load_failure(cmd, ctx.log, err);
     }
     Ok(())
 }
@@ -436,7 +423,7 @@ pub fn load_config_above_for_tool(
             counts,
         ) {
             if !is_optional {
-                report_bunfig_load_failure_as(cmd, ctx.log, err, Some(&shown), None);
+                report_bunfig_load_failure_as(cmd, ctx.log, err, Some(&shown));
             }
             // SAFETY: as above.
             let log = unsafe { &mut *ctx.log };

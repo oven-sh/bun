@@ -962,26 +962,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
 
-    // Read once, here: `load_config` needs the mode that these select before the rest is parsed.
-    let (hot_flag, watch_flag) = match cmd {
-        CommandTag::AutoCommand
-        | CommandTag::RunCommand
-        | CommandTag::TestCommand
-        | CommandTag::RunAsNodeCommand => (args.flag(b"--hot"), args.flag(b"--watch")),
-        CommandTag::BuildCommand => (false, args.flag(b"--watch")),
-        _ => (false, false),
-    };
-    let restarts_process = if hot_flag {
-        // `watch_instead_of_hot_for_check` makes this the restarting mode later.
-        cmd != CommandTag::RunAsNodeCommand && args.flag(b"--check")
-    } else {
-        watch_flag
-    };
-    if restarts_process {
-        // In this mode a bunfig.toml that does not parse waits for a save.
-        ctx.debug.hot_reload = HotReload::Watch;
-    }
-
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;
     }
@@ -1112,9 +1092,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
-        if hot_flag {
+        if args.flag(b"--hot") {
             ctx.debug.hot_reload = HotReload::Hot;
-        } else if watch_flag {
+        } else if args.flag(b"--watch") {
             ctx.debug.hot_reload = HotReload::Watch;
 
             // Windows applies this to the watcher child process.
@@ -1125,7 +1105,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
         ctx.debug.no_clear_screen = args.flag(b"--no-clear-screen");
-        ctx.debug.watch_flag = watch_flag;
+        ctx.debug.watch_flag = args.flag(b"--watch");
         ctx.debug.watch_kill_signal_arg = args.option(b"--watch-kill-signal").map(Into::into);
 
         if let Some(origin) = args.option(b"--origin") {
@@ -1542,7 +1522,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.bundler_options.ignore_dce_annotations = args.flag(b"--ignore-dce-annotations");
 
     if cmd == CommandTag::BuildCommand {
-        parse_build_command_options(cmd, &args, &mut opts, ctx, &mut diag, watch_flag);
+        parse_build_command_options(cmd, &args, &mut opts, ctx, &mut diag);
     }
 
     if opts.entry_points.is_empty() {
@@ -2059,7 +2039,6 @@ fn parse_build_command_options(
     opts: &mut api::TransformOptions,
     ctx: Context<'_>,
     diag: &mut clap::Diagnostic,
-    watch_flag: bool,
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.check = args.flag(b"--check");
@@ -2251,7 +2230,7 @@ fn parse_build_command_options(
         }
     }
 
-    if watch_flag {
+    if args.flag(b"--watch") {
         ctx.debug.hot_reload = HotReload::Watch;
         bun_core::set_auto_reload_on_crash(true);
 

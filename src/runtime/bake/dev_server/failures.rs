@@ -388,26 +388,21 @@ impl DevServer {
         bv2: &mut BundleV2,
     ) -> Result<(), AllocError> {
         let mut walk = incremental_graph::DeletedFileWalk::default();
-        let in_graph = match graph {
-            bake::Graph::Server | bake::Graph::Ssr => self
+        let client = graph == bake::Graph::Client;
+        // A graph that did not read the file in this build has it from an earlier build: the file is gone there too.
+        let other_graph_too = !bv2.has_source_of(abs_path, !client);
+        let in_client_graph = (client || other_graph_too)
+            && self
+                .client_graph
+                .on_file_deleted(abs_path, bv2, &mut walk)?;
+        let in_server_graph = (!client || other_graph_too)
+            && self
                 .server_graph
-                .on_file_deleted(abs_path, bv2, &mut walk)?,
-            bake::Graph::Client => {
-                let in_graph = self
-                    .client_graph
-                    .on_file_deleted(abs_path, bv2, &mut walk)?;
-                // The importers of a client component are in the server graph.
-                if self
-                    .client_graph
-                    .bundled_files
-                    .get(abs_path)
-                    .is_some_and(|file| file.is_hmr_root)
-                {
-                    self.server_graph
-                        .on_file_deleted(abs_path, bv2, &mut walk)?;
-                }
-                in_graph
-            }
+                .on_file_deleted(abs_path, bv2, &mut walk)?;
+        let in_graph = if client {
+            in_client_graph
+        } else {
+            in_server_graph
         };
         // A loop and not a recursion: a step frees edges of the dependency lists of other files.
         let mut handled = 0;

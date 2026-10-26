@@ -311,7 +311,17 @@ impl DirectoryWatchStore {
             }
             Ok(None) => {
                 // A directory that is gone gets no watch, and a package specifier never makes the resolver look again.
-                let _ = resolver.bust_dir_cache(dir_name_to_watch);
+                let mut gone = dir_name_to_watch;
+                loop {
+                    let _ = resolver.bust_dir_cache(gone);
+                    let parent =
+                        bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(gone);
+                    let is_root = parent.is_empty() || parent.len() >= gone.len();
+                    if is_root || resolver.read_dir_info_ignore_error(parent).is_some() {
+                        break;
+                    }
+                    gone = parent;
+                }
                 None
             }
             Err(_) => None,

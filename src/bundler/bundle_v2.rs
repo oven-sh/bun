@@ -3066,6 +3066,13 @@ pub mod bv2_impl {
             missing_sources::note_file(self, path);
         }
 
+        /// Dev server: true if this build has a source of `path` for the client graph (`client`) or for a server graph.
+        pub fn has_source_of(&self, path: &[u8], client: bool) -> bool {
+            self.graph.build_graphs.iter().any(|(target, sources)| {
+                (target == Target::Browser) == client && sources.get(path).is_some()
+            })
+        }
+
         /// `loader`: see `requested_file_loader`. An `Err` is out of memory.
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,

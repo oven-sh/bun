@@ -2516,15 +2516,31 @@ devTest("a removed package two imports below a framework route fails the route",
   },
 });
 
+// Only the browser copy of Local.ts imports the package. The server graphs get empty.ts.
+const browserCopyImportsPackage = {
+  "package.json": JSON.stringify({ imports: { "#lib": { browser: "lib", default: "./empty.ts" } } }),
+  "empty.ts": `export const a = "E";`,
+  "routes/local.ts": `
+    import * as Local from '../Local';
+    export default function () {
+      return new Response('Local ' + typeof Local.marker);
+    }
+  `,
+  "Local.ts": `
+    "use client";
+    import { a } from '#lib';
+    export const marker = a;
+  `,
+};
+
 // Near.js and Far.js are client components of the package, and a route imports each one: the server
-// graph has the importers of a client component. Only the browser copy of Local.ts imports the
-// barrel, so the client graph finds the package gone. Near.js imports the barrel. Far.js imports it
-// through wrapper.js, so the resolver does not find Far.js when its turn comes.
+// graph has the importers of a client component. The save of Local.ts makes the client graph find
+// the package gone. Near.js imports the barrel. Far.js imports it through wrapper.js, so the resolver
+// does not find Far.js when its turn comes.
 devTest('a removed package with "use client" modules fails the routes that import the modules', {
   framework: { ...minimalFramework, serverComponents: separateSSRGraph },
   files: {
-    "package.json": JSON.stringify({ imports: { "#lib": { browser: "lib", default: "./empty.ts" } } }),
-    "empty.ts": `export const a = "E";`,
+    ...browserCopyImportsPackage,
     ...Object.fromEntries(
       ["Near", "Far"].map(name => [
         `routes/${name.toLowerCase()}.ts`,
@@ -2536,17 +2552,6 @@ devTest('a removed package with "use client" modules fails the routes that impor
         `,
       ]),
     ),
-    "routes/local.ts": `
-      import * as Local from '../Local';
-      export default function () {
-        return new Response('Local ' + typeof Local.marker);
-      }
-    `,
-    "Local.ts": `
-      "use client";
-      import { a } from '#lib';
-      export const marker = a;
-    `,
     ...wrappedPackage,
     "node_modules/lib/Near.js": `
       "use client";
@@ -2577,6 +2582,30 @@ devTest('a removed package with "use client" modules fails the routes that impor
         couldNotResolve("routes/far.ts:1:23", "lib/Far.js"),
         couldNotResolve("routes/near.ts:1:23", "lib/Near.js"),
       ],
+    });
+  },
+});
+
+// routes/barrel.ts imports the barrel in the server graph, and its first build finds the package
+// gone. The client graph has the barrel from the build of /local.
+devTest("a removed package that the server graph finds gone fails a client component that imports it", {
+  framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+  files: {
+    ...browserCopyImportsPackage,
+    "routes/barrel.ts": `
+      import { a } from 'lib';
+      export default function () {
+        return new Response('barrel ' + a);
+      }
+    `,
+    ...abPackage("lib", abBarrel),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/local")).status).toBe(200);
+    removePackage(dev);
+    expect((await dev.fetch("/barrel")).status).toBe(500);
+    await using c = await dev.client("/local", {
+      errors: [couldNotResolve("Local.ts:2:19", "#lib"), couldNotResolve("routes/barrel.ts:1:19", "lib")],
     });
   },
 });
@@ -2638,12 +2667,14 @@ devTest("a removed package that node_modules links to fails the pages above it",
 });
 
 // The save finds the package gone. The dev server then looks for wrapper.js and outer.js in a
-// directory that is gone. The resolver must not keep that answer: the next save finds the package.
+// directory that is gone, and for the directory of other.js to watch it. The resolver must not keep
+// those answers: the next save finds the package.
 for (const perfectIncremental of ["0", "1"]) {
   const page = (tag: string) => `
     import { a } from 'lib';
     import { o } from 'lib/outer.js';
-    console.log('${tag} ' + a + ' ' + o);
+    import { s } from 'lib/sub/other.js';
+    console.log('${tag} ' + a + ' ' + o + ' ' + s);
   `;
   devTest(
     `a removed package that is back builds at the next save (BUN_ASSUME_PERFECT_INCREMENTAL=${perfectIncremental})`,
@@ -2653,19 +2684,24 @@ for (const perfectIncremental of ["0", "1"]) {
         "page.html": emptyHtmlFile({ scripts: ["page.ts"] }),
         "page.ts": page("first"),
         ...wrappedPackage,
+        "node_modules/lib/sub/other.js": `import { a } from '../index.js'; export const s = 'S_' + a;`,
       },
       async test(dev) {
         await using c = await dev.client("/page");
-        await c.expectMessage("first A O_W_A");
+        await c.expectMessage("first A O_W_A S_A");
         fs.renameSync(dev.join("node_modules/lib"), dev.join("node_modules/lib.away"));
         await dev.write("page.ts", page("away"), {
-          errors: [couldNotResolve("page.ts:1:19", "lib"), couldNotResolve("page.ts:2:19", "lib/outer.js")],
+          errors: [
+            couldNotResolve("page.ts:1:19", "lib"),
+            couldNotResolve("page.ts:2:19", "lib/outer.js"),
+            couldNotResolve("page.ts:3:19", "lib/sub/other.js"),
+          ],
         });
         fs.renameSync(dev.join("node_modules/lib.away"), dev.join("node_modules/lib"));
         await c.expectReload(async () => {
           await dev.write("page.ts", page("back"));
         });
-        await c.expectMessage("back A O_W_A");
+        await c.expectMessage("back A O_W_A S_A");
       },
     },
   );

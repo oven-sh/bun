@@ -65,20 +65,12 @@ mod EventLoop {
 // ContentsOrFd
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(bun_core::EnumTag)]
-#[enum_tag(existing = ContentsOrFdTag)]
 pub enum ContentsOrFd {
     Fd { dir: Fd, file: Fd },
     // The `'static` is ownership-erased: contents may be arena-owned,
     // plugin-owned, or truly static (runtime source). The producer keeps the
     // backing allocation alive for the duration of the bundle pass.
     Contents(&'static [u8]),
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub(crate) enum ContentsOrFdTag {
-    Fd,
-    Contents,
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1451,10 +1443,20 @@ pub mod parse_worker {
     // getCodeForParseTaskWithoutPlugins
     // ───────────────────────────────────────────────────────────────────────────
 
+    /// Who a read from disk is for.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum ReadFor {
+        /// The parse task: a file that the output copies is read onto the global heap, for the output to adopt.
+        ParseTask,
+        /// `fetchSourceCode`: the plugin can return a pointer into the bytes and gets a NUL after them, so the worker arena.
+        NativePlugin,
+    }
+
     // `transpiler`/`resolver` are raw `*mut`.
     // Callers pass `resolver = &mut (*transpiler).resolver`; taking
     // `&mut Transpiler` + `&mut Resolver` would be aliased-`&mut` UB. We only
     // touch the disjoint `(*transpiler).fs` and `(*resolver).caches.fs` fields.
+    #[allow(clippy::too_many_arguments)]
     fn get_code_for_parse_task_without_plugins(
         task: &mut ParseTask,
         log: &mut Log,
@@ -1462,7 +1464,8 @@ pub mod parse_worker {
         resolver: *mut Resolver,
         bump: &Bump,
         file_path: &mut Fs::Path,
-        _loader: Loader,
+        loader: Loader,
+        read_for: ReadFor,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -1523,13 +1526,13 @@ pub mod parse_worker {
                     }
                 }
 
-                // Always read into the worker arena: it is pinned for the
-                // entire bundle pass (freed only via `pool.deinit()` inside
-                // `deinit_without_freeing_arena`, after `process_files_to_copy`
-                // has already deep-copied every additional-file body into its
-                // `OutputFile`). This avoids churning the global allocator with
-                // one `Vec<u8>` per file.
-                let read_arena: Option<&Bump> = Some(bump);
+                // `None` is the global heap: the output adopts a copied file's buffer, which an arena block does not allow.
+                let read_arena: Option<&Bump> =
+                    if read_for == ReadFor::ParseTask && loader.should_copy_for_bundling() {
+                        None
+                    } else {
+                        Some(bump)
+                    };
                 // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`;
                 // `(*transpiler).fs` is a live `*mut FileSystem` BACKREF.
                 let fs_ref = unsafe { &mut *(*transpiler).fs };
@@ -1649,7 +1652,14 @@ pub mod parse_worker {
 
         if !might_have_on_parse_plugins {
             return get_code_for_parse_task_without_plugins(
-                task, log, transpiler, resolver, bump, file_path, *loader,
+                task,
+                log,
+                transpiler,
+                resolver,
+                bump,
+                file_path,
+                *loader,
+                ReadFor::ParseTask,
             );
         }
 
@@ -1705,10 +1715,7 @@ pub mod parse_worker {
         // the parent via offset_of; a `&mut` here would (a) shrink provenance to
         // the inner field and (b) alias with any `&`/`&mut` to the wrapper.
         result: *mut OnBeforeParseResult,
-        // Owns the `Contents` fetched by `fetch_source_code` so the buffer the
-        // native plugin reads through `wrapper.original_source` stays alive for
-        // the duration of `run`. Returned to the caller when the plugin keeps
-        // the original source, dropped otherwise.
+        // What `fetch_source_code` read: `run` returns it when the plugin keeps that source.
         original_contents: Option<crate::cache::Contents>,
     }
 
@@ -1980,6 +1987,7 @@ pub mod parse_worker {
                 this.bump,
                 this.file_path,
                 result.loader,
+                ReadFor::NativePlugin,
             ) {
                 Ok(e) => e,
                 Err(e) => {
@@ -1988,14 +1996,6 @@ pub mod parse_worker {
                     return 1;
                 }
             };
-            // `Contents::Owned(Vec<u8>)` (the file-read path — see
-            // `.rs:1287` / `resolver/lib.rs:2285`) frees on drop, which would
-            // leave `result.source_ptr` / `wrapper.original_source` dangling for
-            // the native plugin and `OnBeforeParsePlugin::run` to read through.
-            // Stash ownership on `this.original_contents` so the bytes outlive
-            // the wrapper; `OnBeforeParsePlugin::run` returns it when the
-            // plugin keeps the original source, or drops it when the plugin
-            // replaces the source.
             let fd = entry.fd;
             this.original_contents = Some(core::mem::take(&mut entry.contents));
             let contents_slice = this
@@ -2212,11 +2212,7 @@ pub mod parse_worker {
                     }
                     *from_plugin = true;
                     *self.loader = wrapper.result.loader;
-                    // If the plugin called `fetch_source_code` and left the
-                    // source unchanged, hand the original `Contents` back to
-                    // the caller so the buffer is reclaimed instead of leaked.
-                    // Otherwise the plugin replaced the source; the original
-                    // (if any) drops with `self`.
+                    // A plugin that left the fetched source unchanged gets the original `Contents` back.
                     let contents =
                         if !wrapper.original_source.is_null() && ptr == wrapper.original_source {
                             self.original_contents
@@ -2246,6 +2242,7 @@ pub mod parse_worker {
                 self.bump,
                 self.file_path,
                 *self.loader,
+                ReadFor::ParseTask,
             )
         }
     }
@@ -2295,9 +2292,12 @@ pub mod parse_worker {
             &mut loader,
             &mut contents_came_from_plugin,
         );
-        if result.is_err() {
+        match &result {
+            Ok(entry) => {
+                this.has_heap_reads |= matches!(entry.contents, crate::cache::Contents::Owned(_))
+            }
             // SAFETY: `transpiler` is live; no other borrow of it is held here.
-            unsafe { (*transpiler).reset_store() };
+            Err(_) => unsafe { (*transpiler).reset_store() },
         }
         result
     }
@@ -2311,7 +2311,7 @@ pub mod parse_worker {
         this: &mut crate::Worker,
         step: &mut Step,
         log: &mut Log,
-        entry: &mut CacheEntry,
+        mut entry: CacheEntry,
     ) -> core::result::Result<Success, AnyError> {
         // reshaped for borrowck — `transpiler_for_target` borrows `this`
         // mutably; we may need to call it again below (server-components branch),
@@ -2337,11 +2337,7 @@ pub mod parse_worker {
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
             std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
-        // Error-path cleanup (`transpiler.reset_store()` and
-        // `if (.fd) entry.deinit(arena)`) is reshaped into the
-        // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
-        // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows that
-        // follow. There are no other fallible `?` between here and that match.
+        // Error-path cleanup (`transpiler.reset_store()`) is the explicit `match ast_result { Err(e) => ... }` below.
         // `resolver` is a field of
         // `*transpiler`. Keep raw — never materialize `&mut Transpiler`
         // while a `&mut` derived from `resolver` is live. `resolver` is
@@ -2355,18 +2351,6 @@ pub mod parse_worker {
             // SAFETY: `options` is a disjoint field of the live `*transpiler` (see .rs:1955).
             .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
             .unwrap_or(Loader::File);
-
-        // WARNING: Do not change the variant of `task.contents_or_fd` from
-        // `.fd` to `.contents` (or back) after this point!
-        //
-        // When `task.contents_or_fd == .fd`, `entry.contents` is an owned string.
-        // When `task.contents_or_fd == .contents`, `entry.contents` is NOT owned! Freeing it here will cause a double free!
-        //
-        // Changing from `.contents` to `.fd` will cause a double free.
-        // This was the case in the situation where the ParseTask receives its `.contents` from an onLoad plugin, which caused it to be
-        // allocated by `bun.default_allocator` and then freed in `BundleV2.deinit` (and also by `entry.deinit(arena)` below).
-        #[cfg(debug_assertions)]
-        let debug_original_variant_check: ContentsOrFdTag = task.contents_or_fd.tag();
 
         // SAFETY: `worker_raw` derived from the live `this: &mut Worker` above.
         // Read the `BackRef` field via `worker_raw` (not `this`) so no
@@ -2457,10 +2441,7 @@ pub mod parse_worker {
                 is_symlink: file_path.is_symlink,
             },
             index: bun_ast::Index(task.source_index.get()),
-            // `entry.contents` is owned by `task.stage` (written back by
-            // the caller after parse — see `ParseTask::run`). `Source` is stored in
-            // `Success` which lives no longer than the `ParseTask` itself, so this
-            // borrow is sound. Routed through the audited `StoreStr` arena-erasure
+            // A heap read (`Contents::Owned`) moves into `Success` below, beside this alias. Routed through the audited `StoreStr` arena-erasure
             // path (single `from_raw_parts` in `StoreStr::slice`); replace with
             // `Source<'arena>` once that lifetime is threaded through `Success`/Graph.
             contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
@@ -2743,23 +2724,8 @@ pub mod parse_worker {
         let mut ast = match ast_result {
             Ok(a) => a,
             Err(e) => {
-                // Error-path cleanup: reset the AST store
-                // unconditionally, and free the owned `entry.contents` only when
-                // it was sourced from `.fd` (the `.contents` variant is borrowed —
-                // freeing it would double-free in `BundleV2.deinit`).
-                #[cfg(debug_assertions)]
-                if task.contents_or_fd.tag() != debug_original_variant_check {
-                    panic!(
-                        "BUG: `task.contents_or_fd` changed in a way that will cause a double free or memory to leak!\n\n    Original = {}\n    New = {}\n",
-                        <&'static str>::from(debug_original_variant_check),
-                        <&'static str>::from(task.contents_or_fd.tag()),
-                    );
-                }
                 // SAFETY: `transpiler` is live; no other borrow of it is held here.
                 unsafe { (*transpiler).reset_store() };
-                if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
-                    entry.deinit();
-                }
                 return Err(e);
             }
         };
@@ -2777,9 +2743,15 @@ pub mod parse_worker {
 
         *step = Step::Resolve;
 
+        let mut result_source = source.clone();
+        // The graph row takes a heap read, for the `OutputFile` or the dev server to adopt.
+        if let crate::cache::Contents::Owned(bytes) = &mut entry.contents {
+            result_source.contents = std::borrow::Cow::Owned(core::mem::take(bytes));
+        }
+
         Ok(Success {
             ast,
-            source: source.clone(),
+            source: result_source,
             log: core::mem::take(log),
             use_directive,
             unique_key_for_additional_file: unique_key_for_additional_file.key,
@@ -2825,53 +2797,45 @@ pub mod parse_worker {
         debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
         let value: ResultValue = 'value: {
-            if matches!(this.stage, ParseTaskStage::NeedsSourceCode) {
-                match get_source_code(this, worker, &mut log) {
-                    Ok(entry) => this.stage = ParseTaskStage::NeedsParse(entry),
-                    Err(e) => {
+            // A local owns the entry, since the arena-owned `ParseTask` never drops: every exit frees a heap read.
+            let entry = match core::mem::replace(&mut this.stage, ParseTaskStage::NeedsSourceCode) {
+                ParseTaskStage::NeedsParse(entry) => entry,
+                ParseTaskStage::NeedsSourceCode => {
+                    let entry = match get_source_code(this, worker, &mut log) {
+                        Ok(entry) => entry,
+                        Err(e) => {
+                            break 'value ResultValue::Err(ResultError {
+                                err: e,
+                                step,
+                                log,
+                                source_index: this.source_index,
+                                target: this.known_target,
+                            });
+                        }
+                    };
+
+                    if log.has_errors() {
                         break 'value ResultValue::Err(ResultError {
-                            err: e,
+                            err: crate::Error::SyntaxError,
                             step,
                             log,
                             source_index: this.source_index,
                             target: this.known_target,
                         });
                     }
-                }
 
-                if log.has_errors() {
-                    break 'value ResultValue::Err(ResultError {
-                        err: crate::Error::SyntaxError,
-                        step,
-                        log,
-                        source_index: this.source_index,
-                        target: this.known_target,
-                    });
+                    if crate::ThreadPool::uses_io_pool() {
+                        this.stage = ParseTaskStage::NeedsParse(entry);
+                        // SAFETY: `pool` is a `NonNull<ThreadPool>` BACKREF live for the
+                        // bundle pass.
+                        ctx.graph.pool().schedule_inside_thread_pool(this);
+                        worker.unget();
+                        return;
+                    }
+                    entry
                 }
-
-                if crate::ThreadPool::uses_io_pool() {
-                    // SAFETY: `pool` is a `NonNull<ThreadPool>` BACKREF live for the
-                    // bundle pass.
-                    ctx.graph.pool().schedule_inside_thread_pool(this);
-                    worker.unget();
-                    return;
-                }
-            }
-
-            // reshaped for borrowck — `this` and `this.stage.needs_parse`
-            // both borrowed mutably. The entry must live
-            // in-place so its `Contents::Owned` buffer survives in
-            // `task.stage` for the bundle's lifetime (Success.source.contents
-            // borrows it via the arena-erased `StoreStr` path). Take it out, parse, then *write it
-            // back* on every path before `break 'value` so dropping the local
-            // can't free the buffer underneath the borrowed source.
-            let mut entry =
-                match core::mem::replace(&mut this.stage, ParseTaskStage::NeedsSourceCode) {
-                    ParseTaskStage::NeedsParse(e) => e,
-                    ParseTaskStage::NeedsSourceCode => unreachable!(),
-                };
-            let parsed = run_with_source_code(this, worker, &mut step, &mut log, &mut entry);
-            this.stage = ParseTaskStage::NeedsParse(entry);
+            };
+            let parsed = run_with_source_code(this, worker, &mut step, &mut log, entry);
             match parsed {
                 Ok(ast) => {
                     // When using HMR, always flag asts with errors as parse failures.

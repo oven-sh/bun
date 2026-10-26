@@ -234,11 +234,7 @@ impl ThreadPool {
                 unreachable!()
             };
             let contents = *contents;
-            // `cache::Contents` has no borrowed-slice variant; the
-            // contract (see ParseTask.rs `run_with_source_code` defer) is that
-            // `entry.deinit()` is *skipped* when `contents_or_fd == .contents`,
-            // so an `External` provenance tag (no-op deinit) is the correct
-            // mapping for these unowned bytes.
+            // `cache::Contents` has no borrowed-slice variant: `External` owns nothing, so the entry's drop leaves these bytes alone.
             // SAFETY: caller contract; borrow ends at `;`.
             unsafe {
                 (*parse_task).stage = ParseTaskStage::NeedsParse(CacheEntry {
@@ -380,6 +376,7 @@ impl ThreadPool {
                 data: None,
                 ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
                 has_created: false,
+                has_heap_reads: false,
                 deinit_task: ThreadPoolLib::Task {
                     node: ThreadPoolLib::Node::default(),
                     callback: Worker::deinit_callback,
@@ -440,6 +437,8 @@ pub struct Worker {
 
     pub(crate) ast_memory_store: ManuallyDrop<bun_ast::ASTMemoryAllocator>,
     pub(crate) has_created: bool,
+    /// This thread read a file onto the global heap for the output to adopt.
+    pub(crate) has_heap_reads: bool,
     /// `ThreadPoolLib.Thread.current` — `None` when called off a pool thread.
     /// `ParentRef` (not raw `*mut`) because the pool-owned `Thread` strictly
     /// outlives the per-thread `Worker` it created, and the only access is
@@ -580,6 +579,10 @@ impl Worker {
         unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
         if worker.has_created {
             worker.heap = None;
+        }
+        if worker.has_heap_reads {
+            // Another thread frees those buffers, and back-to-back bundles never park this thread for its idle sweep.
+            bun_core::Global::mimalloc_cleanup(false);
         }
         WORKER_LIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
     }

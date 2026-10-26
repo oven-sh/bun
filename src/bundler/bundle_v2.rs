@@ -252,13 +252,18 @@ impl<'a> BundleV2<'a> {
             .unused_import_flags_ts
     }
 
-    /// A `files` entry is a source that no directory holds, like a plugin's.
+    /// A `files` entry is a source that no directory holds, like a plugin's. Its key has forward slashes.
     fn set_file_map_result_flags(
         &mut self,
         target: options::Target,
         result: &mut bun_resolver::Result,
     ) {
-        let flags = self.root_unused_import_flags_ts(target, &result.path_pair.primary);
+        let path = &result.path_pair.primary;
+        let flags = if bun_core::strings::contains(path.text, b"/node_modules/") {
+            options::TSUnusedImportFlags::empty()
+        } else {
+            self.root_unused_import_flags_ts(target, path)
+        };
         result.flags.set_unused_import_flags_ts(flags);
     }
 

@@ -126,7 +126,7 @@ fn join_aliases(kind1: MemoizationLevel, kind2: MemoizationLevel) -> Memoization
 struct IdentifierNode {
     level: MemoizationLevel,
     memoized: bool,
-    /// Not in upstream: indices into `CollectState::operands`, not one set of operands per lvalue.
+    /// Not in upstream: indices into `CollectState::operand_lists`, not a set of operands.
     dependencies: SmallVec<[u32; 4]>,
     scopes: IndexSet<ScopeId>,
     seen: bool,
@@ -139,7 +139,7 @@ struct ScopeNode {
 }
 
 /// Not in upstream: the rvalues of one instruction, the dependencies of each of its lvalues.
-struct Operands {
+struct OperandList {
     /// They are `CollectState::operand_ids[start..end]`.
     start: u32,
     end: u32,
@@ -157,7 +157,7 @@ struct CollectState {
     identifiers: IdMap<DeclarationId, IdentifierNode>,
     scopes: IdMap<ScopeId, ScopeNode>,
     /// Indexed by `IdentifierNode::dependencies`.
-    operands: Vec<Operands>,
+    operand_lists: Vec<OperandList>,
     operand_ids: Vec<DeclarationId>,
     escaping_values: IndexSet<DeclarationId>,
     /// First invariant violation. The `()` visitor callbacks cannot return it.
@@ -170,7 +170,7 @@ impl CollectState {
             definitions: IdMap::new(),
             identifiers: IdMap::new(),
             scopes: IdMap::new(),
-            operands: Vec::new(),
+            operand_lists: Vec::new(),
             operand_ids: Vec::new(),
             escaping_values: IndexSet::new(),
             error: None,
@@ -944,7 +944,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
         }
 
         // Add the operands as dependencies of all lvalues
-        let operands_idx = if aliasing_lvalues.is_empty() || rvalue_data.is_empty() {
+        let list_idx = if aliasing_lvalues.is_empty() || rvalue_data.is_empty() {
             None
         } else {
             let start = state.operand_ids.len() as u32;
@@ -952,12 +952,12 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 .operand_ids
                 .extend(rvalue_data.iter().map(|(_, operand_id)| *operand_id));
             let end = state.operand_ids.len() as u32;
-            state.operands.push(Operands {
+            state.operand_lists.push(OperandList {
                 start,
                 end,
                 next: start,
             });
-            Some(state.operands.len() as u32 - 1)
+            Some(state.operand_lists.len() as u32 - 1)
         };
         for lv in &aliasing_lvalues {
             let lvalue_decl_id = env.identifiers[lv.place_identifier.0 as usize].declaration_id;
@@ -974,8 +974,8 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 });
             node.level = join_aliases(node.level, lv.level);
             // Not in upstream, which skips the lvalue itself: a visit of a seen node has no effect.
-            if let Some(operands_idx) = operands_idx {
-                node.dependencies.push(operands_idx);
+            if let Some(list_idx) = list_idx {
+                node.dependencies.push(list_idx);
             }
 
             state.visit_operand(
@@ -1167,20 +1167,20 @@ fn compute_memoized_identifiers(
         let reads_result = level == MemoizationLevel::Conditional && !force_memoize;
         let mut has_memoized_dependency = false;
         let mut nth = 0;
-        while let Some(&operands_idx) = state.identifiers.get(id).unwrap().dependencies.get(nth) {
+        while let Some(&list_idx) = state.identifiers.get(id).unwrap().dependencies.get(nth) {
             nth += 1;
-            let mut own = state.operands[operands_idx as usize].start;
+            let mut own = state.operand_lists[list_idx as usize].start;
             loop {
-                let operands = &mut state.operands[operands_idx as usize];
-                // Not in upstream: only a first visit has an effect, so the others share a cursor.
-                let at = if reads_result { own } else { operands.next };
-                if at == operands.end {
+                let list = &mut state.operand_lists[list_idx as usize];
+                // Not in upstream: a node that reads no result skips operands already visited.
+                let at = if reads_result { own } else { list.next };
+                if at == list.end {
                     break;
                 }
                 if reads_result {
                     own = at + 1;
                 } else {
-                    operands.next = at + 1;
+                    list.next = at + 1;
                 }
                 let dep = state.operand_ids[at as usize];
                 has_memoized_dependency |= visit(dep, false, state, memoized, env)?;

@@ -14,6 +14,12 @@
 
 namespace Bun {
 
+namespace NodeVM {
+// NodeVM.cpp: struct declarations in a source are lowered to plain classes before JavaScriptCore compiles it.
+WTF::String lowerStructSyntax(JSC::JSGlobalObject*, const WTF::String& source, int kind);
+void installStructBase(JSC::JSGlobalObject*, JSC::JSGlobalObject* target);
+}
+
 NodeVMModuleRequest::NodeVMModuleRequest(WTF::String specifier, WTF::HashMap<WTF::String, WTF::String> importAttributes)
     : m_specifier(WTF::move(specifier))
     , m_importAttributes(WTF::move(importAttributes))
@@ -331,7 +337,30 @@ NodeVMModule* NodeVMModule::create(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
     JSValue disambiguator = args.at(2);
 
     if (disambiguator.isString()) {
-        RELEASE_AND_RETURN(scope, NodeVMSourceTextModule::create(vm, globalObject, args));
+        // A source that declares structs is lowered to plain classes; its context gets the helper the lowering calls.
+        WTF::String sourceText = disambiguator.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        WTF::String lowered = NodeVM::lowerStructSyntax(globalObject, sourceText, 2);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (lowered.impl() == sourceText.impl()) {
+            RELEASE_AND_RETURN(scope, NodeVMSourceTextModule::create(vm, globalObject, args));
+        }
+
+        JSC::JSGlobalObject* target = globalObject;
+        JSValue contextValue = args.at(1);
+        if (contextValue.isObject()) {
+            target = NodeVM::getGlobalObjectFromContext(globalObject, contextValue, false);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        if (target) {
+            NodeVM::installStructBase(globalObject, target);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+
+        MarkedArgumentBuffer loweredArgs;
+        for (size_t i = 0; i < args.size(); ++i)
+            loweredArgs.append(i == 2 ? JSValue(jsString(vm, lowered)) : args.at(i));
+        RELEASE_AND_RETURN(scope, NodeVMSourceTextModule::create(vm, globalObject, ArgList(loweredArgs)));
     }
 
     if (disambiguator.inherits(JSArray::info())) {

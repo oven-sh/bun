@@ -390,14 +390,15 @@ devTest("importing a file that was renamed before a build read it shows an error
   async test(dev) {
     await dev.fetch("/index");
     fs.renameSync(dev.join("src/renamed.ts"), dev.join("src/renamed.tsx"));
-    {
-      await using c = await dev.client("/second", {
-        errors: ['second.ts:1:23: error: Could not resolve: "./src/renamed"'],
-      });
-    }
-    // A new file is a change in src/ for the watcher of each platform.
-    await dev.write("src/added.ts", `export {};`);
-    await using c = await dev.client("/second");
+    await using c = await dev.client("/second", {
+      errors: ['second.ts:1:23: error: Could not resolve: "./src/renamed"'],
+    });
+    await c.expectReload(async () => {
+      await using batch = await dev.batchChanges();
+      // A new file is a change in src/ for the watcher of each platform. The save builds second.ts again.
+      await dev.write("src/added.ts", `export {};`);
+      await dev.writeNoChanges("second.ts");
+    });
     await c.expectMessage("second: ts");
   },
 });
@@ -648,7 +649,9 @@ devTest("an import that a plugin resolves to a missing file is built again when 
   async test(dev) {
     const errors = ['index.ts:1:23: error: Could not resolve: "./data"'];
     await using c = await dev.client("/index", { errors });
-    await dev.write("unrelated.txt", "a change in the directory of index.ts", { errors });
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("unrelated.txt", "a change in the directory of index.ts", { errors });
+    });
     expect(await dev.fetch("/counts").json()).toEqual({ onResolve: 1 });
     await c.expectReload(async () => {
       await dev.write("generated/data.ts", `export const value = "generated";`);

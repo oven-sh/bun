@@ -69,7 +69,7 @@ Each `paths` entry is a module name or an object:
 | `importNamePattern` | Report only the names that match this regular expression. |
 | `allowImportNamePattern` | Report every name except those that match this regular expression. |
 
-An `import type` is erased when the file is compiled, so it doesn't load anything. With `{ name: "./server/db", allowTypeImports: true }`, these are allowed:
+An `import type` is erased when the file is compiled, so it doesn't load anything. With `verbatimModuleSyntax`, `import { type Order }` is not erased: it still loads the module. With `{ name: "./server/db", allowTypeImports: true }`, these are allowed:
 
 {/* good {"options": [{"paths": [{"name": "./server/db", "allowTypeImports": true}]}]} */}
 ```ts

@@ -64,6 +64,68 @@ describe("one shared object is one JS object per realm", () => {
   });
 });
 
+describe("symbols are shareable values", () => {
+  test("unique, registered and well-known symbols round trip in one realm", () => {
+    shared struct Box {
+      v;
+    }
+    const box = new Box();
+    for (const symbol of [Symbol("u"), Symbol(), Symbol(""), Symbol.for("registered"), Symbol.iterator]) {
+      expect(Reflect.canBeShared(symbol)).toBe(true);
+      box.v = symbol;
+      expect(box.v).toBe(symbol);
+      expect(Atomics.load(box, "v")).toBe(symbol);
+    }
+    const symbol = Symbol("same");
+    box.v = symbol;
+    // Another symbol with the same description is another symbol.
+    expect(Atomics.compareExchange(box, "v", Symbol("same"), 1)).toBe(symbol);
+    expect(box.v).toBe(symbol);
+    expect(Atomics.compareExchange(box, "v", symbol, 1)).toBe(symbol);
+    expect(box.v).toBe(1);
+  });
+
+  test("another agent gets symbols that are the same across agents", async () => {
+    shared struct Box {
+      a;
+      b;
+      c;
+    }
+    const box = new Box();
+    const unique = Symbol("unique");
+    const registered = Symbol.for("shared.registered");
+    box.a = unique;
+    box.b = registered;
+    const src = `
+      self.onmessage = ({ data: box }) => {
+        const a = box.a;
+        const b = box.b;
+        box.c = a;
+        postMessage([
+          typeof a,
+          a.description,
+          b === Symbol.for("shared.registered"),
+          Symbol.keyFor(b),
+          Symbol.keyFor(a),
+          box.a === a,
+          Atomics.load(box, "a") === a,
+        ]);
+      };
+    `;
+    const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+    const worker = new Worker(url);
+    const result = new Promise<unknown[]>((resolve, reject) => {
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = e => reject(e.error ?? e);
+    });
+    worker.postMessage(box);
+    expect(await result).toEqual(["symbol", "unique", true, "shared.registered", undefined, true, true]);
+    worker.terminate();
+    // The symbol the worker stored back is the one this agent made.
+    expect(box.c).toBe(unique);
+  });
+});
+
 describe("Atomics in a realm that only received a struct", () => {
   test("a worker uses Atomics on a struct before it reads any of the structs names", async () => {
     shared struct Box {

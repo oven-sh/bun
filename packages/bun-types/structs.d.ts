@@ -14,6 +14,7 @@ type SharedValue =
   | number
   | string
   | bigint
+  | symbol
   | SharedStructObject
   | SharedArray
   | AtomicsMutex

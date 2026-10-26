@@ -22,11 +22,11 @@ describe("shared struct", () => {
     }
     const a = new Box();
     const b = new Box();
-    for (const ok of [undefined, null, true, 1.5, "str", 10n, b]) {
+    for (const ok of [undefined, null, true, 1.5, "str", 10n, b, Symbol("s"), Symbol.for("registered")]) {
       a.value = ok;
       expect(a.value).toBe(ok);
     }
-    for (const bad of [{}, [], () => {}, Symbol("s")]) {
+    for (const bad of [{}, [], () => {}]) {
       expect(() => {
         a.value = bad;
       }).toThrow(TypeError);
@@ -65,7 +65,7 @@ describe("shared struct", () => {
     expect(Reflect.canBeShared(new Box())).toBe(true);
     expect(Reflect.canBeShared({})).toBe(false);
     expect(Reflect.canBeShared(() => {})).toBe(false);
-    expect(Reflect.canBeShared(Symbol("s"))).toBe(false);
+    expect(Reflect.canBeShared(Symbol("s"))).toBe(true);
   });
 
   test("Atomics on struct fields", () => {

@@ -38,6 +38,9 @@ if (process.argv[2] === "server") {
     },
     {
       sni: { "*": { keys: [createPrivateKey(readFileSync(keyPath))], certs: [readFileSync(certPath)] } },
+      // Without this, lsquic picks one of two congestion controllers by its first round-trip time, and their first
+      // windows differ by a factor of three. The numbers of the test are for this one.
+      cc: "bbr",
       transportParams: { maxIdleTimeout: 20, initialMaxStreamsBidi: 1000 },
       onheaders(this: any, headers: Record<string, string>) {
         const path = headers[":path"];
@@ -50,9 +53,9 @@ if (process.argv[2] === "server") {
           return;
         }
         // The client's last request. Its packet acknowledged everything that the server sent, and the client reads
-        // nothing from now on. One pass of the engine writes the whole flight: more than the congestion window
-        // holds, so the window fills and stays full.
-        const { stats } = this.session;
+        // nothing from now on. The flight is larger than the congestion window, so the window fills and stays full.
+        const session = this.session;
+        const { stats } = session;
         const sentBefore = stats.bytesSent;
         const lostBefore = stats.pktLost;
         for (const [stream, i] of responses) {
@@ -61,9 +64,13 @@ if (process.argv[2] === "server") {
           stream.writer.endSync();
         }
         const useUpTheCredit = () => {
-          // lsquic probes twice for a lost packet and then takes every packet for lost. After that it holds the rest
-          // of the flight back, so the window does not fill on a machine that is this slow.
-          const flightIsOver = stats.bytesSent - sentBefore + 4096n >= stats.cwnd || stats.pktLost - lostBefore > 2n;
+          // A machine that stalls for longer than the idle timeout loses the session, and its numbers stay as they are.
+          if (session.destroyed) return print("the session ended before the flight did");
+          // The flight is over when its bytes fill the congestion window. Before that, lsquic's pacer can hold the
+          // next packet back for a moment. lsquic also probes twice for a lost packet and then takes every packet for
+          // lost. After that it holds the rest of the flight back, so the window does not fill on a machine that is
+          // this slow.
+          const flightIsOver = stats.bytesSent - sentBefore >= stats.cwnd || stats.pktLost - lostBefore > 2n;
           if (!flightIsOver) return void setImmediate(useUpTheCredit);
           const sent = wantTrailers.splice(0);
           // The last response of the flight has the end of its message in lsquic's buffer.

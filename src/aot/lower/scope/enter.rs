@@ -293,7 +293,7 @@ fn emit_entry_value(
             ScopeSlot::ArgumentsBinding => {
                 find_entry(entry.initial, BindingRef::Slot(scope, ScopeSlot::Arguments))
             }
-            ScopeSlot::EvalVariables => {
+            ScopeSlot::EvalVariables | ScopeSlot::ParameterEvalVariables => {
                 let layout = lowering.file.untyped_layout(&[]);
                 let head = lowering.builder.new_object(layout, &[], None, &[]);
                 let null = lowering.builder.null();

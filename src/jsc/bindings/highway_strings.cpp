@@ -498,9 +498,10 @@ static HWY_INLINE bool IsUntidyPathPartAt(const uint8_t* HWY_RESTRICT path, size
 }
 
 // `path` has more bytes than `d` has lanes.
-template<class D>
+template<bool stops_at_non_ascii, class D>
 static HWY_INLINE size_t IndexOfUntidySlashBy(D d, const uint8_t* HWY_RESTRICT path, size_t len)
 {
+    const hn::RebindToSigned<D> ds;
     const size_t N = hn::Lanes(d);
     const auto slash = hn::Set(d, uint8_t { '/' });
     const auto lowest_bit = hn::Set(d, uint8_t { 1 });
@@ -508,33 +509,49 @@ static HWY_INLINE size_t IndexOfUntidySlashBy(D d, const uint8_t* HWY_RESTRICT p
     const size_t last = len - N - 1;
     size_t at = 0;
     while (true) {
+        const auto bytes = hn::LoadU(d, path + at);
         // A '/' with a '/' or a '.' after it. '.' is '/' without its lowest bit.
-        const auto suspects = hn::And(hn::Eq(hn::LoadU(d, path + at), slash),
+        auto suspects = hn::And(hn::Eq(bytes, slash),
             hn::Eq(hn::Or(hn::LoadU(d, path + at + 1), lowest_bit), slash));
+        if constexpr (stops_at_non_ascii)
+            suspects = hn::Or(suspects, hn::RebindMask(d, hn::Lt(hn::BitCast(ds, bytes), hn::Zero(ds))));
         if (HWY_UNLIKELY(!hn::AllFalse(d, suspects))) {
             for (uint64_t bits = hn::BitsFromMask(d, suspects); bits != 0; bits &= bits - 1) {
                 const size_t found = at + hwy::Num0BitsBelowLS1Bit_Nonzero64(bits);
-                if (IsUntidyPathPartAt(path, len, found + 1)) return found;
+                if ((stops_at_non_ascii && path[found] != '/') || IsUntidyPathPartAt(path, len, found + 1)) return found;
             }
         }
-        if (at == last) return len;
+        if (at == last) return stops_at_non_ascii && path[len - 1] >= 0x80 ? len - 1 : len;
         at = HWY_MIN(at + N, last);
     }
+}
+
+template<bool stops_at_non_ascii>
+static HWY_INLINE size_t IndexOfUntidySlash(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    const hn::CappedTag<uint8_t, 32> d32;
+    const hn::CappedTag<uint8_t, 16> d16;
+    const hn::CappedTag<uint8_t, 8> d8;
+    if (len > hn::Lanes(d32)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d32, path, len);
+    if (hn::Lanes(d16) < hn::Lanes(d32) && len > hn::Lanes(d16)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d16, path, len);
+    if (len > hn::Lanes(d8)) return IndexOfUntidySlashBy<stops_at_non_ascii>(d8, path, len);
+    for (size_t at = 0; at + 1 < len; ++at) {
+        if (stops_at_non_ascii && path[at] >= 0x80) return at;
+        if (path[at] == '/' && IsUntidyPathPartAt(path, len, at + 1)) return at;
+    }
+    return stops_at_non_ascii && len != 0 && path[len - 1] >= 0x80 ? len - 1 : len;
 }
 
 // Index of the first '/' in front of a part that is empty, "." or "..", or `len` if there is none.
 size_t IndexOfUntidySlashImpl(const uint8_t* HWY_RESTRICT path, size_t len)
 {
-    const hn::CappedTag<uint8_t, 32> d32;
-    const hn::CappedTag<uint8_t, 16> d16;
-    const hn::CappedTag<uint8_t, 8> d8;
-    if (len > hn::Lanes(d32)) return IndexOfUntidySlashBy(d32, path, len);
-    if (hn::Lanes(d16) < hn::Lanes(d32) && len > hn::Lanes(d16)) return IndexOfUntidySlashBy(d16, path, len);
-    if (len > hn::Lanes(d8)) return IndexOfUntidySlashBy(d8, path, len);
-    for (size_t at = 0; at + 1 < len; ++at) {
-        if (path[at] == '/' && IsUntidyPathPartAt(path, len, at + 1)) return at;
-    }
-    return len;
+    return IndexOfUntidySlash<false>(path, len);
+}
+
+// Index of the first byte that is such a '/' or is not ASCII, or `len` if there is none.
+size_t IndexOfUntidySlashOrNonAsciiImpl(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    return IndexOfUntidySlash<true>(path, len);
 }
 
 // Entered only at the target the build is compiled for: see highway_last_index_of_slash.
@@ -2653,6 +2670,7 @@ HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfNotCharImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
 HWY_EXPORT(IndexOfUntidySlashImpl);
+HWY_EXPORT(IndexOfUntidySlashOrNonAsciiImpl);
 HWY_EXPORT(LastIndexOfAnyCharImpl);
 HWY_EXPORT(LastIndexOfCharImpl);
 HWY_EXPORT(LineStartsImpl);
@@ -2759,6 +2777,12 @@ size_t highway_index_of_untidy_slash(const uint8_t* HWY_RESTRICT path, size_t le
 {
     if (len <= 32) return HWY_STATIC_DISPATCH(IndexOfUntidySlashImpl)(path, len);
     return BUN_HWY_DISPATCH(IndexOfUntidySlashImpl)(path, len);
+}
+
+size_t highway_index_of_untidy_slash_or_non_ascii(const uint8_t* HWY_RESTRICT path, size_t len)
+{
+    if (len <= 32) return HWY_STATIC_DISPATCH(IndexOfUntidySlashOrNonAsciiImpl)(path, len);
+    return BUN_HWY_DISPATCH(IndexOfUntidySlashOrNonAsciiImpl)(path, len);
 }
 
 // These look at one or two vectors of 16 bytes: the name at the end of a path, what two paths start with, the folders

@@ -48,6 +48,7 @@ export const highwayStringsForTesting: (
     | "indexOfAny"
     | "lastIndexOfAny"
     | "indexOfUntidySlash"
+    | "indexOfUntidySlashOrNonAscii"
     | "lastIndexOfSlash"
     | "lastIndexOfSlashOrDot"
     | "commonPrefixLength"

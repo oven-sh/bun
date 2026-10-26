@@ -1,4 +1,4 @@
-use bun_sema::bind::{Binding, Decl, ScopeId, ScopeKind, SymbolId};
+use bun_sema::bind::{Binding, Decl, ScopeId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{ExprId, ExprKind, FnId, StmtId, is_moved_to_file_start};
@@ -13,7 +13,7 @@ use super::{Context, Initialization, ScopeWalk, Task, WalkedFunction, WalkedFunc
 use crate::ir::FunctionKey;
 use crate::lower::commonjs;
 use crate::lower::scope::analysis::sort_unique;
-use crate::lower::scope::lexical_owners::scope_chain;
+use crate::lower::scope::lexical_owners::{ScopeObjectSearch, for_each_scope_object};
 use crate::lower::scope::{BindingRef, ScopeInput, ScopeSlot};
 use crate::modules::ModuleKind;
 
@@ -47,6 +47,7 @@ pub(in crate::lower::scope) fn walk_file(
     sort_unique(&mut walk.function_references);
     sort_unique(&mut walk.eval_uses);
     sort_unique(&mut walk.stored_slots);
+    walk.this_bindings.sort_unstable();
     sort_unique(&mut walk.symbols_read_by_enums);
     sort_unique(&mut walk.symbols_in_export_lists);
     walk.symbol_stores
@@ -91,6 +92,8 @@ impl<'x, 's> Walker<'x, 's> {
         let decisions = &input.compiled.analysis.decisions;
         let is_commonjs = input.modules.kind(input.file) == ModuleKind::CommonJs;
         let (jsx_uses, metadata_uses) = collect_implicit_uses(bound);
+        let (eval_variable_scopes, parameter_eval_variable_scopes) =
+            collect_eval_variable_scopes(hir, bound, decisions);
         Walker {
             input,
             hir,
@@ -110,6 +113,7 @@ impl<'x, 's> Walker<'x, 's> {
             last_users: vec![None; bound.symbols.len()],
             unprinted_uses: Vec::new(),
             pending_stores: Vec::new(),
+            unconditional_statements: Vec::new(),
             clock: 0,
             walk: ScopeWalk {
                 function_of_fn: vec![None; hir.fns.len()],
@@ -121,7 +125,8 @@ impl<'x, 's> Walker<'x, 's> {
                 is_initialized_conditionally: vec![false; bound.symbols.len()],
                 is_switch_scope: vec![false; bound.scopes.len()],
                 is_repeated_scope: vec![false; bound.scopes.len()],
-                eval_variable_scopes: collect_eval_variable_scopes(bound, decisions),
+                eval_variable_scopes,
+                parameter_eval_variable_scopes,
                 has_wrapper_parameters: is_commonjs
                     && commonjs::keeps_wrapper(bound, decisions, input.builtins),
                 ..ScopeWalk::default()
@@ -192,6 +197,16 @@ impl<'x, 's> Walker<'x, 's> {
                 let time = self.tick();
                 for symbol in self.pending_stores.drain(first_pending as usize..) {
                     self.walk.last_store_times[symbol.idx()] = time;
+                }
+            }
+            // The decorators are walked first, and run among the other parts of the class or behind them all. So none of the stores that the function makes while it evaluates the class counts as made until the class is.
+            Task::EndDecoratedClass { first_store } => {
+                let time = self.tick();
+                for &(symbol, _, function) in &self.walk.symbol_stores[first_store as usize..] {
+                    if function == context.function {
+                        let last = &mut self.walk.last_store_times[symbol.idx()];
+                        *last = (*last).max(time);
+                    }
                 }
             }
             Task::EndLoop(index) => {
@@ -354,23 +369,27 @@ impl<'x, 's> Walker<'x, 's> {
         self.record_store(context, BindingRef::Slot(scope, slot));
     }
 
-    pub(super) fn record_scope_chain(
+    pub(super) fn record_scope_objects(
         &mut self,
         function: WalkedFunctionId,
-        from: ScopeId,
-        until: ScopeId,
+        search: ScopeObjectSearch,
     ) {
-        let bound = self.bound;
-        for scope in scope_chain(bound, from).take_while(|&scope| scope != until) {
-            match bound.scopes[scope.idx()].kind {
-                ScopeKind::With(_) => self.record_slot_use(function, scope, ScopeSlot::WithObject),
-                _ => {
-                    if self.walk.eval_variable_scopes.binary_search(&scope).is_ok() {
-                        self.record_slot_use(function, scope, ScopeSlot::EvalVariables);
-                    }
+        let walk = &mut self.walk;
+        for_each_scope_object(self.hir, self.bound, search, |object| {
+            let is_made = match object {
+                BindingRef::Slot(scope, ScopeSlot::EvalVariables) => {
+                    walk.eval_variable_scopes.binary_search(&scope).is_ok()
                 }
+                BindingRef::Slot(scope, ScopeSlot::ParameterEvalVariables) => {
+                    let scopes = &walk.parameter_eval_variable_scopes;
+                    scopes.binary_search(&scope).is_ok()
+                }
+                _ => true,
+            };
+            if is_made {
+                walk.uses.push((function, object));
             }
-        }
+        });
     }
 
     fn initialize_symbol(

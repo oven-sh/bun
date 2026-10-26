@@ -430,7 +430,9 @@ pub(crate) fn run<'a>(
         return Err(Rejected::new(Rejection::TooLarge));
     }
     f.comment_directives = comment_directives;
-    pure_calls::mark_pure_calls(&mut f, text);
+    if !options.keeps_function_directives {
+        pure_calls::mark_pure_calls(&mut f, text);
+    }
     let names = &mut scratch.names;
     let source = text;
     let mut intern = |it: &[u8]| names.atom(crate::names::Text::not_in_source(source, it), atoms);

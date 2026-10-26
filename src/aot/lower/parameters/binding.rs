@@ -54,7 +54,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     PatKind::Ident(name) => {
                         let symbol = self.file.bound.declared_symbol(Decl::Param(node.pat));
                         if !self.is_kept_in_register(Binding::Symbol(symbol)) {
-                            self.builder.record_position(node.pos);
+                            let recorded = self.file.recorded_binding_position(node.pat);
+                            self.builder.record_position(recorded);
                         }
                         self.initialize_converted_symbol(symbol, name, value);
                     }

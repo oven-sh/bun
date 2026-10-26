@@ -1,8 +1,10 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, ScopeId, ScopeKind};
-use bun_sema::hir::{ExprId, NodeData};
+use bun_sema::bind::{Binding, ScopeId};
+use bun_sema::hir::{ExprId, NodeData, PatId};
+use smallvec::SmallVec;
 
 use super::identifiers::BindingRead;
+use super::lexical_owners::{ScopeObjectSearch, for_each_scope_object};
 use super::{BindingRef, ScopeSlot, bindings};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::ECMAMode;
@@ -28,18 +30,30 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let start = bound.dynamic_lookup_scope(NodeData::Expr(identifier))?;
         let name = self.file.identifier_name(identifier);
         let declaring_scope = self.find_declaring_scope(bound.binding(identifier));
-        let until = bound.dynamic_lookup_end(identifier, declaring_scope);
-        Some(self.search_scope_objects(start, until, name))
+        let search = ScopeObjectSearch {
+            start,
+            until: bound.dynamic_lookup_end(identifier, declaring_scope),
+            declaring_scope,
+            pos: self.file.hir[identifier].pos,
+        };
+        Some(self.search_scope_objects(search, name))
     }
 
-    pub(super) fn resolve_dynamic_name(
+    pub(super) fn resolve_dynamic_pattern_name(
         &mut self,
         start: ScopeId,
+        pattern: PatId,
         binding: Binding,
         name: Atom,
     ) -> DynamicBinding {
-        let until = self.find_declaring_scope(binding);
-        self.search_scope_objects(start, until, name)
+        let declaring_scope = self.find_declaring_scope(binding);
+        let search = ScopeObjectSearch {
+            start,
+            until: declaring_scope,
+            declaring_scope,
+            pos: self.file.hir[pattern].pos,
+        };
+        self.search_scope_objects(search, name)
     }
 
     fn find_declaring_scope(&self, binding: Binding) -> ScopeId {
@@ -51,30 +65,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn search_scope_objects(
-        &mut self,
-        start: ScopeId,
-        until: ScopeId,
-        name: Atom,
-    ) -> DynamicBinding {
-        let bound = self.file.bound;
+    fn search_scope_objects(&mut self, search: ScopeObjectSearch, name: Atom) -> DynamicBinding {
         let key = self.file.name_key(name);
         let holder = self.builder.create_variable(None);
         let with_base = self.builder.create_variable(None);
         let found = self.create_block();
-        let mut enclosing = start;
-        while enclosing.is_some() && enclosing != until {
-            let scope = enclosing;
-            enclosing = bound.scopes[scope.idx()].parent;
-            let is_with = matches!(bound.scopes[scope.idx()].kind, ScopeKind::With(_));
-            let stored = if is_with {
-                BindingRef::Slot(scope, ScopeSlot::WithObject)
-            } else {
-                BindingRef::Slot(scope, ScopeSlot::EvalVariables)
-            };
-            if !is_with && self.file.scopes.placement(stored).is_none() {
-                continue;
+        let mut objects: SmallVec<[BindingRef; 4]> = SmallVec::new();
+        let file = &*self.file;
+        for_each_scope_object(file.hir, file.bound, search, |stored| {
+            let is_with = matches!(stored, BindingRef::Slot(_, ScopeSlot::WithObject));
+            if is_with || file.scopes.placement(stored).is_some() {
+                objects.push(stored);
             }
+        });
+        for stored in objects {
+            let is_with = matches!(stored, BindingRef::Slot(_, ScopeSlot::WithObject));
             let object = self.get_stored(stored);
             let has_binding = self.builder.scope_has_binding(object, key);
             let hit = self.create_block();

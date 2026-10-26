@@ -350,6 +350,12 @@ describe("kernels for paths", () => {
     for (let i = 0; i + 1 < p.length; i++) if (p[i] === SLASH && isUntidyPartAt(p, i + 1)) return i;
     return p.length;
   }
+  function refIndexOfUntidySlashOrNonAscii(p: Uint8Array) {
+    for (let i = 0; i < p.length; i++) {
+      if (p[i] >= 0x80 || (p[i] === SLASH && i + 1 < p.length && isUntidyPartAt(p, i + 1))) return i;
+    }
+    return p.length;
+  }
   function refCommonPrefixLength(a: Uint8Array, b: Uint8Array) {
     let i = 0;
     while (i < a.length && i < b.length && a[i] === b[i]) i++;
@@ -371,6 +377,12 @@ describe("kernels for paths", () => {
   function check(p: Uint8Array, at: () => string) {
     p = exact(p);
     compare("indexOfUntidySlash", hw("indexOfUntidySlash", p, 0), refIndexOfUntidySlash(p), at);
+    compare(
+      "indexOfUntidySlashOrNonAscii",
+      hw("indexOfUntidySlashOrNonAscii", p, 0),
+      refIndexOfUntidySlashOrNonAscii(p),
+      at,
+    );
     compare("lastIndexOfSlash", hw("lastIndexOfSlash", p, 0), refLastIndexOf(p, SLASH), at);
     compare("lastIndexOfSlashOrDot", hw("lastIndexOfSlashOrDot", p, 0), refLastIndexOfAny(p, slashOrDot), at);
     compare("countSlashes", hw("countSlashes", p, 0), refCount(p, SLASH), at);
@@ -424,6 +436,28 @@ describe("kernels for paths", () => {
             p[pos] = first;
             p[pos + 1] = second;
             check(p, () => `len=${len} pos=${pos} bytes=${first},${second}`);
+          }
+        }
+      }
+    }
+    expectNothingWrong();
+  });
+
+  it("a byte outside ASCII at every position of a path of every length up to 100, in front of and behind an untidy part", () => {
+    for (let len = 1; len <= 100; len++) {
+      const tidy = new Uint8Array(len);
+      for (let i = 0; i < len; i++) tidy[i] = i % 7 === 0 ? SLASH : 0x61 + (i % 5);
+      tidy[len - 1] = 0x61;
+      for (const byte of [0x80, 0xe9, 0xff]) {
+        for (let pos = 0; pos < len; pos++) {
+          const p = tidy.slice();
+          p[pos] = byte;
+          check(p, () => `len=${len} byte=${byte} pos=${pos}`);
+          for (const untidy of [pos - 9, pos - 2, pos + 1, pos + 8]) {
+            if (untidy < 0 || untidy + 2 > len) continue;
+            const both = p.slice();
+            both[untidy] = both[untidy + 1] = SLASH;
+            check(both, () => `len=${len} byte=${byte} pos=${pos} untidy=${untidy}`);
           }
         }
       }

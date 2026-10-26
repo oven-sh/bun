@@ -1,6 +1,6 @@
 use super::bits::insert_bit;
 use super::declaration_kinds::{DeclarationKind, declaration_kind, for_each_name};
-use super::direct_evals::{DirectEval, compute_dynamic_scopes, find_direct_evals};
+use super::direct_evals::{DirectEval, DynamicScopes, compute_dynamic_scopes, find_direct_evals};
 use super::lookup::{COMMONJS_VARIABLES, Lookup};
 use super::namespace_exports::ExportedBlockBindings;
 use super::storage::RuntimeReferencesIn;
@@ -23,14 +23,14 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     let type_only = TypeOnlyCode::new(hir, bound);
     let direct_evals = find_direct_evals(hir, bound, idents, scopes, &type_only);
     let has_sloppy_eval = direct_evals.iter().any(|eval| eval.is_sloppy);
-    let dynamic_scopes = compute_dynamic_scopes(bound, &direct_evals);
+    let dynamic = compute_dynamic_scopes(hir, bound, &direct_evals);
     let exported_block_bindings = ExportedBlockBindings::collect(hir, bound, scopes);
     let mut pass = ReferencePass {
         lookup: Lookup {
             hir,
             bound,
             scopes,
-            dynamic_scopes,
+            dynamic,
         },
         idents,
         options,
@@ -95,7 +95,7 @@ fn find_arguments_variables(
         hir,
         bound,
         scopes,
-        dynamic_scopes: Vec::new(),
+        dynamic: DynamicScopes::default(),
     };
     let name = known::arguments;
     let mut variables = Vec::new();
@@ -144,7 +144,7 @@ impl ReferencePass<'_, '_> {
                 continue;
             }
             insert_bit(&mut self.references.evaluated_idents, ident.idx());
-            let found = self.lookup.find(scope, name);
+            let found = self.lookup.find(scope, name, hir[ident].pos);
             if found.binding != bound.default_binding(ident) {
                 self.references.ident_bindings.push((ident, found.binding));
             }
@@ -197,11 +197,9 @@ impl ReferencePass<'_, '_> {
             let PatKind::Ident(name) = hir[pat].kind else {
                 continue;
             };
-            let found = self.lookup.find(scope, name);
-            if found.binding != Binding::Symbol(self.declared_var_symbol(pat)) {
-                self.references
-                    .initialized_bindings
-                    .push((pat, found.binding));
+            let binding = self.lookup.find_binding(scope, name);
+            if binding != Binding::Symbol(self.declared_var_symbol(pat)) {
+                self.references.initialized_bindings.push((pat, binding));
             }
         }
     }
@@ -234,7 +232,7 @@ impl ReferencePass<'_, '_> {
 
     fn collect_dynamic_declarators(&mut self) {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
-        if self.lookup.dynamic_scopes.is_empty() {
+        if self.lookup.dynamic.scopes.is_empty() {
             return;
         }
         for (index, decl) in hir.var_decls.iter().enumerate() {
@@ -249,7 +247,7 @@ impl ReferencePass<'_, '_> {
             }
             for_each_name(hir, decl.pat, |pat, name| {
                 let scope = bound.stmt_scope[stmt.idx()];
-                let dynamic_scope = self.lookup.find(scope, name).dynamic_scope;
+                let dynamic_scope = self.lookup.find(scope, name, hir[pat].pos).dynamic_scope;
                 if dynamic_scope.is_some() {
                     let lookup = (pat, dynamic_scope);
                     self.references.dynamic_declarator_lookups.push(lookup);
@@ -266,7 +264,7 @@ impl ReferencePass<'_, '_> {
                 continue;
             }
             for spec in export.items.iter().filter(|&spec| !hir[spec].type_only) {
-                let binding = self.lookup.find(scope, hir[spec].local).binding;
+                let binding = self.lookup.find_binding(scope, hir[spec].local);
                 self.references.exported_bindings.push((spec, binding));
             }
         }
@@ -287,7 +285,7 @@ impl ReferencePass<'_, '_> {
                 continue;
             }
             if let Some(root) = hir.texts(names).next() {
-                let binding = self.lookup.find(scope, root).binding;
+                let binding = self.lookup.find_binding(scope, root);
                 let entry = (ImportEqualsId(index as u32), binding);
                 self.references.entity_root_bindings.push(entry);
             }

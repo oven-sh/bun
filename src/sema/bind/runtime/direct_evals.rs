@@ -1,6 +1,7 @@
 use super::bits::{has_bit, insert_bit};
 use super::declarations::is_var_scope;
 use super::lookup::is_appended_visible;
+use super::queries::is_among_parameters;
 use super::references::ReferencePass;
 use super::stores::find_outermost_cast;
 use super::type_only_code::TypeOnlyCode;
@@ -54,26 +55,43 @@ fn find_direct_eval_call(hir: &File<'_>, bound: &BoundBuilder, ident: ExprId) ->
     (call.callee == callee && call.chain == Chain::No).then_some(parent)
 }
 
+#[derive(Default)]
+pub(super) struct DynamicScopes {
+    /// `with` statements, and the scopes that take the variables of text evaluated in their code. For a function that code is its body.
+    pub scopes: Vec<u64>,
+    /// The functions that take the variables of text evaluated among their parameters.
+    pub parameter_eval_scopes: Vec<u64>,
+}
+
 pub(super) fn compute_dynamic_scopes(
+    hir: &File<'_>,
     bound: &BoundBuilder,
     direct_evals: &[DirectEval],
-) -> Vec<u64> {
-    let mut dynamic_scopes = Vec::new();
+) -> DynamicScopes {
+    let mut dynamic = DynamicScopes::default();
     for (index, scope) in bound.scopes.iter().enumerate() {
         if matches!(scope.kind, ScopeKind::With(_)) {
-            insert_bit(&mut dynamic_scopes, index);
+            insert_bit(&mut dynamic.scopes, index);
         }
     }
     for eval in direct_evals.iter().filter(|eval| eval.is_sloppy) {
-        let mut at = eval.scope;
+        let (mut at, mut from) = (eval.scope, ScopeKind::Block);
         while at.is_some() && !is_var_scope(bound.scopes[at.idx()].kind) {
+            from = bound.scopes[at.idx()].kind;
             at = bound.scopes[at.idx()].parent;
         }
-        if at.is_some() {
-            insert_bit(&mut dynamic_scopes, at.idx());
+        if at.is_none() {
+            continue;
+        }
+        let is_among_parameters = matches!(bound.scopes[at.idx()].kind, ScopeKind::Fn(function)
+            if is_among_parameters(hir, function, from, hir[eval.call].pos));
+        if is_among_parameters {
+            insert_bit(&mut dynamic.parameter_eval_scopes, at.idx());
+        } else {
+            insert_bit(&mut dynamic.scopes, at.idx());
         }
     }
-    dynamic_scopes
+    dynamic
 }
 
 impl ReferencePass<'_, '_> {

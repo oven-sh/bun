@@ -129,6 +129,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         // JSC reports and records the iteration at the end of `...`.
         let position = match self.file.begins_with_parenthesis(iterable) {
+            _ if self.file.runs_as_written() => hir[spread].pos + 3,
             true => hir[spread].pos,
             false => self.file.first_position(iterable),
         };
@@ -187,7 +188,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
 fn ends_in_list_literal(file: &FileLowering<'_, '_, '_, '_>, iterable: ExprId) -> bool {
     let hir = file.hir;
-    if file.is_statically_resolved(iterable) || file.is_simplified(iterable) {
+    if file.is_statically_resolved(iterable)
+        || file.is_simplified(iterable)
+        || file.runs_as_written()
+    {
         return false;
     }
     let is_dead = |arm: ExprId| file.decisions().is_dead_expr(arm);

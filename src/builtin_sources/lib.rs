@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-const HEADER: &[u8] = b"bun-builtins-manifest\t5";
+const HEADER: &[u8] = b"bun-builtins-manifest\t6";
 
 pub const VIRTUAL_ROOT: &[u8] = b"/$bun/js/";
 
@@ -28,6 +28,7 @@ pub struct Manifest {
     builtin_functions: Vec<(Box<[u8]>, u32)>,
     function_file_indexes: Vec<(u32, u32)>,
     bundled_names: Vec<(Box<[u8]>, Vec<BundledName>)>,
+    bundled_positions: Vec<(Box<[u8]>, std::ops::Range<usize>)>,
 }
 
 #[derive(Debug)]
@@ -82,6 +83,13 @@ impl Manifest {
                         Some((last, names)) if **last == *file => names.push(name),
                         _ => manifest.bundled_names.push((file.into(), vec![name])),
                     }
+                }
+                b"positions" => {
+                    let file = field()?;
+                    let start = number(field()?).ok_or_else(error)? as usize;
+                    let length = number(field()?).ok_or_else(error)? as usize;
+                    let range = start..start + length;
+                    manifest.bundled_positions.push((file.into(), range));
                 }
                 b"function" => {
                     let id = number(field()?).ok_or_else(error)?;
@@ -176,6 +184,20 @@ impl Manifest {
         let mut files = self.bundled_names.iter();
         let found = files.find(|(file, _)| Some(&**file) == path);
         found.map_or(&[], |(_, names)| names)
+    }
+
+    /// Where the text of the module stands in the text that `bun run` evaluates, as src/codegen/bundled-positions.ts writes it. Empty: nobody knows.
+    pub fn bundled_positions(&self, module: u32) -> &'static [u8] {
+        static POSITIONS: OnceLock<Vec<u8>> = OnceLock::new();
+        let path = self
+            .module(module)
+            .and_then(|module| module.path.as_deref());
+        let mut files = self.bundled_positions.iter();
+        let Some((_, range)) = files.find(|(file, _)| Some(&**file) == path) else {
+            return &[];
+        };
+        let positions = POSITIONS.get_or_init(|| Archive::read(b"positions").unwrap_or_default());
+        positions.get(range.clone()).unwrap_or_default()
     }
 
     pub fn function_files(&self) -> &[Box<[u8]>] {
@@ -322,7 +344,7 @@ mod tests {
     use super::*;
     use bun_sema_standalone as _;
 
-    const MANIFEST: &[u8] = b"bun-builtins-manifest\t5\n\
+    const MANIFEST: &[u8] = b"bun-builtins-manifest\t6\n\
         define\tprocess.platform\t\"linux\"\n\
         \n\
         module\t0\tnode/fs.ts\tnode:fs\n\
@@ -452,14 +474,14 @@ mod tests {
             "function\t-1\tbuiltins/Fifo.ts\tcreateFIFO",
             "function\t1\tbuiltins/Fifo.ts",
         ] {
-            let text = format!("bun-builtins-manifest\t5\n\n{record}\n");
+            let text = format!("bun-builtins-manifest\t6\n\n{record}\n");
             assert_eq!(error_line(text.as_bytes()), Some(3), "{record}");
         }
     }
 
     #[test]
     fn rejects_unlisted_function_file() {
-        let text = b"bun-builtins-manifest\t5\n\
+        let text = b"bun-builtins-manifest\t6\n\
             functions\tbuiltins/Fifo.ts\n\
             function\t1\tbuiltins/Fifo.ts\tcreateFIFO\n\
             function\t2\tbuiltins/Other.ts\tother\n";

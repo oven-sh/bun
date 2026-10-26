@@ -26,7 +26,6 @@ pub(super) type EvalOperands = SmallVec<[ValueId; 4]>;
 struct EvalRecord<'l, 'f, 'a, 'c, 'p, 's> {
     lowering: &'l mut FunctionLowering<'f, 'a, 'c, 'p, 's>,
     context: EvalContext,
-    is_sloppy: bool,
     entered_from_parameters: FunctionScopes,
     bindings: Vec<EvalBinding>,
     operands: EvalOperands,
@@ -54,13 +53,18 @@ fn compute_binding_kind(kind: BindingKind) -> EvalBindingKind {
     }
 }
 
-// A function keeps its top-level lexical declarations in an environment of their own, inside the environment of its variables: a `var` of the evaluated text that meets one of them is a SyntaxError.
-fn compute_scope_depths(hir: &hir::File<'_>, bound: &Bound<'_>, innermost: ScopeId) -> ScopeDepths {
+// The depth of a scope is that of its variables. A function keeps its top-level lexical declarations in an environment of their own, inside the environment of its variables: a `var` of the evaluated text that meets one of them is a SyntaxError. The variables of text evaluated among its parameters lie outside its parameters, which lie outside its variables.
+fn compute_scope_depths(file: &FileLowering<'_, '_, '_, '_>, innermost: ScopeId) -> ScopeDepths {
     let mut depths = ScopeDepths::new();
-    let mut scope = innermost;
+    let (mut scope, mut depth) = (innermost, 1);
     while scope.is_some() {
-        depths.push((scope, depths.len() as u32 * 2 + 1));
-        scope = bound.runtime_parent_scope(hir, scope);
+        depths.push((scope, depth));
+        let parameter_variables = BindingRef::Slot(scope, ScopeSlot::ParameterEvalVariables);
+        depth += match file.scopes.placement(parameter_variables) {
+            Some(_) => 4,
+            None => 2,
+        };
+        scope = file.bound.runtime_parent_scope(file.hir, scope);
     }
     depths
 }
@@ -131,13 +135,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         context: EvalContext,
     ) -> (Vec<EvalBinding>, EvalOperands) {
         let bound = self.file.bound;
-        let depths = compute_scope_depths(self.file.hir, bound, eval_scope.scope);
+        let depths = compute_scope_depths(self.file, eval_scope.scope);
         let entered_from_parameters =
             find_functions_entered_from_parameters(self.file.hir, bound, &depths, call);
         let mut record = EvalRecord {
             lowering: self,
             context,
-            is_sloppy: eval_scope.is_sloppy,
             entered_from_parameters,
             bindings: Vec::new(),
             operands: SmallVec::new(),
@@ -165,13 +168,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 impl EvalRecord<'_, '_, '_, '_, '_, '_> {
     // A sloppy function keeps its parameters and `arguments` in an environment of their own. It lies inside the environment that takes the variables of a text evaluated among the parameters: a `var` of that text that meets one of them is a SyntaxError. It lies outside the environment that takes the variables of a text evaluated in the body: a `var` of that text makes a new variable.
     fn compute_parameter_depth(&self, parameter: Binding, scope: ScopeId, depth: u32) -> u32 {
-        if self.entered_from_parameters.contains(&scope) {
-            return depth - u32::from(self.is_sloppy);
-        }
         let file = &*self.lowering.file;
         let variables = BindingRef::Slot(scope, ScopeSlot::EvalVariables);
-        let is_outside_variables = file.scopes.placement(variables).is_some()
-            && file.bound.is_outside_body_variables(parameter);
+        let is_outside_variables = self.entered_from_parameters.contains(&scope)
+            || (file.scopes.placement(variables).is_some()
+                && file.bound.is_outside_body_variables(parameter));
         depth + u32::from(is_outside_variables)
     }
 
@@ -244,8 +245,13 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
     }
 
     fn add_scope_bindings(&mut self, scope: ScopeId, depth: u32) {
-        let binding = create_binding(EvalBindingKind::EvalVariables, None, depth);
-        self.add_stored(binding, BindingRef::Slot(scope, ScopeSlot::EvalVariables));
+        if !self.entered_from_parameters.contains(&scope) {
+            let binding = create_binding(EvalBindingKind::EvalVariables, None, depth);
+            self.add_stored(binding, BindingRef::Slot(scope, ScopeSlot::EvalVariables));
+        }
+        let binding = create_binding(EvalBindingKind::EvalVariables, None, depth + 2);
+        let parameter_variables = BindingRef::Slot(scope, ScopeSlot::ParameterEvalVariables);
+        self.add_stored(binding, parameter_variables);
         if self.context.this_scope == Some(scope) {
             self.add_owner_bindings(scope, depth);
         }

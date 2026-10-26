@@ -172,7 +172,6 @@ calls-fast-paths/functions-destructured-from-require	// IR= 1 ofTheHost = Call v
 calls-fast-paths/functions-destructured-from-require	// IR= 1 ofThreeFunctions = Call v[0-9]+, (-|v[0-9]+) \(v
 calls-fast-paths/functions-in-literal-fields	// IR+ IsClosureOf v[0-9]+ function=f[0-9]+
 calls-fast-paths/functions-in-literal-fields	// IR+ ^ .*GetCapture
-calls-fast-paths/generic-entrypoint-inline-slow-path	// ENTRY-SIZE< oneString 36 20
 calls-fast-paths/global-functions-sizes-and-private-names-share-a-body	// IR= 1 sumOfSizes CallBuiltin v[0-9]+ \(\) overload=MapPrototypeSize/
 calls-fast-paths/inlining-by-caller-kind	// IR= 2 waits  = Mul .*#[0-9]+$
 calls-fast-paths/inlining-by-caller-kind	// IRM= 1 CallDirect \(v[0-9]+, v[0-9]+\) function=f[0-9]+
@@ -252,7 +251,6 @@ calls-fast-paths/new-without-constructor	// IR= 1 implicit : =?L[0-9]+ = (NewObj
 calls-fast-paths/new-without-constructor	// IR= 1 implicit = Construct v
 calls-fast-paths/new-without-constructor	// IR= 1 keeps NewArray
 calls-fast-paths/number-parameters-indirect-call	// ENTRY-SIZE< oneNumber 48 8
-calls-fast-paths/number-parameters-indirect-call	// ENTRY-SIZE< threeNumbers 120 18
 calls-fast-paths/number-result-boxed-by-stub	// CALLS+ addOne BoxNumber
 calls-fast-paths/number-result-boxed-by-stub	// CALLS+ half BoxNumber
 calls-fast-paths/number-result-boxed-by-stub	// CALLS+ xOf BoxOptionalNumber
@@ -404,7 +402,6 @@ calls/tail-calls-mixed-result-types-large	// IR+ ^function f[0-9]+ "numbers" Pla
 calls/tail-calls-mixed-result-types-large	// IR+ ^function f[0-9]+ "onlyForwards" Plain .* -> anything( |$)
 calls/tail-calls-mixed-result-types-large	// IR+ ^function f[0-9]+ "onlyPassesOn" Plain .* -> anything( |$)
 calls/unguarded-functions-have-one-body	// IR= 1 sumOfAll String string="marker of sumOfAll"
-classes-and-closures/arrow-functions-in-literals-that-share-state	// IR+ key="summary"[^"]*deferral=CapturesEnvironment
 classes-and-closures/base-class-named-through-a-namespace	// IR+ ^layout L[0-9]+ .*\{name="edge" declared=
 classes-and-closures/base-class-named-through-a-namespace	// IR+ ^layout L[0-9]+ .*\{name="extra" declared=
 classes-and-closures/base-class-named-through-a-namespace	// IR+ ^layout L[0-9]+ .*\{name="side" declared=
@@ -781,7 +778,6 @@ typed-objects/length-compared-on-each-test-exit	// IRT= 1 scan name="byteLength"
 typed-objects/length-compared-on-each-test-exit	// IRT= 2 down Greater
 typed-objects/length-compared-on-each-test-exit	// IRT= 2 kept Less
 typed-objects/length-compared-on-each-test-exit	// IRT= 2 scan Less
-typed-objects/literal-types-and-class-chains	// DATA< 95000
 typed-objects/literal-with-computed-key-is-born-typed	// IRT= 0 lacksMember : =?L[0-9]+ = NewObject 
 typed-objects/literal-with-computed-key-is-born-typed	// IRT= 0 namedBehindKey : =?L[0-9]+ = NewObject 
 typed-objects/literal-with-keys-named-by-constant-strings-is-born-as-its-record	// IR= 0 underProto : =?L[0-9]+ = NewObject 
@@ -903,12 +899,7 @@ structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration
 structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 1 sumPair = TypeTest
 structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 2 sumPoint = GetSlot v\d+ key="[xy]" receivers=\[L\d+\] level=Proven
 structural-types/an-instance-under-a-computed-key-of-a-union-type-passes-for-the-index-signature	// IRT= 0 barkIn testedType=undefined.null.object
-typed-objects/members-behind-a-view-are-filled-at-birth	// IRT= 0 readBag = TypeTest
-typed-objects/members-behind-a-view-are-filled-at-birth	// IRT= 0 readBag GetSlotOrUndefined
-typed-objects/members-behind-a-view-are-filled-at-birth	// IRT= 0 readRequest = TypeTest
-typed-objects/members-behind-a-view-are-filled-at-birth	// IRT= 0 readRequest GetSlotOrUndefined
 typed-objects/one-rest-copy-leaves-plain-literals-filled-at-birth	// IRT= 0 readRest GetSlotOrUndefined
-typed-objects/one-spread-under-a-declared-type-leaves-plain-literals-filled-at-birth	// IRT= 0 readState = TypeTest
 typed-objects/one-spread-under-a-declared-type-leaves-plain-literals-filled-at-birth	// IRT= 0 readState IsSlotFilled
 untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 read = TypeTest
 untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 read GetSlotOrUndefined

@@ -79,6 +79,7 @@ impl FileLowering<'_, '_, '_, '_> {
             role: FunctionRole::Signature,
             flags: FunctionFlags::default(),
             length: 0,
+            has_written_await: false,
             enclosing_runtime_function: None,
             captures: Vec::new(),
             this_type: DeclaredType::untyped(),

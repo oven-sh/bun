@@ -1,6 +1,6 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Decl};
-use bun_sema::hir::{ClassId, ExprKind, Flags};
+use bun_sema::hir::{ClassId, ExprKind, Flags, start_of};
 
 use super::members::ClassHead;
 use super::{
@@ -206,6 +206,9 @@ impl FileLowering<'_, '_, '_, '_> {
     fn heritage_position(&self, class: ClassId) -> u32 {
         let hir = self.hir;
         let node = hir[class];
+        if self.runs_as_written() {
+            return start_of(hir, node.extends);
+        }
         let is_printed_in_parentheses = matches!(
             hir[self.skip_type_syntax(node.extends)].kind,
             ExprKind::Binary { .. }
@@ -227,6 +230,12 @@ impl FileLowering<'_, '_, '_, '_> {
     // which it does not know in a default export.
     fn class_store_position(&self, class: ClassId) -> u32 {
         let node = self.hir[class];
+        if self.runs_as_written() {
+            return match node.name.is_some() {
+                true => node.text_start + self.queries.atom_bytes(node.name).len() as u32,
+                false => node.text_start,
+            };
+        }
         let has_mapped_name = node.name.is_some() && !node.flags.contains(Flags::DEFAULT);
         let name_length =
             || bun_core::strings::utf8_lossy_len_utf16(self.queries.atom_bytes(node.name));

@@ -55,3 +55,54 @@ fn closure_that_a_store_can_follow_shares() {
         assert!(is_field(storage_of_c(statements)), "{statements}");
     }
 }
+
+#[test]
+fn closure_shares_what_a_pattern_stores_when_its_value_has_been_evaluated() {
+    let shared = [
+        "let c = 0, read, x; [read, x = c = 1] = [() => c]; return read;",
+        "let c = 0, read, x; ({ read, x = c = 1 } = { read: () => c }); return read;",
+        "let c = 0, read; ({ [(c = 1, 'read')]: read } = { read: () => c }); return read;",
+        "let c = 0, list = []; [list[c = 1]] = [() => c]; return list;",
+        "let c = 0, read, x; [[read, x = c = 1] = [() => c]] = []; return read;",
+        "let c = 0, read, x; [read, x = c++] = [() => c]; return read;",
+    ];
+    for statements in shared {
+        assert!(is_field(storage_of_c(statements)), "{statements}");
+    }
+    let copied = "let c = 0, read, list = []; [list[(read = () => c, 0)]] = [c = 1]; return read;";
+    assert_eq!(storage_of_c(copied), Storage::Local);
+}
+
+#[test]
+fn closure_of_an_inner_pattern_shares_what_the_outer_pattern_stores_behind_it() {
+    let shared = [
+        "let c = 0; let [[read = () => c], x = (c = 1)] = [[]]; return read;",
+        "let c = 0; let [[read = () => c], [x = (c = 1)]] = [[], []]; return read;",
+        "let c = 0; const { a: [read = () => c], [(c = 1, 'b')]: x } = { a: [] }; return read;",
+        "let c = 0; var [[read = () => c], ...[x = (c = 1)]] = [[]]; return read;",
+        "let c = 0; try { throw [[]]; } catch ([[read = () => c], x = (c = 1)]) { return read; }",
+    ];
+    for statements in shared {
+        assert!(is_field(storage_of_c(statements)), "{statements}");
+    }
+    let parameters = "export function g(c, [[read = () => c], x = (c = 1)]) { return read; }";
+    assert!(is_field(storage_in("main.mjs", parameters, "c")));
+    let copied = "let c = 0; let [[x = (c = 1)], read = () => c] = [[]]; return read;";
+    assert_eq!(storage_of_c(copied), Storage::Local);
+}
+
+#[test]
+fn closure_shares_what_a_decorator_of_its_class_stores() {
+    let shared = [
+        "class A { [(read = () => c, 'a')]() {} @(c = 1, f) b() {} }",
+        "class A extends (read = () => c, Object) { @(c = 1, f) b() {} }",
+        "@(read = () => c, f) class A extends (c = 1, Object) {}",
+        "@(c = 1, f) class A { static m() { return c; } }",
+        "class A { @(read = () => c, f) a() {} @(c = 1, f) b() {} }",
+    ];
+    for class in shared {
+        let source =
+            format!("export function g(f: any) {{ let c = 0, read: any; {class} return read; }}");
+        assert!(is_field(storage_in("main.ts", &source, "c")), "{class}");
+    }
+}

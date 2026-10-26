@@ -45,6 +45,11 @@ impl Walker<'_, '_> {
         let own_scope = bound.own_scope(statement);
         let outer_scope = bound.scope_of_stmt(statement);
         self.enter_scope(own_scope, context);
+        if let StmtKind::Expr(expression) = hir[statement].kind
+            && !context.is_conditional
+        {
+            self.unconditional_statements.push(expression);
+        }
         match hir[statement].kind {
             StmtKind::Expr(expression)
             | StmtKind::Return(expression)
@@ -136,6 +141,11 @@ impl Walker<'_, '_> {
             | StmtKind::ForOf {
                 left, expr, body, ..
             } => {
+                // `for (var a = 0 in b)` evaluates `0` first, and once.
+                if let StmtKind::Var(declarations) = hir[left].kind {
+                    let initializers = declarations.iter().map(|id| hir[id].init);
+                    self.push_expressions(initializers, context);
+                }
                 self.push_expressions([expr], context);
                 let inner = self.enter_loop(statement, outer_scope, context);
                 match hir[left].kind {
@@ -231,7 +241,9 @@ impl Walker<'_, '_> {
                     PatternRole::LexicalDeclaration
                 }
             };
-            self.push_expressions([declaration.init], context);
+            if !is_loop_head {
+                self.push_expressions([declaration.init], context);
+            }
             self.visit_pattern(declaration.pat, role, context);
         }
     }

@@ -151,14 +151,35 @@ fn derived_this_is_mutable() {
 }
 
 #[test]
-fn derived_this_is_never_copied() {
+fn derived_this_is_copied_behind_the_only_super_call() {
     let source = "export function f(B) { \
         return class extends B { constructor() { super(); return () => this; } }; }";
     analyze_source("main.mjs", source, |probe| {
-        let constructor = probe.only_function(FnKind::Constructor);
-        let environment = [Capture::Environment(probe.top_scope(constructor))];
-        assert_eq!(probe.captures(probe.arrow()), environment);
+        let this = probe.slot(probe.only_function(FnKind::Constructor), ScopeSlot::This);
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(this)]);
+        assert_eq!(probe.placement(this).storage, Storage::Local);
     });
+}
+
+#[test]
+fn derived_this_is_shared_where_the_super_call_may_be_skipped_or_comes_later() {
+    for body in [
+        "if (g) super(); return () => this;",
+        "g && super(); return () => this;",
+        "const r = () => this; super(); return r;",
+        "super(() => this);",
+        "if (g) { super(); } else { super(); } return () => this;",
+        "try { super(); } catch {} return () => this;",
+    ] {
+        let source = format!(
+            "export function f(B, g) {{ return class extends B {{ constructor() {{ {body} }} }}; }}"
+        );
+        analyze_source("main.mjs", &source, |probe| {
+            let constructor = probe.only_function(FnKind::Constructor);
+            let environment = [Capture::Environment(probe.top_scope(constructor))];
+            assert_eq!(probe.captures(probe.arrow()), environment, "{body}");
+        });
+    }
 }
 
 #[test]

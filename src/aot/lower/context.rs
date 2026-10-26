@@ -144,6 +144,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     atoms: FxHashMap<Atom, StringId>,
     atom_keys: FxHashMap<Atom, PropertyKeyId>,
     shown_names: ShownNames,
+    has_bundled_positions: bool,
     pub(in crate::lower) printed_operators: PrintedOperators,
     counters: Counters,
     scratch: BuilderScratch,
@@ -214,6 +215,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                 bound,
                 inputs.sources.bundled_names(file),
             ),
+            has_bundled_positions: !inputs.sources.bundled_positions(file).is_empty(),
             printed_operators: PrintedOperators::default(),
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
@@ -290,6 +292,11 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(crate) fn runs_as_written(&self) -> bool {
         self.inputs.sources.kind(self.file) == load::SourceKind::EvaluatedText
             || hir::find_transpiled_mark(&self.hir.text).is_some()
+    }
+
+    // A stack trace shows the positions that the engine records in the text it runs: no source map takes them back to a token.
+    pub(crate) fn is_shown_without_source_map(&self) -> bool {
+        self.has_bundled_positions || self.runs_as_written()
     }
 
     pub(crate) fn evaluated_function(&self, call: ExprId) -> Option<FunctionRef> {

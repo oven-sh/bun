@@ -42,7 +42,6 @@ const {
   isStoppedModuleGraphRunning,
 } = require("internal/shared");
 const shared = require("internal/shared");
-const reportError = globalThis.reportError;
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary, loadChild } = require("internal/cluster/isPrimary");
@@ -169,6 +168,7 @@ const pushRenderedHeader = http.responseRoad.pushRenderedHeader!;
 const outgoingSetHeader = http.responseRoad.outgoingSetHeader!;
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const outgoingGetHeader = OutgoingMessagePrototype.getHeader;
+const outgoingHasHeader = OutgoingMessagePrototype.hasHeader;
 const plainOutgoingMessage: any = new OutgoingMessage();
 let http1Fallback: typeof import("internal/http1_server_fallback").default | undefined;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
@@ -3153,8 +3153,11 @@ function ServerResponse(
     }
     return;
   }
-  if (new.target !== ServerResponse && !(this instanceof ServerResponse))
-    return new ServerResponse(req, options) as any;
+  if (new.target !== ServerResponse) {
+    ("unlikely");
+    if (!(this instanceof ServerResponse)) return new ServerResponse(req, options) as any;
+    return initializeStoreByStore(this, req, options);
+  }
   const exchange = makeExchange(this, null, noResponseEvents, null);
   exchange.flags = EXCHANGE_HAS_PENDING_CALLBACKS;
   this._events = Object.create(null);
@@ -3214,6 +3217,48 @@ function ServerResponse(
   }
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
+
+// A class that extends ServerResponse may have an accessor under any of these names, so each store is made, in this order.
+function initializeStoreByStore(
+  res: $Node.ServerResponse,
+  req: $Node.IncomingMessage,
+  options: $Node.ServerResponseOptions | undefined,
+): void {
+  const exchange = makeExchange(res, null, noResponseEvents, null);
+  exchange.flags = EXCHANGE_HAS_PENDING_CALLBACKS;
+  OutgoingMessage.$call(res, options);
+  res.$exchange = exchange;
+
+  res.useChunkedEncodingByDefault = true;
+
+  res.req = req;
+  res.sendDate = true;
+  res._sent100 = false;
+  res[headerStateSymbol] = NodeHTTPHeaderState.none;
+  res[kPendingCallbacks] = [];
+  res.finished = false;
+
+  if (req.method === "HEAD") res._hasBody = false;
+
+  if (req.httpVersionMajor! < 1 || req.httpVersionMinor! < 1) {
+    res.useChunkedEncodingByDefault = chunkExpression.test((req.headers?.te as string | undefined) ?? "");
+    res.shouldKeepAlive = false;
+  }
+
+  if (options) {
+    res[kHandle] = options[kHandle] || req[kHandle];
+    const rejectNonStandardBodyWrites = options[kRejectNonStandardBodyWrites];
+    if (rejectNonStandardBodyWrites !== undefined) {
+      res[kRejectNonStandardBodyWrites] = rejectNonStandardBodyWrites;
+    }
+  } else {
+    res[kHandle] = req[kHandle];
+  }
+
+  res.statusCode = 200;
+  res.statusMessage = undefined;
+  res.chunkedEncoding = false;
+}
 const ServerResponsePrototype: object = ServerResponse.prototype;
 Object.defineProperty(ServerResponse, "length", { __proto__: null, value: 2, configurable: true });
 // A response whose own statusCode was deleted sends 200, as in Node.js.
@@ -4458,22 +4503,15 @@ function finishExchangeInSteps(exchange: Exchange, flags: number): void {
   return emitResponseFinished(exchange.response, callback);
 }
 
-// The ticks of the full road one after the other, for a response that takes no stores. What one of them throws does not keep the next from running.
+// The ticks of the full road, for a response that takes no stores. They run next, one after the other.
 function finishExchangeTickByTick(exchange: Exchange, flags: number): void {
+  const { queueTickInFront } = require("internal/process/tick_ring");
   const res = exchange.response;
+  queueTickInFront(finishExchangeInSteps, 2, exchange, flags);
+  queueTickInFront(markResponseEndedNT, 1, res, undefined);
   if (exchange.bytesBuffered !== 0 && !exchange.isFlushScheduled) {
-    try {
-      flushWriteAccountingNT(res);
-    } catch (error) {
-      reportError(error);
-    }
+    queueTickInFront(flushWriteAccountingNT, 1, res, undefined);
   }
-  try {
-    markResponseEndedNT(res);
-  } catch (error) {
-    reportError(error);
-  }
-  return finishExchangeInSteps(exchange, flags);
 }
 
 const flushWriteAccountingOfResponse = flushWriteAccountingNT;
@@ -4811,6 +4849,10 @@ function inheritsFromResponsePrototype(res: $Node.ServerResponse, name: string):
 
 function reachesShouldKeepAlive(res: $Node.ServerResponse): boolean {
   return !ObjectHasOwn(res, "shouldKeepAlive") && inheritsFromResponsePrototype(res, "shouldKeepAlive");
+}
+
+function reachesHeadersSent(res: $Node.ServerResponse): boolean {
+  return !ObjectHasOwn(res, "headersSent") && inheritsFromResponsePrototype(res, "headersSent");
 }
 
 function reachesSocket(res: $Node.ServerResponse): boolean {
@@ -5505,7 +5547,7 @@ const OriginalWriteHeadFn = (ServerResponse.prototype.writeHead = function (
   headers?: $Node.HttpHeadersInit | null,
 ) {
   const exchange = this.$exchange;
-  if (exchange.response !== this) {
+  if (exchange.response !== this || this.hasHeader !== outgoingHasHeader || !reachesHeadersSent(this)) {
     ("unlikely");
     return writeHeadInFull.$call(this, statusCode, statusMessage, headers);
   }

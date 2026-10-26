@@ -1,5 +1,6 @@
 use bun_sema::bind::{Binding, CodeUnit, Decl, FnOwner};
 use bun_sema::check::aot::FunctionRef;
+use bun_sema::file_analysis::has_live_await;
 use bun_sema::hir::{self, Flags, FnId, FnKind};
 
 use crate::builtins::id::BuiltinClass;
@@ -155,6 +156,7 @@ pub(crate) fn create_header(
         role: file.source.function_role(),
         flags,
         length: 0,
+        has_written_await: false,
         enclosing_runtime_function,
         captures: file.capture_positions(key),
         this_type: DeclaredType::untyped(),
@@ -250,6 +252,9 @@ fn create_source_header(
         }
         None => None,
     };
+    header.has_written_await = header.flags.contains(FunctionFlags::IS_ASYNC)
+        && !header.flags.contains(FunctionFlags::HAS_EXPLICIT_NAME)
+        && has_live_await(hir, &file.decisions().as_folded_by_bun_run(), function);
     header.text = file.compute_text_range(function);
     header.length = func
         .params

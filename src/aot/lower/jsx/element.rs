@@ -11,7 +11,7 @@ use bun_sema::import_sites::{
 use bun_sema::resolve::JsxRuntime;
 use smallvec::{SmallVec, smallvec};
 
-use super::Element;
+use super::{Element, find_key_argument};
 use crate::diagnostic_codes::Code;
 use crate::ir::ValueId;
 use crate::lower::call::{self, Arguments, Callee};
@@ -78,11 +78,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let ExprKind::Jsx(jsx) = hir[expression].kind else {
             unreachable!("lower_element_parts_for_effect takes a Jsx expression");
         };
+        let callee = jsx_callee(hir, self.file.compiled.jsx_mode, jsx);
+        let key_argument = find_key_argument(hir, callee, jsx);
         let tag = hir[jsx].tag.some();
         let tag = tag.filter(|&tag| self.file.find_intrinsic_tag_name(tag).is_none());
-        let values = hir[jsx].attrs.iter().filter_map(|it| hir[it].value.some());
+        let attributes = hir[jsx].attrs.iter().filter(|&it| Some(it) != key_argument);
+        let values = attributes.filter_map(|it| hir[it].value.some());
         let parts = tag.into_iter().chain(values);
-        let parts: SmallVec<[ExprId; 8]> = parts.chain(hir.ids(hir[jsx].children)).collect();
+        let parts = parts.chain(hir.ids(hir[jsx].children));
+        let key = key_argument.and_then(|key| hir[key].value.some());
+        let parts: SmallVec<[ExprId; 8]> = parts.chain(key).collect();
         for part in parts {
             self.lower_expression_for_effect(part);
         }

@@ -43,7 +43,7 @@ if (
   process.exit(1);
 }
 
-const lines = ["bun-builtins-manifest\t5"];
+const lines = ["bun-builtins-manifest\t6"];
 
 function canonicalJSON(name: string, text: string): string {
   try {
@@ -153,11 +153,18 @@ for (const listing of listOfModules.listings.keys()) {
   lines.push(`declarations\t${listing}`);
 }
 
+const bundledPositions: Buffer[] = [];
 for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
+  const [kind, file, encoded] = line.split("\t");
   // The positions are those of the text that was bundled.
-  if (line !== "" && locate(line.split("\t")[1]) === path.join(import.meta.dir, "../js", line.split("\t")[1])) {
+  if (line === "" || locate(file) !== path.join(import.meta.dir, "../js", file)) continue;
+  if (kind !== "positions") {
     lines.push(line);
+    continue;
   }
+  const start = bundledPositions.reduce((sum, bytes) => sum + bytes.length, 0);
+  bundledPositions.push(Buffer.from(encoded, "base64"));
+  lines.push(`positions\t${file}\t${start}\t${bundledPositions.at(-1)!.length}`);
 }
 const mapOfHelpers: SourceMap = JSON.parse(fs.readFileSync(`${bundledHelpers}.map`, "utf8"));
 const identifiersOfHelpers = findNamingIdentifiers(fs.readFileSync(bundledHelpers, "utf8"), mapOfHelpers);
@@ -257,6 +264,7 @@ if (archive) {
   for (const [file, text] of engineTexts) files.push([file, Buffer.from(text)]);
   files.push(["tsconfig.json", Buffer.from(mergeTsconfig())]);
   files.push(...declarationsOfRuntime());
+  files.push(["positions", Buffer.concat(bundledPositions)]);
   files.push(["manifest", Buffer.from(manifest)]);
   files.sort(([a], [b]) => (a < b ? -1 : 1));
   const frames = files.map(([, text]) => {

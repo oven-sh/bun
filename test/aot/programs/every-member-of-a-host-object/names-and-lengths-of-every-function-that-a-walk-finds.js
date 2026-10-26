@@ -30,6 +30,7 @@ visit(require("@vercel/fetch"), "@vercel/fetch");
 visit(require("bun:ffi"), "bun:ffi");
 visit(require("bun:jsc"), "bun:jsc");
 visit(require("bun:sqlite"), "bun:sqlite");
+visit(require("bun:wrap"), "bun:wrap");
 visit(require("isomorphic-fetch"), "isomorphic-fetch");
 visit(require("node-fetch"), "node-fetch");
 visit(require("node:_http_agent"), "node:_http_agent");

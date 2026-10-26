@@ -7,13 +7,24 @@ use super::{
 use crate::bind::{Binding, Bound, CommonJsVariable, Parent};
 use crate::file_analysis::has_live_top_level_await;
 use crate::fold::{Decisions, FoldError, FoldErrorKind};
-use crate::hir::{ExprId, File, FnBody, NodeData, StmtId, StmtKind};
+use crate::hir::{
+    ExprId, File, FnBody, NodeData, StmtId, StmtKind, find_transpiled_mark, is_marked_as_commonjs,
+};
 use crate::import_sites::{ImportScan, is_runtime_import};
 
 #[derive(Default)]
 struct VariableUses {
     evidence: CommonJsEvidence,
     uses_require_or_path: bool,
+}
+
+/// `bun run` loads a file that it hands to the engine as written by what the mark says, whatever the file's name, its package and its text say.
+pub(crate) fn find_marked_format(text: &[u8]) -> Option<ModuleFormat> {
+    let mark = find_transpiled_mark(text)?;
+    Some(match is_marked_as_commonjs(&text[mark]) {
+        true => ModuleFormat::CommonJs,
+        false => ModuleFormat::Esm,
+    })
 }
 
 pub(crate) fn decide_module_format(
@@ -23,6 +34,12 @@ pub(crate) fn decide_module_format(
     scan: &ImportScan<'_>,
     declared: DeclaredModuleType,
 ) -> FormatDecision {
+    if let Some(format) = find_marked_format(&hir.text) {
+        return FormatDecision {
+            format,
+            error: None,
+        };
+    }
     let is_export = |stmt| statement_esm_syntax(hir, stmt) == EsmSyntax::ExportOrTopLevelAwait;
     let has_top_level_await = has_live_top_level_await(hir, &Decisions::default());
     if has_top_level_await || hir.ids(hir.body).any(is_export) {

@@ -135,6 +135,16 @@ function turn(i: number): number {
 function turn(i: number): number {
   return new Date(1700000000000 + i * 1000).toISOString().length;
 }
+//// date-to-iso-string-or-to-json-under-a-key-found-at-run-time
+const writers = ["toISOString", "toJSON"] as const;
+const written = new Date(1700000000000);
+function turn(i: number): number {
+  return written[writers[i & 1]!]().length;
+}
+//// date-to-json
+function turn(i: number): number {
+  return new Date(1700000000000 + i * 1000).toJSON().length;
+}
 //// date-parsed-from-iso
 const stamps = ["2026-10-23T18:07:35Z", "1999-01-02T03:04:05.678Z"];
 function turn(i: number): number {

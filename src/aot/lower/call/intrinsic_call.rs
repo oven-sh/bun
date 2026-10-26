@@ -18,6 +18,13 @@ use crate::lower::function::{self, EntryArguments};
 use crate::lower::member::PropertyName;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    fn position_of_call(&self, site: &IntrinsicCall<'_>) -> u32 {
+        match self.file.is_shown_without_source_map() {
+            true => self.file.last_mapped_position(site.callee),
+            false => self.file.hir[site.call].pos,
+        }
+    }
+
     pub(super) fn lower_call_with_rest(
         &mut self,
         site: IntrinsicCall<'_>,
@@ -25,7 +32,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         rest: &[ExprId],
     ) -> ValueId {
         let arguments = self.lower_argument_slice(rest);
-        self.set_position(self.file.hir[site.call].pos);
+        self.set_position(self.position_of_call(&site));
         self.emit_call_at(callee, arguments, site.options)
     }
 
@@ -84,7 +91,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> Lowered<ValueId> {
         let function = find_linked_function(self, site.callee, linked)?;
         let arguments = self.lower_argument_slice(site.arguments);
-        self.set_position(self.file.hir[site.call].pos);
+        self.set_position(self.position_of_call(&site));
         let is_declared_here = self.file.function_key(function).home_file() == self.file.file;
         Ok(match arguments {
             Arguments::Values(values) if is_declared_here => {
@@ -111,7 +118,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         argument: u32,
     ) -> ValueId {
         let hir = self.file.hir;
-        let position = hir[site.call].pos;
+        let position = self.position_of_call(&site);
         let function = self.emit_private_global_get(table::text_of_name(callee));
         let prepended = self.builder.integer(i64::from(argument));
         let arguments = if has_spread(hir, site.arguments) {

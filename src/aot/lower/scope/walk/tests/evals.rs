@@ -1,5 +1,5 @@
 use bun_sema::bind::{BindingKind, Bound, ScopeId};
-use bun_sema::hir::{ClassId, FnKind, MemberId, StmtKind};
+use bun_sema::hir::{ClassId, FnId, FnKind, MemberId, StmtKind};
 
 use super::{
     has_use, initialized_at, is_commonjs_slot, slots_used_by, stored_in_loop, used_slots, walked,
@@ -309,6 +309,48 @@ fn sloppy_eval_declares_in_function() {
     assert!(scopes.is_empty());
     let (scopes, _) = eval_variable_scopes("function f(s) { if (false) { eval(s); } }");
     assert!(scopes.is_empty());
+}
+
+#[test]
+fn text_among_parameters_and_text_in_body_declare_in_different_objects() {
+    let slots = |bound: &Bound<'_>, function: FnId| {
+        let scope = top_scope(bound, function);
+        let of_body = BindingRef::Slot(scope, ScopeSlot::EvalVariables);
+        let of_parameters = BindingRef::Slot(scope, ScopeSlot::ParameterEvalVariables);
+        (scope, of_body, of_parameters)
+    };
+    let in_body = "function f(s, r = () => x) { eval(s); return x; }";
+    with_walk(&[("main.cjs", in_body)], |hir, bound, walk| {
+        let function = only_function(hir, FnKind::Decl);
+        let (scope, of_body, of_parameters) = slots(bound, function);
+        assert_eq!(walk.eval_variable_scopes, [scope]);
+        assert!(walk.parameter_eval_variable_scopes.is_empty());
+        assert!(has_use(walk, walked(walk, function), of_body));
+        assert!(!has_use(walk, walked(walk, function), of_parameters));
+        let arrow = walked(walk, only_function(hir, FnKind::Arrow));
+        assert!(!has_use(walk, arrow, of_body));
+    });
+    let among_parameters = "function f(s, t = eval(s), r = () => x) { return x; }";
+    with_walk(&[("main.cjs", among_parameters)], |hir, bound, walk| {
+        let function = only_function(hir, FnKind::Decl);
+        let (scope, of_body, of_parameters) = slots(bound, function);
+        assert!(walk.eval_variable_scopes.is_empty());
+        assert_eq!(walk.parameter_eval_variable_scopes, [scope]);
+        assert!(!has_use(walk, walked(walk, function), of_body));
+        assert!(has_use(walk, walked(walk, function), of_parameters));
+        let arrow = walked(walk, only_function(hir, FnKind::Arrow));
+        assert!(has_use(walk, arrow, of_parameters));
+    });
+    let in_both = "function f(s, t = eval(s), r = () => x) { eval(s); }";
+    with_walk(&[("main.cjs", in_both)], |hir, bound, walk| {
+        let function = only_function(hir, FnKind::Decl);
+        let (scope, of_body, of_parameters) = slots(bound, function);
+        assert_eq!(walk.eval_variable_scopes, [scope]);
+        assert_eq!(walk.parameter_eval_variable_scopes, [scope]);
+        let arrow = walked(walk, only_function(hir, FnKind::Arrow));
+        assert!(!has_use(walk, arrow, of_body));
+        assert!(has_use(walk, arrow, of_parameters));
+    });
 }
 
 #[test]

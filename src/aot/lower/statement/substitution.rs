@@ -313,7 +313,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let is_literal = matches!(hir[decl.pat].kind, PatKind::Ident(_))
             && is_constant(declaration)
             && decl.init.is_some()
-            && self.is_literal_operand(decl.init)
+            && (self.is_literal_operand(decl.init) || self.is_printed_as_undefined(decl.init))
             && !matches!(
                 hir[self.skip_type_syntax(decl.init)].kind,
                 ExprKind::Binary { left, .. } if self.is_text(left)

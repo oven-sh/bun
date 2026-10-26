@@ -63,7 +63,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         // JSC records a store to a name that lies in a scope.
                         let binding = self.file.bound.initialized_binding(pattern);
                         if !self.is_kept_in_register(binding) {
-                            self.builder.record_position(position);
+                            let recorded = self.file.recorded_binding_position(pattern);
+                            self.builder.record_position(recorded);
                         }
                         self.initialize_pattern_name(pattern, value, source);
                     }
@@ -103,7 +104,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match file.hir.member_key(file.skip_type_syntax(target)) {
             Some((object, _)) => self.set_position(file.member_position(object)),
             None if self.is_kept_in_register(file.bound.binding(target)) => {}
-            None => self.builder.record_position(file.hir[target].pos),
+            None => self
+                .builder
+                .record_position(file.recorded_name_position(target)),
         }
     }
 

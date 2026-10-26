@@ -144,11 +144,13 @@ impl FileLowering<'_, '_, '_, '_> {
                     op: UnOp::Plus | UnOp::Minus,
                     ..
                 } => true,
-                ExprKind::Call(site) => {
-                    let callee = hir[site].callee;
-                    if callee == child || self.builtins.builtin_of_expression(callee).is_none() {
-                        return false;
-                    }
+                ExprKind::Call(site)
+                    if hir[site].callee != child
+                        && self
+                            .builtins
+                            .builtin_of_expression(hir[site].callee)
+                            .is_some() =>
+                {
                     true
                 }
                 _ => return false,

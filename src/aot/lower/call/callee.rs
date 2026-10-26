@@ -3,10 +3,10 @@ use std::cell::RefCell;
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{Binding, BindingInitializer, BindingKind, Decl, FnOwner, Parent};
 use bun_sema::check::spans::skip_trivia;
-use bun_sema::fold::{Constant, Decision, FoldedValue};
+use bun_sema::fold::{Constant, Decision, FoldedValue, TreeNode, push_children};
 use bun_sema::hir::{
     BinOp, Call, Chain, EnumMemberId, ExprFlags, ExprId, ExprKind, FnBody, FnKind, IdList,
-    MemberKey, PropKey, PropKind, UnOp, end_of_expr,
+    MemberKey, PropKey, PropKind, UnOp, end_of_expr, start_of,
 };
 use bun_sema::import_sites::ImportSiteKind;
 use rustc_hash::FxHashMap;
@@ -254,11 +254,22 @@ impl PrintedOperators {
 impl FileLowering<'_, '_, '_, '_> {
     // JSC reports a call at the end of its callee, which the source map takes back to this token. A text that runs as written has no source map.
     pub(in crate::lower) fn last_mapped_position(&self, expression: ExprId) -> u32 {
+        self.last_mapped_position_in(expression, true)
+    }
+
+    // The same for an expression that is no callee and no object of a member: there `new Map()` is printed `new Map`.
+    pub(in crate::lower) fn last_mapped_value_position(&self, expression: ExprId) -> u32 {
+        self.last_mapped_position_in(expression, false)
+    }
+
+    fn last_mapped_position_in(&self, expression: ExprId, is_callee: bool) -> u32 {
         let hir = self.hir;
-        if self.runs_as_written() {
-            return end_of_expr(hir, expression);
+        if self.is_shown_without_source_map() {
+            return end_of_expr(hir, self.skip_type_syntax(expression));
         }
         let mut last = self.skip_type_syntax(expression);
+        // What is printed in place of a name stands where the name stands.
+        let mut is_callee = is_callee;
         loop {
             if self.is_printed_as_literal(last) {
                 return self.first_position(last);
@@ -304,6 +315,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                 }
                 ExprKind::New(site) if hir[site].close_pos == u32::MAX => hir[site].callee,
+                ExprKind::New(site) if hir[site].args.is_empty() && !is_callee => hir[site].callee,
                 ExprKind::Fn(function) => match hir[function].body {
                     FnBody::Expr(body) => body,
                     FnBody::None | FnBody::Block(_) => {
@@ -332,6 +344,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 _ => return hir[last].pos,
             };
+            is_callee &= matches!(hir[last].kind, ExprKind::Ident(_));
             last = self.skip_type_syntax(next);
         }
     }
@@ -340,7 +353,7 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn call_position(&self, site: Call) -> u32 {
         let end = self.last_mapped_position(site.callee);
         match site.chain {
-            Chain::Start if self.runs_as_written() => self.next_token_position(end) + 2,
+            Chain::Start if self.is_shown_without_source_map() => self.next_token_position(end) + 2,
             Chain::Start | Chain::Continue | Chain::No => end,
         }
     }
@@ -348,7 +361,8 @@ impl FileLowering<'_, '_, '_, '_> {
     // JSC reports an access to a member at the `.`, the `?.` or the `[` behind the object, which the source map takes back to the last token of the object.
     pub(in crate::lower) fn member_position(&self, object: ExprId) -> u32 {
         let end = self.last_mapped_position(object);
-        if !self.runs_as_written() {
+        // The text that runs has no syntax of types: the operator stands right behind the object there.
+        if !self.is_shown_without_source_map() || self.skip_type_syntax(object) != object {
             return end;
         }
         let operator = self.next_token_position(end);
@@ -368,15 +382,32 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // JSC records a name where it ends. The source map takes that to a `)` or `]` that is printed right behind the name.
     pub(in crate::lower) fn name_position(&self, identifier: ExprId) -> u32 {
-        let hir = self.hir;
-        if self.runs_as_written() {
-            return hir[identifier].end;
-        }
         if let Some(position) = self.find_shorthand_name_position(identifier) {
             return position;
         }
+        if self.is_shown_without_source_map() {
+            return self.hir[identifier].end;
+        }
         self.find_closing_token_behind(identifier)
-            .unwrap_or(hir[identifier].pos)
+            .unwrap_or(self.hir[identifier].pos)
+    }
+
+    // JSC records a name where it ends, which the source map takes back to where the name starts.
+    pub(in crate::lower) fn recorded_name_position(&self, identifier: ExprId) -> u32 {
+        let name = self.hir[identifier];
+        match self.runs_as_written() {
+            true => name.end,
+            false => name.pos,
+        }
+    }
+
+    // JSC reports the store of `a += b` one character behind the start of the operator, which the source map takes back to the last token of the target.
+    pub(in crate::lower) fn updating_store_position(&self, target: ExprId) -> u32 {
+        let end = self.last_mapped_position(target);
+        match self.runs_as_written() {
+            true => self.next_token_position(end) + 1,
+            false => end,
+        }
     }
 
     // The `)` of a call or the `]` of a list that is printed right behind an expression.
@@ -460,7 +491,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let Parent::Prop(property) = self.bound.parent_of_expr(identifier) else {
             return None;
         };
-        if hir[property].kind != PropKind::Shorthand || self.runs_as_written() {
+        if hir[property].kind != PropKind::Shorthand {
             return None;
         }
         let is_in_word =
@@ -468,6 +499,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let name = hir[identifier];
         let start = self.next_token_position(name.end) as usize;
         let end = start + (name.end - name.pos) as usize;
+        if self.is_shown_without_source_map() {
+            return Some(end as u32);
+        }
         let mut mapped = name.pos as usize;
         let mut position = start;
         while let Some(&byte) = hir.text.get(position).filter(|_| position <= end) {
@@ -489,6 +523,9 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // JSC reports `instanceof` and `in` where the right operand starts. The source map knows no `(` that is printed around it, and takes that to the token in front.
     pub(in crate::lower) fn right_operand_position(&self, left: ExprId, right: ExprId) -> u32 {
+        if self.runs_as_written() {
+            return start_of(self.hir, right);
+        }
         let is_in_parentheses = match self.hir[self.skip_to_printed_initializer(right)].kind {
             ExprKind::Fn(function) => self.hir[function].kind == FnKind::Arrow,
             ExprKind::Cond { test, .. } => self.find_printed_condition(test).is_none(),
@@ -532,10 +569,45 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // JSC stores the value of `export default value` in a variable named `starDefault`, and reports the store as many columns behind the start of the value as that name is long. The source map takes
+    // the place back to the last token that it knows there.
+    pub(in crate::lower) fn default_export_position(&self, value: ExprId) -> u32 {
+        const LENGTH_OF_VARIABLE_NAME: u32 = 11;
+        let hir = self.hir;
+        let start = self.first_position(value);
+        let reported = start + LENGTH_OF_VARIABLE_NAME;
+        if self.runs_as_written() {
+            return reported;
+        }
+        let mut last = start;
+        let mut stack = vec![TreeNode::Expr(value)];
+        while let Some(node) = stack.pop() {
+            let TreeNode::Expr(part) = node else {
+                continue;
+            };
+            let first = self.first_position(part);
+            if first > reported {
+                continue;
+            }
+            let mut tokens: SmallVec<[u32; 8]> =
+                smallvec![first, self.last_mapped_value_position(part)];
+            if let ExprKind::Object(properties) = hir[self.skip_type_syntax(part)].kind {
+                tokens.extend(properties.iter().map(|property| hir[property].pos));
+            }
+            let in_front = tokens.into_iter().filter(|&token| token <= reported);
+            last = last.max(in_front.max().unwrap_or(last));
+            push_children(hir, node, &mut stack);
+        }
+        last
+    }
+
     // Bun's transpiler gives an expression the position of its first operand, without the parentheses around it.
     pub(in crate::lower) fn first_position(&self, expression: ExprId) -> u32 {
         let hir = self.hir;
         let mut first = self.skip_type_syntax(expression);
+        if self.runs_as_written() {
+            return hir[first].pos;
+        }
         // The result of an operator that the transpiler computes stands where the operator's expression is written.
         let mut is_computed = false;
         loop {
@@ -576,6 +648,11 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprKind::Index { obj, index, .. } => {
                     self.find_printed_element(obj, index).unwrap_or(obj)
                 }
+                // The transpiler gives what it makes of `void 0` the position of the operand.
+                ExprKind::Unary {
+                    op: UnOp::Void,
+                    operand,
+                } if self.is_printed_as_undefined(first) => operand,
                 ExprKind::Dot { obj, .. } => obj,
                 ExprKind::Call(site) | ExprKind::TaggedTemplate(site) => hir[site].callee,
                 ExprKind::Unary {
@@ -693,6 +770,17 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // Bun's transpiler computes an operator whose operands are literals, and prints the result at the position of the operator's expression.
+    // `1 + "ab".length` and `Level.High`, of which Bun's transpiler prints the value.
+    pub(in crate::lower) fn is_folded_into_literal(&self, expression: ExprId) -> bool {
+        match self.hir[self.skip_type_syntax(expression)].kind {
+            ExprKind::Binary { .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Dot { .. }
+            | ExprKind::Index { .. } => self.is_printed_as_literal(expression),
+            _ => false,
+        }
+    }
+
     fn is_printed_as_literal(&self, expression: ExprId) -> bool {
         let hir = self.hir;
         match hir[self.skip_type_syntax(expression)].kind {
@@ -1095,6 +1183,9 @@ impl FileLowering<'_, '_, '_, '_> {
         left: ExprId,
         right: ExprId,
     ) -> (ExprId, ExprId) {
+        if self.runs_as_written() {
+            return (left, right);
+        }
         let is_moved = |operand| {
             let printed = self.skip_unprinted_syntax(operand);
             match self.hir[printed].kind {
@@ -1159,6 +1250,21 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // `undefined` and `void 0`, which Bun's transpiler prints `void 0`.
+    pub(in crate::lower) fn is_printed_as_undefined(&self, expression: ExprId) -> bool {
+        let written = self.skip_type_syntax(expression);
+        match self.hir[written].kind {
+            ExprKind::Ident(known::undefined) => {
+                matches!(self.bound.binding(written), Binding::Free)
+            }
+            ExprKind::Unary {
+                op: UnOp::Void,
+                operand,
+            } => self.is_literal_operand(operand),
+            _ => false,
+        }
+    }
+
     pub(in crate::lower) fn is_text(&self, expression: ExprId) -> bool {
         match self.hir[self.skip_type_syntax(expression)].kind {
             ExprKind::String(_) => true,
@@ -1188,6 +1294,7 @@ impl FileLowering<'_, '_, '_, '_> {
         match hir[test].kind {
             ExprKind::True => Some(true),
             ExprKind::False | ExprKind::Null => Some(false),
+            _ if self.is_printed_as_undefined(test) => Some(false),
             ExprKind::Unary {
                 op: UnOp::Not,
                 operand,

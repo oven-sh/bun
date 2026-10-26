@@ -27,7 +27,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             _ => self
                 .file
                 .find_shorthand_name_position(identifier)
-                .unwrap_or(self.file.hir[identifier].pos),
+                .unwrap_or_else(|| self.file.recorded_name_position(identifier)),
         };
         self.builder.record_position(recorded);
         if recorded == position {
@@ -90,7 +90,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(start) => IdentifierTarget::Dynamic {
                 binding,
                 name,
-                holder: self.resolve_dynamic_name(start, binding, name).holder,
+                holder: self
+                    .resolve_dynamic_pattern_name(start, pattern, binding, name)
+                    .holder,
             },
             None => IdentifierTarget::Binding {
                 binding,
@@ -142,7 +144,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let binding = bound.initialized_binding(pattern);
         match bound.dynamic_lookup_scope(NodeData::Pat(pattern)) {
             Some(start) => {
-                let holder = self.resolve_dynamic_name(start, binding, name).holder;
+                let found = self.resolve_dynamic_pattern_name(start, pattern, binding, name);
+                let holder = found.holder;
                 self.store_dynamic_binding(binding, name, holder, value);
             }
             None => bindings::initialize_binding(self, binding, name, value, source),

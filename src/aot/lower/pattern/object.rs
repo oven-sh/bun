@@ -29,8 +29,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let prepared = self.prepare_target(property.target);
                 // JSC records the copy at the pattern and nothing for the store. The `{` of an assignment is the start of an expression, which the source map knows.
                 let recorded = match node {
-                    PatternNode::Binding(_) => mapped,
-                    PatternNode::Assignment(_) => self.file.node_position(node),
+                    PatternNode::Binding(_) if !self.file.runs_as_written() => mapped,
+                    PatternNode::Binding(_) | PatternNode::Assignment(_) => {
+                        self.file.node_position(node)
+                    }
                 };
                 self.set_position(recorded);
                 let layout = self.find_rest_layout(property.target);

@@ -5,9 +5,9 @@ mod type_of;
 use bun_sema::atom::known;
 use bun_sema::bind::Parent;
 use bun_sema::fold::FoldedValue;
-use bun_sema::hir::{BinOp, ExprId, ExprKind, IdList, StmtId, StmtKind, UnOp};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, IdList, StmtId, StmtKind, UnOp, is_parenthesized};
 use bun_sema::module_format::main_module_operand;
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 
 pub(in crate::lower) use self::concatenation::PrintedOperand;
 use self::concatenation::SumOperator;
@@ -213,6 +213,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let ExprKind::Binary { op: inner, .. } = hir[expression].kind else {
             return None;
         };
+        if self.file.runs_as_written() {
+            return match self.file.bound.parent_of_expr(expression) {
+                Parent::Expr(parent) if !is_parenthesized(hir, expression) => {
+                    let is_operator = matches!(hir[parent].kind, ExprKind::Binary { op, .. } if op != BinOp::Comma);
+                    is_operator.then_some(parent)
+                }
+                _ => None,
+            };
+        }
         let mut operand = expression;
         while let Parent::Expr(parent) = self.file.bound.parent_of_expr(operand) {
             match hir[parent].kind {
@@ -240,6 +249,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     // `(a + b) * c`, `(a + b).x * c`: the first token that Bun's transpiler prints is a parenthesis, which its source map does not know.
     fn is_printed_in_parentheses_first(&self, expression: ExprId) -> bool {
         let hir = self.file.hir;
+        if self.file.runs_as_written() {
+            return false;
+        }
         let mut first = expression;
         loop {
             let (next, outer) = match hir[first].kind {
@@ -406,6 +418,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         spine.push((op, right));
         let mut innermost_operator = expression;
         let mut innermost = left;
+        let outer_position = self.find_operator_position(expression);
+        // In a text that runs as written, each operator stands where the operators between its parentheses start.
+        let is_written = self.file.runs_as_written();
+        let mut written_position = outer_position;
+        let mut written_positions: SmallVec<[u32; 8]> = smallvec![outer_position];
         // The operators from here on stand in parentheses that Bun's transpiler prints.
         let mut first_in_parentheses = None;
         while let ExprKind::Binary { op, left, right } = hir[innermost].kind {
@@ -422,14 +439,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 break;
             }
             let outer = spine[spine.len() - 1].0;
-            if first_in_parentheses.is_none() && needs_parentheses(outer, op, true) {
+            if is_written {
+                if is_parenthesized(hir, innermost) {
+                    written_position = hir[innermost].pos;
+                }
+                written_positions.push(written_position);
+            } else if first_in_parentheses.is_none() && needs_parentheses(outer, op, true) {
                 first_in_parentheses = Some(spine.len());
             }
             spine.push((op, right));
             innermost_operator = innermost;
             innermost = left;
         }
-        let outer_position = self.find_operator_position(expression);
         let first_in_parentheses = first_in_parentheses.unwrap_or(spine.len());
         let (mut inner_position, mut position_in_front) = (outer_position, outer_position);
         if first_in_parentheses < spine.len() {
@@ -450,6 +471,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         {
             self.builder
                 .record_position(match index < first_in_parentheses {
+                    _ if is_written => written_positions[index],
                     true => outer_position,
                     false => inner_position,
                 });
@@ -463,6 +485,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 inner_position = position_in_front;
             }
             let written = match index < first_in_parentheses {
+                _ if is_written => written_positions[index],
                 true => outer_position,
                 false => inner_position,
             };

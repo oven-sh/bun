@@ -29,41 +29,42 @@ const listWithForIn = object => {
   for (const key in object) listed.push(key);
   return listed.join();
 };
+// Each look stands in a function that is handed its own barrel alone: a name that one look stores is a name of that barrel, not of all thirty.
 const firstLooks = [
-  [() => require("./first-look/barrel-01.js"), b => b.one],
-  [() => require("./first-look/barrel-02.js"), b => b.missing],
-  [() => require("./first-look/barrel-03.js"), b => "two" in b],
-  [() => require("./first-look/barrel-04.js"), b => Object.prototype.hasOwnProperty.call(b, "three")],
-  [() => require("./first-look/barrel-05.js"), b => Object.keys(b).join()],
-  [() => require("./first-look/barrel-06.js"), b => listWithForIn(b)],
-  [() => require("./first-look/barrel-07.js"), b => valuesOf({ ...b })],
-  [() => require("./first-look/barrel-08.js"), b => JSON.stringify(b)],
-  [() => require("./first-look/barrel-09.js"), b => valuesOf(Object.assign({}, b))],
-  [() => require("./first-look/barrel-10.js"), b => valuesOf(Object.assign(b, { extra: "extra" }))],
-  [() => require("./first-look/barrel-11.js"), b => Reflect.ownKeys(b).map(String).join()],
-  [() => require("./first-look/barrel-12.js"), b => Object.keys(Object.getOwnPropertyDescriptor(b, "one")).join()],
-  [() => require("./first-look/barrel-13.js"), b => [b[0], b["0"], 0 in b, b[-1], b[1.5]].join()],
-  [() => require("./first-look/barrel-14.js"), b => ((b[0] = "zero"), Reflect.ownKeys(b).map(String).join())],
-  [() => require("./first-look/barrel-15.js"), b => (b.one = "stored")],
-  [() => require("./first-look/barrel-16.js"), b => delete b.one],
-  [() => require("./first-look/barrel-17.js"), b => Object.defineProperty(b, "one", { value: "defined" })],
-  [() => require("./first-look/barrel-18.js"), b => [Object.freeze(b) === b, Object.isFrozen(b), Object.isSealed(b), Object.isExtensible(b)].join()],
-  [() => require("./first-look/barrel-19.js"), b => [Object.seal(b) === b, Object.isFrozen(b), Object.isSealed(b), Object.isExtensible(b)].join()],
-  [() => require("./first-look/barrel-20.js"), b => [Object.preventExtensions(b) === b, Object.isFrozen(b), Object.isSealed(b), attempt(() => (b.more = 1))].join()],
-  [() => require("./first-look/barrel-21.js"), b => [Object.create(b).two, "two" in Object.create(b), listWithForIn(Object.create(b))].join(" ")],
-  [() => require("./first-look/barrel-22.js"), b => (Object.setPrototypeOf(b, { inherited: "inherited" }), [b.inherited, b.one, listWithForIn(b)].join(" "))],
-  [() => require("./first-look/barrel-23.js"), b => [b.__esModule, (b.added = "added"), Object.keys(b).join()].join(" ")],
-  [() => require("./first-look/barrel-24.js"), b => [Object.entries(b).join("|"), Object.values(b).join("|")].join(" ")],
-  [() => require("./first-look/barrel-25.js"), b => [Object.isFrozen(b), Object.isSealed(b), Object.isExtensible(b)].join()],
-  [() => require("./first-look/barrel-26.js"), b => [b.hasOwnProperty("one"), b.propertyIsEnumerable("one"), b.toString()].join()],
-  [() => require("./first-look/barrel-27.js"), b => [typeof b.__lookupGetter__("one"), b.__lookupSetter__("one"), b.__lookupGetter__("__esModule")].join()],
-  [() => require("./first-look/barrel-28.js"), b => (({ one, ...rest }) => [one, valuesOf(rest)].join(" "))(b)],
-  [() => require("./first-look/barrel-29.js"), b => Object.defineProperty(b, "fresh", { value: "fresh", enumerable: true }) === b],
-  [() => require("./first-look/barrel-30.js"), b => [Reflect.get(b, "two"), Reflect.has(b, "default"), Reflect.set(b, "two", 2), Reflect.deleteProperty(b, "two")].join()],
+  () => (b => [b, () => b.one])(require("./first-look/barrel-01.js")),
+  () => (b => [b, () => b.missing])(require("./first-look/barrel-02.js")),
+  () => (b => [b, () => "two" in b])(require("./first-look/barrel-03.js")),
+  () => (b => [b, () => Object.prototype.hasOwnProperty.call(b, "three")])(require("./first-look/barrel-04.js")),
+  () => (b => [b, () => Object.keys(b).join()])(require("./first-look/barrel-05.js")),
+  () => (b => [b, () => listWithForIn(b)])(require("./first-look/barrel-06.js")),
+  () => (b => [b, () => valuesOf({ ...b })])(require("./first-look/barrel-07.js")),
+  () => (b => [b, () => JSON.stringify(b)])(require("./first-look/barrel-08.js")),
+  () => (b => [b, () => valuesOf(Object.assign({}, b))])(require("./first-look/barrel-09.js")),
+  () => (b => [b, () => valuesOf(Object.assign(b, { extra: "extra" }))])(require("./first-look/barrel-10.js")),
+  () => (b => [b, () => Reflect.ownKeys(b).map(String).join()])(require("./first-look/barrel-11.js")),
+  () => (b => [b, () => Object.keys(Object.getOwnPropertyDescriptor(b, "one")).join()])(require("./first-look/barrel-12.js")),
+  () => (b => [b, () => [b[0], b["0"], 0 in b, b[-1], b[1.5]].join()])(require("./first-look/barrel-13.js")),
+  () => (b => [b, () => ((b[0] = "zero"), Reflect.ownKeys(b).map(String).join())])(require("./first-look/barrel-14.js")),
+  () => (b => [b, () => (b.one = "stored")])(require("./first-look/barrel-15.js")),
+  () => (b => [b, () => delete b.one])(require("./first-look/barrel-16.js")),
+  () => (b => [b, () => Object.defineProperty(b, "one", { value: "defined" })])(require("./first-look/barrel-17.js")),
+  () => (b => [b, () => [Object.freeze(b) === b, Object.isFrozen(b), Object.isSealed(b), Object.isExtensible(b)].join()])(require("./first-look/barrel-18.js")),
+  () => (b => [b, () => [Object.seal(b) === b, Object.isFrozen(b), Object.isSealed(b), Object.isExtensible(b)].join()])(require("./first-look/barrel-19.js")),
+  () => (b => [b, () => [Object.preventExtensions(b) === b, Object.isFrozen(b), Object.isSealed(b), attempt(() => (b.more = 1))].join()])(require("./first-look/barrel-20.js")),
+  () => (b => [b, () => [Object.create(b).two, "two" in Object.create(b), listWithForIn(Object.create(b))].join(" ")])(require("./first-look/barrel-21.js")),
+  () => (b => [b, () => (Object.setPrototypeOf(b, { inherited: "inherited" }), [b.inherited, b.one, listWithForIn(b)].join(" "))])(require("./first-look/barrel-22.js")),
+  () => (b => [b, () => [b.__esModule, (b.added = "added"), Object.keys(b).join()].join(" ")])(require("./first-look/barrel-23.js")),
+  () => (b => [b, () => [Object.entries(b).join("|"), Object.values(b).join("|")].join(" ")])(require("./first-look/barrel-24.js")),
+  () => (b => [b, () => [Object.isFrozen(b), Object.isSealed(b), Object.isExtensible(b)].join()])(require("./first-look/barrel-25.js")),
+  () => (b => [b, () => [b.hasOwnProperty("one"), b.propertyIsEnumerable("one"), b.toString()].join()])(require("./first-look/barrel-26.js")),
+  () => (b => [b, () => [typeof b.__lookupGetter__("one"), b.__lookupSetter__("one"), b.__lookupGetter__("__esModule")].join()])(require("./first-look/barrel-27.js")),
+  () => (b => [b, () => (({ one, ...rest }) => [one, valuesOf(rest)].join(" "))(b)])(require("./first-look/barrel-28.js")),
+  () => (b => [b, () => Object.defineProperty(b, "fresh", { value: "fresh", enumerable: true }) === b])(require("./first-look/barrel-29.js")),
+  () => (b => [b, () => [Reflect.get(b, "two"), Reflect.has(b, "default"), Reflect.set(b, "two", 2), Reflect.deleteProperty(b, "two")].join()])(require("./first-look/barrel-30.js")),
 ];
-firstLooks.forEach(([load, look], index) => {
-  const barrel = load();
-  console.log(index + 1, attempt(() => look(barrel)));
+firstLooks.forEach((load, index) => {
+  const [barrel, look] = load();
+  console.log(index + 1, attempt(look));
   console.log(index + 1, describe(barrel));
   console.log(index + 1, valuesOf(barrel));
 });

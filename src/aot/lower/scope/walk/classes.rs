@@ -63,6 +63,8 @@ impl Walker<'_, '_> {
             }
         }
 
+        let first_store = self.walk.symbol_stores.len() as u32;
+        let is_decorated = !entries_of(&self.class_decorators, class).is_empty();
         for &(_, decorator) in entries_of(&self.class_decorators, class) {
             self.stack.push((Task::Expression(decorator), context));
         }
@@ -116,6 +118,9 @@ impl Walker<'_, '_> {
                 | MemberKind::ConstructSignature
                 | MemberKind::IndexSignature => {}
             }
+        }
+        if is_decorated {
+            self.push_task(Task::EndDecoratedClass { first_store }, context);
         }
     }
 

@@ -1988,6 +1988,7 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_exe_format",
+ "bun_highway",
  "bun_http",
  "bun_libarchive",
  "bun_opaque",

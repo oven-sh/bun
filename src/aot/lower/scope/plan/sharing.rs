@@ -122,8 +122,12 @@ fn find_time_of_last_store(
     binding: BindingRef,
     owner: WalkedFunctionId,
 ) -> Option<u32> {
-    let BindingRef::Symbol(symbol) = binding else {
-        return None;
+    let symbol = match binding {
+        BindingRef::Symbol(symbol) => symbol,
+        BindingRef::Slot(scope, ScopeSlot::This) => {
+            return find_time_of_only_super_call(context, scope);
+        }
+        BindingRef::Slot(..) => return None,
     };
     let bound = context.input.bound;
     if bound.is_visible_to_eval(symbol) {
@@ -153,6 +157,18 @@ fn find_time_of_last_store(
     };
     let is_stable = context.is_stable_ignoring(symbol, is_own_store);
     is_stable.then_some(time)
+}
+
+// Nothing else binds `this` of the derived constructor, and whatever stands behind the call in the constructor runs behind it.
+fn find_time_of_only_super_call(context: &Context<'_, '_>, scope: ScopeId) -> Option<u32> {
+    let bindings = &context.walk.this_bindings;
+    let times = &context.walk.slot_initializations;
+    let first = bindings.partition_point(|binding| binding.0 < scope);
+    let end = bindings.partition_point(|binding| binding.0 <= scope);
+    match bindings[first..end] {
+        [(_, true)] => find_by_key(times, (scope, ScopeSlot::This)),
+        _ => None,
+    }
 }
 
 // A closure would copy what the name holds, because the name is never stored again and is initialized before the closure is made.
@@ -259,7 +275,8 @@ fn create_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option
             | ScopeSlot::Arguments
             | ScopeSlot::ArgumentsBinding
             | ScopeSlot::WithObject
-            | ScopeSlot::EvalVariables,
+            | ScopeSlot::EvalVariables
+            | ScopeSlot::ParameterEvalVariables,
         ) => None,
     }
 }

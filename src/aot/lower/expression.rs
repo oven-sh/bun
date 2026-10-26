@@ -101,7 +101,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Decision::Unknown if self.file.decisions().is_truthy_without_effects(expression) => {
                 self.lower_member_reads(expression);
             }
-            Decision::Unknown => self.lower_for_effect_by_kind(expression, is_unused_in_bun_run),
+            Decision::Unknown => {
+                let were_suspended = self.suspend_records_of_literal(expression);
+                self.lower_for_effect_by_kind(expression, is_unused_in_bun_run);
+                self.builder.suspend_records(were_suspended);
+            }
         }
         self.leave_nesting();
     }
@@ -165,12 +169,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value
     }
 
+    // What Bun's transpiler prints as a literal leaves no record. Returns what held before.
+    fn suspend_records_of_literal(&mut self, expression: ExprId) -> bool {
+        let were_suspended = self.builder.suspend_records(true);
+        if !were_suspended && !self.file.is_folded_into_literal(expression) {
+            self.builder.suspend_records(false);
+        }
+        were_suspended
+    }
+
     // Of `(a, b)`, `1 && b` and `[b][0]` Bun's transpiler may print `b` alone. Nothing else of them leaves a record.
     fn lower_printed_part(&mut self, expression: ExprId, evaluation: Evaluation<'_>) -> ValueId {
         let printed = self.file.skip_unprinted_syntax(expression);
         let is_partly_printed = printed != self.file.skip_type_syntax(expression);
         if !is_partly_printed && self.printed_part != Some(expression) {
-            return self.lower_by_decision(expression, evaluation);
+            let were_suspended = self.suspend_records_of_literal(expression);
+            let value = self.lower_by_decision(expression, evaluation);
+            self.builder.suspend_records(were_suspended);
+            return value;
         }
         let part = is_partly_printed.then_some(printed);
         let outer_part = std::mem::replace(&mut self.printed_part, part);

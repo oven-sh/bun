@@ -61,7 +61,10 @@ pub(crate) enum ScopeSlot {
     ArgumentsBinding,
     CommonJs(CommonJsVariable),
     WithObject,
+    /// The variables of text evaluated in the scope. In a function: of text evaluated in its body.
     EvalVariables,
+    /// The variables of text evaluated among the parameters of the function.
+    ParameterEvalVariables,
     Class(ClassSlot),
 }
 

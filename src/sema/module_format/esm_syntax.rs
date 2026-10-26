@@ -1,4 +1,4 @@
-use super::EsmSyntax;
+use super::{EsmSyntax, ModuleFormat, find_marked_format};
 use crate::file_analysis::has_live_top_level_await;
 use crate::fold::Decisions;
 use crate::hir::{Expr, ExprKind, File, StmtId, StmtKind};
@@ -15,7 +15,10 @@ pub(crate) fn statement_esm_syntax(hir: &File<'_>, stmt: StmtId) -> EsmSyntax {
 }
 
 pub(crate) fn file_esm_syntax(hir: &File<'_>) -> EsmSyntax {
-    if has_live_top_level_await(hir, &Decisions::default()) {
+    // A mark makes an ES module of a text that has none of the syntax.
+    if find_marked_format(&hir.text) == Some(ModuleFormat::Esm)
+        || has_live_top_level_await(hir, &Decisions::default())
+    {
         return EsmSyntax::ExportOrTopLevelAwait;
     }
     let statements = hir

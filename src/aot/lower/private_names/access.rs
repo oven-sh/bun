@@ -281,7 +281,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.builder.undefined();
         };
         let object = self.lower_expression(right);
-        let reported = self.file.first_position(right);
+        // JSC records no place for the test. The last one in front of it lies in the right operand, and the source map takes that back to where the operand starts.
+        let recorded = self.builder.last_recorded_position();
+        let reported = match recorded.filter(|_| self.file.runs_as_written()) {
+            Some(recorded) => recorded,
+            None => self.file.first_position(right),
+        };
         self.set_position_of_text_elsewhere(reported, hir[expression].pos);
         match self.file.bound.private_name_of_reference(left) {
             Some(name) => self.emit_name_test(object, name),

@@ -97,6 +97,8 @@ unsafe extern "C" {
 
     fn highway_index_of_untidy_slash(path: *const u8, len: usize) -> usize;
 
+    fn highway_index_of_untidy_slash_or_non_ascii(path: *const u8, len: usize) -> usize;
+
     fn highway_last_index_of_slash(path: *const u8, len: usize) -> usize;
 
     fn highway_last_index_of_slash_or_dot(path: *const u8, len: usize) -> usize;
@@ -800,6 +802,22 @@ pub fn index_of_untidy_slash(path: &[u8]) -> Option<usize> {
     let result = unsafe { highway_index_of_untidy_slash(path.as_ptr(), path.len()) };
     let found = found_at(result, path.len());
     debug_assert!(found.is_none_or(|i| path[i] == b'/' && matches!(path[i + 1], b'/' | b'.')));
+    found
+}
+
+/// Index of the first byte of `path` that is not ASCII or is what [`index_of_untidy_slash`] looks for.
+#[inline(always)]
+pub fn index_of_untidy_slash_or_non_ascii(path: &[u8]) -> Option<usize> {
+    if cfg!(miri) {
+        return (0..path.len())
+            .find(|&at| !path[at].is_ascii() || index_of_untidy_slash(&path[at..]) == Some(0));
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_untidy_slash_or_non_ascii(path.as_ptr(), path.len()) };
+    let found = found_at(result, path.len());
+    debug_assert!(found.is_none_or(|i| {
+        !path[i].is_ascii() || (path[i] == b'/' && matches!(path[i + 1], b'/' | b'.'))
+    }));
     found
 }
 

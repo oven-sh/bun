@@ -218,6 +218,7 @@ function findKept(folder: string, into: string[]) {
 // What a script writes (generate.ts) is written below a temporary folder that stands for ./programs: <that folder>/<topic>/<name>.ts. First the programs are only listed, under the paths they
 // would have there. Which of them a run takes goes by those paths, as for a program that is kept, so only what is taken is written.
 let writtenRoot: string | undefined;
+let listingsInUse = 0;
 const notYetWritten = new Map<string, { topic: string; program: WrittenProgram }>();
 const programsOfScript = new Map<string, WrittenProgram[]>();
 // The programs that follow from the table of built-ins have to be made before anybody knows their names, a group at a time. What is listed is the group: <that folder>/<topic>/<group>.
@@ -231,18 +232,18 @@ export const inPrograms = (path: string) =>
 
 function findWritten(topic: string, into: string[]) {
   const generator = generators[topic]();
-  if (writtenRoot === undefined) {
-    const folder = (writtenRoot = String(
-      tempDir("aot-written-programs", { "tsconfig.json": JSON.stringify({ extends: join(root, "tsconfig.json") }) }),
-    ));
-    // `bun test test/aot` is one process for all files: the next one begins anew.
-    afterAll(() => {
-      rmSync(folder, { recursive: true, force: true });
-      writtenRoot = undefined;
-      notYetWritten.clear();
-      groups.clear();
-    });
-  }
+  writtenRoot ??= String(
+    tempDir("aot-written-programs", { "tsconfig.json": JSON.stringify({ extends: join(root, "tsconfig.json") }) }),
+  );
+  // `bun test test/aot` is one process for all files: the next one begins anew. A hook runs when the `describe` block in which it was made ends, and the blocks of a file share the folder.
+  listingsInUse++;
+  afterAll(() => {
+    if (--listingsInUse > 0) return;
+    rmSync(writtenRoot!, { recursive: true, force: true });
+    writtenRoot = undefined;
+    notYetWritten.clear();
+    groups.clear();
+  });
   // The compiler options of the folder hold for what is written as for what is kept.
   if (existsSync(join(root, topic, "tsconfig.json"))) {
     mkdirSync(join(writtenRoot, topic), { recursive: true });

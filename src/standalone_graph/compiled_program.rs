@@ -465,8 +465,8 @@ fn is_normalized_posix_path(name: &[u8]) -> bool {
     };
     let rest = rest.strip_suffix(b"/").unwrap_or(rest);
     rest.is_empty()
-        || bun_core::strings::split(rest, b"/")
-            .all(|component| !matches!(component, b"" | b"." | b".."))
+        || (!rest.ends_with(b"/")
+            && bun_highway::index_of_untidy_slash(&name[..=rest.len()]).is_none())
 }
 
 /// `name` as a key of `files` and `dirs`: absolute, normalized, posix-separated, without trailing separators.
@@ -621,6 +621,10 @@ impl StandaloneModuleGraph {
         let Some(program) = self.compiled_program.as_ref() else {
             return false;
         };
+        // Most of them are keys as they stand.
+        if cfg!(not(windows)) && is_normalized_posix_path(path) {
+            return self.is_near_source_paths(program, path.strip_suffix(b"/").unwrap_or(path));
+        }
         let mut buffer = path_buffer_pool::get();
         absolute_key(path, &mut buffer)
             .is_some_and(|key| self.is_near_source_paths(program, key.as_bytes()))

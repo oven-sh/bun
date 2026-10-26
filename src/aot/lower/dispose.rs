@@ -219,7 +219,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let file = &*self.file;
         let found = match self.key {
-            _ if file.runs_as_written() => None,
+            _ if file.is_shown_without_source_map() => None,
             FunctionKey::Source(source) => {
                 let behind = match file.bound.fns[source.function.idx()].owner {
                     FnOwner::Expr(owner) => file.find_closing_token_behind(owner),

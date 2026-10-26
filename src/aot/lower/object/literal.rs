@@ -3,9 +3,10 @@ use bun_sema::bind::{CodeUnit, Parent};
 use bun_sema::check::aot::{
     IndexKey, IndexSignature, MemberLookup, MemberName, PositionTypes, ShapeKind,
 };
+use bun_sema::check::spans::skip_trivia_back;
 use bun_sema::hir::{
     BinOp, Branches, ExprId, ExprKind, File, FnId, MemberKey, Prop, PropId, PropKey, PropKind,
-    is_proto_setter,
+    is_proto_setter, start_of,
 };
 use smallvec::{SmallVec, smallvec};
 
@@ -16,6 +17,13 @@ use crate::ir::generated::TypeSiteKind;
 use crate::lower::member::{GivenName, PropertyName};
 use crate::lower::positions::SiteOrigin;
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, captures, convert};
+
+/// What stands in front of a property of a literal.
+#[derive(Copy, Clone)]
+enum InFront {
+    StartOfLiteral(u32),
+    Property(PropId),
+}
 
 #[derive(Copy, Clone)]
 struct Dictionary {
@@ -300,9 +308,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         match hir[source].kind {
             ExprKind::Object(properties) => {
-                let mut start = Some(hir[source].pos);
+                let mut in_front = InFront::StartOfLiteral(hir[source].pos);
                 for property in properties.iter() {
-                    self.lower_property_definition(object, dictionary, property, start.take());
+                    self.lower_property_definition(object, dictionary, property, in_front);
+                    in_front = InFront::Property(property);
                 }
             }
             ExprKind::Binary { left, right, .. } => {
@@ -339,8 +348,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         object: &mut ObjectBuilder,
         dictionary: Option<Dictionary>,
         property: PropId,
-        // Where the literal starts, for its first property.
-        literal_start: Option<u32>,
+        in_front: InFront,
     ) {
         let hir = self.file.hir;
         let prop = hir[property];
@@ -349,10 +357,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match prop.kind {
             // JSC copies the object that a literal begins with in one step, which it reports at the start of the literal.
             PropKind::Spread => {
-                let position = literal_start.unwrap_or(prop.pos);
+                let (position, recorded) = match in_front {
+                    InFront::StartOfLiteral(start) => (start, start),
+                    InFront::Property(_) if self.file.runs_as_written() => {
+                        let value = start_of(hir, prop.value) as usize;
+                        let end_of_dots = skip_trivia_back(&hir.text, value) as u32;
+                        (end_of_dots, end_of_dots)
+                    }
+                    // The source map does not know the parenthesis and answers the token in front of it.
+                    InFront::Property(previous)
+                        if self.file.begins_with_parenthesis(prop.value) =>
+                    {
+                        let last = self.file.last_mapped_value_position(hir[previous].value);
+                        (last, last)
+                    }
+                    InFront::Property(_) => (prop.pos, self.file.first_position(prop.value)),
+                };
                 self.lower_spread(object, dictionary, prop.value, position);
-                let recorded =
-                    literal_start.unwrap_or_else(|| self.file.first_position(prop.value));
                 self.builder.record_position(recorded);
             }
             PropKind::Init if is_proto_setter(&prop) => {
@@ -544,9 +565,13 @@ pub(crate) fn lower_object_literal(
             lowering.begin_object(layout)
         }
     };
-    let mut start = (rest.len() == props.len()).then_some(hir[literal].pos);
+    let mut in_front = match props.iter().next() {
+        Some(first) if rest.len() != props.len() => InFront::Property(first),
+        _ => InFront::StartOfLiteral(hir[literal].pos),
+    };
     for prop in rest {
-        lowering.lower_property_definition(&mut object, dictionary, prop, start.take());
+        lowering.lower_property_definition(&mut object, dictionary, prop, in_front);
+        in_front = InFront::Property(prop);
     }
     lowering.set_position(hir[literal].pos);
     super::finish_object(lowering, object)

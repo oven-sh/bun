@@ -1,10 +1,11 @@
 use bun_sema::bind::{CodeUnit, Decl, EvalScope, FnOwner, ScopeId, ScopeKind};
 use bun_sema::check::aot::FunctionRef;
-use bun_sema::hir::{Flags, FnBody, FnId, FnKind, StmtId};
+use bun_sema::hir::{ExprId, Flags, FnBody, FnId, FnKind, StmtId};
 
 use super::{Context, EvalUse, Initialization, PatternRole, Task, WalkedFunctionId, Walker};
 use crate::ir::{ClassSlot, FunctionKey};
 use crate::lower::parameters::parameter_symbols;
+use crate::lower::scope::lexical_owners::ScopeObjectSearch;
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{class, commonjs};
 
@@ -207,7 +208,7 @@ impl Walker<'_, '_> {
         });
     }
 
-    pub(super) fn visit_direct_eval(&mut self, eval: EvalScope, context: Context) {
+    pub(super) fn visit_direct_eval(&mut self, call: ExprId, eval: EvalScope, context: Context) {
         let (hir, bound) = (self.hir, self.bound);
         let time = self.tick();
         for symbol in bound.ids(eval.symbols) {
@@ -234,7 +235,13 @@ impl Walker<'_, '_> {
                 self.record_slot_store(context, self.file_scope, slot);
             }
         }
-        self.record_scope_chain(context.function, eval.scope, ScopeId::NONE);
+        let search = ScopeObjectSearch {
+            start: eval.scope,
+            until: ScopeId::NONE,
+            declaring_scope: ScopeId::NONE,
+            pos: hir[call].pos,
+        };
+        self.record_scope_objects(context.function, search);
         let parent_of = |&scope: &ScopeId| bound.runtime_parent_scope(hir, scope).some();
         for scope in std::iter::successors(eval.scope.some(), parent_of) {
             let ScopeKind::Class(class) = bound.scopes[scope.idx()].kind else {
@@ -275,6 +282,7 @@ impl Walker<'_, '_> {
         self.record_eval_arguments_slots(eval, context, time);
         if kind == FnKind::Constructor {
             self.record_slot_store(context, scope, ScopeSlot::This);
+            self.walk.this_bindings.push((scope, false));
             self.use_lexical_slot(context, ScopeSlot::Callee);
             let reference = (context.function, function);
             self.walk.function_references.push(reference);

@@ -6,6 +6,38 @@ use core::ops::Range;
 const SLASH: u8 = b'/';
 const DOT: u8 = b'.';
 
+/// `<[u8]>::is_ascii` for a path or a part of one: a few characters or a few dozen.
+#[inline(always)]
+pub fn is_ascii(text: &[u8]) -> bool {
+    const HIGHEST_BITS: u128 = u128::from_ne_bytes([0x80; 16]);
+    let (start, len) = (text.as_ptr(), text.len());
+    // SAFETY: every read lies in `text`. One that ends with it may overlap the one before it.
+    unsafe {
+        let block = |at: usize| start.add(at).cast::<u128>().read_unaligned();
+        if len > 32 {
+            let mut seen = block(len - 32) | block(len - 16);
+            let mut at = 0;
+            while at + 32 < len {
+                seen |= block(at) | block(at + 16);
+                at += 32;
+            }
+            return seen & HIGHEST_BITS == 0;
+        }
+        if len >= 16 {
+            return (block(0) | block(len - 16)) & HIGHEST_BITS == 0;
+        }
+        if len >= 8 {
+            let (first, last) = (start.cast::<u64>(), start.add(len - 8).cast::<u64>());
+            return (first.read_unaligned() | last.read_unaligned()) & HIGHEST_BITS as u64 == 0;
+        }
+        if len >= 4 {
+            let (first, last) = (start.cast::<u32>(), start.add(len - 4).cast::<u32>());
+            return (first.read_unaligned() | last.read_unaligned()) & HIGHEST_BITS as u32 == 0;
+        }
+        len == 0 || (*start | *start.add(len / 2) | *start.add(len - 1)) < 0x80
+    }
+}
+
 /// Whether the part of `path` that starts at `start` is "." or "..".
 #[inline(always)]
 fn is_dots_at(path: &[u8], start: usize) -> bool {
@@ -15,12 +47,12 @@ fn is_dots_at(path: &[u8], start: usize) -> bool {
     )
 }
 
-/// Whether no part of `path` between two slashes is empty, "." or "..".
+/// Whether every character of `path` is ASCII and no part between two slashes is empty, "." or "..".
 #[inline(always)]
-pub fn is_tidy_posix(path: &[u8]) -> bool {
+pub fn is_tidy_ascii_posix(path: &[u8]) -> bool {
     !path.is_empty()
         && !(path[0] == DOT && is_dots_at(path, 0))
-        && bun_highway::index_of_untidy_slash(path).is_none()
+        && bun_highway::index_of_untidy_slash_or_non_ascii(path).is_none()
 }
 
 /// Where the parts from `start` on that are kept as they are end: at a '/' in front of a part that is empty, "." or "..", or at `limit`, which is not behind a slash.
@@ -243,13 +275,13 @@ pub fn parse_posix_latin1(path: &[u8]) -> ParsedPosixLatin1 {
     }
 }
 
-/// Whether [`crate::resolve_posix_t`] answers `path` as it is.
+/// Whether every character of `path` is ASCII and [`crate::resolve_posix_t`] answers `path` as it is.
 #[inline(always)]
-pub fn is_resolved_posix(path: &[u8]) -> bool {
+pub fn is_resolved_ascii_posix(path: &[u8]) -> bool {
     !path.is_empty()
         && path[0] == SLASH
         && (path[path.len() - 1] != SLASH || path.len() == 1)
-        && is_tidy_posix(path)
+        && is_tidy_ascii_posix(path)
 }
 
 /// The answer is ".." `ups` times with slashes between them and then `to[rest..]`, which is empty or starts with a slash unless `ups` is 0.
@@ -258,10 +290,10 @@ pub struct RelativePosixLatin1 {
     pub rest: usize,
 }
 
-/// [`crate::relative_posix_t`] of two paths that are [`is_resolved_posix`].
+/// [`crate::relative_posix_t`] of two paths that are [`is_resolved_ascii_posix`].
 #[inline(always)]
 pub fn relative_posix_latin1(from: &[u8], to: &[u8]) -> RelativePosixLatin1 {
-    debug_assert!(is_resolved_posix(from) && is_resolved_posix(to));
+    debug_assert!(is_resolved_ascii_posix(from) && is_resolved_ascii_posix(to));
     // Where the names of `from` start that are not in `to`, if there are any, and `rest`.
     let (left_from, rest) = 'found: {
         let common = bun_highway::common_prefix_length(from, to);

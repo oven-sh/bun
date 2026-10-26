@@ -362,3 +362,23 @@ function turn(i: number): number {
   });
   return seen;
 }
+//// name-of-a-new-function-object-where-another-was-given-a-display-name
+const nothing = process.argv.length > 1000 ? "x" : "";
+const handedBack = new Function("f", "return f;" + nothing) as <T>(f: T) => T;
+(handedBack(function other() {}) as any).displayName = "displayed";
+function nameOf(made: () => number): string {
+  return made.name;
+}
+function turn(i: number): number {
+  const made = () => i;
+  if (i < 0) handedBack(made);
+  return nameOf(made).length + made();
+}
+//// new-function-object-bound-to-an-async-resource-where-another-was-given-a-display-name
+import { AsyncResource } from "node:async_hooks";
+const nothing = process.argv.length > 1000 ? "x" : "";
+const handedBack = new Function("f", "return f;" + nothing) as <T>(f: T) => T;
+(handedBack(function other() {}) as any).displayName = "displayed";
+function turn(i: number): number {
+  return AsyncResource.bind(() => i)();
+}

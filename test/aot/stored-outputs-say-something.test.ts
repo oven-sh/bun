@@ -39,6 +39,10 @@ const plainBunVaries: Record<string, string> = {
     "plain Bun prints the lines of the stored output in one of several orders from run to run: which CommonJS file begins first is not one answer there; the stored order is what the executable always prints",
   "modules/imported-commonjs-files-run-in-the-order-they-are-loaded":
     "plain Bun begins the four CommonJS files in the order in which their texts arrive, which is not one order from run to run; the stored output is the usual one, and what the executable always prints",
+  "node-http-probes/frozen-sealed-and-closed-objects":
+    "plain Bun prints one of several outputs from run to run, the stored one among them",
+  "node-http-probes/objects-closed-through-proxies-with-and-without-traps":
+    "plain Bun prints one of several outputs from run to run, the stored one among them",
   "static-modules/cycles/the-second-of-two-commonjs-imports-requires-the-importer":
     "plain Bun begins the second file before the first in about one run of ten on a busy machine; the stored output is what it prints in the other nine, and what the executable always prints",
   "static-modules/earlier-cases/names-imported-by-es-modules-against-later-stores":

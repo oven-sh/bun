@@ -142,7 +142,10 @@ impl FileLowering<'_, '_, '_, '_> {
         ModuleFragment {
             body: roots.body,
             data: roots.data,
-            positions: crate::emit::source_positions(text, line_starts),
+            positions: match self.inputs.sources.bundled_positions(self.file) {
+                [] => crate::emit::source_positions(text, line_starts),
+                bundled => crate::emit::source_positions_in_bundle(text, bundled),
+            },
             function_text,
         }
     }
@@ -151,6 +154,8 @@ impl FileLowering<'_, '_, '_, '_> {
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_export_default(&mut self, statement: StmtId, expression: ExprId) {
         let position = self.file.hir[statement].start;
+        let reported = self.file.default_export_position(expression);
+        self.builder.record_position(reported);
         let value = match self.file.default_export_name(position) {
             Some(name) => {
                 let key = self.file.text_key(name);

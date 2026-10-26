@@ -290,7 +290,12 @@ pub(super) fn has_parameter_expressions(
             PatKind::Object(props) => {
                 for prop in props.iter() {
                     let prop = &hir[prop];
-                    if prop.default.is_some() || matches!(prop.key, PropKey::Computed(_)) {
+                    let is_key_computed = matches!(prop.key, PropKey::Computed(_))
+                        || matches!(
+                            prop.name_kind,
+                            NameKind::ComputedString | NameKind::ComputedNumber
+                        );
+                    if prop.default.is_some() || is_key_computed {
                         return true;
                     }
                     pending.push(prop.value);

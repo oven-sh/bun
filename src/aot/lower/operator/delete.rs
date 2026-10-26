@@ -45,7 +45,7 @@ pub(super) fn lower_delete(
 impl FileLowering<'_, '_, '_, '_> {
     // JSC records a `delete` where its operand ends.
     fn delete_position(&self, access: ExprId) -> u32 {
-        let closing = match self.runs_as_written() {
+        let closing = match self.is_shown_without_source_map() {
             true => None,
             false => self.find_closing_token_behind(access),
         };

@@ -671,7 +671,7 @@ describe.concurrent("modules that do not run", () => {
   );
 
   test.skipIf(!perf)(
-    "a module that a require() finds in a graph that is being loaded costs a few steps of a load",
+    "a module that a require() finds in a graph that is being loaded costs no step of a load",
     async () => {
       const best: number[] = [];
       const numbers = [100, 1100];
@@ -723,7 +723,7 @@ describe.concurrent("modules that do not run", () => {
       console.log(
         `static-modules-slope: ${perModule.toFixed(0)} instructions a module that a require() finds in a graph that is being loaded`,
       );
-      expect(perModule).toBeLessThanOrEqual(9500);
+      expect(perModule).toBeLessThanOrEqual(800);
     },
     1_800_000,
   );

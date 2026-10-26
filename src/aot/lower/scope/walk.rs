@@ -93,6 +93,8 @@ pub(super) struct ScopeWalk {
     pub(super) argument_reads: Vec<(WalkedFunctionId, ArgumentRead)>,
     pub(super) eval_uses: Vec<EvalUse>,
     pub(super) stored_slots: Vec<(ScopeId, ScopeSlot)>,
+    // Each place that may bind `this` of a derived constructor, by the scope of the constructor, and whether it is a `super(..)` that every run of the constructor's own code comes to before what stands behind it.
+    pub(super) this_bindings: Vec<(ScopeId, bool)>,
     pub(super) symbol_initializations: Vec<Option<Initialization>>,
     // The initialization stands under a branch, a loop, a `try`, a `switch`, a label or a `with` of its function, so code behind it in the text may run without it.
     pub(super) is_initialized_conditionally: Vec<bool>,
@@ -116,6 +118,7 @@ pub(super) struct ScopeWalk {
     pub(super) is_switch_scope: Vec<bool>,
     pub(super) is_repeated_scope: Vec<bool>,
     pub(super) eval_variable_scopes: Vec<ScopeId>,
+    pub(super) parameter_eval_variable_scopes: Vec<ScopeId>,
     // The text of the file is a function of `this` and the five names of a CommonJS module.
     pub(super) has_wrapper_parameters: bool,
 }
@@ -129,6 +132,7 @@ enum Task {
     InitializeParameter(SymbolId),
     InitializeSlot(ScopeId, ScopeSlot),
     EndStores { first_pending: u32 },
+    EndDecoratedClass { first_store: u32 },
     EndLoop(u32),
 }
 
@@ -183,6 +187,8 @@ struct Walker<'x, 's> {
     last_users: Vec<Option<WalkedFunctionId>>,
     unprinted_uses: Vec<(WalkedFunctionId, SymbolId)>,
     pending_stores: Vec<SymbolId>,
+    // The expressions of the expression statements that stand under no branch, loop, `try`, `switch`, label or `with` of their function.
+    unconditional_statements: Vec<ExprId>,
     clock: u32,
     walk: ScopeWalk,
     stack: Vec<(Task, Context)>,

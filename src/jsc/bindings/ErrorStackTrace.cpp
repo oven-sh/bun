@@ -565,7 +565,7 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
 static String compiledFunctionName(JSC::VM& vm, const JSC::StackFrame& frame)
 {
     JSC::AOT::FunctionDescription description(frame.compiledFrame().function);
-    return frame.isAsyncFrame() ? description.name(vm) : description.nameInFrames(vm, frame.callee());
+    return frame.isAsyncFrame() ? description.name(vm) : description.nameInFrames(vm, frame.callee(), frame.compiledFrame().calleeLiesInFrame);
 }
 
 static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)

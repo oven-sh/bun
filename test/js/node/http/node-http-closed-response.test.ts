@@ -7,9 +7,9 @@ const script = `
   const http = require("node:http");
   const { LEVEL: level, MOMENT: moment } = process.env;
   const lines = [];
-  process.on("uncaughtException", error =>
-    lines.push("uncaught in " + error.stack.split("\\n")[1].trim().split(" ")[1] + ": " + error.message),
-  );
+  const nameOf = frame => (frame.includes(" (") ? frame.slice(3, frame.indexOf(" (")) : frame.slice(3).replace(/^.*:\\d+$/, ""));
+  const namesIn = error => error.stack.split("\\n").slice(1).map(line => nameOf(line.trim()));
+  process.on("uncaughtException", error => lines.push("uncaught in " + namesIn(error).join(" < ") + ": " + error.message));
   let turn = 0;
   const sockets = new Set();
   const server = http.createServer((request, response) => {
@@ -67,10 +67,10 @@ test("a response frozen between write() and end() keeps its socket, and the next
     '200 null ""',
     '200 2 "first last"',
     "connections 2",
-    `uncaught in <anonymous>: ${readonly}`,
-    `uncaught in flushWriteAccountingNT: ${readonly}`,
-    "uncaught in unknown: ServerResponse has an already assigned socket",
-    `uncaught in emitCloseNT: ${readonly}`,
+    `uncaught in <anonymous> < <anonymous> < emit < onNodeHTTPRequest: ${readonly}`,
+    `uncaught in flushWriteAccountingNT < processTicksAndRejections: ${readonly}`,
+    "uncaught in unknown < assignSocketInternal < onNodeHTTPRequest: ServerResponse has an already assigned socket",
+    `uncaught in emitCloseNT < emit < emitCloseNT < processTicksAndRejections: ${readonly}`,
   ]);
 });
 
@@ -78,10 +78,10 @@ test("each step behind the end() of a response that is then frozen reports the s
   expect(await run("freeze", "after")).toEqual([
     ...fourAnswersOnOneConnection,
     `uncaught in onNodeHTTPRequest: ${readonly}`,
-    `uncaught in flushWriteAccountingNT: ${readonly}`,
-    `uncaught in markResponseEndedNT: ${notExtensible}`,
-    `uncaught in set: ${readonly}`,
-    `uncaught in emitCloseNT: ${readonly}`,
+    `uncaught in flushWriteAccountingNT < processTicksAndRejections: ${readonly}`,
+    `uncaught in markResponseEndedNT < processTicksAndRejections: ${notExtensible}`,
+    `uncaught in set < <anonymous> < emitResponseFinish < emit < emitResponseFinished < processTicksAndRejections: ${readonly}`,
+    `uncaught in emitCloseNT < processTicksAndRejections: ${readonly}`,
   ]);
 });
 
@@ -94,7 +94,7 @@ test.each([
   expect(await run(level, moment)).toEqual([
     ...fourAnswersOnOneConnection,
     `uncaught in onNodeHTTPRequest: ${notExtensible}`,
-    `uncaught in markResponseEndedNT: ${notExtensible}`,
+    `uncaught in markResponseEndedNT < processTicksAndRejections: ${notExtensible}`,
     "finish 1",
     "close 1",
   ]);

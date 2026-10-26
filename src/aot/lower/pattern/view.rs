@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, PatParent};
-use bun_sema::hir::{ExprId, ExprKind, NameKind, PatKind, PropKey, PropKind};
+use bun_sema::hir::{ExprId, ExprKind, NameKind, PatId, PatKind, PropKey, PropKind};
 use smallvec::SmallVec;
 
 use super::PatternNode;
@@ -92,6 +92,15 @@ impl FileLowering<'_, '_, '_, '_> {
                 PatParent::Param(parameter) => return self.hir[parameter].ty.is_some(),
                 PatParent::None => return false,
             }
+        }
+    }
+
+    // JSC records the store to a name that is declared where the name ends, which the source map takes back to where it starts.
+    pub(in crate::lower) fn recorded_binding_position(&self, name: PatId) -> u32 {
+        let name = self.hir[name];
+        match self.runs_as_written() {
+            true => name.end,
+            false => name.pos,
         }
     }
 

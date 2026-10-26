@@ -21,7 +21,7 @@ export interface NamingIdentifier {
 
 const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-function* decodeMappings(mappings: string) {
+export function* decodeMappings(mappings: string) {
   let at = 0;
   const readNumber = () => {
     let value = 0;
@@ -58,7 +58,7 @@ const storeOfAnonymousFunctionOrClass = new RegExp(
   "y",
 );
 
-class Text {
+export class Text {
   #lineStarts = [0];
   constructor(readonly text: string) {
     for (let at = text.indexOf("\n"); at >= 0; at = text.indexOf("\n", at + 1)) this.#lineStarts.push(at + 1);
@@ -110,7 +110,7 @@ export function findNamingIdentifiers(output: string, map: SourceMap): NamingIde
   return [...found.values()].sort((a, b) => a.source - b.source || a.index - b.index);
 }
 
-interface Word {
+export interface Word {
   text: string;
   index: number;
 }
@@ -121,10 +121,18 @@ function listWords(text: string): Word[] {
 
 /**
  * `changed` is `original` with pieces replaced, moved to the front or left out. Answers, for the index of a word of `changed`, the
- * index of the same word in `original`.
+ * index of the same word in `original`. Two words are the same if `spell` answers the same for both. `noteReplaced` is told the
+ * words of `original` that have none, and the words of `changed` in their place.
  */
-function alignWords(original: string, changed: string): Map<number, number> {
-  const [a, b] = [listWords(original), listWords(changed)];
+export function alignWords(
+  original: string,
+  changed: string,
+  spell = (word: string) => word,
+  noteReplaced?: (old: Word[], replacement: Word[]) => void,
+): Map<number, number> {
+  const [writtenA, writtenB] = [listWords(original), listWords(changed)];
+  const spelled = (words: Word[]) => words.map(word => ({ ...word, text: spell(word.text) }));
+  const [a, b] = [spelled(writtenA), spelled(writtenB)];
   const run = 4;
   const continuesAlike = (i: number, j: number) => {
     for (let k = 0; k < run; k++) {
@@ -145,6 +153,7 @@ function alignWords(original: string, changed: string): Map<number, number> {
       if (distance > limit) return aligned;
       for (let skipped = 0; skipped <= distance; skipped++) {
         if (!continuesAlike(i + skipped, j + distance - skipped)) continue;
+        noteReplaced?.(writtenA.slice(i, i + skipped), writtenB.slice(j, j + distance - skipped));
         i += skipped;
         j += distance - skipped;
         break search;

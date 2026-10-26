@@ -1,5 +1,5 @@
 // The ticks that wait are in a ring of nodes, from `ring.read` up to `ring.write`, which is always free.
-const { ring, takeTick } = require("internal/process/next_tick_queue");
+const { ring, takeTick, asyncContext } = require("internal/process/next_tick_queue");
 const asyncHooksTick = require("internal/async_hooks_tick");
 
 const tickInitHooks = asyncHooksTick.tickInitHooks;
@@ -87,11 +87,32 @@ function dropFreeTicks(): void {
   write.next = firstKept;
 }
 
+// Queues a tick with one or two arguments ahead of the ticks that wait, in the async context that is current.
+function queueTickInFront(callback: TickCallback, count: number, first: unknown, second: unknown): void {
+  const read = ring.read!;
+  let free = ring.write!;
+  if (free.next === read) {
+    const tick = new Tick();
+    tick.next = read;
+    free.next = tick;
+  }
+  do free = free.next;
+  while (free.next !== read);
+  free.callback = callback;
+  free.frame = $getInternalField(asyncContext, 0);
+  free.count = count;
+  free.first = first;
+  free.second = second;
+  ring.read = free;
+  $putInternalField(nextTickQueue, 0, 1);
+}
+
 function newTickObject(callback: TickCallback, args: unknown[] | undefined, frame: Frame): TickObject {
   return { callback, args, frame };
 }
 
 let tickingProcess!: NodeJS.Process;
+let nextTickQueue: any;
 
 function takeTickObject(tick: Tick): TickObject {
   const tock = tick.shown!;
@@ -131,9 +152,19 @@ function pushWithInitHooks(cb: TickCallback, args: unknown[] | undefined, frame:
 function start(process: NodeJS.Process, marker: any, processTicksAndRejections: () => void): void {
   ring.read = ring.write = new Tick();
   tickingProcess = process;
+  nextTickQueue = marker;
   $putInternalField(marker, 2, processTicksAndRejections);
 }
 
 export type { Frame, Ring, Tick, TickCallback };
 
-export default { growRing, tickInitHooks, pushWithList, pushWithInitHooks, pushTickObject, takeTickObject, start };
+export default {
+  growRing,
+  tickInitHooks,
+  pushWithList,
+  pushWithInitHooks,
+  pushTickObject,
+  takeTickObject,
+  queueTickInFront,
+  start,
+};

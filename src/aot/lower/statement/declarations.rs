@@ -89,7 +89,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     name: Some(PropertyName::Constant(key).into()),
                     ..Evaluation::at_tail(tail)
                 };
-                self.record_store_ahead_of_value(binding, hir[decl.pat].pos);
+                let name = self.file.recorded_binding_position(decl.pat);
+                self.record_store_ahead_of_value(binding, name);
                 let records = self.builder.number_of_records();
                 let value = self.lower_expression_in(initializer, evaluation);
                 let recorded = self.builder.last_recorded_position();

@@ -152,7 +152,7 @@ pub struct Options {
     pub attach_comments: bool,
     /// Parsing for `bun compile`.
     pub compiles: bool,
-    /// With `compiles`: a `"use strict"` directive of a function counts.
+    /// With `compiles`: the engine gets the text as it is written. A `"use strict"` directive of a function counts, and a comment says of no call that it is pure.
     pub keeps_function_directives: bool,
     /// Functions have empty bodies wherever `parser/skipped_blocks.rs` can step over their blocks.
     pub skips_function_blocks: bool,

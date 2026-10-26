@@ -3,6 +3,7 @@ mod analyze;
 mod tests;
 mod top_level_await;
 
+pub use top_level_await::has_live_await;
 pub(crate) use top_level_await::has_live_top_level_await;
 
 use crate::atom::{Atom, Interner};

@@ -1,8 +1,7 @@
 use bun_core::strings;
-use bun_sema::hir::find_transpiled_mark;
+use bun_sema::hir::{find_transpiled_mark, is_marked_as_commonjs};
 use std::borrow::Cow;
 
-const COMMONJS_WORD: &[u8] = b"@bun-cjs";
 const WRAPPER_START: &[u8] = b"(function(exports, require, module, __filename, __dirname) {";
 const WRAPPER_END: &[u8] = b"})";
 
@@ -27,7 +26,7 @@ fn find_wrapper_end(text: &[u8], body_start: usize) -> Option<usize> {
 fn find_wrapper(text: &[u8]) -> Option<(usize, usize)> {
     let mark = find_transpiled_mark(text)?;
     let start = mark.end;
-    if !strings::contains(&text[mark], COMMONJS_WORD) || !text[start..].starts_with(WRAPPER_START) {
+    if !is_marked_as_commonjs(&text[mark]) || !text[start..].starts_with(WRAPPER_START) {
         return None;
     }
     Some((start, find_wrapper_end(text, start + WRAPPER_START.len())?))

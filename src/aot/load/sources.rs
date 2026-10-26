@@ -261,6 +261,15 @@ impl Sources {
         }
     }
 
+    pub fn bundled_positions(&self, file: FileId) -> &'static [u8] {
+        match self.kind(file) {
+            SourceKind::RuntimeModule(module) => {
+                self.manifest.bundled_positions(module.registry_id())
+            }
+            _ => &[],
+        }
+    }
+
     pub fn web_assembly_files(&self) -> &[FileId] {
         &self.web_assembly_files
     }

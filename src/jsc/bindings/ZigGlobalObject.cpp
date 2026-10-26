@@ -3220,9 +3220,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
         RETURN_IF_EXCEPTION(scope, {});
         JSC::AOT::CompiledCallee::setPrototypeProperty(vm, target, prototype, PropertyAttribute::DontEnum | 0);
         // The first read of name replaces what the putDirect below stores (JSFunction::reifyName): by the function's own name, with these attributes.
-        JSString* ownName = jsString(vm, JSC::AOT::CompiledCallee::name(target));
-        JSC::AOT::CompiledCallee::setNameProperty(globalObject, target, ownName, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+        String ownName = JSC::AOT::CompiledCallee::name(target);
+        JSC::AOT::CompiledCallee::setNameProperty(globalObject, target, jsString(vm, ownName), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
         RETURN_IF_EXCEPTION(scope, {});
+        if (name.isString()) {
+            String stored = asString(name)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!stored.isEmpty() && stored != ownName)
+                JSC::AOT::CompiledCallee::showNameUntilLookedFor(vm, target, stored);
+        }
         return JSValue::encode(jsUndefined());
     }
 #endif

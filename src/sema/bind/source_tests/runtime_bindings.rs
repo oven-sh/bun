@@ -1026,6 +1026,54 @@ fn eval_variables_between_body_and_parameters() {
 }
 
 #[test]
+fn eval_variables_of_parameters_and_of_body() {
+    #[derive(Debug, PartialEq)]
+    enum Start {
+        Static,
+        Function,
+        Parameter,
+    }
+    use Start::{Function, Parameter, Static};
+    let cases = [
+        (r#"function f(a, b = x) { eval(""); }"#, Static),
+        (r#"function f(a, b = () => x) { eval(""); }"#, Static),
+        (r#"var f = (a, b = () => x) => eval("");"#, Static),
+        (r#"function f(a, b = 2) { eval(""); return x; }"#, Function),
+        (r#"function f(a, b = eval("")) { return x; }"#, Function),
+        (r#"function f(a, b = eval(""), c = x) {}"#, Parameter),
+        (
+            r#"function f(a, b = eval(""), c = () => x) { eval(""); }"#,
+            Parameter,
+        ),
+        (r#"var f = (a, b = eval(""), c = () => x) => 0;"#, Function),
+        (r#"var f = (a, b = eval("")) => x;"#, Function),
+        (
+            r#""use strict"; function f(a, b = eval(""), c = x) {}"#,
+            Static,
+        ),
+    ];
+    for (text, expected) in cases {
+        analyzed("a.cjs", text, |s| {
+            let function_scope = s.bound.symbol_scope(parameter(s, "a", 0));
+            let lookup = s
+                .bound
+                .dynamic_lookup_scope(NodeData::Expr(s.ident("x", 0)));
+            let actual = match lookup {
+                None => Static,
+                Some(scope) if scope == function_scope => Function,
+                Some(scope) => {
+                    let scope = &s.bound.scopes[scope.idx()];
+                    assert!(matches!(scope.kind, ScopeKind::Param(_)), "{text}");
+                    assert_eq!(scope.parent, function_scope, "{text}");
+                    Parameter
+                }
+            };
+            assert_eq!(actual, expected, "{text}");
+        });
+    }
+}
+
+#[test]
 fn stores() {
     for &(statement, kind) in STORES {
         let text = format!("let x; {statement}");

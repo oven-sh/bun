@@ -258,6 +258,8 @@ pub fn has_runtime_member(hir: &File, member: MemberId) -> bool {
     }
 }
 
+const TRANSPILED_MARK: &[u8] = b"// @bun";
+
 /// The line that starts with `// @bun`, if it is the first line or follows a hashbang. `bun run` hands such a file to the engine as it is written.
 pub fn find_transpiled_mark(text: &[u8]) -> Option<Range<usize>> {
     let end_of_line = |start: usize| {
@@ -269,8 +271,26 @@ pub fn find_transpiled_mark(text: &[u8]) -> Option<Range<usize>> {
         false => 0,
     };
     text[start..]
-        .starts_with(b"// @bun")
+        .starts_with(TRANSPILED_MARK)
         .then(|| start..end_of_line(start).unwrap_or(text.len()))
+}
+
+/// The text behind such a line is the function that the loader calls with the five values of a CommonJS file. Behind any other mark stands an ES module.
+pub fn is_marked_as_commonjs(mark: &[u8]) -> bool {
+    let mut rest = &mark[TRANSPILED_MARK.len()..];
+    while let Some(at) = strings::index_of_char_usize(rest, b'@') {
+        let word = &rest[at + 1..];
+        if word.starts_with(b"bun-cjs") {
+            return true;
+        }
+        // `bun run` does not look at the byte behind a word that it knows, nor at the one behind an `@` that starts none.
+        let passed = match word.starts_with(b"bytecode") {
+            true => b"bytecode".len() + 1,
+            false => 1,
+        };
+        rest = word.get(passed..).unwrap_or_default();
+    }
+    false
 }
 
 pub fn is_moved_to_file_start(hir: &File, statement: StmtId) -> bool {

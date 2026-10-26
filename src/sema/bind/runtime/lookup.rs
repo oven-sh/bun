@@ -1,11 +1,13 @@
 use super::bits::has_bit;
 use super::declaration_kinds::{DeclarationKind, declaration_kind};
+use super::direct_evals::DynamicScopes;
 use super::namespace_exports::is_block_binding;
 use super::queries::{find_symbol, is_among_parameters};
 use super::{Binding, CodeUnit, CommonJsVariable, RuntimeScopes};
 use crate::atom::{Atom, known};
 use crate::bind::{BoundBuilder, Scope, ScopeId, ScopeKind, SymFlags, SymbolId};
 use crate::hir::*;
+use crate::module_format::{ModuleFormat, find_marked_format};
 
 pub(super) const COMMONJS_VARIABLES: [CommonJsVariable; 5] = [
     CommonJsVariable::Module,
@@ -19,7 +21,7 @@ pub(super) struct Lookup<'a, 's> {
     pub hir: &'a File<'s>,
     pub bound: &'a BoundBuilder,
     pub scopes: &'a RuntimeScopes,
-    pub dynamic_scopes: Vec<u64>,
+    pub dynamic: DynamicScopes,
 }
 
 pub(super) struct Found {
@@ -30,8 +32,14 @@ pub(super) struct Found {
 }
 
 impl Lookup<'_, '_> {
-    pub(super) fn find(&self, start: ScopeId, name: Atom) -> Found {
+    pub(super) fn find_binding(&self, start: ScopeId, name: Atom) -> Binding {
+        self.find(start, name, u32::MAX).binding
+    }
+
+    /// `pos` is the position of the mention of `name`.
+    pub(super) fn find(&self, start: ScopeId, name: Atom, pos: u32) -> Found {
         let (mut at, mut from, mut dynamic_scope) = (start, ScopeKind::Block, ScopeId::NONE);
+        let mut inner = ScopeId::NONE;
         while at.is_some() {
             let scope = &self.bound.scopes[at.idx()];
             if matches!(scope.kind, ScopeKind::With(_)) && dynamic_scope.is_none() {
@@ -45,10 +53,15 @@ impl Lookup<'_, '_> {
                     dynamic_scope,
                 };
             }
-            if has_bit(&self.dynamic_scopes, at.idx()) && dynamic_scope.is_none() {
-                dynamic_scope = at;
+            if dynamic_scope.is_none() && self.has_visible_eval_variables(at, from, pos) {
+                // The scope of a parameter says on which side the lookup enters the function.
+                dynamic_scope = match from {
+                    ScopeKind::Param(_) => inner,
+                    _ => at,
+                };
             }
             from = scope.kind;
+            inner = at;
             at = self.bound.runtime_parent_scope(self.hir, at);
         }
         Found {
@@ -59,9 +72,19 @@ impl Lookup<'_, '_> {
         }
     }
 
+    // Code among the parameters of a function does not see the variables of text evaluated in the body. Code in the body sees the variables of both texts.
+    fn has_visible_eval_variables(&self, at: ScopeId, from: ScopeKind, pos: u32) -> bool {
+        if has_bit(&self.dynamic.parameter_eval_scopes, at.idx()) {
+            return true;
+        }
+        has_bit(&self.dynamic.scopes, at.idx())
+            && !matches!(self.bound.scopes[at.idx()].kind, ScopeKind::Fn(function)
+                if is_among_parameters(self.hir, function, from, pos))
+    }
+
     // Text evaluated in the body of a function declares its variables in the environment of the body's variables.
     pub(super) fn is_behind_eval_variables(&self, found: &Found, pos: u32) -> bool {
-        if !has_bit(&self.dynamic_scopes, found.scope.idx()) {
+        if !has_bit(&self.dynamic.scopes, found.scope.idx()) {
             return false;
         }
         let ScopeKind::Fn(function) = self.bound.scopes[found.scope.idx()].kind else {
@@ -96,8 +119,10 @@ impl Lookup<'_, '_> {
             return None;
         }
         let mut variables = COMMONJS_VARIABLES.into_iter();
-        let variable = variables.find(|variable| variable.name() == name);
-        variable.map(Binding::CommonJs)
+        let variable = variables.find(|variable| variable.name() == name)?;
+        // Bun's transpiler gives an ES module what it reads of the five. A module that the engine gets as written has none.
+        let is_written_module = find_marked_format(&self.hir.text) == Some(ModuleFormat::Esm);
+        (!is_written_module).then_some(Binding::CommonJs(variable))
     }
 
     pub(super) fn local_binding(

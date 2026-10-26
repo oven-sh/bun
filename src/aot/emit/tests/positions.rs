@@ -1,4 +1,4 @@
-use crate::emit::source_positions;
+use crate::emit::{source_positions, source_positions_in_bundle};
 use crate::ir::generated::ColumnAdjustment;
 
 fn find_line_starts(text: &str) -> Vec<u32> {
@@ -88,4 +88,36 @@ fn column_formula() {
         let expected_column = text[line_start..position].encode_utf16().count();
         assert_eq!(found, (line, expected_column), "{position}");
     }
+}
+
+#[test]
+fn pieces_of_a_bundle_go_on_over_line_breaks() {
+    // 2 bytes in: 3 columns further right. 6 bytes on: 1 line further up, column 7. 3 bytes on: 1 column further left.
+    let encoded = [2, 12, 6, 3, 7, 3, 2];
+    let positions = source_positions_in_bundle(b"ab cd\nef gh ij\nk", &encoded);
+    assert!(positions.line_starts.is_empty());
+    assert_eq!(
+        positions.column_adjustments,
+        [
+            adjustment(2, 0, 5),
+            adjustment(6, 1, 0),
+            adjustment(8, 0, 7),
+            adjustment(11, 0, 9),
+            adjustment(15, 1, 0),
+        ]
+    );
+}
+
+#[test]
+fn pieces_that_end_early_or_pass_the_text_are_left_out() {
+    let positions = source_positions_in_bundle(b"ab", &[1, 0, 9, 0, 1]);
+    assert_eq!(
+        positions.column_adjustments,
+        [adjustment(1, 0, 1), adjustment(2, 0, 2)]
+    );
+    assert!(
+        source_positions_in_bundle(b"ab", &[0x80])
+            .column_adjustments
+            .is_empty()
+    );
 }

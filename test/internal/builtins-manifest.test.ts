@@ -13,6 +13,7 @@ import {
   typesOnlySchemas,
 } from "../../src/codegen/builtins-manifest-model";
 import { listBundledNamesOfModule } from "../../src/codegen/bundled-names";
+import { encodePieces, findPositionsInEvaluatedText } from "../../src/codegen/bundled-positions";
 import { run } from "../aot/harness/run";
 
 const root = join(import.meta.dir, "..", "..");
@@ -48,7 +49,14 @@ const engineFunctions: EngineFunctions = {
 function createFixture(engine: EngineFunctions = engineFunctions) {
   const dir = tempDir("builtins-manifest", {
     "aot_engine_functions.json": JSON.stringify(engine),
-    "bundled_names_of_modules.txt": `name\tnode/fs.ts\t12\tread2\town\nname\t${textsForTheCompiler[0]}\t3\tcall2\tvariable\n`,
+    "bundled_names_of_modules.txt": [
+      `name\tnode/fs.ts\t12\tread2\town`,
+      `positions\tnode/fs.ts\t${Buffer.from([1, 2, 3]).toString("base64")}`,
+      `name\t${textsForTheCompiler[0]}\t3\tcall2\tvariable`,
+      `positions\t${textsForTheCompiler[0]}\t${Buffer.from([4]).toString("base64")}`,
+      `positions\tnode/os.ts\t${Buffer.from([5, 6]).toString("base64")}`,
+      ``,
+    ].join("\n"),
     "runtime.out.js": "var a=()=>1;",
     "runtime.out.js.map": JSON.stringify({
       version: 3,
@@ -100,8 +108,8 @@ describe("builtins-manifest.ts", () => {
 
   afterAll(() => fixture[Symbol.dispose]());
 
-  test("the manifest has format 5 and its six record kinds", () => {
-    expect(records[0]).toEqual(["bun-builtins-manifest", "5"]);
+  test("the manifest has format 6 and its seven record kinds", () => {
+    expect(records[0]).toEqual(["bun-builtins-manifest", "6"]);
     expect([...new Set(records.slice(1).map(([kind]) => kind))]).toEqual([
       "define",
       "module",
@@ -109,6 +117,7 @@ describe("builtins-manifest.ts", () => {
       "function",
       "declarations",
       "name",
+      "positions",
     ]);
   });
 
@@ -117,6 +126,14 @@ describe("builtins-manifest.ts", () => {
       ["name", "node/fs.ts", "12", "read2", "own"],
       ["name", "runtime.js", "11", "a", "variable"],
     ]);
+  });
+
+  test("the positions of all modules are one file of the archive, and the manifest says which part is whose", () => {
+    expect(records.filter(([kind]) => kind === "positions")).toEqual([
+      ["positions", "node/fs.ts", "0", "3"],
+      ["positions", "node/os.ts", "3", "2"],
+    ]);
+    expect([...Buffer.from(readArchive(fixture.archive).read("positions"), "latin1")]).toEqual([1, 2, 3, 5, 6]);
   });
 
   test("the defines do not depend on --debug", () => {
@@ -264,6 +281,64 @@ describe("bundled-names.ts", () => {
       ["name", "node/sample.ts", at("setTimeout() {}"), "setTimeout2", "own"],
       ["name", "node/sample.ts", at("export default"), "$", "variable"],
     ]);
+  });
+});
+
+describe("bundled-positions.ts", () => {
+  test("finds where the tokens of a file stand in the text that is evaluated", async () => {
+    const written = [
+      `const stream = require("node:stream");`,
+      `// Nothing of this line is evaluated.`,
+      `function check(value: unknown, name: string): void {`,
+      `  if (typeof value !== "string") {`,
+      `    throw $ERR_INVALID_ARG_TYPE(name, "string", value);`,
+      `  }`,
+      `  stream.$call(value!, false);`,
+      `  (stream as any).end(name);`,
+      `}`,
+      `export default check;`,
+      ``,
+    ].join("\n");
+    const given =
+      "var $;" +
+      written
+        .replace(
+          `require("node:stream")`,
+          "(__intrinsic__getInternalField(12) || __intrinsic__createInternalModuleById(12))",
+        )
+        .replace("$ERR_INVALID_ARG_TYPE(", "__intrinsic__makeErrorWithCode(118, ")
+        .replace("$call", "__intrinsic__call")
+        .replace("export default", "$ =");
+    using dir = tempDir("bundled-positions", { "module.ts": given + "done($);\n" });
+    const built = await Bun.build({
+      entrypoints: [join(String(dir), "module.ts")],
+      target: "bun",
+      minify: { syntax: true, keepNames: true },
+      sourcemap: "external",
+    });
+    const [output, map] = await Promise.all(
+      ["entry-point", "sourcemap"].map(kind => built.outputs.find(it => it.kind === kind)!.text()),
+    );
+    const evaluated = `(function (){"use strict";${output.replace("// @bun\n", "").trim()}})`.replace(
+      /__intrinsic__/g,
+      "@",
+    );
+    const pieces = findPositionsInEvaluatedText(written, output, JSON.parse(map), evaluated);
+    const lines = evaluated.split("\n");
+    const textBehind = (inWritten: string) => {
+      const offset = written.indexOf(inWritten);
+      const piece = pieces.findLast(piece => piece.offset <= offset)!;
+      expect(written.slice(piece.offset, offset)).not.toContain("\n");
+      return lines[piece.line].slice(piece.column + offset - piece.offset);
+    };
+    expect(textBehind(`("node:stream")`)).toStartWith("(12)");
+    expect(textBehind(`(name, "string", value)`)).toStartWith(`(118, name, "string", value)`);
+    expect(textBehind(`$ERR_INVALID_ARG_TYPE`)).toStartWith("@makeErrorWithCode(");
+    expect(textBehind(`(value!, false)`)).toStartWith("(value, !1)");
+    expect(textBehind(`.$call`)).toStartWith(".@call(");
+    expect(textBehind(` as any).end(name)`)).toStartWith(".end(name)");
+    expect(textBehind(`(name);`)).toStartWith("(name)");
+    expect(encodePieces(written, pieces).length).toBeLessThan(written.length / 4);
   });
 });
 

@@ -253,7 +253,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let starts_with_key = first.start == first.name_pos
             && hir.text[first.start as usize] != b'['
             && first.kind != MemberKind::StaticBlock;
-        if starts_with_key || self.runs_as_written() {
+        if starts_with_key || self.is_shown_without_source_map() {
             return Some(first.start);
         }
         if let Some(constructor) = constructor {

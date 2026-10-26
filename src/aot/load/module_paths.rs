@@ -114,9 +114,15 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
         None => match input.kind {
             SourceKind::RuntimeModule(runtime_module) => {
                 let runtime_module = context.manifest.module(runtime_module.registry_id());
-                return match runtime_module.and_then(|module| module.specifier.as_deref()) {
-                    Some(specifier) => specifier.into(),
-                    None => input.file_name.into(),
+                let specifier = runtime_module.and_then(|module| module.specifier.as_deref());
+                // `bun run` shows a module of src/js/internal as internal:<name>.
+                return match (
+                    specifier,
+                    specifier.and_then(|it| it.strip_prefix(b"internal/")),
+                ) {
+                    (_, Some(name)) => [b"internal:", name].concat().into(),
+                    (Some(specifier), None) => specifier.into(),
+                    (None, None) => input.file_name.into(),
                 };
             }
             SourceKind::RuntimeFunctions | SourceKind::EvaluatedText => {
@@ -608,7 +614,7 @@ mod tests {
         let path = b"/$bun/js/node/fs.ts";
         let id = RuntimeModule::NodeFs.registry_id();
         let path_with_specifier = |specifier: &str| {
-            let text = format!("bun-builtins-manifest\t5\nmodule\t{id}\tnode/fs.ts\t{specifier}\n");
+            let text = format!("bun-builtins-manifest\t6\nmodule\t{id}\tnode/fs.ts\t{specifier}\n");
             let manifest = Manifest::parse(text.as_bytes()).unwrap();
             let input = PathInput {
                 kind: runtime_kind(),
@@ -617,6 +623,7 @@ mod tests {
             public_path_with_manifest(&manifest, &FileMaps::default(), input)
         };
         assert_eq!(path_with_specifier("node:fs"), b"node:fs");
+        assert_eq!(path_with_specifier("internal/fs/a"), b"internal:fs/a");
         assert_eq!(path_with_specifier("-"), path);
     }
 

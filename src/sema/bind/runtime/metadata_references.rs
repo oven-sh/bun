@@ -119,7 +119,7 @@ impl ReferencePass<'_, '_> {
         let enclosing_scope = bound.scopes[class_scope.idx()].parent;
         for (global, member) in serialized.first_members {
             let name = global.name();
-            if self.lookup.find(enclosing_scope, name).binding != Binding::Free {
+            if self.lookup.find_binding(enclosing_scope, name) != Binding::Free {
                 pending.push(PendingReference {
                     reference: MetadataReference::Global(class, global),
                     scope: enclosing_scope,

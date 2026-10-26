@@ -1,4 +1,4 @@
-use bun_sema::bind::{Binding, Bound, Decl, ScopeId, ScopeKind, SymbolId};
+use bun_sema::bind::{Binding, Bound, Decl, ScopeId, ScopeKind, SymbolId, is_among_parameters};
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, ClassId, DecoratorOwner, ExprId, FnId, NodeData, ParamId};
 
@@ -16,19 +16,37 @@ fn is_variable_scope(kind: ScopeKind) -> bool {
     )
 }
 
+// The scopes that take the variables of evaluated text, and the functions that take the variables of text evaluated among their parameters.
 pub(super) fn collect_eval_variable_scopes(
+    hir: &hir::File<'_>,
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
-) -> Vec<ScopeId> {
-    let mut scopes = Vec::new();
+) -> (Vec<ScopeId>, Vec<ScopeId>) {
+    let (mut scopes, mut parameter_scopes) = (Vec::new(), Vec::new());
     for &(call, eval) in bound.runtime.eval_scopes() {
-        if eval.is_sloppy && !decisions.is_dead_expr(call) {
-            let mut chain = scope_chain(bound, eval.scope);
-            scopes.extend(chain.find(|scope| is_variable_scope(bound.scopes[scope.idx()].kind)));
+        if !eval.is_sloppy || decisions.is_dead_expr(call) {
+            continue;
+        }
+        let mut from = ScopeKind::Block;
+        for scope in scope_chain(bound, eval.scope) {
+            let kind = bound.scopes[scope.idx()].kind;
+            if is_variable_scope(kind) {
+                match kind {
+                    ScopeKind::Fn(function)
+                        if is_among_parameters(hir, function, from, hir[call].pos) =>
+                    {
+                        parameter_scopes.push(scope);
+                    }
+                    _ => scopes.push(scope),
+                }
+                break;
+            }
+            from = kind;
         }
     }
     sort_unique(&mut scopes);
-    scopes
+    sort_unique(&mut parameter_scopes);
+    (scopes, parameter_scopes)
 }
 
 pub(super) fn collect_inner_module_parameters(

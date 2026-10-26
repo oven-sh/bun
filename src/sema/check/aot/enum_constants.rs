@@ -1,12 +1,13 @@
 use super::answers::{EnumConstant, GaveUp};
 use super::queries::Queries;
-use crate::atom::known;
+use crate::atom::{Atom, known};
 use crate::bind::{Binding, Decl, SymFlags};
 use crate::check::Checker;
 use crate::fold::is_exact_power;
-use crate::hir::{self, BinOp, Chain, EnumMemberId, ExprId, ExprKind, MemberKey};
+use crate::hir::{self, BinOp, EnumMemberId, ExprFlags, ExprId, MemberKey};
 use crate::program::{FileId, Sym};
 use crate::types::EnumValue;
+use smallvec::SmallVec;
 
 pub(in crate::check) const READS_OTHER_FILE_OR_VARIABLE: u8 = 1 << 0;
 pub(in crate::check) const RESTS_ON_INEXACT_POWER: u8 = 1 << 1;
@@ -37,26 +38,26 @@ enum EnumReach {
     ConstEnums,
 }
 
-fn has_optional_link(hir: &hir::File<'_>, access: ExprId) -> bool {
-    let mut link = access;
-    while let ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } = hir[link].kind
-    {
-        if matches!(chain, Chain::Start | Chain::Continue) {
-            return true;
-        }
-        link = obj;
-    }
-    false
+/// The last name of a path such as `Outer.Inner.A`.
+#[derive(Copy, Clone)]
+struct PathMember {
+    holder: Sym,
+    member: Sym,
+    is_path_declared_here: bool,
 }
 
-fn without_casts(hir: &hir::File<'_>, mut expression: ExprId) -> ExprId {
-    while let ExprKind::As { expr, .. }
-    | ExprKind::Satisfies { expr, .. }
-    | ExprKind::NonNull(expr) = hir[expression].kind
-    {
-        expression = expr;
+/// What one part of a namespace exports is in scope in its other parts too, where no declaration
+/// of it stands around the name.
+fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], name: ExprId) -> bool {
+    let mut around = hir.parent(hir.node(name));
+    while around.is_some() {
+        let mut declarations = declarations.iter();
+        if declarations.any(|&declaration| hir.parent(hir.node(declaration)) == around) {
+            return true;
+        }
+        around = hir.parent(around);
     }
-    expression
+    false
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
@@ -126,31 +127,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         access: ExprId,
         reach: EnumReach,
     ) -> Option<(FileId, EnumMemberId)> {
-        let hir = self.hir();
-        let (object, MemberKey::Name(name)) = hir.member_key(access)? else {
-            return None;
-        };
-        if has_optional_link(hir, access)
-            || !hir.is_name_resolved_by_transpiler(access, self.atom_bytes(name))
-        {
-            return None;
-        }
-        let object = without_casts(hir, object);
         let files = self.files();
-        let root = self
-            .c
-            .resolve_entity_name_expression(self.file, object, SymFlags::VALUE)?;
-        let flags = files.flags(root);
-        if !flags.intersects(SymFlags::ENUM) {
-            return None;
-        }
-        let is_declared_here = self.is_first_identifier_own_declaration(object);
+        let PathMember {
+            holder,
+            member,
+            is_path_declared_here: is_declared_here,
+        } = self.c.resolve_member_path(self.file, access)?;
+        let flags = files.flags(holder);
         let is_const_enum_elsewhere =
             reach == EnumReach::ConstEnums && flags.intersects(SymFlags::CONST_ENUM);
         if !is_declared_here && !is_const_enum_elsewhere {
             return None;
         }
-        let member = files.export(root, name)?;
         if !files.flags(member).intersects(SymFlags::ENUM_MEMBER)
             || !self.has_compiled_value(member, is_declared_here)
         {
@@ -163,14 +151,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 None
             }
         })
-    }
-
-    fn is_first_identifier_own_declaration(&self, entity_name: ExprId) -> bool {
-        let (hir, bound) = (self.hir(), self.bound());
-        match bound.binding(hir::first_identifier(hir, entity_name)) {
-            Binding::Symbol(symbol) => !bound.symbol(symbol).flags.intersects(SymFlags::ALIAS),
-            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
-        }
     }
 
     fn has_compiled_value(&self, symbol: Sym, is_declared_here: bool) -> bool {
@@ -195,27 +175,60 @@ impl Checker<'_, '_> {
     }
 
     fn resolve_constant_entity(&self, file: FileId, entity: ExprId) -> Option<Sym> {
-        let (hir, files) = (self.hir(file), self.files());
-        if has_optional_link(hir, entity) {
-            return None;
-        }
-        let ExprKind::Index { obj, index, .. } = hir[entity].kind else {
+        if self.hir(file).member_key(entity).is_none() {
             return self.resolve_entity_name_expression(file, entity, SymFlags::VALUE);
-        };
-        let (_, MemberKey::Name(name)) = hir.member_key(entity)? else {
-            return None;
-        };
-        if hir::is_parenthesized(hir, index)
-            || !hir::is_entity_name_expression(hir, obj)
-            || !hir.is_name_resolved_by_transpiler(entity, self.atoms().bytes(name))
-        {
+        }
+        let named = self.resolve_member_path(file, entity)?;
+        let is_known_to_transpiler = named.is_path_declared_here || named.member.file != file;
+        is_known_to_transpiler.then_some(named.member)
+    }
+
+    /// Follows a path the way Bun's transpiler does: the first name is what it is bound to as a
+    /// value, `["name"]` is `.name`, and parentheses and type assertions do not count.
+    fn resolve_member_path(&self, file: FileId, path: ExprId) -> Option<PathMember> {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
+        let mut first = path;
+        while let Some((object, key)) = hir.member_key(first) {
+            let MemberKey::Name(name) = key else {
+                return None;
+            };
+            let is_optional = hir
+                .expr_flags(first)
+                .contains(ExprFlags::OPTIONAL_CHAIN_LINK);
+            if is_optional || !hir.is_name_resolved_by_transpiler(first, self.atoms().bytes(name)) {
+                return None;
+            }
+            names.push(name);
+            first = hir.skip_type_assertions(object);
+        }
+        if names.is_empty() {
             return None;
         }
-        let root = self.resolve_entity_name_expression(file, obj, SymFlags::VALUE)?;
-        if !files.flags(root).intersects(SymFlags::ENUM) {
-            return None;
+        let root = self.resolve_entity_name_expression(file, first, SymFlags::VALUE)?;
+        let mut end = PathMember {
+            holder: root,
+            member: root,
+            is_path_declared_here: true,
+        };
+        for &name in names.iter().rev() {
+            end.holder = end.member;
+            if !files.flags(end.holder).intersects(SymFlags::NAMESPACE) {
+                return None;
+            }
+            let link = files.namespace_member(end.holder, name)?;
+            end.is_path_declared_here &= !files.flags(link).intersects(SymFlags::ALIAS);
+            end.member = files.canonical(files.resolve_alias_as(link, SymFlags::VALUE)?);
         }
-        files.export(root, name)
+        end.is_path_declared_here &= match bound.binding(first) {
+            Binding::Symbol(symbol) => {
+                let symbol = bound.symbol(symbol);
+                !symbol.flags.intersects(SymFlags::ALIAS)
+                    && is_declared_around(hir, symbol.decls, first)
+            }
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
+        };
+        Some(end)
     }
 
     fn is_global_number(&self, symbol: Sym) -> bool {

@@ -272,7 +272,7 @@ impl FileLowering<'_, '_, '_, '_> {
     // JSC reports the calls of the iteration protocol at the `of`, which the source map takes back to the last token before it.
     fn last_mapped_head_position(&self, statement: StmtId, left: StmtId) -> u32 {
         let hir = self.hir;
-        if self.runs_as_written() {
+        if self.is_shown_without_source_map() {
             return self.next_token_position(hir[left].loc.end);
         }
         let position = match hir[left].kind {

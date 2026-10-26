@@ -100,5 +100,18 @@ describe("Bun.inspect of a list of paths", () => {
     expect(printed(path.parse("/" + accented + "/" + long + ".txt").base)).toBe(false);
     expect(printed(path.relative("/a", "/a/" + accented))).toBe(true);
     expect(printed(path.format({ dir: "/" + accented, base: "b" }))).toBe(true);
+    expect(printed(path.normalize("/" + accented + "/a"))).toBe(true);
+    expect(printed(path.join("/" + accented))).toBe(true);
+    expect(printed(path.join("/a", "../" + accented))).toBe(true);
+    expect(printed(path.resolve("/a", "../" + accented))).toBe(true);
+    expect(printed(path.resolve(accented).slice(-40))).toBe(true);
+    expect(printed(path.relative("/a/b", "/a/" + accented))).toBe(true);
+    expect(printed(path.relative("/a/./b", "/a/" + accented))).toBe(true);
+    expect(printed(path.extname("/a/b." + accented))).toBe(true);
+    expect(printed(path.basename("/a/" + accented + ".txt", ".txt"))).toBe(true);
+    expect(printed(path.basename("/" + accented + "/" + long))).toBe(false);
+    expect(printed(path.basename("/" + accented + "/" + long + ".txt", ".txt"))).toBe(false);
+    expect(printed(path.dirname("/" + long + "/" + accented))).toBe(false);
+    expect(printed(path.extname("/" + accented + "/b." + long))).toBe(false);
   });
 });

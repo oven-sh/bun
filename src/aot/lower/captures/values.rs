@@ -138,6 +138,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let name = self.file.bound.symbol(symbol).name;
                 self.get_binding(Binding::Symbol(symbol), name)
             }
+            // Another closure shares the place, which holds nothing until `super(..)` returns.
+            BindingRef::Slot(_, ScopeSlot::This) if reads_location => self.get_this(),
             BindingRef::Symbol(_) | BindingRef::Slot(..) => self.get_stored(binding),
         }
     }

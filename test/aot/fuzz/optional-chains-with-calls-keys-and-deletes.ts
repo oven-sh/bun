@@ -123,7 +123,7 @@ export function generate(random: Random): string {
   const rows: string[] = [];
   for (let id = 0, scenes = random.between(12, 30); id < scenes; id++) {
     const text = chain(1);
-    const isReference = !/\)$/.test(text);
+    const isReference = !text.endsWith(")");
     const whole = random.weighted([
       [8, text],
       [isReference ? 4 : 0, `delete ${text}`],

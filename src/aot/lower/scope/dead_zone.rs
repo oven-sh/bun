@@ -28,6 +28,7 @@ pub(super) fn has_dead_zone(file: &FileLowering<'_, '_, '_, '_>, binding: Bindin
             | ScopeSlot::CommonJs(_)
             | ScopeSlot::WithObject
             | ScopeSlot::EvalVariables
+            | ScopeSlot::ParameterEvalVariables
             | ScopeSlot::Class(
                 ClassSlot::ClassObject
                 | ClassSlot::ClassToken

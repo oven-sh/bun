@@ -119,6 +119,12 @@ pub(crate) const PARAMETER_EXPRESSIONS: &[(&str, bool)] = &[
     ("function f({ a = 1 }) {}", true),
     ("function f([a = 1]) {}", true),
     ("function f({ [k]: a }) {}", true),
+    (r#"function f({ ["a"]: a }) {}"#, true),
+    ("function f({ [0]: a }) {}", true),
+    ("function f({ [`a`]: a }) {}", true),
+    (r#"function f([{ ["a"]: a }]) {}"#, true),
+    (r#"function f({ "a": a }) {}"#, false),
+    ("function f({ 0: a }) {}", false),
 ];
 
 pub(crate) const ARGUMENTS_OBJECT_USES: &[&str] = &[

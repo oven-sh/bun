@@ -52,7 +52,7 @@ impl ReferencePass<'_, '_> {
         node: NodeData,
         kind: ImplicitReferenceKind,
     ) {
-        let binding = self.lookup.find(scope, name).binding;
+        let binding = self.lookup.find_binding(scope, name);
         self.references.implicit_references.push(ImplicitReference {
             node,
             kind,

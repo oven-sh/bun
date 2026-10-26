@@ -12,8 +12,8 @@ use bun_node_path::{
     basename_posix_latin1, basename_posix_t, basename_windows_t,
     basename_without_suffix_posix_latin1, dirname_posix_latin1, dirname_posix_t, dirname_windows_t,
     extname_posix_latin1, extname_posix_t, extname_windows_t, format_t, is_absolute_posix_t,
-    is_absolute_windows_t, is_resolved_posix, is_tidy_posix, join_buf_len, join_posix_t,
-    join_windows_t, normalize_buf_len, normalize_posix_latin1, normalize_posix_t,
+    is_absolute_windows_t, is_ascii, is_resolved_ascii_posix, is_tidy_ascii_posix, join_buf_len,
+    join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_latin1, normalize_posix_t,
     normalize_windows_t, parse_posix_latin1, parse_posix_t, parse_windows_t, path_size,
     relative_buf_len, relative_posix_latin1, relative_posix_t, relative_windows_t,
     resolve_absolute_posix_latin1, resolve_buf_len, resolve_posix_t, resolve_windows_t,
@@ -62,19 +62,27 @@ fn latin1_answer<'a>(heap: &JsHeap<'a>, answer: &[u8]) -> Option<Text<'a>> {
     (answer.len() <= JSString::MAX_LENGTH).then(|| heap.create_latin1_string(answer))
 }
 
-/// `None` for all but an 8-bit string of ASCII characters: an answer with any other character is made from UTF-8.
-/// With `FLAT_ONLY`, `None` for a rope too, and nothing is called.
+/// `None` for all but an 8-bit string. With `FLAT_ONLY`, `None` for a rope too, and nothing is called.
+/// An answer with a character outside ASCII is made from UTF-8, so only ASCII characters of these become an answer.
 #[inline(always)]
 fn latin1_of<'a, const FLAT_ONLY: bool>(
     heap: &JsHeap<'a>,
     text: Text<'a>,
 ) -> bindgen::Result<'a, Option<JsLatin1<'a>>> {
-    let text = if FLAT_ONLY {
-        text.flat_latin1()
+    if FLAT_ONLY {
+        Ok(text.flat_latin1())
     } else {
-        text.resolved_latin1(heap)?
-    };
-    Ok(text.filter(|text| text.characters().is_ascii()))
+        text.resolved_latin1(heap)
+    }
+}
+
+/// [`latin1_of`], and `None` unless every character is ASCII.
+#[inline(always)]
+fn ascii_of<'a, const FLAT_ONLY: bool>(
+    heap: &JsHeap<'a>,
+    text: Text<'a>,
+) -> bindgen::Result<'a, Option<JsLatin1<'a>>> {
+    Ok(latin1_of::<FLAT_ONLY>(heap, text)?.filter(|text| is_ascii(text.characters())))
 }
 
 /// `$name` answers `$of_latin1` of the operands' Latin-1 characters, or `$of_utf8` where that is `None`.
@@ -153,6 +161,25 @@ unsafe fn part<'a>(
     unsafe { text.substring_unchecked(heap, range.start, range.end) }
 }
 
+/// [`part`], or `None` if one of the characters is outside ASCII. SAFETY: that of [`part`].
+#[inline(always)]
+unsafe fn ascii_part<'a>(
+    heap: &JsHeap<'a>,
+    text: &JsLatin1<'a>,
+    range: core::ops::Range<usize>,
+) -> Option<Text<'a>> {
+    // SAFETY: forwarded.
+    unsafe {
+        is_ascii(text.characters().get_unchecked(range.clone())).then(|| part(heap, text, range))
+    }
+}
+
+/// `slice`, which a function of `bun_node_path` answered for `text.characters()`, or `None` if one of the characters is outside ASCII.
+#[inline(always)]
+fn ascii_slice<'a>(heap: &JsHeap<'a>, text: &JsLatin1<'a>, slice: &[u8]) -> Option<Text<'a>> {
+    is_ascii(slice).then(|| text.part(heap, slice))
+}
+
 #[inline(always)]
 fn basename_t<'p, const WINDOWS: bool>(path: &'p [u8], suffix: Option<&[u8]>) -> &'p [u8] {
     if WINDOWS {
@@ -172,28 +199,28 @@ fn basename_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
         return Ok(None);
     };
     let Some(suffix) = suffix else {
-        return Ok(Some(if WINDOWS {
-            text.part(heap, basename_windows_t(text.characters(), None))
+        return Ok(if WINDOWS {
+            ascii_slice(heap, &text, basename_windows_t(text.characters(), None))
         } else {
             // SAFETY: the range is of these characters.
-            unsafe { part(heap, &text, basename_posix_latin1(text.characters())) }
-        }));
+            unsafe { ascii_part(heap, &text, basename_posix_latin1(text.characters())) }
+        });
     };
     // A suffix whose UTF-8 is longer than that of the path is not looked for. Of an ASCII suffix that is its length.
-    let Some(suffix) =
-        latin1_of::<FLAT_ONLY>(heap, suffix)?.filter(|suffix| suffix.characters().is_ascii())
-    else {
+    let Some(suffix) = ascii_of::<FLAT_ONLY>(heap, suffix)? else {
         return Ok(None);
     };
     let (characters, suffix) = (text.characters(), suffix.characters());
     if WINDOWS {
-        return Ok(Some(
-            text.part(heap, basename_windows_t(characters, Some(suffix))),
+        return Ok(ascii_slice(
+            heap,
+            &text,
+            basename_windows_t(characters, Some(suffix)),
         ));
     }
     // SAFETY: the ranges are of these characters.
-    Ok(Some(unsafe {
-        part(
+    Ok(unsafe {
+        ascii_part(
             heap,
             &text,
             if suffix.is_empty() || suffix.len() > characters.len() {
@@ -202,7 +229,7 @@ fn basename_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
                 basename_without_suffix_posix_latin1(characters, suffix)
             },
         )
-    }))
+    })
 }
 
 #[cold]
@@ -236,13 +263,17 @@ fn dirname_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
         return Ok(None);
     };
     if WINDOWS {
-        return Ok(Some(text.part(heap, dirname_windows_t(text.characters()))));
+        return Ok(ascii_slice(
+            heap,
+            &text,
+            dirname_windows_t(text.characters()),
+        ));
     }
-    Ok(Some(match dirname_posix_latin1(text.characters()) {
+    Ok(match dirname_posix_latin1(text.characters()) {
         // SAFETY: the range is of these characters.
-        Ok(end) => unsafe { part(heap, &text, 0..end) },
-        Err(literal) => heap.create_latin1_string(literal),
-    }))
+        Ok(end) => unsafe { ascii_part(heap, &text, 0..end) },
+        Err(literal) => Some(heap.create_latin1_string(literal)),
+    })
 }
 
 #[cold]
@@ -266,12 +297,12 @@ fn extname_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
     let Some(text) = latin1_of::<FLAT_ONLY>(heap, path)? else {
         return Ok(None);
     };
-    Ok(Some(if WINDOWS {
-        text.part(heap, extname_windows_t(text.characters()))
+    Ok(if WINDOWS {
+        ascii_slice(heap, &text, extname_windows_t(text.characters()))
     } else {
         // SAFETY: the range is of these characters.
-        unsafe { part(heap, &text, extname_posix_latin1(text.characters())) }
-    }))
+        unsafe { ascii_part(heap, &text, extname_posix_latin1(text.characters())) }
+    })
 }
 
 #[cold]
@@ -316,7 +347,7 @@ fn parse_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
     heap: &JsHeap<'a>,
     path: Text<'a>,
 ) -> bindgen::Result<'a, Option<ParsedPath<'a>>> {
-    let Some(text) = latin1_of::<FLAT_ONLY>(heap, path)? else {
+    let Some(text) = ascii_of::<FLAT_ONLY>(heap, path)? else {
         return Ok(None);
     };
     if !WINDOWS {
@@ -478,18 +509,19 @@ fn normalize_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
     let Some(text) = latin1_of::<FLAT_ONLY>(heap, path)? else {
         return Ok(None);
     };
-    if !WINDOWS {
-        if is_tidy_posix(text.characters()) {
-            return Ok(Some(path));
-        }
-        if text.characters().len() <= SHORT {
-            return Ok(Some(normalize_short_posix(heap, text.characters())));
-        }
+    if !WINDOWS && is_tidy_ascii_posix(text.characters()) {
+        return Ok(Some(path));
+    }
+    if !is_ascii(text.characters()) {
+        return Ok(None);
+    }
+    if !WINDOWS && text.characters().len() <= SHORT {
+        return Ok(Some(normalize_short_posix(heap, text.characters())));
     }
     Ok(normalize_untidy::<WINDOWS>(heap, text))
 }
 
-/// `path` is [`SHORT`].
+/// `path` is [`SHORT`] and ASCII.
 #[inline(never)]
 fn normalize_short_posix<'a>(heap: &JsHeap<'a>, path: &[u8]) -> Text<'a> {
     heap.create_latin1_string(normalize_posix_latin1(path, &mut normalized_buffer()))
@@ -555,8 +587,8 @@ fn join_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
         }
     }
     let joined = joined.characters();
-    if !is_tidy_posix(joined) {
-        return Ok(Some(normalize_short_posix(heap, joined)));
+    if !is_tidy_ascii_posix(joined) {
+        return Ok(is_ascii(joined).then(|| normalize_short_posix(heap, joined)));
     }
     Ok(Some(match only {
         Some(only) => only,
@@ -575,7 +607,7 @@ fn join_windows_latin1<'a, const FLAT_ONLY: bool>(
     let mut parts: Parts<'_> = [const { core::mem::MaybeUninit::uninit() }; FEW];
     let mut count = 0;
     for &path in paths {
-        let Some(text) = latin1_of::<FLAT_ONLY>(heap, path)? else {
+        let Some(text) = ascii_of::<FLAT_ONLY>(heap, path)? else {
             return Ok(None);
         };
         if !text.characters().is_empty() {
@@ -666,7 +698,10 @@ fn relative_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
     ) else {
         return Ok(None);
     };
-    if !is_resolved_posix(from.characters()) || !is_resolved_posix(to.characters()) {
+    if !is_resolved_ascii_posix(from.characters()) || !is_resolved_ascii_posix(to.characters()) {
+        if !is_ascii(from.characters()) || !is_ascii(to.characters()) {
+            return Ok(None);
+        }
         return Ok(relative_of_untidy_posix(heap, from, to));
     }
     let target = to.characters();
@@ -699,6 +734,7 @@ fn relative_upwards<'a>(heap: &JsHeap<'a>, ups: usize, rest: &[u8]) -> Option<Te
     })
 }
 
+/// `from` and `to` are ASCII.
 #[inline(never)]
 fn relative_of_untidy_posix<'a>(
     heap: &JsHeap<'a>,
@@ -800,14 +836,14 @@ fn resolve_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
             continue;
         }
         let is_absolute = part[0] == CHAR_FORWARD_SLASH;
-        if is_absolute && joined.start == SHORT && is_resolved_posix(part) {
+        if is_absolute && joined.start == SHORT && is_resolved_ascii_posix(part) {
             return Ok(Some(path));
         }
         if !joined.prepend(part) {
             return Ok(None);
         }
         if is_absolute {
-            return Ok(Some(resolve_joined_posix(heap, joined.characters())));
+            return Ok(resolve_joined_posix(heap, joined.characters()));
         }
     }
     // `process.cwd()` itself is kept as a string.
@@ -817,25 +853,23 @@ fn resolve_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
     #[cfg(not(windows))]
     {
         let working_directory = bun_node_path::posix_working_directory();
-        if working_directory.is_ascii()
-            && is_absolute_posix_t(working_directory)
-            && joined.prepend(working_directory)
-        {
-            return Ok(Some(resolve_joined_posix(heap, joined.characters())));
+        if is_absolute_posix_t(working_directory) && joined.prepend(working_directory) {
+            return Ok(resolve_joined_posix(heap, joined.characters()));
         }
     }
     Ok(None)
 }
 
-/// `joined` is absolute and [`SHORT`].
+/// `joined` is absolute and [`SHORT`]. `None` if one of its characters, or bytes of the working directory, is outside ASCII.
 #[inline(always)]
-fn resolve_joined_posix<'a>(heap: &JsHeap<'a>, joined: &[u8]) -> Text<'a> {
-    if is_resolved_posix(joined) {
-        return heap.create_latin1_string(joined);
+fn resolve_joined_posix<'a>(heap: &JsHeap<'a>, joined: &[u8]) -> Option<Text<'a>> {
+    if is_resolved_ascii_posix(joined) {
+        return Some(heap.create_latin1_string(joined));
     }
-    resolve_untidy_posix(heap, joined)
+    is_ascii(joined).then(|| resolve_untidy_posix(heap, joined))
 }
 
+/// `joined` is absolute, [`SHORT`] and ASCII.
 #[inline(never)]
 fn resolve_untidy_posix<'a>(heap: &JsHeap<'a>, joined: &[u8]) -> Text<'a> {
     heap.create_latin1_string(resolve_absolute_posix_latin1(

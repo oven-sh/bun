@@ -248,6 +248,7 @@ fn slot_label(binding: BindingRef) -> &'static str {
             ScopeSlot::CommonJs(_) => "commonJs",
             ScopeSlot::WithObject => "withObject",
             ScopeSlot::EvalVariables => "evalVariables",
+            ScopeSlot::ParameterEvalVariables => "parameterEvalVariables",
             ScopeSlot::Class(ClassSlot::ClassObject) => "classObject",
             ScopeSlot::Class(ClassSlot::ClassToken) => "classToken",
             ScopeSlot::Class(ClassSlot::ComputedKey(_)) => "computedKey",

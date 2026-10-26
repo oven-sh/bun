@@ -21,6 +21,7 @@ extern "C" size_t highway_line_starts(const uint8_t* text, size_t text_len, uint
 extern "C" size_t highway_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
 extern "C" size_t highway_last_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
 extern "C" size_t highway_index_of_untidy_slash(const uint8_t* path, size_t len);
+extern "C" size_t highway_index_of_untidy_slash_or_non_ascii(const uint8_t* path, size_t len);
 extern "C" size_t highway_last_index_of_slash(const uint8_t* path, size_t len);
 extern "C" size_t highway_last_index_of_slash_or_dot(const uint8_t* path, size_t len);
 extern "C" size_t highway_common_prefix_length(const uint8_t* a, const uint8_t* b, size_t len);
@@ -94,6 +95,8 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
             : highway_last_index_of_any_char(haystack, len, needle, needle_len);
     } else if (op == "indexOfUntidySlash"_s) {
         result = highway_index_of_untidy_slash(haystack, len);
+    } else if (op == "indexOfUntidySlashOrNonAscii"_s) {
+        result = highway_index_of_untidy_slash_or_non_ascii(haystack, len);
     } else if (op == "lastIndexOfSlash"_s) {
         result = highway_last_index_of_slash(haystack, len);
     } else if (op == "lastIndexOfSlashOrDot"_s) {

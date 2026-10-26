@@ -126,9 +126,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let ExprKind::Call(site) = hir[call].kind else {
             unreachable!("a super call is a call expression");
         };
+        let position = self.file.call_position(hir[site]);
         let Some(constructor) = self.find_derived_constructor() else {
             self.lower_arguments(hir[site].args);
-            self.set_position(hir[call].pos);
+            self.set_position(position);
             self.emit_throw_runtime_error(RuntimeErrorKind::UninitializedThis, None);
             return self.builder.undefined();
         };
@@ -143,13 +144,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let this = match self.lower_arguments(hir[site].args) {
             Arguments::Values(mut values) => {
                 self.convert_arguments(call, &mut values);
-                self.set_position(hir[call].pos);
+                self.set_position(position);
                 self.builder
                     .super_construct(layout, parent, new_target, &values)
             }
             Arguments::List(list) => {
                 self.convert_argument_list(call, list);
-                self.set_position(hir[call].pos);
+                self.set_position(position);
                 self.builder
                     .super_construct_list(layout, parent, new_target, list)
             }

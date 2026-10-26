@@ -1037,7 +1037,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     false => Interest::Binding(defined),
                 },
                 Some(Member::Undefined | Member::Marker(_) | Member::OnObject) => continue,
-                // A name of a CommonJS module that an ES module hands on, on what `require` gives of the ES module.
+                // What an ES module hands on of another module, on what `require` gives of the ES module: a name of a CommonJS module, the object of a module, `module.exports`.
                 None => match (
                     graph.member_binding(self.file, access),
                     self.find_accessed_module(access),
@@ -1048,6 +1048,34 @@ impl<'a, 's> FileScan<'a, 's> {
                         match self.is_called(access) {
                             true => Interest::CalledName(export, accessed),
                             false => Interest::Name(export, accessed),
+                        }
+                    }
+                    (
+                        Some(
+                            binding @ (ImportBinding::Namespace { .. }
+                            | ImportBinding::NamespaceRead { .. }
+                            | ImportBinding::Exports { .. }),
+                        ),
+                        accessed,
+                    ) => {
+                        if let (ImportBinding::Namespace { module, .. }, Some(accessed)) =
+                            (binding, accessed)
+                            && module_with_code(accessed) != module_with_code(module)
+                        {
+                            let handed_on = Interest::HandedOnNamespace(module_with_code(module));
+                            self.add_interest(hir[access].pos, handed_on);
+                        }
+                        match binding {
+                            // The member around it says what it reads.
+                            ImportBinding::Namespace { module, .. }
+                                if self.is_object_of_bound_member(access) =>
+                            {
+                                Interest::Evaluation(module)
+                            }
+                            _ => match self.interest_in_import(binding, Some(access), accessed) {
+                                Some(interest) => interest,
+                                None => continue,
+                            },
                         }
                     }
                     _ => continue,

@@ -1,5 +1,5 @@
 use bun_sema::bind::{Binding, CodeUnit, PrivateMembers, ScopeId, SymbolId};
-use bun_sema::fold::Decision;
+use bun_sema::fold::{Decision, TreeNode};
 use bun_sema::hir::{
     Call, CallId, ExprId, ExprKind, JsxId, MemberId, NodeData, PatId, PatKind, PropKey,
 };
@@ -14,6 +14,8 @@ use super::{ArgumentRead, Context, PatternRole, Task, Walker};
 use crate::builtins::table::{self, Scope};
 use crate::builtins::{Intrinsic, Mutability, Resolved};
 use crate::ir::ClassSlot;
+use crate::lower::jsx::find_key_argument;
+use crate::lower::scope::lexical_owners::ScopeObjectSearch;
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{class, parameters};
 use crate::modules::{Member, ModuleRef, Site, SiteAnswer};
@@ -62,10 +64,13 @@ impl Walker<'_, '_> {
                 self.visit_call(expression, call, context);
             }
             // The store is made when the operands have been evaluated.
-            ExprKind::Unary { .. } | ExprKind::Assign { .. } => {
-                let first_pending = self.pending_stores.len() as u32;
-                self.push_evaluated_children(expression, context);
-                self.push_task(Task::EndStores { first_pending }, context);
+            ExprKind::Unary { operand, .. } => self.push_operands_of_store([operand], context),
+            // A pattern runs its keys, its targets and its defaults when the value has been evaluated.
+            ExprKind::Assign { target, value, .. } if self.is_assignment_pattern(target) => {
+                self.push_operands_of_store([value, target], context);
+            }
+            ExprKind::Assign { target, value, .. } => {
+                self.push_operands_of_store([target, value], context);
             }
             ExprKind::Fn(function) => self.visit_function(function, context.function),
             ExprKind::Class(class) => self.visit_class(class, context),
@@ -85,6 +90,20 @@ impl Walker<'_, '_> {
         }
     }
 
+    fn push_operands_of_store<const N: usize>(&mut self, operands: [ExprId; N], context: Context) {
+        let first_pending = self.pending_stores.len() as u32;
+        self.push_expressions(operands, context);
+        self.push_task(Task::EndStores { first_pending }, context);
+    }
+
+    fn is_assignment_pattern(&self, target: ExprId) -> bool {
+        let target = self.hir.skip_type_assertions(target);
+        matches!(
+            self.hir[target].kind,
+            ExprKind::Array(_) | ExprKind::Object(_)
+        )
+    }
+
     fn visit_identifier(&mut self, identifier: ExprId, context: Context) {
         let (bound, function) = (self.bound, context.function);
         let binding = bound.binding(identifier);
@@ -94,9 +113,15 @@ impl Walker<'_, '_> {
             self.pending_stores.push(symbol);
         }
         self.record_binding_use(context, binding, bound.is_store_target(identifier));
-        if let Some(from) = bound.dynamic_lookup_scope(NodeData::Expr(identifier)) {
-            let until = bound.dynamic_lookup_end(identifier, self.declaring_scope(binding));
-            self.record_scope_chain(function, from, until);
+        if let Some(start) = bound.dynamic_lookup_scope(NodeData::Expr(identifier)) {
+            let declaring_scope = self.declaring_scope(binding);
+            let search = ScopeObjectSearch {
+                start,
+                until: bound.dynamic_lookup_end(identifier, declaring_scope),
+                declaring_scope,
+                pos: self.hir[identifier].pos,
+            };
+            self.record_scope_objects(function, search);
         }
     }
 
@@ -171,6 +196,7 @@ impl Walker<'_, '_> {
 
     fn visit_call(&mut self, expression: ExprId, call: CallId, context: Context) {
         let call = self.hir[call];
+        let mut binds_this_for_what_follows = false;
         if matches!(self.hir[call.callee].kind, ExprKind::Super) {
             let scope = context.lexical_scope;
             self.use_this(context);
@@ -178,15 +204,20 @@ impl Walker<'_, '_> {
             self.record_slot_store(context, scope, ScopeSlot::This);
             match self.bound.code_unit(scope) {
                 CodeUnit::Function(constructor) => {
+                    binds_this_for_what_follows = self.walk.function_of_fn[constructor.idx()]
+                        == Some(context.function)
+                        && self.unconditional_statements.contains(&expression);
                     self.record_slot_use(context.function, scope, ScopeSlot::Callee);
                     let reference = (context.function, constructor);
                     self.walk.function_references.push(reference);
                 }
                 CodeUnit::File | CodeUnit::FieldInitializer(_) => {}
             }
+            let binding = (scope, binds_this_for_what_follows);
+            self.walk.this_bindings.push(binding);
         } else {
             if let Some(&eval) = self.bound.eval_scope(expression) {
-                self.visit_direct_eval(eval, context);
+                self.visit_direct_eval(expression, eval, context);
             }
             self.record_argument_read(&call, context);
             // Else the lowering emits the load of the module and never reads the callee.
@@ -198,6 +229,10 @@ impl Walker<'_, '_> {
             }
         }
         self.push_expressions(self.hir.ids(call.args), context);
+        if binds_this_for_what_follows {
+            let scope = context.lexical_scope;
+            self.push_task(Task::InitializeSlot(scope, ScopeSlot::This), context);
+        }
     }
 
     // `require_a()`, where `var require_a = __commonJS(cb)`.
@@ -287,15 +322,20 @@ impl Walker<'_, '_> {
         for binding in bindings_of(&self.jsx_uses, expression) {
             self.record_binding_use(context, binding, false);
         }
+        let key_argument = find_key_argument(hir, callee, jsx);
         let jsx = hir[jsx];
         self.push_expressions([jsx.tag], context);
         for attribute in jsx.attrs.iter() {
+            if Some(attribute) == key_argument {
+                continue;
+            }
             if let PropKey::Computed(key) = hir.runtime_property_key(attribute) {
                 self.push_expressions([key], context);
             }
             self.push_expressions([hir[attribute].value], context);
         }
         self.push_expressions(hir.ids(jsx.children), context);
+        self.push_expressions(key_argument.map(|key| hir[key].value), context);
     }
 
     fn record_private_name(&mut self, reference: ExprId, context: Context) {
@@ -339,11 +379,25 @@ impl Walker<'_, '_> {
         }
     }
 
+    // The keys and the defaults are pushed in the order in which they run: what belongs to an inner pattern runs before what follows that pattern in the outer one.
     pub(super) fn visit_pattern(&mut self, pattern: PatId, role: PatternRole, context: Context) {
         let hir = self.hir;
         let mut initialized: SmallVec<[SymbolId; 4]> = SmallVec::new();
-        let mut pending: SmallVec<[PatId; 8]> = pattern.some().into_iter().collect();
-        while let Some(pattern) = pending.pop() {
+        let mut pending: SmallVec<[TreeNode; 8]> = SmallVec::new();
+        pending.extend(pattern.some().map(TreeNode::Pattern));
+        while let Some(node) = pending.pop() {
+            let pattern = match node {
+                TreeNode::Pattern(pattern) => pattern,
+                TreeNode::Expr(expression) => {
+                    self.push_expressions([expression], context);
+                    continue;
+                }
+                TreeNode::Stmt(_) | TreeNode::Function(_) | TreeNode::Class(_) => {
+                    debug_assert!(false, "a pattern holds patterns and expressions");
+                    continue;
+                }
+            };
+            let first_part = pending.len();
             match hir[pattern].kind {
                 PatKind::Ident(_) => {
                     match role {
@@ -360,19 +414,20 @@ impl Walker<'_, '_> {
                 PatKind::Object(properties) => {
                     for property in properties.iter() {
                         if let PropKey::Computed(key) = hir.runtime_binding_key(property) {
-                            self.push_expressions([key], context);
+                            pending.push(TreeNode::Expr(key));
                         }
-                        self.push_expressions([hir[property].default], context);
-                        pending.extend(hir[property].value.some());
+                        pending.push(TreeNode::Expr(hir[property].default));
+                        pending.extend(hir[property].value.some().map(TreeNode::Pattern));
                     }
                 }
                 PatKind::Array(elements) => {
                     for element in elements.iter() {
-                        self.push_expressions([hir[element].default], context);
-                        pending.extend(hir[element].pat.some());
+                        pending.push(TreeNode::Expr(hir[element].default));
+                        pending.extend(hir[element].pat.some().map(TreeNode::Pattern));
                     }
                 }
             }
+            pending[first_part..].reverse();
         }
         let initialize: fn(SymbolId) -> Task = match role {
             PatternRole::Parameter => Task::InitializeParameter,
@@ -393,8 +448,15 @@ impl Walker<'_, '_> {
             Binding::Arguments(owner) => self.use_arguments_binding(owner, true, context),
             Binding::CommonJs(_) | Binding::Free => {}
         }
-        if let Some(from) = bound.dynamic_lookup_scope(NodeData::Pat(name)) {
-            self.record_scope_chain(context.function, from, self.declaring_scope(binding));
+        if let Some(start) = bound.dynamic_lookup_scope(NodeData::Pat(name)) {
+            let declaring_scope = self.declaring_scope(binding);
+            let search = ScopeObjectSearch {
+                start,
+                until: declaring_scope,
+                declaring_scope,
+                pos: self.hir[name].pos,
+            };
+            self.record_scope_objects(context.function, search);
         }
     }
 }

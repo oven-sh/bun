@@ -1550,7 +1550,7 @@ pub mod formatter {
     pub struct Formatter<'a> {
         pub global_this: &'a JSGlobalObject,
 
-        /// Callers seat this to a stack slice and reset it to `EMPTY` before
+        /// Callers seat this to a slice they own and reset it to `EMPTY` before
         /// the backing storage goes away. A `&'a`
         /// slice cannot express that without forcing `'a` to outlive locals;
         /// `RawSlice` carries the outlives-holder invariant instead.

@@ -30,6 +30,34 @@ using JSGlobalObject = JSC::JSGlobalObject;
 
 using String = WTF::String;
 
+// A call with at most this many arguments copies them to the stack and allocates nothing.
+static constexpr size_t stackArgumentCapacity = 255;
+
+// Copies every argument into `values`, which the GC scans.
+static void copyArguments(JSC::JSGlobalObject* globalObject, const ScriptArguments& arguments, JSC::MarkedVector<JSC::JSValue>& values)
+{
+    size_t count = arguments.argumentCount();
+    // Crashes if it cannot allocate, as the Vector inside `arguments` does.
+    values.fill(JSC::getVM(globalObject), count, [&](JSC::JSValue* slots) {
+        for (size_t i = 0; i < count; i++)
+            slots[i] = arguments.argumentAt(i);
+    });
+}
+
+static NEVER_INLINE void messageWithHeapArguments(void* client, MessageType type, MessageLevel level, JSC::JSGlobalObject* globalObject, const ScriptArguments& arguments)
+{
+    JSC::MarkedVector<JSC::JSValue> values;
+    copyArguments(globalObject, arguments, values);
+    Bun__ConsoleObject__messageWithTypeAndLevel(client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, values.data<JSC::EncodedJSValue>(), values.size());
+}
+
+static NEVER_INLINE void timeLogWithHeapArguments(void* client, JSC::JSGlobalObject* globalObject, const BunString* label, const ScriptArguments& arguments)
+{
+    JSC::MarkedVector<JSC::JSValue> values;
+    copyArguments(globalObject, arguments, values);
+    Bun__ConsoleObject__timeLog(client, globalObject, label, values.data<JSC::EncodedJSValue>(), values.size());
+}
+
 void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level,
     JSC::JSGlobalObject* globalObject,
     Ref<ScriptArguments>&& arguments)
@@ -43,17 +71,20 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
         }
     }
     auto args = arguments.ptr();
-    JSC::EncodedJSValue jsArgs[255];
-
-    auto count = std::min(args->argumentCount(), (size_t)255);
-    for (size_t i = 0; i < count; i++) {
-        auto val = args->argumentAt(i);
-        jsArgs[i] = JSC::JSValue::encode(val);
-    }
+    auto count = args->argumentCount();
 
     if (type == MessageType::Table && count >= 2 && !args->argumentAt(1).isUndefined() && (!args->argumentAt(1).isCell() || args->argumentAt(1).asCell()->type() != JSC::JSType::ArrayType)) [[unlikely]] {
         JSC::throwTypeError(globalObject, scope, "The \"properties\" argument must be an instance of Array."_s);
         return;
+    }
+
+    if (count > stackArgumentCapacity) [[unlikely]]
+        RELEASE_AND_RETURN(scope, messageWithHeapArguments(this->m_client, type, level, globalObject, *args));
+
+    JSC::EncodedJSValue jsArgs[stackArgumentCapacity];
+    for (size_t i = 0; i < count; i++) {
+        auto val = args->argumentAt(i);
+        jsArgs[i] = JSC::JSValue::encode(val);
     }
 
     RELEASE_AND_RETURN(scope, Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count));
@@ -85,8 +116,13 @@ void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
     auto input = Bun::toString(label);
 
     auto args = arguments.ptr();
-    JSC::EncodedJSValue jsArgs[255];
-    auto count = std::min(args->argumentCount(), (size_t)255);
+    auto count = args->argumentCount();
+    if (count > stackArgumentCapacity) [[unlikely]] {
+        timeLogWithHeapArguments(this->m_client, globalObject, &input, *args);
+        return;
+    }
+
+    JSC::EncodedJSValue jsArgs[stackArgumentCapacity];
     for (size_t i = 0; i < count; i++) {
         auto val = args->argumentAt(i);
         jsArgs[i] = JSC::JSValue::encode(val);

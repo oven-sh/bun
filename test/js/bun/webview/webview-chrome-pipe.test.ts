@@ -136,6 +136,32 @@ test.concurrent("an expression that throws rejects", async () => {
   expect(result).toEqual({ rejected: expect.stringContaining("inside the fake") });
 });
 
+test.concurrent("`console: globalThis.console` prints every argument of a console call in the page", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      prelude +
+        `
+        const view = new Bun.WebView({ backend, width: 100, height: 100, console: globalThis.console });
+        await view.navigate("http://fake/");
+        await view.evaluate("__fake_console('log', Array.from({ length: 300 }, (_, i) => 'log' + i))");
+        await view.evaluate("__fake_console('error', Array.from({ length: 300 }, (_, i) => 'error' + i))");
+        view.close();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: Array.from({ length: 300 }, (_, i) => "log" + i).join(" ") + "\n",
+    stderr: Array.from({ length: 300 }, (_, i) => "error" + i).join(" ") + "\n",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("the browser exiting rejects what it owed, and the next WebView respawns it", async () => {
   const result = await runScenario(`
     const first = newView();

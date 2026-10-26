@@ -249,3 +249,180 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+it.concurrent("console methods print every argument of a call with more than 255 arguments", async () => {
+  // Not console.assert: a failing one aborts under BUN_JSC_validateExceptionChecks until #44950.
+  const methods = ["log", "info", "debug", "warn", "error", "trace", "group", "groupCollapsed", "dirxml", "timeLog"];
+  const counts = [255, 256, 300];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.time("timer");
+       for (const method of ${JSON.stringify(methods)}) {
+         for (const count of ${JSON.stringify(counts)}) {
+           // The values of one call are "log300_0" to "log300_299".
+           const values = Array.from({ length: count }, (_, i) => method + count + "_" + i);
+           if (method === "timeLog") console.timeLog("timer", ...values);
+           else console[method](...values);
+           if (method.startsWith("group")) console.groupEnd();
+         }
+       }`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // What one call prints: its values with a space between them.
+  const line = (method: string, count: number) =>
+    Array.from({ length: count }, (_, i) => method + count + "_" + i).join(" ") + "\n";
+  // The lines of these methods, in the order of the calls.
+  const lines = (names: string[], prefix = "") =>
+    names.flatMap(name => counts.map(count => prefix + line(name, count))).join("");
+  expect({
+    stdout: stdout.replace(/^ +at .+\n/gm, ""),
+    stderr: stderr.replace(/^\[.+?s\]/gm, "[elapsed]"),
+    exitCode,
+  }).toEqual({
+    stdout: lines(["log", "info", "debug", "trace", "group", "groupCollapsed", "dirxml"]),
+    stderr: lines(["warn", "error"]) + lines(["timeLog"], "[elapsed] timer "),
+    exitCode: 0,
+  });
+});
+
+it.concurrent("console.log fills in a format specifier from an argument past the 255th", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const values = Array.from({ length: 300 }, (_, i) => "v" + i);
+       console.log(values.map(() => "%s").join(" "), ...values);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: Array.from({ length: 300 }, (_, i) => "v" + i).join(" ") + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("console.log throws what the inspect hook of an argument past the 255th throws", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const values = Array.from({ length: 300 }, (_, i) => i);
+       values[299] = {
+         [Symbol.for("nodejs.util.inspect.custom")]() {
+           throw new Error("from argument 299");
+         },
+       };
+       try {
+         console.log(...values);
+       } catch (e) {
+         console.error(e.message);
+       }`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    // The arguments before the one that throws are already written.
+    stdout: Array.from({ length: 299 }, (_, i) => i + " ").join(""),
+    stderr: "from argument 299\n",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("console.log prints every argument of a call with 70000 arguments", async () => {
+  // More arguments than a 16-bit count can hold.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `console.log(...Array.from({ length: 70000 }, (_, i) => i));`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = Array.from({ length: 70000 }, (_, i) => i).join(" ") + "\n";
+  const printed = stdout.trimEnd().split(" ");
+  // `exact` checks every byte. The count and the last value keep the failure message short.
+  expect({ exact: stdout === expected, count: printed.length, last: printed.at(-1), stderr, exitCode }).toEqual({
+    exact: true,
+    count: 70000,
+    last: "69999",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("console.log gives every argument to an attached inspector and to the terminal", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "-e", "setInterval(() => {}, 1000);"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // The inspector prints its WebSocket URL to stderr.
+  let stderr = "";
+  let url: string | undefined;
+  const stderrDecoder = new TextDecoder();
+  for await (const chunk of proc.stderr) {
+    stderr += stderrDecoder.decode(chunk, { stream: true });
+    url = stderr.match(/ws:\/\/\S+/)?.[0];
+    if (url) break;
+  }
+  if (!url) throw new Error(`No inspector URL in stderr:\n${stderr}`);
+
+  const ws = new WebSocket(url);
+  const opened = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<never>();
+  const added = Promise.withResolvers<{ message: { parameters: { value: string }[] } }>();
+  const evaluated = Promise.withResolvers<{ wasThrown: boolean }>();
+  closed.promise.catch(() => {});
+  ws.addEventListener("open", () => opened.resolve());
+  ws.addEventListener("close", () => closed.reject(new Error("The inspector closed the socket")));
+  ws.addEventListener("error", () => closed.reject(new Error("The inspector socket failed")));
+  ws.addEventListener("message", ({ data }) => {
+    const { id, method, params, result } = JSON.parse(String(data));
+    if (method === "Console.messageAdded") added.resolve(params);
+    if (id === 2) evaluated.resolve(result);
+  });
+  await Promise.race([opened.promise, closed.promise]);
+  ws.send(JSON.stringify({ id: 1, method: "Console.enable" }));
+  ws.send(
+    JSON.stringify({
+      id: 2,
+      method: "Runtime.evaluate",
+      params: { expression: `console.log(...Array.from({ length: 300 }, (_, i) => "v" + i))` },
+    }),
+  );
+  const { message } = await Promise.race([added.promise, closed.promise]);
+
+  // The terminal gets the call as one line on stdout.
+  let stdout = "";
+  const stdoutDecoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    stdout += stdoutDecoder.decode(chunk, { stream: true });
+    if (stdout.includes("\n")) break;
+  }
+  // The call returned, and the process is still there.
+  const { wasThrown } = await Promise.race([evaluated.promise, closed.promise]);
+  const exitCode = proc.exitCode;
+  ws.close();
+
+  const values = Array.from({ length: 300 }, (_, i) => "v" + i);
+  expect({
+    inspector: message.parameters.map(parameter => parameter.value),
+    terminal: stdout.trimEnd().split(" "),
+    wasThrown,
+    exitCode,
+  }).toEqual({ inspector: values, terminal: values, wasThrown: false, exitCode: null });
+});

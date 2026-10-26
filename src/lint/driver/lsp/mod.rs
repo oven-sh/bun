@@ -332,8 +332,8 @@ struct Server<'s> {
 /// The files that say how a file is linted or formatted, or whether it is at all.
 const WATCHED: [&str; 13] = [
     "**/bunfig.toml",
-    "**/package.json",
-    "**/{eslint,oxlint,prettier,vite}.config.{js,mjs,cjs,ts,mts,cts}",
+    "**/package.{json,yaml}",
+    "**/{eslint,oxlint,oxfmt,prettier,vite}.config.{js,mjs,cjs,ts,mts,cts}",
     "**/.eslintrc",
     "**/.eslintrc.{js,cjs,json,yaml,yml}",
     "**/.oxlintrc.{json,jsonc}",
@@ -353,6 +353,7 @@ fn is_watched(name: &[u8]) -> bool {
         name,
         b"bunfig.toml"
             | b"package.json"
+            | b"package.yaml"
             | b".editorconfig"
             | b".gitignore"
             | b".eslintignore"
@@ -360,8 +361,10 @@ fn is_watched(name: &[u8]) -> bool {
     ) || [&b".eslintrc"[..], b".oxlintrc", b".oxfmtrc", b".prettierrc"]
         .iter()
         .any(|it| name.starts_with(it))
-        || (matches!(stem, b"eslint" | b"oxlint" | b"prettier" | b"vite")
-            && strings::contains(name, b".config."))
+        || (matches!(
+            stem,
+            b"eslint" | b"oxlint" | b"oxfmt" | b"prettier" | b"vite"
+        ) && strings::contains(name, b".config."))
         || (matches!(stem, b"tsconfig" | b"jsconfig") && name.ends_with(b".json"))
 }
 

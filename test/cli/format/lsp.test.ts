@@ -297,6 +297,33 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
     timeout,
   );
 
+  // Every file that `bun fmt` reads its configuration from is one whose save makes the server read it again.
+  test(
+    "reads a package.yaml again when a client without a watcher saves it",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", { "package.yaml": "name: a\n", "a.js": "" });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.js");
+      const ugly = 'const  value  =  "text"\n';
+      open(client, path, ugly);
+      expect(applyEdits(ugly, (await format(client, path)).result)).toBe('const value = "text";\n');
+      const yaml = join(String(dir), "package.yaml");
+      writeFileSync(yaml, "name: a\nprettier:\n  semi: false\n");
+      open(client, yaml, "name: a\nprettier:\n  semi: false\n", "yaml");
+      client.notify("textDocument/didSave", { textDocument: { uri: uriOf(yaml) } });
+      expect(applyEdits(ugly, (await format(client, path)).result)).toBe('const value = "text"\n');
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   // A configuration file that is a program runs in a child process: once per folder, not once per request, which
   // would miss the editor's timeout for formatting on save.
   test(

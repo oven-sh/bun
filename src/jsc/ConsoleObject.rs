@@ -895,10 +895,20 @@ impl<'a> TablePrinter<'a> {
         if !self.properties.is_undefined() {
             let mut properties_iter = jsc::JSArrayIterator::init(self.properties, global_object)?;
             while let Some(value) = properties_iter.next()? {
-                columns.push(Column {
-                    name: value.to_bun_string(global_object)?,
-                    width: 1,
-                });
+                let mut name = BunString::DEAD;
+                // SAFETY: `name` is a live out-param for the call.
+                unsafe {
+                    jsc::cpp::Bun__ConsoleObject__tableColumnName(
+                        global_object,
+                        value,
+                        &raw mut name,
+                    )
+                }?;
+                // Dead: the entry's property key is a Symbol, which names no column.
+                if name.is_dead() {
+                    continue;
+                }
+                columns.push(Column { name, width: 1 });
             }
         }
 

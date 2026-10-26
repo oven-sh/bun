@@ -363,3 +363,127 @@ console.log("calls=" + calls);`,
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
   });
 });
+
+// Node uses each `properties` entry as a property key (`map[key] ??= []`) and
+// lists the columns with ObjectKeys(map), which leaves out Symbol keys. So an
+// entry whose key is a Symbol names no column, and it must not reach ToString,
+// which throws on a Symbol.
+describe("console.table with a Symbol-keyed entry in properties", () => {
+  // The declared type of `properties` is string[]. These tests pass other values on purpose.
+  const table = (data: object, properties: unknown[], options?: { colors?: boolean }) =>
+    Bun.inspect.table(data, properties as string[], options);
+  const S = Symbol("col");
+  const data = [{ a: 1, b: 2 }];
+  const onlyA = `┌───┬───┐\n│   │ a │\n├───┼───┤\n│ 0 │ 1 │\n└───┴───┘\n`;
+  const header = (out: string) => out.split("\n")[1];
+
+  // ToPrimitive decides the key, so a type test on the entry finds only the first three.
+  const symbolKeyed: [string, () => unknown][] = [
+    ["a Symbol", () => S],
+    ["a registered Symbol", () => Symbol.for("col")],
+    ["a well-known Symbol", () => Symbol.iterator],
+    ["a boxed Symbol", () => Object(S)],
+    ["an object whose Symbol.toPrimitive returns a Symbol", () => ({ [Symbol.toPrimitive]: () => S })],
+    ["an object whose toString returns a Symbol", () => ({ toString: () => S })],
+    ["an object whose valueOf returns a Symbol", () => ({ toString: null, valueOf: () => S })],
+    [
+      "an object whose toString returns a Symbol and whose valueOf returns a string",
+      () => ({ toString: () => S, valueOf: () => "b" }),
+    ],
+    [
+      "a String object whose Symbol.toPrimitive returns a Symbol",
+      () => Object.assign(new String("a"), { [Symbol.toPrimitive]: () => S }),
+    ],
+  ];
+
+  test.each(symbolKeyed)("%s names no column", (_, entry) => {
+    expect(table(data, [entry(), "a"])).toBe(onlyA);
+    expect(table(data, [entry(), "a"], { colors: false })).toBe(onlyA);
+    expect(Bun.stripANSI(table(data, [entry(), "a"], { colors: true }))).toBe(onlyA);
+  });
+
+  test("a row that owns the Symbol key", () => {
+    expect(table([{ a: 1, [S]: 9 }], [S, "a"])).toBe(onlyA);
+  });
+
+  test("a string entry equal to the Symbol's description keeps its column", () => {
+    expect(table([{ col: 1, [S]: 9 }], [S, "col"])).toBe(
+      `┌───┬─────┐\n│   │ col │\n├───┼─────┤\n│ 0 │ 1   │\n└───┴─────┘\n`,
+    );
+  });
+
+  test("only Symbol entries leave the index column", () => {
+    expect(table([{ a: 1 }, 5], [S])).toBe(`┌───┐\n│   │\n├───┤\n│ 0 │\n│ 1 │\n└───┘\n`);
+  });
+
+  test("a Symbol entry adds nothing to an array, an object, a Map or a Set", () => {
+    for (const make of [() => [], () => ({}), () => new Map([["k", { a: 1 }]]), () => new Set([{ a: 1 }])]) {
+      expect(table(make(), [S, "a"])).toBe(table(make(), ["a"]));
+    }
+  });
+
+  test("console.table", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const S = Symbol("col");
+const data = [{ a: 1, b: 2 }];
+console.table(data, [S, "a"]);
+console.table(data, [Object(S), "a"]);
+console.table(data, [{ [Symbol.toPrimitive]: () => S }, "a"]);
+console.table(data, [{ toString: () => S }, "a"]);
+console.table([{ a: 1, [S]: 9 }], [S, "a"]);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: onlyA.repeat(5), stderr: "", exitCode: 0 });
+  });
+
+  // Controls. These pass without the fix. They pin what the fix must not change.
+  describe("an entry with a string key", () => {
+    test("keeps its column", () => {
+      expect(header(table(data, [42, "a"]))).toBe("│   │ 42 │ a │");
+      expect(header(table(data, [{}, "a"]))).toBe("│   │ [object Object] │ a │");
+      expect(header(table(data, [null, undefined, 1n, -0, new String("a"), [1, 2], ""]))).toBe(
+        "│   │ null │ undefined │ 1 │ 0 │ a │ 1,2 │   │",
+      );
+      const withHole = ["a"];
+      withHole[2] = "b";
+      expect(header(table(data, withHole))).toBe("│   │ a │ undefined │ b │");
+    });
+
+    test("is converted with the string hint", () => {
+      expect(header(table(data, [{ toString: () => "b", valueOf: () => S }, "a"]))).toBe("│   │ b │ a │");
+      expect(header(table(data, [{ [Symbol.toPrimitive]: (hint: string) => hint }, "a"]))).toBe("│   │ string │ a │");
+      const throwingValueOf = {
+        toString: () => "b",
+        valueOf() {
+          throw new Error("valueOf must not run");
+        },
+      };
+      expect(header(table(data, [throwingValueOf, "a"]))).toBe("│   │ b │ a │");
+    });
+
+    test("is coerced once, before the rows are read", () => {
+      let calls = 0;
+      const entry = { toString: () => (calls++, "a") };
+      expect(header(table([{ a: 1 }, { a: 2 }, { a: 3 }], [entry]))).toBe("│   │ a │");
+      expect(calls).toBe(1);
+    });
+
+    test("still throws when its coercion throws", () => {
+      const boom = new Error("boom");
+      const throwing = {
+        toString() {
+          throw boom;
+        },
+      };
+      expect(() => table(data, [throwing])).toThrow(boom);
+      expect(() => table(data, [{ [Symbol.toPrimitive]: () => ({}) }])).toThrow(TypeError);
+      expect(() => table(data, [{ toString: () => ({}), valueOf: () => ({}) }])).toThrow(TypeError);
+    });
+  });
+});

@@ -128,3 +128,24 @@ void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& 
 }
 
 }
+
+// ToPropertyKey(entry) for console.table's `properties`. A Symbol key names no column: `*name` is Dead.
+extern "C" [[ZIG_EXPORT(false_is_throw)]] bool Bun__ConsoleObject__tableColumnName(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedEntry, BunString* name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue key = JSC::JSValue::decode(encodedEntry);
+    if (!key.isString()) {
+        key = key.toPrimitive(globalObject, JSC::PreferString);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (key.isSymbol()) {
+            *name = { BunStringTag::Dead };
+            return true;
+        }
+    }
+
+    *name = Bun::toStringRef(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}

@@ -1340,7 +1340,12 @@ pub struct DeferredErrors {
     /// These are errors for expressions
     pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
     pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
+
+    /// The first `(` that starts an item, an error only in an arrow parameter list: `((a)) => a`
+    pub(crate) invalid_paren: bun_ast::Loc,
 }
+
+const _: () = assert!(core::mem::size_of::<DeferredErrors>() == 28);
 
 impl DeferredErrors {
     pub(crate) fn merge_into(&self, to: &mut DeferredErrors) {
@@ -1350,6 +1355,14 @@ impl DeferredErrors {
         to.invalid_expr_after_question = self
             .invalid_expr_after_question
             .or(to.invalid_expr_after_question);
+        to.record_paren(self.invalid_paren);
+    }
+
+    #[inline]
+    pub(crate) fn record_paren(&mut self, loc: bun_ast::Loc) {
+        if self.invalid_paren.is_empty() {
+            self.invalid_paren = loc;
+        }
     }
 }
 

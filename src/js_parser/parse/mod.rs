@@ -23,9 +23,9 @@ use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
-    ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
-    StmtList, TypeParameterFlag,
+    FnOrArrowDataParse, InvalidLoc, InvalidLocTag, LexicalDecl, LocList, ParenExprOpts,
+    ParseBindingOptions, ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts,
+    SkipTypeParameterResult, StmtList, TypeParameterFlag,
 };
 use bun_ast as js_ast;
 use bun_ast::expr::EFlags;
@@ -514,10 +514,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         // Are these arguments to an arrow function?
+        // With a parenthesized item ":" is no return type: "case ((a)): b => c". esbuild refuses that.
         let mut is_arrow_fn = p.lexer.token == T::TEqualsGreaterThan;
         if is_arrow_fn
             || opts.force_arrow_fn
-            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+            || (Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && errors.invalid_paren.is_empty())
         {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
@@ -555,6 +558,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }),
                     default: tuple.expr,
                     ..Default::default()
+                });
+            }
+
+            // "((a)) => a" converts like "(a) => a"
+            if !errors.invalid_paren.is_empty() && invalid_log.is_empty() {
+                invalid_log.push(InvalidLoc {
+                    loc: errors.invalid_paren,
+                    kind: InvalidLocTag::Parentheses,
                 });
             }
 
@@ -648,7 +659,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.log_expr_errors(&mut errors);
             if spread_range.len > 0 {
                 p.log()
-                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
+                    .add_range_error(Some(p.source), spread_range, b"Unexpected \"...\"");
                 return Err(crate::Error::SyntaxError);
             }
 

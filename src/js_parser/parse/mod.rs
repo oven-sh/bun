@@ -351,25 +351,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.call_struct_helper(loc, b"s", &[this, struct_self])
     }
 
-    /// `self = __structBase.r();`, the first statement of a struct constructor: `self` is the struct whose constructor is running.
+    /// `var self = __structBase.r();`, the first statement of a struct constructor: `self` is the struct whose constructor is running.
     pub(crate) fn struct_self_prologue(
         &mut self,
         loc: bun_ast::Loc,
         struct_self: js_ast::Ref,
     ) -> Stmt {
-        let target = self.new_expr(E::Identifier::init(struct_self), loc);
         let running = self.call_struct_helper(loc, b"r", &[]);
-        let assign = self.new_expr(
-            E::Binary {
-                op: js_ast::op::Code::BinAssign,
-                left: target,
-                right: running,
-            },
-            loc,
-        );
+        let binding = self.b(B::Identifier { r#ref: struct_self }, loc);
+        let decls = G::DeclList::from_slice(&[G::Decl {
+            binding,
+            value: Some(running),
+        }]);
         self.s(
-            S::SExpr {
-                value: assign,
+            S::Local {
+                decls,
                 ..Default::default()
             },
             loc,

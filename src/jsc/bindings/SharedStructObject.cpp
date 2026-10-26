@@ -89,20 +89,26 @@ public:
         m_ids.set(&symbol->uid(), id);
     }
 
-    // The well-known symbols (`Symbol.iterator` and the others), by description, which a script cannot change.
+    // The well-known symbols (`Symbol.iterator` and the others), by description, which a script cannot change. There are a dozen.
     JSC::Symbol* wellKnown(const WTF::String& description)
     {
         WTF::Locker locker { cellLock() };
-        auto it = m_wellKnown.find(description);
-        return it == m_wellKnown.end() ? nullptr : it->value.get();
+        for (auto& entry : m_wellKnown) {
+            if (entry.description == description)
+                return entry.symbol.get();
+        }
+        return nullptr;
     }
 
     void addWellKnown(JSC::VM& vm, const WTF::String& description, JSC::Symbol* symbol)
     {
         WTF::Locker locker { cellLock() };
-        auto result = m_wellKnown.add(description, JSC::WriteBarrier<JSC::Symbol>());
-        if (result.isNewEntry)
-            result.iterator->value.set(vm, this, symbol);
+        for (auto& entry : m_wellKnown) {
+            if (entry.description == description)
+                return;
+        }
+        m_wellKnown.append(WellKnown { description, JSC::WriteBarrier<JSC::Symbol>() });
+        m_wellKnown.last().symbol.set(vm, this, symbol);
     }
 
 private:
@@ -121,7 +127,11 @@ private:
     JSC::WeakGCMap<const void*, JSC::JSObject> m_objects;
     WTF::HashMap<uint64_t, JSC::WriteBarrier<JSC::Symbol>> m_symbols;
     WTF::HashMap<const void*, uint64_t> m_ids;
-    WTF::HashMap<WTF::String, JSC::WriteBarrier<JSC::Symbol>> m_wellKnown;
+    struct WellKnown {
+        WTF::String description;
+        JSC::WriteBarrier<JSC::Symbol> symbol;
+    };
+    WTF::Vector<WellKnown> m_wellKnown;
 };
 
 template<typename Visitor>
@@ -132,8 +142,8 @@ void SharedObjectRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     WTF::Locker locker { thisObject->cellLock() };
     for (auto& entry : thisObject->m_symbols.values())
         visitor.append(entry);
-    for (auto& entry : thisObject->m_wellKnown.values())
-        visitor.append(entry);
+    for (auto& entry : thisObject->m_wellKnown)
+        visitor.append(entry.symbol);
 }
 
 DEFINE_VISIT_CHILDREN(SharedObjectRegistry);
@@ -213,6 +223,14 @@ static SharedObjectRegistry* registryOf(VM& vm, JSGlobalObject* globalObject, bo
     auto* registry = SharedObjectRegistry::create(vm, globalObject);
     globalObject->putDirect(vm, name, registry, static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     return registry;
+}
+
+// The description of a symbol as a string of its own: the impl of a symbol is a string holding it, but one that is not hashed or compared like others.
+static String descriptionOf(WTF::SymbolImpl& uid)
+{
+    if (uid.is8Bit())
+        return String(uid.span8());
+    return String(uid.span16());
 }
 
 // The registry that holds the symbols of the agent (the thread) of `globalObject`: the one of its default realm, which a vm context shares.
@@ -752,7 +770,7 @@ bool Bun__SharedSymbol__describe(JSC::JSGlobalObject* globalObject, JSC::Encoded
     JSC::VM& vm = globalObject->vm();
     auto* symbol = JSC::asSymbol(value);
     WTF::SymbolImpl& uid = symbol->uid();
-    WTF::String description(uid);
+    WTF::String description = Bun::descriptionOf(uid);
     *id = 0;
     *kind = 0;
     if (uid.symbolRegistry())
@@ -798,8 +816,7 @@ void Bun__SharedSymbol__registerWellKnown(JSC::JSGlobalObject* globalObject, JSC
         return;
     JSC::VM& vm = globalObject->vm();
     auto* symbol = JSC::asSymbol(value);
-    WTF::String description(symbol->uid());
-    Bun::agentRegistry(vm, globalObject)->addWellKnown(vm, description, symbol);
+    Bun::agentRegistry(vm, globalObject)->addWellKnown(vm, Bun::descriptionOf(symbol->uid()), symbol);
 }
 
 // A Mutex or a Condition object for `inner`, the generated object that implements it.

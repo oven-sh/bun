@@ -319,6 +319,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut names = BumpVec::<Expr>::new_in(p.arena);
         let mut kept = BumpVec::<G::Property>::with_capacity_in(properties.len(), p.arena);
         for prop in properties.drain(..) {
+            if kind == StructKind::Shared
+                && prop.kind != js_ast::g::PropertyKind::ClassStaticBlock
+                && !prop.flags.contains(Flags::Property::IsStatic)
+            {
+                // Shared structs have no instance methods, accessors or private names
+                // (the early errors of SharedStructBody).
+                let key = prop.key.expect("class element has a key");
+                let is_constructor = !prop.flags.contains(Flags::Property::IsComputed)
+                    && matches!(key.data, js_ast::ExprData::EString(name) if name.eql_comptime(b"constructor"));
+                if prop.flags.contains(Flags::Property::IsMethod) && !is_constructor {
+                    p.log().add_error(
+                        Some(p.source),
+                        key.loc,
+                        b"Shared structs cannot have instance methods",
+                    );
+                } else if matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_)) {
+                    p.log().add_error(
+                        Some(p.source),
+                        key.loc,
+                        b"Shared structs cannot have instance private names",
+                    );
+                }
+            }
             let is_field = prop.kind == js_ast::g::PropertyKind::Normal
                 && prop.value.is_none()
                 && prop.class_static_block.is_none()

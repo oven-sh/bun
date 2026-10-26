@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import vm from "node:vm";
 
 // https://github.com/tc39/proposal-structs: shared structs.
 
@@ -32,14 +33,17 @@ describe("shared struct", () => {
     }
   });
 
-  test("shared structs cannot have instance methods or extend plain structs", () => {
-    expect(() => {
-      shared struct WithMethod {
-        x;
-        m() {}
-      }
-      new WithMethod();
-    }).toThrow(TypeError);
+  test("shared structs cannot have instance methods, accessors or private names (early errors)", () => {
+    for (const body of ["m() {}", "get g() { return 1; }", "set s(v) {}", "*gen() {}", "async am() {}", "#p;", "#m() {}"]) {
+      expect(() => new vm.Script(`shared struct S { x; ${body} }`)).toThrow(SyntaxError);
+    }
+    // Static elements and the constructor are fine.
+    expect(
+      () => new vm.Script("shared struct S { x; static m() {} static #p = 1; static { } constructor() { } }"),
+    ).not.toThrow();
+  });
+
+  test("shared structs cannot extend plain structs", () => {
     struct Plain {
       x;
     }

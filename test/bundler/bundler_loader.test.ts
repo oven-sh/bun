@@ -592,6 +592,57 @@ describe("bundler", async () => {
     }
   });
 
+  // The printer gives a module one of two forms. An ESM module is a tuple that starts with
+  // its dependency list. A CommonJS module is a function, which loads its imports itself.
+  describe("internal_bake_dev module forms", () => {
+    // `bun build` runs the full link, and the dev server does not. The link marks an ESM
+    // file with `export *` from a CommonJS file as a file with dynamic exports.
+    itBundled("bake-dev/export-star-from-commonjs", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import * as barrel from "./barrel.js";
+          console.log(barrel.own, barrel.a);
+        `,
+        "/barrel.js": /* js */ `
+          export * from "./cjs.js";
+          export const own = 1;
+        `,
+        "/cjs.js": /* js */ `
+          module.exports = { a: 1 };
+        `,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"barrel.js": [ [\n    "cjs.js", 0, // namespace import\n  ], [');
+        expect(output).not.toContain('"barrel.js"(');
+      },
+    });
+
+    itBundled("bake-dev/commonjs-with-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import mixed from "./mixed.js";
+          console.log(mixed.value);
+        `,
+        "/mixed.js": /* js */ `
+          import { value } from "./dep.js";
+          module.exports = { value };
+        `,
+        "/dep.js": /* js */ `
+          export const value = 1;
+        `,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"mixed.js"(hmr, module, exports) {');
+        expect(output).toContain('var [import_dep] = hmr.importsSync(["dep.js"]);');
+        expect(output).not.toContain('"mixed.js": [');
+      },
+    });
+  });
+
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the
   // printer when bundled with the dev server's module format.
   // https://github.com/oven-sh/bun/issues/31943
@@ -747,58 +798,6 @@ describe("bundler", async () => {
         expect(api.readFile(join("/out", jsFile))).toContain('"entry.ts"');
         const cssFile = readdirSync(api.outdir).find(x => x.endsWith(".css"))!;
         expect(api.readFile(join("/out", cssFile))).toContain("color: red");
-      },
-    });
-  });
-
-  // The printer gives a module one of two forms. An ESM module is a tuple that starts with
-  // its dependency list. A CommonJS module is a function, which loads its imports itself.
-  describe("internal_bake_dev module forms", () => {
-    // `bun build` runs the full link, and the dev server does not. The link marks an ESM
-    // file with `export *` from a CommonJS file as a file with dynamic exports.
-    itBundled("bake-dev/export-star-from-commonjs", {
-      format: "internal_bake_dev",
-      files: {
-        "/entry.ts": /* js */ `
-          import * as barrel from "./barrel.js";
-          console.log(barrel.own, barrel.a);
-        `,
-        "/barrel.js": /* js */ `
-          export * from "./cjs.js";
-          export const own = 1;
-        `,
-        "/cjs.js": /* js */ `
-          module.exports = { a: 1 };
-        `,
-      },
-      onAfterBundle(api) {
-        const output = api.readFile("/out.js");
-        expect(output).toContain('"barrel.js": [ [\n    "cjs.js", 0, // namespace import\n  ], [');
-        expect(output).not.toContain('"barrel.js"(');
-      },
-    });
-
-    itBundled("bake-dev/commonjs-with-import", {
-      format: "internal_bake_dev",
-      files: {
-        "/entry.ts": /* js */ `
-          import mixed from "./mixed.js";
-          console.log(mixed.value);
-        `,
-        "/mixed.js": /* js */ `
-          import { value } from "./dep.js";
-          module.exports = { value };
-        `,
-        "/dep.js": /* js */ `
-          export const value = 1;
-        `,
-      },
-      onAfterBundle(api) {
-        const output = api.readFile("/out.js");
-        expect(output).toContain(
-          '"mixed.js"(hmr, module, exports) {\n    var [import_dep] = hmr.importsSync(["dep.js"]);',
-        );
-        expect(output).not.toContain('"mixed.js": [');
       },
     });
   });

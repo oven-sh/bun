@@ -36,8 +36,11 @@ function makeFor(node, type, range, fields) {
     const { line, column } = sourceCode.getLocFromIndex(index);
     return { column, line };
   };
+  const loc = { end: at(range[1]), start: at(range[0]) };
   const made = { type };
-  Object.assign(made, fields(orUndefined(made)), { range, loc: { end: at(range[1]), start: at(range[0]) } });
+  // As laid out as `node`, which can be from an earlier file.
+  const position = "start" in node ? { start: range[0], end: range[1], range, loc } : { range, loc };
+  Object.assign(made, fields(orUndefined(made)), position);
   if (orUndefined(made)) made.parent = node;
   madeFor.set(node, made);
   return made;

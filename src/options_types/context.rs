@@ -604,6 +604,8 @@ pub struct Eval {
     /// holds the user's actual `-e` bytes so `process._eval` reports them
     /// (or `undefined` when empty). `None` = not `--interactive`.
     pub interactive_script: Option<Box<[u8]>>,
+    /// `bun lint` or `bun fmt` started this process to read a configuration that its own tool reads in Node.js.
+    pub reads_configuration: bool,
 }
 
 pub struct CpuProf {

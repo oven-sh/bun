@@ -797,7 +797,8 @@ impl<'e> Host<'e> {
             | (source_type_for_oxlint(file) << 5)
             | (u32::from(ast::shortens_nodes(file)) << 8)
             | (u32::from(types.is_some()) << 9)
-            | (u32::from(file.language().eslint_major < 10) << 10);
+            | (u32::from(file.language().eslint_major < 10) << 10)
+            | (u32::from(crate::estree::has_start_end(file)) << 11);
         wire::words(
             &mut message,
             &[

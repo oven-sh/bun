@@ -2,9 +2,11 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "node:path";
 
-// Unfixed, the 8 idle wasm compiler threads keep 35 to 39 MiB of freed compile temporaries until
-// they exit after 10 s. Fixed, they release it about 100 ms after the last compile and RSS returns
-// to where it started.
+// A burst is 6 compiles of one module, each result dropped. Idle wasm compiler threads that do not
+// release what they freed keep 38 to 54 MiB of it after a burst (8 threads), until they exit after
+// 10 s. With one release they keep 9 to 40 MiB: one release leaves the large blocks that a thread
+// used a moment ago. When they release again for those, RSS returns to about 4 MiB over where it
+// started, about 200 ms after the burst.
 const idleTargetMiB = 10;
 
 // Debug and ASAN builds link a JavaScriptCore that does not allocate through mimalloc, so the
@@ -26,12 +28,16 @@ test.skipIf(isDebug || isASAN)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const result = JSON.parse(stdout.trim().split("\n").at(-1)!);
+    // The bursts after the first one: the fixture says why the first one does not count, and when
+    // it stops.
+    const bursts: { peakDeltaMiB: number; idleDeltaMiB: number }[] = result.bursts;
+    const released = bursts.filter(burst => burst.idleDeltaMiB < idleTargetMiB);
     // The whole measurement is in the object so a failure prints it. The compiles have to grow RSS
     // well past the target first, or the idle check means nothing.
     expect({
       ...result,
-      grew: result.peakDeltaMiB > idleTargetMiB * 2,
-      released: result.idleDeltaMiB < idleTargetMiB,
+      grew: released.every(burst => burst.peakDeltaMiB > idleTargetMiB * 2),
+      released: released.length >= 2,
     }).toMatchObject({ grew: true, released: true });
     expect(exitCode).toBe(0);
   },

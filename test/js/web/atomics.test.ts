@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 describe("Atomics", () => {
   describe("basic operations", () => {
@@ -424,4 +424,162 @@ test.skipIf(isASAN /* malloc is not mimalloc */)(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[] 8\n", stderr: "", exitCode: 0 });
   },
   30_000,
+);
+
+// One release does not hand back the large blocks (96 KiB and up) that the thread used a moment ago: the allocator
+// leaves those for a thread that takes them again at once. A waiter that keeps waiting releases again 100 ms later,
+// which does. With one release the 44 MiB that the worker frees here stay for the whole wait (18 to 22 MiB of them
+// resident). Linux only: reads RSS. Not ASAN or debug: malloc is not mimalloc there.
+test.skipIf(!isLinux || isASAN || isDebug)(
+  "Atomics.wait releases the large blocks that this thread freed right before it",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      const view = new Int32Array(new SharedArrayBuffer(16));
+      const [RELEASED, PHASE, GO] = [0, 1, 2];
+      const worker = new Worker(
+        URL.createObjectURL(
+          new Blob(
+            [
+              \`
+              self.onmessage = event => {
+                const view = new Int32Array(event.data);
+                // The allocator frees the large blocks of a thread at once while that thread has never released.
+                // A wait that times out makes this thread one that has.
+                Atomics.wait(view, 0, 0, 150);
+                // The main thread reads RSS in each phase, and sets GO to the phase when it has.
+                Atomics.store(view, 1, 1);
+                Atomics.wait(view, 2, 0);
+                const blocks = [];
+                for (let kib = 96; kib <= 480; kib += 32) {
+                  for (let i = 0; i < 12; i++) blocks.push(new Uint8Array(kib * 1024).fill(1));
+                }
+                Atomics.store(view, 1, 2);
+                Atomics.wait(view, 2, 1);
+                // transfer(0) frees the memory here and now: no collection, and no allocation after it.
+                for (const block of blocks) block.buffer.transfer(0);
+                Atomics.store(view, 1, 3);
+                Atomics.wait(view, 0, 0, 1500);
+                postMessage("done");
+              };
+              \`,
+            ],
+            { type: "application/javascript" },
+          ),
+        ),
+      );
+      const done = new Promise(resolve => (worker.onmessage = resolve));
+      worker.postMessage(view.buffer);
+      const rss = () => process.memoryUsage.rss() / 1048576;
+      const reach = phase => {
+        while (Atomics.load(view, PHASE) !== phase);
+      };
+      const go = phase => {
+        Atomics.store(view, GO, phase);
+        Atomics.notify(view, GO);
+      };
+      // No await from here until the worker is told to stop: a thread that goes idle is swept, and every sweep moves
+      // the clock by which the allocator tells which large blocks were used a moment ago.
+      reach(1);
+      const base = rss();
+      go(1);
+      reach(2);
+      const held = rss() - base;
+      go(2);
+      reach(3);
+      const deadline = performance.now() + 1200;
+      let kept;
+      while ((kept = rss() - base) >= 10 && performance.now() < deadline);
+      Atomics.store(view, RELEASED, 1);
+      Atomics.notify(view, RELEASED);
+      await done;
+      console.log(JSON.stringify({ held, kept }));
+      process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { held, kept } = JSON.parse(stdout);
+    // The whole measurement is in the object so a failure prints it. The blocks are 44 MiB.
+    expect({ held, kept, wasResident: held > 40, released: kept < 10 }).toMatchObject({
+      wasResident: true,
+      released: true,
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// ..and the waiter drops the lock of the waiter list for that second release as well, about 200 ms into the wait.
+test.skipIf(isASAN /* malloc is not mimalloc */)(
+  "a notify that arrives while Atomics.wait releases a second time is not lost",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      const view = new Int32Array(new SharedArrayBuffer(16));
+      const [VALUE, WAITING, LAST] = [0, 1, 2];
+      const worker = new Worker(
+        URL.createObjectURL(
+          new Blob(
+            [
+              \`
+              self.onmessage = event => {
+                const view = new Int32Array(event.data);
+                const results = [];
+                for (;;) {
+                  // Large blocks, freed right before the wait: the first release leaves them, and the second one
+                  // has 44 MiB to hand back and takes a while.
+                  const blocks = [];
+                  for (let kib = 96; kib <= 480; kib += 32) {
+                    for (let i = 0; i < 12; i++) blocks.push(new Uint8Array(kib * 1024).fill(1));
+                  }
+                  for (const block of blocks) block.buffer.transfer(0);
+                  Atomics.store(view, 1, 1);
+                  // A waiter that misses its notification is off the list already: it sleeps for the whole
+                  // timeout and then still answers "ok".
+                  const start = performance.now();
+                  const result = Atomics.wait(view, 0, 0, 10000);
+                  results.push(performance.now() - start > 5000 ? "late" : result);
+                  Atomics.store(view, 0, 0);
+                  if (Atomics.load(view, 2)) return postMessage(results);
+                }
+              };
+              \`,
+            ],
+            { type: "application/javascript" },
+          ),
+        ),
+      );
+      worker.postMessage(view.buffer);
+      const results = new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
+      const delays = [];
+      for (let delay = 200; delay <= 207; delay += 1) delays.push(delay);
+      for (const delay of delays) {
+        while (Atomics.load(view, WAITING) !== 1);
+        Atomics.store(view, WAITING, 0);
+        const start = performance.now();
+        while (performance.now() - start < delay);
+        if (delay === delays.at(-1)) Atomics.store(view, LAST, 1);
+        Atomics.store(view, VALUE, 1);
+        Atomics.notify(view, VALUE);
+      }
+      // ("not-equal" if the worker was held up for that long before it got to wait)
+      console.log(JSON.stringify((await results).filter(result => result !== "ok" && result !== "not-equal")), delays.length);
+      process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[] 8\n", stderr: "", exitCode: 0 });
+  },
 );

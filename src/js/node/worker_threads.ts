@@ -343,7 +343,7 @@ const { makePortReadable, makePortWritable } = require("internal/worker/stdio");
 // The parent always sends stdout and stderr ports; stdin only for { stdin: true }.
 // With the ports registered on the global, process.stdin/stdout/stderr's native
 // lazy getters build the port-backed streams (never the fd-backed ones a plain
-// thread would get); read them here so they exist before user code, as in node.
+// thread would get); stdout and stderr are read here for the Console below.
 function setupWorkerStdio(stdio) {
   _setStdioPorts(stdio);
   const stdoutStream = process.stdout;
@@ -351,7 +351,8 @@ function setupWorkerStdio(stdio) {
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
-  void process.stdin;
+  // Only the port-backed one is built here: its listener acks what the parent writes even if this thread never reads.
+  if ($getByIdDirect(stdio, "stdin")) void process.stdin;
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the port-backed streams.
   const { Console } = require("node:console");

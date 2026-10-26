@@ -100,7 +100,9 @@ export function getStdioWriteStream(
 export function getNodeWorkerStdioStream(process: typeof globalThis.process, fd: number, ports: any) {
   const stdio = require("internal/worker/stdio");
   if (fd === 0) {
-    return ports.stdin ? stdio.makePortReadable(ports.stdin, true) : stdio.makeEndedReadable();
+    // An own read: the ended stream is built after user code, and Object.prototype must not supply a port.
+    const port = $getByIdDirect(ports, "stdin");
+    return port ? stdio.makePortReadable(port, true) : stdio.makeEndedWorkerStdin();
   }
   const stream = stdio.makePortWritable(fd === 1 ? ports.stdout : ports.stderr);
   // A synchronous exit leaves no loop turn for the reader's ack; complete the parked

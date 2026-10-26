@@ -556,7 +556,10 @@ export const exposedInternals = {
   "internal/util/debuglog": require("internal/util/debuglog"),
   "internal/async_context_frame": require("internal/async_context_frame"),
   "internal/async_hooks": require("internal/async_hooks"),
-  "internal/webstreams/adapters": require("internal/webstreams_adapters"),
+  // A getter so loading this module does not load internal/streams/readable: a worker test checks when that one loads.
+  get "internal/webstreams/adapters"() {
+    return require("internal/webstreams_adapters");
+  },
   "internal/dgram": require("internal/dgram"),
   // Bun's real implementations, under the names node's tests import them by.
   "internal/validators": require("internal/validators"),
@@ -920,6 +923,13 @@ export const byteStreamInternals = {
 export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   "InternalModuleRegistry.cpp",
   "jsInternalModulesLoadedFromBytecode",
+  0,
+);
+
+// The internal JS modules the calling realm has evaluated, by name ("node:fs", "internal:streams/readable").
+export const loadedInternalModules: () => string[] = $newCppFunction(
+  "InternalModuleRegistry.cpp",
+  "jsLoadedInternalModules",
   0,
 );
 

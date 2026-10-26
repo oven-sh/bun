@@ -135,18 +135,28 @@ function makePortWritable(port: MessagePort) {
 }
 
 // A node worker's process.stdin without { stdin: true }.
-function makeEndedReadable() {
+function makeEndedWorkerStdin() {
   const Readable = require("internal/streams/readable");
-  return new Readable({
-    read() {
-      this.push(null);
-    },
-  });
+  // Built on first read, not at worker start as in node (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L143-L144): its two construction-time defaults keep their worker-start values.
+  const EventEmitter = require("node:events");
+  const captureRejections = EventEmitter.captureRejections;
+  if (captureRejections) EventEmitter.captureRejections = false;
+  try {
+    return new Readable({
+      __proto__: null,
+      highWaterMark: require("internal/streams/state").initialHighWaterMarkBytes,
+      read() {
+        this.push(null);
+      },
+    });
+  } finally {
+    if (captureRejections) EventEmitter.captureRejections = true;
+  }
 }
 
 export default {
   kFlushSync,
   makePortReadable,
   makePortWritable,
-  makeEndedReadable,
+  makeEndedWorkerStdin,
 };

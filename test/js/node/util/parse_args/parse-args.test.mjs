@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isDebug } from "harness";
 import { parseArgs } from "node:util";
 
 describe("parseArgs", () => {
@@ -1108,8 +1108,10 @@ describe("parseArgs extra tests", () => {
     });
 
     test("100 mixed several times", () => {
+      // Only a debug build is too slow for 1000 iterations (about 10 s). CI's ASAN lane is a release build.
+      const iterations = isDebug ? 100 : 1000;
       let result;
-      for (let i = 0; i < 1000; ++i) {
+      for (let i = 0; i < iterations; ++i) {
         result = parseArgs({
           allowPositionals: true,
           strict: false,

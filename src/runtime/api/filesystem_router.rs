@@ -204,7 +204,8 @@ impl FileSystemRouter {
                                 continue 'outer;
                             }
                         }
-                        let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
+                        // The path as walked. `Entry.dir` is where the listing was first read.
+                        let abs_parts: [&[u8]; 2] = [dir_ref.abs_path, entry.base()];
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).
                         let full_path = vm.fs().abs(&abs_parts).to_vec();

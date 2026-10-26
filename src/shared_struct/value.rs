@@ -6,9 +6,35 @@ use bun_threading::Guarded;
 use crate::mutex::{Condition, Mutex};
 use crate::shape::StructShape;
 
+/// A symbol as a slot keeps it. A symbol belongs to the agent that made it, so what crosses is a name for it: a number that
+/// every agent holding the symbol agrees on, and its description. An agent that has no symbol for the number makes one.
+#[derive(Debug)]
+pub struct SymbolRecord {
+    /// Names a symbol that is not registered; zero for a registered one, which is named by its description.
+    pub id: u64,
+    /// Made by `Symbol.for`: the same symbol in every agent that asks for its description.
+    pub registered: bool,
+    /// The text of `Symbol(description)`, which `Symbol()` has none of. A registered symbol always has one.
+    pub description: Option<Arc<[u16]>>,
+}
+
+impl SymbolRecord {
+    /// Whether both records stand for the same symbol.
+    pub fn same_as(&self, other: &SymbolRecord) -> bool {
+        if self.registered != other.registered {
+            return false;
+        }
+        if self.registered {
+            self.description == other.description
+        } else {
+            self.id == other.id
+        }
+    }
+}
+
 /// What a slot can hold. These are exactly the values that may cross agents:
-/// primitives, other blocks (a shared struct or a shared array) and the sync primitives.
-/// Objects, functions and symbols are not shareable.
+/// primitives (symbols included), other blocks (a shared struct or a shared array) and the
+/// sync primitives. Objects and functions are not shareable.
 #[derive(Clone, Debug)]
 pub enum Value {
     Undefined,
@@ -19,6 +45,7 @@ pub enum Value {
     String(Arc<[u16]>),
     /// A BigInt in its decimal form.
     BigInt(Arc<str>),
+    Symbol(Arc<SymbolRecord>),
     Struct(Arc<SharedBlock>),
     Mutex(Arc<Mutex>),
     Condition(Arc<Condition>),
@@ -37,6 +64,7 @@ const TAG_BIGINT: u64 = 3;
 const TAG_STRUCT: u64 = 4;
 const TAG_MUTEX: u64 = 5;
 const TAG_CONDITION: u64 = 6;
+const TAG_SYMBOL: u64 = 7;
 
 fn boxed(tag: u64, datum: u64) -> u64 {
     debug_assert!(datum <= DATUM_MASK);
@@ -98,6 +126,10 @@ fn encode_owned(v: &Value) -> u64 {
             TAG_BIGINT,
             pointer_datum(Box::into_raw(Box::new(Arc::clone(s)))),
         ),
+        Value::Symbol(r) => boxed(
+            TAG_SYMBOL,
+            pointer_datum(Box::into_raw(Box::new(Arc::clone(r)))),
+        ),
         Value::Struct(b) => boxed(TAG_STRUCT, pointer_datum(Arc::into_raw(Arc::clone(b)))),
         Value::Mutex(m) => boxed(TAG_MUTEX, pointer_datum(Arc::into_raw(Arc::clone(m)))),
         Value::Condition(c) => boxed(TAG_CONDITION, pointer_datum(Arc::into_raw(Arc::clone(c)))),
@@ -106,7 +138,7 @@ fn encode_owned(v: &Value) -> u64 {
 }
 
 /// Slot bits for a value that owns nothing: a primitive, or the address of an object that the
-/// caller keeps alive. Strings and BigInts have no such form because they are boxed per store.
+/// caller keeps alive. Strings, BigInts and symbols have no such form because they are boxed per store.
 fn encode_plain(v: &Value) -> u64 {
     match v {
         Value::Undefined => boxed(TAG_SPECIAL, 0),
@@ -123,7 +155,9 @@ fn encode_plain(v: &Value) -> u64 {
         Value::Struct(b) => boxed(TAG_STRUCT, pointer_datum(Arc::as_ptr(b))),
         Value::Mutex(m) => boxed(TAG_MUTEX, pointer_datum(Arc::as_ptr(m))),
         Value::Condition(c) => boxed(TAG_CONDITION, pointer_datum(Arc::as_ptr(c))),
-        Value::String(_) | Value::BigInt(_) => unreachable!("strings and BigInts are boxed"),
+        Value::String(_) | Value::BigInt(_) | Value::Symbol(_) => {
+            unreachable!("strings, BigInts and symbols are boxed")
+        }
     }
 }
 
@@ -139,6 +173,7 @@ unsafe fn own(bits: u64) -> Option<Retired> {
     let free: unsafe fn(usize) = match (bits >> TAG_SHIFT) & TAG_MASK {
         TAG_STRING => free_box::<Arc<[u16]>>,
         TAG_BIGINT => free_box::<Arc<str>>,
+        TAG_SYMBOL => free_box::<Arc<SymbolRecord>>,
         TAG_STRUCT => free_arc::<SharedBlock>,
         TAG_MUTEX => free_arc::<Mutex>,
         TAG_CONDITION => free_arc::<Condition>,
@@ -185,6 +220,7 @@ unsafe fn decode(bits: u64) -> Value {
             },
             TAG_STRING => Value::String(Arc::clone(boxed_ref::<Arc<[u16]>>(bits))),
             TAG_BIGINT => Value::BigInt(Arc::clone(boxed_ref::<Arc<str>>(bits))),
+            TAG_SYMBOL => Value::Symbol(Arc::clone(boxed_ref::<Arc<SymbolRecord>>(bits))),
             TAG_STRUCT => Value::Struct(arc_from_datum(datum)),
             TAG_MUTEX => Value::Mutex(arc_from_datum(datum)),
             TAG_CONDITION => Value::Condition(arc_from_datum(datum)),
@@ -205,7 +241,7 @@ unsafe fn arc_from_datum<T>(datum: u64) -> Arc<T> {
 }
 
 /// Whether the slot bits `cur` hold the value `expected`. Numbers compare by bits after NaN
-/// canonicalization, strings and BigInts by content, objects by identity.
+/// canonicalization, strings and BigInts by content, symbols by what they stand for, objects by identity.
 ///
 /// # Safety
 /// As [`decode`].
@@ -219,6 +255,9 @@ unsafe fn holds(cur: u64, expected: &Value) -> bool {
             }
             Value::BigInt(e) => {
                 is_boxed(cur) && tag == TAG_BIGINT && **boxed_ref::<Arc<str>>(cur) == **e
+            }
+            Value::Symbol(e) => {
+                is_boxed(cur) && tag == TAG_SYMBOL && boxed_ref::<Arc<SymbolRecord>>(cur).same_as(e)
             }
             _ => cur == encode_plain(expected),
         }
@@ -234,8 +273,8 @@ impl Drop for ReadGuard<'_> {
     }
 }
 
-/// A fixed-length block of atomic slots. A slot that holds a string, BigInt, struct, mutex or
-/// condition owns one strong count of it, and overwriting the slot releases that count once no
+/// A fixed-length block of atomic slots. A slot that holds a string, BigInt, symbol, struct, mutex
+/// or condition owns one strong count of it, and overwriting the slot releases that count once no
 /// reader can still be using the old pointer.
 ///
 /// Why that is safe: a reader does `readers += 1`, loads the slot, takes its own count, then
@@ -403,6 +442,51 @@ mod tests {
 
     fn is_str(v: &Value, text: &str) -> bool {
         matches!(v, Value::String(s) if **s == *utf16(text))
+    }
+
+    #[test]
+    fn symbols_are_the_same_by_what_they_stand_for() {
+        let unique = |id| {
+            Value::Symbol(Arc::new(SymbolRecord {
+                id,
+                registered: false,
+                description: Some(utf16("d")),
+            }))
+        };
+        let registered = |text| {
+            Value::Symbol(Arc::new(SymbolRecord {
+                id: 0,
+                registered: true,
+                description: Some(utf16(text)),
+            }))
+        };
+        let b = SharedBlock::new(2);
+        b.store(0, &unique(5));
+        // Another id is another symbol, whatever the description says; the same id is the same one.
+        assert!(
+            matches!(b.compare_exchange(0, &unique(6), &Value::Null), Value::Symbol(r) if r.id == 5)
+        );
+        assert!(matches!(b.load(0), Value::Symbol(_)));
+        assert!(
+            matches!(b.compare_exchange(0, &unique(5), &Value::Null), Value::Symbol(r) if r.id == 5)
+        );
+        assert!(matches!(b.load(0), Value::Null));
+        // A registered symbol is the one with that description, and never a unique one.
+        b.store(1, &registered("k"));
+        assert!(matches!(
+            b.compare_exchange(1, &registered("other"), &Value::Null),
+            Value::Symbol(_)
+        ));
+        assert!(matches!(
+            b.compare_exchange(1, &unique(0), &Value::Null),
+            Value::Symbol(_)
+        ));
+        assert!(matches!(b.load(1), Value::Symbol(_)));
+        assert!(matches!(
+            b.compare_exchange(1, &registered("k"), &Value::Null),
+            Value::Symbol(_)
+        ));
+        assert!(matches!(b.load(1), Value::Null));
     }
 
     #[test]

@@ -61,6 +61,33 @@ public:
     JSC::JSObject* get(const void* key) const { return m_objects.get(key); }
     void set(const void* key, JSC::JSObject* object) { m_objects.set(key, object); }
 
+    DECLARE_VISIT_CHILDREN;
+
+    // The symbols of this realm that a shared slot has held, which are not registered: each has a number that every agent agrees on.
+    // They stay as long as the realm does, so that the number keeps naming the same symbol.
+    JSC::Symbol* symbolFor(uint64_t id)
+    {
+        WTF::Locker locker { cellLock() };
+        auto it = m_symbols.find(id);
+        return it == m_symbols.end() ? nullptr : it->value.get();
+    }
+
+    std::optional<uint64_t> idOf(const void* uid)
+    {
+        WTF::Locker locker { cellLock() };
+        auto it = m_ids.find(uid);
+        if (it == m_ids.end())
+            return std::nullopt;
+        return it->value;
+    }
+
+    void remember(JSC::VM& vm, uint64_t id, JSC::Symbol* symbol)
+    {
+        WTF::Locker locker { cellLock() };
+        m_symbols.add(id, JSC::WriteBarrier<JSC::Symbol>()).iterator->value.set(vm, this, symbol);
+        m_ids.set(&symbol->uid(), id);
+    }
+
 private:
     SharedObjectRegistry(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
@@ -75,7 +102,21 @@ private:
     }
 
     JSC::WeakGCMap<const void*, JSC::JSObject> m_objects;
+    WTF::HashMap<uint64_t, JSC::WriteBarrier<JSC::Symbol>> m_symbols;
+    WTF::HashMap<const void*, uint64_t> m_ids;
 };
+
+template<typename Visitor>
+void SharedObjectRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<SharedObjectRegistry>(cell);
+    Base::visitChildren(thisObject, visitor);
+    WTF::Locker locker { thisObject->cellLock() };
+    for (auto& entry : thisObject->m_symbols.values())
+        visitor.append(entry);
+}
+
+DEFINE_VISIT_CHILDREN(SharedObjectRegistry);
 
 const ClassInfo SharedObjectRegistry::s_info = { "SharedObjectRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SharedObjectRegistry) };
 
@@ -544,6 +585,59 @@ void Bun__SharedObject__register(JSC::JSGlobalObject* globalObject, const void* 
 {
     if (auto* object = JSC::JSValue::decode(encoded).getObject())
         Bun::registryOf(globalObject->vm(), globalObject, true)->set(key, object);
+}
+
+static std::atomic<uint64_t> nextSymbolId { 1 };
+
+// What a symbol stands for across agents (see SymbolRecord in src/shared_struct/value.rs). A registered symbol is named by its key, which
+// is its description. Any other symbol gets a number the first time it is stored, kept for as long as the realm lives.
+bool Bun__SharedSymbol__describe(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encoded, uint64_t* id, bool* registered, const char16_t** chars, size_t* length, bool* hasDescription)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encoded);
+    if (!value.isSymbol())
+        return false;
+    JSC::VM& vm = globalObject->vm();
+    auto* symbol = JSC::asSymbol(value);
+    JSC::SymbolImpl& uid = symbol->uid();
+    *registered = !!uid.symbolRegistry();
+    *id = 0;
+    if (!*registered) {
+        auto* registry = Bun::registryOf(vm, globalObject, true);
+        if (auto existing = registry->idOf(&uid))
+            *id = *existing;
+        else {
+            *id = nextSymbolId.fetch_add(1);
+            registry->remember(vm, *id, symbol);
+        }
+    }
+    // The description, widened to UTF-16 in storage that lasts until the next call on this thread.
+    static thread_local WTF::Vector<char16_t> text;
+    text.clear();
+    WTF::String description = symbol->description();
+    *hasDescription = !description.isNull();
+    if (*hasDescription) {
+        text.reserveCapacity(description.length());
+        for (unsigned i = 0; i < description.length(); i++)
+            text.append(description[i]);
+    }
+    *chars = text.data();
+    *length = text.size();
+    return true;
+}
+
+// The symbol of this realm that a record stands for: the one it already has, or a new one.
+JSC::EncodedJSValue Bun__SharedSymbol__make(JSC::JSGlobalObject* globalObject, uint64_t id, bool registered, const char16_t* chars, size_t length, bool hasDescription)
+{
+    JSC::VM& vm = globalObject->vm();
+    WTF::String description = hasDescription ? WTF::String(std::span<const char16_t>(chars, length)) : WTF::String();
+    if (registered)
+        return JSC::JSValue::encode(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(description)));
+    auto* registry = Bun::registryOf(vm, globalObject, true);
+    if (auto* existing = registry->symbolFor(id))
+        return JSC::JSValue::encode(existing);
+    auto* symbol = hasDescription ? JSC::Symbol::createWithDescription(vm, description) : JSC::Symbol::create(vm);
+    registry->remember(vm, id, symbol);
+    return JSC::JSValue::encode(symbol);
 }
 
 // Makes `object`, a Mutex or a Condition that was just made, what the proposal says those are: an object with no prototype that cannot

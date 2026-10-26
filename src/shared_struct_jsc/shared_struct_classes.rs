@@ -15,7 +15,7 @@ use bun_jsc::{
     from_js_host_call, to_js_host_call,
 };
 use bun_shared_struct::{
-    self as shared, Abort, ShapeError, SharedBlock, StructShape, Value, WaitOutcome,
+    self as shared, Abort, ShapeError, SharedBlock, StructShape, SymbolRecord, Value, WaitOutcome,
 };
 
 use crate::generated_bindgen::shared_struct_classes::{js_Condition, js_Mutex};
@@ -36,6 +36,26 @@ unsafe extern "C" {
         key: *const c_void,
         wrapper: JSValue,
     );
+    /// What a symbol stands for across agents: `*id` (zero for a registered symbol), whether `Symbol.for` made it, and its description
+    /// as `*length` UTF-16 units at `*chars`, valid until the next call. False if `symbol` is not a symbol.
+    safe fn Bun__SharedSymbol__describe(
+        global: &JSGlobalObject,
+        symbol: JSValue,
+        id: &mut u64,
+        registered: &mut bool,
+        chars: &mut *const u16,
+        length: &mut usize,
+        has_description: &mut bool,
+    ) -> bool;
+    /// The symbol of this realm that a record stands for: the one it already has, or a new one.
+    fn Bun__SharedSymbol__make(
+        global: &JSGlobalObject,
+        id: u64,
+        registered: bool,
+        chars: *const u16,
+        length: usize,
+        has_description: bool,
+    ) -> JSValue;
     /// The Mutex or Condition (or view) that stands for the shared object at `key` in this realm, if it is alive; else empty.
     safe fn Bun__SharedObject__lookup(global: &JSGlobalObject, key: *const c_void) -> JSValue;
     /// Records that `object` stands for the shared object at `key` in this realm.
@@ -174,6 +194,7 @@ fn is_shareable(value: JSValue) -> bool {
         || value.is_number()
         || value.is_string_literal()
         || value.is_big_int()
+        || value.is_symbol()
         || !Bun__SharedBlock__fromJS(value).is_null()
         || value.as_class_ref::<MutexObject>().is_some()
         || value.as_class_ref::<ConditionObject>().is_some()
@@ -201,9 +222,43 @@ fn to_value(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Value>> 
         Value::BigInt(Arc::from(
             core::str::from_utf8(digits.to_utf8().slice()).expect("BigInt digits are ASCII"),
         ))
+    } else if value.is_symbol() {
+        Value::Symbol(symbol_record(global, value))
     } else {
         shared_of(value).expect("is_shareable")
     }))
+}
+
+/// What the symbol `value` stands for across agents.
+fn symbol_record(global: &JSGlobalObject, value: JSValue) -> Arc<SymbolRecord> {
+    let mut id = 0;
+    let mut registered = false;
+    let mut chars = core::ptr::null();
+    let mut length = 0;
+    let mut has_description = false;
+    let is_symbol = Bun__SharedSymbol__describe(
+        global,
+        value,
+        &mut id,
+        &mut registered,
+        &mut chars,
+        &mut length,
+        &mut has_description,
+    );
+    debug_assert!(is_symbol);
+    let description = has_description.then(|| {
+        if length == 0 {
+            Arc::from(Vec::<u16>::new())
+        } else {
+            // SAFETY: C++ points `chars` at `length` UTF-16 units that stay valid until its next call, and this copies them first.
+            Arc::from(unsafe { core::slice::from_raw_parts(chars, length) })
+        }
+    });
+    Arc::new(SymbolRecord {
+        id,
+        registered,
+        description,
+    })
 }
 
 /// The object behind a SharedStruct, SharedArray, Mutex or Condition; `None` for any other value.
@@ -246,6 +301,23 @@ pub(crate) fn to_js(global: &JSGlobalObject, value: Value) -> JsResult<JSValue> 
             JSValue::big_int_from_decimal(global, digits.as_bytes())?.unwrap_or(JSValue::UNDEFINED)
         }
         Value::Struct(block) => wrap(global, block)?,
+        Value::Symbol(record) => {
+            let (chars, length) = record
+                .description
+                .as_ref()
+                .map_or((core::ptr::null(), 0), |text| (text.as_ptr(), text.len()));
+            // SAFETY: `chars` points at `length` units that `record` keeps alive for the call, and is not read when `length` is zero.
+            unsafe {
+                Bun__SharedSymbol__make(
+                    global,
+                    record.id,
+                    record.registered,
+                    chars,
+                    length,
+                    record.description.is_some(),
+                )
+            }
+        }
         Value::Mutex(inner) => {
             let key = Arc::as_ptr(&inner).cast::<c_void>();
             standing_for(global, key, || {

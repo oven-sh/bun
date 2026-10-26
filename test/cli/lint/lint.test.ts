@@ -8802,7 +8802,7 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         }),
         lint(files, ["-f", "unix", "src/b.js"]),
       ]);
-      expect(piped.stdout).toContain("<dir>/src/b.js:2:8: Dependency cycle detected");
+      expect(piped.stdout).toContain("src/b.js:2:8: Dependency cycle detected");
       expect(piped.stdout).toContain("no-cycle");
       expect([piped.exitCode, onDisk.stdout, onDisk.exitCode]).toEqual([1, "", 0]);
     });

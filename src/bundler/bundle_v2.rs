@@ -6037,7 +6037,8 @@ pub mod bv2_impl {
                                 // A plugin or an earlier import can resolve a record and leave its path as written.
                                 for record in import_records.as_mut_slice() {
                                     if !record.path.is_disabled && record.source_index.is_valid() {
-                                        record.path = sources[record.source_index.get() as usize].path;
+                                        record.path =
+                                            sources[record.source_index.get() as usize].path;
                                     }
                                 }
                             } else {

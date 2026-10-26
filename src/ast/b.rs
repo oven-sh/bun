@@ -75,9 +75,10 @@ pub struct Property {
 pub struct Object {
     pub properties: crate::StoreSlice<Property>,
     pub is_single_line: bool,
+    pub close_brace_loc: crate::Loc,
 }
-// No `impl Default` on purpose: only `is_single_line` has a sensible default;
-// `properties` does not, so every constructor must supply it.
+// No `impl Default` on purpose: only `is_single_line`/`close_brace_loc` have
+// sensible defaults; `properties` does not, so every constructor must supply it.
 
 pub struct Array {
     pub items: crate::StoreSlice<ArrayBinding>,
@@ -143,6 +144,7 @@ impl B {
                 let original_name = ref_.get_symbol(symbol_table).original_name.slice();
                 raw(hasher, self.tag() as u8);
                 raw(hasher, original_name.len());
+                hasher.update(original_name);
             }
             B::BArray(array) => {
                 raw(hasher, self.tag() as u8);

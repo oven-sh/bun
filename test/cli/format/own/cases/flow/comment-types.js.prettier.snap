@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+// @flow
+const result: { [string]: string } = {};
+
+type A = { a: number };
+import type { B } from "b";
+function f(a: A, b: ?B): void {}
+
+class C<T> {
+  a: T;
+  b: number = 1;
+}
+const text = "/*: no comment */";
+type D = A;
+g(/* an ordinary comment */);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// @flow
+const result: { [string]: string } = {};
+
+type A = { a: number };
+import type { B } from "b";
+function f(a: A, b: ?B): void {}
+
+class C<T> {
+  a: T;
+  b: number = 1;
+}
+const text = "/*: no comment */";
+type D = A;
+g(/* an ordinary comment */);
+
+===================== End =====================

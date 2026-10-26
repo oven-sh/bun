@@ -76,6 +76,7 @@ interface HTTPParserBinding {
 
 const { methods, allMethods, HTTPParser } = process.binding("http_parser") as HTTPParserBinding;
 const incoming = require("node:_http_incoming");
+const { kHeaderSource } = require("internal/http");
 
 const { IncomingMessage, readStart, readStop } = incoming;
 
@@ -121,7 +122,7 @@ const validateHeaderValue = (name, value) => {
 
 // Node's `getOptionValue('--insecure-http-parser')`. The flag is fixed during
 // CLI parsing, so reading it once here is equivalent.
-const insecureHTTPParser = $newRustFunction("node_http_binding.rs", "getInsecureHTTPParser", 0)();
+const insecureHTTPParser = $bindgen("node_http_binding.bind.ts", "insecureHTTPParser");
 
 const kIncomingMessage = Symbol("IncomingMessage");
 const kSkipPendingData = Symbol("SkipPendingData");
@@ -183,6 +184,7 @@ function parserOnHeadersComplete(
   const ParserIncomingMessage = socket?.server?.[kIncomingMessage] || IncomingMessage;
 
   const incoming = (parser.incoming = new ParserIncomingMessage(socket));
+  incoming[kHeaderSource] = null;
   incoming.httpVersionMajor = versionMajor;
   incoming.httpVersionMinor = versionMinor;
   incoming.httpVersion = `${versionMajor}.${versionMinor}`;
@@ -357,4 +359,5 @@ export default {
   isLenient,
   calculateLenientFlags,
   prepareError,
+  MAX_HEADER_PAIRS,
 };

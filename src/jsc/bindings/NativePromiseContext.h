@@ -90,6 +90,13 @@ public:
     void* pointer() const { return m_data.pointer(); }
     Tag tag() const { return m_data.type(); }
 
+    JSC::JSValue takeHeld()
+    {
+        JSC::JSValue held = m_held.get();
+        m_held.clear();
+        return held;
+    }
+
 private:
     NativePromiseContext(JSC::VM& vm, JSC::Structure* structure, void* ctx, Tag tag)
         : Base(vm, structure)

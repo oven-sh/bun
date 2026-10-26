@@ -348,12 +348,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             // Node.js requires options.paths to be an array
             bool pathsIsArray = JSC::isArray(globalObject, pathsValue);
             RETURN_IF_EXCEPTION(scope, {});
-            if (!pathsIsArray) {
-                Bun::throwError(globalObject, scope,
-                    Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
-                    "options.paths must be an array"_s);
-                return {};
-            }
+            if (!pathsIsArray)
+                return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.paths"_s, pathsValue);
 
             WTF::Vector<BunString> paths;
 

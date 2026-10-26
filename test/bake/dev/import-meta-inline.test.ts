@@ -154,6 +154,45 @@ console.log("import.meta.url:", import.meta.url);
   },
 });
 
+// The inlined path is 8-bit text and can be non-ASCII. `.charCodeAt(n)` folds without a minify flag, and has to read
+// the path per UTF-16 code unit: after "é" a byte offset is one code unit too far. The module is not a route.
+devTest("import.meta.file of a non-ASCII path folds per UTF-16 code unit on the server", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+import { codes } from "../dér/filé.ts";
+export default function (req, meta) {
+  return Response.json(codes());
+}
+`,
+    "dér/filé.ts": `
+export function codes() {
+  return [import.meta.file, import.meta.file.charCodeAt(5), import.meta.file.charCodeAt(6)];
+}
+`,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    expect(await response.json()).toEqual(["filé.ts", 116, 115]);
+  },
+});
+
+devTest("import.meta.file of a non-ASCII path folds per UTF-16 code unit on the client", {
+  framework: minimalFramework,
+  files: {
+    "dér/filé.js": `
+console.log(JSON.stringify([import.meta.file, import.meta.file.charCodeAt(5), import.meta.file.charCodeAt(6)]));
+`,
+    "index.html": emptyHtmlFile({
+      scripts: ["dér/filé.js"],
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    expect(JSON.parse(await c.getStringMessage())).toEqual(["filé.js", 106, 115]);
+  },
+});
+
 devTest("import.meta properties in catch-all routes", {
   framework: minimalFramework,
   files: {

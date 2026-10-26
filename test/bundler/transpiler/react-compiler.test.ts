@@ -4157,6 +4157,41 @@ describe("bundler", () => {
       stdout: ["DefineThenLiteral=e9 4e2d", "HalfThenHalfDefine=d83d de00", "LiteralThenDefine=4e2d e9"].join("\n"),
     },
   });
+
+  // An inlined env value is the bytes of the environment. For bytes that are no sequence of UTF-8, constant
+  // propagation leaves `.length` for run time, as the fold of the parser does: it has no count that the printed
+  // string is sure to have.
+  itBundled("react-compiler/LengthOfAnEnvValueThatIsNotUtf8", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Length, LengthOfText } from "./forms";
+        console.log(Length({}).props.children === LengthOfText({ text: process.env.PUB_NOT_UTF8 }).props.children, LengthOfText({ text: process.env.PUB_TEXT }).props.children);
+      `,
+      "/forms.jsx": /* jsx */ `
+        export function Length() {
+          return <div>{String(process.env.PUB_NOT_UTF8.length)}</div>;
+        }
+        export function LengthOfText({ text }) {
+          return <div>{String(text.length)}</div>;
+        }
+      `,
+      "/.env": Buffer.concat([
+        Buffer.from("PUB_NOT_UTF8="),
+        Buffer.from([0x80, 0x80, 0x80]),
+        Buffer.from("\nPUB_TEXT=é😀\n"),
+      ]),
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": ``,
+      "/node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `export const c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    },
+    dotenv: "PUB_*",
+    reactCompiler: true,
+    minifySyntax: true,
+    backend: "cli",
+    target: "browser",
+    run: { stdout: "true 3" },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

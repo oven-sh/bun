@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
@@ -374,20 +375,120 @@ describe("bundler", () => {
       },
     });
   }
-  // A branch is removed only if its condition folds, and the build then needs no "./missing-*.js".
-  itBundled("minify/DefineNonAsciiDeadBranch", {
+  // Every condition is true. A branch is removed only if its condition folds, and the build then
+  // needs no "./missing-*.js". So each row fails the build if its fold is wrong or left out.
+  {
+    const conditions = [
+      // one fold of the define
+      `X.length === 1`,
+      `+X !== +X`,
+      `!(X < "z")`,
+      `X[0] === "é"`,
+      `X.charCodeAt(0) === 233`,
+      // the result of [n] in a second fold: the value has to be the character
+      `X[0] + "x" === "éx"`,
+      '`${X[0]}x` === "éx"',
+      `X[0] > "z" && X[0] < "ê"`,
+      `X[0] + X[0] === "éé"`,
+      `(X[0] + "x")[0] === "é"`,
+      `(X[0] + "x").charCodeAt(0) === 233`,
+      `U[0] + "x" === "éx"`,
+      `U[1] + U[2] === "😀"`,
+      `(U[1] + "x").charCodeAt(0) === 0xd83d`,
+      `+W[0] === 0`,
+      // the same shapes where one byte of the character gives the same answer by chance
+      `(X[0] + "x").length === 2`,
+      "`${X[0]}x`.length === 2",
+      `(X[0] + X[0]).length === 2`,
+      `+X[0] !== +X[0]`,
+      `(U[1] + U[2]).length === 2`,
+      `(U[0] + "x").length === 2`,
+      // order is by UTF-16 code unit: inside a sequence, after a shared prefix, against a
+      // literal, and where a code unit and a byte disagree (U+FF5E and U+E000 against U+1F600)
+      `X > EGRAVE && !(X < EGRAVE)`,
+      `ZHONG > DING`,
+      `Z < Z1 && Z <= Z`,
+      `X < XA && XA > X && X <= X && X >= X`,
+      `P > Z && !(P < Z)`,
+      `X < "ü" && X > "à"`,
+      `Z < "\uff5e" && "\uff5e" > Z`,
+      // the entry has the escape: half of a pair cannot be written to a file as it is
+      `!(PRIVATE < "\\ud800")`,
+    ];
+    itBundled("minify/DefineNonAsciiDeadBranch", {
+      files: {
+        "/entry.js": conditions
+          .map((condition, i) => `if (${condition}) console.log(${i}); else require("./missing-${i}.js");`)
+          .join("\n"),
+      },
+      define: {
+        X: '"é"',
+        XA: '"éa"',
+        EGRAVE: '"è"',
+        U: '"é😀"',
+        W: '"\u00a0"',
+        ZHONG: '"中"',
+        DING: '"丁"',
+        Z: '"😀"',
+        Z1: '"😁"',
+        P: '"\uff5e"',
+        PRIVATE: '"\ue000"',
+      },
+      minifySyntax: true,
+      run: { stdout: conditions.map((_, i) => i).join("\n") },
+    });
+  }
+  // What folds and what does not, as it is printed. A literal that is not ASCII is UTF-16: its
+  // `[n]`, `.charCodeAt` and unary `+` are not folded, and neither is a key that is one.
+  itBundled("minify/NonAsciiStringFoldPins", {
     files: {
       "/entry.js": /* js */ `
-        if (X.length === 1) console.log("one"); else require("./missing-length.js");
-        if (+X) require("./missing-number.js"); else console.log("nan");
-        if (X < "z") require("./missing-order.js"); else console.log("after z");
-        if (X[0] === "é") console.log("first"); else require("./missing-index.js");
-        if (X.charCodeAt(0) === 233) console.log("code"); else require("./missing-code.js");
+        capture((C + "xy")[2]);
+        capture((C + "xy").charCodeAt(2));
+        capture((C + "xy")[3]);
+        capture(({ e: 1 }).e);
+        capture(B.clé);
+        capture(({ "é": 1 }).é);
+        capture(({ "Ã©": 1 }).é);
+        capture("é"[0]);
+        capture("é".charCodeAt(0));
+        capture("é" < "z");
+        capture(C < "é");
       `,
     },
-    define: { X: '"é"' },
+    define: { C: '"€"', B: '{"clé":2}' },
     minifySyntax: true,
-    run: { stdout: "one\nnan\nafter z\nfirst\ncode" },
+    capture: [
+      '"y"',
+      "121",
+      '"€xy"[3]',
+      "1",
+      "2",
+      '{ "é": 1 }.é',
+      '{ "Ã©": 1 }.é',
+      '"é"[0]',
+      '"é".charCodeAt(0)',
+      "!1",
+      "!1",
+    ],
+  });
+  // A string enum member that is a define goes through the same folds.
+  itBundled("minify/DefineNonAsciiInlinedEnum", {
+    files: {
+      "/entry.ts": /* ts */ `
+        declare const X: string, N: string, PD: string, ZD: string;
+        enum E { A = X, C = N, P = PD, Z = ZD, J = X + "y" }
+        capture(E.A.length);
+        capture(E.A[0]);
+        capture(E.A[1]);
+        capture(+E.C);
+        capture(E.P < E.Z);
+        capture(E.J.length);
+      `,
+    },
+    define: { X: '"é😀"', N: '"\u00a01"', PD: '"\uff5e"', ZD: '"😀"' },
+    minifySyntax: true,
+    capture: ["3", '"é"', '"\\uD83D"', "1", "!1", "4"],
   });
   // A join of two 8-bit strings is still resolved at build time when one of them is not ASCII.
   itBundled("minify/DefineNonAsciiRequireJoin", {
@@ -2253,3 +2354,106 @@ test.each(["transformSync", "transform"] as const)(
     expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");
   },
 );
+
+// Seeded differential of the string folds against the engine: every value is a `define`, which is
+// stored as 8-bit WTF-8 and not by the lexer. The folded bundle has to compute what this process
+// computes for the same expressions, and nothing that can fold may be left in its text: a fold
+// that is left out gives the same value. Replay with BUN_DEFINE_FOLD_SEED=<seed>.
+const DEFINE_FOLD_SEED =
+  process.env.BUN_DEFINE_FOLD_SEED !== undefined ? Number(process.env.BUN_DEFINE_FOLD_SEED) >>> 0 : 0x9e3779b9;
+const DEFINE_FOLD_CASES = Number(process.env.BUN_DEFINE_FOLD_CASES ?? 200);
+
+test(`folds of non-ASCII define strings are what the engine computes (seed=${DEFINE_FOLD_SEED})`, async () => {
+  let seed = DEFINE_FOLD_SEED;
+  const rnd = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = <T>(list: T[]) => list[Math.floor(rnd() * list.length)];
+  // prettier-ignore
+  const atoms = ["a", "z", "A", "0", "1", "9", " ", "x", "-", ".", "é", "ü", "\u00a0", "€", "中", "\u2028", "\ufeff", "\uff5e", "\ue000", "\uffff",
+    "😀", "𠮷", "\u{10000}", "\u{10ffff}", "\ud800", "\udbff", "\udc00", "\udfff", "\ud83d", "\ude00"];
+  // prettier-ignore
+  const numeric = ["1", "12", " 12 ", "\u00a01", "\u20281\u2028", "\ufeff7", "1e3", "0x10", "-5", "", " ", "\u00a0", "1\u00a02", "Infinity", "é1"];
+  const str = () => {
+    if (rnd() < 0.12) return pick(numeric);
+    let text = "";
+    for (let n = Math.floor(rnd() * 6); n > 0; n--) text += pick(atoms);
+    return text;
+  };
+
+  const define: Record<string, string> = {};
+  const lines: string[] = [];
+  const want: unknown[][] = [];
+  // A read at or past the end is left for run time, and so is everything that is made of one.
+  const left = { index: 0, charCodeAt: 0, booleans: 0 };
+  for (let k = 0; k < DEFINE_FOLD_CASES; k++) {
+    const x = str(),
+      y = rnd() < 0.15 ? x : str(),
+      z = rnd() < 0.6 ? x + y : str();
+    const i = Math.floor(rnd() * (x.length + 2)),
+      j = Math.floor(rnd() * (x.length + y.length + 2));
+    const [X, Y, Z] = [`X${k}`, `Y${k}`, `Z${k}`];
+    define[X] = JSON.stringify(x);
+    define[Y] = JSON.stringify(y);
+    define[Z] = JSON.stringify(z);
+    let line = `[${X}[${i}], ${X}.charCodeAt(${i}), ${X}.length, (${X} + ${Y}).length, (${X} + ${Y})[${j}], (${X} + ${Y}).charCodeAt(${j}), ${X} < ${Y}, ${X} <= ${Y}, ${X} > ${Y}, ${X} >= ${Y}, +${X}, -${X}, ~${Y}, ${X} + ${Y} === ${Z}, ${X} === ${Y}, \`\${${X}}\${${Y}}\`.length, \`\${${X}}-\${${Y}}\`[${j}]`;
+    // prettier-ignore
+    const row: unknown[] = [x[i], x.charCodeAt(i), x.length, (x + y).length, (x + y)[j], (x + y).charCodeAt(j), x < y, x <= y, x > y, x >= y, +x, -x, ~(y as any), x + y === z, x === y, `${x}${y}`.length, `${x}-${y}`[j]];
+    left.index += (i >= x.length ? 1 : 0) + (j >= x.length + y.length ? 1 : 0) + (j > x.length + y.length ? 1 : 0);
+    left.charCodeAt += (i >= x.length ? 1 : 0) + (j >= x.length + y.length ? 1 : 0);
+    left.booleans += 6;
+    if (x.length > 0) {
+      // The result of `[n]` in a second fold.
+      const n = Math.floor(rnd() * x.length);
+      line += `, (${X}[${n}] + ${Y}).length, ${X}[${n}] + ${Y} === ${Z}, ${X}[${n}] < ${Y}, +${X}[${n}], ${X}[${n}][0], ${X}[${n}].charCodeAt(0), \`\${${X}[${n}]}-\`.length`;
+      // prettier-ignore
+      row.push((x[n] + y).length, x[n] + y === z, x[n] < y, +x[n], x[n][0], x[n].charCodeAt(0), `${x[n]}-`.length);
+      left.booleans += 2;
+    }
+    lines.push(line + "],");
+    want.push(row);
+  }
+
+  using dir = tempDir("define-fold-differential", { "entry.js": `rows([\n${lines.join("\n")}\n]);\n` });
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.js")],
+    define,
+    minify: { syntax: true },
+    target: "bun",
+  });
+  expect(result.success).toBe(true);
+  const code = await result.outputs[0].text();
+
+  // The bundle has no import or export: the engine evaluates it as it is, not through the runtime transpiler.
+  let got: unknown[][] = [];
+  new Function("rows", code)((rows: unknown[][]) => (got = rows));
+  const differ: unknown[] = [];
+  for (let k = 0; k < want.length; k++)
+    for (let c = 0; c < want[k].length; c++)
+      if (!Object.is(want[k][c], got[k]?.[c])) differ.push({ k, cell: c, want: want[k][c], got: got[k]?.[c] });
+  expect({ rows: got.length, differ: differ.length, first: differ.slice(0, 5) }).toEqual({
+    rows: DEFINE_FOLD_CASES,
+    differ: 0,
+    first: [],
+  });
+
+  const count = (re: RegExp) => code.match(re)?.length ?? 0;
+  expect({
+    length: count(/\.length\b/g),
+    charCodeAt: count(/\.charCodeAt\(/g),
+    index: count(/["`]\[\d+\]/g),
+    booleans: count(/![01]\b/g),
+    compares: count(/["`] [<>]=? ["`]/g),
+    unary: count(/(?<=[\[,] )[+\-~]["`]/g),
+  }).toEqual({
+    length: 0,
+    charCodeAt: left.charCodeAt,
+    index: left.index,
+    booleans: left.booleans,
+    compares: 0,
+    unary: 0,
+  });
+});

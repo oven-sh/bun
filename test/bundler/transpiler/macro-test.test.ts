@@ -380,6 +380,8 @@ test("non-ASCII strings from a macro and in a macro argument fold per UTF-16 cod
       `console.log(JSON.stringify([json()[0], json()[0][0], json()[0][1], \`\${json()[0]}\`.length, json()[0].length, json()[1]]));`,
       `console.log(JSON.stringify([bin().length, \`\${bin()}!\`.length, (bin() + "!")[33]]));`,
       `console.log(JSON.stringify([echo(X.length), echo(X[0]), echo(X.charCodeAt(0)), echo(X + "x"), echo(\`\${X}x\`), echo(+X), echo(X < "z")]));`,
+      // the result of [n] in a second fold
+      `console.log(JSON.stringify([echo(X[0] + "x"), echo(\`\${X[0]}x\`), echo((X[0] + "x").length), echo((X[0] + X[0]).length), echo(X[0] > "z"), echo(+X[0]), echo(X[0][0]), echo(X[0].charCodeAt(0))]));`,
       ``,
     ].join("\n"),
   });
@@ -392,7 +394,7 @@ test("non-ASCII strings from a macro and in a macro argument fold per UTF-16 cod
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Debug builds print "[macro] call <name>" to stdout before the script's own output.
-  expect({ lines: stdout.trim().split("\n").slice(-3), stderr }).toEqual({
+  expect({ lines: stdout.trim().split("\n").slice(-4), stderr }).toEqual({
     lines: [
       JSON.stringify(["é😀", "é", "\ud83d", 3, 3, { "clé": 'ü\n"' }]),
       JSON.stringify([50, 51, "."]),
@@ -404,6 +406,16 @@ test("non-ASCII strings from a macro and in a macro argument fold per UTF-16 cod
         { got: "éx", type: "string" },
         { got: null, type: "number" },
         { got: false, type: "boolean" },
+      ]),
+      JSON.stringify([
+        { got: "éx", type: "string" },
+        { got: "éx", type: "string" },
+        { got: 2, type: "number" },
+        { got: 2, type: "number" },
+        { got: true, type: "boolean" },
+        { got: null, type: "number" },
+        { got: "é", type: "string" },
+        { got: 233, type: "number" },
       ]),
     ],
     stderr: "",

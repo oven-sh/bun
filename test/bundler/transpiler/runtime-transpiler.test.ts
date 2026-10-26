@@ -50,6 +50,30 @@ test("non-ascii --define values and regexp sources fold per UTF-16 code unit", a
   expect(exitCode).toBe(0);
 });
 
+// A `[define]` table in bunfig.toml is read like `--define`, and plain `bun run` folds `[0]`.
+test("a non-ASCII bunfig.toml [define] string folds per UTF-16 code unit", async () => {
+  using dir = tempDir("bunfig-define-non-ascii", {
+    "bunfig.toml": `[define]\n"process.env.TITLE" = "'élan'"\n`,
+    "index.ts": `
+      function local() {
+        const title = process.env.TITLE!;
+        return title[0].toUpperCase() + title.slice(1);
+      }
+      console.log(JSON.stringify([process.env.TITLE![0].toUpperCase() + process.env.TITLE!.slice(1), local()]));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: '["Élan","Élan"]\n', stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 test("ascii regex with escapes", () => {
   expect(/^[-#!$@£%^&*()_+|~=`{}\[\]:";'<>?,.\/ ]$/).toBeInstanceOf(RegExp);
 });

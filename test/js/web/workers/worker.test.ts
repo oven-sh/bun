@@ -862,18 +862,12 @@ describe("worker thread limit", () => {
     using dir = tempDir("worker-thread-limit", {});
     using unprivileged = unprivilegedSpawnOptions(String(dir));
     // A limit of 1 refuses every new thread, whatever else the uid runs: this
-    // process is already one task of the uid. The child sets the limit on
-    // itself once its lazy runtime threads exist, so the first thread that is
-    // refused is a worker's.
+    // process is already one task of the uid.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `import { Worker as NodeWorker } from "node:worker_threads";
-         let keep = [];
-         for (let i = 0; i < 50; i++) keep.push(new Array(10000).fill(i));
-         keep = [];
-         Bun.gc(true);
          const limited = Bun.spawnSync([${JSON.stringify(prlimit)}, "--pid", String(process.pid), "--nproc=1"]);
          if (limited.exitCode !== 0) throw new Error("prlimit: " + limited.stderr);
          const attempt = create => {
@@ -887,14 +881,15 @@ describe("worker thread limit", () => {
          console.log(JSON.stringify({
            web: attempt(() => new Worker("data:text/javascript,postMessage(1)")),
            node: attempt(() => new NodeWorker(new URL("data:text/javascript,1"))),
-         }));
-         // A normal exit runs a GC, and its collector thread would be refused too.
-         process.exit(0);`,
+         }));`,
       ],
       cwd: String(dir),
       env: {
         ...bunEnv,
         HOME: String(dir),
+        // The ASAN lanes tear the VM down at exit, which runs one more
+        // collection. JSC aborts when its collector thread is refused.
+        BUN_DESTRUCT_VM_ON_EXIT: undefined,
         // LeakSanitizer needs a tracer thread at exit, which the limit refuses.
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
       },

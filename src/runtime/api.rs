@@ -150,21 +150,16 @@ fn with_text_format_source<R>(
 ) -> bun_jsc::JsResult<R> {
     // A private mi_heap costs microseconds to create, more than parsing a
     // small document: keep one per thread and recycle it between calls.
-    // `#[thread_local]` rather than `thread_local!` so there is no
-    // destructor racing mimalloc's own thread teardown (as in
-    // `ast_memory_allocator.rs`); a parked heap is reclaimed with the thread.
-    #[thread_local]
-    static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
     struct Recycle(Option<bun_alloc::Arena>);
     impl Drop for Recycle {
         fn drop(&mut self) {
             if let Some(mut arena) = self.0.take() {
                 arena.reset_retain_with_limit(2 * 1024 * 1024);
-                ARENA.set(Some(arena));
+                TEXT_FORMAT_ARENA.set(Some(arena));
             }
         }
     }
-    let recycle = Recycle(Some(ARENA.take().unwrap_or_default()));
+    let recycle = Recycle(Some(TEXT_FORMAT_ARENA.take().unwrap_or_default()));
     let arena = recycle.0.as_ref().expect("set above");
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
@@ -188,6 +183,15 @@ fn with_text_format_source<R>(
     let source = bun_ast::Source::init_path_string(path, bytes);
 
     f(arena, &mut log, &source)
+}
+
+/// The arena `with_text_format_source` recycles. Nothing destroys it at thread exit: no destructor, and mimalloc keeps the heap.
+#[thread_local]
+static TEXT_FORMAT_ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
+
+/// `deinit_runtime_state` calls this when the thread's VM is destroyed. A pool thread's macro VM never is.
+pub(crate) fn drop_parked_text_format_arena() {
+    drop(TEXT_FORMAT_ARENA.take());
 }
 
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────

@@ -573,6 +573,16 @@ JSC::EncodedJSValue Bun__SharedBlock__wrap(JSC::JSGlobalObject* globalObject, co
     return JSC::JSValue::encode(view);
 }
 
+// For Rust, before it makes a Mutex or a Condition in `globalObject`: loads the structs surface there if that has not happened.
+// Undefined, or empty with an exception pending.
+JSC::EncodedJSValue Bun__SharedSurface__ensure(JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Bun__ensureStructsSurface(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue()));
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 // The object that stands for the shared object at `key` in this realm if there is one alive, else empty. Used for a Mutex or a Condition.
 JSC::EncodedJSValue Bun__SharedObject__lookup(JSC::JSGlobalObject* globalObject, const void* key)
 {

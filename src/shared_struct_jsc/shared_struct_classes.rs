@@ -56,6 +56,9 @@ unsafe extern "C" {
         length: usize,
         has_description: bool,
     ) -> JSValue;
+    /// Loads the structs surface in `global` if that has not happened (so Atomics works on what Rust is about to make). Empty with an
+    /// exception pending.
+    fn Bun__SharedSurface__ensure(global: &JSGlobalObject) -> JSValue;
     /// The Mutex or Condition (or view) that stands for the shared object at `key` in this realm, if it is alive; else empty.
     safe fn Bun__SharedObject__lookup(global: &JSGlobalObject, key: *const c_void) -> JSValue;
     /// Records that `object` stands for the shared object at `key` in this realm.
@@ -322,13 +325,13 @@ pub(crate) fn to_js(global: &JSGlobalObject, value: Value) -> JsResult<JSValue> 
             let key = Arc::as_ptr(&inner).cast::<c_void>();
             standing_for(global, key, || {
                 js_Mutex::to_js(MutexObject::new(inner), global)
-            })
+            })?
         }
         Value::Condition(inner) => {
             let key = Arc::as_ptr(&inner).cast::<c_void>();
             standing_for(global, key, || {
                 js_Condition::to_js(ConditionObject::new(inner), global)
-            })
+            })?
         }
     })
 }
@@ -339,15 +342,18 @@ fn standing_for(
     global: &JSGlobalObject,
     key: *const c_void,
     make: impl FnOnce() -> JSValue,
-) -> JSValue {
+) -> JsResult<JSValue> {
     let existing = Bun__SharedObject__lookup(global, key);
     if !existing.is_empty() {
-        return existing;
+        return Ok(existing);
     }
+    // A realm that is handed a mutex can use Atomics on it before any script reads one of the lazy names.
+    // SAFETY: `global` is live, and the call returns empty only with an exception pending.
+    from_js_host_call(global, || unsafe { Bun__SharedSurface__ensure(global) })?;
     let made = make();
     Bun__SharedObject__makeBare(global, made);
     Bun__SharedObject__register(global, key, made);
-    made
+    Ok(made)
 }
 
 /// `new Atomics.Mutex()`: called from C++ (SharedStructObject.cpp). Empty with an exception pending.

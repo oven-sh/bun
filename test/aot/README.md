@@ -125,7 +125,8 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **Every program in every commit.** `every-program-<part>` (`programs-as-entry-points.ts`) makes the programs of a part, some 600, the entry points of one executable and runs each in a
   process of its own, with its types and with its types erased: all 41,000 in 48 minutes of a shard, a tenth of what they cost one by one. A program among hundreds is not compiled
   as it is alone, so this stands beside the share and takes nothing from it. What a program prints may hang on being alone in its executable: `"alone": "<why>"` in its
-  `<program>.json` leaves it out. A red says whether the program is red alone too. A build of a part may hold 3.2 GB at most: the two builds of a part run at once, and the
+  `<program>.json` leaves it out. A red says whether the program is red alone too. Windows limits the length of a command line, so a part is several
+  executables there; Linux arm64 builds the same groups, and `AOT_SMALL_GROUPS=1` does on any system. The line `GROUPS:` says how many programs each executable holds. A build of a part may hold 3.2 GB at most: the two builds of a part run at once, and the
   smallest machines that run them have 8 GB. It is in the step that holds up nothing until CI has shown it green.
 - **A tenth of the programs, each as it is alone.** `every-program-alone-<part>` (`programs-as-separate-entry-points.ts`) also makes many programs the entry points of one executable, but
   starts each in a Worker, so each is a program of its own and is compiled as it is when it is built alone: a program cannot lean on what a neighbor names. That costs three times the

@@ -2,13 +2,22 @@ import { builtinFeatureUses, readTrimTable } from "bun:internal-for-testing";
 import { bunEnv, bunExe, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "node:path";
 import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
-import { loadFeatures, narrowestTrimFeature, type FeatureModel, type FeatureName, type TrimFeature } from "../../scripts/build/trim/features";
+import {
+  loadFeatures,
+  narrowestTrimFeature,
+  type FeatureModel,
+  type FeatureName,
+  type TrimFeature,
+} from "../../scripts/build/trim/features";
 import type { TrimTable } from "../../scripts/build/trim/table";
 import type { BuiltinEntry } from "../../scripts/build/trim/types";
 
 export const repositoryRoot: string = join(import.meta.dir, "..", "..");
 
-export function tempDirForAotBuilds(basename: string, files: Record<string, string>): ReturnType<typeof tempDirWithBunTypes> {
+export function tempDirForAotBuilds(
+  basename: string,
+  files: Record<string, string>,
+): ReturnType<typeof tempDirWithBunTypes> {
   return tempDirWithBunTypes(basename, { "tsconfig.json": `{ "compilerOptions": { "types": ["bun"] } }`, ...files });
 }
 
@@ -45,14 +54,18 @@ const probed = Bun.spawnSync({
   stdout: "pipe",
   stderr: "pipe",
 });
-export const trimProbe: { stderr: string; exitCode: number } = { stderr: probed.stderr.toString(), exitCode: probed.exitCode };
+export const trimProbe: { stderr: string; exitCode: number } = {
+  stderr: probed.stderr.toString(),
+  exitCode: probed.exitCode,
+};
 export const canTrim: boolean = !trimProbe.stderr.includes("this build of Bun doesn't support --trim");
 
 const featuresByKey = new Map<string, FeatureName>();
 for (const { name } of model.features) {
   const key = name.toLowerCase();
   const other = featuresByKey.get(key);
-  if (other !== undefined) throw new Error(`src/trim/features declares ${other} and ${name}, which differ only in case`);
+  if (other !== undefined)
+    throw new Error(`src/trim/features declares ${other} and ${name}, which differ only in case`);
   featuresByKey.set(key, name);
 }
 
@@ -67,7 +80,10 @@ export function featureNamed(spelling: string): FeatureName {
 }
 
 export function featureOf(builtinOrModule: string): FeatureName {
-  const feature = builtinEntries.filter(each => each.path === builtinOrModule).map(guardFeatureOf).find(each => each !== undefined);
+  const feature = builtinEntries
+    .filter(each => each.path === builtinOrModule)
+    .map(guardFeatureOf)
+    .find(each => each !== undefined);
   if (feature === undefined) throw new Error(`no feature implements ${builtinOrModule}`);
   return feature;
 }
@@ -83,11 +99,17 @@ export function saysFeatureWasRemoved(stderr: string, feature: FeatureName): boo
   // One of Bun's own modules may catch the error and put its message into one of its own: util.inspect into an AssertionError, inspector.open() into the line that Node prints.
   if (stderr.includes(`rror: ${textOf(feature)} was removed by --trim because your code never uses it.`)) return true;
   // A native function of one of Bun's own modules has no path that a program could write. The message names what to allow.
-  const [, publicName] = / was removed by --trim because your code never uses it\. To keep it, add "([\w-]+)" to compile\.trim\.allow\b/.exec(stderr) ?? [];
+  const [, publicName] =
+    / was removed by --trim because your code never uses it\. To keep it, add "([\w-]+)" to compile\.trim\.allow\b/.exec(
+      stderr,
+    ) ?? [];
   if (model.trimFeatures.some(each => each.name === publicName && each.features.includes(feature))) return true;
   const [, builtin] = /^\w*rror: (\S+) was removed by --trim\b.*\n\s*code: "ERR_FEATURE_REMOVED"/m.exec(stderr) ?? [];
   // Compiled code that knows which built-in it calls names its path. The function object that stays behind knows its own name only.
-  return builtinEntries.some(entry => (entry.path === builtin || entry.path.endsWith("." + builtin)) && entry.uses.some(use => use.feature === feature));
+  return builtinEntries.some(
+    entry =>
+      (entry.path === builtin || entry.path.endsWith("." + builtin)) && entry.uses.some(use => use.feature === feature),
+  );
 }
 
 export function withoutFeatures(features: readonly FeatureName[]): string[] {
@@ -136,7 +158,8 @@ export function narrowestNameOf(feature: FeatureName): string | undefined {
 }
 
 const table: TrimTable | undefined = canTrim ? readTrimTable(bunExe()) : undefined;
-if (table !== undefined && table.featuresHash !== model.hash) throw new Error("this Bun was linked with another list of features than src/trim/features");
+if (table !== undefined && table.featuresHash !== model.hash)
+  throw new Error("this Bun was linked with another list of features than src/trim/features");
 
 const featuresByIndex = new Map(model.features.map(each => [each.index, each.name]));
 
@@ -146,7 +169,51 @@ function nameOf(index: number): FeatureName {
   return name;
 }
 
-const enteredFromCommandLine = new Set(model.features.filter(each => each.enteredFrom === "command-line").map(each => each.index));
+// Where the bytes that go with `feature` are in this Bun, given the features that were removed from an executable.
+export function describeBytesRemovedWith(feature: FeatureName, removedIndexes: readonly number[]): string {
+  if (table === undefined) return "this Bun has no trim table";
+  const { ranges, sets } = table;
+  const removed = new Set(removedIndexes);
+  const goesWithFeature = (set: number) => sets[set]!.some(index => nameOf(index) === feature);
+  const bytesOfSet = new Map<number, { cuttable: number; fillOnly: number }>();
+  const holes: { bytes: number; bytesOfFeature: number; end: number }[] = [];
+  let isNextToHole = false;
+  for (const { start, end, set, canBeCut } of ranges) {
+    const bytesOfFeature = goesWithFeature(set) ? end - start : 0;
+    if (bytesOfFeature > 0) {
+      const bytes = bytesOfSet.getOrInsert(set, { cuttable: 0, fillOnly: 0 });
+      bytes[canBeCut ? "cuttable" : "fillOnly"] += bytesOfFeature;
+    }
+    const isInHole = canBeCut && sets[set]!.every(index => removed.has(index));
+    const last = holes.at(-1);
+    if (isInHole && isNextToHole && last!.end === start) {
+      last!.bytes += end - start;
+      last!.bytesOfFeature += bytesOfFeature;
+      last!.end = end;
+    } else if (isInHole) holes.push({ bytes: end - start, bytesOfFeature, end });
+    isNextToHole = isInHole;
+  }
+  holes.sort((a, b) => b.bytes - a.bytes);
+  return [
+    ...[...bytesOfSet]
+      .sort(([, a], [, b]) => b.cuttable + b.fillOnly - a.cuttable - a.fillOnly)
+      .slice(0, 12)
+      .map(([set, { cuttable, fillOnly }]) => {
+        const kept = sets[set]!.filter(index => !removed.has(index)).map(nameOf);
+        return `${cuttable} bytes that can be cut and ${fillOnly} that can only be filled go with ${sets[set]!.map(nameOf).join(", ")}; kept: ${kept.join(", ") || "none"}`;
+      }),
+    `${holes.length} holes`,
+    ...holes.flatMap(({ bytes, bytesOfFeature }, index) =>
+      bytesOfFeature > 0
+        ? [`hole ${index + 1} by size: ${bytes} bytes, ${bytesOfFeature} of them go with ${feature}`]
+        : [],
+    ),
+  ].join("\n");
+}
+
+const enteredFromCommandLine = new Set(
+  model.features.filter(each => each.enteredFrom === "command-line").map(each => each.index),
+);
 
 export const requirements: { feature: FeatureName; required: FeatureName }[] = (table?.edges ?? [])
   .filter(({ from, strength }) => strength !== "RecoverableGuard" && !enteredFromCommandLine.has(from))

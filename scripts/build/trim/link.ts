@@ -586,6 +586,14 @@ export function printSummary(layout: Layout, { model, uses, format, stopwatch }:
       `${definitions} written by the entry point itself, ` +
       `${partition.foldedEntryPoints.length} entry points folded with other code`,
   );
+  const featureByIndex = new Map(model.features.map(feature => [feature.index, feature]));
+  const featureName = (index: number) => featureByIndex.get(index)?.name ?? String(index);
+  if (partition.foldedEntryPoints.length > 0) {
+    const counts = new Map<number, number>();
+    for (const { feature } of partition.foldedEntryPoints) counts.set(feature, (counts.get(feature) ?? 0) + 1);
+    const listed = [...counts].sort(([a], [b]) => a - b).map(([feature, count]) => `${featureName(feature)} ${count}`);
+    console.log(`folded with other code: ${listed.join(", ")}`);
+  }
   console.log(describeFeatureEdges(partition.edges));
   console.log(
     `${partition.groups.length} groups, ${cuttableCount} ranges that can be cut, ` +
@@ -597,8 +605,6 @@ export function printSummary(layout: Layout, { model, uses, format, stopwatch }:
   }
   console.log(`${megabytes(uncuttableGroupBytes(layout, format))} of the groups are outside every cuttable range`);
   console.log(`the trim table takes ${layout.table.length} of ${layout.room} bytes`);
-  const featureByIndex = new Map(model.features.map(feature => [feature.index, feature]));
-  const featureName = (index: number) => featureByIndex.get(index)?.name ?? String(index);
   const withoutGuard = findUsedFeaturesWithoutGuard({ model, uses, entryPoints: entries.entryPoints });
   if (withoutGuard.length > 0) {
     console.log(

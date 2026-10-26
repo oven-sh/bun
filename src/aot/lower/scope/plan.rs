@@ -46,6 +46,7 @@ struct BindingSharing {
     shared: Vec<BindingRef>,
     fields_for_eval: Vec<BindingRef>,
     fields_for_handlers: Vec<BindingRef>,
+    functions_with_fields_for_handlers: Vec<WalkedFunctionId>,
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
 }
 
@@ -62,6 +63,7 @@ struct Parts {
     forms: Vec<BindingForm>,
     placements: Placements,
     captures: CapturePlan,
+    functions_with_fields_for_handlers: Vec<WalkedFunctionId>,
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
 }
 
@@ -176,6 +178,7 @@ pub(super) fn analyze(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
         forms,
         placements,
         captures,
+        functions_with_fields_for_handlers: sharing.functions_with_fields_for_handlers,
         initialized_holders: sharing.initialized_holders,
     };
     tables::build_analysis(&context, parts)

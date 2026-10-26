@@ -134,6 +134,24 @@ if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
 }
 
+/**
+ * Spread over `bunEnv` for a child process. On macOS the system allocator then overwrites blocks when they are
+ * allocated and released, puts guard pages around large ones, checks its heap as it goes, aborts on the first error
+ * and prints the reason to stderr even when that is a pipe.
+ */
+export const strictSystemAllocatorEnv: Record<string, string> = isMacOS
+  ? {
+      MallocPreScribble: "1",
+      MallocScribble: "1",
+      MallocGuardEdges: "1",
+      MallocCheckHeapStart: "1",
+      MallocCheckHeapEach: "5000",
+      MallocCheckHeapAbort: "1",
+      MallocErrorAbort: "1",
+      MallocDebugReport: "crash",
+    }
+  : {};
+
 for (let key in bunEnv) {
   if (bunEnv[key] === undefined) {
     delete ciEnv[key];

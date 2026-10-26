@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-906-c4caab79";
+export const WEBKIT_VERSION = "autobuild-preview-pr-906-145dca15";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -31,7 +31,7 @@ import type { EngineSources } from "../aot.ts";
 import { evaluateCMake, type CMakeEvaluation } from "../cmake.ts";
 import type { Config } from "../config.ts";
 import { assert, BuildError } from "../error.ts";
-import { computeCpuTargetFlags, computeHardeningFlags } from "../flags.ts";
+import { computeCpuTargetFlags, computeHardeningFlags, fuzzilliCoverageFlags } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
 import { quote } from "../shell.ts";
 import {
@@ -1868,7 +1868,8 @@ function jscGroup(
       },
     ],
     includes: jsc.includes,
-    cflags: [...jsc.targetFlags, "-DBUILDING_JavaScriptCore"],
+    // The coverage flags: JSC's CMakeLists, ENABLE_FUZZILLI.
+    cflags: [...jsc.targetFlags, "-DBUILDING_JavaScriptCore", ...fuzzilliCoverageFlags(cfg)],
     cxxflags: jsc.cxx,
     pch: join(JSC, "JavaScriptCorePrefix.h"),
     chainedPch: aotPrefixes.map(({ header, base }) => ({

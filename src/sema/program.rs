@@ -924,6 +924,20 @@ impl<'u> Run<'u> {
         }
     }
 
+    /// For the loads of one compile build, which all intern in `atoms`. They share declaration files.
+    pub fn of_compile_build(session: &'u Session, atoms: Interner<'u>) -> Run<'u> {
+        Run {
+            session,
+            atoms,
+            parsed: ShardedMap::default(),
+            provided: FxHashSet::default(),
+            only_declaration_files: true,
+            parses: AtomicUsize::new(0),
+            bytes: AtomicUsize::new(0),
+            origins: AtomicUsize::new(1),
+        }
+    }
+
     /// Makes the programs share only declaration files.
     pub fn sharing_only_declaration_files(self) -> Run<'u> {
         Run {
@@ -6553,8 +6567,8 @@ impl<'s> Files<'s> {
         );
         // It already has every atom in the files, since no file is added to the program from here on.
         let atoms = match run {
-            Some(_) => Interner::over(session, atoms),
-            None => atoms,
+            Some(_) if compile.is_none() => Interner::over(session, atoms),
+            _ => atoms,
         };
         let code_graph = CodeFiles::into_code_graph(code_files, &modules, session);
         let no_symbol = Sym {

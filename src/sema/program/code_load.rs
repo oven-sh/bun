@@ -39,8 +39,28 @@ impl<'s> Files<'s> {
         roots: RootFileNames<'_>,
         inputs: &CompileInputs<'_, 's>,
     ) -> Files<'s> {
+        Self::load_for_compile_with_parsed_files(session, None, host, options, roots, inputs)
+    }
+
+    /// `parsed`: `Run::of_compile_build` with the atoms of `inputs`.
+    pub fn load_for_compile_with_parsed_files(
+        session: &'s Session,
+        parsed: Option<&'s Run<'s>>,
+        host: &dyn CodeHost,
+        options: Options,
+        roots: RootFileNames<'_>,
+        inputs: &CompileInputs<'_, 's>,
+    ) -> Files<'s> {
         let compile = CompileLoad { host, inputs };
-        Self::load_with(session, None, host, options, roots, &|_| {}, Some(compile))
+        Self::load_with(
+            session,
+            parsed,
+            host,
+            options,
+            roots,
+            &|_| {},
+            Some(compile),
+        )
     }
 }
 

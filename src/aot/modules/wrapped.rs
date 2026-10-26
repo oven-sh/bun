@@ -31,7 +31,6 @@ pub struct InnerModule {
     pub kind: InnerModuleKind,
     /// `require_x`, `init_x`. Every mention of it is a call without arguments.
     pub holder: SymbolId,
-    pub declaration: VarDeclId,
     /// It declares holders only and has no code.
     pub statement: StmtId,
     /// A call behind a failure throws the same error again. Otherwise it answers as if the body had ended.
@@ -344,7 +343,6 @@ impl Finder<'_, '_> {
                 callback,
                 kind: shape.kind,
                 holder,
-                declaration,
                 statement,
                 keeps_error: shape.keeps_error,
                 exports_parameter,
@@ -796,27 +794,6 @@ impl WrappedModules {
         let module = self.of_name(files, file, object, Role::ModuleParameter)?;
         (name == known::exports).then_some(module.callback)
     }
-
-    /// `require_x = __commonJS(..)` has no code.
-    pub fn is_erased_declaration(&self, file: FileId, declaration: VarDeclId) -> bool {
-        let mut modules = self.of_file(file).iter();
-        modules.any(|module| module.declaration == declaration)
-    }
-
-    /// Every variable that the statement declares is the holder of an inner module.
-    #[cfg(test)]
-    pub fn is_erased_statement(&self, files: &Files<'_>, file: FileId, statement: StmtId) -> bool {
-        if self.of_file(file).is_empty() {
-            return false;
-        }
-        match files.hir(file)[statement].kind {
-            StmtKind::Var(declarations) => {
-                let mut declarations = declarations.iter();
-                declarations.all(|declaration| self.is_erased_declaration(file, declaration))
-            }
-            _ => false,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1062,7 +1039,10 @@ require_b();
             let found = expressions
                 .filter(|&it| wrapped.is_exports_object(files, file, it) == Some(module.callback));
             assert_eq!(found.count(), 2);
-            assert!(wrapped.is_erased_statement(files, file, module.statement));
+            let StmtKind::Var(declarations) = hir[module.statement].kind else {
+                panic!("a variable statement declares the holder");
+            };
+            assert_eq!(declarations.len(), 1);
         });
     }
 }

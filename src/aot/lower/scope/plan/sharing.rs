@@ -85,7 +85,7 @@ pub(super) fn compute_sharing(
         }
     }
     sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
-    sharing.fields_for_handlers = collect_fields_for_handlers(context);
+    collect_fields_for_handlers(context, &mut sharing);
     sharing.captured_uses.sort_unstable();
     sharing.variables.sort_unstable();
     sharing.shared.sort_unstable();
@@ -358,11 +358,13 @@ fn collect_fields_for_eval(
 
 // Each block of a `try` hands to the handler every local that the `try` stores, and each store begins a block.
 // Where that is too much, the handler reads those names from fields.
-fn collect_fields_for_handlers(context: &Context<'_, '_>) -> Vec<BindingRef> {
+fn collect_fields_for_handlers(context: &Context<'_, '_>, sharing: &mut BindingSharing) {
     let mut fields = Vec::new();
+    let mut functions = Vec::new();
     for walked in &context.walk.tries {
         let is_seen_by_handler = |binding: &BindingRef| {
-            context.owner_of(*binding) == Some(walked.function)
+            matches!(binding, BindingRef::Symbol(_))
+                && context.owner_of(*binding) == Some(walked.function)
                 && encloses(context, context.scope_of(*binding), walked.boundary)
         };
         let stored = walked.stored.iter().copied().filter(is_seen_by_handler);
@@ -373,8 +375,11 @@ fn collect_fields_for_handlers(context: &Context<'_, '_>) -> Vec<BindingRef> {
             && stored.len().saturating_mul(store_count) > context.input.max_handler_arguments
         {
             fields.append(&mut stored);
+            functions.push(walked.function);
         }
     }
     sort_unique(&mut fields);
-    fields
+    sort_unique(&mut functions);
+    sharing.fields_for_handlers = fields;
+    sharing.functions_with_fields_for_handlers = functions;
 }

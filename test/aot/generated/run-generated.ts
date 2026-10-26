@@ -97,6 +97,10 @@ function departingGroups(ours: string[], theirs: string[], notCompared: RegExp) 
   return departing.slice(0, 20);
 }
 
+function stderrOfFailure(run: { stderr: string; signal: unknown; exitCode: number | null }, exitCode: number) {
+  return run.exitCode === exitCode && run.signal === null ? {} : { stderr: run.stderr.slice(-4000) };
+}
+
 export function generated(title: string, given: Generated[]) {
   const listed = (onceWrong as Record<string, string[]>)[title] ?? [];
   const programs = given.map(program => (listed.includes(program.name) ? { ...program, wasOnceWrong: true } : program));
@@ -229,7 +233,13 @@ export function generated(title: string, given: Generated[]) {
               for (let i = 0; i < Math.max(ours.length, theirs.length) && departing.length < 20; i++) {
                 if (ours[i] !== theirs[i]) departing.push(`--aot: ${ours[i]}\nplain: ${theirs[i]}`);
               }
-              expect({ departing, signal: compiled.signal, exitCode: compiled.exitCode, lines: ours.length }).toEqual({
+              expect({
+                departing,
+                signal: compiled.signal,
+                exitCode: compiled.exitCode,
+                lines: ours.length,
+                ...stderrOfFailure(compiled, exitCode),
+              }).toEqual({
                 departing: [],
                 signal: null,
                 exitCode,
@@ -242,7 +252,13 @@ export function generated(title: string, given: Generated[]) {
                   { ...bunEnv, ...(program.mayStopOutOfMemory && withoutCrashReport), ...under },
                 );
                 if (program.mayStopOutOfMemory && again.stderr.includes("FATAL: out of memory")) continue;
-                expect({ under, stdout: again.stdout, signal: again.signal, exitCode: again.exitCode }).toEqual({
+                expect({
+                  under,
+                  stdout: again.stdout,
+                  signal: again.signal,
+                  exitCode: again.exitCode,
+                  ...stderrOfFailure(again, exitCode),
+                }).toEqual({
                   under,
                   stdout: plain.stdout,
                   signal: null,

@@ -12,7 +12,9 @@ mod tests;
 mod threads;
 
 pub use check::{check_and_lower, check_and_lower_noting_commits};
-pub use load::{find_configuration_of_each_entry_point, load_program};
+pub use load::{
+    find_configuration_of_each_entry_point, load_program, load_program_with_parsed_files,
+};
 pub use locator::{Locator, TextLocator};
 pub use log_message::log_message;
 pub use roles::{decide_roles, keep_verified_roles};

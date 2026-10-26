@@ -15,9 +15,10 @@
 //   AOT_PROGRAMS_LISTED=<file> ..                                      the programs that the file lists, one a line, as paths below ./programs without the extension
 //   AOT_BUILD_FLAGS="--aot-validate" ..                                every build takes these flags too
 //   AOT_REDS=<file> ..                                                 gets a line for each program that is red: <name>, a tab, the way, a tab, what happened
+//   AOT_SMALL_GROUPS=1 ..                                              the groups that Windows builds, on any system
 import { afterAll, describe, expect, test } from "bun:test";
 import { appendFileSync, copyFileSync, existsSync, readdirSync, readFileSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { dirname, join, normalize, relative, sep } from "path";
 import {
   besideOf,
@@ -42,8 +43,9 @@ import {
 } from "./run-programs";
 
 const starter = "start-the-entry-point-named.ts";
-// Windows takes 32,767 characters.
-const longestCommandLine = isWindows ? 30_000 : 1_000_000;
+// Windows takes 32,767 characters, so a part is several executables there. What a program does can depend on which programs share its executable, so Linux arm64 builds the same groups.
+const buildsSmallGroups = isWindows || (isLinux && isArm64) || !!process.env.AOT_SMALL_GROUPS;
+const longestCommandLine = buildsSmallGroups ? 30_000 : 1_000_000;
 const redsExplained = 5;
 // The two builds of a part run at once, and the smallest machines that run them have 8 GB.
 const mostMegabytesOfABuild = 3200;
@@ -137,6 +139,13 @@ class Way {
     readonly carrier: string[],
   ) {}
 
+  /** How many programs each executable holds. */
+  sizeOfGroups() {
+    const sizes = new Map<string, number>();
+    for (const executable of this.executableOf.values()) sizes.set(executable, (sizes.get(executable) ?? 0) + 1);
+    return sizes;
+  }
+
   command(entryPoints: string[], executable: string) {
     const more = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").filter(Boolean);
     return [bunExe(), "build", "--compile", "--aot", ...more, "--aot-check=validate-references", ...this.carrier, ...this.flags, ...entryPoints, "--outfile", executable];
@@ -208,8 +217,8 @@ export function programsAsEntryPoints(part = 1, parts = 1) {
     const ways = [new Way("compiled", [], folder, carrier), new Way("compiled with types erased", ["--aot-erase-types"], folder, carrier)];
     const typed = new Set(chosen.filter(hasTypes));
     // What is kept and what the scripts have written lie below two folders. On Windows these may be on two drives, so each is built by itself there, with the starter at its top.
-    const byRoot = isWindows ? Map.groupBy(chosen, rootOf) : new Map([[join(import.meta.dir, "programs"), chosen]]);
-    const rootInBuild = (path: string) => (isWindows ? rootOf(path) : join(import.meta.dir, "programs"));
+    const byRoot = buildsSmallGroups ? Map.groupBy(chosen, rootOf) : new Map([[join(import.meta.dir, "programs"), chosen]]);
+    const rootInBuild = (path: string) => (buildsSmallGroups ? rootOf(path) : join(import.meta.dir, "programs"));
     for (const root of byRoot.keys()) if (!existsSync(join(root, starter))) copyFileSync(join(import.meta.dir, "programs", starter), join(root, starter));
     let built: Promise<void>[] | undefined;
     const buildOnce = (index: number) =>
@@ -222,7 +231,9 @@ export function programsAsEntryPoints(part = 1, parts = 1) {
       if (process.env.AOT_REDS) appendFileSync(process.env.AOT_REDS, `${nameOf(path)}\t${way.name}\t${what.replaceAll("\n", " | ").slice(0, 300)}\n`);
       const topic = nameOf(path).split("/")[0];
       const file = existsSync(join(import.meta.dir, `${topic}.test.ts`)) ? `test/aot/${topic}.test.ts` : `test/aot/parts.test.ts`;
-      console.error(`RED: ${nameOf(path)}, ${way.name}, one of ${way.executableOf.size} entry points: ${what}\n  alone: AOT_PROGRAMS=${nameOf(path)} TEST_PART=aot/${topic} bun test ${file}`);
+      const together = way.sizeOfGroups().get(way.executableOf.get(path)!) ?? 0;
+      const sameGroups = `${buildsSmallGroups ? "AOT_SMALL_GROUPS=1 " : ""}TEST_PART=aot/every-program${parts > 1 ? `-${part}` : ""} bun test test/aot/parts.test.ts`;
+      console.error(`RED: ${nameOf(path)}, ${way.name}, one of ${together} entry points: ${what}\n  alone: AOT_PROGRAMS=${nameOf(path)} TEST_PART=aot/${topic} bun test ${file}\n  in the same executable: ${sameGroups}`);
     };
     /** Does the program do the same when it is the only one in its executable? */
     async function explain(path: string, way: Way, judge: (result: RunResult) => void) {
@@ -251,6 +262,7 @@ export function programsAsEntryPoints(part = 1, parts = 1) {
         await Promise.all(ways.map((_, index) => buildOnce(index)));
         expect(ways.flatMap(way => way.notBuiltTogether)).toEqual([]);
         console.error(`MEMORY: ${ways.map(way => `${way.name}: ${way.mostMegabytes} MB`).join(", ")}`);
+        console.error(`GROUPS: ${ways.map(way => `${way.name}: ${[...way.sizeOfGroups().values()].join(" + ")} entry points`).join(", ")}`);
         if (isLinux && !isASAN && !isDebug && !process.env.AOT_BUILD_FLAGS) expect(Math.max(...ways.map(way => way.mostMegabytes))).toBeLessThan(mostMegabytesOfABuild);
       },
       1_500_000,

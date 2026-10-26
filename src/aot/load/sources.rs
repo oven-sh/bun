@@ -18,6 +18,7 @@ pub(crate) use self::freeze::{
 use crate::builtins::{ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
 use crate::diagnostics::FileDiagnostic;
 use crate::load::named_loads::NamedModule;
+#[cfg(test)]
 use crate::load::project::ProjectId;
 use crate::lower;
 
@@ -173,6 +174,7 @@ struct SourceEntry {
 
 #[derive(Clone)]
 pub struct Sources {
+    #[cfg(test)]
     project: ProjectId,
     entries: Vec<SourceEntry>,
     entry_points: Vec<EntryPoint>,
@@ -184,6 +186,7 @@ pub struct Sources {
 }
 
 impl Sources {
+    #[cfg(test)]
     pub fn project(&self) -> ProjectId {
         self.project
     }

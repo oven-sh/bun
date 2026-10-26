@@ -1,0 +1,29 @@
+diff --git a/Sources/Fuzzilli/Fuzzer.swift b/Sources/Fuzzilli/Fuzzer.swift
+index e1f7924b..f3b8a6ba 100644
+--- a/Sources/Fuzzilli/Fuzzer.swift
++++ b/Sources/Fuzzilli/Fuzzer.swift
+@@ -1235,8 +1235,10 @@ public class Fuzzer {
+             b.throwException(exception)
+         }
+         execution = execute(b.finalize(), purpose: .startup)
+-        guard case .failed = execution.outcome else {
+-            logger.fatal(
++        if case .failed = execution.outcome {
++        } else {
++            // A target that only compiles programs accepts one that throws.
++            logger.warning(
+                 "Cannot detect failed executions (exit code must be nonzero when an uncaught exception was thrown, but execution outcome was \(execution.outcome))"
+             )
+         }
+diff --git a/Sources/Fuzzilli/Profiles/Profile.swift b/Sources/Fuzzilli/Profiles/Profile.swift
+index 4b5b8e9e..b8f52ed2 100644
+--- a/Sources/Fuzzilli/Profiles/Profile.swift
++++ b/Sources/Fuzzilli/Profiles/Profile.swift
+@@ -50,6 +50,7 @@ public let profiles = [
+     "qtjs": qtjsProfile,
+     "qjs": qjsProfile,
+     "jsc": jscProfile,
++    "bunCompiler": bunCompilerProfile,
+     "spidermonkey": spidermonkeyProfile,
+     "v8": v8Profile,
+     "v8Sandbox": v8SandboxProfile,

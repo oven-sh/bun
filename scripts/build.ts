@@ -452,6 +452,7 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   tinycc: "boolean",
   valgrind: "boolean",
   fuzzilli: "boolean",
+  fuzzilliCompilerOnly: "boolean",
   hardened: "boolean",
   requireMdwe: "boolean",
   lockEnvironment: "boolean",

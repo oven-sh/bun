@@ -1,6 +1,8 @@
 use std::fmt::Write;
 
-use super::{is_field, storage_in};
+use bun_sema::hir::FnKind;
+
+use super::{analyze_source, is_field, storage_in};
 use crate::lower::scope::Storage;
 
 // `count` variables in front of a `try` that stores to each of them once.
@@ -31,6 +33,19 @@ fn many_variables_stored_in_try_are_fields() {
         assert!(is_field(storage_in("main.mjs", &source, "v0")));
         assert!(is_field(storage_in("main.mjs", &source, "v199")));
     }
+}
+
+#[test]
+fn only_function_with_many_variables_stored_in_try_reports_fields() {
+    let has_fields = |count: usize| {
+        let source = write_stores_in_try(count, "catch { inner_sum = v1; }");
+        analyze_source("main.mjs", &source, |probe| {
+            let function = probe.functions(FnKind::Decl)[0];
+            probe.has_fields_for_handlers(probe.key(function))
+        })
+    };
+    assert!(!has_fields(100));
+    assert!(has_fields(200));
 }
 
 #[test]

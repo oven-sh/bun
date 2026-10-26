@@ -124,7 +124,7 @@ if (takesWhatIsFixed) {
 
 for (const callable of callables) {
   const ways = waysToHandOn.filter(([way]) =>
-    inShare(`${callable.path} after ${way}`, isDebug || isASAN ? 4_000 : 400),
+    inShare(`${callable.path} after ${way}`, isDebug || isASAN ? 4_000 : 400, true),
   );
   if (ways.length)
     expectWaysToKeepFeatures(`${callable.path}, after ${ways.map(([way]) => way).join(" and ")}`, [callable], ways);

@@ -254,6 +254,11 @@ JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSC::JSGlobalObject * globalObject, J
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+void Bun__REPRL__resetCoverage()
+{
+    __sanitizer_cov_reset_edgeguards();
+}
+
 // Register the fuzzilli() function on a Bun global object
 void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 {
@@ -288,5 +293,10 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 }
 
 } // extern "C"
+
+#else
+
+// fuzzilli_compile_loop.rs names it in every build and calls it only in one with Fuzzilli.
+extern "C" void Bun__REPRL__resetCoverage() {}
 
 #endif // FUZZILLI_ENABLED

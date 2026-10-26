@@ -147,6 +147,7 @@ impl DiagnosticBuffer {
         self.diagnostics.is_empty()
     }
 
+    #[cfg(test)]
     pub fn iter(&self) -> impl Iterator<Item = &Diagnostic> + '_ {
         self.diagnostics.iter()
     }

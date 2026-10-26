@@ -47,3 +47,7 @@ test/integration/next-pages/test/dev-server-ssr-100.test.ts
 test/integration/next-pages/test/dev-server.test.ts
 test/integration/next-pages/test/next-build.test.ts
 test/js/third_party/next-auth/next-auth.test.ts
+
+# Calls into many APIs, each of which has a test file of its own.
+test/js/bun/util/system-library-calls.test.ts
+test/napi/addon-allocations.test.ts

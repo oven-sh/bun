@@ -39,11 +39,13 @@ using namespace JSC;
     macro(_events) \
     macro(abort) \
     macro(addAbortAlgorithmToSignal) \
+    macro(armedTimeout) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
+    macro(autoDestroyed) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \
@@ -77,9 +79,11 @@ using namespace JSC;
     macro(esmRegistryHasEvaluated) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
+    macro(exchange) \
     macro(expires) \
     macro(exports) \
     macro(extname) \
+    macro(fakeSocket) \
     macro(fastPath) \
     macro(fatal) \
     macro(fd) \
@@ -89,6 +93,7 @@ using namespace JSC;
     macro(globScan) \
     macro(globScanSync) \
     macro(handleEvent) \
+    macro(hasWaitingResponses) \
     macro(headers) \
     macro(highWaterMark) \
     macro(host) \
@@ -105,11 +110,14 @@ using namespace JSC;
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isOpen) \
+    macro(isPrepared) \
     macro(isUncloneable) \
     macro(isUntransferable) \
     macro(join) \
     macro(json) \
     macro(kResistStopPropagation) \
+    macro(keepAliveTimeoutSet) \
     macro(lazy) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
@@ -137,12 +145,15 @@ using namespace JSC;
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
+    macro(ownReadableState) \
+    macro(ownWritableState) \
     macro(parse) \
     macro(partitioned) \
     macro(path) \
     macro(paths) \
     macro(peekPromiseSettledValue) \
     macro(peekPromiseStatus) \
+    macro(pipelinedResponses) \
     macro(pokePromiseAsHandled) \
     macro(port) \
     macro(prev) \
@@ -154,6 +165,7 @@ using namespace JSC;
     macro(rawHeaders) \
     macro(read) \
     macro(readable) \
+    macro(readableMark) \
     macro(readableType) \
     macro(redirect) \
     macro(relative) \
@@ -174,6 +186,7 @@ using namespace JSC;
     macro(sharedFd) \
     macro(signal) \
     macro(size) \
+    macro(socketTimeoutTimer) \
     macro(specifier) \
     macro(start) \
     macro(status) \
@@ -197,6 +210,7 @@ using namespace JSC;
     macro(webStreamClosedPromise) \
     macro(webStreamControllerError) \
     macro(writable) \
+    macro(writableMark) \
     macro(writableType) \
     macro(write) \
     macro(writer) \

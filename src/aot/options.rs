@@ -101,6 +101,7 @@ pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
     (b".yml", Loader::Yaml),
 ];
 
+#[cfg(any(test, feature = "test_support"))]
 pub fn default_loaders() -> Vec<(Vec<u8>, Loader)> {
     DEFAULT_LOADERS
         .iter()
@@ -108,6 +109,7 @@ pub fn default_loaders() -> Vec<(Vec<u8>, Loader)> {
         .collect()
 }
 
+#[cfg(any(test, feature = "test_support"))]
 impl LoadOptions {
     pub fn new(project_root: Vec<u8>) -> LoadOptions {
         LoadOptions {

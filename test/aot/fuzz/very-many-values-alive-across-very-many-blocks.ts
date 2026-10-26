@@ -55,7 +55,7 @@ function body(k: any, n: number, order: string): string {
       L.push("const v" + i + " = " + k.load(i) + ";");
       if (i >= d) L.push(use(i - d));
     }
-    for (let i = n - d; i < n; i++) L.push(use(i));
+    for (let i = Math.max(0, n - d); i < n; i++) L.push(use(i));
   } else if (order === "carried-round-a-loop") {
     for (let i = 0; i < n; i++) L.push("let v" + i + " = " + k.zero + ";");
     L.push("for (let turn = 0; turn < 3; turn++) {");

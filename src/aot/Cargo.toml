@@ -15,6 +15,8 @@ path = "tests/ir_tests.rs"
 linked_names = ["bun_aot_builtins/linked_names"]
 # The printer of IR text. Bun writes the program as bytes: only tests read text.
 ir_text = []
+# What only tests use, those in `tests/` too.
+test_support = ["bun_aot_interface/test_support"]
 
 [dependencies]
 bun_aot_builtins.workspace = true
@@ -48,7 +50,7 @@ smallvec.workspace = true
 
 [dev-dependencies]
 # tests/ir_tests.rs links the library as any other crate does.
-bun_aot = { workspace = true, features = ["ir_text"] }
+bun_aot = { workspace = true, features = ["ir_text", "test_support"] }
 # The native symbols that Bun's C and C++ side provides to `bun_core`.
 bun_sema_standalone = { path = "../sema/standalone", features = ["test_support"] }
 bun_trim = { workspace = true, features = ["test_support"] }

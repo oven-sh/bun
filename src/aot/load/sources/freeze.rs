@@ -75,6 +75,7 @@ pub(crate) fn freeze_sources(
     let functions = &mut all.evaluated_functions;
     functions.shared_sort_unstable_by_key(|entry| entry.0);
     let sources = Sources {
+        #[cfg(test)]
         project: input.project,
         entry_points: collect_entry_points(input, &all.entries),
         entries: all.entries,

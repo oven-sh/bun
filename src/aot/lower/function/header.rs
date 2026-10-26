@@ -144,6 +144,9 @@ pub(crate) fn create_header(
     if file.scopes.has_too_many_captures(key) {
         file.gave_up(LimitId::MaxCaptures, position);
     }
+    if file.scopes.has_fields_for_handlers(key) {
+        file.gave_up(LimitId::MaxHandlerArguments, position);
+    }
     Function {
         name: None,
         module: file.module_id(),

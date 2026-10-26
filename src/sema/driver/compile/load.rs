@@ -10,7 +10,7 @@ use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
-use bun_sema::program::{CompileInputs, FileId, Files, MainModule, RootFileNames};
+use bun_sema::program::{CompileInputs, FileId, Files, MainModule, RootFileNames, Run};
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
     CodeResolution, Host, HostResolution, Options, Resolver, is_same_path, is_typescript_file_name,
@@ -26,6 +26,16 @@ pub fn load_program<'s>(
     session: &'s Session,
     host: &dyn CodeHost,
     request: &CompileRequest<'_, 's>,
+) -> Result<LoadedProgram<'s>, LoadFailure> {
+    load_program_with_parsed_files(session, host, request, None)
+}
+
+/// `parsed`: the declaration files that the loads of the build have parsed so far.
+pub fn load_program_with_parsed_files<'s>(
+    session: &'s Session,
+    host: &dyn CodeHost,
+    request: &CompileRequest<'_, 's>,
+    parsed: Option<&'s Run<'s>>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
     use_dedicated_pool("Bun Compile");
     let entry_paths = match request.entry_points {
@@ -94,8 +104,9 @@ pub fn load_program<'s>(
         }
     };
     options.emits_declarations = false;
-    let files = Files::load_for_compile(
+    let files = Files::load_for_compile_with_parsed_files(
         session,
+        parsed,
         host,
         project.options,
         root_files,

@@ -127,7 +127,8 @@ function describe(e/*: unknown*/)/*: string*/ {
     tryAwait: "STATE\nfor (const [n, bad] of rounds) { try { A await @P@; B } catch (e) { HANDLER } }\nlines.push('end ' + (SHOW));",
     returnedAndCaughtAbove: "STATE\nfunction ask(n/*: number*/, bad/*: boolean*/)/*: Promise<unknown>*/ { return @P@; }\nfor (const [n, bad] of rounds) { A await ask(n, bad).catch(e => { HANDLER }); B }\nlines.push('end ' + (SHOW));",
     settled: "STATE\nfor (const [n, bad] of rounds.slice(-4)) { A const [result] = await Promise.allSettled([@P@]); if (result.status === 'rejected') { const e = result.reason; HANDLER } B }\nlines.push('end ' + (SHOW));",
-    notAwaited: "STATE\nconst all/*: Promise<unknown>[]*/ = [];\nfor (const [n, bad] of rounds.slice(-4)) { A all.push(@P@.catch(e => { HANDLER })); B }\nawait Promise.all(all);\nlines.push('end ' + (SHOW));",
+    // The four promises are independent and may settle in any order, so their lines are sorted.
+    notAwaited: "STATE\nconst all/*: Promise<unknown>[]*/ = [];\nfor (const [n, bad] of rounds.slice(-4)) { A all.push(@P@.catch(e => { HANDLER })); B }\nawait Promise.all(all);\nlines.sort();\nlines.push('end ' + (SHOW));",
   };
   const add = (t: string, thrower: string, c: string, catcher: { body: string }, isAsync: boolean) => { for (const [s, state] of Object.entries(states)) for (const [w, when] of Object.entries(whens)) {
     if (w === "late" && /^(serverStop|bunConnect|bunConnectAlways|fetchRefused|bunFetch|dnsLookup|secretsGet|udpSocket|sleep)Native$/.test(t)) continue; // 2,000 servers, sockets, lookups or timers take seconds

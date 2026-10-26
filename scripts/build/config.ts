@@ -167,6 +167,8 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /** With `fuzzilli`: only the ahead-of-time compiler reports coverage (scripts/build/fuzzilli-compiler-coverage.txt). */
+  fuzzilliCompilerOnly: boolean;
   /**
    * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt.
    * The link makes a position-independent executable with full RELRO, eager binding and code in pages of its own.
@@ -469,6 +471,7 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  fuzzilliCompilerOnly?: boolean;
   hardened?: boolean;
   requireMdwe?: boolean;
   lockEnvironment?: boolean;
@@ -1534,6 +1537,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustLto,
     debugInfo,
     linkerMap: partial.linkerMap ?? true,
+    fuzzilliCompilerOnly: partial.fuzzilliCompilerOnly ?? false,
     ci,
     buildkite,
     webkit,
@@ -1924,7 +1928,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.debugInfo !== defaultDebugInfo(cfg)) features.push(`debug-info:${cfg.debugInfo}`);
   if (!cfg.linkerMap) features.push("linker-map:off");
   if (cfg.valgrind) features.push("valgrind");
-  if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.fuzzilli) features.push(cfg.fuzzilliCompilerOnly ? "fuzzilli:compiler-only" : "fuzzilli");
   if (cfg.hardened) features.push("hardened");
   if (cfg.requireMdwe !== cfg.hardened) features.push("require-mdwe:off");
   if (cfg.lockEnvironment !== cfg.hardened) features.push("lock-environment:off");

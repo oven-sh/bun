@@ -358,7 +358,7 @@ export function windowsEnv(
   coerceForWrite: CoerceEnvVarForWrite,
   resetForDelete: ResetEnvVarForDelete,
 ) {
-  (internalEnv as any)[Bun.inspect.custom] = () => {
+  (internalEnv as any)[Symbol.for("nodejs.util.inspect.custom")] = () => {
     let o = {};
     for (let k of envMapList) {
       o[k] = internalEnv[k.toUpperCase()];

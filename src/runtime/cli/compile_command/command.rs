@@ -47,6 +47,12 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         );
     }
     configuration::use_default_entry_point(ctx);
+    #[cfg(unix)]
+    if bun_core::Environment::ENABLE_FUZZILLI
+        && crate::cli::fuzzilli_compile_loop::is_started_by_fuzzilli()
+    {
+        crate::cli::fuzzilli_compile_loop::compile_programs(ctx);
+    }
 
     let configuration = configuration::configure(&mut *ctx)?;
     let location = configuration::output_location(

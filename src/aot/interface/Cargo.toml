@@ -12,6 +12,8 @@ doctest = false
 [features]
 # This Bun is built without the compiler: `bun_aot_absent` turns it on.
 absent = []
+# What only tests use.
+test_support = []
 
 [dependencies]
 bun_ast.workspace = true

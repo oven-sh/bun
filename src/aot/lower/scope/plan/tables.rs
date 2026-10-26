@@ -115,6 +115,7 @@ fn compute_function_summaries(
     let functions = &context.walk.functions;
     debug_assert_eq!(functions.len(), parts.captures.captures.len());
     let over_limit = &parts.captures.functions_over_limit;
+    let with_fields_for_handlers = &parts.functions_with_fields_for_handlers;
     let mut summaries = Vec::with_capacity(functions.len());
     let mut captures = Vec::new();
     for (id, function) in (0..).map(WalkedFunctionId).zip(functions) {
@@ -126,6 +127,7 @@ fn compute_function_summaries(
             undeclared_parameters: count_undeclared_parameters(context, function.key),
             captures: start..captures.len() as u32,
             has_too_many_captures: over_limit.binary_search(&id).is_ok(),
+            has_fields_for_handlers: with_fields_for_handlers.binary_search(&id).is_ok(),
         });
     }
     summaries.sort_unstable_by_key(|summary| summary.key);

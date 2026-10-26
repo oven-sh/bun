@@ -1,5 +1,6 @@
 use core::fmt;
 use core::num::NonZeroU32;
+use core::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use crate::trim::TrimRequest;
@@ -53,6 +54,23 @@ impl fmt::Debug for ReadListener {
     }
 }
 
+/// For a process that builds many programs: it loads once what a build loads whatever its entry points hold.
+#[derive(Clone)]
+pub struct Preload {
+    /// An empty file beside the entry point.
+    pub placeholder_entry_point: Box<[u8]>,
+    /// Called on the thread that builds. The build reads its entry points after this returns.
+    pub on_loaded: Arc<dyn Fn() + Send + Sync>,
+    /// Set before `on_loaded` is called. The builds that begin later load everything themselves.
+    pub is_loaded: Arc<AtomicBool>,
+}
+
+impl fmt::Debug for Preload {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Preload")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AotOptions {
     pub heap: HeapSize,
@@ -76,6 +94,8 @@ pub struct AotOptions {
     pub runs_tests: bool,
     /// `--watch` starts to watch each file here.
     pub before_read: Option<ReadListener>,
+    /// Only a build of Bun with Fuzzilli looks at it.
+    pub preload: Option<Preload>,
     pub thread_count: Option<NonZeroU32>,
     pub option_words: Vec<Box<[u8]>>,
 }
@@ -101,6 +121,7 @@ impl Default for AotOptions {
             checks_only: false,
             runs_tests: false,
             before_read: None,
+            preload: None,
             thread_count: None,
             option_words: Vec::new(),
         }
@@ -153,6 +174,7 @@ mod tests {
             checks_only,
             runs_tests,
             before_read,
+            preload,
             thread_count,
             option_words,
         } = AotOptions::default();
@@ -177,6 +199,7 @@ mod tests {
         assert!(!checks_only);
         assert!(!runs_tests);
         assert!(before_read.is_none());
+        assert!(preload.is_none());
         assert!(thread_count.is_none());
         assert!(option_words.is_empty());
     }

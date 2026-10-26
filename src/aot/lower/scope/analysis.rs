@@ -116,6 +116,7 @@ pub(super) struct FunctionSummary {
     pub(super) undeclared_parameters: u32,
     pub(super) captures: Range<u32>,
     pub(super) has_too_many_captures: bool,
+    pub(super) has_fields_for_handlers: bool,
 }
 
 pub(super) struct LoopStores {
@@ -222,6 +223,11 @@ impl ScopeAnalysis {
     pub(in crate::lower) fn has_too_many_captures(&self, key: FunctionKey) -> bool {
         let function = self.find_function(key);
         function.is_some_and(|function| function.has_too_many_captures)
+    }
+
+    pub(in crate::lower) fn has_fields_for_handlers(&self, key: FunctionKey) -> bool {
+        let function = self.find_function(key);
+        function.is_some_and(|function| function.has_fields_for_handlers)
     }
 
     /// The name holds a required module that is only read by members, so it holds no value, and every run of the function comes behind its initialization.

@@ -389,6 +389,7 @@
 # CHECK-NEXT: SetGlobalBinding v0 key="x"
 # CHECK-NEXT: v5:{{*}}= IsBuiltinLocationUnchanged member=MathMax
 # CHECK-NEXT: v6:{{*}}= GetBuiltinValue builtin=ProcessPid overload=ProcessPid/0
+# CHECK-NEXT: InitializeBuiltin builtin=ProcessNextTick
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-NEXT: function f29 name="validation" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=function}] results=[{type=anything}]
@@ -806,6 +807,7 @@ function f28 name="globals" module=m0 thisType={type=anything} parameters=[{type
     SetGlobalBinding v0 key="x"
     v5 = IsBuiltinLocationUnchanged member=MathMax
     v6 = GetBuiltinValue builtin=ProcessPid overload=ProcessPid/0
+    InitializeBuiltin builtin=ProcessNextTick
     Return v1
 }
 function f29 name="validation" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=function}] results=[{type=anything}] {

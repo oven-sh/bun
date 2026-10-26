@@ -60,6 +60,7 @@ use crate::report::{ModuleLocator, SourceTexts};
 use crate::statistics::{LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics};
 use bun_ast::{Kind, Loader, Log, Msg};
 use bun_core::ZBox;
+use bun_options_types::aot_options::Preload;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::program::{FileId, Files};
@@ -351,12 +352,15 @@ impl KeepsFreeBlocksBelowThePeak {
     const TIME_BEHIND_THE_PEAK: Duration = Duration::from_millis(1500);
     const TIME_BETWEEN_LOOKS: Duration = Duration::from_millis(20);
 
-    fn begin() -> KeepsFreeBlocksBelowThePeak {
+    fn begin(starts_thread: bool) -> KeepsFreeBlocksBelowThePeak {
         let is_over = Arc::new(AtomicBool::new(false));
         let is_first = BUILDS_THAT_KEEP_FREE_BLOCKS.fetch_add(1, Ordering::AcqRel) == 0;
         let watcher = (bun_alloc::USE_MIMALLOC && is_first)
             .then(|| {
                 Self::hand_out_last_freed_memory(true);
+                if !starts_thread {
+                    return None;
+                }
                 let is_over = Arc::clone(&is_over);
                 let thread = std::thread::Builder::new().name("AOT memory".into());
                 thread.spawn(move || Self::watch(&is_over)).ok()
@@ -426,6 +430,14 @@ impl Drop for KeepsFreeBlocksBelowThePeak {
             let _ = watcher.join();
         }
     }
+}
+
+fn preload_of<'a>(options: &Options<'a>) -> Option<&'a Preload> {
+    if !bun_core::Environment::ENABLE_FUZZILLI {
+        return None;
+    }
+    let preload = options.aot.preload.as_ref();
+    preload.filter(|preload| !preload.is_loaded.load(Ordering::Relaxed))
 }
 
 // A global begins at an entry point: the process at the first, a Worker at the one that it names. What the compiler proves about a
@@ -892,7 +904,9 @@ fn compile_programs<'a>(
     provider: &'a dyn SourceProvider,
     log: &mut Log,
 ) -> Result<CompiledPrograms, BuildFailed> {
-    let _keeps_free_blocks_below_the_peak = KeepsFreeBlocksBelowThePeak::begin();
+    // A process that `Preload::on_loaded` forks has the calling thread alone.
+    let _keeps_free_blocks_below_the_peak =
+        KeepsFreeBlocksBelowThePeak::begin(preload_of(options).is_none());
     let request = EngineRequest {
         options: options.aot,
         identity: options.executable_identity,

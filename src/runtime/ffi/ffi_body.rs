@@ -368,6 +368,26 @@ mod stdarg {
         pub(super) fn inject(_: &mut TCC::State) {}
     }
 
+    /// Compiled C code allocates with the allocator of the libraries it calls, so either may release the other's
+    /// blocks. The `malloc` linked into the executable can be the executable's alone.
+    #[cfg(unix)]
+    fn find_shared_allocator_function(
+        name: &core::ffi::CStr,
+        linked: *const c_void,
+    ) -> *const c_void {
+        // SAFETY: `name` is NUL-terminated.
+        let shared = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
+        if shared.is_null() {
+            linked
+        } else {
+            shared.cast_const()
+        }
+    }
+    #[cfg(not(unix))]
+    fn find_shared_allocator_function(_: &core::ffi::CStr, linked: *const c_void) -> *const c_void {
+        linked
+    }
+
     pub(super) fn inject(state: &mut TCC::State) {
         state
             .add_symbols(&[
@@ -394,10 +414,22 @@ mod stdarg {
                 ("fflush", ffi_fflush as *const c_void),
                 ("fread", libc::fread as *const c_void),
                 // memory
-                ("malloc", libc::malloc as *const c_void),
-                ("realloc", libc::realloc as *const c_void),
-                ("calloc", calloc as *const c_void),
-                ("free", libc::free as *const c_void),
+                (
+                    "malloc",
+                    find_shared_allocator_function(c"malloc", libc::malloc as *const c_void),
+                ),
+                (
+                    "realloc",
+                    find_shared_allocator_function(c"realloc", libc::realloc as *const c_void),
+                ),
+                (
+                    "calloc",
+                    find_shared_allocator_function(c"calloc", calloc as *const c_void),
+                ),
+                (
+                    "free",
+                    find_shared_allocator_function(c"free", libc::free as *const c_void),
+                ),
                 // error
                 ("perror", perror as *const c_void),
             ])
@@ -407,7 +439,13 @@ mod stdarg {
         {
             state
                 .add_symbols(&[
-                    ("posix_memalign", libc::posix_memalign as *const c_void),
+                    (
+                        "posix_memalign",
+                        find_shared_allocator_function(
+                            c"posix_memalign",
+                            libc::posix_memalign as *const c_void,
+                        ),
+                    ),
                     ("dlopen", libc::dlopen as *const c_void),
                     ("dlclose", libc::dlclose as *const c_void),
                     ("dlsym", libc::dlsym as *const c_void),

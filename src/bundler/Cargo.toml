@@ -70,7 +70,7 @@ bun_hash.workspace = true
 # The native symbols that Bun's C and C++ side provides to `bun_core`.
 bun_sema_standalone = { path = "../sema/standalone" }
 # The functions that `bun_aot_interface` declares.
-bun_aot_compiler = { package = "bun_aot", path = "../aot" }
+bun_aot_compiler = { package = "bun_aot", path = "../aot", features = ["test_support"] }
 
 [features]
 default = []

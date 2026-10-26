@@ -138,6 +138,10 @@ builtin-modules/members-that-load-modules-or-evaluate-text-are-imported-by-name
 builtin-modules/methods-named-like-the-functions-of-node-path
 builtin-modules/names-lengths-and-texts-of-library-functions-that-the-program-enters
 builtin-modules/natives-read-members-of-what-they-are-handed
+builtin-modules/next-tick-read-in-a-function-that-does-nothing-else
+builtin-modules/next-tick-read-in-a-loop-that-never-runs
+builtin-modules/next-tick-read-returned-to-a-caller-that-ignores-it
+builtin-modules/next-tick-read-used-only-in-a-branch-not-taken
 builtin-modules/rejected-argument-description
 builtin-modules/rejected-argument-whose-fields-nobody-reads
 builtin-modules/require-resolve-answers-the-name-of-a-built-in-module-as-it-was-asked
@@ -147,6 +151,7 @@ builtin-modules/the-exports-of-a-native-module-are-captured-when-it-is-first-loa
 builtin-modules/the-library-describes-a-proxy-in-its-error-without-asking-it
 builtin-modules/the-process-object-is-whole-at-the-first-statement
 builtin-modules/the-text-of-a-buffer-with-every-kind-of-receiver-encoding-and-bound
+builtin-modules/unused-next-tick-read-beside-other-entry-points
 bundler-features/build-constants-across-modules
 bundler-features/namespace-import-of-primitive-module
 calls-fast-paths/a-callee-taken-in-makes-an-object-of-the-shape-that-the-caller-has-tested
@@ -311,6 +316,8 @@ classes/lists-of-every-length-are-spread-into-super-and-into-a-class-without-a-c
 classes/members-above-a-deleted-field-answer
 classes/names-that-built-ins-have-as-data-are-called-as-methods
 classes/several-members-of-a-base-change-under-heirs
+classes/static-field-of-a-union-of-number-literals-holds-a-number-given-as-any
+classes/static-field-of-a-union-of-number-literals-holds-numbers-cast-to-it
 classes/static-field-replaces-a-static-method-that-a-loop-stored-to
 classes/static-fields-named-like-static-methods-and-accessors-are-listed
 classes/static-fields-whose-type-is-one-number-are-read-while-they-change
@@ -507,6 +514,19 @@ enums/a-number-outside-the-enum-is-given-for-a-parameter-with-a-default-and-read
 enums/a-number-outside-the-enum-is-given-for-it-and-read-in-a-closure
 enums/constant-pow-matches-engine
 enums/enums-with-reverse-keys-of-every-kind
+enums/static-field-of-a-base-class-and-an-own-property-of-its-subclass-hold-numbers-past-int32
+enums/static-field-of-a-const-enum-type-holds-a-number-past-int32
+enums/static-field-of-a-flags-enum-holds-what-arithmetic-makes-of-the-flags
+enums/static-field-of-an-enum-or-a-string-holds-a-number-past-int32
+enums/static-field-of-an-enum-or-undefined-holds-a-number-past-int32
+enums/static-field-of-an-enum-type-holds-a-number-past-int32
+enums/static-field-of-an-enum-type-holds-numbers-below-and-far-past-int32
+enums/static-field-of-an-enum-type-is-stored-through-a-parameter-that-holds-the-class
+enums/static-field-of-an-enum-type-is-stored-through-this
+enums/static-field-of-an-enum-with-one-member-holds-another-number
+enums/static-field-of-one-enum-member-holds-another-number
+enums/static-field-past-int32-is-read-by-operators-and-as-an-index
+enums/static-field-past-int32-is-the-subject-of-a-switch
 errors/a-definition-by-descriptor-that-is-refused
 errors/a-read-of-an-accessor-of-a-web-class-on-its-prototype-leaves-no-frame
 errors/a-read-of-an-accessor-without-a-function-object-leaves-no-frame
@@ -521,6 +541,8 @@ escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made-in-a-very-large-program
 escape-analysis/a-call-throws-while-a-slice-that-a-builder-takes-over-is-not-yet-made-in-hot-code
 escape-analysis/a-callback-over-the-scope-of-a-function-calls-what-the-function-was-given-validated
+escape-analysis/a-closure-made-in-a-try-holds-a-name-the-try-stores-under-a-condition
+escape-analysis/a-closure-made-in-a-try-that-stores-to-very-many-names
 escape-analysis/a-closure-made-in-one-turn-of-a-loop-captures-a-value-made-ahead-of-the-loop
 escape-analysis/a-constructor-returns-a-function-without-optimization-rounds
 escape-analysis/a-default-array-or-an-iterator-is-made-into-json-in-hot-code-and-every-pass-is-verified
@@ -755,6 +777,10 @@ language/error-positions-in-static-blocks
 language/every-door-of-sloppy-code-to-a-built-in-throws
 language/finalization-registry-outlives-its-creating-job
 language/finalization-registry-unused-after-await
+language/for-in-in-a-try-assigns-a-destructured-parameter-read-after-the-loop
+language/for-in-in-a-try-assigns-a-destructured-parameter-read-in-the-finally
+language/for-in-in-a-try-assigns-a-destructured-parameter-read-in-the-handler
+language/for-in-in-a-try-assigns-a-destructured-parameter-while-the-object-changes
 language/for-in-members-in-nested-loops
 language/for-in-over-three-known-names-meets-values-of-another-kind
 language/for-in-over-two-known-names-meets-values-of-another-kind

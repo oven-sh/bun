@@ -1,6 +1,7 @@
 use super::import_graph::ImportGraph;
 use super::{
     Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, mentions_worker_constructor,
+    preload_of,
 };
 use crate::builtins::{BuiltinNames, RuntimeModule};
 use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
@@ -25,15 +26,16 @@ use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
 use bun_sema::import_sites::ImportSpecifier;
-use bun_sema::program::{FileId, Files, MainModule};
+use bun_sema::program::{FileId, Files, MainModule, Run};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
     CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
-    find_configuration_of_each_entry_point, load_program,
+    find_configuration_of_each_entry_point, load_program_with_parsed_files,
 };
 use bun_threading::Guarded;
+use core::sync::atomic::Ordering;
 use std::cell::Cell;
 use std::mem::take;
 use std::thread::Scope;
@@ -105,6 +107,25 @@ struct SharedLoadInputs<'c, 's> {
     manifest: &'static Manifest,
     runtime_modules: &'c RuntimeModules,
     messages: &'c LoadMessages,
+    parsed_declarations: Option<&'s Run<'s>>,
+}
+
+/// What the request for a load of Bun's own code borrows.
+struct RuntimeLoadInputs<'c, 's> {
+    fold: FoldInputs<'s>,
+    code: CodeOptions,
+    host: RuntimeHost<'c>,
+    can_load_code_at_run_time: bool,
+    loads_code_by_unknown_names_alone: bool,
+}
+
+// Programs that ask the same of Bun's own code share one load of it.
+fn asks_the_same(a: &RuntimeRoots, b: &RuntimeRoots) -> bool {
+    a.paths == b.paths
+        && a.host_loaded_modules == b.host_loaded_modules
+        && a.imports_cluster == b.imports_cluster
+        && a.imports_uncompiled_code == b.imports_uncompiled_code
+        && a.loads_by_unknown_path == b.loads_by_unknown_path
 }
 
 fn create_runtime_modules(archive: &'static Archive, options: &Options<'_>) -> RuntimeModules {
@@ -179,6 +200,9 @@ impl<'a> Build<'a> {
             &self.limits,
             self.platform,
         );
+        let parsed_declarations = preload_of(options).map(|_| {
+            &*(application_session.arena()).alloc(Run::of_compile_build(application_session, atoms))
+        });
         let shared = SharedLoadInputs {
             disk: &disk,
             sessions,
@@ -190,6 +214,7 @@ impl<'a> Build<'a> {
             manifest: archive.manifest(),
             runtime_modules: &runtime_modules,
             messages: &messages,
+            parsed_declarations,
         };
         let result = self.load_projects(&shared, asset_reads, then);
         self.leftovers.push(Box::new(disk));
@@ -293,16 +318,24 @@ impl<'a> Build<'a> {
         })
     }
 
-    fn load_projects_once<R>(
+    fn load_projects_once<'s, R>(
         &mut self,
-        shared: &SharedLoadInputs<'_, '_>,
-        project: &ApplicationLoad<'_, '_, '_, '_, '_>,
+        shared: &SharedLoadInputs<'_, 's>,
+        project: &ApplicationLoad<'_, '_, '_, '_, 's>,
         then: Then<'_, 'a, R>,
     ) -> Result<R, Stage> {
         let options = self.options;
         let (host, request, positions) = (project.host, project.request, project.positions);
         let session = shared.sessions.application;
-        let mut application = self.load_application(session, host, request, shared.messages)?;
+        let mut preloaded_runtime = None;
+        if let Some(preload) = preload_of(options) {
+            let placeholder = [preload.placeholder_entry_point.to_vec()];
+            preloaded_runtime =
+                Some(self.load_runtime_of_placeholder(shared, project, &placeholder)?);
+            preload.is_loaded.store(true, Ordering::Relaxed);
+            (preload.on_loaded)();
+        }
+        let mut application = self.load_application(session, host, request, shared)?;
         if project.asset_reads == AssetReads::FinishedLater {
             read_assets(project.scope, host);
         }
@@ -389,14 +422,6 @@ impl<'a> Build<'a> {
                 collect_runtime_roots(files, shared.runtime_modules, self.platform)
             })
             .collect();
-        // Programs that ask the same of Bun's own code share one load of it.
-        let asks_the_same = |a: &RuntimeRoots, b: &RuntimeRoots| {
-            a.paths == b.paths
-                && a.host_loaded_modules == b.host_loaded_modules
-                && a.imports_cluster == b.imports_cluster
-                && a.imports_uncompiled_code == b.imports_uncompiled_code
-                && a.loads_by_unknown_path == b.loads_by_unknown_path
-        };
         let mut groups: Vec<Vec<usize>> = Vec::new();
         for (index, asked) in roots.iter().enumerate() {
             match (groups.iter_mut()).find(|group| asks_the_same(&roots[group[0]], asked)) {
@@ -412,50 +437,19 @@ impl<'a> Build<'a> {
                 0 => shared.sessions.runtime,
                 _ => &shared.further_runtime_sessions[group_index - 1],
             };
-            // A name that the build does not know may be the path of a file on disk. Code that the build does not see may name the module too.
-            let is_told_of_code =
-                options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
-            let loads_code_by_unknown_names_alone =
-                !is_told_of_code && roots.loads_by_unknown_path && options.aot.loads_code_from_disk;
-            let can_load_code_at_run_time = is_told_of_code || loads_code_by_unknown_names_alone;
-            let runtime_fold = create_runtime_fold_inputs(
-                shared.manifest,
-                session.arena(),
-                &shared.atoms,
-                shared.messages,
-                &self.limits,
-                self.platform,
-                ProgramFacts {
-                    can_load_code_at_run_time,
-                    can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
-                },
-            );
-            let runtime_code = CodeOptions {
-                tsconfig_override: Some([VIRTUAL_ROOT, b"tsconfig.json"].concat()),
-                max_computed_candidates: max_computed_candidates(&self.limits),
-                ..CodeOptions::bun_run(VIRTUAL_ROOT.strip_suffix(b"/").unwrap_or(VIRTUAL_ROOT))
+            let inputs = self.create_runtime_load_inputs(shared, session, roots);
+            let runtime_request = self.create_runtime_request(shared, &inputs, roots);
+            let RuntimeLoadInputs {
+                host: ref runtime_host,
+                can_load_code_at_run_time,
+                loads_code_by_unknown_names_alone,
+                ..
+            } = inputs;
+            let preloaded = preloaded_runtime.take();
+            let mut runtime = match preloaded.filter(|(known, _)| asks_the_same(known, roots)) {
+                Some((_, runtime)) => runtime,
+                None => self.load_runtime(shared, session, runtime_host, &runtime_request)?,
             };
-            let runtime_host = RuntimeHost {
-                disk: shared.disk,
-                runtime_modules: shared.runtime_modules,
-                builtin_names: shared.builtin_names,
-                platform: self.platform,
-                messages: shared.messages,
-                unreadable: Default::default(),
-            };
-            let runtime_request = CompileRequest {
-                entry_points: EntryPoints::Resolved(&roots.paths),
-                code: &runtime_code,
-                fold: &runtime_fold,
-                atoms: shared.atoms,
-                libs: options.typescript_libs,
-                project_origin: FileOrigin::Runtime,
-                threads: self.threads,
-                progress: None,
-                left_out_bodies: None,
-            };
-            let runtime = load_program(session, &runtime_host, &runtime_request);
-            let mut runtime = self.finish_load(runtime, &runtime_request, shared.messages)?;
             self.count_time(StatisticId::LoadRuntimeProjectNanoseconds, started);
 
             runtime.set_is_read_again(is_read_again);
@@ -479,7 +473,7 @@ impl<'a> Build<'a> {
                     },
                     runtime: LoadedProject {
                         loaded: &runtime,
-                        host: &runtime_host,
+                        host: runtime_host,
                         request: &runtime_request,
                         sources: sources.runtime,
                     },
@@ -500,6 +494,113 @@ impl<'a> Build<'a> {
             }
         }
         Ok(result.expect("a build has a program"))
+    }
+
+    fn create_runtime_load_inputs<'c, 's>(
+        &self,
+        shared: &SharedLoadInputs<'c, 's>,
+        session: &'s Session,
+        roots: &RuntimeRoots,
+    ) -> RuntimeLoadInputs<'c, 's> {
+        let options = self.options;
+        // A name that the build does not know may be the path of a file on disk. Code that the build does not see may name the module too.
+        let is_told_of_code = options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
+        let loads_code_by_unknown_names_alone =
+            !is_told_of_code && roots.loads_by_unknown_path && options.aot.loads_code_from_disk;
+        let can_load_code_at_run_time = is_told_of_code || loads_code_by_unknown_names_alone;
+        RuntimeLoadInputs {
+            fold: create_runtime_fold_inputs(
+                shared.manifest,
+                session.arena(),
+                &shared.atoms,
+                shared.messages,
+                &self.limits,
+                self.platform,
+                ProgramFacts {
+                    can_load_code_at_run_time,
+                    can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
+                },
+            ),
+            code: CodeOptions {
+                tsconfig_override: Some([VIRTUAL_ROOT, b"tsconfig.json"].concat()),
+                max_computed_candidates: max_computed_candidates(&self.limits),
+                ..CodeOptions::bun_run(VIRTUAL_ROOT.strip_suffix(b"/").unwrap_or(VIRTUAL_ROOT))
+            },
+            host: RuntimeHost {
+                disk: shared.disk,
+                runtime_modules: shared.runtime_modules,
+                builtin_names: shared.builtin_names,
+                platform: self.platform,
+                messages: shared.messages,
+                unreadable: Default::default(),
+            },
+            can_load_code_at_run_time,
+            loads_code_by_unknown_names_alone,
+        }
+    }
+
+    fn create_runtime_request<'r, 's>(
+        &self,
+        shared: &SharedLoadInputs<'_, 's>,
+        inputs: &'r RuntimeLoadInputs<'_, 's>,
+        roots: &'r RuntimeRoots,
+    ) -> CompileRequest<'r, 's>
+    where
+        'a: 'r,
+    {
+        CompileRequest {
+            entry_points: EntryPoints::Resolved(&roots.paths),
+            code: &inputs.code,
+            fold: &inputs.fold,
+            atoms: shared.atoms,
+            libs: self.options.typescript_libs,
+            project_origin: FileOrigin::Runtime,
+            threads: self.threads,
+            progress: None,
+            left_out_bodies: None,
+        }
+    }
+
+    fn load_runtime<'s>(
+        &mut self,
+        shared: &SharedLoadInputs<'_, 's>,
+        session: &'s Session,
+        host: &RuntimeHost<'_>,
+        request: &CompileRequest<'_, 's>,
+    ) -> Result<LoadedProgram<'s>, Stage> {
+        let parsed = shared.parsed_declarations;
+        let runtime = load_program_with_parsed_files(session, host, request, parsed);
+        self.finish_load(runtime, request, shared.messages)
+    }
+
+    /// Bun's own code as a program asks for it that uses nothing of it by name.
+    fn load_runtime_of_placeholder<'s>(
+        &mut self,
+        shared: &SharedLoadInputs<'_, 's>,
+        project: &ApplicationLoad<'_, '_, '_, '_, 's>,
+        placeholder: &[Vec<u8>],
+    ) -> Result<(RuntimeRoots, LoadedProgram<'s>), Stage> {
+        let request = CompileRequest {
+            entry_points: EntryPoints::Written(placeholder),
+            code: project.request.code,
+            fold: project.request.fold,
+            atoms: project.request.atoms,
+            libs: project.request.libs,
+            project_origin: project.request.project_origin,
+            threads: project.request.threads,
+            progress: None,
+            left_out_bodies: None,
+        };
+        let session = shared.sessions.application;
+        let application = self.load_application(session, project.host, &request, shared)?;
+        let files = application.files();
+        let roots = collect_runtime_roots(files, shared.runtime_modules, self.platform);
+        drop(application);
+        let session = shared.sessions.runtime;
+        let inputs = self.create_runtime_load_inputs(shared, session, &roots);
+        let request = self.create_runtime_request(shared, &inputs, &roots);
+        let runtime = self.load_runtime(shared, session, &inputs.host, &request)?;
+        Ok((roots, runtime))
     }
 
     /// The positions of the entry points that are loaded now. The others are left for loads of their own.
@@ -568,14 +669,15 @@ impl<'a> Build<'a> {
         kept
     }
 
-    pub(super) fn load_application<'s>(
+    fn load_application<'s>(
         &mut self,
         session: &'s Session,
         host: &LoadHost<'_>,
         request: &CompileRequest<'_, 's>,
-        messages: &LoadMessages,
+        shared: &SharedLoadInputs<'_, 's>,
     ) -> Result<LoadedProgram<'s>, Stage> {
-        let mut result = load_program(session, host, request);
+        let (messages, parsed) = (shared.messages, shared.parsed_declarations);
+        let mut result = load_program_with_parsed_files(session, host, request, parsed);
         if !host.reads_in_background_after_load()
             && !host.finish_background_reads()
             && result.is_ok()
@@ -583,7 +685,7 @@ impl<'a> Build<'a> {
         {
             drop(result);
             self.provider.clear_embedded_files();
-            result = load_program(session, host, request);
+            result = load_program_with_parsed_files(session, host, request, parsed);
         }
         self.finish_load(result, request, messages)
     }

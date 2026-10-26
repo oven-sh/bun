@@ -43,3 +43,31 @@ export function writeClassWithMethods(methodCount: number): Program {
     output: `${methodCount + 1} 7 ${methodCount - 1}\n`,
   };
 }
+
+// The `try` block stores to every local, the `catch` block reads every local, and the second call throws halfway.
+export function writeLocalsStoredInTry(localCount: number): Program {
+  const indexes = indexesUpTo(localCount);
+  const lastStored = localCount >> 1;
+  const sumOfCatch = indexes.reduce((sum, index) => mix(sum, index <= lastStored ? index * 7 + 1 : 0), 1);
+  return {
+    source: [
+      "function mix(sum, value) { return (sum * 33 + value) % 1000000007; }",
+      "function run(numbers, throws) {",
+      "let sum = 1;",
+      ...indexes.map(index => `let local${index} = 0;`),
+      "try {",
+      ...indexes.map(
+        index => `local${index} = numbers[${index}];${index === lastStored ? " if (throws) throw 0;" : ""}`,
+      ),
+      "} catch {",
+      ...indexes.map(index => `sum = mix(sum, local${index});`),
+      "}",
+      `return mix(sum, local0 + local${localCount - 1});`,
+      "}",
+      "const numbers = [];",
+      `for (let index = 0; index < ${localCount}; index++) numbers.push(index * 7 + 1);`,
+      "console.log(run(numbers, false), run(numbers, true));",
+    ].join("\n"),
+    output: `${mix(1, 1 + (localCount - 1) * 7 + 1)} ${mix(sumOfCatch, 1)}\n`,
+  };
+}

@@ -428,3 +428,7 @@ test/bundler/native-plugin.test.ts
 
 # Slow
 test/js/bun/typescript/type-export.test.ts
+
+# End the process while threads, lookups and requests are in flight.
+test/js/bun/util/system-library-calls.test.ts
+test/napi/addon-allocations.test.ts

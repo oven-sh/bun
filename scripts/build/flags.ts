@@ -34,6 +34,16 @@ export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
 }
 
+/** What makes a translation unit report coverage to Fuzzilli: for Bun's own sources and, in an engine built from source, JavaScriptCore's. */
+export function fuzzilliCoverageFlags(cfg: Pick<Config, "cwd" | "fuzzilli" | "fuzzilliCompilerOnly">): string[] {
+  if (!cfg.fuzzilli) return [];
+  const list = join(cfg.cwd, "scripts/build/fuzzilli-compiler-coverage.txt");
+  return [
+    "-fsanitize-coverage=trace-pc-guard",
+    ...(cfg.fuzzilliCompilerOnly ? [`-fsanitize-coverage-allowlist=${list}`] : []),
+  ];
+}
+
 export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: string): string[] {
   return usesSafeStack(c) && safeStackDependencies.includes(dependency) ? ["-fsanitize=safe-stack"] : [];
 }
@@ -776,7 +786,7 @@ export const bunOnlyFlags: Flag[] = [
     desc: "Undefined-behavior sanitizers",
   },
   {
-    flag: ["-fsanitize-coverage=trace-pc-guard", "-DFUZZILLI_ENABLED"],
+    flag: c => [...fuzzilliCoverageFlags(c), "-DFUZZILLI_ENABLED"],
     when: c => c.fuzzilli,
     desc: "Fuzzilli coverage instrumentation",
   },

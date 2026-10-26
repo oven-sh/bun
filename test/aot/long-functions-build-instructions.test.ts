@@ -1,7 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { measureCommand } from "./analysis-scaling/measure-check";
-import { withThreads } from "./harness/flags";
+import { expectLinearInstructionCount } from "./long-functions-instructions";
 import {
   indexesUpTo,
   mix,
@@ -74,56 +73,38 @@ function writeLocalsLoadedFromArrays(localCount: number): Program {
   };
 }
 
-// The `try` block stores to every local, the `catch` block reads every local, and the second call throws halfway.
-function writeLocalsStoredInTry(localCount: number): Program {
-  const indexes = indexesUpTo(localCount);
-  const lastStored = localCount >> 1;
-  const sumOfCatch = indexes.reduce((sum, index) => mix(sum, index <= lastStored ? index * 7 + 1 : 0), 1);
+// Every object is filled by name behind its empty literal, and holds the object made before it.
+function writeObjectsThatHoldTheOneBefore(objectCount: number): Program {
+  const indexes = indexesUpTo(objectCount);
+  const last = objectCount - 1;
   return {
     source: [
-      "function mix(sum, value) { return (sum * 33 + value) % 1000000007; }",
-      "function run(numbers, throws) {",
-      "let sum = 1;",
-      ...indexes.map(index => `let local${index} = 0;`),
-      "try {",
+      "function make() {",
       ...indexes.map(
-        index => `local${index} = numbers[${index}];${index === lastStored ? " if (throws) throw 0;" : ""}`,
+        index =>
+          `const object${index} = {}; object${index}.index = ${index}; object${index}.text = "text ${index}"; ` +
+          `object${index}.previous = ${index ? `object${index - 1}` : "null"};`,
       ),
-      "} catch {",
-      ...indexes.map(index => `sum = mix(sum, local${index});`),
+      `return object${last};`,
       "}",
-      `return mix(sum, local0 + local${localCount - 1});`,
-      "}",
-      "const numbers = [];",
-      `for (let index = 0; index < ${localCount}; index++) numbers.push(index * 7 + 1);`,
-      "console.log(run(numbers, false), run(numbers, true));",
+      "const made = make();",
+      "console.log(made.index, made.text, made.previous.index, made.previous.previous.text);",
     ].join("\n"),
-    output: `${mix(1, 1 + (localCount - 1) * 7 + 1)} ${mix(sumOfCatch, 1)}\n`,
+    output: `${last} text ${last} ${last - 1} text ${last - 2}\n`,
   };
 }
 
-async function instructionsOfBuild(program: Program) {
-  using dir = tempDir("aot-long-functions-counted", { "main.js": program.source });
+async function codeBytesOfFunction(program: Program, name: string) {
+  using dir = tempDir("aot-long-functions-code-bytes", { "main.js": program.source });
   const cwd = String(dir);
-  const command = [bunExe(), "build", "--compile", "--aot", withThreads(1), "./main.js", "--outfile", "./main"];
-  const { instructions } = await measureCommand(cwd, command, 200_000);
-  await using ran = Bun.spawn({ cmd: ["./main"], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [output, errors, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  expect({ output, errors, exitCode }).toEqual({ output: program.output, errors: "", exitCode: 0 });
-  return instructions;
-}
-
-// Instructions on one thread are the same at any load, so the bound is closer to four than a bound on time can be.
-// What a build of nothing costs is left out.
-async function expectLinearInstructionCount(
-  few: number,
-  writeProgramOfSize: (size: number) => Program,
-  mostGrowth: number,
-) {
-  const programs = [{ source: "console.log(0);", output: "0\n" }, writeProgramOfSize(few), writeProgramOfSize(4 * few)];
-  const [withNone, withFew, withMany] = await Promise.all(programs.map(instructionsOfBuild));
-  if (withNone === undefined || withFew === undefined || withMany === undefined) return;
-  expect((withMany - withNone) / (withFew - withNone)).toBeLessThan(mostGrowth);
+  const flags = ["--aot-report=./report.json", "--aot-report-detail=functions"];
+  const cmd = [bunExe(), "build", "--compile", "--aot", ...flags, "./main.js", "--outfile", "./main"];
+  await using built = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "ignore", stderr: "pipe" });
+  expect({ errors: await built.stderr.text(), exitCode: await built.exited }).toMatchObject({ exitCode: 0 });
+  const { functions } = (await Bun.file(`${cwd}/report.json`).json()) as {
+    functions: { name: string; codeBytes: number }[];
+  };
+  return functions.filter(it => it.name === name).reduce((sum, it) => sum + it.codeBytes, 0);
 }
 
 test.skipIf(isSlowBuild || isWindows)(
@@ -167,9 +148,29 @@ test.skipIf(isSlowBuild || isWindows)(
 );
 
 test.skipIf(isSlowBuild || isWindows)(
-  "the instructions of a build are nearly linear in the number of locals a try block stores to",
+  "the instructions of a build are nearly linear in the number of locals loaded from arrays, from sixty locals on",
   async () => {
-    await expectLinearInstructionCount(1_000, writeLocalsStoredInTry, 6.5);
+    await expectLinearInstructionCount(60, writeLocalsLoadedFromArrays, 5.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild)(
+  "the code of a function is linear in the number of locals loaded from arrays",
+  async () => {
+    const [withFew, withMany] = await Promise.all(
+      [60, 240].map(localCount => codeBytesOfFunction(writeLocalsLoadedFromArrays(localCount), "run")),
+    );
+    expect(withFew).toBeGreaterThan(0);
+    expect(withMany / withFew).toBeLessThan(5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of objects that each hold the one before",
+  async () => {
+    await expectLinearInstructionCount(8_000, writeObjectsThatHoldTheOneBefore, 4.5);
   },
   240_000,
 );

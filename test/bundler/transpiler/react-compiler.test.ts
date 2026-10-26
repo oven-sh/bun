@@ -4224,18 +4224,17 @@ test.skipIf(isDebug || isASAN)(
 );
 
 // At each join between a read and its definition EnterSSA made an identifier for a phi, and then left the phi out. The
-// children of an element are all read at its end, so each literal below is live across every ternary after it.
-// Not where the empty build takes 330 MB: the first component only takes more than that with so many children that a
-// debug build of it does not end in time.
+// children of an element are all read at its end, so the value of each ternary below is live across every ternary
+// after it: 1,500 children took 280 MB and 3,000 took 950 MB.
+// Not on a debug build, which takes about 10 seconds for the second component.
 test.skipIf(isDebug || isASAN)(
   "react-compiler memory does not grow with the values that are live across a join",
   async () => {
     const ternary = "{props.a ? 1 : 2}";
-    const ternaries = Buffer.alloc(ternary.length * 400, ternary).toString();
-    const numbers = Array.from({ length: 4000 }, (_, i) => `{${i}}`).join("");
+    const children = (count: number) => Buffer.alloc(ternary.length * count, ternary).toString();
     using dir = tempDir("react-compiler-live-across-joins", {
-      "across.jsx": `export default function App(props) { return <div>${numbers}${ternaries}</div>; }`,
-      "before.jsx": `export default function App(props) { return <div>${ternaries}${numbers}</div>; }`,
+      "half.jsx": `export default function App(props) { return <div>${children(1500)}</div>; }`,
+      "whole.jsx": `export default function App(props) { return <div>${children(3000)}</div>; }`,
     });
 
     const peakMB = async (entry: string) => {
@@ -4249,11 +4248,171 @@ test.skipIf(isDebug || isASAN)(
       return maxRSS / 1024 / 1024;
     };
 
-    const [across, before] = await Promise.all([peakMB("across.jsx"), peakMB("before.jsx")]);
-    // The two components have the same children. Without the fix the first takes 209 MB more.
-    expect(across - before).toBeLessThan(100);
+    const [half, whole] = await Promise.all([peakMB("half.jsx"), peakMB("whole.jsx")]);
+    // Without the fix the second component takes more than 500 MB more than the first.
+    expect(whole - half).toBeLessThan(100);
   },
 );
+
+// A constant that is read after a loop is looked up through the last join of the body, and the header of the loop then
+// comes to that join again. There the join gets the phi that upstream has. A lookup that went on above it would end at
+// the join of the `switch`, which has 2,000 predecessors, and each of the 2,000 constants would get a phi that wide.
+test.skipIf(isDebug || isASAN)(
+  "react-compiler memory does not grow with the width of a join above the last join of a loop",
+  async () => {
+    const each = (text: (index: number) => string) => Array.from({ length: 2000 }, (_, i) => text(i)).join("");
+    using dir = tempDir("react-compiler-loop-below-wide-join", {
+      "empty.jsx": `export default function App() { return null; }`,
+      "loop.jsx": `
+        export default function App(props) {
+          ${each(i => `const v${i} = props.a${i};\n`)}
+          let i = 0, x = 0;
+          do {
+            switch (props.k) {
+              case 0: x = props.z ? 1 : 2; break;
+              ${each(i => `case ${i + 1}: x = ${i + 1}; break;\n`)}
+            }
+            i += props.c ? 1 : 2;
+          } while (i < props.n);
+          return <div>{x}${each(i => `{v${i}}`)}</div>;
+        }
+      `,
+    });
+
+    const peakMB = async (entry: string) => {
+      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+        cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+        cwd: String(dir),
+      });
+      expect(stderr).toBe("");
+      expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
+      expect(exitCode).toBe(0);
+      return maxRSS / 1024 / 1024;
+    };
+
+    const [empty, loop] = await Promise.all([peakMB("empty.jsx"), peakMB("loop.jsx")]);
+    // 150 MB above the empty build, and 430 MB where the join of the `switch` takes the phis.
+    expect(loop - empty).toBeLessThan(280);
+  },
+);
+
+// A read after a loop that a `break` leaves looks in the body of the loop first, and the header of the loop then
+// looks in the body again. A join that takes no phi gets no identifier from EnterSSA. One that the lookup comes to
+// again gets the phi that upstream has there. In the fifth component the `break` is above the last join: the header
+// comes to that one once, and reads a phi in the making there.
+test("react-compiler finds what a variable is after a loop that is left below a join", async () => {
+  using dir = tempDir("react-compiler-loop-joins", {
+    "entry.jsx": `
+      export function WhileIfTernaryBreak(props) {
+        const v = 1;
+        let n = 0;
+        while (props.c) {
+          if (props.d) {
+            if (props.e) n++;
+          }
+          const t = props.f ? 1 : 2;
+          if (props.g) break;
+          n += t;
+        }
+        return <div title={v}>{n}</div>;
+      }
+      export function ForOfNullishBreak(props) {
+        const v = 1;
+        let n = 0;
+        for (const item of props.items) {
+          if (item.d) {
+            if (item.e) n++;
+          }
+          const t = item.f ?? 2;
+          if (item.g) break;
+          n += t;
+        }
+        return <div title={v}>{n}</div>;
+      }
+      export function DoWhileNestedTernaryAnd(props) {
+        const v = 1;
+        let n = 0;
+        do {
+          const s = props.d ? (props.e ? 1 : 2) : 3;
+          const t = props.f && props.h;
+          if (props.g) break;
+          n += s + t;
+        } while (props.c);
+        return <div title={v}>{n}</div>;
+      }
+      export function ForOptionalChainLabelledBreak(props) {
+        const v = 1;
+        let n = 0;
+        outer: {
+          for (let i = 0; i < props.k; i++) {
+            const s = props.a?.b?.c;
+            if (props.f) n++;
+            if (props.g) break outer;
+            n += s;
+          }
+          n = n * 2;
+        }
+        return <div title={v}>{n}</div>;
+      }
+      export function WhileIfBreakTernary(props) {
+        const v = 1;
+        let n = 0;
+        while (props.c) {
+          if (props.d) {
+            if (props.e) n++;
+          }
+          if (props.g) break;
+          const t = props.f ? 1 : 2;
+          n += t;
+        }
+        return <div title={v}>{n}</div>;
+      }
+      export function DoWhileTryBreak(props) {
+        const v = 1;
+        let n = 0;
+        do {
+          try {
+            n += props.a ? (props.b ? 1 : 2) : 3;
+            log(n);
+          } catch {
+            break;
+          }
+          n += props.c ? 1 : 2;
+        } while (props.d);
+        return <div title={v}>{n}</div>;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // The cache of each component, and what `v` is where the element reads it.
+  const compiled = stdout
+    .split(/^function /m)
+    .slice(1)
+    .map(text => [
+      text.slice(0, text.indexOf("(")),
+      text.match(/\b_c\(\d+\)/)?.[0],
+      text.match(/\btitle: [^,\n]+/)?.[0],
+    ]);
+  expect(compiled).toEqual([
+    ["WhileIfTernaryBreak", "_c(2)", "title: 1"],
+    ["ForOfNullishBreak", "_c(2)", "title: 1"],
+    ["DoWhileNestedTernaryAnd", "_c(2)", "title: 1"],
+    ["ForOptionalChainLabelledBreak", "_c(2)", "title: 1"],
+    ["WhileIfBreakTernary", "_c(2)", "title: 1"],
+    ["DoWhileTryBreak", "_c(7)", "title: 1"],
+  ]);
+  expect(exitCode).toBe(0);
+});
 
 // InferTypes puts the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
 // from each other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.

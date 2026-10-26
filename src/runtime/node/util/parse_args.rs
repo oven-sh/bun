@@ -3,7 +3,6 @@ use std::borrow::Cow;
 
 use bun_core::{String, StringView};
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
 use super::parse_args_utils::{
@@ -108,6 +107,16 @@ struct OptionToken<'a> {
     raw: ValueRef<'a>,
 }
 
+/// Node names a short-group member '-' + its code unit: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/parse_args/parse_args.js#L242
+fn group_member_raw_name(raw: &String, i: usize) -> ([u16; 2], usize) {
+    let member = raw.substring_with_len(i, i + 1);
+    match member.length() {
+        1 => ([u16::from(b'-'), member.char_at(0)], 2),
+        // `raw` is a second string conversion of the element and can come back empty.
+        _ => ([u16::from(b'-'), 0], 1),
+    }
+}
+
 struct RawNameFormatter<'a> {
     token: OptionToken<'a>,
     raw: Cow<'a, String>,
@@ -119,8 +128,11 @@ impl fmt::Display for RawNameFormatter<'_> {
         let token = &self.token;
         let raw: &String = &self.raw;
         if let Some(optgroup_idx) = token.optgroup_idx {
-            let i = optgroup_idx as usize;
-            raw.substring_with_len(i, i + 1).fmt(f)
+            let (units, len) = group_member_raw_name(raw, optgroup_idx as usize);
+            for c in char::decode_utf16(units[..len].iter().copied()) {
+                fmt::Write::write_char(f, c.unwrap_or(char::REPLACEMENT_CHARACTER))?;
+            }
+            Ok(())
         } else {
             match token.parse_type {
                 OptionParseType::LoneShortOption | OptionParseType::LoneLongOption => raw.fmt(f),
@@ -143,16 +155,8 @@ impl OptionToken<'_> {
     fn make_raw_name_js_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(optgroup_idx) = self.optgroup_idx {
             let raw = self.raw.as_bun_string(global)?;
-            let i = optgroup_idx as usize;
-            let mut buf = [0u8; 8];
-            let str = {
-                use std::io::Write;
-                let mut cursor: &mut [u8] = &mut buf[..];
-                write!(cursor, "-{}", raw.substring_with_len(i, i + 1)).expect("unreachable");
-                let written = 8 - cursor.len();
-                &buf[..written]
-            };
-            bun_string_jsc::create_utf8_for_js(global, str)
+            let (units, len) = group_member_raw_name(&raw, optgroup_idx as usize);
+            String::clone_utf16(&units[..len]).into_js(global)
         } else {
             match self.parse_type {
                 OptionParseType::LoneShortOption | OptionParseType::LoneLongOption => {

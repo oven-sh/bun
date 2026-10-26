@@ -9,7 +9,7 @@ pub struct UseIsnan {
 
 const COMPARISON_WITH_NAN: Message =
     Message::new("comparisonWithNaN", "Use the isNaN function to compare with NaN.");
-/// What oxlint says instead.
+/// oxlint's messages.
 const INEQUALITY_WITH_NAN: Message =
     Message::new("comparisonWithNaN", "Checking inequality with NaN will always return true");
 const EQUALITY_WITH_NAN: Message =
@@ -55,7 +55,7 @@ fn is_nan_identifier(e: Expr) -> bool {
     }
 }
 
-/// `Number.isNaN(compared)` in place of the comparison `e`.
+/// Replaces the comparison `e` with `Number.isNaN(compared)`.
 fn fix_comparison<'a>(fixer: Fixer<'a>, e: Expr<'a>, compared: Expr<'a>, negates: bool, casts: bool) -> Fix {
     let wraps = is_sequence(compared);
     let text = [
@@ -70,7 +70,7 @@ fn fix_comparison<'a>(fixer: Fixer<'a>, e: Expr<'a>, compared: Expr<'a>, negates
     fixer.replace(e, text)
 }
 
-/// [`is_nan_identifier`] for what is compared. There oxlint does not look at the end of a sequence.
+/// [`is_nan_identifier`] for an operand of a comparison, where oxlint doesn't look at the end of a sequence.
 fn is_compared_nan(e: Expr) -> bool {
     is_nan_identifier(e) && !(is_sequence(e) && e.file().language().is_oxlint)
 }
@@ -93,7 +93,7 @@ impl UseIsnan {
     fn report_comparison<'a>(e: Expr<'a>, op: BinOp, nan: Expr<'a>, compared: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // oxlint points at the `NaN`, with its parentheses.
         let report = match (cx.language().is_oxlint, op) {
-            (false, _) => cx.report(e, COMPARISON_WITH_NAN).hint("Nothing is equal to NaN, not even NaN itself."),
+            (false, _) => cx.report(e, COMPARISON_WITH_NAN).hint("Nothing equals NaN, not even NaN."),
             (true, BinOp::NotEq | BinOp::NotEqEq) => cx.report(nan.outer_span(), INEQUALITY_WITH_NAN),
             (true, BinOp::EqEq | BinOp::EqEqEq) => cx.report(nan.outer_span(), EQUALITY_WITH_NAN),
             (true, _) => cx.report(nan.outer_span(), ORDER_WITH_NAN),
@@ -103,7 +103,7 @@ impl UseIsnan {
             return;
         }
         let negates = matches!(op, BinOp::NotEq | BinOp::NotEqEq);
-        // oxlint has a fix, and suggests nothing.
+        // oxlint has a fix instead of suggestions.
         if cx.language().is_oxlint {
             report.fix(|fixer| {
                 let call: &[u8] = if negates { b"!isNaN(" } else { b"isNaN(" };
@@ -156,12 +156,12 @@ impl UseIsnan {
             return;
         }
         // oxlint points at the `NaN`, without parentheses.
-        let place = match first.kind() {
+        let location = match first.kind() {
             _ if !cx.language().is_oxlint => e.span(),
             ExprKind::Binary { op: BinOp::Comma, right, .. } => right.span(),
             _ => first.span(),
         };
-        let report = cx.report(place, INDEX_OF_NAN).data("methodName", method_name);
+        let report = cx.report(location, INDEX_OF_NAN).data("methodName", method_name);
         // `arr.findIndex(Number.isNaN)` would lose the side effects of what comes before the `NaN`.
         if is_sequence(first) || args.len() > 1 || cx.language().is_oxlint {
             return;

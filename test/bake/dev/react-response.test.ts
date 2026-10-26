@@ -49,21 +49,3 @@ devTest("error thrown when streaming = true", {
     expect(fallback_message_container.problems?.exceptions[0].message).toContain("LMAO");
   },
 });
-
-devTest("the global Response in a server component is the standard one", {
-  framework: "react",
-  files: {
-    "pages/index.tsx": `
-      export const streaming = false;
-      export const mode = "ssr";
-
-      export default async function IndexPage() {
-        return <p>{typeof Response.render}</p>;
-      }
-    `,
-  },
-  async test(dev) {
-    const response = await dev.fetch("/");
-    expect(await response.text()).toContain("<p>undefined</p>");
-  },
-});

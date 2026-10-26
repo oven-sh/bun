@@ -73,6 +73,12 @@ impl DirectDependencies {
         redirect(lockfile, self.moved_pairs(lockfile), direct_only);
     }
 
+    /// Returns the packages that direct dependencies have moved to since the snapshot.
+    pub(crate) fn moved_to(&self, lockfile: &Lockfile) -> Vec<PackageID> {
+        let pairs = self.moved_pairs(lockfile);
+        pairs.into_iter().map(|(_, new)| new).collect()
+    }
+
     fn moved_pairs(&self, lockfile: &Lockfile) -> Vec<(PackageID, PackageID)> {
         let packages_len = lockfile.packages.len();
         let pkg_res = lockfile.packages.items_resolution();
@@ -130,8 +136,9 @@ impl DirectDependencies {
                     || (new as usize) >= packages_len
                     || pkg_res[new as usize].tag != ResolutionTag::Npm
                     || name_hashes[old as usize] != name_hashes[new as usize]
-                    // A peer only shared `old` with a regular dependency of its owner or of the
-                    // root (`bind_served_peers`). Nothing moved if that still resolves to `old`.
+                    // A peer shares the version of a regular dependency of its owner or of the root.
+                    // If that dependency still resolves to `old`, or already resolves to `new`, only
+                    // the peer was rebound and nothing was updated.
                     || (dep.behavior.is_peer()
                         && [owner, 0].into_iter().any(|holder| {
                             (dep_slices[holder].get(deps).iter())
@@ -139,7 +146,7 @@ impl DirectDependencies {
                                 .any(|(other, &kept)| {
                                     other.name_hash == dep.name_hash
                                         && !other.behavior.is_peer()
-                                        && kept == old
+                                        && (kept == old || kept == new)
                                 })
                         }))
                 {
@@ -499,42 +506,34 @@ pub(crate) fn redirect_moved_edges(
     redirect(lockfile, pairs, direct_only);
 }
 
+/// The package of `cleaned` with the name and the resolution of the package `old_id` of `before_clean`. `None` if the clean dropped it.
+pub(crate) fn package_after_clean(
+    before_clean: &Lockfile,
+    cleaned: &Lockfile,
+    old_id: PackageID,
+) -> Option<PackageID> {
+    let old_res = before_clean
+        .packages
+        .items_resolution()
+        .get(old_id as usize)?;
+    let old_buf = before_clean.buffers.string_bytes.as_slice();
+    let new_res = cleaned.packages.items_resolution();
+    let new_buf = cleaned.buffers.string_bytes.as_slice();
+    let named = cleaned.packages_named(before_clean.packages.items_name_hash()[old_id as usize]);
+    (named.iter().copied()).find(|&id| new_res[id as usize].eql(old_res, new_buf, old_buf))
+}
+
 /// Packages of `cleaned` that the `moved` edges of `before_clean` resolved to, for seeding the security scan.
 pub(crate) fn moved_targets_after_clean(
     before_clean: &Lockfile,
     cleaned: &Lockfile,
     moved: &[(DependencyID, PackageID)],
 ) -> Vec<PackageID> {
-    if moved.is_empty() {
-        return Vec::new();
-    }
     let old_resolutions = before_clean.buffers.resolutions.as_slice();
-    let old_name_hashes = before_clean.packages.items_name_hash();
-    let old_res = before_clean.packages.items_resolution();
-    let old_buf = before_clean.buffers.string_bytes.as_slice();
-    let new_res = cleaned.packages.items_resolution();
-    let new_buf = cleaned.buffers.string_bytes.as_slice();
-
-    let mut targets: Vec<PackageID> = Vec::new();
-    for &(dep_id, _) in moved {
-        let Some(&old_id) = old_resolutions.get(dep_id as usize) else {
-            continue;
-        };
-        if (old_id as usize) >= old_res.len() {
-            continue;
-        }
-        let Some(entry) = cleaned.package_index.get(&old_name_hashes[old_id as usize]) else {
-            continue;
-        };
-        if let Some(&id) = entry
-            .as_slice()
-            .iter()
-            .find(|&&c| new_res[c as usize].eql(&old_res[old_id as usize], new_buf, old_buf))
-        {
-            targets.push(id);
-        }
-    }
-    targets
+    (moved.iter())
+        .filter_map(|&(dep_id, _)| old_resolutions.get(dep_id as usize))
+        .filter_map(|&old_id| package_after_clean(before_clean, cleaned, old_id))
+        .collect()
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -705,6 +704,40 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
+/// `bun update`, once everything is resolved: a dependency whose source could not be read kept the package of bun.lock (`Scratch::refreshing`), which the warning about the failed read does not say. Each such package gets the line that `warn_unchecked` prints for a package whose manifest could not be fetched. A command that has failed by now saves nothing, and gets no such line.
+pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
+    if manager.subcommand != crate::Subcommand::Update
+        || manager.log_mut().has_errors()
+        || manager.update_requests.iter().any(|request| request.failed)
+    {
+        return;
+    }
+    let lockfile = &*manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let mut kept: Vec<(&[u8], Box<[u8]>)> = (lockfile.kept_without_refresh().iter())
+        .map(|&id| {
+            let resolution = &lockfile.packages.items_resolution()[id as usize];
+            (
+                lockfile.packages.items_name()[id as usize].slice(buf),
+                text(resolution.fmt(buf, bun_core::fmt::PathSep::Posix)),
+            )
+        })
+        .collect();
+    index_sort::sort_vec_unstable_by(&mut kept, |a, b| a.cmp(b));
+    let log = manager.log_mut();
+    for (name, resolution) in kept {
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "{}@{} was not checked for updates",
+                bun_core::fmt::for_terminal(BStr::new(name)),
+                bun_core::fmt::for_terminal(BStr::new(&resolution)),
+            ),
+        );
+    }
+}
+
 /// Returns the source of the root package.json and its `patchedDependencies` object.
 fn root_patched_dependencies<'a>(
     cache: &'a mut WorkspacePackageJSONCache,
@@ -787,7 +820,8 @@ fn warn_patch_key_without_version(
     );
 }
 
-/// After the clean: one warning per `patchedDependencies` key that names no installed package.
+/// Runs after the lockfile is cleaned. Prints one warning per `patchedDependencies` key that
+/// doesn't match an installed package.
 pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     if manager.lockfile.patched_dependencies.count() == 0
         || manager.options.log_level == LogLevel::Silent

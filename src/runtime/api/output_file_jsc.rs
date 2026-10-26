@@ -6,7 +6,7 @@
 //! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
 //! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass as _};
 
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
@@ -69,18 +69,14 @@ impl OutputFileJsc for OutputFile {
                     )),
                 };
 
-                let build_output = Box::new(BuildArtifact {
+                BuildArtifact {
                     blob: Blob::init_with_store(file_blob, global_object),
                     hash: self.hash,
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(copy.pathname.as_ref()),
-                });
-
-                // Ownership transfers to the JS `BuildArtifact` wrapper
-                // (`finalize` reclaims it). Typed `Box`-taking entry point —
-                // the leak/from_raw pair lives once in the `#[js_class]` shim.
-                BuildArtifact::to_js_boxed(build_output, global_object)
+                }
+                .to_js(global_object)
             }
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
@@ -96,16 +92,14 @@ impl OutputFileJsc for OutputFile {
                     )),
                 };
 
-                let build_output = Box::new(BuildArtifact {
+                BuildArtifact {
                     blob: Blob::init_with_store(file_blob, global_object),
                     hash: self.hash,
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path: Box::<[u8]>::from(path_to_use),
-                });
-
-                // See `Copy` arm.
-                BuildArtifact::to_js_boxed(build_output, global_object)
+                }
+                .to_js(global_object)
             }
             OutputFileValue::Buffer { bytes } => {
                 let bytes_len = bytes.len();
@@ -118,16 +112,14 @@ impl OutputFileJsc for OutputFile {
                     None => Box::from(self.src_path.text),
                 };
 
-                let build_output = Box::new(BuildArtifact {
+                BuildArtifact {
                     blob,
                     hash: self.hash,
                     loader: self.input_loader,
                     output_kind: self.output_kind,
                     path,
-                });
-
-                // See `Copy` arm.
-                BuildArtifact::to_js_boxed(build_output, global_object)
+                }
+                .to_js(global_object)
             }
             OutputFileValue::Noop => {
                 // SAFETY: filtered out by the early-out match above.

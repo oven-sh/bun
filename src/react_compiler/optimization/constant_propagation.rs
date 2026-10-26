@@ -1007,46 +1007,6 @@ fn js_strict_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> bool {
     }
 }
 
-/// Convert a string to a number using JS `ToNumber` semantics.
-/// In JS: `""` → 0, `" "` → 0, `" 42 "` → 42, `"0x1A"` → 26, `"Infinity"` → Infinity.
-fn js_to_number(s: &[u8]) -> f64 {
-    let Ok(s) = core::str::from_utf8(s) else {
-        return f64::NAN;
-    };
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return 0.0;
-    }
-    if trimmed == "Infinity" || trimmed == "+Infinity" {
-        return f64::INFINITY;
-    }
-    if trimmed == "-Infinity" {
-        return f64::NEG_INFINITY;
-    }
-    // Handle hex literals (0x/0X)
-    if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
-        return match u64::from_str_radix(&trimmed[2..], 16) {
-            Ok(v) => v as f64,
-            Err(_) => f64::NAN,
-        };
-    }
-    // Handle octal literals (0o/0O)
-    if trimmed.starts_with("0o") || trimmed.starts_with("0O") {
-        return match u64::from_str_radix(&trimmed[2..], 8) {
-            Ok(v) => v as f64,
-            Err(_) => f64::NAN,
-        };
-    }
-    // Handle binary literals (0b/0B)
-    if trimmed.starts_with("0b") || trimmed.starts_with("0B") {
-        return match u64::from_str_radix(&trimmed[2..], 2) {
-            Ok(v) => v as f64,
-            Err(_) => f64::NAN,
-        };
-    }
-    trimmed.parse::<f64>().unwrap_or(f64::NAN)
-}
-
 fn js_abstract_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> bool {
     match (lhs, rhs) {
         (PrimitiveValue::Null, PrimitiveValue::Null) => true,
@@ -1067,8 +1027,8 @@ fn js_abstract_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> bool {
         (PrimitiveValue::Number(n), PrimitiveValue::String(s))
         | (PrimitiveValue::String(s), PrimitiveValue::Number(n)) => {
             // String is coerced to number using JS ToNumber semantics.
-            // Non-ASCII content (UTF-16 storage) cannot be numeric → NaN.
-            let sv = s.as_bytes().map(js_to_number).unwrap_or(f64::NAN);
+            // Not in upstream, which has a `js_to_number` of its own: `JsString::to_number` reads both storages.
+            let sv = s.to_number();
             let nv = n.value();
             if nv.is_nan() || sv.is_nan() {
                 false

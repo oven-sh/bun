@@ -88,6 +88,34 @@ const unlisted: Files = {
 };
 const missingIn = (text: string) => Array.from(text.matchAll(/Missing dependency `([^`]+)`/g), it => it[1]);
 
+const setsStateIf = (condition: string) => `import { useState } from "react";
+
+export function Component() {
+  const [state, setState] = useState(0);
+  if (${condition}) setState(1);
+  return <div>{state}</div>;
+}
+`;
+/**
+ * A string against a number, in a condition that is a constant. Where it is true, the state is set in render.
+ * `Number(text)` decides it: U+FEFF and U+00A0 are white space and U+0085 is not, `inf` is no number, and half of a
+ * surrogate pair is no white space.
+ */
+const looseEquality: Files = {
+  "bom.jsx": setsStateIf(`"\\uFEFF1" == 1`),
+  "half-of-a-pair.jsx": setsStateIf(`"\\uD800" != 1`),
+  "inf.jsx": setsStateIf(`"inf" == 1e999`),
+  "nbsp.jsx": setsStateIf(`1 == "\\u00A01"`),
+  "nel.jsx": setsStateIf(`"\\u00851" == 1`),
+};
+const whereItIsTrue = ["bom.jsx", "half-of-a-pair.jsx", "nbsp.jsx"];
+/** No sign follows `0x`, `0o` or `0b`, so these are false. oxlint 1.87 takes the sign, and reports all three. */
+const signAfterThePrefix: Files = {
+  "binary-sign.jsx": setsStateIf(`"0b+1" == 1`),
+  "hex-sign.jsx": setsStateIf(`"0x+10" == 16`),
+  "octal-sign.jsx": setsStateIf(`"0o+7" == 7`),
+};
+
 describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.oxlint}`, () => {
   test(
     "on oxlint's own test cases",
@@ -402,6 +430,18 @@ ${chain}
     expect([0, 1]).toContain(exit);
   });
 
+  test("`==` of a string and a number is what JavaScript computes, also where oxlint differs", async () => {
+    const { diagnostics, files, exit } = await report({
+      ".oxlintrc.json": rc(["react/set-state-in-render"]),
+      ...looseEquality,
+      ...signAfterThePrefix,
+    });
+    expect(Object.keys(diagnostics).sort()).toEqual(whereItIsTrue);
+    expect(rulesIn(diagnostics)).toEqual(["react(set-state-in-render)"]);
+    expect(files).toBe(8);
+    expect(exit).toBe(1);
+  });
+
   test("reports nothing for a path that contains node_modules", async () => {
     const { diagnostics, files, exit } = await report(small.node_modules);
     expect(diagnostics).toEqual(expected.reports.node_modules.diagnostics);
@@ -522,6 +562,15 @@ describe.concurrent(
         ],
         "some.jsx": [["4:44-4:49", "alpha", "Zed"]],
       });
+      expect(exitCode).toBe(1);
+    });
+
+    test("`==` of a string and a number is what JavaScript computes", async () => {
+      const { files, exitCode } = await messages(looseEquality);
+      const rules = Object.fromEntries(
+        Object.entries(files).map(([name, { messages }]) => [name, messages.map(it => it.ruleId)]),
+      );
+      expect(rules).toEqual(Object.fromEntries(whereItIsTrue.map(name => [name, ["react-hooks/set-state-in-render"]])));
       expect(exitCode).toBe(1);
     });
 

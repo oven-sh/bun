@@ -1178,6 +1178,29 @@ pub fn js_string_to_number(text: &[u8]) -> f64 {
     }
 }
 
+/// [`js_string_to_number`] for UTF-16 code units.
+pub fn js_string_to_number_utf16(text: &[u16]) -> f64 {
+    let is_space = |unit: &&u16| strings::is_js_whitespace(u32::from(**unit));
+    let start = text.iter().take_while(is_space).count();
+    let end = text.len() - text[start..].iter().rev().take_while(is_space).count();
+    let text = &text[start..end];
+    let mut stack = [0u8; 64];
+    let mut heap = Vec::new();
+    let buffer = match stack.get_mut(..text.len()) {
+        Some(buffer) => buffer,
+        None if strings::first_non_ascii16(text).is_some() => return f64::NAN,
+        None => {
+            heap.resize(text.len(), 0);
+            &mut heap[..]
+        }
+    };
+    // Between its white space, a number is ASCII.
+    match strings::narrow_ascii_u16(text, buffer) {
+        Some(ascii) => js_string_to_number(ascii),
+        None => f64::NAN,
+    }
+}
+
 /// The length of the `StrUnsignedDecimalLiteral` of ECMAScript that `text` starts with, `Infinity`
 /// apart: what `parseFloat` reads behind the sign. 0: none.
 pub fn js_decimal_literal_len(text: &[u8]) -> usize {

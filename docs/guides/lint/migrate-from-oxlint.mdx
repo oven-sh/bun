@@ -150,6 +150,7 @@ If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issu
 - **Patterns in rule options are JavaScript regular expressions.** oxlint uses Rust's `regex` crate.
 - **Extglob patterns work.** `?(a)`, `*(a)`, `+(a)`, `@(a|b)`, and `!(a)` mean what they mean in ESLint, in `files` and `excludeFiles` of `overrides` and in the globs of rule options. oxlint reads the parentheses literally, so an override for `**/*.?([cm])ts`, which `@oxlint/migrate` copies from an ESLint config as it is, never applies there. To match a literal `@(`, escape it: `"@\\("`. `ignorePatterns` are `.gitignore` lines and have no groups.
 - **Control flow rules follow ESLint** where oxlint differs: `no-unreachable`, `no-fallthrough`, `getter-return`, `array-callback-return`, `constructor-super`, `no-this-before-super`, `no-useless-assignment`.
+- **The React Compiler rules compare a string with a number as JavaScript does.** `"0x+10" == 16` is `false`. oxlint accepts a sign after `0x`, `0o`, or `0b`, so it reports a `setState` call inside `if ("0x+10" == 16)` as one that runs in render.
 - **`--fix` never writes a file that no longer parses.** Bun leaves the file alone and warns.
 - **`--init` adds `[lint]` to `bunfig.toml`**, not an `.oxlintrc.json`. If you already have an oxlint config, it does nothing.
 - **No language server.** `--lsp` is an error. Keep `oxlint` if your editor's oxc extension uses it.

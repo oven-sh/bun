@@ -1097,12 +1097,7 @@ fn get_assumed_invoked_functions(func: &HirFunction, env: &Environment) -> HashS
     let mut temporaries: IdMap<IdentifierId, (FunctionId, HashSet<FunctionId>)> = IdMap::new();
     let mut hoistable = get_assumed_invoked_functions_impl(func, env, &mut temporaries);
 
-    // Step 3: Propagate assumed-invoked status through mayInvoke chains
-    //
-    // Not in upstream, which runs this step at the end of every recursive call, over every
-    // entry of the shared map. A `mayInvoke` set then holds a whole chain, and N nested
-    // functions take N^3 steps. Here a `mayInvoke` set holds what the function invokes
-    // directly, and this loop follows the chains once, to the same set.
+    // Step 3: follow the mayInvoke chains. Not in upstream, which does it in every recursive call.
     let mut changed = true;
     while changed {
         changed = false;
@@ -1335,11 +1330,7 @@ fn collect_non_nulls_in_blocks(
                                 .map(|place| place.identifier)
                                 .collect()
                         };
-                    // Not in upstream, which computes this set again for each nested
-                    // function. The TS original passes the set of the outermost function
-                    // down (`...context`). `inner_func` is in that set, and only code inside
-                    // `inner_func` can refer to a function that it declares, so the two sets
-                    // agree on those functions.
+                    // Not in upstream, which computes this set again. TS passes the outer one down.
                     let inner_ctx = CollectHoistableContext {
                         temporaries: ctx.temporaries,
                         known_immutable_identifiers: &HashSet::default(),

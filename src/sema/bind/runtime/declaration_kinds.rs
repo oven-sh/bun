@@ -107,6 +107,29 @@ pub(super) fn is_block_level(bound: &BoundBuilder, scope: ScopeId) -> bool {
     scope.is_some() && bound.container_scope(scope) != scope
 }
 
+/// `export default Name` exports nothing where the file declares `Name` as an interface, a type alias or a namespace without values, and as nothing that has a value.
+/// What stands in `declare global` counts as declared by the file.
+fn exports_type(hir: &File<'_>, bound: &BoundBuilder, statement: StmtId) -> bool {
+    let StmtKind::ExportDefault(value) = hir[statement].kind else {
+        return false;
+    };
+    let ExprKind::Ident(name) = hir[hir.skip_type_assertions(value)].kind else {
+        return false;
+    };
+    let scope = bound.stmt_scope[statement.idx()];
+    if hir.is_js || scope.is_none() {
+        return false;
+    }
+    let locals = bound.scopes[bound.container_scope(scope).idx()].locals;
+    let globals = bound.global_augmentations.iter();
+    let tables = globals.map(|global| bound.symbols[global.idx()].exports);
+    let symbols = (tables.chain([locals])).filter_map(|table| bound.find_in_table(table, name));
+    let mut decls = symbols.flat_map(|symbol| bound.symbols[symbol.idx()].decls.iter());
+    let declares_type =
+        |decl: &Decl| matches!(decl, Decl::Interface(_) | Decl::Alias(_) | Decl::Module(_));
+    decls.clone().any(declares_type) && !decls.any(|&decl| creates_binding(hir, bound, decl))
+}
+
 pub(super) fn creates_binding(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) -> bool {
     let is_ambient = || bound.modifier_flags(hir, decl).contains(Flags::AMBIENT);
     match decl {
@@ -139,6 +162,7 @@ pub(super) fn creates_binding(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) 
                 ..
             }
         ),
+        Decl::ExportExpr(statement) => !exports_type(hir, bound, statement),
         _ => true,
     }
 }

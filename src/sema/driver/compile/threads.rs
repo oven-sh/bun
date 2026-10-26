@@ -91,32 +91,102 @@ mod tests {
         );
     }
 
+    /// Starts regions of two runs on a pool thread until another thread takes one of the runs, where it calls
+    /// `on_other_thread`. The tests of this program share the pool, so at times it has no idle thread.
+    fn start_regions_until_a_thread_joins(on_other_thread: &(dyn Fn() + Sync)) {
+        let caches = ThreadCaches::default();
+        let has_joined = AtomicBool::new(false);
+        let started = std::time::Instant::now();
+        let mut patience = std::time::Duration::from_millis(1);
+        while !has_joined.load(Ordering::SeqCst) {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(20),
+                "no thread joined the region"
+            );
+            let ((), ()) = run_on_one_thread_while(
+                &caches,
+                || {
+                    let starter = std::thread::current().id();
+                    let begun = std::time::Instant::now();
+                    for_each_parallel_in_runs(&caches, 2, 2, 1, &|_| {
+                        if std::thread::current().id() != starter {
+                            has_joined.store(true, Ordering::SeqCst);
+                            return on_other_thread();
+                        }
+                        while !has_joined.load(Ordering::SeqCst) && begun.elapsed() < patience {
+                            std::thread::yield_now();
+                        }
+                    });
+                },
+                || {},
+            );
+            patience *= 2;
+        }
+    }
+
     #[test]
     fn region_started_on_pool_thread_gets_idle_threads() {
         set_up_output();
         if region_pool().max_threads() < 3 {
             return;
         }
+        start_regions_until_a_thread_joins(&|| {});
+    }
+
+    fn panic_message_of(run: impl FnOnce()) -> String {
+        let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+        let payload = payload.expect_err("it panics");
+        payload.downcast_ref::<String>().expect("a text").clone()
+    }
+
+    #[test]
+    fn panic_in_a_region_continues_on_the_thread_that_started_it() {
+        set_up_output();
         let caches = ThreadCaches::default();
-        let arrived = AtomicUsize::new(0);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        let ((), ()) = run_on_one_thread_while(
-            &caches,
-            || {
-                for_each_parallel_in_runs(&caches, 2, 2, 1, &|_| {
-                    arrived.fetch_add(1, Ordering::SeqCst);
-                    while arrived.load(Ordering::SeqCst) < 2 {
-                        assert!(
-                            std::time::Instant::now() < deadline,
-                            "no thread joined the region"
-                        );
-                        std::thread::yield_now();
-                    }
-                });
-            },
-            || {},
-        );
-        assert_eq!(arrived.load(Ordering::SeqCst), 2);
+        let message = panic_message_of(|| {
+            for_each_parallel_in_runs(&caches, 2, 8, 1, &|index| {
+                assert!(index != 5, "at index {index}");
+            });
+        });
+        assert_eq!(message, "at index 5");
+    }
+
+    #[test]
+    fn panic_beside_a_region_continues_when_the_region_has_ended() {
+        set_up_output();
+        let caches = ThreadCaches::default();
+        let visits = AtomicUsize::new(0);
+        let message = panic_message_of(|| {
+            let visit = |_: usize| {
+                visits.fetch_add(1, Ordering::SeqCst);
+            };
+            for_each_parallel_while(&caches, 2, 8, 1, &visit, &mut || panic!("meanwhile"));
+        });
+        assert_eq!(message, "meanwhile");
+        assert_eq!(visits.load(Ordering::SeqCst), 8);
+    }
+
+    #[test]
+    fn panic_in_a_region_started_on_a_pool_thread_continues_on_the_thread_that_waits_for_it() {
+        set_up_output();
+        let caches = ThreadCaches::default();
+        let message = panic_message_of(|| {
+            let start_region =
+                || for_each_parallel_in_runs(&caches, 2, 2, 1, &|_| panic!("inside"));
+            let ((), ()) = run_on_one_thread_while(&caches, start_region, || {});
+        });
+        assert_eq!(message, "inside");
+    }
+
+    #[test]
+    fn panic_of_a_thread_that_joined_a_region_continues_on_the_thread_that_started_it() {
+        set_up_output();
+        if region_pool().max_threads() < 3 {
+            return;
+        }
+        let message =
+            panic_message_of(|| start_regions_until_a_thread_joins(&|| panic!("has joined")));
+        assert_eq!(message, "has joined");
     }
 
     #[test]

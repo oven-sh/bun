@@ -1,4 +1,4 @@
-// Prints the frames of errors thrown while the resources of `using` declarations are disposed. An executable lists the function around a declaration at the declared name.
+// Prints the frames of errors thrown while the resources of `using` declarations are disposed. The function around a declaration is listed at its end.
 function fail() {
   throw new Error("fail");
 }

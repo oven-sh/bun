@@ -26,12 +26,14 @@ interface File {
   awaits: boolean;
 }
 
-export function generate(random: Random): { file: string; text: string; files: Record<string, string> } {
+// `hasMore` adds packages in node_modules, functions that return what `require()` answers, and default exports without a name.
+export function generate(
+  random: Random,
+  hasMore = false,
+): { file: string; text: string; files: Record<string, string> } {
   const counters = { names: 0, literals: 0 };
   const fresh = (stem: string) => `${stem}${++counters.names}`;
   const isBroad = random.chance(0.5);
-  // In which order files of both kinds run while they are loaded is not what this program asks. So only where all files are of one kind do the files that
-  // others take from print while they are loaded.
   const flavor = random.weighted<"modules" | "commonjs" | "both">([
     [3, "modules"],
     [2, "commonjs"],
@@ -57,7 +59,13 @@ export function generate(random: Random): { file: string; text: string; files: R
         : random.pick([".cjs", ".cjs", ".js"]);
   // TypeScript finds a file without its extension only if that is `.ts` or `.js`.
   const specifier = (from: string, to: string) => {
-    const path = from.startsWith("lib/") ? "./" + to.slice("lib/".length) : "./" + to;
+    const inPackage = /^node_modules\/(\w+)\//.exec(to);
+    if (inPackage) return JSON.stringify(inPackage[1]);
+    const path = from.startsWith("lib/")
+      ? "./" + to.slice("lib/".length)
+      : from.startsWith("node_modules/")
+        ? "../../" + to
+        : "./" + to;
     const mayBeShort = !/ts$/.test(from) || /\.[jt]s$/.test(to);
     return JSON.stringify(mayBeShort && random.chance(0.25) ? path.replace(/\.\w+$/, "") : path);
   };
@@ -69,7 +77,7 @@ export function generate(random: Random): { file: string; text: string; files: R
     awaits: false,
   };
   helpers.path = "lib/helpers" + (hasTyped ? ".ts" : extensionOf(helpers.kind));
-  const empty = { counters, functions: [], shapes: [], mayAwait: false, printsWhileLoaded: false, loads: "" };
+  const empty = { counters, functions: [], shapes: [], mayAwait: false, loads: "", mayOmitNames: hasMore };
   texts[helpers.path] = write(random, {
     isTyped: hasTyped,
     isCommonJs: helpers.kind === "commonjs",
@@ -247,7 +255,26 @@ export function generate(random: Random): { file: string; text: string; files: R
   const files: File[] = [];
 
   function addFile(stem: string, role: Part["role"], kind: Kind, loads = ""): File {
-    const path = (role === "main" ? "" : "lib/") + stem + extensionOf(kind);
+    const isPackage = hasMore && role === "library" && kind !== "typescript" && random.chance(0.4);
+    const path = (role === "main" ? "" : isPackage ? `node_modules/${stem}/` : "lib/") + stem + extensionOf(kind);
+    if (isPackage) {
+      const entry = "./" + path.slice(path.lastIndexOf("/") + 1);
+      texts[`node_modules/${stem}/package.json`] =
+        JSON.stringify(
+          {
+            name: stem,
+            ...(kind === "module" ? { type: "module" } : {}),
+            ...random.pick<object>([
+              { main: entry },
+              { exports: entry },
+              { exports: { ".": { import: entry, require: entry } } },
+              { main: "./missing.js", exports: { ".": { default: entry } } },
+            ]),
+          },
+          null,
+          2,
+        ) + "\n";
+    }
     const mayAwait = kind !== "commonjs" && (role === "main" || random.chance(0.25));
     const file: File = { path, kind, offers: [], awaits: mayAwait };
     const lines: string[] = [];
@@ -295,8 +322,8 @@ export function generate(random: Random): { file: string; text: string; files: R
         functions,
         shapes,
         mayAwait,
-        printsWhileLoaded: flavor !== "both",
         loads: early + loads,
+        mayOmitNames: hasMore,
       },
     });
     texts[path] = written.text;
@@ -436,6 +463,14 @@ export function generate(random: Random): { file: string; text: string; files: R
               `module.exports = require(${source});\n`,
               `function load() {\n  const loaded = require(${source});\n  return loaded;\n}\nmodule.exports = load();\n`,
               `exports.loaded = [1].map(() => require(${source}));\n`,
+              ...(hasMore
+                ? [
+                    `"use strict";\nfunction load() {\n  return require(${source});\n}\nmodule.exports = load();\n`,
+                    `"use strict";\nmodule.exports = (() => require(${source}))();\n`,
+                    `"use strict";\nconst load = function () {\n  return module.require(${source});\n};\nexports.loaded = load();\n`,
+                    `function load() {\n  return require(${source});\n}\nmodule.exports = load();\n`,
+                  ]
+                : []),
             ])
           : between.kind === "typescript" && loaded.kind === "commonjs"
             ? `import ${source};\n`
@@ -443,6 +478,12 @@ export function generate(random: Random): { file: string; text: string; files: R
                 `export * from ${source};\n`,
                 `import ${source};\n`,
                 `import * as loaded from ${source};\nexport { loaded };\n`,
+                ...(hasMore && !loaded.awaits && between.kind === "module"
+                  ? [
+                      `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\nfunction load() {\n  return require(${source});\n}\nexport const loaded = load();\n`,
+                      `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\nexport const loaded = (() => require(${source}))();\n`,
+                    ]
+                  : []),
               ]);
       target = between;
     }

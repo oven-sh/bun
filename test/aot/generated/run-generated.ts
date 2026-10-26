@@ -303,10 +303,13 @@ export function generated(title: string, given: Generated[]) {
       shared.set(member.program, "nothing to compare");
     });
     // A build stops at the first entry point that TypeScript rejects. `bun check` names them all at once, and each of them is built alone, where its build has the say.
+    // A build knows `console`, `process` and `Bun` where no typings are installed, and `bun check` does not: TS2584, TS2591 and TS2868 say only that.
     if (together.some(({ file }) => /\.[cm]?tsx?$/.test(file))) {
       const entries = together.map(({ index, file }) => `./${index}/${file}`);
       const check = await slot(() => spawned([bunExe(), "check", "--no-pretty", "--all", ...entries], folder, bunEnv));
-      const errors = (check.stdout + check.stderr).matchAll(/^(\d+)[\\/][^(\n]+\(\d+,\d+\): error /gm);
+      const errors = (check.stdout + check.stderr).matchAll(
+        /^(\d+)[\\/][^(\n]+\(\d+,\d+\): error (?!TS(?:2584|2591|2868):)/gm,
+      );
       const rejected = new Set(Array.from(errors, ([, index]) => Number(index)));
       together = together.filter(member => {
         if (!rejected.has(member.index)) return true;

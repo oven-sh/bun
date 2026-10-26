@@ -292,7 +292,8 @@ fn is_first_entry_point_held(text: &str) -> (bool, bool) {
             program.file("main.ts"),
             program.file("other.ts"),
         );
-        assert!(files.module(main).is_leaf && files.module(other).is_leaf);
+        assert!(files.module(main).is_leaf != files.module(main).is_read_by_every_task);
+        assert!(files.module(other).is_leaf);
         let has_tree = || !files.hir(main).stmts.is_empty();
         let had_tree = AtomicBool::new(false);
         let build = check(program, &|_, file| {

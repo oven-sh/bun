@@ -194,6 +194,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    // JSC stores the member to the object, and records the store.
+    fn record_store_to_object(&mut self) {
+        if !self.builder.is_at_last_recorded_position() {
+            self.builder.record_position(self.position());
+        }
+    }
+
     pub(in crate::lower) fn put_reference(
         &mut self,
         reference: &Reference,
@@ -236,10 +243,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_private_set(object, access, value, source);
             }
             Reference::ModuleVariable { variable, holder } => {
+                self.record_store_to_object();
                 self.test_holder(holder, NullishAccess::Write);
                 self.builder.put_module_variable(variable, value);
             }
-            Reference::Discarded { holder } => self.test_holder(holder, NullishAccess::Write),
+            Reference::Discarded { holder } => {
+                self.record_store_to_object();
+                self.test_holder(holder, NullishAccess::Write);
+            }
             Reference::Invalid => {}
         }
         value

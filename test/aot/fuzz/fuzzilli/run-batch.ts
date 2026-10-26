@@ -143,7 +143,8 @@ function importersOf(file: string, folder: string) {
 
 /** Whether the compiler made one program of the entry points in place of one of each, and the first of our programs that its report names as the reason. */
 function programsOf(folder: string, entryPoints: number) {
-  type Report = { statistics: { EngineRuns: number }; unseenCode: { location: { file: string } | null }[] };
+  type Unseen = { cause: string; builtin: string | null; location: { file: string } | null };
+  type Report = { statistics: { EngineRuns: number }; unseenCode: Unseen[] };
   let report: Report;
   try {
     report = JSON.parse(readFileSync(join(folder, "report.json"), "utf8"));
@@ -156,6 +157,7 @@ function programsOf(folder: string, entryPoints: number) {
     // The compiler runs once for each program. When they turn out to be one, it runs once more.
     areOneProgram: report.statistics.EngineRuns !== entryPoints,
     openedBy: openedBy === undefined ? undefined : Number(openedBy),
+    reasons: report.unseenCode.map(({ cause, builtin }) => cause + (builtin ? ` ${builtin}` : "")).join(", "),
   };
 }
 
@@ -164,6 +166,7 @@ type Built = {
   writesToBuiltins: Set<number>;
   areOneProgram?: boolean;
   openedBy?: number;
+  reasons?: string;
   stopped?: { reason: string; culprit: number | undefined; stderr: string };
 };
 /** Builds the executable. Returns the programs that the errors name, or how the compiler stopped. */
@@ -461,6 +464,8 @@ async function differsAmong(
   ).get(index)!;
   return !agree(compiled, plain);
 }
+/** The kernel does that to a process whose group is out of memory, and `spawn` at its bound. */
+const wasKilled = ({ end }: Ended) => end === "the process ended: SIGKILL";
 const plainEnv: Record<string, string> = hidesFunctionText ? { BUN_FUZZILLI_HIDES_FUNCTION_TEXT: "1" } : {};
 
 /**
@@ -701,6 +706,7 @@ for (let batch = 0; batches === 0 || batch < batches || waitingWithTheWorldOpen.
     }
     if (built.areOneProgram !== undefined)
       add(built.areOneProgram ? "executables that are one program" : "executables with a program for each group");
+    if (built.areOneProgram && !haveTheWorldOpen) add(`one program and none is named: ${built.reasons}`);
     break;
   }
   const all = texts.map((_, index) => index);
@@ -731,9 +737,11 @@ for (let batch = 0; batches === 0 || batch < batches || waitingWithTheWorldOpen.
     const says = (message: string) => second.stderr.includes(message) || second.stdout.includes(message);
     const showsFunctionText = !hidesFunctionText && /function|=>|class /.test(referenceAgain.stdout + second.stdout);
     let kind =
-      referenceAgain.end.startsWith("the process ended") && !reservedTooManyAddresses(referenceAgain)
+      referenceAgain.end.startsWith("the process ended") &&
+      !wasKilled(referenceAgain) &&
+      !reservedTooManyAddresses(referenceAgain)
         ? "bun-run-signal"
-        : isLimit(referenceAgain) || reservedTooManyAddresses(referenceAgain)
+        : isLimit(referenceAgain) || wasKilled(referenceAgain) || reservedTooManyAddresses(referenceAgain)
           ? "neither finished"
           : !isLimit(reference) && !agree(reference, referenceAgain)
             ? "bun run is unsteady"

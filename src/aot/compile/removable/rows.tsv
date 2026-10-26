@@ -663,6 +663,13 @@
 +	+	+	-	-	ts	enum MARK { A = `a` }
 +	+	+	-	-	ts	enum MARK { A = "a" + "b" }
 +	+	+	-	-	ts	enum MARK { A = 1, B = MARK.A, C = MARK["A"] }
+-	-	-	-	-	ts	enum MARK { "é" = 1, B = MARK["é"] }
++	+	+	-	-	ts	enum MARK { "é" = 1, B = MARK.é }
++	+	+	-	-	ts	enum MARK { é = 1, B = é }
+-	-	-	-	-	ts	enum Color { "é" = 1 } const MARK = Color["é"];
+-	-	-	-	-	ts	enum Color { "é" = 1 } const MARK = Color["\u00e9"];
++	+	+	-	-	ts	enum Color { "é" = 1 } const MARK = Color.é;
++	+	+	-	-	ts	enum Color { "a-b" = 1 } const MARK = Color["a-b"];
 +	+	+	-	-	ts	const enum MARK { A, B = 2 }
 +	+	+	-	-	ts	declare enum MARK { A }
 +	+	+	-	-	ts	declare const enum MARK { A }

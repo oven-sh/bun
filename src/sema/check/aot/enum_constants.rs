@@ -130,7 +130,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let (object, MemberKey::Name(name)) = hir.member_key(access)? else {
             return None;
         };
-        if has_optional_link(hir, access) {
+        if has_optional_link(hir, access)
+            || !hir.is_name_resolved_by_transpiler(access, self.atom_bytes(name))
+        {
             return None;
         }
         let object = without_casts(hir, object);
@@ -203,7 +205,10 @@ impl Checker<'_, '_> {
         let (_, MemberKey::Name(name)) = hir.member_key(entity)? else {
             return None;
         };
-        if hir::is_parenthesized(hir, index) || !hir::is_entity_name_expression(hir, obj) {
+        if hir::is_parenthesized(hir, index)
+            || !hir::is_entity_name_expression(hir, obj)
+            || !hir.is_name_resolved_by_transpiler(entity, self.atoms().bytes(name))
+        {
             return None;
         }
         let root = self.resolve_entity_name_expression(file, obj, SymFlags::VALUE)?;

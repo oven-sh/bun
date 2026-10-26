@@ -1,3 +1,4 @@
+use bun_sema::bind::FnOwner;
 use bun_sema::hir::{self, ExprId, IdList, PatKind, Span, StmtId, StmtKind, VarDeclId, VarKind};
 use smallvec::SmallVec;
 
@@ -7,7 +8,8 @@ use super::control::{CleanupLanding, CleanupPath};
 use super::member::PropertyName;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::BlockRole;
-use crate::ir::{Edge, LocalVariable, ValueId};
+use crate::ir::{Edge, FunctionKey, LocalVariable, ValueId};
+use crate::modules::ModuleKind;
 
 const HAS_AWAIT_STATE: &str = "a scope with an asynchronous resource has its await state";
 
@@ -154,7 +156,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         is_last: bool,
         path: CleanupPath,
     ) {
-        self.set_position(resource.position);
+        let position = self.find_disposal_position();
+        self.set_position(position.unwrap_or(resource.position));
         let pending = match path {
             CleanupPath::Normal => None,
             CleanupPath::Throw { thrown } => Some(thrown),
@@ -171,8 +174,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let done = self.create_block();
         let skipped = self.create_block();
         let method = self.branch_if_undefined(resource.method, skipped);
-        let catches = pending.is_some() || trailing.is_some();
-        let handler = catches.then(|| self.begin_handler(BlockRole::CatchHandler, None));
+        // What a method throws is thrown again by the scope: that `throw` is the one whose frames are listed if nobody catches it.
+        let handler = self.begin_handler(BlockRole::CatchHandler, None);
         let this = Some(resource.value);
         let result = call::emit_call(self, method, this, &[]);
         if resource.hint == DisposeHint::Async {
@@ -181,24 +184,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.builder.write_variable(state.has_awaited, yes);
             self.emit_await(result);
         }
-        if let Some(handler) = handler {
-            self.end_handler(handler);
-            let resume = self.create_block();
-            self.jump(resume);
-
-            self.continue_in(handler.block());
-            let error = self.builder.catch_value();
-            let error = match pending {
-                Some(suppressed) => self.builder.new_suppressed_error(error, suppressed),
-                None => error,
-            };
-            if let Some(state) = trailing {
-                self.emit_pending_await(state);
-            }
-            self.emit_throw(error);
-            self.continue_in(resume);
-        }
+        self.end_handler(handler);
         self.jump(done);
+
+        self.continue_in(handler.block());
+        let error = self.builder.catch_value();
+        let error = match pending {
+            Some(suppressed) => self.builder.new_suppressed_error(error, suppressed),
+            None => error,
+        };
+        if let Some(state) = trailing {
+            self.emit_pending_await(state);
+        }
+        self.emit_throw(error);
 
         self.continue_in(skipped);
         if resource.hint == DisposeHint::Async {
@@ -212,6 +210,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(state) = trailing {
             self.emit_pending_await(state);
         }
+    }
+
+    // JSC records the calls that dispose behind the body, which the source map takes back to the last token of the function, or to a `)` or `]` that is printed right behind the function.
+    fn find_disposal_position(&mut self) -> Option<u32> {
+        if let Some(found) = self.disposal_position {
+            return found;
+        }
+        let file = &*self.file;
+        let found = match self.key {
+            _ if file.runs_as_written() => None,
+            FunctionKey::Source(source) => {
+                let behind = match file.bound.fns[source.function.idx()].owner {
+                    FnOwner::Expr(owner) => file.find_closing_token_behind(owner),
+                    _ => None,
+                };
+                behind.or_else(|| file.last_mapped_function_position(source.function))
+            }
+            FunctionKey::ModuleBody(_) | FunctionKey::WrappedModuleBody(_)
+                if file.inputs.modules.kind(file.file) == ModuleKind::CommonJs =>
+            {
+                file.last_mapped_list_position(file.hir.body)
+            }
+            _ => None,
+        };
+        self.disposal_position = Some(found);
+        found
     }
 
     fn emit_pending_await(&mut self, state: AwaitState) {

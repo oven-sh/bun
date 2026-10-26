@@ -90,6 +90,12 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    /// The transpiler resolves `object["name"]` like `object.name` only when it stores the key as
+    /// bytes, which it does for ASCII text (`E::String::is_utf16`).
+    pub fn is_name_resolved_by_transpiler(&self, access: ExprId, name: &[u8]) -> bool {
+        !self.expr_flags(access).contains(ExprFlags::BRACKET_ACCESS) || name.is_ascii()
+    }
+
     pub fn jsx_attribute_text(&self, value: ExprId) -> Atom {
         let texts = &self.jsx_attribute_texts;
         if let Ok(at) = texts.binary_search_by_key(&value, |text| text.0) {

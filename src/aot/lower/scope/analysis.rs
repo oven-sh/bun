@@ -144,6 +144,8 @@ pub(crate) struct ScopeAnalysis {
     pub(super) initialized_holders: Vec<(FunctionKey, SymbolId)>,
     pub(super) use_counts: Vec<u8>,
     pub(super) symbols_read_by_enums: Vec<SymbolId>,
+    pub(super) symbols_in_export_lists: Vec<SymbolId>,
+    pub(super) symbols_named_elsewhere_only_in_unprinted_statements: Vec<SymbolId>,
     pub(super) has_wrapper_parameters: bool,
 }
 
@@ -169,6 +171,19 @@ impl ScopeAnalysis {
 
     pub(in crate::lower) fn is_read_by_enum(&self, symbol: SymbolId) -> bool {
         self.symbols_read_by_enums.binary_search(&symbol).is_ok()
+    }
+
+    pub(in crate::lower) fn is_in_export_list(&self, symbol: SymbolId) -> bool {
+        self.symbols_in_export_lists.binary_search(&symbol).is_ok()
+    }
+
+    // Other functions than its own name the symbol only in statements for which Bun's transpiler prints nothing.
+    pub(in crate::lower) fn is_named_elsewhere_only_in_unprinted_statements(
+        &self,
+        symbol: SymbolId,
+    ) -> bool {
+        let symbols = &self.symbols_named_elsewhere_only_in_unprinted_statements;
+        symbols.binary_search(&symbol).is_ok()
     }
 
     pub(in crate::lower) fn placement(&self, binding: BindingRef) -> Option<Placement> {

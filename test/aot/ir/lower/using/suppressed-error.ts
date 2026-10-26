@@ -1,5 +1,9 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="combines"
+// CHECK-NOT: NewSuppressedError
+// CHECK: role=CatchHandler
+// CHECK-NEXT: [[alone]] = CatchValue
+// CHECK-NEXT: Throw [[alone]]
 // CHECK-NOT: role=CatchHandler
 // CHECK-NOT: NewSuppressedError
 // CHECK: role=DisposalCleanup

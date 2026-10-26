@@ -293,8 +293,7 @@ fn static_member_names(hir: &File<'_>, members: Span<MemberId>) -> impl Iterator
     })
 }
 
-pub(super) fn can_list_declarations_of(files: &Files<'_>, file: FileId) -> bool {
-    let hir = files.hir(file);
+pub(super) fn can_list_declarations_of(hir: &File<'_>) -> bool {
     let mut interfaces = hir.interfaces.iter();
     let mut classes = hir.classes.iter();
     hir.kind != FileKind::Declaration

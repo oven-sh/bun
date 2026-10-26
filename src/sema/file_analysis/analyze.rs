@@ -51,6 +51,7 @@ pub(super) fn run<'s>(
         jsx_imports: scan.jsx_imports,
         unused_import_symbols: scan.unused_import_symbols,
         imports_used_only_in_dead_code: scan.imports_used_only_in_dead_code,
+        imports_used_without_a_read: scan.imports_used_without_a_read,
         pending_macro_calls: scan.pending_macro_calls,
         has_live_top_level_await: has_live_top_level_await(hir, &folded.decisions),
         errors: join_errors(folded.errors, scan.errors, decision.error, arena),

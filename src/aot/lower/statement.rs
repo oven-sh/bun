@@ -281,7 +281,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn reads_variable(&self, expression: ExprId, symbol: SymbolId) -> bool {
-        let name = self.skip_type_syntax(expression);
+        let name = self.skip_unprinted_syntax(expression);
         matches!(self.hir[name].kind, ExprKind::Ident(_))
             && self.bound.binding(name) == Binding::Symbol(symbol)
     }
@@ -369,7 +369,10 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // Behind a statement that leaves the list only the declarations of functions and of `var` variables are printed.
-    fn last_mapped_list_position(&self, statements: IdList<StmtId>) -> Option<u32> {
+    pub(in crate::lower) fn last_mapped_list_position(
+        &self,
+        statements: IdList<StmtId>,
+    ) -> Option<u32> {
         let hir = self.hir;
         let leaves = |statement: StmtId| {
             matches!(

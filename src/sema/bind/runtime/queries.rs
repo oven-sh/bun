@@ -289,6 +289,12 @@ impl Bound<'_> {
         binding.map_or(Binding::Free, |&binding| self.binding_under_goal(binding))
     }
 
+    /// False for `export default Name` where `Name` is only a type: the statement has no code, and it gives the file no export.
+    pub fn exports_value(&self, statement: StmtId) -> bool {
+        let declared = &self.runtime.declarations.declared_symbols;
+        find_symbol(declared, Decl::ExportExpr(statement)) != Some(SymbolId::NONE)
+    }
+
     pub fn has_runtime_value(&self, symbol: SymbolId) -> bool {
         !has_bit(&self.runtime.declarations.valueless_symbols, symbol.idx())
     }

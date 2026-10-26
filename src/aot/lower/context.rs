@@ -16,6 +16,7 @@ use rustc_hash::FxHashMap;
 use self::function_table::FunctionTable;
 use self::shown_names::ShownNames;
 use super::LoweredFile;
+use super::call::PrintedOperators;
 use super::class::ClassState;
 use super::fragment::{FragmentBuilder, ModuleFragment};
 use super::layouts::{DefinedObjectTypes, LayoutState};
@@ -143,6 +144,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     atoms: FxHashMap<Atom, StringId>,
     atom_keys: FxHashMap<Atom, PropertyKeyId>,
     shown_names: ShownNames,
+    pub(in crate::lower) printed_operators: PrintedOperators,
     counters: Counters,
     scratch: BuilderScratch,
     pub(crate) has_chain_past_nesting_limit: bool,
@@ -212,6 +214,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                 bound,
                 inputs.sources.bundled_names(file),
             ),
+            printed_operators: PrintedOperators::default(),
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
             has_chain_past_nesting_limit: false,

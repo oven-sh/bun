@@ -1,6 +1,7 @@
 use super::answers::FunctionRef;
 use crate::atom::Atom;
-use crate::program::{FileId, Files, Sym};
+use crate::hir::File;
+use crate::program::{Files, Sym};
 use crate::util::FxHashMap;
 use smallvec::SmallVec;
 
@@ -75,8 +76,8 @@ impl BuiltinTypeSymbols {
         }
     }
 
-    pub fn can_list_declarations_of(files: &Files<'_>, file: FileId) -> bool {
-        resolve::can_list_declarations_of(files, file)
+    pub fn can_list_declarations_of(file: &File<'_>) -> bool {
+        resolve::can_list_declarations_of(file)
     }
 
     pub fn class_of(&self, symbol: Sym) -> Option<BuiltinTypeClass> {

@@ -1,6 +1,7 @@
 // An error that nobody catches is printed with the frames of the `throw` that let it go when it leaves a callback of a timer,
 // process.nextTick, queueMicrotask or a listener. They are the frames of the first `throw`, whatever `finally` blocks and `using`
-// declarations it passes, and the frames of the call where a built-in function throws an error that it was given. Its own
+// declarations it passes, and the frames of the call where a built-in function throws an error that it was given. What the
+// disposer of a `using` declaration throws is thrown again at the end of the function around the declaration. Its own
 // `stack` stays the frames of the place that made it, and that is also what is printed for a rejected promise, for a module's
 // top level and for a Worker.
 import { expect } from "bun:test";
@@ -52,6 +53,38 @@ function throwAgainWhatCalleeThrew(value) {
     throwGiven(value);
   } catch (error) {
     throw error;
+  }
+}
+function throwAgainWhatWasThrownAgain(value) {
+  try {
+    throwAgainWhatCalleeThrew(value);
+  } catch (error) {
+    throw error;
+  }
+}
+function throwAgainTwice(value) {
+  try {
+    try {
+      throwGiven(value);
+    } catch (inner) {
+      throw inner;
+    }
+  } catch (outer) {
+    throw outer;
+  }
+}
+function returnWhatWasThrownAgain(value) {
+  try {
+    throwAgainWhatCalleeThrew(value);
+  } catch (error) {
+    return error;
+  }
+}
+function throwAgainBelowFinally(value) {
+  try {
+    throwAgainWhatCalleeThrew(value);
+  } finally {
+    console.log("finally");
   }
 }
 function throwInTry(value) {
@@ -140,6 +173,32 @@ function throwBesideResource(value) {
   using resource = { [Symbol.dispose]() { console.log("disposed"); } };
   throw value;
 }
+function leaveResourceThatThrows() {
+  using resource = { [Symbol.dispose]() { throw new Error("from the disposer"); } };
+  console.log("left");
+}
+function leaveTwoResourcesOfWhichOneThrows(value) {
+  using first = { [Symbol.dispose]() { console.log("disposed"); } };
+  using second = { [Symbol.dispose]() { throwGiven(value); } };
+  return value.message.length;
+}
+function throwBesideResourceThatThrows(value) {
+  using resource = { [Symbol.dispose]() { throw new Error("from the disposer"); } };
+  throw value;
+}
+function callBesideResourceThatThrows(value) {
+  let count = 0;
+  {
+    using resource = { [Symbol.dispose]() { throw new Error("from the disposer"); } };
+    count += value.message.length;
+    throwGiven(value);
+  }
+  return count + value.message.length;
+}
+async function throwBesideAsyncResourceThatThrows(value) {
+  await using resource = { async [Symbol.asyncDispose]() { throw new Error("from the disposer"); } };
+  throw value;
+}
 function check(signal) {
   signal.throwIfAborted();
 }
@@ -159,6 +218,14 @@ const forms = {
   "thrown again in a catch that does nothing else": () => setTimeout(function onTimer() { throwAgainAtOnce(make()); }, 1),
   "thrown by a callee and again in a catch that does nothing else": () =>
     setTimeout(function onTimer() { throwAgainWhatCalleeThrew(make()); }, 1),
+  "thrown again by a callee and again by its caller, in catches that do nothing else": () =>
+    setTimeout(function onTimer() { throwAgainWhatWasThrownAgain(make()); }, 1),
+  "thrown again twice in one function, in catches that do nothing else": () =>
+    setTimeout(function onTimer() { throwAgainTwice(make()); }, 1),
+  "thrown again by a callee, caught and returned by its caller, thrown by another": () =>
+    setTimeout(function onTimer() { throwGiven(returnWhatWasThrownAgain(make())); }, 1),
+  "thrown again by a callee in a catch that does nothing else, through a finally": () =>
+    setTimeout(function onTimer() { throwAgainBelowFinally(make()); }, 1),
   "caught and returned by one function, thrown by another": () =>
     setTimeout(function onTimer() { throwGiven(makeByFailing()); }, 1),
   "thrown in a later turn": () => setTimeout(function onTimer() { throwGiven(madeEarly); }, 1),
@@ -190,6 +257,30 @@ const forms = {
   "thrown through a finally in a loop over an iterator": () => setTimeout(function onTimer() { callInLoop(make()); }, 1),
   "thrown by a callee beside a using declaration": () => setTimeout(function onTimer() { callBesideResource(make()); }, 1),
   "thrown beside a using declaration": () => setTimeout(function onTimer() { throwBesideResource(make()); }, 1),
+  "thrown by the disposer of a using declaration": () => setTimeout(function onTimer() { leaveResourceThatThrows(); }, 1),
+  "thrown by a callee of the disposer of the second of two using declarations": () =>
+    setTimeout(function onTimer() { leaveTwoResourcesOfWhichOneThrows(make()); }, 1),
+  "thrown beside a using declaration whose disposer throws": () =>
+    setTimeout(function onTimer() { throwBesideResourceThatThrows(make()); }, 1),
+  "thrown by a callee in a block with a using declaration whose disposer throws": () =>
+    setTimeout(function onTimer() { callBesideResourceThatThrows(make()); }, 1),
+  "the stacks of what a using declaration whose disposer throws lets go": () =>
+    setTimeout(function onTimer() {
+      try {
+        callBesideResourceThatThrows(make());
+      } catch (error) {
+        console.log(error.stack);
+        console.log(error.error.stack);
+      }
+    }, 1),
+  "the stack of what an await using declaration whose disposer throws lets go": () =>
+    setTimeout(async function onTimer() {
+      try {
+        await throwBesideAsyncResourceThatThrows(make());
+      } catch (error) {
+        console.log(error.stack);
+      }
+    }, 1),
   "an object through a finally": () => setTimeout(function onTimer() { callInTry(throwGiven, { a: 1 }); }, 1),
   "an error of a built-in function through a finally": () => setTimeout(function onTimer() { callInTry(JSON.parse, "{"); }, 1),
   "thrown by a built-in function that was given it": () =>
@@ -335,6 +426,15 @@ describe("an error that nobody catches", () => {
       "onTimer",
     ]);
     expect(framesOf("caught and returned by one function, thrown by another")).toEqual(["throwGiven", "onTimer"]);
+    expect(framesOf("thrown again by a callee and again by its caller, in catches that do nothing else")).toEqual([
+      "throwAgainWhatWasThrownAgain",
+      "onTimer",
+    ]);
+    expect(framesOf("thrown again by a callee in a catch that does nothing else, through a finally")).toEqual([
+      "throwAgainWhatCalleeThrew",
+      "throwAgainBelowFinally",
+      "onTimer",
+    ]);
     expect(framesOf("thrown in a try with a finally")).toEqual(["throwInTry", "onTimer"]);
     expect(framesOf("thrown through two finally blocks")).toEqual([
       "throwGiven",
@@ -348,6 +448,7 @@ describe("an error that nobody catches", () => {
       "callBesideResource",
       "onTimer",
     ]);
+    expect(framesOf("thrown by the disposer of a using declaration")).toEqual(["leaveResourceThatThrows", "onTimer"]);
     expect(framesOf("thrown by a built-in function that was given it")).toEqual(["check", "onTimer"]);
     expect(framesOf("a listener of an EventTarget below a catch")).toEqual(["throwGiven", "onAsked", "onTimer"]);
     expect(framesOf("caught by the program")).toEqual(["make", "onTimer"]);

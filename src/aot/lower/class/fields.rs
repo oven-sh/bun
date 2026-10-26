@@ -213,7 +213,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_field(class, member, FieldValue::Initializer, false, this);
             }
             ClassElement::AccessorStorage { member, value } => {
-                let value = self.lower_field_value(class, member, value, None, this);
+                let name = self.file.bound.private_name_of_member(member);
+                let function_name = name.map(|name| self.name_under_private_name(class, name));
+                let value = self.lower_field_value(class, member, value, function_name, this);
                 self.set_position(self.file.hir[member].name_pos);
                 let stored = self.file.resolve_accessor_storage(member);
                 self.emit_stored_definition(stored, this, value);
@@ -253,11 +255,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let target = self.find_field_target(class, member);
         let function_name = is_defined.then(|| match target {
             FieldTarget::Property(name) => GivenName::under_member(&self.file.hir[member], name),
-            FieldTarget::Private(id) => {
-                let layout = self.file.own_class_layout(class);
-                let name = self.file.bound.private_name(id).name;
-                PropertyName::Constant(layouts::private_key(self.file, layout, name)).into()
-            }
+            FieldTarget::Private(name) => self.name_under_private_name(class, name),
         });
         let value = self.lower_field_value(class, member, value, function_name, this);
         self.set_position(self.file.hir[member].name_pos);
@@ -267,6 +265,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             (FieldTarget::Private(name), true) => self.emit_field_definition(this, name, value),
             (FieldTarget::Private(name), false) => self.emit_name_set(this, name, value, None),
         }
+    }
+
+    fn name_under_private_name(&mut self, class: ClassId, name: PrivateNameId) -> GivenName {
+        let layout = self.file.own_class_layout(class);
+        let name = self.file.bound.private_name(name).name;
+        PropertyName::Constant(layouts::private_key(self.file, layout, name)).into()
     }
 
     fn find_field_target(&mut self, class: ClassId, member: MemberId) -> FieldTarget {

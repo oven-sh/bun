@@ -24,11 +24,31 @@ pub(in crate::lower::scope) fn walk_file(
     let mut walker = Walker::new(input, lexical_owners);
     walker.walk_module();
     let mut walk = walker.walk;
+    if !walker.unprinted_uses.is_empty() {
+        let mut named: Vec<SymbolId> = walker.unprinted_uses.iter().map(|named| named.1).collect();
+        sort_unique(&mut named);
+        let printed_users = walk
+            .uses
+            .iter()
+            .filter_map(|&(user, binding)| match binding {
+                BindingRef::Symbol(symbol) if named.binary_search(&symbol).is_ok() => {
+                    Some((symbol, user))
+                }
+                _ => None,
+            });
+        walk.printed_users = printed_users.collect();
+        walk.printed_users.sort_unstable();
+        walk.symbols_named_in_unprinted_statements = named;
+        let unprinted_uses = walker.unprinted_uses.iter();
+        walk.uses
+            .extend(unprinted_uses.map(|&(user, symbol)| (user, BindingRef::Symbol(symbol))));
+    }
     sort_unique(&mut walk.uses);
     sort_unique(&mut walk.function_references);
     sort_unique(&mut walk.eval_uses);
     sort_unique(&mut walk.stored_slots);
     sort_unique(&mut walk.symbols_read_by_enums);
+    sort_unique(&mut walk.symbols_in_export_lists);
     walk.symbol_stores
         .sort_unstable_by_key(|store| (store.0, store.1));
     sort_unique(&mut walk.function_of_field);
@@ -88,6 +108,7 @@ impl<'x, 's> Walker<'x, 's> {
             metadata_uses,
             class_decorators: collect_class_decorators(hir, bound),
             last_users: vec![None; bound.symbols.len()],
+            unprinted_uses: Vec::new(),
             pending_stores: Vec::new(),
             clock: 0,
             walk: ScopeWalk {
@@ -96,6 +117,7 @@ impl<'x, 's> Walker<'x, 's> {
                 last_store_times: vec![0; bound.symbols.len()],
                 use_counts: vec![0; bound.symbols.len()],
                 symbols_read_by_enums: Vec::new(),
+                symbols_in_export_lists: Vec::new(),
                 is_initialized_conditionally: vec![false; bound.symbols.len()],
                 is_switch_scope: vec![false; bound.scopes.len()],
                 is_repeated_scope: vec![false; bound.scopes.len()],
@@ -267,6 +289,7 @@ impl<'x, 's> Walker<'x, 's> {
             enclosing_try: None,
             is_repeated: function != WalkedFunctionId::MODULE_BODY,
             is_conditional: false,
+            is_unprinted: false,
         };
         self.enter_scope(scope, context);
         context
@@ -281,6 +304,10 @@ impl<'x, 's> Walker<'x, 's> {
     pub(super) fn record_symbol_use(&mut self, context: Context, symbol: SymbolId) {
         let use_count = &mut self.walk.use_counts[symbol.idx()];
         *use_count = (*use_count + 1).min(2);
+        if context.is_unprinted {
+            self.unprinted_uses.push((context.function, symbol));
+            return;
+        }
         self.record_unwritten_symbol_use(context, symbol);
     }
 

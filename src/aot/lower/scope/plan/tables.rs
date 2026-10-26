@@ -33,6 +33,14 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
     let holders = holders.map(|&(function, symbol)| (walk.functions[function.index()].key, symbol));
     let mut initialized_holders: Vec<(FunctionKey, SymbolId)> = holders.collect();
     initialized_holders.sort_unstable();
+    let named_in_unprinted_statements = walk.symbols_named_in_unprinted_statements.iter();
+    let named_elsewhere_only_there = named_in_unprinted_statements.filter(|&&symbol| {
+        let owner = context.owner_of(BindingRef::Symbol(symbol));
+        let first = walk.printed_users.partition_point(|user| user.0 < symbol);
+        let printed_users = walk.printed_users[first..].iter();
+        let mut printed_users = printed_users.take_while(|user| user.0 == symbol);
+        !printed_users.any(|user| Some(user.1) != owner)
+    });
     ScopeAnalysis {
         file: context.input.file,
         max_captures: context.input.max_captures,
@@ -53,6 +61,10 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         initialized_holders,
         use_counts: walk.use_counts.clone(),
         symbols_read_by_enums: walk.symbols_read_by_enums.clone(),
+        symbols_in_export_lists: walk.symbols_in_export_lists.clone(),
+        symbols_named_elsewhere_only_in_unprinted_statements: named_elsewhere_only_there
+            .copied()
+            .collect(),
         has_wrapper_parameters: walk.has_wrapper_parameters,
     }
 }

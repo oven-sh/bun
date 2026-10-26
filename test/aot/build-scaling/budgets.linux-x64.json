@@ -209,10 +209,18 @@
   },
   "steps of a chain of calls that each add a class to one array, whose elements are read under many names": {
     "millionInstructions": 6013,
-    "megabytes": 136,
+    "megabytes": 233,
     "growth": {
       "instructions": 3.5
     }
+  },
+  "terms of one sum that name a constant": {
+    "millionInstructions": 3417,
+    "megabytes": 142
+  },
+  "functions with a row of constants that are each computed from the one before": {
+    "millionInstructions": 5178,
+    "megabytes": 142
   },
   "a declaration where an expression belongs, nested in itself": {
     "millionInstructions": 6900,

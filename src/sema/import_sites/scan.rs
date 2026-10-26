@@ -38,6 +38,8 @@ pub(crate) fn collect_import_sites<'s>(
     sites_by_kind.shared_sort_unstable_by_key(|&index| sites[index as usize].kind);
     let imports_used_only_in_dead_code =
         (uses.as_ref()).map_or_else(Vec::new, |uses| uses.symbols_used_only_in_dead_code());
+    let imports_used_without_a_read =
+        (uses.as_ref()).map_or_else(Vec::new, |uses| uses.symbols_used_without_a_read());
     let unused_import_symbols = uses.map_or_else(Vec::new, |uses| uses.unused_symbols());
     ImportScan {
         sites: slice_in(&sites, arena),
@@ -46,6 +48,7 @@ pub(crate) fn collect_import_sites<'s>(
         jsx_imports,
         unused_import_symbols: slice_in(&unused_import_symbols, arena),
         imports_used_only_in_dead_code: slice_in(&imports_used_only_in_dead_code, arena),
+        imports_used_without_a_read: slice_in(&imports_used_without_a_read, arena),
         module_require_objects: slice_in(&calls.module_require_objects, arena),
         requires_of_other_files: slice_in(&calls.requires_of_other_files, arena),
         pending_macro_calls: slice_in(&pending_macro_calls, arena),

@@ -19,6 +19,7 @@ use crate::builtins::{Resolved, builtin_value_of};
 use crate::ir::generated::TypeSiteKind;
 use crate::ir::{DeclaredType, ExpectedResultId, PropertyKeyId, StringId, ValueId};
 
+pub(in crate::lower) use self::callee::PrintedOperators;
 pub(in crate::lower) use self::intrinsic::lower_intrinsic_expression;
 
 pub(crate) enum Arguments {
@@ -116,7 +117,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.lower_super_call(call);
         }
         self.record_read_of_builtin_path(inner);
-        if let Some(value) = self.try_lower_module_call(call, exit) {
+        let is_in_tail_position = matches!(evaluation.tail, Tail::Yes { .. });
+        let outer = std::mem::replace(&mut self.is_call_in_tail_position, is_in_tail_position);
+        let loaded = self.try_lower_module_call(call, exit);
+        self.is_call_in_tail_position = outer;
+        if let Some(value) = loaded {
             return value;
         }
         if let Some(value) = self.try_lower_export_definition(call) {

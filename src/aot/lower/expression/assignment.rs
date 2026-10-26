@@ -1,7 +1,9 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, Decl};
+use bun_sema::bind::{Binding, Decl, PatParent};
 use bun_sema::fold::Decision;
-use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, IdList, MemberKey, PropId, Span, UnOp};
+use bun_sema::hir::{
+    BinOp, ExprFlags, ExprId, ExprKind, Flags, IdList, MemberKey, PropId, Span, UnOp,
+};
 
 use super::ResultUsage;
 use super::logical::LogicalOperator;
@@ -141,12 +143,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(placement) = file.scopes.placement(BindingRef::Symbol(symbol)) else {
             return false;
         };
-        let is_exported = file.bound.symbol_scope(symbol) == file_scope(file)
-            && matches!(placement.storage, Storage::Variable(_));
+        let is_declared_exported = |declaration: &Decl| match *declaration {
+            Decl::Var(pattern) => match file.bound.pat_parent[pattern.idx()] {
+                PatParent::Var(declaration) => file.hir[declaration].flags.contains(Flags::EXPORT),
+                _ => false,
+            },
+            Decl::Class(class) => file.hir[class].flags.contains(Flags::EXPORT),
+            _ => false,
+        };
         let mut declarations = file.bound.symbol(symbol).decls.iter();
+        let is_exported = file.bound.symbol_scope(symbol) == file_scope(file)
+            && (matches!(placement.storage, Storage::Variable(_))
+                || file.scopes.is_in_export_list(symbol)
+                || declarations.clone().any(is_declared_exported));
         let is_parameter = declarations.any(|declaration| matches!(declaration, Decl::Param(_)));
         let flags = self.builder.function().flags;
-        !placement.is_shared
+        let is_seen_by_no_printed_closure = !file.bound.is_visible_to_eval(symbol)
+            && file
+                .scopes
+                .is_named_elsewhere_only_in_unprinted_statements(symbol);
+        (!placement.is_shared || is_seen_by_no_printed_closure)
             && !file.scopes.is_read_by_enum(symbol)
             && !(is_exported && !file.is_commonjs_module())
             && !(is_parameter && flags.contains(FunctionFlags::IS_GENERATOR))

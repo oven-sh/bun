@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{Binding, BindingInitializer, BindingKind, Decl, FnOwner, Parent};
 use bun_sema::check::spans::skip_trivia;
@@ -7,6 +9,8 @@ use bun_sema::hir::{
     MemberKey, PropKey, PropKind, UnOp, end_of_expr,
 };
 use bun_sema::import_sites::ImportSiteKind;
+use rustc_hash::FxHashMap;
+use smallvec::{SmallVec, smallvec};
 
 use super::Callee;
 use crate::builtins::Resolved;
@@ -213,6 +217,13 @@ fn is_equality(op: BinOp) -> bool {
     )
 }
 
+fn is_computable(op: BinOp) -> bool {
+    !matches!(
+        op,
+        BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma | BinOp::In | BinOp::Instanceof
+    )
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum LiteralKind {
     Number,
@@ -221,6 +232,23 @@ enum LiteralKind {
     Null,
     Undefined,
     BigInt,
+}
+
+// What Bun's transpiler prints for the operators of a file. Each is asked once, however many operators and names of constants lead to it.
+#[derive(Default)]
+pub(in crate::lower) struct PrintedOperators {
+    literals: RefCell<FxHashMap<ExprId, bool>>,
+    kinds: RefCell<FxHashMap<ExprId, Option<LiteralKind>>>,
+}
+
+impl PrintedOperators {
+    fn find_literal(&self, operator: ExprId) -> Option<bool> {
+        self.literals.borrow().get(&operator).copied()
+    }
+
+    fn find_kind(&self, operator: ExprId) -> Option<Option<LiteralKind>> {
+        self.kinds.borrow().get(&operator).copied()
+    }
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -701,15 +729,8 @@ impl FileLowering<'_, '_, '_, '_> {
             }
 
             ExprKind::Binary { op, left, right } => {
-                !matches!(
-                    op,
-                    BinOp::And
-                        | BinOp::Or
-                        | BinOp::Nullish
-                        | BinOp::Comma
-                        | BinOp::In
-                        | BinOp::Instanceof
-                ) && self.is_literal_operand(right)
+                is_computable(op)
+                    && self.is_literal_operand(right)
                     && self.is_literal_operand(left)
                     && self.is_computed(op, left, right)
             }
@@ -747,6 +768,9 @@ impl FileLowering<'_, '_, '_, '_> {
             };
         };
         let name = self.find_written_member_name(key)?;
+        if !hir.is_name_resolved_by_transpiler(expression, self.queries.atom_bytes(name)) {
+            return None;
+        }
         let limit = self
             .inputs
             .limits
@@ -803,7 +827,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // An expression without what Bun's transpiler does not print: type syntax, and a comma whose left operand it drops.
+    // An expression without what Bun's transpiler does not print: type syntax, a comma whose left operand it drops, and what a literal decides against.
     pub(in crate::lower) fn skip_unprinted_syntax(&self, expression: ExprId) -> ExprId {
         let mut printed = self.skip_type_syntax(expression);
         loop {
@@ -821,6 +845,11 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 ExprKind::Index { obj, index, .. } => match self.find_printed_element(obj, index) {
                     Some(element) => element,
+                    None => return printed,
+                },
+                ExprKind::Cond { test, branches } => match self.find_printed_condition(test) {
+                    Some(true) => self.hir.branches(branches).yes,
+                    Some(false) => self.hir.branches(branches).no,
                     None => return printed,
                 },
                 _ => return printed,
@@ -887,10 +916,23 @@ impl FileLowering<'_, '_, '_, '_> {
             return false;
         };
         let site = analysis.import_sites[site];
-        matches!(
-            site.kind,
-            ImportSiteKind::Require(_) | ImportSiteKind::RequireResolve(_)
-        ) && site.specifier_node.is_some()
+        // A function that the program has made and named `require` is called as any other.
+        let hir = self.hir;
+        let ExprKind::Call(id) = hir[call].kind else {
+            return false;
+        };
+        let mut root = self.skip_type_syntax(hir[id].callee);
+        if let ExprKind::Dot { obj, .. } = hir[root].kind {
+            root = self.skip_type_syntax(obj);
+        }
+        let is_declared = matches!(hir[root].kind, ExprKind::Ident(_))
+            && matches!(self.bound.binding(root), Binding::Symbol(_));
+        !is_declared
+            && matches!(
+                site.kind,
+                ImportSiteKind::Require(_) | ImportSiteKind::RequireResolve(_)
+            )
+            && site.specifier_node.is_some()
             && self.is_literal_operand(site.specifier_node)
     }
 
@@ -1008,17 +1050,18 @@ impl FileLowering<'_, '_, '_, '_> {
             operand = self.skip_unprinted_syntax(written);
         }
         if let ExprKind::Binary { op, left, right } = hir[operand].kind {
-            let kinds = (
-                self.find_literal_kind(left)?,
-                self.find_literal_kind(right)?,
-            );
-            let is_text = matches!(kinds, (LiteralKind::String, _) | (_, LiteralKind::String));
-            return Some(match op {
-                BinOp::Add if is_text => LiteralKind::String,
-                BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => LiteralKind::Boolean,
-                _ if is_equality(op) => LiteralKind::Boolean,
-                _ => LiteralKind::Number,
-            });
+            if let Some(kind) = self.printed_operators.find_kind(operand) {
+                return kind;
+            }
+            let kind = self.find_computed_kind(op, left, right);
+            let mut kinds = self.printed_operators.kinds.borrow_mut();
+            kinds.insert(operand, kind);
+            return kind;
+        }
+        // `"ab".length`
+        if matches!(hir[operand].kind, ExprKind::Dot { .. }) && self.is_printed_as_literal(operand)
+        {
+            return Some(LiteralKind::Number);
         }
         match self.decisions().constant(hir, operand) {
             FoldedValue::Constant(Constant::Number(_)) => Some(LiteralKind::Number),
@@ -1029,6 +1072,20 @@ impl FileLowering<'_, '_, '_, '_> {
             FoldedValue::Constant(Constant::BigInt(_)) => Some(LiteralKind::BigInt),
             _ => None,
         }
+    }
+
+    fn find_computed_kind(&self, op: BinOp, left: ExprId, right: ExprId) -> Option<LiteralKind> {
+        let kinds = (
+            self.find_literal_kind(left)?,
+            self.find_literal_kind(right)?,
+        );
+        let is_text = matches!(kinds, (LiteralKind::String, _) | (_, LiteralKind::String));
+        Some(match op {
+            BinOp::Add if is_text => LiteralKind::String,
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => LiteralKind::Boolean,
+            _ if is_equality(op) => LiteralKind::Boolean,
+            _ => LiteralKind::Number,
+        })
     }
 
     // Bun's transpiler moves a literal on the left of an equality operator to the right.
@@ -1054,7 +1111,42 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // The operators of `a + b + c` are asked from the innermost on, so that each finds the answer for its left operand.
     pub(in crate::lower) fn is_literal_operand(&self, expression: ExprId) -> bool {
+        let written = self.skip_type_syntax(expression);
+        if !matches!(self.hir[written].kind, ExprKind::Binary { .. }) {
+            return self.is_printed_literal(written);
+        }
+        if let Some(is_literal) = self.printed_operators.find_literal(written) {
+            return is_literal;
+        }
+        let mut row: SmallVec<[ExprId; 8]> = smallvec![written];
+        while let Some(left) = self.find_deciding_left_operator(row[row.len() - 1])
+            && self.printed_operators.find_literal(left).is_none()
+        {
+            row.push(left);
+        }
+        let mut is_literal = false;
+        for &operator in row.iter().rev() {
+            is_literal = self.is_printed_literal(operator);
+            let mut literals = self.printed_operators.literals.borrow_mut();
+            literals.insert(operator, is_literal);
+        }
+        is_literal
+    }
+
+    // The left operand of an operator, where that is an operator which decides what is printed for this one.
+    fn find_deciding_left_operator(&self, operator: ExprId) -> Option<ExprId> {
+        let ExprKind::Binary { op, left, right } = self.hir[operator].kind else {
+            return None;
+        };
+        let left = self.skip_type_syntax(left);
+        let is_deciding = matches!(self.hir[left].kind, ExprKind::Binary { .. })
+            && (op == BinOp::Comma || is_computable(op) && self.is_literal_operand(right));
+        is_deciding.then_some(left)
+    }
+
+    fn is_printed_literal(&self, expression: ExprId) -> bool {
         let inner = self.skip_unprinted_syntax(expression);
         match self.hir[inner].kind {
             ExprKind::Null

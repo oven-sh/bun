@@ -138,8 +138,8 @@ impl FileLowering<'_, '_, '_, '_> {
         let PatParent::Var(declaration) = self.bound.pat_parent[pattern.idx()] else {
             return None;
         };
-        // The transpiler knows the value from the declaration on.
-        let is_declared = self.hir[pattern].pos < self.hir[name].pos;
+        // The transpiler knows the value from the end of the declaration on.
+        let is_declared = self.hir[declaration].loc.end <= self.hir[name].pos;
         (is_declared && self.is_named_by_its_value(declaration))
             .then_some(self.hir[declaration].init)
     }
@@ -330,7 +330,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 budget.take_step()
                     && match hir[earlier].kind {
                         StmtKind::Var(declarations) => declarations.iter().all(is_constant),
-                        StmtKind::Directive { .. } => true,
+                        StmtKind::Directive { .. } | StmtKind::Enum(_) => true,
                         _ => !self.is_printed(earlier),
                     }
             })

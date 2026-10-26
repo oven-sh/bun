@@ -286,6 +286,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let member = find_bound_member(self.file, access)?;
         let position = self.file.hir[access].pos;
         let holder = self.lower_root(access);
+        self.record_read_from_object(access);
         self.set_position(position);
         self.test_holder(holder, NullishAccess::Read);
         emit_member_read(self, member)

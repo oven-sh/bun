@@ -44,6 +44,7 @@ arrays/index-fill-grows-like-push
 arrays/lists-of-fractions-returned-by-functions-that-are-handed-a-list-of-texts-are-read-by-index
 arrays/lists-of-fractions-returned-by-functions-that-are-handed-an-empty-list-are-read-by-index
 arrays/lists-of-numbers-are-given-undefined-null-nan-and-holes
+arrays/lists-of-numbers-in-either-storage-are-walked-by-typed-readers
 arrays/lists-of-whole-numbers-that-are-handed-in-are-walked-beside-a-list-that-stays-as-written
 arrays/lists-with-named-properties-keep-their-element-proofs
 arrays/lists-with-names-of-their-own-lose-and-gain-elements-at-the-front
@@ -357,6 +358,7 @@ classes-and-closures/a-closure-made-anew-on-every-turn-is-read-on-that-turn
 classes-and-closures/a-closure-made-anew-on-every-turn-is-read-on-that-turn-in-module-code
 classes-and-closures/a-closure-made-anew-on-the-way-a-test-always-takes-is-read-on-that-turn
 classes-and-closures/a-closure-over-another-object-is-stored-by-name-into-a-field
+classes-and-closures/a-function-that-is-handed-over-or-left-out
 classes-and-closures/a-large-name-given-to-a-function-at-run-time-is-held-once
 classes-and-closures/a-name-is-looked-for-in-an-object-behind-a-read-of-it-in-a-loop
 classes-and-closures/a-setter-without-a-getter-hides-a-member-of-object-prototype
@@ -408,10 +410,12 @@ classes-below-functions/a-setter-of-new-target-takes-the-store-of-a-string-in-th
 classes-below-functions/a-setter-of-new-target-takes-the-store-of-an-object-in-the-constructor
 classes-below-functions/a-setter-of-new-target-takes-the-store-when-reflect-construct-is-called-through-call
 classes-below-functions/reflect-construct-after-the-class-was-wrapped-in-a-proxy
+classes/a-class-without-a-name-is-the-default-export
 classes/a-definition-that-throws-leaves-the-fields-defined-before-it
 classes/a-field-and-a-derived-constructor-both-evaluate-text
 classes/a-field-declared-by-a-base-class-holds-integers-in-the-class-below
 classes/a-function-that-constructs-itself-without-end-makes-classes-with-members-under-indexes
+classes/a-function-that-the-field-of-a-private-accessor-holds-takes-its-name
 classes/a-method-is-called-on-a-parameter-without-a-type
 classes/a-name-that-looks-like-a-number-is-stored-to-the-prototype-object-of-a-class
 classes/a-subclass-without-a-constructor-is-constructed-as-one-that-calls-super-itself
@@ -424,6 +428,7 @@ classes/bare-field-is-undefined-when-a-class-expression-has-two-parents
 classes/bare-private-field-is-undefined-below-a-replaced-parent
 classes/classes-that-a-function-stores-into-a-variable-of-the-module
 classes/classes-that-extend-array-and-typed-arrays
+classes/classes-with-128-to-130-static-fields-are-listed-described-and-changed
 classes/classes-with-and-without-a-static-member-of-one-name-become-text-numbers-and-json-in-turn
 classes/classes-written-for-es5-inherit-through-a-helper
 classes/evaluated-text-lists-the-static-fields-of-a-class-in-its-first-for-in
@@ -455,6 +460,8 @@ classes/the-constructor-above-lets-the-object-out-before-the-fields-below-are-de
 classes/the-constructor-above-stores-under-an-inherited-accessor-before-the-field-below-is-defined
 classes/the-name-of-a-class-is-read-while-its-decorators-run
 classes/the-prototype-object-of-a-class-is-no-instance-of-it
+classes/the-values-of-accessor-fields-run-ahead-of-the-defaults-of-the-parameters
+classes/the-values-of-accessor-fields-run-ahead-of-the-defaults-of-the-parameters-where-fields-are-assigned
 classes/twenty-subclasses-override-a-method-beside-an-entry-point-that-requires-a-computed-name
 classes/unread-field-is-stored-below-a-replaced-parent
 classes/what-a-loop-reads-is-changed-inside-the-loop-without-naming-it
@@ -494,6 +501,7 @@ closed-world/code-by-computed-path-without-js-extension
 closed-world/code-by-computed-path-without-js-extension-with-eval
 closed-world/console-constructor-is-read-through-a-proxy-of-console
 closed-world/data-files-by-computed-path
+closed-world/eval-is-picked-from-a-table-under-a-key-put-together-at-run-time-and-called
 closed-world/external-package-finds-the-realm-locked
 closed-world/files-that-load-as-host-objects-by-name
 closed-world/functions-native-code-calls/timer-delay-known-at-run-time
@@ -507,9 +515,15 @@ closed-world/members-of-process-are-read-through-an-object-that-inherits-from-pr
 closed-world/members-of-process-are-read-under-computed-keys-once-process-arrives-behind-many-calls
 closed-world/members-that-are-no-functions-are-read-on-built-in-modules-that-were-handed-on
 closed-world/package-outside-sees-no-module-object-of-the-program
+closed-world/plugin-of-bun-named-on-a-star-import-made-of-getters
+closed-world/plugin-of-bun-named-on-an-object-filled-under-the-keys-of-the-module
+closed-world/plugin-of-bun-named-on-getters-over-the-keys-of-the-global-bun
+closed-world/process-get-builtin-module-is-read-from-a-table-under-a-key-put-together-at-run-time-and-called
 closed-world/replaceable-members-out-of-a-table-beside-an-external-package
+closed-world/require-is-picked-from-a-table-under-a-key-put-together-at-run-time-and-called
 closed-world/script-declarations-over-every-global
 closed-world/script-declarations-over-every-global-validated
+closed-world/the-function-constructor-is-picked-from-a-table-under-a-key-put-together-at-run-time-and-called
 closed-world/the-parent-that-a-package-outside-sees-outlives-collections
 closure-factories/a-factory-is-called-before-its-variable-is-filled
 closure-factories/a-factory-that-can-tell-its-closures-apart
@@ -683,6 +697,7 @@ const-and-dead-zones/a-default-export-that-is-a-number-is-read-above-its-stateme
 const-and-dead-zones/a-default-export-that-is-an-arrow-function-is-read-above-its-statement-in-the-output-of-bun-build
 const-and-dead-zones/a-large-var-read-only-where-a-parameter-has-another-type-than-the-written-one
 const-and-dead-zones/import-store-const-arrow-assign
+const-and-dead-zones/initializers-that-read-the-variable-they-initialize
 const-and-dead-zones/namespace-store-self-import
 const-and-dead-zones/reads-that-nothing-uses-of-variables-before-their-declarations
 const-and-dead-zones/texts-joined-from-constants-that-are-read-in-their-dead-zones
@@ -787,11 +802,13 @@ effects/an-array-of-strings-made-at-run-time-is-read-and-written-around-every-to
 effects/closures-that-hold-a-value-outside-its-type-store-to-variables-read-behind-their-calls
 effects/literals-with-elements-name-a-prototype-that-answers-for-indices-validated
 effects/things-read-right-where-they-are-made
+enums/a-member-set-to-the-length-of-a-string-is-read-from-the-enum-object
 enums/a-negative-member-is-raised-to-a-power-that-is-read-out-of-a-list
 enums/a-number-outside-the-enum-is-given-for-a-parameter-with-a-default-and-read-in-a-closure
 enums/a-number-outside-the-enum-is-given-for-it-and-read-in-a-closure
 enums/constant-pow-matches-engine
 enums/enums-with-reverse-keys-of-every-kind
+enums/members-with-non-ascii-names-are-read-after-the-enum-object-changes
 enums/static-field-of-a-base-class-and-an-own-property-of-its-subclass-hold-numbers-past-int32
 enums/static-field-of-a-const-enum-type-holds-a-number-past-int32
 enums/static-field-of-a-flags-enum-holds-what-arithmetic-makes-of-the-flags
@@ -823,8 +840,11 @@ errors/errors-of-every-operand-that-a-built-in-function-converts-are-caught
 errors/every-kind-of-place-that-throws
 errors/frames-of-a-printed-error-below-expressions-that-construct
 errors/frames-of-commonjs-files-that-throw-while-they-are-imported
+errors/frames-of-errors-that-built-in-functions-make-above-compiled-functions
+errors/frames-of-functions-that-return-what-require-answers
 errors/iterating-what-is-not-iterable
 errors/messages-name-the-built-in-function-that-cannot-be-constructed
+errors/names-in-frames-of-functions-whose-name-was-defined-and-deleted
 errors/own-property-names-of-errors-made-in-programs-classes-and-built-in-modules
 errors/places-that-throw-with-another-text-or-column
 errors/reads-of-null-with-many-values-in-registers
@@ -854,6 +874,7 @@ errors/stack-frames-of-functions-called-through-an-await
 errors/stack-frames-of-functions-called-through-an-await-beside-entry-points-that-change-globalthis
 errors/stack-frames-of-functions-given-a-display-name-far-from-where-they-are-written
 errors/stack-frames-of-functions-given-a-display-name-once-they-come-back-out-of-code-made-at-run-time
+errors/stack-frames-of-functions-given-a-display-name-where-nobody-sees-it-however-they-are-called
 errors/stack-frames-of-functions-in-evaluated-text-that-return-a-new-error
 errors/stack-frames-of-functions-named-by-copies-and-under-computed-keys-beside-an-import-named-at-run-time
 errors/stack-frames-of-functions-of-node-modules-that-one-place-makes-under-many-names
@@ -864,6 +885,7 @@ errors/stack-frames-of-functions-that-return-a-new-error
 errors/stack-frames-of-functions-that-return-a-new-error-in-the-output-of-bun-build
 errors/stack-frames-of-functions-that-return-a-variable-behind-a-type
 errors/stack-frames-of-functions-that-return-a-variable-behind-statements-that-leave-nothing-to-run
+errors/stack-frames-of-functions-that-return-a-variable-that-a-literal-chooses
 errors/stack-frames-of-functions-that-return-a-variable-used-once
 errors/stack-frames-of-functions-that-return-a-variable-with-a-type
 errors/stack-frames-of-functions-with-a-display-name-once-a-statement-has-looked-for-the-name
@@ -883,8 +905,13 @@ errors/stack-frames-where-the-initializer-of-a-field-throws
 errors/stack-lines-after-types-over-several-lines
 errors/stack-lines-of-expressions-written-over-several-lines
 errors/stack-positions-after-types-on-the-same-line
+errors/stack-positions-behind-calls-of-a-function-that-create-require-made
+errors/stack-positions-behind-class-declarations-that-closures-and-other-files-see
 errors/stack-positions-behind-members-that-are-tags-of-templates
 errors/stack-positions-behind-spreads-of-operands-in-parentheses
+errors/stack-positions-behind-stores-to-exports-that-another-file-reads
+errors/stack-positions-behind-tags-of-templates-that-are-local-names
+errors/stack-positions-behind-variables-that-closures-name-only-where-nothing-runs
 errors/stack-positions-beside-variables-at-the-top-of-a-module
 errors/stack-positions-in-concatenations-and-compound-assignments
 errors/stack-positions-in-text-that-the-program-evaluates
@@ -893,6 +920,7 @@ errors/stack-positions-of-callers
 errors/stack-positions-of-callers-that-step-a-generator
 errors/stack-positions-of-checks-that-have-no-place-of-their-own
 errors/stack-positions-of-constants-at-the-top-of-a-file
+errors/stack-positions-of-constants-behind-enums-that-functions-declare
 errors/stack-positions-of-conversions-that-have-no-place-of-their-own
 errors/stack-positions-of-expressions-that-throw
 errors/stack-positions-of-expressions-that-throw-in-commonjs
@@ -936,6 +964,7 @@ escape-analysis/fields-are-deleted-from-objects-that-stay-in-one-function
 escape-analysis/find-over-an-array-literal-that-a-function-answers-and-every-pass-is-verified
 escape-analysis/find-over-one-of-two-array-literals-and-every-pass-is-verified
 escape-analysis/five-objects-that-leave-on-one-way-are-candidates-for-one-variable
+escape-analysis/function-objects-without-captures-are-only-called-while-others-of-their-function-are-renamed-and-every-pass-is-verified
 escape-analysis/loop-over-an-arguments-object-or-undefined
 escape-analysis/objects-filled-under-tries-hold-one-another-and-leave-on-one-way
 escape-analysis/objects-that-refer-to-each-other-built-on-one-path
@@ -1235,6 +1264,7 @@ language/iterate-a-string-object-or-a-collection
 language/keys-made-of-primitives-are-closed
 language/maps-and-sets-of-every-key-kind-vs-model
 language/members-are-replaced-for-every-reader
+language/members-that-can-be-replaced-are-replaced-beside-a-file-that-defines-globals-under-computed-names
 language/not-a-number-with-its-sign-set-is-tested-and-unboxed
 language/nullable-integers
 language/number-parameters-called-with-sums
@@ -1322,6 +1352,7 @@ modules/a-commonjs-file-throws-after-a-module-it-required-imported-it
 modules/a-computed-path-is-required-again-and-again
 modules/a-constant-import-of-a-data-url-admits-that-text-alone
 modules/a-cycle-of-modules-one-of-which-throws-is-asked-for-in-a-worker
+modules/a-default-export-that-names-only-a-type-exports-nothing
 modules/a-file-requires-a-module-whose-import-is-in-flight
 modules/a-file-requires-a-module-whose-import-is-in-flight-and-that-imports-the-entry-point
 modules/a-file-that-is-gone-by-the-time-it-is-loaded-under-a-computed-path
@@ -1332,6 +1363,7 @@ modules/a-function-of-a-commonjs-file-that-ignores-its-this-is-called-through-th
 modules/a-graph-that-a-module-imported-on-demand-imports-without-waiting-runs-behind-the-await-of-that-module
 modules/a-helper-that-defines-getters-on-the-exports-of-a-commonjs-file-also-defines-the-flag-of-es-modules
 modules/a-late-module-reaches-what-is-not-installed-through-a-module-that-the-entry-point-imports
+modules/a-member-of-a-cycle-is-imported-after-the-root-of-the-cycle-threw-behind-an-await
 modules/a-member-of-a-cycle-that-another-member-requires-stays-evaluated-when-the-cycle-throws
 modules/a-module-is-required-again-by-a-file-it-imports-on-demand-before-the-first-require-returns
 modules/a-module-resumed-inside-require-awaits-a-number
@@ -1345,8 +1377,10 @@ modules/a-module-resumed-inside-require-throws
 modules/a-module-that-binds-a-name-a-library-module-lacks-fails-alone
 modules/a-module-that-cannot-be-linked-exports-functions-and-classes
 modules/a-module-that-ended-on-a-cycle-whose-other-module-throws-is-imported-later
+modules/a-module-that-reads-a-type-of-a-library-module-fails-to-link
 modules/a-namespace-is-read-for-a-name-that-a-commonjs-file-lacks-and-another-module-imports
 modules/a-require-is-called-before-create-require-has-made-it
+modules/a-require-links-part-of-a-graph-between-its-import-and-its-link
 modules/a-required-module-settles-an-awaited-promise-and-throws-after-an-await
 modules/a-shell-command-starts-in-the-directory-of-the-system
 modules/a-strict-bundle-in-the-commonjs-format-of-bun-build-returns-early-and-names-a-source-map
@@ -1358,11 +1392,14 @@ modules/an-embedded-file-opened-for-reading-refuses-writes
 modules/an-import-called-under-a-require-while-a-module-imported-on-demand-is-loaded-runs-its-file-behind-that-module
 modules/an-import-called-under-a-require-while-the-entry-point-is-loaded-runs-its-file-before-the-entry-point
 modules/an-import-equals-names-a-module-that-only-a-declaration-knows
+modules/an-import-of-an-evaluated-module-settles-in-the-same-job-however-the-module-was-first-loaded
 modules/an-imported-commonjs-file-requires-a-module-that-awaits
 modules/bindings-behind-getters-that-a-helper-defines-are-imported-by-name-beside-the-default
+modules/class-fields-and-stores-through-super-on-a-namespace-whose-exports-nothing-reads
 modules/cycles-in-which-a-module-throws-are-asked-for-by-require
 modules/cycles-in-which-a-module-throws-beside-commonjs-files
 modules/cycles-with-top-level-await-in-which-a-module-throws
+modules/deleting-and-defining-exports-that-nothing-reads
 modules/each-way-to-require-a-module-with-top-level-await
 modules/each-way-to-require-by-a-computed-name-a-module-with-top-level-await
 modules/esbuild-require-shim-loads-files-and-packages
@@ -1500,6 +1537,7 @@ node-http-probes/replaced-methods-of-socket
 node-http-probes/state-of-a-response-through-a-proxy-and-an-heir
 node-http-probes/the-head-is-decided-at-the-first-write
 nothing-throws-because-of-a-type/a-boolean-out-of-a-map-of-numbers-is-held-in-a-field-and-rounded
+nothing-throws-because-of-a-type/a-number-declared-a-string-is-spread-behind-a-loop-in-a-validating-build
 nothing-throws-because-of-a-type/a-test-that-only-null-and-undefined-should-fail-is-failed-by-other-values
 nothing-throws-because-of-a-type/tests-that-a-declared-type-would-decide-are-met-by-other-values
 null-where-the-type-says-none/a-field-declared-and-never-made-is-read-in-a-callback-of-a-function-called-twice
@@ -1995,6 +2033,10 @@ untyped-stress/prototype-chains-changed-at-random-1
 untyped-stress/prototype-chains-changed-at-random-beside-a-library-module
 untyped-stress/set-and-map-iteration-without-operations
 untyped-stress/string-building
+ways-into-library-modules/net-socket-through-a-function-that-calls-a-member-of-what-it-is-given-under-the-key-it-is-given
+ways-into-library-modules/net-socket-through-a-member-of-a-dynamic-import-of-node-module-called-under-a-key-put-together-at-run-time
+ways-into-library-modules/net-socket-through-a-member-of-a-star-import-of-node-module-called-under-a-key-put-together-at-run-time
+ways-into-library-modules/net-socket-through-a-member-of-node-module-called-under-a-key-put-together-at-run-time
 ways-into-library-modules/net-socket-through-create-require-found-by-a-loop-over-the-keys-of-a-table-of-functions
 ways-into-library-modules/net-socket-through-create-require-in-a-copy-of-node-module-read-far-down-a-chain-of-calls
 ways-into-library-modules/net-socket-through-create-require-named-on-a-proxy-of-node-module

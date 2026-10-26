@@ -133,10 +133,10 @@ export interface Part {
   shapes: Shape[];
   // It may wait at its top level.
   mayAwait: boolean;
-  // A `library` has blocks at its top level that catch and print.
-  printsWhileLoaded: boolean;
   // In `main`: statements that load the files which throw while they are loaded.
   loads: string;
+  // A class or a function that is the default export may have no name. The file itself cannot reach it then.
+  mayOmitNames: boolean;
 }
 
 // What the file `helpers` declares for a file that is typed or not.
@@ -1480,7 +1480,12 @@ export function write(
             (hasDefault = true),
             kind === "arrow"
               ? { ...plain, tail: [`export default ${name}${semi}`], exportedAs: "default" }
-              : { ...plain, head: "export default ", exportedAs: "default" }
+              : {
+                  ...plain,
+                  head: "export default ",
+                  exportedAs: "default",
+                  isNamed: !(part?.mayOmitNames && random.chance(0.5)),
+                }
           ),
         ],
         [2, later],
@@ -1537,7 +1542,7 @@ export function write(
           ],
           ...form.tail,
         );
-        shapes.push({ ...reachable(shape), name: form.local });
+        if (form.isNamed || isExpression) shapes.push({ ...reachable(shape), name: form.local });
         exports.push({ exportedAs: form.exportedAs, shape: reachable(shape) });
         continue;
       }
@@ -1572,7 +1577,9 @@ export function write(
       : random.chance(0.15) && !isCommonJs
         ? "export "
         : "";
+    const isReachable = !form || form.isNamed || form.local !== target.name;
     if (
+      isReachable &&
       isTyped &&
       !asArrow &&
       !target.yields &&
@@ -1605,7 +1612,7 @@ export function write(
           ],
       ...(form?.tail ?? []),
     );
-    functions.push(form ? { ...target, name: form.local } : target);
+    if (isReachable) functions.push(form ? { ...target, name: form.local } : target);
     if (form) exports.push({ exportedAs: form.exportedAs, callable: target });
   }
 
@@ -1786,7 +1793,7 @@ function framesOf(error${any})${typed(": string")} {
     .split("\\n")
     .map(text => /^\\s*at (.*?) ?\\(?[^ ()]*${part ? "[\\\\/]([\\w-]+)\\.[cm]" : "main\\.c"}?[jt]s:(\\d+):(\\d+)\\)?$/.exec(text))
     .filter(found => found !== null)
-    .map(found => found[1].replace(/^(new |async )?(<anonymous>|[oO]nce[A-Z]\\w*)$/, "$1") + "@" + found[2] + ":" + found[3]${part ? ' + ":" + found[4]' : ""})
+    .map(found => found[1].replace(/^(new |async )?(<anonymous>|[oO]nce[A-Z]\\w*${part?.mayOmitNames ? "|default|starDefault|\\w+_default" : ""})$/, "$1") + "@" + found[2] + ":" + found[3]${part ? ' + ":" + found[4]' : ""})
     .join(" < ");
 }
 const caught${typed(": string[]")} = [];
@@ -1852,7 +1859,7 @@ namespace Units {
   // Code at the top of the module runs once, so each block has one call that throws.
   const blocks = !part
     ? random.between(1, 3)
-    : part.role === "main" || (part.role === "library" && part.printsWhileLoaded)
+    : part.role === "main" || part.role === "library"
       ? random.between(0, 2)
       : 0;
   for (let index = blocks; index > 0; index--) {

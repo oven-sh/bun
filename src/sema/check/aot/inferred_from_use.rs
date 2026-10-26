@@ -13,6 +13,7 @@ use crate::session::vec_from_iter_in;
 use crate::types::{
     MapperId, Prop, PropFlags, PropSource, Shape, SigId, SigParam, TypeData, TypeId,
 };
+use crate::util::FxHashSet;
 use smallvec::SmallVec;
 use std::rc::Rc;
 
@@ -641,15 +642,21 @@ fn find_enclosing_sum(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -
     is_sum.then_some(parent)
 }
 
-fn is_used_as_int32(hir: &hir::File<'_>, bound: &Bound<'_>, number: ExprId) -> bool {
+// `walked_sums`: the sums that earlier questions went through, which were all answered with no.
+fn is_used_as_int32(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    number: ExprId,
+    walked_sums: &mut FxHashSet<ExprId>,
+) -> bool {
     let mut value = number;
     loop {
         match find_use(hir, bound, value) {
             Use::Int32 | Use::Key { .. } => return true,
             Use::Stored { op: Some(op), .. } => return yields_int32(op) || op == BinOp::UShr,
             Use::AddedTo(_) | Use::Number => match find_enclosing_sum(hir, bound, value) {
-                Some(sum) => value = sum,
-                None => return false,
+                Some(sum) if walked_sums.insert(sum) => value = sum,
+                Some(_) | None => return false,
             },
             Use::Nothing
             | Use::PassedOn(_)
@@ -1090,9 +1097,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         let (hir, bound) = (self.hir(), self.bound());
         let references = self.reference_index().to_bindings;
+        let mut walked_sums = FxHashSet::default();
         let has_int32_use = references_to(references, symbol)
             .iter()
-            .any(|&(_, reference)| is_used_as_int32(hir, bound, reference));
+            .any(|&(_, reference)| is_used_as_int32(hir, bound, reference, &mut walked_sums));
         let mut walk = Walk::new(self.inputs.max_inference_nodes);
         let holds_integers = has_int32_use
             && self.starts_as_integer(&mut walk, symbol)

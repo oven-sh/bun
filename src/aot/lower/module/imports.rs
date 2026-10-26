@@ -172,6 +172,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let position = file.hir[access].pos;
         // Whoever reads `a.c` has read `a` first, which throws in the dead zone of `a`: before `const a = require(..)` has run.
         self.check_member_root(access);
+        self.record_read_from_object(access);
         self.set_position(position);
         let modules = self.file.inputs.modules;
         if let ImportBinding::Synthetic(export) = binding

@@ -5,7 +5,7 @@ use super::testing::{
 use super::*;
 use crate::builtins::{RuntimeFunction, RuntimeModule, table};
 use crate::ir::generated::{FunctionFlags, ModuleKind};
-use crate::ir::{FunctionId, Id, ModuleId, print_function, print_program};
+use crate::ir::{FunctionId, Id, ModuleId, OpaqueKind, Type, print_function, print_program};
 use crate::link::ModuleOrigin;
 use crate::load::read_file_bytes;
 use crate::load::runtime_modules::RuntimeModules;
@@ -129,6 +129,30 @@ fn closure_that_names_class_declared_behind_return_links() {
     let source =
         "function make() {\n  return () => new Late();\n  class Late {}\n}\nconsole.log(make);";
     link_successfully(&[("a.ts", source), GLOBALS]);
+}
+
+#[test]
+fn constructor_that_is_left_out_takes_the_class_token_as_a_class_token() {
+    let source = "exports.Base = class {};\n\
+        class Unread extends exports.Base { constructor(a) { super(a); } #hidden() {} }";
+    let program = link_successfully(&[("a.cjs", source)]).program;
+    let index = program.functions.iter().position(|function| {
+        let name = function.name.map(|name| program.strings.get(name));
+        name == Some(b"Unread".as_slice())
+    });
+    let index = index.expect("the class is defined");
+    let constructor = &program.functions[index];
+    let mut text = String::new();
+    print_function(
+        program.name_tables(),
+        FunctionId::new(index),
+        constructor,
+        &mut text,
+    );
+    assert!(text.contains("LeftOutOfExecutable"), "{text}");
+    let captures = constructor.captures.iter();
+    let types = captures.map(|capture| program.types.get(capture.ty));
+    assert!(types.eq([&Type::opaque(OpaqueKind::ClassToken)]), "{text}");
 }
 
 #[test]

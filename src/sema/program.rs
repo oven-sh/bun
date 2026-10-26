@@ -25,7 +25,7 @@ use self::code_load::{
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
-use crate::check::aot::COMPILER_DECLARATIONS_PATH;
+use crate::check::aot::{BuiltinTypeSymbols, COMPILER_DECLARATIONS_PATH};
 use crate::check::errors::{SuggestionLookup, is_close};
 use crate::check::spans::{Spans, skip_trivia, skip_trivia_back};
 use crate::components::Components;
@@ -238,6 +238,9 @@ pub struct Module<'s> {
     /// checks it reads its HIR, which is freed at the end of that task (`Files::free_tree`), and
     /// nothing that mentions one of its nodes is published.
     pub is_leaf: bool,
+    /// Only in a build. No file refers to it either, but lowering any file can read its declarations
+    /// (`BuiltinTypeSymbols`). So it's no leaf, and its HIR is freed once every file is lowered.
+    pub is_read_by_every_task: bool,
     /// It adds no globally visible declarations, so it `is_leaf` if no file refers to it.
     adds_no_globals: bool,
     /// True if only files that import this module can refer to its declarations. Neither the module nor any file that
@@ -851,6 +854,8 @@ struct ModuleSummary<'s> {
     /// The module is a leaf (`Module::is_leaf`) unless a file refers to it, or it imports from an ambient module that
     /// re-exports from a relative name.
     may_be_leaf: bool,
+    /// See `Module::is_read_by_every_task`.
+    lists_declarations_for_every_task: bool,
     /// It may be a leaf, and a build checks it in no case: a source file that no code loads. Its text is still its own.
     may_be_unread: bool,
     /// And it imports from no ambient module that re-exports from a relative name.
@@ -6349,6 +6354,8 @@ impl<'s> Files<'s> {
                 targets,
                 built_imports,
                 may_be_leaf,
+                lists_declarations_for_every_task: module.compiled.is_some()
+                    && BuiltinTypeSymbols::can_list_declarations_of(hir),
                 may_be_unread,
                 is_unread_unless_reached: false,
                 declares_globals: !module.is_module()
@@ -6429,7 +6436,9 @@ impl<'s> Files<'s> {
                             .exports
                             .iter()
                             .any(|it| reexports_relatively(it.spec)));
-                module.is_leaf = !imports_from_one;
+                module.is_leaf = !imports_from_one && !summary.lists_declarations_for_every_task;
+                module.is_read_by_every_task =
+                    !imports_from_one && summary.lists_declarations_for_every_task;
             }
         }
         let may_be_unread = summaries
@@ -7041,15 +7050,15 @@ impl<'s> Files<'s> {
         (package_jsons, linked_directories)
     }
 
-    /// Frees the HIR of `file`, which `is_leaf`. Its text is retained for the report.
+    /// Frees the HIR of `file`, which `is_leaf` or `is_read_by_every_task`. Its text is retained for the report.
     ///
     /// # Safety
     /// Only the task that checks `file` may call this, and only at the end of the task, because an
-    /// entry of its buffer can hold a value that's bound to an earlier file of the task. No
-    /// reference into `hir` or `bound` of the file may be alive.
+    /// entry of its buffer can hold a value that's bound to an earlier file of the task. If the file
+    /// `is_read_by_every_task`, every task must have ended. No reference into `hir` or `bound` of the file may be alive.
     pub unsafe fn free_tree(&self, file: FileId) {
         let cell = &self.modules[file.idx()];
-        debug_assert!(cell.is_leaf);
+        debug_assert!(cell.is_leaf || cell.is_read_by_every_task);
         // SAFETY: no file refers to it, so no other task reads its HIR.
         let module: &mut Module<'s> = unsafe { &mut *cell.0.get() };
         module.hir = stub_of(&mut module.hir);
@@ -7602,6 +7611,7 @@ impl<'s> Files<'s> {
             redirect_for_resolution,
             is_from_external_library: false,
             is_leaf: false,
+            is_read_by_every_task: false,
             adds_no_globals,
             is_closed,
             has_conditional_or_mapped_type,
@@ -9677,7 +9687,8 @@ impl<'s> Files<'s> {
         // One of these can be the symbol made for an `import * as ns`, which belongs to the importing file. Checking
         // any file with two `export *` reads its declarations, so the importing file can't be a leaf.
         for module in &nested {
-            self.modules[module.file.idx()].is_leaf = false;
+            let module = &mut self.modules[module.file.idx()];
+            (module.is_leaf, module.is_read_by_every_task) = (false, false);
         }
         self.modules_with_nested_export_collisions = slice_in(&nested, self.arena);
         let rejected = self.rejected_merges.iter();

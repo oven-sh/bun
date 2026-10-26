@@ -88,7 +88,8 @@ impl ExportScan<'_, '_> {
                 let StmtKind::ExportDefault(_) = self.hir[statement].kind else {
                     return None;
                 };
-                Some(ExportedValue::Expression(statement))
+                let has_value = self.bound.exports_value(statement);
+                has_value.then_some(ExportedValue::Expression(statement))
             }
             Decl::ExportSpec(specifier) => self.find_aliased_binding(specifier),
             Decl::Var(_)

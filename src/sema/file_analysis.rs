@@ -32,6 +32,8 @@ pub struct FileAnalysis<'s> {
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],
     pub imports_used_only_in_dead_code: &'s [SymbolId],
+    /// No code that runs reads them: `export { name }` hands them on, or the metadata of a decorator names them.
+    pub imports_used_without_a_read: &'s [SymbolId],
     pub pending_macro_calls: &'s [ExprId],
     pub has_live_top_level_await: bool,
     pub errors: &'s [FoldError],

@@ -31,6 +31,8 @@ const plainBunVaries: Record<string, string> = {
     "it asks whether the process grew by less than 115 MB and keeps less than 92 MB: plain Bun is over both on Linux, and on macOS under both in some runs",
   "objects/copies-of-an-object-with-very-many-names-take-time-in-proportion":
     "each line has a bound of 10 s: plain Bun is under it on a fast machine, and a debug or sanitizer build on a busy one may not be",
+  "modules/a-commonjs-file-throws-after-a-module-it-required-called-import-on-it":
+    "plain Bun prints one of several outputs from run to run, the stored one among them",
   "modules/an-imported-commonjs-file-requires-a-module-that-awaits":
     "plain Bun begins the two CommonJS files in the order in which their texts arrive, which is not one order from run to run; the stored output has them in the order of the import statements: the usual one, and what the executable always prints",
   "modules/commonjs-requires-es-modules-of-the-graph-being-linked":

@@ -71,10 +71,9 @@ impl<'s> Folder<'_, 's> {
             is_in_optional_chain: is_in_chain,
             is_index: matches!(hir[e].kind, ExprKind::Index { .. }),
         };
-        // `bun build` follows `["name"]` where the name is ASCII.
         let object_state = self.path_states.get(&obj);
         let object_state =
-            object_state.filter(|_| !form.is_index || self.atoms.bytes(name).is_ascii());
+            object_state.filter(|_| hir.is_name_resolved_by_transpiler(e, self.atoms.bytes(name)));
         let state = object_state.and_then(|&state| self.inputs.child(state, name, form));
         if let Some(folded) = self.try_decide_define(e, state) {
             return folded;

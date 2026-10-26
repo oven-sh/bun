@@ -1130,6 +1130,42 @@ fn default_exports() {
 }
 
 #[test]
+fn default_exports_of_types() {
+    for (text, exports_value) in [
+        ("interface T {} export default T;", false),
+        ("export default T; interface T {}", false),
+        ("export interface T {} export default T;", false),
+        ("type T = number; export default T;", false),
+        ("namespace T { export type U = number; } export default T;", false),
+        ("declare namespace T { const a: number; } export default T;", false),
+        ("declare global { interface T {} } export default T;", false),
+        ("interface T {} declare const T: number; export default T;", false),
+        ("interface Map {} export default Map;", false),
+        ("interface T {} export default T as unknown;", false),
+        ("interface T {} const T = 1; export default T;", true),
+        ("interface T {} export default [T];", true),
+        ("namespace T { export const a = 1; } export default T;", true),
+        ("declare const T: number; export default T;", true),
+        ("declare class T {} export default T;", true),
+        ("import type { T } from './t'; export default T;", true),
+        ("export default T;", true),
+    ] {
+        analyzed("a.ts", text, |s| {
+            let statement = first_stmt(s, |kind| matches!(kind, StmtKind::ExportDefault(_)));
+            let default = exported(s, known::default);
+            assert_eq!(s.bound.exports_value(statement), exports_value, "{text}");
+            assert_eq!(s.bound.has_runtime_value(default), exports_value, "{text}");
+            let is_dead = s.analysis.decisions.is_dead_stmt(statement);
+            assert_eq!(is_dead, !exports_value, "{text}");
+        });
+    }
+    analyzed("a.js", "/** @typedef {number} T */ export default T;", |s| {
+        let statement = first_stmt(s, |kind| matches!(kind, StmtKind::ExportDefault(_)));
+        assert!(s.bound.exports_value(statement));
+    });
+}
+
+#[test]
 fn has_runtime_value() {
     for &(text, name, expected) in RUNTIME_VALUES {
         analyzed("a.ts", text, |s| {

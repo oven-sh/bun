@@ -446,12 +446,10 @@ fn program_subtypes_are_interfaces_of_files_with_code() {
         let expected = expected.map(|name| interface_symbol(files, "/a.ts", name));
         assert_eq!(symbols.program_subtypes(), expected);
         for &subtype in symbols.program_subtypes() {
-            assert!(can_list_declarations_of(files, subtype.file));
+            assert!(can_list_declarations_of(files.hir(subtype.file)));
         }
-        assert!(!can_list_declarations_of(
-            files,
-            file_at(files, "/registry.d.ts")
-        ));
+        let declared = file_at(files, "/registry.d.ts");
+        assert!(!can_list_declarations_of(files.hir(declared)));
     });
 }
 
@@ -459,7 +457,8 @@ fn program_subtypes_are_interfaces_of_files_with_code() {
 fn file_without_heritage_or_static_members_is_listed_nowhere() {
     const PROGRAM: &[Declaration] = &[interface("Range"), class("Cache")];
     with_files(&[LIBRARY, module("/a.ts", PROGRAM)], |files| {
-        assert!(!can_list_declarations_of(files, file_at(files, "/a.ts")));
+        let program = file_at(files, "/a.ts");
+        assert!(!can_list_declarations_of(files.hir(program)));
     });
 }
 

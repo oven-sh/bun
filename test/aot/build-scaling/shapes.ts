@@ -489,6 +489,25 @@ export const shapes: Shape[] = [
     }),
   },
   {
+    name: "terms of one sum that name a constant",
+    counted: "terms",
+    size: 8000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}const one = 1 as number;\nconsole.log(one${" + one".repeat(size)});\n`,
+    }),
+  },
+  {
+    name: "functions with a row of constants that are each computed from the one before",
+    counted: "functions",
+    size: 400,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `let sum = 0;\n${lines(size, index => `function f${index}() {\n  const c0 = ${index};\n${lines(24, step => `  const c${step + 1} = c${step} + c${step};`)}  return c24;\n}\nsum += f${index}();`)}console.log(sum);\n`,
+    }),
+  },
+  {
     name: "a declaration where an expression belongs, nested in itself",
     counted: "levels",
     size: 4000,

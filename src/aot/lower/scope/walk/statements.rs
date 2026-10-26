@@ -1,10 +1,31 @@
-use bun_sema::bind::{CommonJsVariable, Decl, ModuleInstanceState, ScopeId, SymbolId};
-use bun_sema::hir::{Flags, Span, StmtId, StmtKind, VarDeclId, VarKind};
+use bun_sema::bind::{Binding, CommonJsVariable, Decl, ModuleInstanceState, ScopeId, SymbolId};
+use bun_sema::hir::{ExprId, ExprKind, Flags, Span, StmtId, StmtKind, VarDeclId, VarKind};
 
 use super::{Context, PatternRole, Task, WalkedLoop, WalkedTry, Walker};
 use crate::lower::scope::ScopeSlot;
 
 impl Walker<'_, '_> {
+    // Whether Bun's transpiler prints nothing for the statement: it names a variable, or tests one, and has nothing else to run.
+    fn is_unprinted(&self, statement: StmtId) -> bool {
+        if statement.is_none() || self.decisions.is_dead_stmt(statement) {
+            return true;
+        }
+        let hir = self.hir;
+        let names_variable = |expression: ExprId| {
+            matches!(hir[expression].kind, ExprKind::Ident(_))
+                && matches!(self.bound.binding(expression), Binding::Symbol(_))
+        };
+        match hir[statement].kind {
+            StmtKind::Empty => true,
+            StmtKind::Expr(expression) => names_variable(expression),
+            StmtKind::Block(list) => hir.ids(list).all(|inner| self.is_unprinted(inner)),
+            StmtKind::If { test, yes, no } => {
+                names_variable(test) && self.is_unprinted(yes) && self.is_unprinted(no)
+            }
+            _ => false,
+        }
+    }
+
     pub(super) fn visit_statement(&mut self, statement: StmtId, context: Context) {
         if statement.is_none() || self.decisions.is_dead_stmt(statement) {
             return;
@@ -16,6 +37,10 @@ impl Walker<'_, '_> {
         if is_module_body && self.input.modules.erased(self.input.file, statement) {
             return;
         }
+        let context = match !context.is_unprinted && self.is_unprinted(statement) {
+            true => context.unprinted(),
+            false => context,
+        };
         let (hir, bound) = (self.hir, self.bound);
         let own_scope = bound.own_scope(statement);
         let outer_scope = bound.scope_of_stmt(statement);
@@ -24,6 +49,14 @@ impl Walker<'_, '_> {
             StmtKind::Expr(expression)
             | StmtKind::Return(expression)
             | StmtKind::Throw(expression) => self.push_expressions([expression], context),
+            StmtKind::ExportNamed(export) if !hir[export].has_module_specifier => {
+                for specifier in hir[export].items.iter() {
+                    if let Binding::Symbol(symbol) = bound.exported_binding(specifier) {
+                        self.walk.symbols_in_export_lists.push(symbol);
+                    }
+                }
+            }
+            StmtKind::ExportNamed(_) => {}
             StmtKind::ExportDefault(value) => {
                 self.push_expressions([value], context);
                 let symbol = bound.declared_symbol(Decl::ExportExpr(statement));
@@ -149,7 +182,6 @@ impl Walker<'_, '_> {
             | StmtKind::Interface(_)
             | StmtKind::TypeAlias(_)
             | StmtKind::Import(_)
-            | StmtKind::ExportNamed(_)
             | StmtKind::ExportStar { .. }
             | StmtKind::ExportAsNamespace(_)
             | StmtKind::Directive { .. } => {}

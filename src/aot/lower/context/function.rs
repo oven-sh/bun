@@ -44,6 +44,10 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) printed_part: Option<ExprId>,
     // What the sums are that stand in parentheses as operands of other sums.
     pub(in crate::lower) printed_sums: FxHashMap<ExprId, PrintedOperand>,
+    // Where the disposals of the function are reported, once a scope with resources has asked.
+    pub(in crate::lower) disposal_position: Option<Option<u32>>,
+    // The call that is being lowered stands in tail position. What loads a module in its place says so.
+    pub(in crate::lower) is_call_in_tail_position: bool,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -78,6 +82,8 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             records_of_initializers: FxHashMap::default(),
             printed_part: None,
             printed_sums: FxHashMap::default(),
+            disposal_position: None,
+            is_call_in_tail_position: false,
             handler: None,
             position,
             nesting_depth: 0,

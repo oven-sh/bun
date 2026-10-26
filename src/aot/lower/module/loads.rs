@@ -628,14 +628,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_require(&mut self, site: AnsweredSite<'_>, specifier: Option<ValueId>) -> ValueId {
         match site.answer {
             SiteAnswer::Module(module) => {
-                if let Some(plan) = site.plan {
-                    return self.emit_planned_require(plan);
-                }
-                let ImportSpecifier::Constant(text) = site.specifier else {
-                    unreachable!("only a constant specifier names one module");
+                let outer = self
+                    .builder
+                    .set_tail_position(self.is_call_in_tail_position);
+                let required = match (site.plan, site.specifier) {
+                    (Some(plan), _) => self.emit_planned_require(plan),
+                    (None, ImportSpecifier::Constant(text)) => {
+                        let text = self.file.intern_atom(text);
+                        self.emit_require_module(module, text)
+                    }
+                    (None, _) => unreachable!("only a constant specifier names one module"),
                 };
-                let text = self.file.intern_atom(text);
-                self.emit_require_module(module, text)
+                self.builder.set_tail_position(outer);
+                required
             }
             SiteAnswer::Computed(candidates) => {
                 let specifier = specifier.unwrap_or_else(|| self.builder.undefined());

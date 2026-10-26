@@ -39,6 +39,7 @@ impl<'s> Folder<'_, 's> {
             }
         }
         self.push_statements_never_reached(&mut roots.all);
+        self.push_default_exports_of_types(&mut roots);
         for entry in &self.decided {
             let first = roots.all.len();
             push_children(self.hir, TreeNode::Expr(entry.0), &mut roots.all);
@@ -46,6 +47,17 @@ impl<'s> Folder<'_, 's> {
         }
         self.push_statements_removed_by_bun_run(&mut roots);
         roots
+    }
+
+    fn push_default_exports_of_types(&self, roots: &mut DeadRoots) {
+        for statement in self.hir.ids(self.hir.body) {
+            if matches!(self.hir[statement].kind, StmtKind::ExportDefault(_))
+                && !self.bound.exports_value(statement)
+            {
+                roots.all.push(TreeNode::Stmt(statement));
+                roots.in_bun_run.push(TreeNode::Stmt(statement));
+            }
+        }
     }
 
     fn push_excluded_parts(&self, stmt: StmtId, roots: &mut Vec<TreeNode>) {

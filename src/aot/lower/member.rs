@@ -10,7 +10,7 @@ use bun_sema::hir::{
 };
 use bun_sema::types::EnumValue;
 
-use super::FunctionLowering;
+use super::{FileLowering, FunctionLowering};
 use crate::diagnostic_codes::Code;
 use crate::ir::{BlockId, PropertyKeyId, ValueId};
 
@@ -69,7 +69,29 @@ impl From<PropertyName> for GivenName {
     }
 }
 
+impl FileLowering<'_, '_, '_, '_> {
+    fn is_tag(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        match self.bound.parent_of_expr(expression) {
+            Parent::Expr(parent) => {
+                matches!(hir[parent].kind, ExprKind::TaggedTemplate(site) if hir[site].callee == expression)
+            }
+            _ => false,
+        }
+    }
+}
+
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    // Where the member is known ahead of time: JSC reads it from the object, and records the read, but for the tag of a template.
+    pub(in crate::lower) fn record_read_from_object(&mut self, access: ExprId) {
+        if let (Some((object, _)), false) =
+            (self.file.hir.member_key(access), self.file.is_tag(access))
+        {
+            let position = self.file.member_position(object);
+            self.builder.record_position(position);
+        }
+    }
+
     fn resolve_access(&mut self, name: PropertyName) -> PropertyName {
         match name {
             PropertyName::Constant(key) => self.normalize_access_key(key),
@@ -237,18 +259,17 @@ pub(in crate::lower) fn emit_member_read(
     };
     let object_position = lowering.file.member_position(object_expression);
     // JSC records no position for the read of the tag of a template.
-    let is_tag = match lowering.file.bound.parent_of_expr(access) {
-        Parent::Expr(parent) => {
-            matches!(hir[parent].kind, ExprKind::TaggedTemplate(site) if hir[site].callee == access)
-        }
-        _ => false,
-    };
+    let is_tag = lowering.file.is_tag(access);
     if is_tag {
         lowering.set_position_to_last_recorded();
     }
     // In `o[k]++` JSC tests `o` behind `k` and records no position for the test. The read that follows has one.
     if !lowering.builder.is_at_last_recorded_position() {
         lowering.set_position(object_position);
+        // A constant that Bun's transpiler prints as its value is reported where the value is written. The read stands where the name is.
+        if object_position < hir[access].pos {
+            lowering.builder.set_written_position(hir[access].pos);
+        }
     }
     let value = lowering.emit_get(object, name);
     if !is_tag {

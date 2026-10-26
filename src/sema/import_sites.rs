@@ -95,6 +95,7 @@ pub(crate) struct ImportScan<'s> {
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],
     pub imports_used_only_in_dead_code: &'s [SymbolId],
+    pub imports_used_without_a_read: &'s [SymbolId],
     pub module_require_objects: &'s [ExprId],
     pub requires_of_other_files: &'s [(u32, Atom)],
     pub pending_macro_calls: &'s [ExprId],

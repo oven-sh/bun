@@ -1,4 +1,12 @@
 {
+  "a-catch-that-only-throws-again-stands-below-a-catch-of-the-caller": {
+    "millionInstructions": 80,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 1999999,
+    "runtimeOperations": 1,
+    "callsNotExpected": 0
+  },
   "a-class-below-a-function-that-nobody-has-constructed": {
     "millionInstructions": 100,
     "testsFailed": 2,
@@ -254,5 +262,13 @@
     "accessesByName": 0,
     "runtimeOperations": 103000,
     "callsNotExpected": 1
+  },
+  "lists-of-numbers-come-in-storage-for-any-value": {
+    "millionInstructions": 111,
+    "testsFailed": 1079417,
+    "alwaysFailing": 0,
+    "accessesByName": 8,
+    "runtimeOperations": 609,
+    "callsNotExpected": 0
   }
 }

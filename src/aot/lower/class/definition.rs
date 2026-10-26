@@ -1,6 +1,6 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Decl};
-use bun_sema::hir::{ClassId, ExprKind};
+use bun_sema::hir::{ClassId, ExprKind, Flags};
 
 use super::members::ClassHead;
 use super::{
@@ -50,6 +50,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             plan.transform == ClassTransform::Standard && has_decorators(hir, node.modifiers);
         let class_decorators =
             has_class_decorators.then(|| self.emit_decorator_array(node.modifiers));
+        if let Some((binding, _)) = outer {
+            self.record_store_ahead_of_value(binding, self.file.class_store_position(class));
+        }
 
         let inner = bound.inner_class_symbol(class).some();
         let class_scope = bound.class_scope[class.idx()];
@@ -175,6 +178,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .decorated_class
             .unwrap_or(evaluation.class_object);
         if let Some((binding, name)) = outer {
+            let position = self.file.class_store_position(evaluation.class);
+            self.record_store_behind_value(binding, position);
             scope::initialize_binding(self, binding, name, value);
         }
         match plan.transform {
@@ -215,6 +220,18 @@ impl FileLowering<'_, '_, '_, '_> {
             true if node.name.is_some() => node.name_pos,
             true => node.text_start,
             false => self.first_position(node.extends),
+        }
+    }
+
+    // JSC records the store of a class declaration as many columns behind `class` as the name is long. The source map takes that back to `class`, or to the name,
+    // which it does not know in a default export.
+    fn class_store_position(&self, class: ClassId) -> u32 {
+        let node = self.hir[class];
+        let has_mapped_name = node.name.is_some() && !node.flags.contains(Flags::DEFAULT);
+        let name_length = || String::from_utf8_lossy(self.queries.atom_bytes(node.name)).encode_utf16().count();
+        match has_mapped_name && name_length() >= "class ".len() {
+            true => node.name_pos,
+            false => node.text_start,
         }
     }
 

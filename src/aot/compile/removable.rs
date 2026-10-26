@@ -878,6 +878,9 @@ impl<'a, 's> Removable<'a, 's> {
                 _ => None,
             };
         };
+        if !hir.is_name_resolved_by_transpiler(reference, self.atoms.bytes(name)) {
+            return None;
+        }
         let mut found = None;
         for &declaration in symbol_of(object)?.decls {
             let Decl::Enum(declaration) = declaration else {

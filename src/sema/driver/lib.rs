@@ -156,21 +156,16 @@ pub fn for_each_parallel_in_runs(
     if count == 0 {
         return;
     }
-    let region = Region {
-        caches,
-        next: AtomicUsize::new(0),
-        count,
-        run,
-        work,
-    };
-    if runs_regions_inline() {
-        return region.work_off();
-    }
+    let region = Region::new(caches, count, run, work);
     let runners = threads.clamp(1, count.div_ceil(run));
-    if is_pool_thread() {
-        return region.work_off_with_idle_threads(runners - 1);
+    if runs_regions_inline() {
+        region.work_off();
+    } else if is_pool_thread() {
+        region.work_off_with_idle_threads(runners - 1);
+    } else {
+        region_pool().each((), |(), (), _| region.work_off(), &mut vec![(); runners]);
     }
-    region_pool().each((), |(), (), _| region.work_off(), &mut vec![(); runners]);
+    region.panic.resume();
 }
 
 /// Like `for_each_parallel_in_runs`, while the calling thread runs `meanwhile`. A thread for which
@@ -187,15 +182,17 @@ pub(crate) fn for_each_parallel_while(
         for_each_parallel_in_runs(caches, threads, count, run, work);
         return meanwhile();
     }
-    let region = Region {
-        caches,
-        next: AtomicUsize::new(0),
-        count,
-        run,
-        work,
-    };
+    let region = Region::new(caches, count, run, work);
     let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
-    region_pool().each_while((), |(), (), _| region.work_off(), &mut runners, meanwhile);
+    region_pool().each_while(
+        (),
+        |(), (), _| region.work_off(),
+        &mut runners,
+        || {
+            region.panic.catch(meanwhile);
+        },
+    );
+    region.panic.resume();
 }
 
 /// Like `for_each_parallel_in_runs`, on the calling thread and on at most `helpers` pool threads. The calling thread
@@ -212,22 +209,18 @@ pub(crate) fn for_each_with_helpers(
         _ if runs_regions_inline() => 0,
         helpers => helpers,
     };
-    let region = Region {
-        caches,
-        next: AtomicUsize::new(0),
-        count,
-        run,
-        work,
-    };
+    let region = Region::new(caches, count, run, work);
     if is_pool_thread() {
-        return region.work_off_with_idle_threads(helpers);
+        region.work_off_with_idle_threads(helpers);
+    } else {
+        region_pool().each_while(
+            (),
+            |(), (), _| region.work_off(),
+            &mut vec![(); helpers],
+            || region.work_off(),
+        );
     }
-    region_pool().each_while(
-        (),
-        |(), (), _| region.work_off(),
-        &mut vec![(); helpers],
-        || region.work_off(),
-    );
+    region.panic.resume();
 }
 
 /// Like `for_each_parallel_in_runs`, on the calling thread, which runs a program, and on the other threads of that
@@ -239,15 +232,10 @@ pub(crate) fn for_each_with_share(
     run: usize,
     work: &(dyn Fn(usize) + Sync),
 ) {
-    let region = Region {
-        caches,
-        next: AtomicUsize::new(0),
-        count,
-        run,
-        work,
-    };
+    let region = Region::new(caches, count, run, work);
     if runs_regions_inline() || is_pool_thread() {
-        return region.work_off();
+        region.work_off();
+        return region.panic.resume();
     }
     let helpers = shares.helpers_of_this_thread();
     region_pool().each_while(
@@ -259,6 +247,7 @@ pub(crate) fn for_each_with_share(
             region.work_off_with_spare_threads(shares);
         },
     );
+    region.panic.resume();
 }
 
 /// How a request's threads are divided among its programs while several of them run at the same time. Each program runs
@@ -499,6 +488,44 @@ struct Region<'a> {
     count: usize,
     run: usize,
     work: &'a (dyn Fn(usize) + Sync),
+    panic: FirstPanic,
+}
+
+/// A panic on any thread of a region continues on the thread that started the region, once every thread has left it.
+/// This is for test programs. Bun aborts when it panics.
+#[derive(Default)]
+struct FirstPanic {
+    #[cfg(panic = "unwind")]
+    payload: Guarded<Option<Box<dyn std::any::Any + Send>>>,
+}
+
+impl FirstPanic {
+    /// Returns whether `run` returned.
+    fn catch(&self, run: impl FnOnce()) -> bool {
+        #[cfg(panic = "unwind")]
+        if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+            self.payload.lock().get_or_insert(payload);
+            return false;
+        }
+        #[cfg(not(panic = "unwind"))]
+        run();
+        true
+    }
+
+    fn resume(&self) {
+        #[cfg(panic = "unwind")]
+        {
+            let Some(payload) = self.payload.lock().take() else {
+                return;
+            };
+            let text = payload.downcast_ref::<String>().map(String::as_str);
+            match text.or_else(|| payload.downcast_ref::<&str>().copied()) {
+                // A test harness shows what the calling thread prints.
+                Some(text) => panic!("{text}"),
+                None => std::panic::resume_unwind(payload),
+            }
+        }
+    }
 }
 
 /// A region that pool threads may join until it's closed.
@@ -603,7 +630,23 @@ impl JoinableRegion {
     }
 }
 
-impl Region<'_> {
+impl<'a> Region<'a> {
+    fn new(
+        caches: &'a ThreadCaches,
+        count: usize,
+        run: usize,
+        work: &'a (dyn Fn(usize) + Sync),
+    ) -> Region<'a> {
+        Region {
+            caches,
+            next: AtomicUsize::new(0),
+            count,
+            run,
+            work,
+            panic: FirstPanic::default(),
+        }
+    }
+
     /// `work_off` on the calling thread, which at most `helpers` pool threads with nothing else to do join: those that
     /// are idle now, and those that become idle while there are runs left.
     fn work_off_with_idle_threads(&self, helpers: usize) {
@@ -640,12 +683,8 @@ impl Region<'_> {
         let _lent = self.caches.lend();
         loop {
             ask();
-            let from = self.next.fetch_add(self.run, Ordering::Relaxed);
-            if from >= self.count {
+            if !self.works_on_next_run() {
                 break;
-            }
-            for i in from..(from + self.run).min(self.count) {
-                (self.work)(i);
             }
         }
     }
@@ -667,27 +706,32 @@ impl Region<'_> {
                     || self.work_off_with_spare_threads(shares),
                 );
             }
-            let from = self.next.fetch_add(self.run, Ordering::Relaxed);
-            if from >= self.count {
+            if !self.works_on_next_run() {
                 break;
-            }
-            for i in from..(from + self.run).min(self.count) {
-                (self.work)(i);
             }
         }
     }
 
     fn work_off(&self) {
         let _lent = self.caches.lend();
-        loop {
-            let from = self.next.fetch_add(self.run, Ordering::Relaxed);
-            if from >= self.count {
-                break;
-            }
+        while self.works_on_next_run() {}
+    }
+
+    /// False: no run is left.
+    fn works_on_next_run(&self) -> bool {
+        let from = self.next.fetch_add(self.run, Ordering::Relaxed);
+        if from >= self.count {
+            return false;
+        }
+        let has_returned = self.panic.catch(|| {
             for i in from..(from + self.run).min(self.count) {
                 (self.work)(i);
             }
+        });
+        if !has_returned {
+            self.next.store(self.count, Ordering::Relaxed);
         }
+        has_returned
     }
 }
 

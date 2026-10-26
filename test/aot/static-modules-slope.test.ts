@@ -465,7 +465,70 @@ describe.concurrent("modules that do not run", () => {
       console.log(
         `static-modules-slope: ${perModule.toFixed(1)} instructions more a module below an import() that nobody waits for`,
       );
-      expect(perModule).toBeLessThanOrEqual(1000);
+      expect(perModule).toBeLessThanOrEqual(400);
+    },
+    1_800_000,
+  );
+
+  // The modules of a large graph import each other many times over. Whoever goes through the graph looks at a module once, and passes over every further request for it.
+  test.skipIf(!perf)(
+    "a further request for a module of the graph costs an import() next to nothing",
+    async () => {
+      const best: number[] = [];
+      const levels = 10;
+      const width = 60;
+      const numbers = [1, 21];
+      for (const requests of numbers) {
+        for (const entry of ["direct.mjs", "fired.mjs"]) {
+          await slot(async () => {
+            const files: Record<string, string> = {
+              "small.mjs": "export const c = 1;\nglobalThis.ran = (globalThis.ran ?? 0) + 1;\n",
+              "root.mjs":
+                Array.from(
+                  { length: width },
+                  (_, place) => `import { c as c${place} } from "./l0p${place}.mjs";\n`,
+                ).join("") +
+                `export const c = ${Array.from({ length: width }, (_, place) => `c${place}`).join(" + ")};\n`,
+              "direct.mjs": `await import("./small.mjs");\nawait import("./root.mjs");\nconsole.log("end");\n`,
+              "fired.mjs": `const small = import("./small.mjs"), root = import("./root.mjs");\nawait small;\nawait root;\nconsole.log("end");\n`,
+            };
+            for (let level = 0; level < levels; level++) {
+              for (let place = 0; place < width; place++) {
+                const below =
+                  level + 1 < levels ? Array.from({ length: requests }, (_, next) => (place + next) % width) : [];
+                const hasFile = place % 3 === 1;
+                if (hasFile) files[`l${level}p${place}.cjs`] = '"use strict";\nexports.one = 1;\n';
+                files[`l${level}p${place}.mjs`] =
+                  below.map(other => `import { c as c${other} } from "./l${level + 1}p${other}.mjs";\n`).join("") +
+                  (hasFile ? `import { one } from "./l${level}p${place}.cjs";\n` : "") +
+                  `export const c = (${["1", ...(hasFile ? ["one"] : []), ...below.map(other => `c${other}`)].join(" + ")}) % 1000;\n` +
+                  `globalThis.ran = (globalThis.ran ?? 0) + 1;\n`;
+              }
+            }
+            using directory = tempDir("aot-static-modules-requests", files);
+            using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+            const { executable } = await build(String(directory), entry);
+            let least = Infinity;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const counted = await run(
+                [perf as string, "stat", "-x,", "-e", "instructions:u", executable],
+                String(elsewhere),
+                bunEnv,
+              );
+              expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({ stdout: "end\n", exitCode: 0 });
+              least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+            }
+            best.push(least);
+          });
+        }
+      }
+      const [fewDirect, fewFired, manyDirect, manyFired] = best;
+      const further = (numbers[1] - numbers[0]) * width * (levels - 1);
+      console.log(
+        `static-modules-slope: ${((manyDirect - fewDirect) / further).toFixed(1)} instructions a further request below an import() that is waited for, ${((manyFired - fewFired) / further).toFixed(1)} below one of two at once`,
+      );
+      expect((manyDirect - fewDirect) / further).toBeLessThanOrEqual(100);
+      expect((manyFired - fewFired) / further).toBeLessThanOrEqual(150);
     },
     1_800_000,
   );
@@ -602,6 +665,7 @@ describe.concurrent("modules that do not run", () => {
         `static-modules-slope: ${((some - none) / 1000).toFixed(0)} instructions for each of the first thousand import(), ${((many - some) / 1000).toFixed(0)} for each of the second`,
       );
       expect(many - some).toBeLessThanOrEqual((some - none) * 1.1);
+      expect((some - none) / 1000).toBeLessThanOrEqual(4500);
     },
     1_800_000,
   );

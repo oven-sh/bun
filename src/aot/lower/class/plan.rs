@@ -250,10 +250,18 @@ fn plan_elements(
     }
 }
 
-fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut ClassPlan) {
+fn plan_initializer_call(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    class: ClassId,
+    plan: &mut ClassPlan,
+) {
     let transform = plan.transform;
+    let is_derived = is_derived_class(hir, class);
     let has_defined_field = plan.instance_elements.iter().any(|element| match *element {
         ClassElement::ParameterPropertyField(_) => true,
+        // The values of the fields of a class that extends nothing run ahead of the defaults of the parameters.
+        ClassElement::AccessorStorage { .. } if !is_derived => true,
         ClassElement::Field { member, .. } | ClassElement::AccessorStorage { member, .. } => {
             let is_moved_to_constructor_body = match hir.runtime_member_key(member) {
                 PropKey::Private(_) => has_decorated_private_name(hir, bound, transform, member),
@@ -345,7 +353,7 @@ pub(super) fn plan_class(
             plan_elements(hir, bound, class, &lists, declares, &mut plan);
         }
     }
-    plan_initializer_call(hir, bound, &mut plan);
+    plan_initializer_call(hir, bound, class, &mut plan);
     plan
 }
 

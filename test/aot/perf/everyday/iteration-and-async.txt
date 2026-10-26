@@ -454,6 +454,26 @@ function turn(i: number): number {
     return (error as Error).message.length + (i & 1);
   }
 }
+//// catch-a-kept-error-and-throw-it-again-below-a-catch-of-the-caller
+const kept = new Error("bottom");
+function check(n: number): number {
+  if (n >= 0) throw kept;
+  return n;
+}
+function checkTwice(n: number): number {
+  try {
+    return check(n) + check(n + 1);
+  } catch (error) {
+    throw error;
+  }
+}
+function turn(i: number): number {
+  try {
+    return checkTwice(i);
+  } catch (error) {
+    return (error as Error).message.length + (i & 1);
+  }
+}
 //// throw-a-kept-error-out-of-a-callback-of-a-built-in
 const kept = new Error("inside");
 const list = [1, 2, 3];
@@ -466,6 +486,19 @@ function turn(i: number): number {
     return 0;
   } catch (error) {
     return (error as Error).message.length + (i & 1);
+  }
+}
+//// catch-the-error-of-a-built-in-function
+const texts = ["{", "["];
+function read(text: string): unknown {
+  const value = JSON.parse(text);
+  return value;
+}
+function turn(i: number): number {
+  try {
+    return read(texts[i & 1]!) === null ? 1 : 0;
+  } catch (error) {
+    return (error as Error).message.length;
   }
 }
 //// error-made-not-thrown

@@ -36,6 +36,7 @@
 //   code-the-build-never-saw-changes-what-it-is-handed the program writes a file when it runs, loads it by a path that only the run knows, and hands it what compiled code holds; each program has a build to itself (code-the-build-never-saw-changes-what-it-is-handed.ts)
 //   lists-of-numbers-through-one-map-or-filter a list of numbers goes through one map, filter, flatMap or Array.from in code that runs often, and other kinds of numbers come than the first turns showed (lists-of-numbers-through-one-map-or-filter.ts)
 //   loops-whose-tests-are-settled-on-the-first-turn a counter that starts at a written number, a test of it, and behind the test a read that something in the loop may store to (loops-whose-tests-are-settled-on-the-first-turn.ts)
+//   loops-over-variables-of-enclosing-code a loop reads and stores variables of its module, of the functions around it and of the turns of a loop around it, while a callee, a closure made in the loop, an accessor, a callback of a built-in, a step of a generator or what runs at an await reads and stores them too (loops-over-variables-of-enclosing-code.ts)
 //   what-a-callback-declares-however-it-reaches-a-built-in closures, functions, classes and objects declared in a callback that a built-in runs for each element, the callback handed over as a method's argument or through call, apply, Reflect.apply, bind and functions that hand it on (what-a-callback-declares-however-it-reaches-a-built-in.ts)
 //   tests-that-ask-which-runtime-this-is typeof Bun, globalThis.Bun, process.versions.bun and their kin, about the global or about a name of the program's own, held in variables that are read ahead of and behind their initializers (tests-that-ask-which-runtime-this-is.ts)
 //   what-a-function-declares-however-often-call-and-apply-enter-it closures, functions, classes and objects declared in a function that call, apply or Reflect.apply enters, where the one place that enters it runs again or another door leads into the same function (what-a-function-declares-however-often-call-and-apply-enter-it.ts)
@@ -715,6 +716,7 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     "code-the-build-never-saw-changes-what-it-is-handed",
     "lists-of-numbers-through-one-map-or-filter",
     "loops-whose-tests-are-settled-on-the-first-turn",
+    "loops-over-variables-of-enclosing-code",
     "counters-handed-to-the-one-call-in-a-loop",
     "strangers-where-a-type-names-a-class",
     "holders-with-the-same-keys-and-one-stranger",

@@ -129,7 +129,9 @@ pub(super) fn find_imported_value_site(
 ) -> Option<usize> {
     let analysis = files.analysis(file);
     let site = analysis.import_site_index(ImportSiteKind::Import(import))?;
-    let has_value_meaning = || may_name_value(files, Sym { file, id: symbol });
+    // A name that code reads is bound, or its module cannot be linked, whatever the name means to the checker.
+    let is_read = || (analysis.imports_used_without_a_read.binary_search(&symbol)).is_err();
+    let has_value_meaning = || is_read() || may_name_value(files, Sym { file, id: symbol });
     let unused = analysis.unused_import_symbols;
     let is_elided = unused.binary_search(&symbol).is_ok()
         || !files.bound(file).has_runtime_value(symbol)

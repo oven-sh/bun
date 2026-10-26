@@ -108,6 +108,11 @@ pub(super) struct ScopeWalk {
     pub(super) use_counts: Vec<u8>,
     // What the members of enums read.
     pub(super) symbols_read_by_enums: Vec<SymbolId>,
+    // What `export { .. }` lists of the file's own.
+    pub(super) symbols_in_export_lists: Vec<SymbolId>,
+    // What is named in statements for which Bun's transpiler prints nothing, and the functions that name it anywhere else.
+    pub(super) symbols_named_in_unprinted_statements: Vec<SymbolId>,
+    pub(super) printed_users: Vec<(SymbolId, WalkedFunctionId)>,
     pub(super) is_switch_scope: Vec<bool>,
     pub(super) is_repeated_scope: Vec<bool>,
     pub(super) eval_variable_scopes: Vec<ScopeId>,
@@ -135,9 +140,17 @@ struct Context {
     enclosing_try: Option<u32>,
     is_repeated: bool,
     is_conditional: bool,
+    is_unprinted: bool,
 }
 
 impl Context {
+    fn unprinted(self) -> Context {
+        Context {
+            is_unprinted: true,
+            ..self
+        }
+    }
+
     fn conditional(self) -> Context {
         Context {
             is_conditional: true,
@@ -168,6 +181,7 @@ struct Walker<'x, 's> {
     metadata_uses: Vec<(ClassId, Binding)>,
     class_decorators: Vec<(ClassId, ExprId)>,
     last_users: Vec<Option<WalkedFunctionId>>,
+    unprinted_uses: Vec<(WalkedFunctionId, SymbolId)>,
     pending_stores: Vec<SymbolId>,
     clock: u32,
     walk: ScopeWalk,

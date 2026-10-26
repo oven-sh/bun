@@ -2,7 +2,6 @@ use super::effects::requested_diagnostics;
 use super::queue::{LOWERING_ROUNDS, run_queue};
 use super::{CheckedProgram, CompileRequest, FileWork, LoadedProgram, RoleDecision};
 use crate::{Diagnostic, equal_diagnostics};
-use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::check::{Checker, Requested};
 use bun_sema::hir::FileKind;
 use bun_sema::program::{FileId, FileRole, Files};
@@ -49,15 +48,11 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     let products: Vec<Guarded<Option<T>>> =
         files_to_lower.iter().map(|_| Guarded::new(None)).collect();
     let to_check = files_to_check(loaded, request, &slots, &requested);
-    let is_read_by_every_task = |&file: &FileId| {
-        files.module(file).is_leaf && BuiltinTypeSymbols::can_list_declarations_of(files, file)
-    };
-    let mut read_by_every_task: Vec<FileId> = to_check
+    let read_by_every_task: Vec<FileId> = to_check
         .iter()
         .copied()
-        .filter(is_read_by_every_task)
+        .filter(|&file| files.module(file).is_read_by_every_task)
         .collect();
-    read_by_every_task.shared_sort_unstable();
     let report = run_queue(
         loaded,
         host,
@@ -79,9 +74,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
                     note_commit(file, product);
                 }
             },
-            frees_tree: &|file| {
-                !loaded.is_read_again && read_by_every_task.binary_search(&file).is_err()
-            },
+            frees_tree: &|_| !loaded.is_read_again,
             first_round: LOWERING_ROUNDS,
             left_out_bodies: request.left_out_bodies,
         },

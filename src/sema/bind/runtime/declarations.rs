@@ -266,8 +266,11 @@ impl Declarations<'_, '_> {
                     own_scopes.push((statement, created));
                 }
                 StatementEntry::ExportExpression(name) => {
-                    let symbol = self.container_export(scope, name);
                     let decl = Decl::ExportExpr(statement);
+                    let symbol = match creates_binding(self.hir, self.bound, decl) {
+                        true => self.container_export(scope, name),
+                        false => Some(SymbolId::NONE),
+                    };
                     declared_symbols.extend(symbol.map(|symbol| (decl, symbol)));
                 }
                 StatementEntry::OwnScope(_) | StatementEntry::None => {}

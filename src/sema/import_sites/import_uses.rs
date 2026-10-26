@@ -10,6 +10,7 @@ pub(super) struct ImportUses {
     pub is_import: PositionSet,
     pub used_live: PositionSet,
     pub used_anywhere: PositionSet,
+    read_live: PositionSet,
 }
 
 impl ImportUses {
@@ -18,6 +19,7 @@ impl ImportUses {
             is_import: PositionSet::new(symbol_count),
             used_live: PositionSet::new(symbol_count),
             used_anywhere: PositionSet::new(symbol_count),
+            read_live: PositionSet::new(symbol_count),
         }
     }
 
@@ -35,6 +37,12 @@ impl ImportUses {
         let imports = self.is_import.iter();
         let unused = imports.filter(|&index| !self.used_live.contains(index));
         unused.map(|index| SymbolId(index as u32)).collect()
+    }
+
+    pub(super) fn symbols_used_without_a_read(&self) -> Vec<SymbolId> {
+        let used = self.used_live.iter();
+        let never_read = used.filter(|&index| !self.read_live.contains(index));
+        never_read.map(|index| SymbolId(index as u32)).collect()
     }
 
     pub(super) fn symbols_used_only_in_dead_code(&self) -> Vec<SymbolId> {
@@ -139,7 +147,11 @@ pub(super) fn compute_import_uses(
         if bound.is_evaluated_ident(e)
             && let Binding::Symbol(symbol) = bound.binding(e)
         {
-            uses.add_use(symbol, !decisions.is_dead_expr(e));
+            let is_live = !decisions.is_dead_expr(e);
+            uses.add_use(symbol, is_live);
+            if is_live {
+                uses.read_live.insert(symbol.idx());
+            }
         }
     }
     for export in hir.exports.iter() {

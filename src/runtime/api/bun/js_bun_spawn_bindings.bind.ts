@@ -1,7 +1,7 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
-import { BuildArtifact } from "../JSBundler.bind.ts";
 import { Blob } from "../../webcore/Blob.bind.ts";
 import { Request, Response } from "../../webcore/response.bind.ts";
+import { BuildArtifact } from "../JSBundler.bind.ts";
 import { KillSignal, Subprocess } from "./subprocess.bind.ts";
 import { TerminalOptions } from "./Terminal.bind.ts";
 

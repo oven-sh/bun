@@ -676,8 +676,9 @@ impl QuicStream {
             self.fail_message(s);
             return;
         }
-        self.send_pending_headers(s);
-        if !self.pending_headers.get().is_empty() {
+        // lsquic only buffers a header block that it takes, and can hold part of it back. The write interest
+        // stays set for the next write event, which flushes the block and sends what waits behind it.
+        if self.send_pending_headers(s) {
             return;
         }
         while !self.outbound.get().data.is_empty() {

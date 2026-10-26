@@ -137,12 +137,12 @@ fn es_module_of_the_runtime_has_export_table() {
         assert_eq!(required.count(), 2);
     });
     with_runtime_graph(&files, |graph, input| {
-        let source = file_named(input, "/$bun/js/runtime.bun.js");
+        let source = file_named(input, "/$bun/js/runtime.out.js");
         let interop = file_interop(input.files, input.sources, source);
         assert_eq!(interop, Interop::ES_MODULE);
         assert_eq!(graph.interop(ModuleRef::File(source)), interop);
         assert_eq!(graph.runtime_module(source), None);
-        let names = export_names(graph, input, "/$bun/js/runtime.bun.js");
+        let names = export_names(graph, input, "/$bun/js/runtime.out.js");
         for name in [&b"__toESM"[..], b"__using"] {
             assert!(names.iter().any(|exported| exported == name));
         }
@@ -326,7 +326,10 @@ fn host_value_is_captured() {
         RequireResult::DefaultExport,
     );
     assert_eq!(Interop::of_external(ExternalKind::HostValue), expected);
-    let files = [("main.js", "import { x } from 'bun:main'; console.log(x);")];
+    let files = [(
+        "main.js",
+        "import { x } from 'bun:only-the-host-has-it'; console.log(x);",
+    )];
     with_graph(&files, |graph, input| {
         let module = first_import_target(graph, input);
         assert!(matches!(module, ModuleRef::External { .. }));

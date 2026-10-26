@@ -27,8 +27,8 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
 use bun_jsc::resolved_source::Bytecode;
 use bun_jsc::virtual_machine::{
-    CancelHotRunTimers, InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult,
-    VirtualMachine, WorkerExecArgvFlags,
+    CancelHotRunTimers, InitOptions, MainEntryPoint, RuntimeHooks,
+    RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine, WorkerExecArgvFlags,
 };
 use bun_jsc::{
     AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
@@ -3715,7 +3715,9 @@ fn get_hardcoded_module(
             // SAFETY: `state` is the live per-thread `RuntimeState` boxed in
             // `init_runtime_state`; no other `&mut` to `entry_point` is held.
             let ep = unsafe { &(*state).entry_point };
-            if !ep.generated {
+            // A compiled entry point runs without the wrapper: the text is empty.
+            let is_compiled = VirtualMachine::get().main_entry_point == MainEntryPoint::Compiled;
+            if !ep.generated && !is_compiled {
                 return None;
             }
             use bun_jsc::resolved_source::Tag;

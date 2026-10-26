@@ -126,6 +126,8 @@ export default b.declarations(
     asyncContext: b.property(b.object, {
       createdOnFirstRead: { capability: "none", uses: { this: [b.returnedFrom(asyncContextCell)] } },
     }),
+    // `require` hands an ES module to it.
+    esmLoadSync: b.otherwiseBy(b.hostCall),
     makeAbortError: makesAbortError,
     makeErrorWithCode: makesErrorWithCode,
     peekPromiseSettledValue: looksAtPromise(
@@ -142,6 +144,8 @@ export default b.declarations(
       writes: promiseState,
       implementation: b.hostCall,
     },
+    // `require` hands a CommonJS file to it.
+    requireCommonJS: b.otherwiseBy(b.hostCall),
     webStreamClosedPromise: {
       args: { stream: b.any.optional },
       returns: b.instance("Promise"),

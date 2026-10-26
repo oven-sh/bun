@@ -372,9 +372,12 @@ fn name_of_external_package_is_read_through_the_namespace() {
 
 #[test]
 fn host_value_name_is_synthetic() {
-    let files = [("main.js", "import d, { x } from 'bun:main';")];
+    let files = [(
+        "main.js",
+        "import d, { x } from 'bun:only-the-host-has-it';",
+    )];
     with_program(&files, |program| {
-        let module = program.external("main.js", "bun:main");
+        let module = program.external("main.js", "bun:only-the-host-has-it");
         for (local_name, name) in [("d", known::default), ("x", program.atom("x"))] {
             let export = program.synthetic_export("main.js", local_name);
             assert_eq!(export.module, module, "{local_name}");

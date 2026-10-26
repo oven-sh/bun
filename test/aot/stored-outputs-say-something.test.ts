@@ -68,6 +68,12 @@ const stored = [
   .filter(file => file.endsWith(".expected.txt"))
   .map(file => file.slice(0, -".expected.txt".length))
   .filter(name => !existsSync(join(root, name + ".todo.txt")) && !plainBunVaries[name])
+  // Plain Bun cannot run such a program, so there is nothing to tell what is stored from.
+  .filter(
+    name =>
+      !existsSync(join(root, name + ".json")) ||
+      !JSON.parse(readFileSync(join(root, name + ".json"), "utf8")).onlyInShell,
+  )
   .sort();
 const topics = [...new Set(stored.map(name => name.split("/")[0]))];
 const isKept = (name: string) =>

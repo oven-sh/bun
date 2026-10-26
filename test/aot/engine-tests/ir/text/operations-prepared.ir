@@ -81,6 +81,7 @@
 # CHECK-NEXT: v10:{{*}}= GetCapture v9 function=f0 index=1
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: b2():
+# CHECK-NEXT: v11:{{*}}= AreFunctionNamesUnchanged
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
 # CHECK-NEXT: function f5 name="elements" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=number}, {type=anything}, {type=object}, {type=string}, {type=Array<anything, pristine[Storage, Names]>}, {type=int}] results=[{type=anything}]
@@ -499,6 +500,7 @@ function f4 name="otherGuards" module=m0 thisType={type=anything} parameters=[{t
     v10 = GetCapture v9 function=f0 index=1
     Return v10
   b2():
+    v11 = AreFunctionNamesUnchanged
     Return
 }
 function f5 name="elements" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=number}, {type=anything}, {type=object}, {type=string}, {type=Array<anything, pristine[Storage, Names]>}, {type=int}] results=[{type=anything}] {

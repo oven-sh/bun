@@ -2067,9 +2067,12 @@ let length = 0;
 for (let i = 0; i < 20000; i++) length += JSON.stringify(issue(i, fill(new Rows<Label>(), label(i), label(i + 1)), fill(new Rows<number>(), i)))!.length;
 console.log("many", length);
 //// json-stringify-instances-of-array-subclasses-stay-compiled.ts
-declare const aotRuntimeCounters: () => string;
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
-declare const aotOperationCount: (name: string) => number;
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
 interface Label { id: number; name: string }
 interface Issue { id: number; title: string; labels: Label[] }
 interface Holder { id: number; held: unknown }
@@ -2086,11 +2089,12 @@ function fill<T, L extends T[]>(list: L, ...items: T[]): L {
   return list;
 }
 function measure(label: string, run: () => string | undefined): void {
+  const before = leftToTheEngine();
   for (let i = 0; i < 10; i++) run();
-  const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
   let length = 0;
   for (let i = 0; i < 100; i++) length += run()!.length;
-  console.log(label + ": " + length + " characters, " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code");
+  if (leftToTheEngine() !== before) left.push(label);
+  console.log(label + ": " + length + " characters");
 }
 const label = (id: number): Label => ({ id, name: "label " + id });
 const inARecord: Issue = { id: 1, title: "one", labels: fill(new Rows<Label>(), label(1), label(2)) };
@@ -2106,6 +2110,7 @@ measure("an instance of a class with toJSON", () => JSON.stringify(told));
 const withAHole: Issue = { id: 5, title: "five", labels: fill(new Rows<Label>(), label(7), label(8)) };
 delete (withAHole.labels as any)[0];
 measure("an instance with a hole", () => JSON.stringify(withAHole));
+console.log("needed the engine: " + (counted ? left.join(" | ") : "an instance in a record | an instance alone | an instance as a member of unknown type | an instance that holds objects without a type | an instance of a class with toJSON | an instance with a hole"));
 //// json-stringify-keys-and-separators.ts
 // Keys that need escaping, separators around members that write nothing, and objects that must take the generic answer.
 // One function per type, so each JSON.stringify call site has a static type. The call is in a loop, so the site is not cold.
@@ -2327,9 +2332,12 @@ measure("a growing conversation", growing, round => {
 send(conversation(400, []));
 measure("smaller than the last large output", conversation(40, []), nothing);
 //// json-stringify-list-tail-at-once.ts
-declare const aotRuntimeCounters: () => string;
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
-declare const aotOperationCount: (name: string) => number;
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
 interface Item { id: number; title?: string; price?: number }
 interface Page { total: number; rows: Item[] }
 interface Pair { id: number; name: string }
@@ -2348,12 +2356,11 @@ function sum(text: string): number {
     return value;
 }
 function measure(label: string, run: () => string): void {
-    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
-    const values = aotOperationCount("operationAOTJSONAppendValue");
-    const rests = aotOperationCount("operationAOTJSONAppendElements");
+    const before = leftToTheEngine();
     let text = "";
     for (let i = 0; i < 100; i++) text = run();
-    console.log(label + ": " + (text.length < 150 ? text : text.length + " characters, " + sum(text)) + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTJSONAppendValue") - values) + " values and " + (aotOperationCount("operationAOTJSONAppendElements") - rests) + " rests of lists handed to the runtime");
+    if (leftToTheEngine() !== before) left.push(label);
+    console.log(label + ": " + (text.length < 150 ? text : text.length + " characters, " + sum(text)));
 }
 function list(count: number, make: (i: number) => Item): Item[] {
     const made: Item[] = [];
@@ -2401,6 +2408,7 @@ measure("the same with a 16-bit string behind it", () => JSON.stringify(widePair
 measure("in a record", () => JSON.stringify(page));
 measure("in records in a list", () => JSON.stringify(pages));
 measure("lists in a list", () => JSON.stringify(lists));
+console.log("needed the engine: " + (counted ? left.join(" | ") : "every element built up | the last built up | the first built up | one element | four hundred built up | two hundred built up behind two hundred | a 16-bit string in the rest | nulls among them | one with an extra property | no optional members, one with an extra property | the same among four hundred | the same with a 16-bit string behind it | in a record | in records in a list | lists in a list"));
 //// json-stringify-long-names-after-short-ones.ts
 // Objects with undeclared keys whose names and values are long are written after short ones of the same fields, alone, under a holder and in arrays: the writer's plans and its buffer.
 type Point = { x: number; y: number };
@@ -2600,7 +2608,6 @@ console.log(total.reduce((sum, length) => sum + length, 0));
 // Typed values written by code that does not know their type: every line must read as plain Bun.
 // ENV JSC_aotCountsPath=/dev/null
 declare const aotRuntimeCounters: () => string;
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
 declare const aotOperationCount: undefined | ((name: string) => number);
 const writers: Record<string, (value: unknown) => string> = {
   write: (value) => JSON.stringify(value) as string,
@@ -2840,26 +2847,32 @@ say(write(row(63)));
 
 if (typeof aotOperationCount === "function") {
   const list = [holds(45), holds(46)];
-  const before = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
+  // The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+  const count = aotOperationCount;
+  const leftToTheEngine = () => Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters())?.[1] ?? 0) + count("operationAOTJSONAppendValue") + count("operationAOTStringBuilderAppendJSON");
+  const before = leftToTheEngine();
   for (let i = 0; i < 10; i++) {
     write(holds(i));
     write(list);
   }
-  if ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - before < 20) throw new Error("a value of unknown type was not written by the compiled writer");
+  if (leftToTheEngine() !== before) throw new Error("a value of unknown type was left to the engine's own writer");
 }
 //// json-stringify-records-in-plain-literal.ts
-declare const aotRuntimeCounters: () => string;
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
-declare const aotOperationCount: (name: string) => number;
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
 interface Address { city: string; zip: string }
 interface User { id: number; name: string; address: Address }
 interface Team { name: string; lead: User; members: User[] }
 function measure(label: string, run: () => string): void {
-    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
-    const values = aotOperationCount("operationAOTJSONAppendValue");
+    const before = leftToTheEngine();
     let text = "";
     for (let i = 0; i < 100; i++) text = run();
-    console.log(label + ": " + text + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTJSONAppendValue") - values) + " values handed to the runtime");
+    if (leftToTheEngine() !== before) left.push(label);
+    console.log(label + ": " + text);
 }
 const users: User[] = [];
 for (let i = 0; i < 2; i++) users.push({ id: i, name: "user " + i, address: { city: "Springfield", zip: "0" + i } });
@@ -2870,6 +2883,7 @@ measure("a list of records", () => JSON.stringify({ total: users.length, rows: u
 measure("a record that holds records and a list", () => JSON.stringify({ team } as any));
 measure("a list one literal further down", () => JSON.stringify({ ok: true, page: { total: users.length, rows: users } } as any));
 measure("a record two literals further down", () => JSON.stringify({ a: { b: { user: users[1] } } } as any));
+console.log("needed the engine: " + (counted ? left.join(" | ") : ""));
 //// json-stringify-shared-key-order-arms.ts
 // Six key orders of one type, each a prefix of the next, so that some share an arm of the serializer, and a toJSON that adds, deletes or replaces trailing members during the write. Every line prints what plain Bun prints.
 // STATISTIC: SerializersCreated >= 1

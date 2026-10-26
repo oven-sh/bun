@@ -8,7 +8,9 @@ function relabel(state: State, label: string): State { return { ...state, label 
 function readState(state: State) { return state.count + state.label.length; }
 
 const stranger: any = JSON.parse(process.argv[2] ?? "null");
-try { console.log(readState(stranger)); } catch { console.log("threw"); }
+for (const read of [readState] as ((value: any) => number)[]) {
+  try { console.log(read(stranger)); } catch { console.log("threw"); }
+}
 const states: State[] = [];
 for (let i = 0; i < 300; i++) states.push(makeState(i, i & 1 ? "ab" : "abc"));
 states[0] = relabel(makeState(0, "a"), "abcd");

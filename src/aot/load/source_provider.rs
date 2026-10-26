@@ -109,6 +109,11 @@ pub trait SourceProvider: Sync {
         true
     }
 
+    /// What a `data:` URL holds. `None` for any other specifier, and for a URL that cannot be decoded.
+    fn decode_data_url(&self, _url: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
     fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad>;
 
     /// True if the embedded path of a `file` loader module does not depend on its contents.

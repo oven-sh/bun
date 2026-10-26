@@ -41,8 +41,8 @@ export const describe = whySkipped ? alwaysSkipped(describeAnywhere.skip) : desc
 export const writesProgramInto = (folder: string) => withProgramOutput(join(folder, programFile));
 
 export interface PrintedIR {
-  /** The IR behind this pass. `Select` is the last one in front of the form `Selected`. */
-  until: string;
+  /** The IR behind this pass. `Select` is the last one in front of the form `Selected`. Without it: the program as the front end wrote it. */
+  until?: string;
   /** As BUN_JSC_aotFunctionToDump: a name, several with `|` between them, or an id such as f0. Every function if there is none. */
   functionName?: string;
   /** The `--aot-<word>` flags of the build that the engine reads. */
@@ -55,7 +55,7 @@ export async function printIR(folder: string, { until, functionName, flags = [] 
       testaot!,
       "print",
       programFile,
-      `--until=${until}`,
+      ...(until === undefined ? [] : [`--until=${until}`]),
       ...(functionName === undefined ? [] : [`--aotFunctionToDump=${functionName}`]),
       ...flags.map(flag => flag.replace(/^--aot-/, "")),
     ],

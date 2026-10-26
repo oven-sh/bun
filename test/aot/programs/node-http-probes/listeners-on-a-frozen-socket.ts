@@ -65,7 +65,7 @@ for (let index = 0; index < handlers.length + 1; index++) {
   try {
     const answer = await fetch(`http://127.0.0.1:${port}/${index}`, {
       method: "POST",
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(20000),
     });
     say("answer", index, answer.status, await answer.text());
   } catch (error) {

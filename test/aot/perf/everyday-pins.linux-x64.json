@@ -223,6 +223,10 @@
     "typed": 68.7,
     "untyped": 55
   },
+  "everyday-classes/an-instance-of-integers-spread-in-front-of-a-member-into-a-record-of-fractions": {
+    "typed": 270.9,
+    "untyped": 626.8
+  },
   "everyday-classes/an-instance-spread-under-an-interface-by-one-function-of-many-in-a-table": {
     "typed": 216.5,
     "untyped": 603.6
@@ -579,6 +583,10 @@
     "typed": 626,
     "untyped": 480
   },
+  "everyday-dictionaries-built-anew/one-name-by-key.one-of-1024-listed-between-collections": {
+    "typed": 691.2,
+    "untyped": 677.1
+  },
   "everyday-downleveled/arguments-to-list.empty-slice-call": {
     "typed": 5,
     "untyped": 5
@@ -771,9 +779,17 @@
     "typed": 59,
     "untyped": 88
   },
+  "everyday-functions/name-of-a-new-function-object-over-many-variables-where-another-was-given-a-display-name": {
+    "typed": 196.9,
+    "untyped": 218.4
+  },
   "everyday-functions/name-of-a-new-function-object-where-another-was-given-a-display-name": {
     "typed": 141.3,
     "untyped": 162.2
+  },
+  "everyday-functions/name-of-a-new-generator-function-where-another-function-was-given-a-display-name": {
+    "typed": 128.8,
+    "untyped": 147.9
   },
   "everyday-functions/new-function-object-bound-to-an-async-resource-where-another-was-given-a-display-name": {
     "typed": 992.1,
@@ -866,6 +882,10 @@
   "everyday-iteration-and-async/catch-a-kept-error-and-throw-it-again-below-a-catch-of-the-caller": {
     "typed": 75,
     "untyped": 104
+  },
+  "everyday-iteration-and-async/catch-an-error-thrown-below-a-built-in-function": {
+    "typed": 9692.8,
+    "untyped": 9706
   },
   "everyday-iteration-and-async/catch-and-rethrow": {
     "typed": 5678.8,

@@ -158,10 +158,32 @@ fn resolve_site<'r>(
         return SiteResolution::Constant(CodeResolution::Erased);
     }
     let resolution = resolve_specifier(context, key, specifier, kind);
+    let resolution = resolve_data_url(context, hir, site, resolution).unwrap_or(resolution);
     SiteResolution::Constant(match is_get_builtin_module(site.kind) {
         true => builtin_module_or_erased(resolution),
         false => resolution,
     })
+}
+
+fn resolve_data_url<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    hir: &hir::File<'_>,
+    site: &ImportSite,
+    resolution: CodeResolution<'r>,
+) -> Option<CodeResolution<'r>> {
+    let CodeResolution::External {
+        specifier,
+        kind: ExternalKind::UncompiledCode,
+    } = resolution
+    else {
+        return None;
+    };
+    let type_attribute = context.atoms.bytes(loader_attribute(hir, site)?);
+    let path = (context.host).create_file_from_data_url(specifier, type_attribute)?;
+    Some(CodeResolution::File(CodeFile {
+        path: context.resolver.keep(&path),
+        host_module: None,
+    }))
 }
 
 fn is_get_builtin_module(kind: ImportSiteKind) -> bool {

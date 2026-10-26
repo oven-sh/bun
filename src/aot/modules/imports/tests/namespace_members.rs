@@ -145,12 +145,12 @@ fn imported_name_of_commonjs_module_must_exist() {
 
 #[test]
 fn host_value_member_gets_a_synthetic_export() {
-    let main = "import * as ns from 'bun:main'; console.log(ns.x);";
+    let main = "import * as ns from 'bun:only-the-host-has-it'; console.log(ns.x);";
     with_program(&[("main.js", main)], |program| {
         let Some(ImportBinding::Synthetic(id)) = program.member_binding("main.js", "x") else {
             panic!("a member of a host value is a synthetic export");
         };
-        let module = program.external("main.js", "bun:main");
+        let module = program.external("main.js", "bun:only-the-host-has-it");
         assert_eq!(program.graph.synthetic_export(id).module, module);
     });
 }

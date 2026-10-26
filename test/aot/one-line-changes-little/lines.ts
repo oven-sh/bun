@@ -213,6 +213,12 @@ export const libraryLines: readonly Line[] = [
   ["unlisted-global-called", "globalThis.__hookOfSomeTool?.(1);"],
   ["unlisted-global-member-called", "const post = globalThis.__configOfSomePackage?.post; if (post) post(1);"],
   ["unlisted-global-read", "console.log(globalThis.__configOfSomePackage === undefined);"],
+  ["display-name-of-unknown", "globalThis[K].displayName = K;"],
+  ["console-log-host-class", "console.log(TextDecoder);"],
+  ["console-log-host-classes", "console.log(Event, DOMException, URLPattern, Bun.Transpiler);"],
+  ["console-log-response-json", "console.log(await new Response(K).json());"],
+  ["console-log-request-json", "console.log(await new Request(\"http://localhost\", { method: \"POST\", body: K }).json());"],
+  ["console-log-file-json", "console.log(await Bun.file(K).json());"],
 ];
 
 /** Built into the entry point that imports everything of ./program.js: what a line does to the program's own code. */

@@ -1144,15 +1144,12 @@ row("many times", () => {
   return sum;
 });
 //// spread-untyped-source.ts
-declare const aotOperationCount: (name: string) => number;
 type Span = { start: number; end: number; label: string };
 type Mark = { at: number; note: string };
 type Message = { content: string; spans?: Span[] };
 
 function measure(label: string, run: () => unknown): void {
-  const before = aotOperationCount("operationAOTEnforceType");
-  const result = run();
-  console.log(label + ": " + JSON.stringify(result) + ": " + (aotOperationCount("operationAOTEnforceType") - before) + " conversions by the runtime");
+  console.log(label + ": " + JSON.stringify(run()));
 }
 
 function append(message: Message, added: readonly Span[]): void {
@@ -1201,7 +1198,6 @@ measure("copies whose fields are read", () => {
   return totalOfMovedMarks(marks);
 });
 //// spread-untyped-source-read-by-field.ts
-declare const aotOperationCount: (name: string) => number;
 type Mark = { pos: number; size: number; note: string; done: boolean; extra: unknown };
 
 function sampleMark(): Mark {
@@ -1238,8 +1234,8 @@ function totalOfPositions(marks: readonly Mark[], by: number, kept: unknown[]): 
   return total;
 }
 
-function show(label: string, marks: Mark[], conversions: number, totals: string, kept: unknown[]): void {
-  console.log(label + ": " + totals + ": " + conversions + " conversions by the runtime");
+function show(label: string, marks: Mark[], totals: string, kept: unknown[]): void {
+  console.log(label + ": " + totals);
   for (let i = 0; i < kept.length; i++) {
     const copy = kept[i] as Record<string, unknown>;
     const source = marks[i % marks.length] as unknown as Record<string, unknown>;
@@ -1254,16 +1250,14 @@ function show(label: string, marks: Mark[], conversions: number, totals: string,
 function reportRead(label: string, text: string): void {
   const marks: Mark[] = JSON.parse(text);
   const kept: unknown[] = [];
-  const before = aotOperationCount("operationAOTEnforceType");
   const totals = totalOfMoved(marks, 1, kept) + " " + totalOfMovedAndResized(marks, 2, 7, kept);
-  show(label, marks, aotOperationCount("operationAOTEnforceType") - before, totals, kept);
+  show(label, marks, totals, kept);
 }
 
 function showPositionsOnly(label: string, marks: Mark[]): void {
   const kept: unknown[] = [];
-  const before = aotOperationCount("operationAOTEnforceType");
   const total = totalOfPositions(marks, 1, kept);
-  show(label, marks, aotOperationCount("operationAOTEnforceType") - before, String(total), kept);
+  show(label, marks, String(total), kept);
 }
 
 const parsed = (text: string): Mark[] => {
@@ -1303,6 +1297,5 @@ console.log(reads);
 
 const many = parsed("[" + Array.from({ length: 300 }, (_, i) => '{"pos":' + i + ',"size":' + (i + 0.5) + ',"note":"n' + i + '","done":' + (i % 2 === 0) + ',"extra":[' + i + "]}").join() + "]");
 let total = 0;
-const beforeMany = aotOperationCount("operationAOTEnforceType");
 for (let round = 0; round < 40; round++) total += totalOfMoved(many, round, []);
-console.log("12,000 copies: " + total + ": " + (aotOperationCount("operationAOTEnforceType") - beforeMany) + " conversions by the runtime");
+console.log("12,000 copies: " + total);

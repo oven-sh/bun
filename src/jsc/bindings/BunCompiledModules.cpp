@@ -207,10 +207,12 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
     auto referrer = requirer ? compiledModuleOf(requirer) : std::nullopt;
     if (referrer && AOT::recordRequire(globalObject, *module, *referrer))
         target->compiledModule = module->index();
+    RETURN_IF_EXCEPTION(scope, false);
     requireInto(globalObject, target, *module);
     RETURN_IF_EXCEPTION(scope, false);
     if (referrer)
         AOT::recordRequire(globalObject, *module, *referrer);
+    RETURN_IF_EXCEPTION(scope, false);
     // A module of the executable is in no cache. The next require() of the name asks the engine again, which answers what the module exports then.
     globalObject->requireMap()->remove(globalObject, jsString(vm, path));
     RETURN_IF_EXCEPTION(scope, false);
@@ -367,6 +369,18 @@ bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* 
     });
 }
 
+static void showChildren(JSGlobalObject* realm, JSObject* module, JSObject* requiredAgain)
+{
+    auto* parent = dynamicDowncast<JSCommonJSModule>(module);
+    // A list that no code has seen is put together when it is first read.
+    if (!parent || !parent->m_childrenValue)
+        return;
+    if (requiredAgain)
+        pushObservableChild(realm, parent, requiredAgain);
+    else
+        appendNewChildrenOfCompiledModule(realm, parent);
+}
+
 JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule* module)
 {
     auto compiled = compiledModuleOf(module);
@@ -508,6 +522,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &createAsyncModuleRequiredError,
     &createEmptyJSONBodyError,
     &createLoadError,
+    &showChildren,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)

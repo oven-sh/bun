@@ -481,7 +481,7 @@ console.log("the run time is asked at most 8400 times for 24000 stores under 600
 //// fresh-keys-tested-with-in.js
 // `key in object` under keys that are new strings each time and spell names the program also writes. The first test under a key makes its text a name. The tests after it are answered by what is known for the structure and the name, and every change that a test by name sees is seen here. The last line counts the visits to the run time.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const visits = () => count("operationAOTInByValGeneric") + count("operationAOTInByValAndCache") + count("operationAOTInByVal");
+const visits = () => count("operationAOTInByValGeneric") + count("operationAOTInByValAndCache");
 
 const anew = names => names.map(name => name.slice(0, 1) + name.slice(1));
 const keysAnew = () => anew(["alpha", "beta", "gamma", "missing", "inherited", "computed"]);
@@ -1378,7 +1378,7 @@ const byMethod: Record<string, (o: any) => any> = {
   text: function (o: any): any { return o.hasOwnProperty("text"); }, count: function (o: any): any { return o.hasOwnProperty("count"); }, whole: function (o: any): any { return o.hasOwnProperty("whole"); },
   flag: function (o: any): any { return o.hasOwnProperty("flag"); }, inner: function (o: any): any { return o.hasOwnProperty("inner"); }, any: function (o: any): any { return o.hasOwnProperty("any"); }, big: function (o: any): any { return o.hasOwnProperty("big"); },
 };
-const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTHasOwnProperty") : 0;
+const entered = (): number => typeof aotOperationCount === "function" ? (aotOperationCount("operationAOTHasOwnByIdAndCache") + aotOperationCount("operationAOTHasOwnByValAndCache")) : 0;
 const objects: Options[] = [];
 for (let i = 0; i < 90; i++) objects.push(i % 3 === 0 ? full(i) : i % 3 === 1 ? bare(i) : withUndefined(i));
 let read = 0;
@@ -1491,7 +1491,7 @@ console.log(JSON.stringify([copy(typed), copy(partly), copy(extended), copy(chil
 delete typed.a; partly.a = 5;
 console.log(short(typed, "a"), short(partly, "a"), JSON.stringify([copy(typed), copy(partly)]));
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
+const entered = () => counted ? (counted("operationAOTHasOwnByIdAndCache") + counted("operationAOTHasOwnByValAndCache")) : 0;
 const before = entered();
 let total = 0;
 const fresh: { q1: number; q2?: number } = { q1: 1 };
@@ -1523,7 +1523,7 @@ const shadowed = Object.create({ hasOwnProperty: () => "inherited" });
 console.log(say(() => method(own, "a")), say(() => method(nothing, "a")), say(() => method(shadowed, "a")), say(() => method(null, "a")), say(() => method(undefined, { toString() { log.push("never"); return "a"; } })), log.includes("never"));
 console.log(say(() => (typed as any).hasOwnProperty()), say(() => (typed as any).hasOwnProperty("a", "b")), say(() => (typed as any).hasOwnProperty(...["b"])));
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
+const entered = () => counted ? (counted("operationAOTHasOwnByIdAndCache") + counted("operationAOTHasOwnByValAndCache")) : 0;
 const things: any[] = [{ q1: 1 } as { q1: number; q2?: number }, JSON.parse('{"q1":1,"q9":2}')], names: unknown[] = ["q1", "q2", "q3", "q9"];
 const before = entered();
 let total = 0;
@@ -2149,7 +2149,7 @@ const hasByKey: (p: any, k: any) => any = function (p: any, k: any): any { retur
 const ownMark: (p: any) => any = function (p: any): any { return Object.hasOwn(p, "mark") ? 1 : 0; };
 const ownX: (p: any) => any = function (p: any): any { return Object.hasOwn(p, "x") ? 1 : 0; };
 const ownByMethod: (p: any) => any = function (p: any): any { return p.hasOwnProperty("mark") ? 1 : 0; };
-const operations = ["operationAOTInByValAndCache", "operationAOTInByVal", "operationAOTInById", "operationAOTHasOwnProperty"];
+const operations = ["operationAOTInByValAndCache", "operationAOTInByValGeneric", "operationAOTInByIdAndCache", "operationAOTHasOwnByIdAndCache", "operationAOTHasOwnByValAndCache"];
 const entered = (): number => { let n = 0; if (typeof aotOperationCount === "function") for (const name of operations) n += aotOperationCount(name); return n; };
 const keys: string[] = JSON.parse('["mark","x","note","other"]');
 for (const [kind, make] of [["typed", makeTyped], ["marked", makeMarked]] as const) {

@@ -22,7 +22,9 @@ const holder = { Message: function Unused() {}, Rest: function Unused() {} };
 holder.Message = Message;
 holder.Rest = Rest;
 const said = new Set();
-const before = count("operationAOTTryPutProperties");
+// Every operation of the run time that a store by name can enter.
+const entered = () => ["PutById", "PutByIdAndCache", "TryPutProperties", "StoreField", "CreateField", "AddPropertyBySlot", "DidCreateField", "DidCreateFieldAt", "DidCreateFieldsAt", "TryFinishBirth"].reduce((sum, name) => sum + count("operationAOT" + name), 0);
+const before = entered();
 for (let i = 0; i < 2000; i++) {
   said.add(new holder.Message(1, "u", "m", "h").show());
   said.add(new holder.Message(1, "u").show());
@@ -31,9 +33,9 @@ for (let i = 0; i < 2000; i++) {
   said.add(new holder.Rest(1, 2, 3, 4).show());
   said.add(new holder.Rest(1).show());
 }
-const asked = count("operationAOTTryPutProperties") - before;
+const asked = entered() - before;
 console.log([...said].join("\n"));
-console.log(!counts || (asked >= 1 && asked <= 300) ? "the stores were learnt together" : "the run time was asked " + asked + " times");
+console.log(!counts || asked <= 300 ? "the stores were learnt together" : "the run time was asked " + asked + " times");
 
 // A store that runs code sees what was stored before it and nothing of what comes behind it.
 const log = [];

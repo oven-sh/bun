@@ -34,7 +34,7 @@ interface Branch {
 }
 
 /** How often the compiler expects a compiled function to run. */
-export const heats = { h: "hot", w: "warm", c: "cold", o: "once", u: "behindFailedTest" } as const;
+export const heats = { h: "hot", w: "warm", c: "cold", k: "cold", o: "once", u: "behindFailedTest" } as const;
 export type Heat = (typeof heats)[keyof typeof heats];
 
 interface Entry {
@@ -192,7 +192,7 @@ const arrivalCounter = "operation:operationAOTRecordArrival";
 
 // Every way in which a function object comes to be: compiled code that allocates one itself, the stubs that allocate one, those that
 // copy one out of a frame for a callee that keeps it, and the functions of the run time that make one a call.
-const closureAllocations = new Set(["closure", "stub:NewSlimClosure", "stub:NewClosure", "stub:CallValueLending", "stub:TakeOverClosure"]);
+const closureAllocations = new Set(["closure", "stub:NewSlimClosure", "stub:NewClosure", "stub:ClosureOfTable", "stub:CallValueLending", "stub:TakeOverClosure"]);
 const closureOperations = new Set(["operationAOTMaterializeDeferredClosure", "operationAOTSingletonClosure", "operationAOTMoveClosureToHeap"]);
 
 export function parseCounts(text: string): Counts {

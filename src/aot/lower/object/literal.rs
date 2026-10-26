@@ -569,12 +569,52 @@ pub(crate) fn lower_object_literal(
         Some(first) if rest.len() != props.len() => InFront::Property(first),
         _ => InFront::StartOfLiteral(hir[literal].pos),
     };
+    let mut members: SmallVec<[(PropId, InFront); 8]> = SmallVec::new();
     for prop in rest {
-        lowering.lower_property_definition(&mut object, dictionary, prop, in_front);
+        members.push((prop, in_front));
         in_front = InFront::Property(prop);
+    }
+    put_halves_of_accessors_side_by_side(hir, &mut members);
+    for (prop, in_front) in members {
+        lowering.lower_property_definition(&mut object, dictionary, prop, in_front);
     }
     lowering.set_position(hir[literal].pos);
     super::finish_object(lowering, object)
+}
+
+// A getter or a setter goes right behind the accessor of its name that the literal has defined already. Making a function runs no code and nobody has seen the object yet, so nobody can tell,
+// and the name keeps the place of its first definition among the keys either way. What may give the name a value in between keeps the two apart.
+fn put_halves_of_accessors_side_by_side(
+    hir: &File<'_>,
+    members: &mut SmallVec<[(PropId, InFront); 8]>,
+) {
+    // The name of each accessor that a later half may join, and where its last half stands.
+    let mut open: SmallVec<[(Atom, usize); 4]> = SmallVec::new();
+    for index in 0..members.len() {
+        let property = members[index].0;
+        let prop = hir[property];
+        match (prop.kind, hir.runtime_property_key(property)) {
+            (PropKind::Getter | PropKind::Setter, PropKey::Name(name)) => {
+                let Some(found) = open.iter().position(|(other, _)| *other == name) else {
+                    open.push((name, index));
+                    continue;
+                };
+                let place = open[found].1 + 1;
+                members[place..=index].rotate_right(1);
+                for (_, last) in &mut open {
+                    if *last >= place {
+                        *last += 1;
+                    }
+                }
+                open[found].1 = place;
+            }
+            (PropKind::Init, _) if is_proto_setter(&prop) => {}
+            (PropKind::Init | PropKind::Shorthand | PropKind::Method, PropKey::Name(name)) => {
+                open.retain(|(other, _)| *other != name);
+            }
+            _ => open.clear(),
+        }
+    }
 }
 
 fn ends_in_literal_of_plain_members(file: &FileLowering<'_, '_, '_, '_>, source: ExprId) -> bool {

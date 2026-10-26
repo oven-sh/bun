@@ -1445,7 +1445,7 @@ console.log("the lengths:", length);
 console.log("the run time is asked for at most one read in two hundred of 169500, of 339 elements in turn:", typeof aotOperationCount !== "function" || visited <= 847);
 //// many-object-kinds-spread.js
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const visits = () => count("operationAOTCloneObject") + count("operationAOTCloneObjectAndExtend");
+const visits = () => count("operationAOTCopyObject");
 const sources = [];
 for (let kind = 0; kind < 48; kind++) {
     const source = {};
@@ -1547,10 +1547,10 @@ for (let i = 0; i < 3; i++) {
 }
 lines.push(made.map(C => new C().sum()).join(), made.map(C => made.map(D => C.is(new D())).join("")).join(" ").replaceAll("true", "T").replaceAll("false", "f"));
 for (let i = 0; i < 200; i++) { tree(Renderer); tree(Special); }
-const before = count("operationAOTPrivateMethodsAdd");
+const before = count("operationAOTPrivateDefine");
 let length = 0;
 for (let i = 0; i < 2000; i++) length += tree(Renderer).text().length + tree(Special).letters().length;
-lines.push(length + " asked " + (count("operationAOTPrivateMethodsAdd") - before));
+lines.push(length + " asked " + (count("operationAOTPrivateDefine") - before));
 tree(Renderer).later().then(x => { lines.push(x); console.log(lines.join("\n")); });
 //// many-structures-copied-by-key.js
 // Objects of many shapes copied property by property into fresh objects: more pairs of shape and key than any table holds, each copy like its source.
@@ -1634,8 +1634,8 @@ said.push("length and name: " + Map.prototype.forEach.length + " " + Map.prototy
 }
 console.log(said.join("\n"));
 //// match-on-unknown-values.js
-const count = globalThis.aotOperationCount ?? (() => 0);
-const counts = typeof globalThis.aotOperationCount === "function";
+const counts = typeof aotOperationCount === "function";
+const count = counts ? aotOperationCount : () => 0;
 
 ////= lines-16	match	text	pattern	text.match
 function show(value) {
@@ -1683,14 +1683,16 @@ for (const pattern of patterns) console.log(attempt("/users/12", pattern), conve
 const receivers = [12345, true, { match(pattern) { return "my own match " + pattern; } }, ["a1"], new String("boxed 12"), null, undefined, 12n, { match: 7 }];
 for (const receiver of receivers) console.log(attempt(receiver, /\d+/));
 
-const before = count("operationAOTStringMatchRegExp");
+// A pattern that begins at the start of the text has an operation of its own.
+const asked = () => count("operationAOTStringMatchRegExp") + count("operationAOTStringMatchPrefix");
+const before = asked();
 let total = 0;
 for (let turn = 0; turn < 3000; turn++) {
   const found = match(paths[turn % 4], route);
   if (found) total += found.length;
   total += match("a1b22c333", global).length;
 }
-console.log(total, !counts || count("operationAOTStringMatchRegExp") - before >= 3000 ? "the stub is asked" : "THE STUB IS NOT ASKED");
+console.log(total, !counts || asked() - before >= 3000 ? "the stub is asked" : "THE STUB IS NOT ASKED");
 //// members-that-built-ins-define-on-prototypes.js
 // Members of a prototype object that Object.assign copies there or that a descriptor defines: before every lookup, after one, twice, on one path, on a holder that refuses, on one of many holders.
 const out = [];

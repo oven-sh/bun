@@ -6,6 +6,7 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/NativeExecutable.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 namespace Bun::Bindgen {
@@ -16,20 +17,10 @@ EncodedJSValue createFunction(JSGlobalObject* globalObject, unsigned length, ASC
     return JSValue::encode(JSFunction::create(getVM(globalObject), globalObject, length, name, function, ImplementationVisibility::Public));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(nameOfFunctionNamedAsBound, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    VM& vm = getVM(globalObject);
-    return JSValue::encode(jsString(vm, makeString("bound "_s, uncheckedDowncast<JSFunction>(JSValue::decode(thisValue))->name(vm))));
-}
-
 EncodedJSValue createFunctionNamedAsBound(JSGlobalObject* globalObject, unsigned length, ASCIILiteral name, NativeFunction function)
 {
-    VM& vm = getVM(globalObject);
-    JSFunction* result = JSFunction::create(vm, globalObject, length, name, function, ImplementationVisibility::Public);
-    // `length` comes into being at its first lookup, and own keys list it in front of `name`.
-    result->hasOwnProperty(globalObject, vm.propertyNames->length);
-    result->ensureRareData(vm)->setHasReifiedName();
-    result->putDirectCustomAccessor(vm, vm.propertyNames->name, CustomGetterSetter::create(vm, nameOfFunctionNamedAsBound, nullptr), PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+    JSFunction* result = JSFunction::create(getVM(globalObject), globalObject, length, name, function, ImplementationVisibility::Public);
+    uncheckedDowncast<NativeExecutable>(result->executable())->setIsNamedAsBound();
     return JSValue::encode(result);
 }
 

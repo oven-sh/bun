@@ -583,7 +583,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         // The function that holds the text of a file with a wrapper is not the body of the module, and what stands behind a `using` declaration stands under the handler that disposes of the resource.
         let is_bare = plan.is_bare && self.is_module_body() && self.handler().is_none();
-        self.builder.evaluate_module(module, referrer, is_bare);
+        // The callback of a wrapper in a bundle is called by the function that the wrapper has made.
+        let is_call_of_require = matches!(plan.target, ModuleRef::File(_));
+        self.builder
+            .evaluate_module(module, referrer, is_bare, is_call_of_require);
         if plan.records {
             self.builder.record_require(module, referrer);
         }
@@ -958,7 +961,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let first = (arguments.len() > 0).then(|| hir.id_at(arguments, 0));
         let specifier = self.lower_computed_specifier(site.answer, first);
         self.lower_arguments_for_effect(arguments, 1);
-        self.set_position(hir[call].pos);
+        self.set_position(match hir[call].kind {
+            ExprKind::Call(id) if self.file.is_shown_without_source_map() => {
+                self.file.call_position(hir[id])
+            }
+            _ => hir[call].pos,
+        });
         self.emit_operation(operation, site, specifier)
     }
 

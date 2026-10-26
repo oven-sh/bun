@@ -136,11 +136,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Binding::Symbol(symbol) if matches!(file.hir[name].kind, ExprKind::Ident(_)) => {
                 file.inputs.modules.import_binding(file.file, symbol)
             }
-            _ => ImportBinding::Local,
+            // `require("./m.mjs").inner` where m.mjs has `export * as inner from ..`.
+            _ => (file.inputs.modules.member_binding(file.file, name))
+                .filter(|binding| matches!(binding, ImportBinding::Namespace { .. }))
+                .unwrap_or(ImportBinding::Local),
         };
+        let is_member = !matches!(file.hir[name].kind, ExprKind::Ident(_));
         match binding {
             ImportBinding::Namespace { module, .. } if file.inputs.modules.is_left_out(module) => {
                 self.builder.undefined()
+            }
+            // The read of the member below it has evaluated what stands in front.
+            ImportBinding::Namespace { module, phase } if is_member => {
+                self.emit_module_namespace(module, phase)
             }
             // `const a = require("./m.mjs")`: `a` stands for what `import * as a` stands for, and so does the call itself in `require("./m.mjs").f()`, which the read of the member has evaluated.
             _ => match file.find_view(name) {

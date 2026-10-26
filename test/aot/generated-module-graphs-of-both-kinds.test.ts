@@ -12,7 +12,6 @@ const nothingToCompareWith = new Set<number>([72, 143, 147, 286, 327, 387, 399, 
 // Where the lines of the executable are not those of `bun run` today. The programs are built and run all the same.
 const departing: Record<string, number[]> = {
   "a CommonJS module that threw is asked for again, and an executable throws the same error": [75, 284, 576],
-  "a built-in module that is imported for the first time takes steps of the loader under `bun run`": [85],
 };
 const howItDeparts = new Map(
   Object.entries(departing).flatMap(([how, seeds]) => seeds.map(seed => [seed, how] as const)),

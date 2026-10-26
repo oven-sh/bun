@@ -268,7 +268,7 @@ export interface CodegenOutputs {
 
   /** What the bundled text of src/js calls the functions that it does not call as src/js does. */
   bundledNamesOfModules: string;
-  /** The bundled text of src/runtime.bun.js. Its source map is beside it, with `.map` behind the name. */
+  /** The bundled text of src/runtime.bun.js. */
   bundledHelpers: string;
 
   /**
@@ -555,7 +555,7 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
   const out = o.bundledHelpers;
 
   n.build({
-    outputs: [out, `${out}.map`],
+    outputs: [out],
     rule: "esbuild",
     inputs: [src],
     implicitInputs: [o.rootInstall],
@@ -572,7 +572,6 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
         "--format=esm",
         "--platform=node",
         "--minify",
-        "--sourcemap=external",
         "--external:/bun:*",
       ]),
     },

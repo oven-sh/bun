@@ -1,5 +1,4 @@
-// FAILS TODAY, and the .expected.txt pins how: process reaches a parameter through ten calls, long after a value that the compiler cannot follow; members that exist are stored there by name. Plain Bun stores all three. The compiler does not see that
-// the store hits process.emitWarning, so that member is read-only in the executable: the documented TypeError, under every schedule (../../flow-schedules.test.ts). In the twin, where process arrives at once, it sees it.
+// process reaches a parameter through ten calls, long after a value that the compiler cannot follow; members that exist are stored there by name and read back from process itself. ../../flow-schedules-beside-a-hidden-value.test.ts builds it under four schedules.
 const hide = value => new CustomEvent("x", { detail: value }).detail;
 function put(object, value) {
   hide(object);

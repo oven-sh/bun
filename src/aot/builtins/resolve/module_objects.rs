@@ -244,11 +244,10 @@ impl Resolver<'_, '_> {
     ) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
         let (object, _) = self.input.hir.member_key(member)?;
         let owner = self.find_owner(object)?;
-        if !self.is_plain_read(member) {
-            return None;
-        }
         let member_use = match id {
+            // What a store puts in the place of the list is handed the same objects.
             BuiltinId::ModuleObjectChildren => ModuleObjectUse::Children,
+            _ if !self.is_plain_read(member) => return None,
             BuiltinId::ModuleObjectParent if self.is_only_tested(member) => {
                 ModuleObjectUse::ParentTested
             }

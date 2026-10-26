@@ -33,7 +33,7 @@ function findPrograms(folder: string, into: string[]) {
 
 const hash = (path: string) => BigInt(Bun.hash(inPrograms(path).replaceAll("\\", "/")));
 const withoutExtension = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
-const optionsOf = (path: string): { env?: Record<string, string>; todoOn?: Record<string, string> } =>
+const optionsOf = (path: string): { env?: Record<string, string>; todoOn?: Record<string, string>; onlyInShell?: string } =>
   existsSync(withoutExtension(path) + ".json") ? JSON.parse(readFileSync(withoutExtension(path) + ".json", "utf8")) : {};
 
 const knownDifferences = new Set(
@@ -56,7 +56,7 @@ export function eagerTierUpSweep(part: number, parts: number) {
       .filter(path => Number((hash(path) >> 16n) % BigInt(parts)) === part - 1)
       .filter(path => !isASAN || inThirdOfAll("eager tier-up", path)),
     path => (wanted === "" || wanted === "quick" ? inTenthOfAll("eager tier-up", path) : inPrograms(path).includes(wanted)),
-  ).filter(path => !existsSync(withoutExtension(path) + ".build-errors.txt") && !existsSync(withoutExtension(path) + ".todo.txt") && !todoReason(optionsOf(path)));
+  ).filter(path => !existsSync(withoutExtension(path) + ".build-errors.txt") && !existsSync(withoutExtension(path) + ".todo.txt") && !todoReason(optionsOf(path)) && !optionsOf(path).onlyInShell);
 
   describe.concurrent("run --aot with eager tier-up", () => {
     if (unsupported) return void test.skip(unsupported, () => {});

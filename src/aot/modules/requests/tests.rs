@@ -1,6 +1,7 @@
 mod module_set;
 
 use super::*;
+use crate::load::runtime_modules::HOST_VALUE_MODULE;
 use crate::modules::testing::{describe_module, file_named, with_graph};
 use crate::modules::{
     Candidates, ModuleFailure, ModuleFailureId, ModuleGraph, SiteAnswer, compare_modules,
@@ -15,7 +16,6 @@ const JSX_PACKAGE: &str = "node_modules/react/index.js";
 const ELEMENT: &str = "export const element = <div />;";
 const KEY_AFTER_SPREAD: &str = "export const keyed = (props) => <div {...props} key='k' />;";
 const UNCOMPILED_MODULE: &str = "https://example.com/z.js";
-const HOST_VALUE_MODULE: &str = "bun:main";
 const PATTERN_REQUIRE: &str = "module.exports = (name) => require(`./pages/${name}.js`);";
 
 struct BoundProgram<'a, 'i, 's> {

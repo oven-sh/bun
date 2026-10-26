@@ -182,6 +182,7 @@ pub(crate) struct Checkpoint {
     lists: u32,
     class_depth: u32,
     has_top_level_await: bool,
+    names_await_at_top_level: bool,
     declared: declared::Mark,
     jsdoc: jsdoc::Lens,
     comments: comments::CommentCheckpoint,
@@ -247,6 +248,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     /// True if some top-level `await` is unambiguous: `await a`, `for await`, `await using`. `await (a)` doesn't count,
     /// because in a script it calls a function named `await`.
     pub(crate) has_plain_top_level_await: bool,
+    /// True if `await` is a name somewhere outside every function, as in `var await`.
+    pub(crate) names_await_at_top_level: bool,
     /// `statementHasAwaitIdentifier`, as error recovery uses it. See `is_in_some_parsing_context`.
     pub(crate) has_await_in_statement: bool,
     /// True if the current top-level statement has an `await` that was parsed outside the await context, either in a
@@ -334,6 +337,7 @@ struct Harvest<'a> {
     end: (u32, u32),
     has_top_level_await: bool,
     has_plain_top_level_await: bool,
+    names_await_at_top_level: bool,
 }
 
 pub(crate) fn run<'a>(
@@ -404,6 +408,7 @@ pub(crate) fn run<'a>(
         end,
         has_top_level_await,
         has_plain_top_level_await,
+        names_await_at_top_level,
     } = match (is_general, options.attach_comments) {
         (true, _) => Parser::<true, true>::new(seed).parse_into(&mut f),
         (false, true) => Parser::<false, true>::new(seed).parse_into(&mut f),
@@ -459,6 +464,7 @@ pub(crate) fn run<'a>(
     Ok(Parsed {
         file: f,
         has_top_level_await,
+        names_await_at_top_level,
         end,
     })
 }
@@ -525,6 +531,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             end: (0, 0),
             has_top_level_await: false,
             has_plain_top_level_await: false,
+            names_await_at_top_level: false,
             has_await_in_statement: false,
             has_await_in_name: false,
             has_await_identifier: false,
@@ -569,6 +576,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             end: self.end,
             has_top_level_await: self.has_top_level_await,
             has_plain_top_level_await: self.has_plain_top_level_await,
+            names_await_at_top_level: self.names_await_at_top_level,
         }
     }
 
@@ -1016,6 +1024,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             lists: self.lists,
             class_depth: self.class_depth,
             has_top_level_await: self.has_top_level_await,
+            names_await_at_top_level: self.names_await_at_top_level,
             declared: self.declared.mark(),
             jsdoc,
             comments: self.comment_checkpoint(),
@@ -1030,6 +1039,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         self.lists = to.lists;
         self.class_depth = to.class_depth;
         self.has_top_level_await = to.has_top_level_await;
+        self.names_await_at_top_level = to.names_await_at_top_level;
         self.declared.rollback(to.declared);
         if self.reads_jsdoc() {
             self.rollback_jsdoc(to);
@@ -1142,6 +1152,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     #[inline(never)]
     fn note_keyword_identifier(&mut self, atom: Atom, pos: u32) {
         self.f.keyword_identifier_positions.push(pos);
+        self.names_await_at_top_level |= atom == known::r#await && self.has_context(ctx::TOP_LEVEL);
         if !self.options.dialect.oxc {
             return;
         }

@@ -441,7 +441,7 @@ describe("emitBuiltinSources", () => {
     expect(edgeArgs(n, archive)).toContain(`--engine-functions=${engineFunctionsJson(cfg)}`);
     // Files that the steps of src/js and of src/runtime.bun.js write.
     expect(edgeInputs(n, archive)).toEqual(
-      expect.arrayContaining([o.bundledNamesOfModules, o.bundledHelpers, `${o.bundledHelpers}.map`].map(p => n.rel(p))),
+      expect.arrayContaining([o.bundledNamesOfModules, o.bundledHelpers].map(p => n.rel(p))),
     );
     expect(edgeArgs(n, archive)).toContain(`--bundled-names-of-modules=${o.bundledNamesOfModules}`);
     expect(edgeArgs(n, archive)).toContain(`--bundled-helpers=${o.bundledHelpers}`);

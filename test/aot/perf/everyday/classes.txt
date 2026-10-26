@@ -672,3 +672,49 @@ function turn(i: number): number {
   kept = steps[names[13]!]!(given[i & 1], i);
   return kept.d;
 }
+//// an-instance-of-integers-spread-in-front-of-a-member-into-a-record-of-fractions
+interface Point {
+  a: number;
+  b: number;
+  c: string;
+  d: number;
+}
+interface Labeled extends Point {
+  label: number;
+}
+class Holder {
+  a = 1;
+  b = 2;
+  c = "three";
+  d = 4;
+}
+const given: any[] = [new Holder(), new Holder(), { a: 5, b: 6, c: "seven", d: 8 }, { label: 0.5, a: 9.5, b: 10.5, c: "eleven", d: 12.5 }];
+if (process.argv.length > 99) given[0][process.argv[99]!] = process.argv[98];
+const steps: Record<string, (source: any, i: number) => any> = {
+  same: source => source,
+  first: source => source.a,
+  second: source => source.b,
+  third: source => source.c,
+  fourth: source => source.d,
+  sum: source => source.a + source.b + source.d,
+  length: source => source.c.length,
+  index: (source, i) => i,
+  pair: (source, i) => [source, i],
+  text: source => source.c + source.a,
+  label: (source, i) => ({ label: i }),
+  keys: source => Object.keys(source),
+  whole: (source): Point => {
+    const point: Point = source;
+    return { ...point };
+  },
+  labeled: (source, i): Labeled => {
+    const point: Point = source;
+    return { ...point, label: i };
+  },
+};
+const names = Object.keys(steps);
+let kept: Point = given[0];
+function turn(i: number): number {
+  kept = steps[names[13]!]!(given[i & 1], i);
+  return kept.d;
+}

@@ -1,6 +1,9 @@
-declare const aotRuntimeCounters: () => string;
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
-declare const aotOperationCount: (name: string) => number;
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
 interface Item { id: number; title?: string; price?: number; hidden?: boolean }
 interface Choice { yes?: boolean; no?: boolean | null; name: string }
 
@@ -9,11 +12,11 @@ function hide(value: unknown): any {
 }
 
 function measure(label: string, run: () => string | undefined): void {
-    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
-    const handedOver = aotOperationCount("operationAOTJSONAppendValue");
+    const before = leftToTheEngine();
     let text: string | undefined = "";
     for (let i = 0; i < 100; i++) text = run();
-    console.log(label + ": " + text + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTJSONAppendValue") - handedOver) + " values handed to the runtime");
+    if (leftToTheEngine() !== before) left.push(label);
+    console.log(label + ": " + text);
 }
 
 function item(bits: number): Item {
@@ -44,3 +47,4 @@ for (const choice of choices) measure("booleans", () => JSON.stringify(choice));
 const strange: Choice = { yes: true, name: "strange" };
 hide(strange).extra = 1;
 measure("an extra property", () => JSON.stringify(strange));
+console.log("needed the engine: " + (counted ? left.join(" | ") : ""));

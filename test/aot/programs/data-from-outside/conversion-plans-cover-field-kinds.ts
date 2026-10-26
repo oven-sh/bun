@@ -1,4 +1,5 @@
-declare const aotOperationCount: (name: string) => number;
+declare const aotOperationCount: undefined | ((name: string) => number);
+const callsOf = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 // Objects built member by member in untyped code are read through record types whose fields are of every usual kind. Any object passes as the record. A member of the wrong kind throws where typed code reads it, undefined, null and a missing member pass, and the object stays as it was. Objects that fit do not enter the runtime's type check once per object.
 type Leaf = { n: number; up: Leaf | null };
 type Solid = { count: number; ratio: number; flag: boolean; label: string; leaf: Leaf; list: number[] };
@@ -60,14 +61,14 @@ function triple(n: number): number {
 
 let text = "";
 const kept: unknown[] = [];
-const before = aotOperationCount("operationAOTEnforceType");
+const before = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType"));
 for (let i = 0; i < 300; i++) {
   const solid = growSolid(i, i % 3 ? i + 0.5 : i, i % 2 === 0, "l" + (i % 5), leaf, list);
   const loose = growLoose(i % 2 === 0, i % 3 ? "m" : null, i % 4 ? leaf : null, i % 2 ? double : triple, i % 2 ? list : leaf, i % 5 ? i : leaf);
   kept.push(solid, loose);
   text = showSolid(solid) + " " + showLoose(loose);
 }
-const slow = aotOperationCount("operationAOTEnforceType") - before;
+const slow = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType")) - before;
 console.log(text, slow < 30 ? "without the runtime" : "through the runtime: " + slow);
 console.log(JSON.stringify(kept[0]), JSON.stringify(kept[1]), JSON.stringify(kept[598]), JSON.stringify(kept[599]));
 

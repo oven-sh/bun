@@ -227,6 +227,36 @@ const ofTheLiteral = fastestOf(5, () => {
 });
 console.log(sums, Object.getPrototypeOf(below) === above);
 console.log(ofTheLiteral < ofTheClass * 5 ? "under five times the time" : "over five times the time");
+//// a-member-stored-on-a-constructor-function-is-not-three-times-as-slow-a-call-as-a-static-member-of-a-class.js
+// A constructor function with a method and a field stored on it by name, as code from before classes has them, beside a class with static members. A call of the one may cost a little more than a call of the other, not three times as much.
+function Stored() {}
+Stored.handle = function (x) {
+  return x + this.base;
+};
+Stored.base = 1;
+Stored.prototype.other = function () {
+  return 1;
+};
+class Declared {
+  static base = 1;
+  static handle(x) {
+    return x + this.base;
+  }
+  other() {
+    return 1;
+  }
+}
+if (new Stored().other() !== new Declared().other()) console.log("another answer");
+let sums = 0;
+////= fastestOf
+////= ofTheClass	Declared.handle(i)
+const ofTheFunction = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 5_000_000; i++) sum = (sum + Stored.handle(i)) | 0;
+  sums = (sums + sum) | 0;
+});
+console.log(sums, Object.keys(Stored).join());
+console.log(ofTheFunction < ofTheClass * 3 ? "under three times the time" : "over three times the time");
 //// a-method-of-an-object-that-instances-are-put-below-is-not-five-times-as-slow-a-call-as-a-method-of-their-class.js
 // Instances of a class that Object.setPrototypeOf() puts below an object created from the class's prototype object, as a framework does with the requests of a server. A call of a method of that object may cost a few times what a call of a method of the class costs on the same instance, not five times.
 class Message {

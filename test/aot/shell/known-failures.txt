@@ -6,8 +6,9 @@ strings/single-characters	// CALLS- kept StringHasAt|StringEqualsLiteral
 # Open: a key that is built from a string and integers is not yet built in one piece.
 strings/strings-built-and-consumed-locally	// CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish
 # Open: `{ ...source, name }` over a source whose names no type knows is born as a copy of the source, and the names that are written are defined by name on the copy: 420 instructions where the form before, a layout of
-# the written names with the copied ones kept beside it, took 735. The copy and its definitions are not yet one call (the three CALLS+ lines of this program below).
+# the written names with the copied ones kept beside it, took 735. The copy and its definitions are not yet one call (the three CALLS+ lines of this program below). In all three functions: the call of `wide` stood in a piece of code that several functions share.
 typed-objects/plain-clone-takes-stores-behind-it	// CALLS- named PutBy
+typed-objects/plain-clone-takes-stores-behind-it	// CALLS- wide PutBy
 # Nobody has looked at the lines below one by one. For a long time no test read the expectation lines; these failed when they were read again.
 # Each is one of three things: an optimization that is lost; a line that spells an operation, a stub or a counter as the compiler no longer does; a function that no longer has a body of its own.
 # A line that says what must NOT be there (IR-, CALLS-, IR= 0) and fails names something that IS there: look at those first.
@@ -841,10 +842,6 @@ typed-objects/slot-next-to-error-slot-stays-proven	// IRT= 1 note \(anything, \S
 typed-objects/spread-inside-try	// IRT= 1 copy  = CloneAs 
 typed-objects/spread-of-single-layout-record	// CALLS+ copy CopyTypedObject32
 typed-objects/spread-of-single-layout-record	// CALLS+ rename CopyTypedObject32
-typed-objects/spread-off-usual-path-is-one-call	// CALLS+ withBoth CloneObjectAndExtend
-typed-objects/spread-off-usual-path-is-one-call	// CALLS+ withId CloneObjectAndExtendWithNumber
-typed-objects/spread-off-usual-path-is-one-call	// CALLS+ withId CopyTypedObject
-typed-objects/spread-off-usual-path-is-one-call	// CALLS+ withName CloneObjectAndExtend
 typed-objects/spread-opaque-source	// CALLS+ rename CloneObjectAndExtend
 typed-objects/spread-opaque-source-stores-number-field	// CALLS+ resize CloneObjectAndExtendWithNumber
 typed-objects/symbol-keyed-fields	// IR+ ^layout L[0-9]+ .*\{name=UniqueSymbol "[^"]*handle" declared=number
@@ -900,7 +897,6 @@ structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration
 structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 2 sumPoint = GetSlot v\d+ key="[xy]" receivers=\[L\d+\] level=Proven
 structural-types/an-instance-under-a-computed-key-of-a-union-type-passes-for-the-index-signature	// IRT= 0 barkIn testedType=undefined.null.object
 typed-objects/one-rest-copy-leaves-plain-literals-filled-at-birth	// IRT= 0 readRest GetSlotOrUndefined
-typed-objects/one-spread-under-a-declared-type-leaves-plain-literals-filled-at-birth	// IRT= 0 readState IsSlotFilled
 untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 read = TypeTest
 untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 read GetSlotOrUndefined
 untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 read IsSlotFilled

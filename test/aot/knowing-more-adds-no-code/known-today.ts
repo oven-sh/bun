@@ -3,8 +3,6 @@
 
 /** bytes of code of the program's own functions: less | more, and where the bytes stand */
 export const knownToday: Readonly<Record<string, string>> = {
-  "an-untyped-module-gets-types":
-    "1,962 | 2,209: the tests at the entrance of the functions and their generic versions stand beside bodies that are no smaller for their types",
   "a-result-gets-a-type":
     "1,634 | 2,005: the generic versions of both functions grow, and a typed body stands beside the worker",
   "a-loop-over-typed-elements":

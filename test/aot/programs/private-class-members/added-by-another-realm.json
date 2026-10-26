@@ -1,1 +1,4 @@
-{ "erased": "as plain Bun" }
+{
+  "erased": "as plain Bun",
+  "onlyInShell": "$262.createRealm"
+}

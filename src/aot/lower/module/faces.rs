@@ -38,12 +38,12 @@ impl FileLowering<'_, '_, '_, '_> {
         let module = lowering.file.module_id();
         let face = ModuleRef::Face(own_file);
         let face = lowering.file.fragment.declare_module(face);
-        lowering.builder.evaluate_module(module, face, true);
+        lowering.builder.evaluate_module(module, face, true, false);
         // Behind the self, so that the files run in the order of its text.
         for owner in modules.faces_behind(own_file) {
             let owner = ModuleRef::Face(owner);
             let owner = lowering.file.fragment.declare_module(owner);
-            lowering.builder.evaluate_module(owner, face, true);
+            lowering.builder.evaluate_module(owner, face, true, false);
         }
         for &export in modules.commonjs().copies(own_file) {
             let copied = *modules.synthetic_export(export);

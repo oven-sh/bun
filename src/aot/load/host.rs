@@ -40,7 +40,7 @@ use crate::load::externals::{contains, is_external};
 use crate::load::is_host_path;
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path,
-    loader_named_by_path, script_kind_of, to_host_loader,
+    loader_named_by_path, parses_text_as_data, script_kind_of, to_host_loader,
 };
 use crate::load::macros;
 use crate::load::named_loads::find_library_modules_named_in_choices;
@@ -528,6 +528,14 @@ impl CodeHost for LoadHost<'_> {
     fn resolve_runtime_module(&self, specifier: &[u8]) -> HostResolution {
         let resolution = self.runtime_resolution(specifier);
         resolution.unwrap_or(HostResolution::Unclaimed)
+    }
+
+    fn create_file_from_data_url(&self, url: &[u8], type_attribute: &[u8]) -> Option<Vec<u8>> {
+        let loader = Loader::from_string(type_attribute)?;
+        match parses_text_as_data(loader) {
+            true => self.plugins.add_data_url(url),
+            false => None,
+        }
     }
 
     fn directory_of<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {

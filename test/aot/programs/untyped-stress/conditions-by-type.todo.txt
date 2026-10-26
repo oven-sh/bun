@@ -1,1 +1,0 @@
-It needs makeMasquerader(), which only the jsc shell has.

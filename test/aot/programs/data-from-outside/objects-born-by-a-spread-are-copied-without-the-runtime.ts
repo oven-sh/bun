@@ -1,4 +1,5 @@
-declare const aotOperationCount: (name: string) => number;
+declare const aotOperationCount: undefined | ((name: string) => number);
+const callsOf = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 // A literal that spreads a typed record of four fields and defines two more properties, in a callback whose result has no declared type, enters its record type as it is. The runtime's type check is not entered once per object.
 type State = "open" | "closed";
 interface Row { id: number; title: string; state: State; login: string; body: string }
@@ -20,13 +21,13 @@ function withoutBody(found: Hit[]): number {
   return found.map(({ body, ...hit }) => ({ ...hit, summary: body.length })).length;
 }
 await hits();
-const before = aotOperationCount("operationAOTEnforceType");
+const before = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType"));
 let total = 0;
 let last: Hit[] = [];
 for (let round = 0; round < 5; round++) {
   last = await hits();
   total += withoutBody(last);
 }
-const slow = aotOperationCount("operationAOTEnforceType") - before;
+const slow = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType")) - before;
 console.log(total, slow < 20 ? "without the runtime" : "through the runtime: " + slow);
 console.log(JSON.stringify(last[7]), Object.keys(last[7]).join(), last[8].state, last[8].words, last[8].author.login);

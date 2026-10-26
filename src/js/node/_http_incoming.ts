@@ -132,7 +132,7 @@ const kRawHeaders = Symbol("kRawHeaders");
 const kTrailers = Symbol("kTrailers");
 const kTrailersDistinct = Symbol("kTrailersDistinct");
 const kTrailersCount = Symbol("kTrailersCount");
-const kAbortController = Symbol("kAbortController");
+const kAbortController = Symbol.for("kAbortController");
 
 declare global {
   namespace $Node {

@@ -57,12 +57,12 @@ for (const name of Object.keys(kinds)) {
 lines.push(attempt(() => new Stamp(Object.freeze({}))), attempt(() => new Stamp(Object.preventExtensions(new Map()))), attempt(() => new Stamp(1)), attempt(() => Stamp.sum(new Map())));
 const kept = [];
 for (let i = 0; i < 300; i++) { new Query(); new Five(); new Twelve("w"); new Fields(); new Deeper(); }
-const before = count("operationAOTPrivateMethodsAdd");
+const before = count("operationAOTPrivateDefine");
 let check = 0;
 for (let i = 0; i < 3000; i++) {
     const q = new Query(), f = new Five(), t = new Twelve("t"), d = new Deeper();
     if (i % 250 === 0) kept.push(q, f, t, d);
     check = (check + q.sum() + f.letters().length + t.sum().length + d.more()) % 100003;
 }
-lines.push("the engine is asked at most 150 times for 15000 additions: " + (count("operationAOTPrivateMethodsAdd") - before <= 150), check + " " + kept.map(x => x.more ? x.more() : x.sum ? x.sum() : x.letters()).join());
+lines.push("the engine is asked at most 150 times for 15000 additions: " + (count("operationAOTPrivateDefine") - before <= 150), check + " " + kept.map(x => x.more ? x.more() : x.sum ? x.sum() : x.letters()).join());
 new Query().then(x => { lines.push(x); console.log(lines.join("\n")); });

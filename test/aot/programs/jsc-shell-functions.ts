@@ -7,6 +7,9 @@ Object.assign(globalThis, {
   // These only influence the JIT, never what a function does.
   noInline: () => {},
   neverInlineFunction: () => {},
+  noDFG: () => {},
+  noFTL: () => {},
+  noOSRExitFuzzing: () => {},
   fullGC,
   edenGC,
   drainMicrotasks,

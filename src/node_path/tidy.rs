@@ -27,12 +27,14 @@ pub fn is_ascii(text: &[u8]) -> bool {
             return (block(0) | block(len - 16)) & HIGHEST_BITS == 0;
         }
         if len >= 8 {
-            let (first, last) = (start.cast::<u64>(), start.add(len - 8).cast::<u64>());
-            return (first.read_unaligned() | last.read_unaligned()) & HIGHEST_BITS as u64 == 0;
+            let first = start.cast::<u64>().read_unaligned();
+            let last = start.add(len - 8).cast::<u64>().read_unaligned();
+            return (first | last) & HIGHEST_BITS as u64 == 0;
         }
         if len >= 4 {
-            let (first, last) = (start.cast::<u32>(), start.add(len - 4).cast::<u32>());
-            return (first.read_unaligned() | last.read_unaligned()) & HIGHEST_BITS as u32 == 0;
+            let first = start.cast::<u32>().read_unaligned();
+            let last = start.add(len - 4).cast::<u32>().read_unaligned();
+            return (first | last) & HIGHEST_BITS as u32 == 0;
         }
         len == 0 || (*start | *start.add(len / 2) | *start.add(len - 1)) < 0x80
     }

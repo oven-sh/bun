@@ -2500,7 +2500,8 @@ class Throws {
 ////= lines-9	makesThrows	Throws	i	x
 check(makesThrows(3), 3, "a constructor that does not throw yet");
 let thrown = checkThrows(() => makesThrows(5), Error, "a constructor that throws");
-let frames = thrown.stack.split("\n").map(line => line.split("@")[0]);
+// A frame is `name@file:line:column` in the jsc shell. In Bun it is `    at name (file:line:column)`, `new name` for a constructor, below a line with the message.
+let frames = thrown.stack.split("\n").filter(line => !line.startsWith("Error: ")).map(line => line.replace(/^    at (new )?/, "").split(/[@ ]/)[0]);
 check(frames[0], "Throws", "the innermost frame of what the constructor throws");
 check(frames[1], "makesThrows", "the frame of the caller of the constructor");
 

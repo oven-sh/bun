@@ -291,7 +291,7 @@ class Corpus:
         if os.path.exists(beside + ".todo.txt") or os.path.exists(beside + ".build-errors.txt"):
             raise NoProgram()
         options = json.load(open(beside + ".json")) if os.path.exists(beside + ".json") else {}
-        if options.get("reference") == "compiled":
+        if options.get("reference") == "compiled" or "onlyInShell" in options:
             raise NoProgram()
         expected = open(beside + ".expected.txt").read() if os.path.exists(beside + ".expected.txt") else None
         env = options.get("env") or {}

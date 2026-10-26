@@ -1,11 +1,13 @@
 // `{ ...r, key: value }` where r has a written record type, which any object may be.
-// A record of the layout is copied inline. Anything else (null, a record with an undeclared property, a plain object) takes one call, as in untyped code.
-// CALLS+ withId CopyTypedObject
-// CALLS+ withId CloneObjectAndExtendWithNumber
-// CALLS+ withName CloneObjectAndExtend
-// CALLS- withName CastInRegister|CloneObjectWithSubtypeCheck
-// CALLS+ withBoth CloneObjectAndExtend
-// CALLS- withBoth CastInRegister|CloneObjectWithSubtypeCheck
+// The new record is allocated on the spot and one call copies: its head copies a record of the layout by itself, and anything else (null, a record with an undeclared property, a plain object) goes on into the operation.
+// Nothing tests the source in front of that call, and the members that are written go into their slots, not by name.
+// The functions are not copied into their callers (see the .json), so that each has code of its own.
+// CALLS+ withId AllocateCell.*operationAOTCopyDataProperties
+// CALLS- withId PutBy|GetBy|Cast|operationAOTCopyObject
+// CALLS+ withName AllocateCell.*operationAOTCopyDataProperties
+// CALLS- withName PutBy|GetBy|Cast|operationAOTCopyObject
+// CALLS+ withBoth AllocateCell.*operationAOTCopyDataProperties
+// CALLS- withBoth PutBy|GetBy|Cast|operationAOTCopyObject
 // SIZE< withId 100
 // SIZE< withName 112
 // SIZE< withBoth 150

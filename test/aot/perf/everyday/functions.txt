@@ -382,3 +382,30 @@ const handedBack = new Function("f", "return f;" + nothing) as <T>(f: T) => T;
 function turn(i: number): number {
   return AsyncResource.bind(() => i)();
 }
+//// name-of-a-new-function-object-over-many-variables-where-another-was-given-a-display-name
+const nothing = process.argv.length > 1000 ? "x" : "";
+const handedBack = new Function("f", "return f;" + nothing) as <T>(f: T) => T;
+(handedBack(function other() {}) as any).displayName = "displayed";
+function nameOf(made: () => number): string {
+  return made.name;
+}
+function turn(i: number): number {
+  const a = i + 1, b = i + 2, c = i + 3, d = i + 4, e = i + 5, f = i + 6, g = i + 7, h = i + 8;
+  const made = () => (a + b + c + d + e + f + g + h) & 0xffff;
+  if (i < 0) handedBack(made);
+  return nameOf(made).length + made();
+}
+//// name-of-a-new-generator-function-where-another-function-was-given-a-display-name
+const nothing = process.argv.length > 1000 ? "x" : "";
+const handedBack = new Function("f", "return f;" + nothing) as <T>(f: T) => T;
+(handedBack(function other() {}) as any).displayName = "displayed";
+function nameOf(made: () => Generator<number>): string {
+  return made.name;
+}
+function turn(i: number): number {
+  const made = function* made() {
+    yield i;
+  };
+  if (i < 0) handedBack(made);
+  return nameOf(made).length + (i & 1);
+}

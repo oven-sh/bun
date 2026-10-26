@@ -518,10 +518,9 @@ mod tests {
         }
         let wrap = manifest.module_by_specifier(b"bun:wrap");
         assert!(wrap.is_some_and(|id| manifest.has_source(id)));
-        let runtime = manifest.resolve(b"./runtime", b"runtime.bun.js");
         assert_eq!(
-            runtime.and_then(|id| archive.path(id)),
-            Some(&b"/$bun/js/runtime.js"[..])
+            wrap.and_then(|id| archive.path(id)),
+            Some(&b"/$bun/js/runtime.out.js"[..])
         );
     }
 

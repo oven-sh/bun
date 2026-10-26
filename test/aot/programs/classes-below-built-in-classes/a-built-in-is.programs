@@ -608,7 +608,8 @@ export const Below = class extends Proxy {};
 export const reached = "reached";
 console.log(reached);
 //// a-class-below-proxy-that-is-exported-and-that-no-file-names/main.js
-// A class below Proxy, which has no prototype property, is exported by a file whose importer names another export: the file stops where the class is made, with a TypeError.
+// A class below Proxy, which has no prototype property, is exported by a file whose importer names another export. In plain Bun the file stops where the class is made, with a
+// TypeError. A build removes the class with the export that nothing names, with --aot and without it, and the file runs to its end.
 ////= lines
 //// a-class-below-proxy-whose-members-are-used-behind-a-catch/made.js
 class Below extends Proxy {

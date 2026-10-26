@@ -53,6 +53,13 @@ declare function $callNoInline<This, Arguments extends unknown[], Result>(
   ...args: Arguments
 ): Result;
 
+/**
+ * True only where a lookup of `name` on `object` finds the method or accessor that the class of `object` declares or inherits, as the source text defines it.
+ * That class may be an heir of the one you mean: ask for the prototype of `object` as well. False says nothing: ask the object and its prototypes then.
+ * Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
+ */
+declare function $findsDeclaredMember(object: object, name: string): boolean;
+
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
 /** Assign to this directly above a function declaration (like a decorator) to override the function's display name. */

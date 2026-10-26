@@ -432,7 +432,7 @@ console.log(total);
 //// object-assign-existing-targets.js
 // Object.assign(target, source ..) where the target is there already, or a second source follows the first: every property is stored, which asks the target and what it inherits from: setters run, what cannot be written refuses, `__proto__` changes the prototype. Where none of that is in the way the properties of a source of one shape go into a target of one shape by a plan that is made once.
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const byPlan = () => counted ? counted("operationAOTObjectAssignFrom") : 0;
+const byPlan = () => counted ? counted("operationAOTCopyDataProperties") : 0;
 const lines = [];
 const mark = Symbol("mark"), other = Symbol("other");
 const show = o => Reflect.ownKeys(o).map(k => { const d = Object.getOwnPropertyDescriptor(o, k); return String(k) + ":" + ("value" in d ? String(d.value) : "accessor") + (d.writable ? "w" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : ""); }).join(",");
@@ -503,12 +503,12 @@ lines.push("grown: " + Object.keys(grown).length + " " + grown.g0 + " " + grown.
 const start = byPlan();
 let sum = 0;
 for (let i = 0; i < 2000; i++) sum += Object.assign({ p: i }, sources.three()).c + Object.assign({}, sources.three(), sources.deleted()).b + Object.assign(targets.same(), sources.three()).a;
-lines.push(sum + " " + (counted ? byPlan() - start >= 5900 : true));
+lines.push(sum + " " + (counted ? byPlan() - start <= 100 : true));
 console.log(lines.join("\n"));
 //// object-assign-new-target-copies-whole.js
 // `Object.assign({}, source)`: where the source is an ordinary object with nothing special about it, the new object is made in one piece with the shape of the source: no property is gone through, from the first copy of every shape on. A second source goes by a plan made once.
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const oneByOne = () => counted ? counted("operationAOTObjectAssignFrom") : 0;
+const oneByOne = () => counted ? counted("operationAOTCopyDataProperties") : 0;
 const lines = [];
 const show = o => Reflect.ownKeys(o).map(k => { const d = Object.getOwnPropertyDescriptor(o, k); return String(k) + ":" + ("value" in d ? JSON.stringify(d.value) ?? "undefined" : "accessor") + (d.writable ? "w" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : ""); }).join(",");
 const forms = { toNew(a) { return Object.assign({}, a); }, two(a, b) { return Object.assign({}, a, b); } };
@@ -575,9 +575,9 @@ const fresh = run("given", 1);
 fresh.x = 2; fresh.added = true;
 console.log(JSON.stringify(given), JSON.stringify(run("given", 1)), Object.getPrototypeOf(fresh) === Object.prototype, fresh.y === given.y);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const before = counted("operationAOTObjectAssignFrom");
+const before = counted("operationAOTCopyDataProperties");
 for (const row of ["literal", "literalAgain", "given", "givenAgain"]) run(row, 500);
-console.log(counted("operationAOTObjectAssignFrom") - before);
+console.log(counted("operationAOTCopyDataProperties") - before);
 //// object-assign-typed-targets.ts
 interface T { n: number; s: string; b: boolean; o?: number; u: number | string; inner: { v: number } }
 interface Patch { n?: number; s?: string; b?: boolean; o?: number; u?: number | string }
@@ -2568,7 +2568,7 @@ console.log(lines.join("\n"));
 // `Object.hasOwn(o, key)` over thirty-two shapes and four keys in turn, sixty times over with new shapes each time, as a server meets them. What is remembered about shapes that are no longer asked about does not stand in the way of those that are: each question (shape, key) is worked out once, and nearly all after that are answered from what is remembered.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
+const entered = () => counted ? (counted("operationAOTHasOwnByIdAndCache") + counted("operationAOTHasOwnByValAndCache")) : 0;
 const keys: any[] = ["alpha", "beta", "gamma", "delta"];
 function ask(o: any, key: any): number { return Object.hasOwn(o, key) ? 1 : 0; }
 const turns = 40, shapes = 32;
@@ -2580,7 +2580,7 @@ console.log(yes, asked, counted ? workedOut * 20 < asked : true);
 declare const aotOperationCount: undefined | ((name: string) => number);
 const has = (o: any, k: any): boolean => Object.prototype.hasOwnProperty.call(o, k);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
+const entered = () => counted ? (counted("operationAOTHasOwnByIdAndCache") + counted("operationAOTHasOwnByValAndCache")) : 0;
 const turns = 50;
 let yes = 0, asked = 0, workedOut = 0;
 function ask(shapes: number, width: number, tag: string) {
@@ -2605,7 +2605,7 @@ console.log(yes, asked, counted ? workedOut * 20 < asked : true);
 // `Object.hasOwn(o, "name")` and `o.hasOwnProperty("name")` with the name written out, asked of objects of sixteen shapes in turn. Each question (shape, name) is worked out once; after that nearly all are answered from what is remembered, whichever shapes they are.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
+const entered = () => counted ? (counted("operationAOTHasOwnByIdAndCache") + counted("operationAOTHasOwnByValAndCache")) : 0;
 function ask(o: any): number {
   return (Object.hasOwn(o, "alpha") ? 1 : 0) + (Object.hasOwn(o, "beta") ? 1 : 0) + (o.hasOwnProperty("gamma") ? 1 : 0) + (Object.prototype.hasOwnProperty.call(o, "delta") ? 1 : 0);
 }

@@ -57,13 +57,7 @@ function createFixture(engine: EngineFunctions = engineFunctions) {
       `positions\tnode/os.ts\t${Buffer.from([5, 6]).toString("base64")}`,
       ``,
     ].join("\n"),
-    "runtime.out.js": "var a=()=>1;",
-    "runtime.out.js.map": JSON.stringify({
-      version: 3,
-      sources: [join(root, "src", "runtime.js")],
-      sourcesContent: ["export var __name = () => 1;"],
-      mappings: "IAAW",
-    }),
+    "runtime.out.js": "var a=()=>1;export{a as __name};",
   });
   const file = (name: string) => join(String(dir), name);
   return {
@@ -122,10 +116,7 @@ describe("builtins-manifest.ts", () => {
   });
 
   test("the names are those of the bundled texts, but for a module that the compiler reads in a second text", () => {
-    expect(records.filter(([kind]) => kind === "name")).toEqual([
-      ["name", "node/fs.ts", "12", "read2", "own"],
-      ["name", "runtime.js", "11", "a", "variable"],
-    ]);
+    expect(records.filter(([kind]) => kind === "name")).toEqual([["name", "node/fs.ts", "12", "read2", "own"]]);
   });
 
   test("the positions of all modules are one file of the archive, and the manifest says which part is whose", () => {
@@ -152,8 +143,8 @@ describe("builtins-manifest.ts", () => {
       "node:fs": "node/fs.ts",
       ws: "thirdparty/ws.ts",
       "@vercel/fetch": "thirdparty/vercel_fetch.js",
-      "bun:wrap": "runtime.bun.js",
-      "-": "runtime.js",
+      "bun:wrap": "runtime.out.js",
+      "bun:main": "runtime.main.js",
       "node:buffer": "-",
     });
   });
@@ -174,9 +165,12 @@ describe("builtins-manifest.ts", () => {
     expect(read("engine/A.js")).toBe("function first() {}\n");
     expect(read("manifest")).toBe(readFileSync(fixture.manifest, "utf8"));
     expect(read("engine/A.js")).toBe("function first() {}\n");
-    for (const name of ["runtime.js", "runtime.bun.js", "node/fs.ts", "builtins/Fifo.ts"]) {
+    for (const name of ["node/fs.ts", "builtins/Fifo.ts"]) {
       expect(read(name)).toBe(readFileSync(locate(name), "utf8"));
     }
+    // The helpers of the bundler are compiled from the text that `bun run` evaluates.
+    expect(read("runtime.out.js")).toBe(readFileSync(fixture.file("runtime.out.js"), "utf8"));
+    expect(read("runtime.main.js")).toBe(readFileSync(join(root, "src", "runtime.main.js"), "utf8"));
     // What private.d.ts says a module answers lies beside the module, so whoever reads the one need not read all the others.
     const listings = records.filter(([kind]) => kind === "declarations").map(([, name]) => name);
     expect(names).toEqual(expect.arrayContaining(listings));

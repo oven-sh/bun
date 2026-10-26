@@ -4,6 +4,7 @@ const { Stream } = require("node:stream");
 const StreamPrototype = Stream.prototype;
 const plainStream: $Node.Stream = new Stream();
 const DuplexPrototype = Stream.Duplex.prototype;
+const ReadablePrototype = Stream.Readable.prototype;
 const duplexResume = DuplexPrototype.resume;
 const duplexRemoveListener = DuplexPrototype.removeListener;
 const { flagsOf, getDefaultHighWaterMark, internals: streamInternals } = require("internal/streams/state");
@@ -2869,7 +2870,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
         return;
       }
       if (
-        this.resume !== serverSocketResume ||
+        !((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(this, "resume")) || this.resume === serverSocketResume) ||
         NetSocketPrototype.resume !== netSocketResume ||
         DuplexPrototype.resume !== duplexResume ||
         this[kStreamingEnabled] ||
@@ -4795,7 +4796,7 @@ function emitsUnseen(res: $Node.ServerResponse): boolean {
 
 function resumesUnseen(socket: $Node.HttpServerSocket): boolean {
   return (
-    socket.resume === serverSocketResume &&
+    ((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(socket, "resume")) || socket.resume === serverSocketResume) &&
     netSocketPrototype!.resume === netSocketResume &&
     DuplexPrototype.resume === duplexResume &&
     socket[kUpgradeIncoming] === undefined &&
@@ -4803,30 +4804,78 @@ function resumesUnseen(socket: $Node.HttpServerSocket): boolean {
   );
 }
 
-// Whether the socket has the prototype of its class and no property of its own under these names, so that a read of one reaches the accessor of a stream class.
-function readsFlowUnseen(socket: $Node.HttpServerSocket): boolean {
+// Whether a read of that name on the socket reaches the accessor of Duplex.prototype: neither the socket nor a prototype in front of it has such a property.
+function reachesDuplexPrototype(socket: $Node.HttpServerSocket, name: string): boolean {
+  return (
+    !ObjectHasOwn(socket, name) &&
+    !ObjectHasOwn(serverSocketPrototype!, name) &&
+    !ObjectHasOwn(netSocketPrototype!, name)
+  );
+}
+
+// The same for an accessor of Readable.prototype.
+function reachesReadablePrototype(socket: $Node.HttpServerSocket, name: string): boolean {
+  return reachesDuplexPrototype(socket, name) && !ObjectHasOwn(DuplexPrototype, name);
+}
+
+function hasThePrototypesOfItsClass(socket: $Node.HttpServerSocket): boolean {
   return (
     ObjectGetPrototypeOf(socket) === serverSocketPrototype &&
-    !ObjectHasOwn(socket, "readable") &&
-    !ObjectHasOwn(socket, "readableLength") &&
-    !ObjectHasOwn(socket, "readableHighWaterMark") &&
-    !ObjectHasOwn(socket, "readableEnded")
+    ObjectGetPrototypeOf(serverSocketPrototype) === netSocketPrototype &&
+    ObjectGetPrototypeOf(netSocketPrototype) === DuplexPrototype &&
+    ObjectGetPrototypeOf(DuplexPrototype) === ReadablePrototype
+  );
+}
+
+function readsFlowUnseen(socket: $Node.HttpServerSocket): boolean {
+  if (
+    IS_COMPILED_AHEAD_OF_TIME &&
+    ObjectGetPrototypeOf(socket) === serverSocketPrototype &&
+    $findsDeclaredMember(socket, "readable") &&
+    $findsDeclaredMember(socket, "readableLength") &&
+    $findsDeclaredMember(socket, "readableHighWaterMark") &&
+    $findsDeclaredMember(socket, "readableEnded")
+  ) {
+    return true;
+  }
+  return (
+    hasThePrototypesOfItsClass(socket) &&
+    reachesReadablePrototype(socket, "readable") &&
+    reachesReadablePrototype(socket, "readableLength") &&
+    reachesReadablePrototype(socket, "readableHighWaterMark") &&
+    reachesReadablePrototype(socket, "readableEnded")
   );
 }
 
 function readsHighWaterMarksUnseen(socket: $Node.HttpServerSocket): boolean {
-  return (
+  if (
+    IS_COMPILED_AHEAD_OF_TIME &&
     ObjectGetPrototypeOf(socket) === serverSocketPrototype &&
-    !ObjectHasOwn(socket, "readableHighWaterMark") &&
-    !ObjectHasOwn(socket, "writableHighWaterMark")
+    $findsDeclaredMember(socket, "readableHighWaterMark") &&
+    $findsDeclaredMember(socket, "writableHighWaterMark")
+  ) {
+    return true;
+  }
+  return (
+    hasThePrototypesOfItsClass(socket) &&
+    reachesReadablePrototype(socket, "readableHighWaterMark") &&
+    reachesDuplexPrototype(socket, "writableHighWaterMark")
   );
 }
 
 function readsItsEndUnseen(socket: $Node.HttpServerSocket): boolean {
-  return (
+  if (
+    IS_COMPILED_AHEAD_OF_TIME &&
     ObjectGetPrototypeOf(socket) === serverSocketPrototype &&
-    !ObjectHasOwn(socket, "destroyed") &&
-    !ObjectHasOwn(socket, "writableEnded")
+    $findsDeclaredMember(socket, "destroyed") &&
+    $findsDeclaredMember(socket, "writableEnded")
+  ) {
+    return true;
+  }
+  return (
+    hasThePrototypesOfItsClass(socket) &&
+    reachesDuplexPrototype(socket, "destroyed") &&
+    reachesDuplexPrototype(socket, "writableEnded")
   );
 }
 

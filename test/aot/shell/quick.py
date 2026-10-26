@@ -17,6 +17,8 @@ Other environment variables:
     WORDS           option words added to every compile, after the program's own, separated by blanks (`testaot list options`)
     RUN_OPTIONS     options of `jsc` for the run of an image, separated by blanks
     RUN_SECONDS     how long the run of an image may take, and the run of `$PLAIN` that it is compared with (default: 120)
+    KNOWS_SHELL_FUNCTIONS  the compiler is told which functions the shell has and Bun has not (functions-of-the-shell.js), so `typeof aotOperationCount` is "function" and a program that
+                    asks so counts. Without it such a program takes the way that it takes in an executable
 
 Prints one line per program and exits with 1 if any line is a failure:
     same            the output equals <program>.expected.txt or, if there is none, the output of `$PLAIN run <file>`
@@ -139,7 +141,8 @@ def run_program(program):
 
     front_flags, words = toolchain.split_flags(options.get("build", []))
     try:
-        toolchain.front_end(source, ir, front_flags, cwd=cwd, seconds=60)
+        also = [HERE + "/functions-of-the-shell.js"] if os.environ.get("KNOWS_SHELL_FUNCTIONS") else []
+        toolchain.front_end(source, ir, front_flags, cwd=cwd, seconds=60, also=also)
     except toolchain.ToolFailed as failed:
         return "NO IR: " + " | ".join(failed.said.strip().split("\n")[:2])[:200]
 

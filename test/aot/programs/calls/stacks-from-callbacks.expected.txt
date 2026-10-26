@@ -3,7 +3,7 @@ toSorted: note < comparator < toSorted < show < module
 typed array sort: note < comparator < sort < show < module
 typed array forEach: note < visitor < forEach < show < module
 typed array map: note < map < show < module
-replace: note < replacer < show < module
+replace: note < replacer < replace < show < module
 replace string: note < replacer < replace < show < module
 getter: note < get < show < module
 toString: note < toString < join < show < module

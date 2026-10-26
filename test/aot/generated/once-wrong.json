@@ -52,5 +52,12 @@
     "not extensible.",
     "of a fixed length.",
     "sealed."
+  ],
+  "values that the analysis no longer follows": [
+    "an array cast to a string, by index, in a closure.",
+    "an array for a string, by index, all of it in a function.",
+    "an array for a string, by index, all of it in the body of a loop.",
+    "an array for a string, by index, where it stands.",
+    "an object for a string, by index, where it stands."
   ]
 }

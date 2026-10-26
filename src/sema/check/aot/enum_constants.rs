@@ -4,7 +4,7 @@ use crate::atom::{Atom, known};
 use crate::bind::{Binding, Decl, SymFlags};
 use crate::check::Checker;
 use crate::fold::is_exact_power;
-use crate::hir::{self, BinOp, EnumMemberId, ExprFlags, ExprId, MemberKey};
+use crate::hir::{self, BinOp, EnumMemberId, ExprFlags, ExprId, Kind, MemberKey, Node};
 use crate::program::{FileId, Sym};
 use crate::types::EnumValue;
 use smallvec::SmallVec;
@@ -60,6 +60,40 @@ fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], name: ExprId) 
     false
 }
 
+/// Bun's transpiler visits the enums of a list of statements ahead of the list's other statements,
+/// and knows a member's value from that visit on.
+fn is_member_visited_before(hir: &hir::File<'_>, member: EnumMemberId, access: ExprId) -> bool {
+    let count_ancestors = |mut node: Node| {
+        let mut count = 0usize;
+        while node.is_some() {
+            node = hir.parent(node);
+            count += 1;
+        }
+        count
+    };
+    let (mut toward_member, mut toward_access) = (hir.node(member), hir.node(access));
+    let (above_member, above_access) = (
+        count_ancestors(toward_member),
+        count_ancestors(toward_access),
+    );
+    for _ in above_access..above_member {
+        toward_member = hir.parent(toward_member);
+    }
+    for _ in above_member..above_access {
+        toward_access = hir.parent(toward_access);
+    }
+    while hir.parent(toward_member) != hir.parent(toward_access) {
+        toward_member = hir.parent(toward_member);
+        toward_access = hir.parent(toward_access);
+    }
+    let is_enum = |node: Node| hir.kind(node) == Kind::EnumDeclaration;
+    match (is_enum(toward_member), is_enum(toward_access)) {
+        (true, false) => true,
+        (false, true) => false,
+        (true, true) | (false, false) => hir[member].pos < hir::start_of(hir, access),
+    }
+}
+
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub(super) fn compute_enum_constant(
         &mut self,
@@ -94,32 +128,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         else {
             return Ok(None);
         };
-        if file == self.file && !self.is_member_seen_before_access(member, access) {
+        if file == self.file && !is_member_visited_before(self.hir(), member, access) {
             return Ok(None);
         }
         let constant = self.compute_enum_constant(file, member);
         Ok(constant.and_then(EnumConstant::value_known_to_build))
     }
 
-    fn is_member_seen_before_access(&self, member: EnumMemberId, access: ExprId) -> bool {
-        let hir = self.hir();
-        if hir[member].pos < hir::start_of(hir, access) {
-            return true;
-        }
-        let statements_with_enum = hir.parent(hir.parent(hir.node(member)));
-        let mut around_access = hir.parent(hir.node(access));
-        while around_access.is_some() {
-            if around_access == statements_with_enum {
-                return true;
-            }
-            around_access = hir.parent(around_access);
-        }
-        false
-    }
-
     pub(super) fn compute_accessed_enum_member(&self, access: ExprId) -> Option<EnumMemberId> {
         let (_, member) = self.find_accessed_enum_member(access, EnumReach::OwnFile)?;
-        Some(member)
+        is_member_visited_before(self.hir(), member, access).then_some(member)
     }
 
     fn find_accessed_enum_member(
@@ -179,7 +197,18 @@ impl Checker<'_, '_> {
             return self.resolve_entity_name_expression(file, entity, SymFlags::VALUE);
         }
         let named = self.resolve_member_path(file, entity)?;
-        let is_known_to_transpiler = named.is_path_declared_here || named.member.file != file;
+        if named.member.file != file {
+            return Some(named.member);
+        }
+        let hir = self.hir(file);
+        let declarations = self.files().decls_of(named.member);
+        let is_known_to_transpiler = named.is_path_declared_here
+            && declarations.iter().all(|&(declared_in, declaration)| {
+                let Decl::EnumMember(member) = declaration else {
+                    return true;
+                };
+                declared_in != file || is_member_visited_before(hir, member, entity)
+            });
         is_known_to_transpiler.then_some(named.member)
     }
 

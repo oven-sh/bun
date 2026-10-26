@@ -233,6 +233,8 @@ pub struct Parsed {
     pub file: Box<FileBuilder>,
     /// True if a top-level `await` was parsed as a keyword.
     pub has_top_level_await: bool,
+    /// True if `await` is a name somewhere outside every function, as in `var await`.
+    pub names_await_at_top_level: bool,
     /// The end of the last token of [`Options::part`] (or of the text), and the end of the token after it, which is the
     /// last one scanned.
     pub end: (u32, u32),

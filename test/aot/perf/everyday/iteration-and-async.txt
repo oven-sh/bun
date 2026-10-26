@@ -488,6 +488,19 @@ function turn(i: number): number {
     return (error as Error).message.length + (i & 1);
   }
 }
+//// catch-an-error-thrown-below-a-built-in-function
+const holder = {
+  toJSON(): never {
+    throw new Error("x");
+  },
+};
+function turn(i: number): number {
+  try {
+    return JSON.stringify(holder).length + i;
+  } catch (error) {
+    return (error as Error).message.length;
+  }
+}
 //// catch-the-error-of-a-built-in-function
 const texts = ["{", "["];
 function read(text: string): unknown {

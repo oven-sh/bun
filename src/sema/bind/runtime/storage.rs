@@ -153,6 +153,7 @@ define_tables! {
             valueless_symbols: S::List<u64>,
             binding_kinds: S::List<BindingKind>,
             early_redeclarations: S::Few<EarlyRedeclaration>,
+            parameters_with_function_of_body: S::Few<u64>,
         }
     }
 }

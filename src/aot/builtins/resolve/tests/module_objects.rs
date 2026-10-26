@@ -218,6 +218,13 @@ fn along_children_and_parent() {
             ("kid.children", Related, Children),
         ],
     );
+    assert_mentions(
+        "module.children = { push(child) {} };",
+        &[
+            ("module", OwnFile, Object),
+            ("module.children", OwnFile, Children),
+        ],
+    );
     with_case(SCRIPT, "module.children[0].exports;", |case| {
         assert_unresolved(case, "module.children[0]");
         assert_unresolved(case, "module.children[0].exports");

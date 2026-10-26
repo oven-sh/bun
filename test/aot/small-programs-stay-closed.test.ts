@@ -48,6 +48,10 @@ const programs: Record<string, { text: string; output: string }> = {
     text: `console.log({ a: 1 });\n`,
     output: "{\n  a: 1,\n}\n",
   },
+  "a class of the host is printed": {
+    text: `console.log(TextDecoder);\n`,
+    output: "[class TextDecoder]\n",
+  },
 };
 
 // These need more of Bun's library than the smallest program (timers, promises, the warning printer), so only the first half holds for them: they stay closed.

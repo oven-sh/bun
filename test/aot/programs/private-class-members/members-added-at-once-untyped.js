@@ -41,7 +41,7 @@ const asksBefore = count("operationAOTTryPutProperties");
 for (let i = 0; i < 60; i++) seen.add(describe(make(i)));
 const asks = count("operationAOTTryPutProperties") - asksBefore;
 for (let i = 0; i < 340; i++) seen.add(describe(make(i)));
-const names = ["operationAOTPrivateMethodsAdd", "operationAOTPrivateFieldAdd", "operationAOTTryPutProperties"];
+const names = ["operationAOTPrivateDefine", "operationAOTTryPutProperties"];
 const before = names.map(name => count(name));
 for (let i = 0; i < 1000; i++) seen.add(describe(make(i)));
 const calls = names.map((name, i) => count(name) - before[i]).reduce((a, b) => a + b);

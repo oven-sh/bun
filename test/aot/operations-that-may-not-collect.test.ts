@@ -29,7 +29,11 @@ describe.skipIf(isASAN || isDebug).concurrent("compile/aot/operations that may n
     for (let first = 0; first < starts; first += 8) {
       const rans = await Promise.all(
         Array.from({ length: 8 }, () =>
-          run(withoutCoreDump([executable]), cwd, { ...bunEnv, BUN_JSC_collectContinuously: "1" }),
+          run(withoutCoreDump([executable]), cwd, {
+            ...bunEnv,
+            BUN_JSC_collectContinuously: "1",
+            BUN_JSC_forceDidDeferGCWork: "1",
+          }),
         ),
       );
       for (const ran of rans)

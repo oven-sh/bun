@@ -108,7 +108,7 @@ pub enum ModuleObjectUse {
     ParentTested,
     /// `module.parent` as a value: the objects of the files that request the owner.
     Parent,
-    /// `module.children`: the objects of the files that the owner requires.
+    /// `module.children`, read or stored: the objects of the files that the owner requires.
     Children,
     /// The object is held, handed on, compared, stored into, or asked for a member that is none of the above.
     Object,

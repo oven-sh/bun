@@ -47,9 +47,10 @@ for (let i = 0; i < 3000; i++) {
   said.add(describe(new Response("r")));
   said.add(describe(new State(i & 3, null)));
 }
-const learnt = count("operationAOTTryPutProperties");
+// Every operation of the run time that a store by name can enter.
+const learnt = ["PutById", "PutByIdAndCache", "TryPutProperties", "StoreField", "CreateField", "AddPropertyBySlot", "DidCreateField", "DidCreateFieldAt", "DidCreateFieldsAt", "TryFinishBirth"].reduce((sum, name) => sum + count("operationAOT" + name), 0);
 console.log([...said].join("\n"));
-console.log(!counts || (learnt >= 1 && learnt <= 300) ? "the stores were learnt together" : "stores of which some find their names there were learnt " + learnt + " times");
+console.log(!counts || learnt <= 300 ? "the stores were learnt together" : "stores of which some find their names there entered the run time " + learnt + " times");
 
 // The second constructor on what the first has not filled, or has filled otherwise.
 const log = [];

@@ -635,6 +635,11 @@
       "untyped": 113.5
     }
   },
+  "built-in/path-is-absolute-in-a-function-out-of-a-record": {
+    "typed": 243.5,
+    "untyped": 246.9,
+    "jit": 220.6
+  },
   "built-in/path-join": {
     "typed": 468.4,
     "untyped": 468.4,
@@ -1403,5 +1408,14 @@
     "typed": 132.9,
     "untyped": 132.8,
     "jit": 268.4
+  },
+  "closure/getters-of-a-table-that-unknown-code-has-seen": {
+    "typed": 395,
+    "untyped": 393.9,
+    "jit": 396,
+    "best": {
+      "typed": 363,
+      "untyped": 393.9
+    }
   }
 }

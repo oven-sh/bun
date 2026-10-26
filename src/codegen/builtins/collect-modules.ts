@@ -89,7 +89,7 @@ export function runtimeModuleSources(): RuntimeModuleSource[] {
   });
   for (const helper of helperModules) {
     sources.push({
-      specifier: helper.specifier ?? path.parse(helper.path).name,
+      specifier: helper.specifier,
       registryId: helper.id,
       registryField: null,
       hasSource: true,

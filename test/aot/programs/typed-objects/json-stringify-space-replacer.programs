@@ -315,9 +315,12 @@ withInstances.address = new PlainAddress("2 Class Street", "Classville");
 show("an object of a class", () => JSON.stringify(withInstances));
 show("as at first", () => JSON.stringify(customer(19)));
 //// json-stringify-stays-compiled.ts
-declare const aotRuntimeCounters: () => string;
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
-declare const aotOperationCount: (name: string) => number;
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
 interface Address { street: string; city: string }
 interface Order { id: number; paid: boolean }
 interface User { id: number; name: string; active: boolean }
@@ -327,11 +330,11 @@ interface Holder { id: number; held: unknown }
 ////= hide-2
 
 function measure(label: string, run: () => string | undefined): void {
-    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
-    const handedOver = aotOperationCount("operationAOTJSONAppendValue");
+    const before = leftToTheEngine();
     let length = 0;
     for (let i = 0; i < 100; i++) length += run()!.length;
-    console.log(label + ": " + length + " characters, " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTJSONAppendValue") - handedOver) + " values handed to the runtime");
+    if (leftToTheEngine() !== before) left.push(label);
+    console.log(label + ": " + length + " characters");
 }
 
 function customer(i: number): Customer {
@@ -356,6 +359,7 @@ const wide: User = { id: 8, name: "\u0416\u4e2d \ud83d\ude00", active: false };
 measure("16-bit text", () => JSON.stringify(wide));
 const parsed: any = JSON.parse('{"id":7,"name":"seven","active":true}');
 measure("an object without a type", () => JSON.stringify(parsed));
+console.log("needed the engine: " + (counted ? left.join(" | ") : "such a property one level down | a member of unknown type"));
 //// json-stringify-string.ts
 ////= lines-35	quote	text	string	string	JSON.stringify
 function quoteOrNothing(text: string | undefined): string | undefined {
@@ -405,17 +409,21 @@ console.log(quoteOrNull("here"), quoteOrNull(null), quoteOrNull(""), quoteIfAny(
 console.log(JSON.stringify(quote(quote("twice"))));
 console.log(JSON.stringify(hide(new String("an object"))), JSON.stringify(hide("hidden")), JSON.stringify({ held: "a member" }));
 //// json-stringify-string-stays-compiled.ts
-declare const aotRuntimeCounters: () => string;
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
-declare const aotOperationCount: (name: string) => number;
+declare const aotRuntimeCounters: undefined | (() => string);
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left: string[] = [];
 
 ////= hide-2
 
 function measure(label: string, run: () => string | undefined): void {
-    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
+    const before = leftToTheEngine();
     let length = 0;
     for (let i = 0; i < 100; i++) length += run()!.length;
-    console.log(label + ": " + length + " characters, " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code");
+    if (leftToTheEngine() !== before) left.push(label);
+    console.log(label + ": " + length + " characters");
 }
 
 function quote(text: string): string {
@@ -437,6 +445,7 @@ measure("16-bit text", () => quote(made + "\u4e2d"));
 measure("a string or undefined", () => quoteOrNothing(made));
 measure("a value without a type", () => quoteAnything(made));
 measure("a String object without a type", () => quoteAnything(hide(new String(made))));
+console.log("needed the engine: " + (counted ? left.join(" | ") : "a String object without a type"));
 //// json-stringify-trailing-optional-members.ts
 // Objects of one type that were created with the first two to six of its members, in a hot loop: every one is written like plain Bun writes it.
 declare const console: { log(...values: unknown[]): void };
@@ -575,19 +584,19 @@ for (const [label, change] of changes) {
 console.log(total + " texts, " + different + " differ");
 //// json-stringify-typed-objects-with-undeclared-keys-stay-compiled.ts
 // The typed writer writes a typed object's undeclared keys itself, below another object and at the top: the engine's own writer is not asked.
-declare const aotRuntimeCounters: () => string;
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
+declare const aotRuntimeCounters: undefined | (() => string);
 declare const aotOperationCount: undefined | ((name: string) => number);
 interface Point { x: number; y: number; label?: string }
 interface Segment { id: number; from: Point; to: Point }
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const finished = () => (counted ? (counted("operationAOTJSONWriterFinish") - writersFailed()) : 0);
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters!())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
 function measure(label: string, run: () => string, isWrittenByTypedWriter: boolean): void {
   for (let i = 0; i < 10; i++) run();
-  const before = finished();
+  const before = leftToTheEngine();
   let length = 0;
   for (let i = 0; i < 100; i++) length += run().length;
-  console.log(label + ": " + length + " characters", counted ? finished() - before === (isWrittenByTypedWriter ? 100 : 0) : true);
+  console.log(label + ": " + length + " characters", leftToTheEngine() - before === (counted && !isWrittenByTypedWriter ? 100 : 0));
 }
 const plainPoint = JSON.parse('{"x":1,"y":2}') as Point;
 measure("no undeclared key", () => JSON.stringify(plainPoint), true);

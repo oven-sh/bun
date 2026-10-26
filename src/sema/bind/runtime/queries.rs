@@ -75,7 +75,7 @@ impl<S: Storage> BoundIn<S> {
         flags.copied().unwrap_or_default()
     }
 
-    /// A function with expressions among its parameters keeps the variables of its body in an environment of their own, inside the environment of its parameters and `arguments`.
+    /// Unless each of its parameters is a plain name, a function keeps what text evaluated in its body declares in an environment of its own, inside the environment of its parameters and `arguments`. With expressions among the parameters the variables of the body's own code are kept there too; without, they are the parameters of their names.
     pub fn is_outside_body_variables(&self, binding: Binding) -> bool {
         let function = match binding {
             Binding::Symbol(symbol) if self.binding_kind(symbol) == BindingKind::Parameter => {
@@ -88,9 +88,17 @@ impl<S: Storage> BoundIn<S> {
             _ => return false,
         };
         let flags = self.function_flags(function);
-        flags.contains(FunctionFlags::HAS_PARAMETER_EXPRESSIONS)
-            && (matches!(binding, Binding::Symbol(_))
-                || !flags.contains(FunctionFlags::HAS_ARGUMENTS_VARIABLE))
+        flags.contains(FunctionFlags::HAS_REST_PATTERN_OR_DEFAULT)
+            && match binding {
+                Binding::Symbol(symbol) => {
+                    let mut declarations = self.symbol(symbol).decls.iter();
+                    let with_function = &self.runtime.declarations.parameters_with_function_of_body;
+                    flags.contains(FunctionFlags::HAS_PARAMETER_EXPRESSIONS)
+                        || (!has_bit(with_function, symbol.idx())
+                            && declarations.all(|decl| matches!(decl, Decl::Param(_))))
+                }
+                _ => !flags.contains(FunctionFlags::HAS_ARGUMENTS_VARIABLE),
+            }
     }
 
     pub fn variable_kind(&self, hir: &File, declaration: VarDeclId) -> VarKind {

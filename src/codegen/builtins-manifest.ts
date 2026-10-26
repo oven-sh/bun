@@ -15,7 +15,6 @@ import {
   sourceFiles,
   specifierOf,
 } from "./builtins-manifest-model";
-import { findNamingIdentifiers, listBundledNames, type SourceMap } from "./bundled-names";
 import { writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { define, globalsToPrefix } from "./replacements";
 
@@ -70,7 +69,7 @@ for (let id = 0; id < moduleList.length; id++) {
   );
 }
 for (const helper of helperModules) {
-  lines.push(`module\t${helper.id}\t${helper.path}\t${helper.specifier ?? "-"}`);
+  lines.push(`module\t${helper.id}\t${helper.path}\t${helper.specifier}`);
 }
 
 const engine: EngineFunctions = JSON.parse(fs.readFileSync(engineFunctions, "utf8"));
@@ -108,7 +107,7 @@ function mergeTsconfig(): string {
 // line of that module too.
 function splitListOfModules(text: string): { rest: string; listings: Map<string, string> } {
   const listingOf = (source: string) => source.replace(/\.[jt]s$/, ".listed.d.ts");
-  const sources = [...sourceFiles, ...helperModules.map(helper => helper.path), ...functionFiles];
+  const sources = [...sourceFiles, ...functionFiles];
   const linesOfModule = new Map<string, string[]>();
   const moduleOfName = new Map<string, string>();
   const rest: string[] = [];
@@ -165,15 +164,6 @@ for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
   const start = bundledPositions.reduce((sum, bytes) => sum + bytes.length, 0);
   bundledPositions.push(Buffer.from(encoded, "base64"));
   lines.push(`positions\t${file}\t${start}\t${bundledPositions.at(-1)!.length}`);
-}
-const mapOfHelpers: SourceMap = JSON.parse(fs.readFileSync(`${bundledHelpers}.map`, "utf8"));
-const identifiersOfHelpers = findNamingIdentifiers(fs.readFileSync(bundledHelpers, "utf8"), mapOfHelpers);
-for (const [index, source] of mapOfHelpers.sources.entries()) {
-  const file = path.resolve(path.dirname(bundledHelpers), source);
-  const helper = helperModules.find(helper => path.resolve(helper.source) === file);
-  if (!helper) throw new Error(`${bundledHelpers} has the text of ${file}, which is none of the helper modules`);
-  const identifiers = identifiersOfHelpers.filter(identifier => identifier.source === index);
-  lines.push(...listBundledNames(helper.path, mapOfHelpers.sourcesContent[index], identifiers));
 }
 
 const manifest = lines.join("\n") + "\n";
@@ -256,9 +246,11 @@ function declarationsOfRuntime(): [string, Buffer][] {
 if (archive) {
   const nameLength = 63;
   const recordLength = 1 + nameLength + 4 + 4;
-  const files = [...sourceFiles, ...helperModules.map(helper => helper.path), ...functionFiles, "builtins.d.ts"].map(
-    (file): [string, Buffer] => [file, fs.readFileSync(locate(file))],
-  );
+  const files = [...sourceFiles, ...functionFiles, "builtins.d.ts"].map((file): [string, Buffer] => [
+    file,
+    fs.readFileSync(locate(file)),
+  ]);
+  for (const helper of helperModules) files.push([helper.path, fs.readFileSync(helper.source ?? bundledHelpers)]);
   files.push(["private.d.ts", Buffer.from(listOfModules.rest)]);
   for (const [file, text] of listOfModules.listings) files.push([file, Buffer.from(text)]);
   for (const [file, text] of engineTexts) files.push([file, Buffer.from(text)]);

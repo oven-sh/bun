@@ -826,6 +826,8 @@ class T {
 //// added-by-another-realm.ts
 // Private members are added to typed objects by code that is evaluated in another realm.
 declare const console: { log(...values: unknown[]): void };
+// Text is evaluated only where the build sees that the program reaches eval.
+eval("0");
 const other: any = (globalThis as any).$262.createRealm().global;
 const kit = other.eval(`(() => {
   class ReturnsArgument { constructor(o) { return o; } }

@@ -1,1 +1,7 @@
-{ "erased": "as plain Bun" }
+{
+  "erased": "as plain Bun",
+  "build": [
+    "--aot-testing=MayEncounterMasqueradesAsUndefined"
+  ],
+  "onlyInShell": "makeMasquerader"
+}

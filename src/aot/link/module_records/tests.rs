@@ -343,7 +343,10 @@ fn import_call_of_replaced_namespace_resolves_the_object() {
 fn external_record_has_kind_and_referrer() {
     let kinds = [
         (PLUGIN_URL, generated::ExternalKind::UncompiledCode),
-        ("bun:main", generated::ExternalKind::HostValue),
+        (
+            "bun:only-the-host-has-it",
+            generated::ExternalKind::HostValue,
+        ),
     ];
     for (specifier, external_kind) in kinds {
         let main = format!("export const loaded = import('{specifier}');\n");

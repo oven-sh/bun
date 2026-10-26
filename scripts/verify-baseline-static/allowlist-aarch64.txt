@@ -5,7 +5,7 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (172 symbols)
+# (176 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
 _ZN3bun10N_SVE2_12811MemRMemImplEPKhmS2_m                                     [SVE]
@@ -24,6 +24,7 @@ _ZN3bun10N_SVE2_12818IndexOfNotCharImplEPKhmh                                 [S
 _ZN3bun10N_SVE2_12819LastIndexOfCharImplEPKhmh                                [SVE]
 _ZN3bun10N_SVE2_12822LastIndexOfAnyCharImplEPKhmS2_m                          [SVE]
 _ZN3bun10N_SVE2_12822IndexOfUntidySlashImplEPKhm                              [SVE]
+_ZN3bun10N_SVE2_12832IndexOfUntidySlashOrNonAsciiImplEPKhm                    [SVE]
 _ZN3bun10N_SVE2_12816LowerAscii16ImplEPKtmPt                                  [SVE]
 _ZN3bun10N_SVE2_12818EncodeHexLowerImplEPKhmPh                                [SVE]
 _ZN3bun10N_SVE2_12818FirstNonAscii8ImplEPKhm                                  [SVE]
@@ -65,6 +66,7 @@ _ZN3bun5N_SVE18IndexOfNotCharImplEPKhmh                                       [S
 _ZN3bun5N_SVE19LastIndexOfCharImplEPKhmh                                      [SVE]
 _ZN3bun5N_SVE22LastIndexOfAnyCharImplEPKhmS2_m                                [SVE]
 _ZN3bun5N_SVE22IndexOfUntidySlashImplEPKhm                                    [SVE]
+_ZN3bun5N_SVE32IndexOfUntidySlashOrNonAsciiImplEPKhm                          [SVE]
 _ZN3bun5N_SVE16LowerAscii16ImplEPKtmPt                                        [SVE]
 _ZN3bun5N_SVE18EncodeHexLowerImplEPKhmPh                                      [SVE]
 _ZN3bun5N_SVE18FirstNonAscii8ImplEPKhm                                        [SVE]
@@ -106,6 +108,7 @@ _ZN3bun6N_SVE218IndexOfNotCharImplEPKhmh                                      [S
 _ZN3bun6N_SVE219LastIndexOfCharImplEPKhmh                                     [SVE]
 _ZN3bun6N_SVE222LastIndexOfAnyCharImplEPKhmS2_m                               [SVE]
 _ZN3bun6N_SVE222IndexOfUntidySlashImplEPKhm                                   [SVE]
+_ZN3bun6N_SVE232IndexOfUntidySlashOrNonAsciiImplEPKhm                         [SVE]
 _ZN3bun6N_SVE216LowerAscii16ImplEPKtmPt                                       [SVE]
 _ZN3bun6N_SVE218EncodeHexLowerImplEPKhmPh                                     [SVE]
 _ZN3bun6N_SVE218FirstNonAscii8ImplEPKhm                                       [SVE]
@@ -147,6 +150,7 @@ _ZN3bun9N_SVE_25618IndexOfNotCharImplEPKhmh                                   [S
 _ZN3bun9N_SVE_25619LastIndexOfCharImplEPKhmh                                  [SVE]
 _ZN3bun9N_SVE_25622LastIndexOfAnyCharImplEPKhmS2_m                            [SVE]
 _ZN3bun9N_SVE_25622IndexOfUntidySlashImplEPKhm                                [SVE]
+_ZN3bun9N_SVE_25632IndexOfUntidySlashOrNonAsciiImplEPKhm                      [SVE]
 _ZN3bun9N_SVE_25616LowerAscii16ImplEPKtmPt                                    [SVE]
 _ZN3bun9N_SVE_25618EncodeHexLowerImplEPKhmPh                                  [SVE]
 _ZN3bun9N_SVE_25618FirstNonAscii8ImplEPKhm                                    [SVE]

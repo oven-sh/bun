@@ -137,6 +137,20 @@ pub(crate) fn reads_raw_bytes(loader: Loader) -> bool {
     )
 }
 
+/// True if the module says what the text says, and nothing about where the text is.
+pub(crate) fn parses_text_as_data(loader: Loader) -> bool {
+    matches!(
+        loader,
+        Loader::Json
+            | Loader::Jsonc
+            | Loader::Json5
+            | Loader::Toml
+            | Loader::Yaml
+            | Loader::Xml
+            | Loader::Text
+    )
+}
+
 pub(crate) fn loader_name(loader: Loader) -> &'static str {
     loader.into()
 }

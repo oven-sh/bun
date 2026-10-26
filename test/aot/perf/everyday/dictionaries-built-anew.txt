@@ -219,3 +219,13 @@ function turn(i: number): number {
   last[i & 255] = seen;
   return count;
 }
+//// one-name-by-key.one-of-1024-listed-between-collections
+const names: string[] = JSON.parse("[" + Array.from({ length: 1024 }, (_, k) => `"route_${k * 7}"`).join(",") + "]");
+function turn(i: number): number {
+  if ((i & 16383) === 16383) Bun.gc(true);
+  const counts: Record<string, number> = {};
+  counts[names[i & 1023]!] = i & 1;
+  let sum = 0;
+  for (const name in counts) sum += counts[name]!;
+  return sum;
+}

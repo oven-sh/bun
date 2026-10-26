@@ -13,6 +13,7 @@ use crate::compile::testing::{default_settings, set_up_output};
 use crate::load::host::tests::{payload_of, take_messages};
 use crate::load::host_platform;
 use crate::load::loaders::BY_NAME;
+use crate::load::runtime_modules::HOST_VALUE_MODULE;
 
 const FS_SOURCE: &[u8] = b"/$bun/js/node/fs.ts";
 const CONFIGURATION: &[u8] = b"/$bun/js/tsconfig.json";
@@ -231,16 +232,20 @@ fn native_module_is_module() {
 }
 
 #[test]
-fn alias_without_id_is_host_value() {
+fn module_that_only_the_host_has_is_host_value() {
     with_host(|fixture| {
         let host_value = HostResolution::External {
-            specifier: b"bun:main".to_vec(),
+            specifier: HOST_VALUE_MODULE.as_bytes().to_vec(),
             kind: ExternalKind::HostValue,
         };
-        assert_eq!(fixture.import(b"bun:main", FS_SOURCE), host_value);
+        assert_eq!(
+            fixture.import(HOST_VALUE_MODULE.as_bytes(), FS_SOURCE),
+            host_value
+        );
         let host = fixture.host;
-        assert_eq!(host.resolve_runtime_module(b"bun:main"), host_value);
-        assert!(host.find_runtime_modules(b"bun:main", b"").is_empty());
+        let name = HOST_VALUE_MODULE.as_bytes();
+        assert_eq!(host.resolve_runtime_module(name), host_value);
+        assert!(host.find_runtime_modules(name, b"").is_empty());
     });
 }
 

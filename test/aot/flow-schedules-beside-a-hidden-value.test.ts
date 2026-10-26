@@ -33,6 +33,7 @@ for (const program of [
   "a-class-that-a-module-of-bun-makes-is-named-long-after-bun-has-left",
   "evaluators-and-a-loader-beside-a-hidden-value-are-called",
   "evaluators-and-a-loader-arrive-late-beside-a-hidden-value-and-are-called",
+  "members-of-process-are-stored-where-process-arrives-late-beside-a-hidden-value",
 ]) {
   // TODO: on macOS the third schedule makes 3,385,852 bytes of code of this program and the usual one 2,680,588: 26 percent more, and ./harness/flow-schedules.ts allows 25. The answers agree.
   const movesTooFar = isMacOS && program === "the-global-object-is-printed";
@@ -71,17 +72,4 @@ test("members-of-process-are-stored-where-process-stands-beside-a-hidden-value: 
       isRefused ? { stdout: "", exitCode: 1, isRefused } : { stdout: plain.stdout, exitCode: 0, isRefused },
     );
   }
-});
-
-// Where `process` comes late, the store is refused under every schedule.
-test("members-of-process-are-stored-where-process-arrives-late-beside-a-hidden-value: one answer under every schedule", async () => {
-  using dir = tempDir("aot-flow-schedules-listed", {});
-  const directory = String(dir);
-  const program = "members-of-process-are-stored-where-process-arrives-late-beside-a-hidden-value";
-  cpSync(join(import.meta.dir, "programs", "soundness", `${program}.mjs`), join(directory, "program.mjs"));
-  expect(await answersTheSameUnderEachSchedule("program", directory, "program.mjs")).toEqual({
-    stdout: await Bun.file(join(import.meta.dir, "programs", "soundness", `${program}.expected.txt`)).text(),
-    errors: [],
-    exitCode: 0,
-  });
 });

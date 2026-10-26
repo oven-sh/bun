@@ -14,7 +14,7 @@ use bun_ast::{ASTMemoryAllocator, Log};
 use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_resolver::options::{ExternalModules, Packages};
 use bun_resolver::package_json::Status;
-use bun_resolver::{GlobalCache, Resolver, ResultUnion};
+use bun_resolver::{DataURL, GlobalCache, Resolver, ResultUnion};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::{DataModule, DataValue};
@@ -292,6 +292,10 @@ impl SourceProvider for BundlerServices {
             None => WithoutServices.load(request, log)?,
         };
         native_plugins::run_before_parse(&self.context, request.module, loaded, log)
+    }
+
+    fn decode_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
+        DataURL::parse(url).ok()??.decode_data().ok()
     }
 
     fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {

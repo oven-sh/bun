@@ -976,7 +976,7 @@ fn types_of_bun_modules_lead_in_no_circle() {
             assert!(unit_count > 150, "{unit_count} files were lowered");
             let files = loaded.projects.runtime.loaded.files();
             let is_excused =
-                |file: FileId| files.module(file).file_name() == b"/$bun/js/runtime.bun.js";
+                |file: FileId| files.module(file).file_name() == b"/$bun/js/runtime.out.js";
             let circular = build
                 .circular_runtime_files
                 .iter()

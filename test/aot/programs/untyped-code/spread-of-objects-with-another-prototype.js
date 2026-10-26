@@ -1,6 +1,6 @@
 // `{ ...object }` and `{ ...object, more }` where the object does not inherit from Object.prototype directly: objects of classes, of Object.create, without a prototype. The copy is a plain object with the own enumerable properties, in order.
 const count = globalThis.aotOperationCount ?? (() => 0);
-const operations = ["operationAOTCloneObject", "operationAOTCloneObjectAndExtend"];
+const operations = ["operationAOTCopyObject"];
 const entered = () => operations.reduce((sum, name) => sum + count(name), 0);
 const mark = Symbol("mark");
 class Product {

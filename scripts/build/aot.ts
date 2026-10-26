@@ -324,11 +324,9 @@ export function emitBuiltinSources({ n, cfg, sources, o, dirStamp, engine }: Ctx
       resolve(cfg.cwd, "src", "jsc", "modules", "NativeModuleList.h"),
       resolve(cfg.cwd, "src", "js", "tsconfig.json"),
       resolve(cfg.cwd, "tsconfig.base.json"),
-      resolve(cfg.cwd, "src", "runtime.bun.js"),
-      resolve(cfg.cwd, "src", "runtime.js"),
+      resolve(cfg.cwd, "src", "runtime.main.js"),
       o.bundledNamesOfModules,
       o.bundledHelpers,
-      `${o.bundledHelpers}.map`,
       ...readdirSync(bunTypes, { recursive: true, encoding: "utf8" })
         .filter(file => file.endsWith(".d.ts") && !file.includes("node_modules"))
         .sort()

@@ -24,7 +24,7 @@ use super::module::{LibraryFunctions, ModuleState};
 use super::scope::{ScopeAnalysis, ScopeInput, analyze_scopes};
 use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
-use crate::builtins::{BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect};
+use crate::builtins::{BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table};
 use crate::compile::removable::Removable;
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{DiagnosticBuffer, Span};
@@ -290,13 +290,29 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
 
     // `bun run` hands the text to the engine as it is written, without its transpiler.
     pub(crate) fn runs_as_written(&self) -> bool {
-        self.inputs.sources.kind(self.file) == load::SourceKind::EvaluatedText
-            || hir::find_transpiled_mark(&self.hir.text).is_some()
+        self.runs_file_as_written(self.file, self.hir)
+    }
+
+    fn runs_file_as_written(&self, file: FileId, hir: &hir::File<'_>) -> bool {
+        match self.inputs.sources.kind(file) {
+            load::SourceKind::EvaluatedText => true,
+            // The helpers of the bundler.
+            load::SourceKind::RuntimeModule(module) => table::is_es_module(module),
+            load::SourceKind::Program
+            | load::SourceKind::Data
+            | load::SourceKind::TypesOnly
+            | load::SourceKind::RuntimeFunctions => hir::find_transpiled_mark(&hir.text).is_some(),
+        }
     }
 
     // A stack trace shows the positions that the engine records in the text it runs: no source map takes them back to a token.
     pub(crate) fn is_shown_without_source_map(&self) -> bool {
         self.has_bundled_positions || self.runs_as_written()
+    }
+
+    pub(crate) fn is_file_shown_without_source_map(&self, file: FileId) -> bool {
+        !self.inputs.sources.bundled_positions(file).is_empty()
+            || self.runs_file_as_written(file, self.queries.files().hir(file))
     }
 
     pub(crate) fn evaluated_function(&self, call: ExprId) -> Option<FunctionRef> {

@@ -271,8 +271,26 @@ fn parse_file_as(
         Some(atoms) => crate::parse(text, options, atoms, scratch),
         None => crate::parse_with_own_atoms(text, options, scratch),
     };
+    // The language reads `await` as a name at the top of a CommonJS file. A file that has the operator there and no such name keeps it.
+    let may_name_await = how.compiles && is_js && path.ends_with(b".cjs");
     let attempt = |mut options: Options, scratch: &mut Scratch| {
-        let first = once(options, scratch).map_err(|it| (it.why, it.at, it.after))?;
+        let with_operator = once(options, scratch);
+        if may_name_await && (with_operator.as_ref()).map_or(true, |it| it.names_await_at_top_level)
+        {
+            let with_name = Options {
+                await_is_a_name: true,
+                ..options
+            };
+            if let Ok(with_operator) = with_operator {
+                scratch.recycle(with_operator.file);
+            }
+            if let Ok(parsed) = once(with_name, scratch) {
+                return Ok(parsed.file);
+            }
+            return (once(options, scratch).map(|it| it.file))
+                .map_err(|it| (it.why, it.at, it.after));
+        }
+        let first = with_operator.map_err(|it| (it.why, it.at, it.after))?;
         if rejects_top_level_await && first.has_top_level_await {
             scratch.recycle(first.file);
             return Err((Rejection::Reported, 0, 0));

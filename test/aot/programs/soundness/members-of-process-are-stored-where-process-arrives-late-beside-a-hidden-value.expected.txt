@@ -1,2 +1,0 @@
-TypeError true
-second 0 function 1

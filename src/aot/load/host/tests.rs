@@ -17,6 +17,7 @@ use crate::compile::testing::{TemporaryDirectory, default_settings, lower_progra
 use crate::diagnostics::Diagnostics;
 use crate::engine::ExecutableIdentity;
 use crate::load::host_platform;
+use crate::load::runtime_modules::HOST_VALUE_MODULE;
 use crate::load::source_provider::{
     DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
     WithoutServices,
@@ -391,14 +392,18 @@ fn runtime_module_resolution_asks_no_plugin() {
 }
 
 #[test]
-fn alias_without_id_is_host_value() {
+fn module_that_only_the_host_has_is_host_value() {
     with_host(&[], |fixture| {
         let host_value = HostResolution::External {
-            specifier: b"bun:main".to_vec(),
+            specifier: HOST_VALUE_MODULE.as_bytes().to_vec(),
             kind: ExternalKind::HostValue,
         };
-        assert_eq!(fixture.resolve(b"bun:main", MAIN), host_value);
-        assert_eq!(fixture.host.resolve_runtime_module(b"bun:main"), host_value);
+        assert_eq!(
+            fixture.resolve(HOST_VALUE_MODULE.as_bytes(), MAIN),
+            host_value
+        );
+        let resolved = (fixture.host).resolve_runtime_module(HOST_VALUE_MODULE.as_bytes());
+        assert_eq!(resolved, host_value);
         assert!(fixture.take_calls().is_empty());
     });
 }

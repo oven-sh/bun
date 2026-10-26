@@ -1,9 +1,13 @@
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())[1]);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left = [];
 function measure(label, run) {
-    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
+    const before = leftToTheEngine();
     let text = "";
     for (let i = 0; i < 100; i++) text = run(i);
-    console.log(label + ": " + text + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code");
+    if (leftToTheEngine() !== before) left.push(label);
+    console.log(label + ": " + text);
 }
 const names = ["zero", "one", "two \"quoted\"", "three\n", "foür", "fïve 中"];
 const kept = [];
@@ -53,3 +57,4 @@ measure("with a replacer", i => JSON.stringify({ a: i, b: 2 }, ["b"]));
 measure("with a space", i => JSON.stringify({ a: i }, null, 1));
 measure("a bigint throws", i => { try { return JSON.stringify({ a: i, b: 1n }); } catch (error) { return error.constructor.name; } });
 measure("members evaluated in order", i => { const order = []; const text = JSON.stringify({ a: (order.push("a"), i), b: (order.push("b"), 2) }); return text + order.join(""); });
+console.log("needed the engine: " + (counted ? left.join(" | ") : "null and undefined | undefined first | undefined now and then | a function and a symbol | a member with toJSON within | a name twice | names that are indexes | a spread | a getter | a method | __proto__ computed | a member named toJSON | with a replacer | a bigint throws | members evaluated in order"));

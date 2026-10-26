@@ -40,6 +40,11 @@ pub trait CodeHost: Host {
         HostResolution::Unclaimed
     }
 
+    /// The path of a file with what a `data:` URL holds, if `type_attribute` loads it as data. Such a module has nothing to run, so it is a file of the program like any other.
+    fn create_file_from_data_url(&self, _url: &[u8], _type_attribute: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
     /// The directory that the imports of a file are resolved from, and whose `tsconfig.json` says how the file is transpiled.
     fn directory_of<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         Cow::Borrowed(dirname::<Posix>(path))

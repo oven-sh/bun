@@ -15,6 +15,8 @@ const machineCodeLoaders = [
 const moduleLoaders = [
   "%ModuleRequire%",
   "%ModuleRequire%.extensions",
+  "%PrivateGlobals%.esmLoadSync",
+  "%PrivateGlobals%.requireCommonJS",
   "Bun.ModuleGraph",
   "Bun.Transpiler",
   "Bun.build",

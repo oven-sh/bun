@@ -908,7 +908,9 @@ function collectBoundNamespace(
     ...(namespace.call === undefined ? b.inherits(path, "Object.prototype") : declareFunction(namespace.call, path)),
     ...namespace.functions.flatMap(fn => [
       ...declareFunction(fn, joinPath([path, fn.name])),
-      ...b.extend(joinPath([path, fn.name]), { functionObjectCode: { symbol: cppSymbolOf(fn), header } }),
+      ...b.extend(joinPath([path, fn.name]), {
+        functionObjectCode: { symbol: cppSymbolOf(fn), header, name: fn.name },
+      }),
     ]),
     ...b.static(binding, {
       getter: b.builtin(path),
@@ -980,7 +982,9 @@ function collectSchema(schema: SchemaFile, joins: Joins, report: (message: strin
     declarations.push(...tryCollect(() => declareFunction(fn, path)));
     if (!joins.nativeBindings.has(path)) continue;
     declarations.push(
-      ...b.extend(path, { functionObjectCode: { symbol: cppSymbolOf(fn), header: `Generated${cppNamespace}.h` } }),
+      ...b.extend(path, {
+        functionObjectCode: { symbol: cppSymbolOf(fn), header: `Generated${cppNamespace}.h`, name: fn.name },
+      }),
     );
   }
   for (const type of schema.types) {

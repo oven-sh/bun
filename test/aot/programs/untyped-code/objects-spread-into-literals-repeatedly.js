@@ -27,7 +27,7 @@ const nested = { inner: { n: 1 } }; lines.push(plain(nested).inner === nested.in
 function churn(n) { let sum = 0; const kept = []; for (let i = 0; i < n; i++) { const made = withTwo({ a: i, b: i, c: "s" + i }, i, i + 1); sum += made.a + made.b + made.extra + made.c.length; if (i % 997 === 0) kept.push(made); } return sum + kept.map(show).join("").length; }
 lines.push(churn(30000));
 for (let i = 0; i < 300; i++) { plain(small); withOne(small, i); withTwo(six, i, i); overwriting(six, i); withOne(empty, i); }
-const names = ["operationAOTCloneObject", "operationAOTCloneObjectAndExtend"];
+const names = ["operationAOTCopyObject"];
 const asked = () => names.reduce((sum, name) => sum + count(name), 0);
 const before = asked();
 let check = 0;

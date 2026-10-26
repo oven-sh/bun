@@ -12,7 +12,7 @@ use super::interop::{ImportPhase, Interop, ModuleKind, file_interop};
 use super::module_set::ModuleSet;
 use super::order::{EvaluationOrder, PlannedSites};
 use super::{BindInput, ModuleRef};
-use crate::builtins::RuntimeModule;
+use crate::builtins::{RuntimeModule, table};
 use crate::diagnostics::{Span, range_of_node};
 use crate::ir::for_each_mut;
 use crate::load::Sources;
@@ -249,6 +249,12 @@ impl FileScanner<'_, '_> {
                 return ScannedSite::AllModules;
             }
             (Err(_), SiteForm::GetBuiltinModule) => return ScannedSite::Erased,
+            // It answers with the modules of the registry, and none of those is an ES module.
+            (Ok(ScannedSite::Module(ModuleRef::Runtime(module))), SiteForm::GetBuiltinModule)
+                if table::is_es_module(module) =>
+            {
+                return ScannedSite::Erased;
+            }
             (
                 Ok(answer),
                 SiteForm::Declaration

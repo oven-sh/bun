@@ -111,6 +111,7 @@
   "built-in/path-basename": 800000,
   "built-in/path-extname": 800000,
   "built-in/path-is-absolute": 2000000,
+  "built-in/path-is-absolute-in-a-function-out-of-a-record": 2000000,
   "built-in/events-beside-an-heir-that-came-late": 200000,
   "built-in/events-emit": 1000000,
   "built-in/events-on-off": 200000,
@@ -256,6 +257,7 @@
   "closure/a-function-made-around-a-written-name": 1000000,
   "closure/a-wrapper-made-around-a-known-function": 1000000,
   "closure/accessors-a-helper-defines-under-its-parameter": 200000,
+  "closure/getters-of-a-table-that-unknown-code-has-seen": 400000,
   "closure/methods-a-loop-over-written-names-defines": 200000,
   "closure/properties-defined-by-a-loop-over-written-names": 200000,
   "function/makers-made-by-one-function-each-with-its-own-prototype": 1000000

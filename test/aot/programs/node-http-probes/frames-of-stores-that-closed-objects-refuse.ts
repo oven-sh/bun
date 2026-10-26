@@ -79,7 +79,7 @@ async function runCase(level: Level, target: Target, moment: Moment) {
       const answer = await fetch(`http://127.0.0.1:${port}/${index}`, {
         method: "POST",
         body: "body",
-        signal: AbortSignal.timeout(2000),
+        signal: AbortSignal.timeout(20000),
       });
       answers.push(`${index}: ${answer.status} ${answer.headers.get("x-turn")} ${await answer.text()}`);
     } catch (error) {

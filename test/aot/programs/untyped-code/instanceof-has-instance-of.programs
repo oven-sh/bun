@@ -2669,13 +2669,16 @@ let total = 0;
 for (let round = 0; round < 30000; round++) total += writers[round % writers.length]("r" + (round & 15), round / 4).length;
 console.log(total);
 //// json-stringify-nested-literals.js
-const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())[1]);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+// The texts that JSON.stringify left to the engine's own writer, and the values that compiled code handed to the run time.
+const leftToTheEngine = () => (counted ? Number(/(\d+)\tcounter:JSONStringifySlowPaths/.exec(aotRuntimeCounters())?.[1] ?? 0) + counted("operationAOTJSONAppendValue") + counted("operationAOTStringBuilderAppendJSON") : 0);
+const left = [];
 function measure(label, run) {
-    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
-    const handedOver = aotOperationCount("operationAOTJSONAppendValue");
+    const before = leftToTheEngine();
     let text = "";
     for (let i = 0; i < 100; i++) text = run(i);
-    console.log(label + ": " + text + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTJSONAppendValue") - handedOver) + " values handed to the runtime");
+    if (leftToTheEngine() !== before) left.push(label);
+    console.log(label + ": " + text);
 }
 let held;
 function hold(value) { held = value; return value; }
@@ -2700,6 +2703,7 @@ measure("with an index within", i => JSON.stringify({ a: { b: 1, 0: i | 0 } }));
 measure("with a getter within", i => JSON.stringify({ a: { get x() { return i | 0; } } }));
 measure("one of two within", i => JSON.stringify({ a: i & 1 ? { odd: i | 0 } : { even: i | 0 } }));
 measure("holds itself", i => { const inner = { x: i | 0 }; inner.self = inner; try { return JSON.stringify({ inner }); } catch (error) { return error.constructor.name; } });
+console.log("needed the engine: " + (counted ? left.join(" | ") : "two levels down | stored to before it is held | stored to after it is held | kept elsewhere and changed there | with toJSON within | with an index within | with a getter within | holds itself"));
 //// keyed-definition-then-put-with-setter.js
 // Definitions and stores by a key cell share one table: an entry filled by one must stay right for the other.
 class Base {

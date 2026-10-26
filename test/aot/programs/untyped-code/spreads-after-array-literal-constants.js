@@ -1,6 +1,6 @@
 // `["run", "--flag", ...rest]`, `[0, ...numbers]`, `[null, ...list, "end"]`: an array literal that begins with constants and goes on with a spread. Each evaluation yields an array of its own: what is done to one shows in no other. Making such arrays over and over takes no work outside compiled code.
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTAppendSpread") : 0;
+const entered = () => counted ? counted("operationAOTAppendElements") : 0;
 const lines = [];
 const show = list => list.length + ":" + list.map((x, i) => (i in list ? "" : "hole ") + (Object.is(x, -0) ? "-0" : typeof x === "string" ? JSON.stringify(x) : typeof x === "object" && x ? JSON.stringify(x) : String(x))).join(",") + ":" + Object.keys(list).join("");
 const spreads = {

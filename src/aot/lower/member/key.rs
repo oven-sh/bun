@@ -34,7 +34,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The key that the engine gives the symbol of `const name = Symbol(..)`: where the call stands, and the description.
+    // The key that the engine gives the symbol of `const name = Symbol(..)`: the position of the call, and the description.
     pub(in crate::lower) fn created_symbol_key(&mut self, name: Atom) -> Option<PropertyKeyId> {
         let creation = self.queries.symbol_creation(name)?;
         if !self.queries.files().is_compiled(creation.file)
@@ -44,7 +44,11 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let module = self.fragment.declare_module(ModuleRef::File(creation.file));
         let description = creation.description.map(|text| self.intern_atom(text));
-        let key = PropertyKey::from_created_symbol(module, creation.position, description);
+        let position = match self.is_file_shown_without_source_map(creation.file) {
+            true => creation.callee_end,
+            false => creation.callee_start,
+        };
+        let key = PropertyKey::from_created_symbol(module, position, description);
         Some(self.fragment.property_keys.intern(key))
     }
 

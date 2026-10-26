@@ -4,7 +4,10 @@ untyped-code/constructor-predicted-then-mispredicted    hot    counts calls into
 untyped-code/stores-to-adjacent-names    hot    counts calls into the runtime
 untyped-code/typed-class-methods-from-runtime-code    hot    counts calls into the runtime
 untyped-code/json-stringify-fresh-literal-operation-count    cold    counts calls into the runtime
-typed-objects/json-stringify-optional-members    cold    counts calls into the runtime
+untyped-code/json-stringify-nested-literals    cold    counts calls into the runtime
+typed-objects/json-stringify-date-fields    cold    counts calls into the runtime
+typed-objects/json-stringify-list-tail-at-once    cold    counts calls into the runtime
+typed-objects/json-stringify-stays-compiled    cold    counts calls into the runtime
 untyped-code/symbol-stores-cached-once    cold    counts calls into the runtime
 literal-strings/string-lookup-counts    cold    counts calls into the runtime
 escape-analysis/write-only-object    cold    asserts that an object is not allocated, which takes a copy of the callee in the caller

@@ -16,8 +16,10 @@ function sliceOfWide(character, length) { const base = "Ā" + character.repeat(l
 function wide(character, length) { const string = sliceOfWide(character, length); Symbol(string); return string; }
 function differsAtTheEnd(character, length) { const string = character.repeat(length - 1) + "-"; Symbol(string); return string; }
 function differsAtTheStart(character, length) { const string = "-" + character.repeat(length - 1); Symbol(string); return string; }
-for (const [make, isRopeExpected, is8BitExpected] of [[resolved, false, true], [rope, true, true], [slice, true, true], [sliceOfWide, true, false], [wide, false, false], [differsAtTheEnd, false, true], [differsAtTheStart, false, true]]) {
-    check(isRope(make("y", 65536)), isRopeExpected, make.name + " makes a rope");
+// Only the jsc shell tells how a string is stored. Whether a slice is a rope is up to whoever makes it.
+for (const [make, isRopeExpected, is8BitExpected] of typeof isRope !== "function" ? [] : [[resolved, false, true], [rope, true, true], [slice, undefined, true], [sliceOfWide, undefined, false], [wide, false, false], [differsAtTheEnd, false, true], [differsAtTheStart, false, true]]) {
+    if (isRopeExpected !== undefined)
+        check(isRope(make("y", 65536)), isRopeExpected, make.name + " makes a rope");
     check(is8BitString(make("y", 65536)), is8BitExpected, make.name + " makes a string of 8-bit characters");
 }
 

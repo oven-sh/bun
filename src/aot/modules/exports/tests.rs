@@ -1,4 +1,5 @@
 use super::*;
+use crate::load::runtime_modules::HOST_VALUE_MODULE;
 use crate::modules::commonjs_exports::{CommonJsInput, scan_commonjs_modules};
 use crate::modules::module_set::collect_modules;
 use crate::modules::order::compute_order;
@@ -12,7 +13,6 @@ use bun_sema::hir::ExportId;
 use bun_sema::import_sites::ImportSiteKind;
 
 const UNCOMPILED_MODULE: &str = "https://example.com/x.js";
-const HOST_VALUE_MODULE: &str = "bun:main";
 
 const PROGRAM: [(&str, &str); 34] = [
     (

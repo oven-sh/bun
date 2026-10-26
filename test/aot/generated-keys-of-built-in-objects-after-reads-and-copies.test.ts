@@ -17,13 +17,13 @@ const tsconfig = JSON.stringify({
   },
 });
 
-// A validating build reads every member it names at start.
-const inAnotherOrder = [3, 15, 19, 43, 47, 67, 99, 119, 139, 155, 163, 175, 183, 187, 223, 231];
+// A validating build reads at start each object that holds a member it names, here the classes of Intl.
+const inAnotherOrder = [67];
 
 // Every run takes these, whatever else it takes.
 const onceWrong = [
-  4, 13, 20, 22, 32, 56, 61, 62, 68, 69, 72, 77, 78, 84, 85, 88, 91, 94, 98, 100, 101, 110, 112, 114, 115, 116, 123,
-  125, 129, 137, 143, 146, 151, 154,
+  3, 4, 13, 15, 19, 20, 22, 32, 43, 47, 56, 61, 62, 68, 69, 72, 77, 78, 84, 85, 88, 91, 94, 98, 99, 100, 101, 110, 112,
+  114, 115, 116, 119, 123, 125, 129, 137, 139, 143, 146, 151, 154, 155, 163, 175, 183, 187, 223, 231,
 ];
 
 generated(

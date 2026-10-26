@@ -158,7 +158,9 @@ def calls(image, map_file):
     # A T line has an offset within a copy of the stubs, a C line the offset of a copy in the code.
     copies = copies or [0]
     stub_offsets = sorted(thunks)
-    for stub_offset, next_stub_offset in zip(stub_offsets, stub_offsets[1:]):
+    # The functions follow the last stub of the last copy.
+    end_of_stubs = min((start - copies[-1] for _, parts in functions for start, _ in parts if start > copies[-1] + stub_offsets[-1]), default=stub_offsets[-1]) if stub_offsets else 0
+    for stub_offset, next_stub_offset in zip(stub_offsets, stub_offsets[1:] + [end_of_stubs]):
         if thunks[stub_offset].startswith('outlined '): functions.append((thunks.pop(stub_offset), [(copy + stub_offset, next_stub_offset - stub_offset) for copy in copies])); ranks.append(other_code)
     thunks = {copy + stub_offset: name for copy in copies for stub_offset, name in thunks.items()}
     starts = {start: (name, i) for i, (name, parts) in enumerate(functions) for start, _ in parts}

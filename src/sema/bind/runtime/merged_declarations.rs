@@ -198,15 +198,21 @@ impl Declarations<'_, '_> {
 
     fn record_same_binding(&mut self, scope: ScopeId, binding: SymbolId, later: Declaration) {
         let flags = self.bound.symbols[binding.idx()].flags;
-        let is_body_declaration = later.kind != DeclarationKind::Parameter
-            && flags.contains(SymFlags::PARAMETER)
-            && self.has_body_variables(scope);
-        let target = if is_body_declaration {
+        let is_body_declaration =
+            later.kind != DeclarationKind::Parameter && flags.contains(SymFlags::PARAMETER);
+        let target = if is_body_declaration && self.has_body_variables(scope) {
             if matches!(later.decl, Decl::Fn(_)) {
                 self.parameters_with_body_function.insert(binding);
             }
             self.body_variable(scope, binding, later.decl)
         } else {
+            if is_body_declaration {
+                let declarations = &mut self.bound.runtime.declarations;
+                insert_bit(
+                    &mut declarations.parameters_with_function_of_body,
+                    binding.idx(),
+                );
+            }
             self.bound
                 .export_symbol_of_value_symbol_if_exported(binding)
         };

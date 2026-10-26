@@ -2270,7 +2270,8 @@ console.log("passed");
 import "./impl.js";
 //// positions-in-property-runs/impl.js
 ////= check-2
-function linesOf(name, stack) { return stack.split("\n").filter(line => line.startsWith(name + "@")).map(line => Number(line.split(":").slice(-2)[0])); }
+// A frame is `name@file:line:column` in the jsc shell and `    at name (file:line:column)` in Bun.
+function linesOf(name, stack) { return stack.split("\n").filter(line => line.startsWith(name + "@") || line.startsWith("    at " + name + " (")).map(line => Number(line.split(":").slice(-2)[0])); }
 
 function fill(o) {
     o.a = 1;

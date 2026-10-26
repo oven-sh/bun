@@ -116,10 +116,246 @@ describe.concurrent.each([6, 14])("the class that a module of Bun makes, behind 
       "",
       `async () => {\n    const { promise, resolve } = Promise.withResolvers();\n    resolve(Bun);\n    return new (await promise).SQL(${url});\n  }`,
     ],
+    [
+      "named on an object created with the descriptors of Bun",
+      "",
+      `() => new (Object.create(null, Object.getOwnPropertyDescriptors(Bun)).SQL)(${url})`,
+    ],
+    [
+      "named on an object created below another with the descriptors of Bun",
+      "",
+      `() => new (Object.create({}, Object.getOwnPropertyDescriptors(Bun)).SQL)(${url})`,
+    ],
+    [
+      "named on an object created with a copy of the descriptors of Bun",
+      "",
+      `() => new (Object.create(null, { ...Object.getOwnPropertyDescriptors(Bun) }).SQL)(${url})`,
+    ],
+    [
+      "named on an object created with the descriptors of a parameter",
+      "",
+      `() => new ((host => Object.create(null, Object.getOwnPropertyDescriptors(host)))(Bun).SQL)(${url})`,
+    ],
+    [
+      "named on the descriptors of a spread copy",
+      "",
+      `() => new (Object.getOwnPropertyDescriptors({ ...Bun }).SQL.value)(${url})`,
+    ],
+    [
+      "taken out of the descriptors of a spread copy by a pattern",
+      "",
+      `() => {\n    const {\n      SQL: { value },\n    } = Object.getOwnPropertyDescriptors({ ...Bun });\n    return new value(${url});\n  }`,
+    ],
+    [
+      "named on the descriptors of a copy by Object.assign",
+      "",
+      `() => new (Object.getOwnPropertyDescriptors(Object.assign({}, Bun)).SQL.value)(${url})`,
+    ],
+    [
+      "named on an object created with the descriptors of a spread copy",
+      "",
+      `() => new (Object.create(null, Object.getOwnPropertyDescriptors({ ...Bun })).SQL)(${url})`,
+    ],
+    [
+      "named on the descriptors of an object created with the descriptors of Bun",
+      "",
+      `() =>\n    new (Object.getOwnPropertyDescriptors(Object.create(null, Object.getOwnPropertyDescriptors(Bun))).SQL.value)(${url})`,
+    ],
+    [
+      "named on the descriptors of an object defined with the descriptors of Bun",
+      "",
+      `() =>\n    new (Object.getOwnPropertyDescriptors(Object.defineProperties({}, Object.getOwnPropertyDescriptors(Bun))).SQL.value)(\n      ${url},\n    )`,
+    ],
+    [
+      "named on a copy defined descriptor by descriptor",
+      "",
+      `() => {\n    const all = Object.getOwnPropertyDescriptors(Bun);\n    const copy = {};\n    for (const key in all) Object.defineProperty(copy, key, all[key]);\n    return new copy.SQL(${url});\n  }`,
+    ],
+    [
+      "named on an object made of the entries of a spread copy",
+      "",
+      `() => new (Object.fromEntries(Object.entries({ ...Bun })).SQL)(${url})`,
+    ],
+    [
+      "named on an object made of entries that a callback made anew",
+      "",
+      `() => new (Object.fromEntries(Object.entries(Bun).map(([key, value]) => [key, value])).SQL)(${url})`,
+    ],
+    [
+      "named on an object made of the own keys of Bun and what is read under them",
+      "",
+      `() => new (Object.fromEntries(Reflect.ownKeys(Bun).map(key => [key, Bun[key]])).SQL)(${url})`,
+    ],
+    [
+      "named on an object made of the own keys of Bun and what Reflect.get reads",
+      "",
+      `() => new (Object.fromEntries(Reflect.ownKeys(Bun).map(key => [key, Reflect.get(Bun, key)])).SQL)(${url})`,
+    ],
+    [
+      "named on an object made of the keys of Bun and what is read under them",
+      "",
+      `() => new (Object.fromEntries(Object.keys(Bun).map(key => [key, Bun[key]])).SQL)(${url})`,
+    ],
+    [
+      "named on an object made of a map of the entries of Bun",
+      "",
+      `() => new (Object.fromEntries(new Map(Object.entries(Bun))).SQL)(${url})`,
+    ],
+    ["asked of a map of the entries of Bun", "", `() => new (new Map(Object.entries(Bun)).get("SQL"))(${url})`],
+    [
+      "named on a copy filled by for-in",
+      "",
+      `() => {\n    const copy = {};\n    for (const key in Bun) copy[key] = Bun[key];\n    return new copy.SQL(${url});\n  }`,
+    ],
+    [
+      "named on a copy filled over Object.keys",
+      "",
+      `() => {\n    const copy = {};\n    for (const key of Object.keys(Bun)) copy[key] = Bun[key];\n    return new copy.SQL(${url});\n  }`,
+    ],
+    [
+      "named on a copy filled over Object.getOwnPropertyNames",
+      "",
+      `() => {\n    const copy = {};\n    for (const key of Object.getOwnPropertyNames(Bun)) copy[key] = Bun[key];\n    return new copy.SQL(${url});\n  }`,
+    ],
+    [
+      "named on a copy filled over Reflect.ownKeys by Reflect.get",
+      "",
+      `() => {\n    const copy = {};\n    for (const key of Reflect.ownKeys(Bun)) copy[key] = Reflect.get(Bun, key);\n    return new copy.SQL(${url});\n  }`,
+    ],
+    [
+      "named on a copy filled over Reflect.ownKeys by Reflect.set",
+      "",
+      `() => {\n    const copy = {};\n    for (const key of Reflect.ownKeys(Bun)) Reflect.set(copy, key, Reflect.get(Bun, key));\n    return new copy.SQL(${url});\n  }`,
+    ],
+    [
+      "named on a copy filled over Object.entries",
+      "",
+      `() => {\n    const copy = {};\n    for (const [key, value] of Object.entries(Bun)) copy[key] = value;\n    return new copy.SQL(${url});\n  }`,
+    ],
+    [
+      "named on a copy filled by a callback",
+      "",
+      `() => {\n    const copy = {};\n    Object.keys(Bun).forEach(key => {\n      copy[key] = Bun[key];\n    });\n    return new copy.SQL(${url});\n  }`,
+    ],
+    [
+      "named on a copy filled by reduce",
+      "",
+      `() =>\n    new (Reflect.ownKeys(Bun).reduce((copy, key) => {\n      copy[key] = Bun[key];\n      return copy;\n    }, {}).SQL)(${url})`,
+    ],
+    [
+      "named on an object made of pairs that promises resolved to",
+      "",
+      `async () =>\n    new (Object.fromEntries(await Promise.all(Object.entries(Bun).map(async ([key, value]) => [key, value]))).SQL)(${url})`,
+    ],
+    [
+      "named on an object made of pairs that a generator yields",
+      `function* pairs() {\n  for (const key in Bun) yield [key, Bun[key]];\n}\n`,
+      `() => new (Object.fromEntries(pairs()).SQL)(${url})`,
+    ],
+    [
+      "named on an object made of the values of the descriptors of Bun",
+      "",
+      `() =>\n    new (Object.fromEntries(\n      Object.entries(Object.getOwnPropertyDescriptors(Bun)).map(([key, descriptor]) => [key, descriptor.value]),\n    ).SQL)(${url})`,
+    ],
+    [
+      "named on the descriptors of Bun and defined under another name",
+      "",
+      `() => new (Object.defineProperty({}, "other", Object.getOwnPropertyDescriptors(Bun).SQL).other)(${url})`,
+    ],
+    [
+      "asked of a map that a loop filled",
+      "",
+      `() => {\n    const map = new Map();\n    for (const key in Bun) map.set(key, Bun[key]);\n    return new (map.get("SQL"))(${url});\n  }`,
+    ],
+    [
+      "named on an instance that its constructor filled",
+      `class Copy {\n  constructor(host) {\n    for (const key in host) this[key] = host[key];\n  }\n}\n`,
+      `() => new (new Copy(Bun).SQL)(${url})`,
+    ],
+    [
+      "named on a copy whose getters read Bun",
+      "",
+      `() => {\n    const copy = {};\n    for (const key of Object.getOwnPropertyNames(Bun)) Object.defineProperty(copy, key, { get: () => Bun[key] });\n    return new copy.SQL(${url});\n  }`,
+    ],
+    [
+      "named as a global after Bun was assigned onto the global object",
+      "",
+      `() => {\n    Object.assign(globalThis, Bun);\n    return new SQL(${url});\n  }`,
+    ],
+    [
+      "named as a global after a loop stored the members on the global object",
+      "",
+      `() => {\n    for (const key in Bun) globalThis[key] = Bun[key];\n    return new SQL(${url});\n  }`,
+    ],
+    [
+      "named on the rest of a pattern",
+      "",
+      `() => {\n    const { ...rest } = Bun;\n    return new rest.SQL(${url});\n  }`,
+    ],
   ])("%s", async (_, first, last) => {
     using dir = tempDir("aot-members-of-bun-named-late", {
       "program.mjs": `${behindCalls(count, first, last)}console.log(typeof (await holder${count}.next()));\n`,
     });
+    const directory = String(dir);
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"],
+      directory,
+    );
+    expect(built.exitCode).toBe(0);
+    const answer = await run([join(directory, isWindows ? "program.exe" : "program")], directory);
+    expect({ stdout: answer.stdout, exitCode: answer.exitCode }).toEqual({ stdout: "function\n", exitCode: 0 });
+  });
+});
+
+// What a copy of process or of the global object holds is found under its name as well.
+describe.concurrent("named on what was made of all the properties of another built-in object", () => {
+  eachRow<[string, string]>([
+    [
+      "the loader of process, on an object created with the descriptors of process",
+      `Object.create(null, Object.getOwnPropertyDescriptors(process)).getBuiltinModule("node:os").cpus`,
+    ],
+    [
+      "the loader of process, taken out of the descriptors of process by a pattern",
+      `(({ getBuiltinModule }) => getBuiltinModule.value)(Object.getOwnPropertyDescriptors(process))("node:os").cpus`,
+    ],
+    [
+      "the loader of process, on the descriptors of a spread copy",
+      `Object.getOwnPropertyDescriptors({ ...process }).getBuiltinModule.value("node:os").cpus`,
+    ],
+    [
+      "the loader of process, on a copy of the descriptors of process",
+      `({ ...Object.getOwnPropertyDescriptors(process) }).getBuiltinModule.value("node:os").cpus`,
+    ],
+    [
+      "the loader of process, on an object made of the entries of the descriptors of process",
+      `Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(process))).getBuiltinModule.value("node:os").cpus`,
+    ],
+    [
+      "the loader of process, asked of a map of the entries of process",
+      `new Map(Object.entries(process)).get("getBuiltinModule")("node:os").cpus`,
+    ],
+    [
+      "a class of Bun, on a proxy whose trap reads Bun under the key",
+      `new (new Proxy({}, { get: (target, key) => Bun[key] }).SQL)(${url})`,
+    ],
+    [
+      "a class of Bun, on a proxy whose trap asks Reflect.get",
+      `new (new Proxy({}, { get: (target, key) => Reflect.get(Bun, key) }).SQL)(${url})`,
+    ],
+    [
+      "a class of Bun, on an object created with the descriptors of the global object",
+      `new (Object.create(null, Object.getOwnPropertyDescriptors(globalThis)).Bun.SQL)(${url})`,
+    ],
+    [
+      "a class of Bun, on the descriptors of a spread copy of the global object",
+      `new (Object.getOwnPropertyDescriptors({ ...globalThis }).Bun.value.SQL)(${url})`,
+    ],
+    [
+      "a class of Bun, on an object made of the entries of the descriptors of the global object",
+      `new (Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(globalThis))).Bun.value.SQL)(${url})`,
+    ],
+  ])("%s", async (_, read) => {
+    using dir = tempDir("aot-members-of-bun-named-late", { "program.mjs": `console.log(typeof ${read});\n` });
     const directory = String(dir);
     const built = await run(
       [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"],

@@ -58,6 +58,21 @@ const programs: [entry: string, pairs: Pair[]][] = [
       ["a field under a plain name", "a field under a symbol", 8],
     ],
   ],
+  [
+    "members-of-a-class-made-on-demand.js",
+    [
+      [
+        "a method under a plain name that is called",
+        "a method under a plain name that is read, compared with undefined and called",
+        4,
+      ],
+      [
+        "a method under a symbol that is called",
+        "a method under a symbol that is read, compared with undefined and called",
+        4,
+      ],
+    ],
+  ],
   ["wrappers.js", [["a wrapper that is called", "a wrapper that is called through call", 4]]],
   ["errors.js", [["an error that is kept", "an error that is returned at once", 32]]],
   [

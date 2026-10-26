@@ -16,10 +16,10 @@ function sum(a: number[]): number { let t = 0; for (const v of a) t += v; return
 function at(a: string[]): string { return a[0] }
 function up(s: string): string { return s.toUpperCase() }
 `;
-const uses: Record<string, { use: string; failsIn?: string }> = {
-  "an array for a string, by index": { use: `first(hide(["a"]))`, failsIn: "where it stands" },
-  "an object for a string, by index": { use: `first(hide({ 0: "z" }))`, failsIn: "where it stands" },
-  "an array cast to a string, by index": { use: `(hide(["a"]) as string)[0]`, failsIn: "in a closure" },
+const uses: Record<string, { use: string; isAlwaysRun?: true }> = {
+  "an array for a string, by index": { use: `first(hide(["a"]))`, isAlwaysRun: true },
+  "an object for a string, by index": { use: `first(hide({ 0: "z" }))`, isAlwaysRun: true },
+  "an array cast to a string, by index": { use: `(hide(["a"]) as string)[0]`, isAlwaysRun: true },
   "a number for a string, by index": { use: `first(hide(7))` },
   "an array for a string, its length": { use: `len(hide([1, 2, 3]))` },
   "a string for a number": { use: `add(hide("s"))` },
@@ -31,23 +31,29 @@ const uses: Record<string, { use: string; failsIn?: string }> = {
   "a string for an array": { use: `at(hide("xyz"))` },
   "an object for a string, a method": { use: `up(hide({ toUpperCase() { return "U" } }))` },
 };
+const whereItStands = (use: string) =>
+  `try { console.log(String(${use})) } catch (e) { console.log((e as Error).constructor.name) }`;
+const inAClosure = (use: string) =>
+  `function attempt(f: () => unknown) { try { console.log(String(f())) } catch (e) { console.log((e as Error).constructor.name) } }\nattempt(() => ${use})`;
+const once = `for (let turn = 0; turn < (Reflect.get(globalThis, "process").argv.length > 99 ? 2 : 1); turn++)`;
 const forms: Record<string, (use: string) => string> = {
-  "where it stands": use =>
-    `try { console.log(String(${use})) } catch (e) { console.log((e as Error).constructor.name) }`,
-  "in a closure": use =>
-    `function attempt(f: () => unknown) { try { console.log(String(f())) } catch (e) { console.log((e as Error).constructor.name) } }\nattempt(() => ${use})`,
+  "where it stands": use => functions + whereItStands(use),
+  "in a closure": use => functions + inAClosure(use),
+  "all of it in a function": use => `(() => {${functions}${whereItStands(use)}\n})();`,
+  "all of it in a function, in a closure": use => `(() => {${functions}${inAClosure(use)}\n})();`,
+  "all of it in the body of a loop": use => `${once} {${functions}${whereItStands(use)}\n}`,
+  "all of it in the body of a loop, in a closure": use => `${once} {${functions}${inAClosure(use)}\n}`,
 };
 
 generated(
   "values that the analysis no longer follows",
-  Object.entries(uses).flatMap(([name, { use, failsIn }]) =>
+  Object.entries(uses).flatMap(([name, { use, isAlwaysRun }]) =>
     Object.entries(forms).map(([form, text]) => ({
       name: `${name}, ${form}.`,
-      isAlwaysRun: failsIn !== undefined,
+      isAlwaysRun: !!isAlwaysRun,
       isOnlyCompiled: true as const,
       flags: ["--aot-limit=MaxValueFlowEdgesLogged:1"],
-      failsToday: form === failsIn ? "it prints undefined" : undefined,
-      make: () => ({ file: "main.ts", text: functions + text(use), files: { "tsconfig.json": tsconfig } }),
+      make: () => ({ file: "main.ts", text: text(use), files: { "tsconfig.json": tsconfig } }),
     })),
   ),
 );

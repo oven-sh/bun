@@ -8,7 +8,7 @@
 use bun_alloc::Arena as ArenaAllocator;
 use bun_options_types::LoaderExt as _;
 
-use crate::virtual_machine::VirtualMachine;
+use crate::virtual_machine::{MAIN_FILE_NAME, MainEntryPoint, VirtualMachine};
 use crate::{
     self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue,
     ResolvedSource,
@@ -220,7 +220,13 @@ extern "C" fn Bun__fetchBuiltinModule(
         jsc::ErrCode::ERR_MODULE_NOT_FOUND
     };
     // The helpers of the bundler are served as text, unless they are compiled with the program: then everybody gets that one module.
-    if specifier.to_utf8().slice() == b"bun:wrap" {
+    // So is the module that stands for a compiled entry point.
+    let is_compiled_with_program = match specifier.to_utf8().slice() {
+        b"bun:wrap" => true,
+        MAIN_FILE_NAME => jsc_vm.main_entry_point == MainEntryPoint::Compiled,
+        _ => false,
+    };
+    if is_compiled_with_program {
         if Bun__isCompiledProgramFile(specifier) {
             return false;
         }

@@ -66,9 +66,11 @@ const packageParts: Record<string, number> = {
   "wrong-declarations": 2,
 };
 
+// Where collections were put off for a while the program asks the collector at the end only if something was put off. Forced, it asks at every such end.
 const besideTheProgram = {
   BUN_JSC_collectContinuously: "1",
   BUN_JSC_collectContinuouslyPeriodMS: "1",
+  BUN_JSC_forceDidDeferGCWork: "1",
   BUN_JSC_useZombieMode: "1",
   BUN_JSC_scribbleFreeCells: "1",
 };
@@ -188,6 +190,7 @@ export const rows: Row[] = [
   variant("validate-back-end", ["--aot-check=validate-back-end"], {}, 8),
   variant("validate-collecting", ["--aot-validate"], {
     BUN_JSC_slowPathAllocsBetweenGCs: "1",
+    BUN_JSC_forceDidDeferGCWork: "1",
     BUN_JSC_useZombieMode: "1",
     BUN_JSC_scribbleFreeCells: "1",
     BUN_JSC_numberOfGCMarkers: "1",
@@ -435,6 +438,7 @@ export const rows: Row[] = [
   ["aot/process-platform-folds", 4, "./process-platform-folds-cases", "processPlatformFolds"],
   ["aot/programs-in-every-run", 32, "./run-programs", "programsInEveryRun"],
   ["aot/programs-marked-as-failing", 0, "./run-programs", "programsMarkedAsFailing"],
+  ["aot/programs-that-ask-the-shell", 4, "./programs-that-ask-the-shell", "programsThatAskTheShell"],
   [
     "aot/programs-that-stopped-a-validating-build",
     3,
@@ -564,6 +568,10 @@ const unitsOfCallees = (callees: Set<string>) =>
 // These draw nothing. They are new to CI, and stay in the step that holds up nothing until they have been green there.
 const onTrial = [
   "aot/backend/backend-with-a-database.test.ts",
+  "aot/programs-that-ask-the-shell-1.test.ts",
+  "aot/programs-that-ask-the-shell-2.test.ts",
+  "aot/programs-that-ask-the-shell-3.test.ts",
+  "aot/programs-that-ask-the-shell-4.test.ts",
   "aot/servers/effect-servers.test.ts",
   "aot/servers/schedules-of-servers.test.ts",
   "aot/servers/schedules-of-tanstack.test.ts",

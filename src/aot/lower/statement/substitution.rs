@@ -82,6 +82,17 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // The same where the statement that holds the name begins with an operator or a condition.
+    pub(in crate::lower) fn find_initializer_visited_again(&self, name: ExprId) -> Option<ExprId> {
+        let statement = self.find_statement_around(name)?;
+        let first = self.skip_type_syntax(self.find_first_expression(statement)?);
+        matches!(
+            self.hir[first].kind,
+            ExprKind::Binary { .. } | ExprKind::Unary { .. } | ExprKind::Cond { .. }
+        )
+        .then(|| self.find_printed_initializer(name))?
+    }
+
     // The name in whose place Bun's transpiler prints the initializer of a variable.
     pub(in crate::lower) fn find_name_replaced_by(&self, initializer: ExprId) -> Option<ExprId> {
         let hir = self.hir;

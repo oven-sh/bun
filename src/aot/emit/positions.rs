@@ -41,7 +41,7 @@ pub fn source_positions_in_bundle(source: &[u8], encoded: &[u8]) -> SourcePositi
         for (line_break, _) in piece.iter().enumerate().filter(|(_, byte)| **byte == b'\n') {
             last = ColumnAdjustment {
                 offset: (end - piece.len() + line_break + 1) as u32,
-                line: last.line + 1,
+                line: last.line.wrapping_add(1),
                 column: 0,
             };
             adjustments.push(last);
@@ -49,7 +49,7 @@ pub fn source_positions_in_bundle(source: &[u8], encoded: &[u8]) -> SourcePositi
         let (Some(_), Some(place)) = (distance, read_number()) else {
             break;
         };
-        let column = last.column + (end as u32 - last.offset);
+        let column = last.column.wrapping_add(end as u32 - last.offset);
         let (line, column) = match place & 1 {
             0 => (last.line, Some(add_signed(column, place >> 1))),
             _ => (add_signed(last.line, place >> 1), read_number()),

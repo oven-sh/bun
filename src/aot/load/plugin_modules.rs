@@ -18,6 +18,7 @@ use std::cmp::Ordering;
 use std::sync::OnceLock;
 
 const FILE_NAMESPACE: &[u8] = b"file";
+const DATA_URL_NAMESPACE: &[u8] = b"dataurl";
 const VIRTUAL_DIRECTORY: &[u8] = b"plugin/";
 const ENCODED_EMPTY_SEGMENT: &[u8] = b"%2f";
 
@@ -153,6 +154,22 @@ impl<'a> PluginModules<'a> {
             }
         };
         cell.get_or_init(resolve).clone()
+    }
+
+    /// Returns the path of a module with what the URL holds. Whoever imports it names the loader.
+    pub(crate) fn add_data_url(&self, url: &[u8]) -> Option<Vec<u8>> {
+        let contents = self.provider.decode_data_url(url)?;
+        let virtual_path = create_virtual_path(DATA_URL_NAMESPACE, url);
+        let module = StoredModule {
+            loader: Loader::Dataurl,
+            is_from_plugin: false,
+            contents: Some(Cow::Owned(contents)),
+        };
+        let load = OnceLock::from(ModuleLoad::Loaded(module));
+        self.modules.insert_ref(virtual_path.clone(), load);
+        let name = (DATA_URL_NAMESPACE.to_vec(), url.to_vec());
+        self.virtual_modules.insert_ref(virtual_path.clone(), name);
+        Some(virtual_path)
     }
 
     pub(crate) fn read(&self, path: &[u8], default_loader: Loader) -> ModuleText {

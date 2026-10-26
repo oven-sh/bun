@@ -106,6 +106,7 @@ export default b.declarations(
   operation("arrayStorageKind", "ArrayStorageKind"),
   b.intrinsic("call", "Call", inlinableCall),
   b.intrinsic("callNoInline", "Call", { intrinsic: "Call", isNeverInlined: true }),
+  operation("findsDeclaredMember", "FindsDeclaredMember"),
   operation("getContiguousIndex", "GetContiguousIndex"),
   operation("getDoubleIndex", "GetDoubleIndex"),
   operation("growNewArray", "GrowNewArray"),

@@ -150,7 +150,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         Some(SymbolCreation {
             file: variable.file,
-            position: hir[callee].pos,
+            callee_start: hir[callee].pos,
+            callee_end: hir[callee].end,
             description,
         })
     }

@@ -583,6 +583,9 @@ static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& fr
     WTF::String functionName;
     if (codeType == JSC::CodeType::FunctionCode && !(frame.isAsyncFrame() && JSC::AOT::FunctionDescription(frame.compiledFrame().function).isNamedByOwner()))
         functionName = compiledFunctionName(vm, frame);
+    // `bun run` evaluates a module of the library as a function that has the name of the module.
+    else if (codeType == JSC::CodeType::ModuleCode && JSC::AOT::FunctionDescription(frame.compiledFrame().function).isInRuntimeModule())
+        functionName = sourceURL(vm, frame);
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && frame.isConstructor() && !functionName.isEmpty())
         return makeString("new "_s, functionName);

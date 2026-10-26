@@ -82,6 +82,32 @@ test(
   600_000,
 );
 
+// The flow analysis takes `Constructor.name` for absent where the table lists no such member. So the table has to list every own key of a constructor that it says it lists whole.
+const keysOfConstructors = [
+  'import { aotBuiltinEntries } from "bun:internal-for-testing";',
+  "const { entries } = aotBuiltinEntries();",
+  "const byToken = new Map(entries.map(entry => [entry.token, entry]));",
+  "const membersOf = Map.groupBy(entries, entry => entry.holder);",
+  'const find = entry => (entry.token === "GlobalThis" ? globalThis : entry.holder && find(byToken.get(entry.holder))?.[entry.name]);',
+  'const textOf = key => (typeof key === "symbol" ? "@@" + key.description.slice(7) : key);',
+  "const unlisted = [];",
+  "let compared = 0;",
+  "for (const entry of entries) {",
+  '  if (entry.kind !== "Constructor" || entry.sameObjectAs || !entry.flags.includes("ListsAllMembers")) continue;',
+  "  const constructor = find(entry);",
+  '  if (typeof constructor !== "function") continue;',
+  "  compared++;",
+  '  const listed = new Set(["length", "name"]);',
+  '  for (const member of membersOf.get(entry.token) ?? []) listed.add((member.isSymbolName ? "@@" : "") + member.name);',
+  '  for (const key of Reflect.ownKeys(constructor)) if (!listed.has(textOf(key))) unlisted.push(entry.path + " " + textOf(key));',
+  "}",
+  "console.log(JSON.stringify({ unlisted, comparesMany: compared > 100 }));",
+].join("\n");
+
+test("the table lists every own key of the constructors that a program can name", async () => {
+  expect(JSON.parse((await runFile(keysOfConstructors)).stdout)).toEqual({ unlisted: [], comparesMany: true });
+});
+
 test("a mismatch is reported", async () => {
   const script = [
     'import { aotBuiltinMismatches } from "bun:internal-for-testing";',

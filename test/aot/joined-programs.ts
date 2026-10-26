@@ -17,6 +17,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
@@ -32,6 +33,7 @@ import {
   takeFromShare,
   taken,
   unsupported,
+  withEverySlot,
   withoutCoreDump,
   withoutDebugInformation,
 } from "./run-programs";
@@ -46,6 +48,9 @@ const programsUnderOneName = 6;
 const groupsInShare = isASAN ? 1 : 3;
 // A validating build of many joined programs needs gigabytes and minutes.
 const programsInValidatingBuild = 40;
+// So does a validating build of one program of thousands of classes: it is a build of its own, and nothing else runs beside it.
+const bytesOfLargeProgram = 100_000;
+const isLargeProgram = (path: string) => statSync(path).size >= bytesOfLargeProgram;
 const measure = ["--aot-heat=everything-is-hot"];
 
 const cannotBeJoined = new RegExp(
@@ -350,18 +355,30 @@ async function compare(folder: string, carrier: string[], group: number | string
       await compare(folder, carrier, `${group}.${from / namesInGroup}`, paths.slice(from, from + namesInGroup), flags);
     return;
   }
-  const parts = splitIntoBuilds(paths, flags.includes("--aot-validate") ? programsInValidatingBuild : undefined);
+  const validates = flags.includes("--aot-validate");
+  const parts = splitIntoBuilds(
+    paths,
+    validates ? programsInValidatingBuild : undefined,
+    validates ? isLargeProgram : undefined,
+  );
   if (parts.length > 1) {
     for (const [index, part] of parts.entries()) await compare(folder, carrier, `${group}.${index}`, part, flags);
     return;
   }
+  // A slot is held for one build at a time, so that a build that waits for every slot waits for no whole group.
+  await slot(() => compareBuilds(cwd, carrier, group, paths, flags));
+}
+
+async function compareBuilds(cwd: string, carrier: string[], group: number | string, paths: string[], flags: string[]) {
+  const validates = flags.includes("--aot-validate");
   // A group begins only if the time that is left covers the longest group so far. One that is still not through when the time is up is ended here. Both are left to another run.
   const began = performance.now();
   if (secondsLeft() * 1000 < longestGroup) return leaveToAnotherRun(group, "its turn came late");
   const made = await written(cwd, carrier, group, paths, "measure", measure, secondsLeft);
   if (!made) return;
   const { names, build, first } = made;
-  const second = await build("tested", [...flags, "--explain=statistics"], bunEnv, secondsLeft);
+  const buildTested = () => build("tested", [...flags, "--explain=statistics"], bunEnv, secondsLeft);
+  const second = await (validates && paths.some(isLargeProgram) ? withEverySlot(1, buildTested) : buildTested());
   if (endsByItsOwnClock && second.signal === "SIGKILL") return leaveToAnotherRun(group, "the clock ended the build");
   expect({
     build: "tested",
@@ -436,7 +453,7 @@ export function joined(label: string, flags: string[], part = 1, parts = 1) {
       const nameOf = (path: string) => inPrograms(path).replaceAll("\\", "/");
       test(
         `group ${group}: ${nameOf(listed[0])} to ${nameOf(listed.at(-1)!)}`,
-        () => slot(() => compare(folder, carrier, group, listed, flags)),
+        () => compare(folder, carrier, group, listed, flags),
         900_000,
       );
     }

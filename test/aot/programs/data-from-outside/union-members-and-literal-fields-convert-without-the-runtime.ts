@@ -1,4 +1,5 @@
-declare const aotOperationCount: (name: string) => number;
+declare const aotOperationCount: undefined | ((name: string) => number);
+const callsOf = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 // Plain objects that untyped code built are read as members of a discriminated union, and as records with fields whose type is a union of string literals. A text among the literals passes however it was built: at run time, as a rope, out of a 16-bit text. Any other text, and a value that is no string, throws where typed code reads the field; undefined and null pass. The program also prints whether the slow type test of the runtime was entered for most of the objects.
 type Inner = { n: number };
 type Circle = { kind: "circle"; inner: Inner; radius: number };
@@ -50,22 +51,22 @@ const kept: any[] = [];
 let sum = 0;
 let text = "";
 const letters = ["cir", "cle", "squ", "are", "clo", "sed", "op", "en"];
-let before = aotOperationCount("operationAOTEnforceType");
+let before = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType"));
 for (let i = 0; i < 400; i++) {
   const figure = growFigure(i % 2 ? "circle" : "square", inner, i);
   kept.push(figure);
   sum += area(figure);
 }
-let slow = aotOperationCount("operationAOTEnforceType") - before;
+let slow = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType")) - before;
 console.log(sum, slow < 20 ? "without the runtime" : "through the runtime: " + slow);
-before = aotOperationCount("operationAOTEnforceType");
+before = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType"));
 for (let i = 0; i < 400; i++) {
   const issue = growIssue(i % 3 ? (i % 3 === 1 ? "open" : "closed") : "", i % 4 ? (i % 4 === 1 ? "low" : i % 4 === 2 ? "high" : null) : undefined, inner);
   kept.push(issue);
   text = describe(issue);
   sum += text.length;
 }
-slow = aotOperationCount("operationAOTEnforceType") - before;
+slow = (callsOf("operationAOTFindLandingOfMisfit") + callsOf("operationAOTContentsHaveType")) - before;
 console.log(sum, text, slow < 20 ? "without the runtime" : "through the runtime: " + slow);
 console.log(JSON.stringify(kept[1]), JSON.stringify(kept[2]), Object.keys(kept[1]).join(), kept[1].kind, kept[2].kind);
 console.log(JSON.stringify(kept[401]), JSON.stringify(kept[402]), JSON.stringify(kept[403]), JSON.stringify(kept[404]), Object.keys(kept[401]).join());

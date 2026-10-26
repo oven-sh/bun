@@ -16,7 +16,7 @@ class Marked { [kFirst] = 1; [kSecond] = 2; plain = 3; [kThird] = 4; sum() { ret
 function Stamped(n) { this[kFirst] = n; this[kSecond] = n + 1; this[kThird] = n + 2; }
 const copyOf = source => Object.defineProperties({}, Object.getOwnPropertyDescriptors(source));
 const sources = [{ a: 1, b: 2 }, { c: 1, d: 2, e: 3 }, { f: 1, g: 2 }, { h: 1, i: 2, j: 3, k: 4 }, { l: 1, m: 2 }, { n: 1, o: 2 }, { p: 1, q: 2, r: 3 }, { s: 1, t: 2 }];
-const names = ["operationAOTTryPutProperties", "operationAOTPrivateFieldAdd", "operationAOTDefineField", "operationAOTPutByIdAndCache"];
+const names = ["operationAOTTryPutProperties", "operationAOTPrivateDefine", "operationAOTDefineField", "operationAOTPutByIdAndCache"];
 const asked = () => names.map(count);
 let check = 0, second = null, last = null;
 const shown = new Set();

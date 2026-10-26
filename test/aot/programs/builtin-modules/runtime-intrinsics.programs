@@ -1008,7 +1008,11 @@ async function ask(title: string, how: Handler, init?: RequestInit, last?: (req:
 }
 
 await ask("two hundred requests first", (_req, res) => void res.end("warm"));
-for (let i = 0; i < 200; i++) await (await fetch(url + "/warm")).text();
+for (let i = 0; i < 200; i++) {
+  const settled = new Promise<void>(resolve => void (settle = resolve));
+  await (await fetch(url + "/warm")).text();
+  await settled;
+}
 
 lines.push("length " + IncomingMessage.length + " " + OutgoingMessage.length);
 lines.push("made by hand: " + keysOf(new IncomingMessage(null as never)));

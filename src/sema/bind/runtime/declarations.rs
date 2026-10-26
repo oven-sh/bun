@@ -7,6 +7,7 @@ use super::declaration_kinds::{
 use super::duplicate_names::find_duplicate_names;
 use super::{
     BindingKind, CodeUnit, EarlyRedeclaration, FunctionFlags, RuntimeInput, RuntimeScopes,
+    has_simple_parameter_list,
 };
 use crate::atom::{Atom, known};
 use crate::bind::{
@@ -320,10 +321,14 @@ impl Declarations<'_, '_> {
         let mut pending = Vec::new();
         let mut flags = vec![FunctionFlags::empty(); hir.fns.len()];
         for (index, func) in hir.fns.iter().enumerate() {
-            if !matches!(func.body, FnBody::None)
-                && has_parameter_expressions(hir, func, &mut pending)
-            {
-                flags[index] = FunctionFlags::HAS_PARAMETER_EXPRESSIONS;
+            if matches!(func.body, FnBody::None) {
+                continue;
+            }
+            if has_parameter_expressions(hir, func, &mut pending) {
+                flags[index] |= FunctionFlags::HAS_PARAMETER_EXPRESSIONS;
+            }
+            if !has_simple_parameter_list(hir, FnId(index as u32)) {
+                flags[index] |= FunctionFlags::HAS_REST_PATTERN_OR_DEFAULT;
             }
         }
         self.bound.runtime.function_flags = flags;

@@ -23,6 +23,8 @@
 //                                         "seconds": the executable is killed, and the test fails, once it has run for that long. Default: the limit of spawned().
 //                                         A Bun built with AddressSanitizer gets longer, in the proportion of that default
 //                                         "skipInShell": why shell/quick.py skips the program; not read here
+//                                         "onlyInShell": which function of the `jsc` shell the program calls that Bun does not have. Nothing that builds an executable takes it.
+//                                         programs-that-ask-the-shell.ts runs it, held to its .expected.txt
 //                                         "skipWithASAN": why a Bun built with AddressSanitizer skips the program
 //                                         "runWithASAN": why a Bun built with AddressSanitizer runs the program even where the quick subset leaves it out
 //                                         "skipInVariants": why variant() leaves the program out
@@ -295,13 +297,23 @@ export function pathOfWrittenProgram(name: string): string | undefined {
 /** Stands the path, out of such a list, for a group of programs that have yet to be made? */
 export const isGroup = (path: string) => groups.has(path);
 
-/** The programs of one topic, or of all. */
-export function find(topic?: string): string[] {
+function findAlsoForShell(topic?: string): string[] {
   const all: string[] = [];
   if (topic === undefined || existsSync(join(root, topic))) findKept(join(root, topic ?? ""), all);
   for (const each of topic === undefined ? Object.keys(generators) : topic in generators ? [topic] : [])
     findWritten(each, all);
   return all;
+}
+
+/** `"onlyInShell"` in the .json beside a program. */
+export const onlyInShell = (path: string): string | undefined =>
+  !groups.has(path) && existsSync(keptBeside(path) + ".json")
+    ? JSON.parse(readFileSync(keptBeside(path) + ".json", "utf8")).onlyInShell
+    : undefined;
+
+/** The programs of one topic, or of all, that Bun can run. */
+export function find(topic?: string): string[] {
+  return findAlsoForShell(topic).filter(path => !onlyInShell(path));
 }
 
 /** Whether AOT_PROGRAMS=<text> selects the program. */
@@ -359,6 +371,36 @@ export function writeShareOfWrittenPrograms(share: string): string {
     () => true,
   );
   return writtenRoot!;
+}
+
+// With these the `jsc` shell says what compiled code did while it ran: how often it called an operation of the run time, how many cells of a kind there are. Bun has none of them.
+const asksTheShell = /\b(aotOperationCount|aotRuntimeCounters|aotBuiltinEntries|memoryUsageStatistics)\b|\$vm\b/;
+
+/**
+ * For shell/quick.py: the programs with `"onlyInShell"`, and those whose text names a function above, which print what they are about in the shell alone. One part of `parts`.
+ * Answers their names, which of them nothing else runs, and the folder that stands for ./programs where a script has written one.
+ */
+export function writeProgramsThatAskTheShell(part: number, parts: number) {
+  const textOf = (path: string) => {
+    const unwritten = notYetWritten.get(path);
+    if (unwritten) return Object.values(unwritten.program.files).join("\n");
+    if (!/[\\/]main\.[a-z]+$/.test(path)) return readFileSync(path, "utf8");
+    const folder = join(path, "..");
+    return (readdirSync(folder, { recursive: true }) as string[])
+      .filter(file => /\.([cm]?[jt]s|tsx)$/.test(file))
+      .map(file => readFileSync(join(folder, file), "utf8"))
+      .join("\n");
+  };
+  const chosen = taken(
+    findAlsoForShell().filter(path => !groups.has(path)),
+    path =>
+      Number((hash(path) >> 16n) % BigInt(parts)) === part - 1 &&
+      !existsSync(keptBeside(path) + ".todo.txt") &&
+      !existsSync(keptBeside(path) + ".build-errors.txt") &&
+      (onlyInShell(path) !== undefined || asksTheShell.test(textOf(path))),
+  );
+  const nameOf = (path: string) => inPrograms(besideOf(path)).replaceAll("\\", "/");
+  return { names: chosen.map(nameOf), onlyThere: chosen.filter(onlyInShell).map(nameOf), written: writtenRoot };
 }
 
 // Each build keeps one core busy for about a second and writes an executable the size of Bun.

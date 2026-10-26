@@ -254,6 +254,12 @@ row('closure_call_two', 'r = f(r): 16 closures of TWO different arrows, one afte
     ts=(FN['ts'], '', 'r = f(r);', 'r'), go=(FN['go'], '', 'r = f(r)', 'r'), cc=(FN['cc'], '', 'r = f(r);', 'r'), call='x = F(two[i & 15], x)')
 row('closure_call_many', 'r = f(r): 16 closures of %d different arrows; with the callee' % ARROWS, group='calls',
     ts=(FN['ts'], '', 'r = f(r);', 'r'), go=(FN['go'], '', 'r = f(r)', 'r'), cc=(FN['cc'], '', 'r = f(r);', 'r'), call='x = F(many[i & 15], x)')
+row('closure_call_fewer_arguments', 'r = f(r): closure_call_many, and every arrow declares one parameter more than the call passes; with the callee', group='calls',
+    ts=('(f: (a: number, b?: number) => number, r: number): number', '', 'r = f(r);', 'r'), call={'ts': 'x = F(wider[i & 15], x)'})
+row('closure_call_six_arguments', 'r = f(r, 1, 2, 3, 4, 5): closure_call_many with more arguments than a call passes in registers; with the callee', group='calls',
+    ts=('(f: (a: number, b: number, c: number, d: number, e: number, g: number) => number, r: number): number', '', 'r = f(r, 1, 2, 3, 4, 5);', 'r'), call={'ts': 'x = F(six[i & 15], x)'})
+row('closure_call_own_property', 'r = f(r): closure_call_many, and every closure has got a property of its own; with the callee', group='calls',
+    ts=(FN['ts'], '', 'r = f(r);', 'r'), call={'ts': 'x = F(tagged[i & 15], x)'})
 row('closure_call_field', 'r = h.f(r); h = h.next: the closure is kept in a field; 16 holders in a ring with closures of %d arrows, so the callee changes from site to site; with the callee' % ARROWS, group='calls', less='field_read',
     ts=('(h: Holder, r: number): number', '', 'r = h.f(r); h = h.next;', 'r'), go=('(h *Holder, r int64) int64', '', 'r = h.f(r); h = h.next', 'r'), cc=('long %s(Holder* h, long r)', '', 'r = h->f(r); h = h->next;', 'r'), call='x = F(HO0, x)')
 row('closure_call_array', 'r = list[r & 15](r): the closure is kept in an array of 16 of %d arrows, and the data picks it; with the index, the bounds check and the callee' % ARROWS, group='calls',
@@ -453,6 +459,9 @@ item('gi', 'function gi(s: string): string { ' + TSB + 'return s; }')
 item('makeClosure', 'function makeClosure(k: number): (a: number) => number { return (a: number): number => { ' + TSB + 'return (a + k) | 0; }; }')
 for j, tail in enumerate(TAILS):
     item('arrow%d' % (j + 1), 'function arrow%d(k: number): (a: number) => number { return (a: number): number => { ' % (j + 1) + TSB + 'return (%s) | 0; }; }' % tail)
+for j, tail in enumerate(TAILS):
+    item('wider%d' % (j + 1), 'function wider%d(k: number): (a: number, b?: number) => number { return (a: number, b?: number): number => { ' % (j + 1) + TSB + 'return (%s + (b === undefined ? 0 : 1)) | 0; }; }' % tail)
+    item('six%d' % (j + 1), 'function six%d(k: number): (a: number, b: number, c: number, d: number, e: number, g: number) => number { return (a: number, b: number, c: number, d: number, e: number, g: number): number => { ' % (j + 1) + TSB + 'return (%s + g) | 0; }; }' % tail)
 item('makeBig', 'function makeBig(k: number): (a: number) => number { return (a: number): number => { ' + WORK_TS + ' return a; }; }')
 item('Holder', 'class Holder { next: Holder; f: (a: number) => number; constructor(f: (a: number) => number) { this.next = this; this.f = f; } }')
 item('A0 A1', 'const A0 = new T(LEN - 1, VERB0), A1 = new T(LEN, VERB1); A0.next = A1; A1.next = A0; A0.nn = A1; A1.nn = A0; A0.any = A1; A1.any = A0; A0.f0 = LEN - 2; A1.f0 = LEN - 1;')
@@ -483,6 +492,9 @@ item('bag', 'const bag: any = {}; for (let i = 0; i < 16; ++i) bag["literal" + i
 item('cA cB', 'const cA = makeClosure(LEN), cB = makeClosure(LEN + 1);')
 item('two', 'const two: ((a: number) => number)[] = [' + sixteen(2, 'arrow%d(%s)') + '];')
 item('many', 'const many: ((a: number) => number)[] = [' + sixteen(ARROWS, 'arrow%d(%s)') + '];')
+item('wider', 'const wider: ((a: number, b?: number) => number)[] = [' + sixteen(ARROWS, 'wider%d(%s)') + '];')
+item('six', 'const six: ((a: number, b: number, c: number, d: number, e: number, g: number) => number)[] = [' + sixteen(ARROWS, 'six%d(%s)') + '];')
+item('tagged', 'const tagged: ((a: number) => number)[] = [' + sixteen(ARROWS, 'Object.assign(arrow%d(%s), { tag: 1 })') + '];')
 item('bigA bigB', 'const bigA = makeBig(LEN), bigB = makeBig(LEN + 1);')
 item('holders HO0', 'const holders: Holder[] = []; for (let i = 0; i < 16; ++i) holders.push(new Holder(many[i])); for (let i = 0; i < 16; ++i) holders[i].next = holders[(i + 1) & 15];\nconst HO0: Holder = holders[0];')
 item('kA kB', 'const kA = new K(LEN), kB = new K(LEN + 1);')

@@ -1288,7 +1288,7 @@ function made() { const o = Object.defineProperties({}, { a: { value: 1, writabl
 function Plain() { Object.defineProperties(this, { a: { value: 1, writable: true }, b: { value: 2, enumerable: true }, c: { value: 3 } }); this.d = 4; }
 lines.push(show(new Rows([1, 2])), Object.keys(new Rows(["x"])).join(), show(new Hidden()), show(new Later()), show(new Plain()), JSON.stringify(new Plain()));
 for (let i = 0; i < 300; i++) { new Rows(); new Hidden(); new Later(); new Plain(); made(); }
-const names = ["operationAOTDefineOwnProperty"];
+const names = ["operationAOTDefineOwnProperty", "operationAOTDefineById", "operationAOTDefineField"];
 const asked = () => names.reduce((sum, name) => sum + count(name), 0);
 function apart(o) { return Object.defineProperties(o, { p: { value: 1 }, q: { value: 2 } }); }
 const untilNow = asked();
@@ -2629,9 +2629,9 @@ show("many objects", () => { let n = 0; for (let i = 0; i < 3000; i++) { const x
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const one: T = { a: 1, b: 2, c: "c" }, other = new Base(1);
 let total = keys(one).length + keys(other).length;
-const before = counted("operationAOTForInKeys");
+const before = counted("operationAOTGetPropertyEnumerator");
 for (let i = 0; i < 1000; i++) total += keys(one).length + keys(other).length;
-console.log(total, counted("operationAOTForInKeys") - before < 100);
+console.log(total, counted("operationAOTGetPropertyEnumerator") - before < 100);
 //// for-of-over-collections-of-another-realm.js
 // Arrays, maps and sets that another realm made have that realm's prototypes, which are not locked: a loop of the compiled program over them follows what that realm has made of its iterators. And what the host iterates itself.
 import vm from "node:vm";

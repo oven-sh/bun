@@ -22,6 +22,10 @@ pub(crate) enum RuntimeFileKind {
     Configuration,
 }
 
+/// Every module of Bun's has an id, so the tests name this one where they need a module that only the host has.
+#[cfg(test)]
+pub(crate) const HOST_VALUE_MODULE: &str = "bun:only-the-host-has-it";
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum RuntimeResolution {
     Module(HostModuleId),
@@ -113,6 +117,10 @@ impl RuntimeModules {
         specifier: &[u8],
         importer: &[u8],
     ) -> Option<RuntimeResolution> {
+        #[cfg(test)]
+        if specifier == HOST_VALUE_MODULE.as_bytes() {
+            return Some(RuntimeResolution::HostValue);
+        }
         let manifest = self.archive.manifest();
         let internal_module = self
             .files
@@ -473,9 +481,19 @@ mod tests {
     }
 
     #[test]
-    fn alias_without_registry_id_is_host_value() {
-        let resolution = runtime_modules().resolve_module(b"bun:main", b"");
+    fn module_that_only_the_host_has_is_host_value() {
+        let resolution = runtime_modules().resolve_module(HOST_VALUE_MODULE.as_bytes(), b"");
         assert_eq!(resolution, HOST_VALUE);
+    }
+
+    #[test]
+    fn module_in_place_of_entry_point_wrapper_has_source() {
+        let runtime = runtime_modules();
+        let resolution = runtime.resolve_module(b"bun:main", b"");
+        assert_eq!(
+            source_path(&runtime, resolution),
+            b"/$bun/js/runtime.main.js"
+        );
     }
 
     #[test]
@@ -503,7 +521,12 @@ mod tests {
         assert_eq!(runtime.find_modules(b"node:sy", b""), [util]);
         assert!(runtime.find_modules(b"node:fs", b"fs").is_empty());
         assert!(runtime.find_modules(b"internal/validators", b"").is_empty());
-        assert!(runtime.find_modules(b"bun:main", b"").is_empty());
+        assert_eq!(runtime.find_modules(b"bun:main", b"").len(), 1);
+        assert!(
+            runtime
+                .find_modules(HOST_VALUE_MODULE.as_bytes(), b"")
+                .is_empty()
+        );
         assert!(runtime.find_modules(b"./", b"").is_empty());
     }
 

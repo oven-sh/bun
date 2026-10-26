@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{Binding, BindingInitializer, BindingKind, Decl, FnOwner, Parent};
@@ -239,6 +239,8 @@ enum LiteralKind {
 pub(in crate::lower) struct PrintedOperators {
     literals: RefCell<FxHashMap<ExprId, bool>>,
     kinds: RefCell<FxHashMap<ExprId, Option<LiteralKind>>>,
+    // Whether a variable that is used once is being asked about. What that question asks of other such variables is answered without them.
+    is_asking_about_variable_used_once: Cell<bool>,
 }
 
 impl PrintedOperators {
@@ -637,7 +639,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     is_computed |= is_literal
                         && (is_name(printed_left)
                             || is_behind_comma && self.is_literal_operand(printed_right));
-                    printed_left
+                    match is_literal {
+                        true => left,
+                        false => printed_left,
+                    }
                 }
                 ExprKind::Cond { test, branches } => match self.find_printed_condition(test) {
                     Some(true) => hir.branches(branches).yes,
@@ -659,6 +664,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     op: UnOp::PostInc | UnOp::PostDec,
                     operand,
                 } => operand,
+                ExprKind::Ident(_) if is_computed => return hir[first].pos,
                 ExprKind::Ident(_) => match self.find_printed_in_place(first) {
                     Some(Printed::Initializer(initializer)) => initializer,
                     Some(Printed::Function(function)) => return hir[function].start,
@@ -770,6 +776,18 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // Bun's transpiler computes an operator whose operands are literals, and prints the result at the position of the operator's expression.
+    // Bun's transpiler prints the initializer of a variable in place of its only use. Where the expression of that statement is an operator or a condition it visits the expression again, and computes
+    // what has become an operator over literals.
+    fn find_literal_visited_again(&self, name: ExprId) -> Option<ExprId> {
+        let is_asking = &self.printed_operators.is_asking_about_variable_used_once;
+        if is_asking.replace(true) {
+            return None;
+        }
+        let initializer = self.find_initializer_visited_again(name);
+        is_asking.set(false);
+        initializer.filter(|&initializer| self.is_literal_operand(initializer))
+    }
+
     // `1 + "ab".length` and `Level.High`, of which Bun's transpiler prints the value.
     pub(in crate::lower) fn is_folded_into_literal(&self, expression: ExprId) -> bool {
         match self.hir[self.skip_type_syntax(expression)].kind {
@@ -805,9 +823,11 @@ impl FileLowering<'_, '_, '_, '_> {
             {
                 self.is_enum_member_known_when_parsed(member)
             }
-            ExprKind::Ident(_) => self
-                .find_printed_value(self.skip_type_syntax(expression))
-                .is_some(),
+            ExprKind::Ident(_) => {
+                let name = self.skip_type_syntax(expression);
+                self.find_printed_value(name).is_some()
+                    || self.find_literal_visited_again(name).is_some()
+            }
             ExprKind::Dot { obj, .. } => {
                 matches!(hir[self.skip_type_syntax(obj)].kind, ExprKind::String(_))
                     && matches!(
@@ -1131,7 +1151,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     None => return Some(LiteralKind::Number),
                 },
                 None => match hir[operand].kind {
-                    ExprKind::Ident(_) => self.find_printed_value(operand)?,
+                    ExprKind::Ident(_) => self
+                        .find_printed_value(operand)
+                        .or_else(|| self.find_literal_visited_again(operand))?,
                     _ => break,
                 },
             };
@@ -1299,7 +1321,11 @@ impl FileLowering<'_, '_, '_, '_> {
                 op: UnOp::Not,
                 operand,
             } => self.find_printed_condition(operand).map(|is_true| !is_true),
-            ExprKind::Ident(_) if let Some(value) = self.find_printed_value(test) => {
+            ExprKind::Ident(_)
+                if let Some(value) = self
+                    .find_printed_value(test)
+                    .or_else(|| self.find_literal_visited_again(test)) =>
+            {
                 self.find_printed_condition(value)
             }
             _ if !self.is_literal_operand(test) => None,

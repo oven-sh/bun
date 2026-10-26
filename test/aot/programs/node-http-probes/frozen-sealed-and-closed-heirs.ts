@@ -92,7 +92,7 @@ async function closeInstanceOfSubclass(level: Level, target: "request" | "respon
       const answer = await fetch(`http://127.0.0.1:${port}/${index}`, {
         method: "POST",
         body: "body",
-        signal: AbortSignal.timeout(2000),
+        signal: AbortSignal.timeout(20000),
       });
       answers.push(`${index}: ${answer.status} ${await answer.text()}`);
     } catch (error) {

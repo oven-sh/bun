@@ -8,16 +8,19 @@ const BASE = path.join(import.meta.dir, "../js");
 export const { moduleList, nativeStartIndex } = createInternalModuleRegistry(BASE);
 export const sourceFiles = moduleList.slice(0, nativeStartIndex);
 
-/** Modules that are compiled with a program that imports them and that the registry does not have. Their ids follow the registry's. */
-export const helperModules: { id: number; path: string; specifier?: string; source: string; isEsModule: boolean }[] = [
+/**
+ * Modules that are compiled with a program that imports them and that the registry does not have. Their ids follow the registry's.
+ * Without a `source`, the compiler reads the text that `bun run` evaluates, which Bun's build makes.
+ */
+export const helperModules: { id: number; path: string; specifier: string; source?: string; isEsModule: boolean }[] = [
+  { id: moduleList.length, path: "runtime.out.js", specifier: "bun:wrap", isEsModule: true },
   {
-    id: moduleList.length,
-    path: "runtime.bun.js",
-    specifier: "bun:wrap",
-    source: path.join(BASE, "../runtime.bun.js"),
+    id: moduleList.length + 1,
+    path: "runtime.main.js",
+    specifier: "bun:main",
+    source: path.join(BASE, "../runtime.main.js"),
     isEsModule: true,
   },
-  { id: moduleList.length + 1, path: "runtime.js", source: path.join(BASE, "../runtime.js"), isEsModule: true },
 ];
 
 const thirdPartySpecifiers: Record<string, string> = { "thirdparty/vercel_fetch.js": "@vercel/fetch" };
@@ -46,8 +49,6 @@ export const functionIds = builtinFunctionIds(path.join(BASE, "builtins"));
 
 /** Where the text that the compiler reads under the name `file` is. A module may have a second text for the compiler, under the same name in src/js/ahead-of-time. */
 export function locate(file: string): string {
-  const helper = helperModules.find(helper => helper.path === file);
-  if (helper) return helper.source;
   const forCompiler = path.join(BASE, "ahead-of-time", file);
   return fs.existsSync(forCompiler) ? forCompiler : path.join(BASE, file);
 }

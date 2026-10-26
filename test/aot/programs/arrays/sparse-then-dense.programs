@@ -1145,7 +1145,7 @@ printCase("iterable object", { *[Symbol.iterator]() { yield 1; yield "two"; } },
 printCase("generator", (function* () { yield 1; yield 2.5; yield "three"; })(), (function* () { yield 4; })());
 
 const plainSources = [integers, doubles, strings, integers64, doubles64, strings64, shortList];
-let appendsBefore = count("operationAOTAppendSpread");
+let appendsBefore = count("operationAOTAppendElements");
 let readsBefore = count("operationAOTReadBatchedElements");
 let total = 0;
 for (let round = 0; round < 1000; round++) {
@@ -1155,7 +1155,7 @@ for (let round = 0; round < 1000; round++) {
     if (x !== source[0] || y !== source[1] || z !== source[2]) total = -1;
   }
 }
-console.log("copied", total, count("operationAOTAppendSpread") === appendsBefore, count("operationAOTReadBatchedElements") === readsBefore);
+console.log("copied", total, count("operationAOTAppendElements") === appendsBefore, count("operationAOTReadBatchedElements") === readsBefore);
 
 class Rows extends Array {}
 const subclassInstance = new Rows();

@@ -2004,7 +2004,7 @@ const source = JSON.parse('{"a":1,"b":"two","c":[3],"d":{"e":4}}');
 let seen = 0;
 const withGetter = { get a() { seen++; return "got"; }, b: 2 };
 const show = (value) => JSON.stringify(value) + " " + Object.keys(value).length;
-const before = count("operationAOTObjectAssignFrom");
+const before = count("operationAOTCopyDataProperties");
 const said = new Set();
 for (let i = 0; i < 300; i++) {
   for (const f of [first, second, third]) {
@@ -2012,7 +2012,7 @@ for (let i = 0; i < 300; i++) {
     said.add(show(copy) + (copy !== source) + (copy.c === source.c));
   }
 }
-const calls = count("operationAOTObjectAssignFrom") - before;
+const calls = count("operationAOTCopyDataProperties") - before;
 console.log([...said].join(" | "), calls === 0 ? "and each copy was made in one step" : "and " + calls + " copies were made property by property");
 console.log(show(call(first, withGetter)), seen, show(call(second, null)), show(call(third, "ab")), show(call(first, [7, 8])), show(call(second, 5)));
 console.log(show(call(withMore, source, { a: 9, z: 0 })), show(call(alsoWithMore, { z: 0 }, source)), show(call(withMore, undefined, source)));

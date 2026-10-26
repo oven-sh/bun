@@ -237,8 +237,8 @@ fn decode_call(operation: ValueView<'_>) -> CallOperation {
     else {
         panic_at(operation, Opcode::Call);
     };
-    let [key, name, _] = rest[argument_count as usize..] else {
-        panic!("three fields follow the arguments of {}", operation.id);
+    let [key, name, _, _] = rest[argument_count as usize..] else {
+        panic!("four fields follow the arguments of {}", operation.id);
     };
     CallOperation {
         callee: ValueId::from_word(callee),

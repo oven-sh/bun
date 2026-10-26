@@ -6,7 +6,9 @@ use smallvec::SmallVec;
 
 use super::{ClassElement, FieldValue, is_auto_accessor, is_derived_class};
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{Field, FieldFlags, FunctionFlags, FunctionKind, TypeSiteKind};
+use crate::ir::generated::{
+    Field, FieldFlags, FunctionFlags, FunctionKind, OperandKind, TypeSiteKind,
+};
 use crate::ir::{ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, TypeTable, ValueId};
 use crate::lower::member::{GivenName, PropertyName};
 use crate::lower::positions::SiteOrigin;
@@ -121,6 +123,8 @@ impl FileLowering<'_, '_, '_, '_> {
             lowering.emit_return(undefined, None);
             lowering.builder.switch_to(split.taken);
             this = split.taken_value;
+        } else {
+            this = lowering.claim_operand_kind(this, OperandKind::Object);
         }
         for &element in elements {
             lowering.emit_class_element(class, element, this);

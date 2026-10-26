@@ -161,9 +161,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         self.set_position(position);
         self.read_scopes_of_expression(expression);
-        let value = self.lower_by_decision(expression, evaluation);
+        let value = self.lower_printed_part(expression, evaluation);
         let value = self.finish_expression(expression, value);
         self.leave_nesting();
+        value
+    }
+
+    // Of `(a, b)`, `1 && b` and `[b][0]` Bun's transpiler may print `b` alone. Nothing else of them leaves a record.
+    fn lower_printed_part(&mut self, expression: ExprId, evaluation: Evaluation<'_>) -> ValueId {
+        let printed = self.file.skip_unprinted_syntax(expression);
+        let is_partly_printed = printed != self.file.skip_type_syntax(expression);
+        if !is_partly_printed && self.printed_part != Some(expression) {
+            return self.lower_by_decision(expression, evaluation);
+        }
+        let part = is_partly_printed.then_some(printed);
+        let outer_part = std::mem::replace(&mut self.printed_part, part);
+        let were_suspended = self.builder.suspend_records(is_partly_printed);
+        let value = self.lower_by_decision(expression, evaluation);
+        self.builder.suspend_records(were_suspended);
+        self.printed_part = outer_part;
         value
     }
 

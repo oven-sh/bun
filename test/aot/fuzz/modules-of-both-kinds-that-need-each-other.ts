@@ -16,6 +16,7 @@
 // Every read stands in a try, and an error prints its name alone: the words of an error are not compared.
 //
 // A program in which plain Bun runs a CommonJS module a second time, because it threw the first time, is counted and is no finding where the two part: an executable runs a module once.
+// So is one in which the two part where a module that threw is asked for again and the executable throws: plain Bun answers with the namespace object there if an ES module imported the file while it ran.
 //
 // Where the two part and --node is given, Node is asked: an executable that prints what Node prints is counted and is no finding.
 //
@@ -249,6 +250,14 @@ if (import.meta.main) {
     return new Set(begun).size < begun.length;
   };
 
+  // Where an ES module imported the file while it ran, plain Bun runs nothing again: the next request gets the namespace object of that import. An executable throws the same error there too.
+  const throwsForModuleThatThrew = (plain: string, compiled: string) => {
+    const [expected, got] = [plain.split("\n"), compiled.split("\n")];
+    const parted = got[expected.findIndex((line, index) => line !== got[index])] ?? "";
+    const asked = /^m\d+ (?:early|late|late require|requires|then|late import) (m\d+)\b.* throws \w+$/.exec(parted)?.[1];
+    return asked !== undefined && expected.includes(`${asked} begins`) && !expected.includes(`${asked} ends`);
+  };
+
   // Whether the same graph without its awaits prints what plain Bun prints.
   async function agreesWithoutAwaits(seed: number, job: number): Promise<boolean> {
     const folder = join(work, `job-${job}-without`);
@@ -290,6 +299,7 @@ if (import.meta.main) {
     if (compiled.late) return finding("the executable hangs", folder, seed, notes, compiled.text);
     if (compiled.out === plain.out && compiled.code === plain.code) return void count("as plain");
     if (runsModuleAgain(plain.out)) return void count("a CommonJS module that threw runs again under plain Bun");
+    if (throwsForModuleThatThrew(plain.out, compiled.out)) return void count("a module that threw is asked for again and the executable throws");
     if (node && !Object.keys(files).some(file => file.endsWith(".ts")) && (await run([node, entry], folder, 30)).out === compiled.out) return void count("plain Bun is by itself: the executable prints what Node prints");
     if (awaits && !(await agreesWithoutAwaits(seed, job))) return void count("prints something else without its awaits too");
     const [expected, got] = [plain.out.split("\n"), compiled.out.split("\n")];

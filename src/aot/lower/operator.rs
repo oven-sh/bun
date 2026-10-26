@@ -185,7 +185,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_unary_operand(&mut self, expression: ExprId, operand: ExprId) -> ValueId {
         let value = self.lower_expression(operand);
-        self.set_position(self.file.hir[expression].pos);
+        let position = self.file.hir[expression].pos;
+        self.set_position(position);
+        self.builder.record_position(position);
         value
     }
 
@@ -440,12 +442,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         }
         let sums = self.plan_sums(expression, &spine, innermost);
+        // JSC records the position of a concatenation in front of its first operand.
+        let is_concatenated = |&sum: &SumOperator| sum == SumOperator::Concatenated;
+        if let Some(index) = sums
+            .as_ref()
+            .and_then(|sums| sums.iter().rposition(is_concatenated))
+        {
+            self.builder
+                .record_position(match index < first_in_parentheses {
+                    true => outer_position,
+                    false => inner_position,
+                });
+        }
         let mut value = self.lower_expression(innermost);
-        let mut recorded = match (spine.len(), &sums) {
-            (_, Some(_)) => self.find_last_record(innermost),
-            (1, None) => self.find_last_record_in_front_of(op, innermost),
-            (_, None) => None,
-        };
+        // The first value of the last concatenation. The transpiler joins the operands that follow with its right operand.
+        let mut concatenation = None;
         for (index, &(node_op, node_right)) in spine.iter().enumerate().rev() {
             let right_value = self.lower_expression(node_right);
             if index + 1 < spine.len() && needs_parentheses(node_op, spine[index + 1].0, true) {
@@ -455,25 +466,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 true => outer_position,
                 false => inner_position,
             };
-            let position = match (node_op, &sums) {
+            let sum = sums
+                .as_ref()
+                .map_or(SumOperator::Separate, |sums| sums[index]);
+            match (node_op, sum) {
                 // JSC reports `instanceof`, like `in`, where the right operand starts.
-                (BinOp::Instanceof, _) => hir[node_right].pos,
-                (BinOp::EqEq, _) => {
-                    self.find_comparison_position(expression, node_op, left, node_right, recorded)
+                (BinOp::Instanceof, _) => {
+                    let left = match index + 1 == spine.len() {
+                        true => innermost,
+                        false => spine[index + 1].1,
+                    };
+                    self.set_position(self.file.instanceof_position(left, node_right));
                 }
-                (_, Some(sums)) if sums[index] == SumOperator::Concatenated => {
-                    let joined = sums[..index].iter().rev();
-                    let joined = joined.take_while(|&&sum| sum == SumOperator::Joined);
-                    let operands = spine[index - joined.count()..=index].iter();
-                    let mut records =
-                        operands.filter_map(|&(_, right)| self.find_last_record(right));
-                    records.next().or(recorded).unwrap_or(written)
+                (BinOp::EqEq, _) | (_, SumOperator::Concatenated | SumOperator::Joined) => {
+                    self.set_position_to_last_recorded();
                 }
-                _ => written,
-            };
-            self.set_position(position);
-            if !matches!(&sums, Some(sums) if sums[index] == SumOperator::Joined) {
-                recorded = Some(position);
+                _ => self.set_position(written),
+            }
+            match sum {
+                SumOperator::Concatenated => concatenation = Some(self.builder.number_of_values()),
+                SumOperator::Joined => {
+                    if let Some(first) = concatenation {
+                        self.builder.move_to_last_recorded_position(first);
+                    }
+                }
+                SumOperator::Separate => concatenation = None,
             }
             value = match node_op {
                 BinOp::Instanceof if index + 1 == spine.len() => {
@@ -487,155 +504,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     // JSC records no position for `==`, which is reported at the last position recorded before it.
-    pub(in crate::lower) fn find_comparison_position(
-        &mut self,
-        expression: ExprId,
-        op: BinOp,
-        left: ExprId,
-        right: ExprId,
-        recorded_in_front: Option<u32>,
-    ) -> u32 {
-        let recorded = match op {
-            BinOp::EqEq => self
-                .find_last_record_of_equality(expression, left, right)
-                .or(recorded_in_front)
-                .or(self.builder.last_recorded_position()),
-            _ => None,
-        };
-        recorded.unwrap_or_else(|| self.find_operator_position(expression))
-    }
-
-    // What `find_comparison_position` wants to know about the left operand, which has just been lowered.
-    pub(in crate::lower) fn find_last_record_in_front_of(
-        &mut self,
-        op: BinOp,
-        left: ExprId,
-    ) -> Option<u32> {
+    pub(in crate::lower) fn set_comparison_position(&mut self, expression: ExprId, op: BinOp) {
         match op {
-            BinOp::EqEq => self.find_last_record(left),
-            _ => None,
-        }
-    }
-
-    // The position of the last record that JSC makes for an operand, which has just been lowered. A literal leaves none.
-    pub(in crate::lower) fn find_last_record(&mut self, operand: ExprId) -> Option<u32> {
-        self.find_last_record_of(operand, true)
-    }
-
-    fn find_last_record_of(&mut self, operand: ExprId, mut is_just_lowered: bool) -> Option<u32> {
-        let hir = self.file.hir;
-        let mut last = self.file.skip_unprinted_syntax(operand);
-        loop {
-            if self.file.is_literal_operand(last) {
-                return None;
-            }
-            let next = match hir[last].kind {
-                ExprKind::Binary {
-                    op: BinOp::Comma,
-                    left,
-                    right,
-                } => {
-                    let recorded = self.find_last_record_of(right, false);
-                    if recorded.is_some() {
-                        return recorded;
-                    }
-                    is_just_lowered = false;
-                    left
-                }
-                ExprKind::Binary {
-                    op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish),
-                    ..
-                } => {
-                    let mut operands: SmallVec<[ExprId; 8]> = SmallVec::new();
-                    let mut first = last;
-                    while let ExprKind::Binary {
-                        op: inner,
-                        left,
-                        right,
-                    } = hir[first].kind
-                        && inner == op
-                    {
-                        operands.push(right);
-                        first = self.file.skip_unprinted_syntax(left);
-                    }
-                    // Bun's transpiler drops what follows a literal that decides a chain of `&&` or `||`.
-                    let is_end = |&operand: &ExprId| {
-                        op != BinOp::Nullish
-                            && self.file.ends_logical_chain(op, operand) == Some(true)
-                    };
-                    let printed_from = operands.iter().rposition(is_end).unwrap_or(0);
-                    for &operand in &operands[printed_from..] {
-                        let recorded = self.find_last_record_of(operand, false);
-                        if recorded.is_some() {
-                            return recorded;
-                        }
-                    }
-                    is_just_lowered = false;
-                    first
-                }
-                ExprKind::Binary { .. } if is_just_lowered => return Some(self.position()),
-                ExprKind::Binary {
-                    op: op @ (BinOp::EqEq | BinOp::EqEqEq),
-                    left,
-                    right,
-                } => {
-                    let (printed_left, printed_right) = self.file.printed_operands(op, left, right);
-                    let recorded = self.find_last_record_of(printed_right, false);
-                    if recorded.is_some() {
-                        return recorded;
-                    }
-                    printed_left
-                }
-                ExprKind::Binary { .. } => return Some(self.find_operator_position(last)),
-                ExprKind::Unary {
-                    op: UnOp::Typeof,
-                    operand,
-                } if matches!(hir[operand].kind, ExprKind::Ident(_)) => {
-                    return Some(hir[operand].pos);
-                }
-                ExprKind::Unary {
-                    op: UnOp::Void | UnOp::Typeof,
-                    operand,
-                } => operand,
-                ExprKind::Template { exprs } => hir.ids(exprs).last()?,
-                ExprKind::This | ExprKind::BigInt(_) | ExprKind::Fn(_) => return None,
-                ExprKind::Ident(_) => return Some(self.file.name_position(last)),
-                _ => return Some(self.file.last_reported_position(last)),
-            };
-            last = self.file.skip_unprinted_syntax(next);
-        }
-    }
-
-    // JSC records a name where it ends. The source map takes that to a `)` or `]` that is printed right behind the name.
-    fn find_last_record_of_equality(
-        &mut self,
-        expression: ExprId,
-        left: ExprId,
-        right: ExprId,
-    ) -> Option<u32> {
-        let hir = self.file.hir;
-        let recorded = self.find_last_record(right)?;
-        let printed_right = self.file.printed_operands(BinOp::EqEq, left, right).1;
-        let printed_right = self.file.skip_unprinted_syntax(printed_right);
-        if !matches!(hir[printed_right].kind, ExprKind::Ident(_)) {
-            return Some(recorded);
-        }
-        let mut last = expression;
-        while let Parent::Expr(parent) = self.file.bound.parent_of_expr(last) {
-            match hir[parent].kind {
-                ExprKind::Call(site) | ExprKind::New(site)
-                    if hir.ids(hir[site].args).last() == Some(last) =>
-                {
-                    return Some(hir[site].close_pos);
-                }
-                ExprKind::Array(elements) if hir.ids(elements).last() == Some(last) => {
-                    return Some(self.file.last_token_position(parent));
-                }
-                _ if hir.type_assertion_operand(parent).is_some() => last = parent,
-                _ => break,
+            BinOp::EqEq => self.set_position_to_last_recorded(),
+            _ => {
+                let position = self.find_operator_position(expression);
+                self.set_position(position);
             }
         }
-        Some(recorded)
     }
 
     fn lower_in(&mut self, expression: ExprId, left: ExprId, right: ExprId) -> ValueId {

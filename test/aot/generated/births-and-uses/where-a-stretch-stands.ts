@@ -1,6 +1,8 @@
 // Where a stretch of code stands. A rewrite of the compiler is written with the stretch in mind that it rewrites, in a function that runs from top to bottom. The same stretch also stands
 // in a loop, in two loops, beside a `continue` or a `break`, under a handler that reads what the stretch has left half done, around a suspension, in a function that is copied into its
 // caller, in one that is also called from a place that seldom runs, under a closure that holds its variables. A family of programs is its stretches times these places, one program each.
+import onceWrong from "./once-wrong.json";
+
 export type Stretch = {
   name: string;
   /** Declarations at the top of the module. */
@@ -21,9 +23,13 @@ export type Stretch = {
 export type Loops = { upTo: (turns: number) => string; listOf: (list: string) => string };
 type Placed = Stretch & Loops;
 
-/** A loop of a few turns whose number is written down may be laid out turn by turn, and is a loop no more. Half of the names leave the number to the run. */
+const keptAsWritten = new Set(Object.values(onceWrong as Record<string, string[]>).flat());
+/** A program of several parts asks by its own name, where its parts are dealt by theirs. */
+export const isKeptAsWritten = (name: string) => keptAsWritten.has(name);
+
+/** A loop of a few turns whose number is written down may be laid out turn by turn, and is a loop no more. Half of the names leave the number to the run. A program that once-wrong.json names stays as it was. */
 export function loopsOf(name: string): Loops {
-  const isWrittenDown = Bun.hash(name + " turns") % 2n === 0n;
+  const isWrittenDown = keptAsWritten.has(name) || Bun.hash(name + " turns") % 2n === 0n;
   return {
     upTo: turns => (isWrittenDown ? `${turns}` : `${turns} + extraTurns`),
     listOf: list => (isWrittenDown ? list : `${list}.slice(extraTurns)`),
@@ -33,6 +39,12 @@ export function loopsOf(name: string): Loops {
 /** A text that is written already, with its counted loops of under ten turns as loopsOf(name) writes them. The program declares `extraTurns`. */
 export const withLoopsOf = (name: string, text: string) =>
   text.replace(/(for \(let \w+ = 0; \w+ < )(\d)(?=;)/g, (_, start, turns) => start + loopsOf(name).upTo(Number(turns)));
+
+/** A whole program that is written already, and at its top the declaration, where a loop of it needs one. */
+export function programWithLoopsOf(name: string, text: string) {
+  const written = withLoopsOf(name, text);
+  return written === text ? text : `const extraTurns = process.argv.length > 99 ? 1 : 0;\n${written}`;
+}
 
 type Place = { kind?: "await" | "yield"; isOutsideFunctions?: true; text: (stretch: Placed) => string };
 

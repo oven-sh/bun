@@ -118,9 +118,10 @@ fn call_round_trip() {
     let reference = (4 + DROPPED_VALUE_COUNT) as u32;
     assert_eq!((with_this.id, with_this.opcode), (value(5), Opcode::Call));
     assert_eq!(with_this.position, Some(17));
+    let absent = ABSENT_WORD;
     assert_eq!(
         with_this.fields,
-        [1, 0, 1, 3, 2, 4, 3, reference, reference, reference]
+        [1, 0, 1, 3, 2, 4, 3, reference, reference, reference, absent]
     );
 
     assert_eq!(
@@ -128,10 +129,9 @@ fn call_round_trip() {
         (value(6), Opcode::Call)
     );
     assert_eq!(without_this.position, None);
-    let absent = ABSENT_WORD;
     assert_eq!(
         without_this.fields,
-        [2, 0, absent, 0, absent, absent, absent]
+        [2, 0, absent, 0, absent, absent, absent, absent]
     );
 }
 

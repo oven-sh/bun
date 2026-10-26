@@ -815,11 +815,11 @@ async function main() {
 }
 main();
 //// worker-from-text-refused.js
-// The compiler finds nothing in this program that evaluates text, and counts on it. A Worker whose script is text that the program makes at run time throws the error of an evaluator that the compiler could not follow. closed-world/worker-from-text-admitted is the same program built with --compile-inspector.
+// The compiler finds nothing in this program that evaluates text, and counts on it. A Worker whose script is text that the program makes at run time starts and fails to load: an error event says that the text isn't in the executable. closed-world/worker-from-text-admitted is the same program built with --compile-inspector.
 // What native code hands back is unknown to the compiler, and so is text that is decoded at run time.
 const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
 const decoded = text => Buffer.from(text).toString();
-////= outcome-5	e compiler couldn't tell at build time") ? "refused: " + message : error.nam
+////= outcome-5	is executable, which only runs code that was compiled into it") ? "refused: it isn't in this executable" : error.nam
 ////= attempt
 ////= started
 async function main() {

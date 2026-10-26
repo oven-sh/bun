@@ -159,8 +159,10 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     }
     RETURN_IF_EXCEPTION(throwScope, {});
     // node:worker_threads' `eval: true` arrives here as a blob: URL of the source.
-    if (Bun::isDataOrBlobURL(scriptUrl)) [[unlikely]] {
-        THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(lexicalGlobalObject, throwScope, {});
+    // Where no flag asks for the error, the Worker starts and reports what its entry point fails to load with.
+    if (Bun::isDataOrBlobURL(scriptUrl) && Bun::isCodeGenerationFromStringsStrictByFlags()) [[unlikely]] {
+        JSC::throwException(lexicalGlobalObject, throwScope, Bun::createCodeGenerationFromStringsError(lexicalGlobalObject));
+        return {};
     }
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 

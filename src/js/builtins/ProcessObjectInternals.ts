@@ -337,13 +337,121 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 // JSNextTickQueue: whether ticks are queued, the queue, the function that runs it.
 type NextTickQueue = InternalFieldObject<[number, unknown, (() => void) | undefined]>;
 type DrainMicrotasks = () => void;
+type Tick = import("../internal/process/tick_ring").Tick;
+type TickCallback = import("../internal/process/tick_ring").TickCallback;
+type TickFrame = import("../internal/process/tick_ring").Frame;
 
-export function initializeNextTickQueue(
-  process: NodeJS.Process,
-  nextTickQueue: NextTickQueue,
-  drainMicrotasksFn: DrainMicrotasks,
-) {
-  return require("internal/process/next_tick_queue").initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn);
+// A stack trace shows where in this function processTicksAndRejections and nextTick begin: native:7:39 and native:40:20.
+// test/js/node/process/process-nexttick-is-native-code.test.ts holds both.
+export function initializeNextTickQueue(process: NodeJS.Process, marker: NextTickQueue, drain: DrainMicrotasks) {
+  const { ring, takeTick, setUp, asyncContext, install } = require("internal/process/next_tick_queue");
+  $putInternalField(marker, 0, 0);
+  function startRing() {
+    const tickRing = require("internal/process/tick_ring");
+    tickRing.start(process, marker, processTicksAndRejections);
+    function processTicksAndRejections() {
+      const context = asyncContext;
+      do {
+        for (let tick: Tick; (tick = ring.read!) !== ring.write;) {
+          const callback = tick.callback!;
+          const count = tick.count;
+          const frame = tick.frame;
+          tick.callback = undefined;
+          tick.frame = undefined;
+          ring.read = tick.next;
+          var restore = $getInternalField(context, 0);
+          $putInternalField(context, 0, frame);
+          if (count === 0) {
+            callback();
+          } else if (count === 1) {
+            const first = tick.first;
+            tick.first = undefined;
+            callback(first);
+          } else if (count === -1) {
+            // The TickObject is read in the async context that is current between ticks.
+            $putInternalField(context, 0, restore);
+            const { callback, args, frame } = tickRing.takeTickObject(tick);
+            restore = $getInternalField(context, 0);
+            $putInternalField(context, 0, frame);
+            if (args === undefined) callback();
+            else callback(...args);
+          } else if (count === 2) {
+            const first = tick.first;
+            const second = tick.second;
+            tick.first = undefined;
+            tick.second = undefined;
+            callback(first, second);
+          } else {
+            const first = tick.first;
+            const second = tick.second;
+            const third = tick.third;
+            tick.first = undefined;
+            tick.second = undefined;
+            tick.third = undefined;
+            callback(first, second, third);
+          }
+          $putInternalField(context, 0, restore);
+        }
+
+        drain();
+      } while (ring.read !== ring.write);
+      $putInternalField(marker, 0, 0);
+    }
+  }
+  // process.nextTick of a program that is not compiled ahead of time.
+  function nextTick(cb: TickCallback, ...args: unknown[]) {
+    if (typeof cb !== "function") require("internal/validators").validateFunction(cb, "callback");
+    if (ring.write === undefined) setUp();
+    if (process._exiting) return;
+    const hooked = tickInitHooks.length !== 0;
+    const count = args.length | 0;
+    const frame: TickFrame = $getInternalField(asyncContext, 0);
+    if (count > 3 || hooked) {
+      const tock = { callback: cb, args: count !== 0 ? args : undefined, frame };
+      if (hooked) {
+        // node fires one TickObject init per process.nextTick() call, at
+        // construction time (before the callback runs).
+        const asyncId = asyncHooksTick.newAsyncId();
+        // Snapshot: enable()/disable() from inside a hook must not affect the
+        // in-flight dispatch (node stages such mutations in tmp_array until
+        // the emit completes).
+        const hooks = tickInitHooks.slice();
+        for (let i = 0; i < hooks.length; i++) {
+          try {
+            hooks[i](asyncId, "TickObject", 0, tock);
+          } catch (err) {
+            // node: a throwing init hook is fatal (fatalError: print + exit 1),
+            // never surfaced to the process.nextTick() caller. console is a
+            // user-mutable global, so shield the print; exit regardless.
+            try {
+              console.error(
+                typeof (err as Partial<Error> | null | undefined)?.stack === "string" ? (err as Error).stack : err,
+              );
+            } catch {}
+            process.exit(1);
+          }
+        }
+      }
+      require("internal/process/tick_ring").pushTickObject(tock);
+    } else {
+      const tick = takeTick(cb, frame);
+      tick.count = count;
+      if (count !== 0) {
+        tick.first = args[0];
+        if (count !== 1) {
+          tick.second = args[1];
+          if (count !== 2) tick.third = args[2];
+        }
+      }
+    }
+    $putInternalField(marker, 0, 1);
+  }
+  if (IS_COMPILED_AHEAD_OF_TIME) {
+    return install(process, marker, startRing, require("internal/process/next_tick_queue").nextTick);
+  }
+  const asyncHooksTick = require("internal/async_hooks_tick");
+  const tickInitHooks = asyncHooksTick.tickInitHooks;
+  return install(process, marker, startRing, nextTick);
 }
 
 type InternalEnvMap = Record<string, string>;

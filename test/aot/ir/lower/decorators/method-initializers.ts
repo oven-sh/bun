@@ -1,7 +1,8 @@
 // RUN(METHOD): link
 // METHOD: layout [[layout]] kind=Instance name="WithMethod"
 // METHOD: function {{*}}kind=Initializer{{*}}thisType={type=[[layout]] flags=[IsFromCompiler]}
-// METHOD: b0([[this]]
+// METHOD: b0([[received]]
+// METHOD: [[this]] = Convert [[received]] declared={type=object flags=[IsFromCompiler, IsClaim]}
 // METHOD-NOT: PropDefine
 // METHOD: [[list]] = ElemGet
 // METHOD: [[run]] = Builtin builtin=CompilerHelpersRunInitializers

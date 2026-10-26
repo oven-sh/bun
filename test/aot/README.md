@@ -80,7 +80,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **A test file that runs no test is red on Debian x64** (`--must-run`), which is told to run every file. A file whose tests all skip themselves there goes into one of the lists of
   `scripts/aot-tests.ts`: what needs a sanitizer or a hardened Bun is always run by the step that has one and left out by the others, what comes as units of `parts.mts` or reads the
   engine's sources is run elsewhere, and `testsOutsideCi` has what no step can run, each with the reason. `every-test-runs-in-ci.test.ts` checks the lists against the steps.
-- **The number of shards follows from the lines of these tests in `test/expected-durations.json`**, twelve minutes to a shard and at most 27 (24 on arm64, 8 on macOS), and
+- **The number of shards follows from the lines of these tests in `test/expected-durations.json`**, twelve minutes to a shard and at most 27 (24 on arm64, 16 on macOS), and
   the files are dealt out by those lines. What a lane runs whatever it draws (`getAotAlwaysDrawn()`) counts whole, the rest by the lane's draw. A file without a line adds nothing to the number of shards and is dealt out as the median of the
   folder: a new file that takes minutes needs a line. `scripts/update-test-durations.mjs` renews them from builds that ran all of the
   folder.

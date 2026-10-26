@@ -205,10 +205,16 @@ async function run(
     );
     const split = (text: string) => text.split(new RegExp(`\\n${mark} (\\d+) (\\S+)\\n`));
     const [stdout, stderr] = [split(ran.stdout), split(ran.stderr)];
-    const ended = (Math.min(stdout.length, stderr.length) / 3) | 0;
+    const marks = (Math.min(stdout.length, stderr.length) / 3) | 0;
+    // The thread of a program that the runner stopped can write into a mark. The programs from there on run again.
+    let ended = 0;
+    while (
+      ended < marks &&
+      Number(stdout[3 * ended + 1]) === left[ended] &&
+      Number(stderr[3 * ended + 1]) === left[ended]
+    )
+      ended++;
     for (let position = 0; position < ended; position++) {
-      if (Number(stdout[3 * position + 1]) !== left[position] || Number(stderr[3 * position + 1]) !== left[position])
-        throw new Error(`Expected the mark of program ${left[position]} at position ${position} of ${stage}`);
       results.set(left[position], {
         stdout: stdout[3 * position],
         stderr: stderr[3 * position],
@@ -221,7 +227,7 @@ async function run(
         stderr: stderr[3 * ended].slice(-4000),
         // Behind the bound nothing is written any more, so the marks of the programs that follow are missing too.
         end:
-          Math.max(ran.stdout.length, ran.stderr.length) >= maxBlocksWritten * 512
+          ended < marks || Math.max(ran.stdout.length, ran.stderr.length) >= maxBlocksWritten * 512
             ? "output"
             : `the process ended: ${ran.signal ?? `exit code ${ran.exitCode}`}`,
         stoppedBefore: left.slice(0, ended).filter(index => isLimit(results.get(index)!)),
@@ -348,6 +354,8 @@ const withNullAsUndefined = (output: string) =>
     .replace(/\[Object: null prototype\] /g, "")
     .replace(/\bnull\b/g, "undefined");
 const isLimit = ({ end }: Ended) => end === "time" || end === "memory" || end === "output";
+/** Thousands of buffers that can grow take more addresses than a process can reserve. */
+const reservedTooManyAddresses = ({ stderr }: Ended) => stderr.includes("mprotect failed: Cannot allocate memory");
 const classOfError = ({ stderr }: Ended) => /\b\w*Error\b/.exec(stderr)?.[0];
 
 function keepFind(kind: string, summary: string, files: Record<string, string>) {
@@ -463,6 +471,22 @@ async function agreesWithUndefinedAsThisOfTheModule(
   layOut(folder, [withUndefinedAsThisOfTheModule(text)], extension, 1);
   const ran = await spawn("this", [bun, "run", `./programs/0${extension}`], folder, plainEnv, 30);
   return removeDetailsOfErrors(ran.stdout) === removeDetailsOfErrors(stdout);
+}
+
+/** `ended` with what the one program in `folder` writes to stderr as an executable of its own. A Worker reports the first of several errors. */
+async function withErrorsOfItsOwnExecutable(folder: string, extension: string, ended: Ended): Promise<Ended> {
+  const own = join(folder, "own");
+  await spawn(
+    "own-build",
+    [bun, "build", "--compile", "--aot", ...buildFlags, `./programs/0${extension}`, "--outfile", own],
+    folder,
+    {},
+    120,
+  );
+  if (!existsSync(own)) return ended;
+  const ran = await spawn("own", ["sh", "-c", `ulimit -f ${maxBlocksWritten}; exec "$0"`, own], folder, {}, 30);
+  rmSync(own, { force: true });
+  return { ...ended, stderr: ended.stderr + ran.stderr.slice(0, 64 << 10) };
 }
 
 /** Whether the executable stopped at a name that `bun run` doesn't know either. `bun run` removes an unused read of some names. */
@@ -605,9 +629,9 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
     const inOrdinary = ordinary.get(index);
     const says = (message: string) => second.stderr.includes(message) || second.stdout.includes(message);
     const showsFunctionText = !hidesFunctionText && /function|=>|class /.test(referenceAgain.stdout + second.stdout);
-    let kind = referenceAgain.end.startsWith("the process ended")
+    let kind = referenceAgain.end.startsWith("the process ended") && !reservedTooManyAddresses(referenceAgain)
       ? "bun-run-signal"
-      : isLimit(referenceAgain)
+      : isLimit(referenceAgain) || reservedTooManyAddresses(referenceAgain)
         ? "neither finished"
         : !isLimit(reference) && !agree(reference, referenceAgain)
           ? "bun run is unsteady"
@@ -649,11 +673,12 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
     if (["limit", "exit-code", "stdout"].includes(kind)) {
       const alone = join(work, `alone-${process.pid}`);
       layOut(alone, [texts[index]], extension, 1);
+      const said = await withErrorsOfItsOwnExecutable(alone, extension, second);
       if ((await build(alone, 1, extension, 1)).writesToBuiltins.size) kind = "documented difference";
       else if (await printsTheDepthOfTheStack(alone, extension)) kind = "documented difference";
       else if (
         stoppedAtAnUnusedLiteral(texts[index], referenceAgain) ||
-        (!referenceAgain.stderr.includes("ReferenceError") && (await stoppedAtANameThatDoesNotExist(alone, second)))
+        (!referenceAgain.stderr.includes("ReferenceError") && (await stoppedAtANameThatDoesNotExist(alone, said)))
       )
         kind = "documented difference";
       else if (!hidesFunctionText && (await printsFromTheTextOfFunctions(alone, extension))) kind = "function text";
@@ -667,7 +692,7 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
         (await agreesWithKeysConvertedBeforeValues(alone, extension, texts[index], second))
       )
         kind = "documented difference";
-      else if (await stoppedAtAnUnusedReadBeforeTheDeclaration(alone, extension, texts[index], second, referenceAgain))
+      else if (await stoppedAtAnUnusedReadBeforeTheDeclaration(alone, extension, texts[index], said, referenceAgain))
         kind = "documented difference";
       rmSync(alone, { recursive: true, force: true });
     }

@@ -547,17 +547,7 @@ function createHook(hook: HookCallbacks) {
         // function must stay independently removable (removal is by
         // identity, and removing the other instance's entry would reorder
         // its callback relative to unrelated hooks).
-        enabledInit = (asyncId, type, triggerAsyncId, resource) => {
-          try {
-            init(asyncId, type, triggerAsyncId, resource);
-            return false;
-          } catch (err: any) {
-            try {
-              console.error(typeof err?.stack === "string" ? err.stack : err);
-            } catch {}
-            return true;
-          }
-        };
+        enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
         require("internal/process/next_tick_queue").ring.pushWithInitHooks =
           require("internal/process/tick_ring").pushWithInitHooks;
         require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);

@@ -77,6 +77,12 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
             return ImplementationVisibility::Public;
 #endif
 
+#if ENABLE(AOT)
+        // The walk over compiled code lists the frames that are shown. The function object that names such a frame enters compiled code through an executable that is shown nowhere.
+        if (frame.isCompiledFrame())
+            return ImplementationVisibility::Public;
+#endif
+
         if (auto* callee = frame.callee()) {
             if (auto* jsFunction = dynamicDowncast<JSFunction>(callee)) {
                 if (auto* executable = jsFunction->executable())

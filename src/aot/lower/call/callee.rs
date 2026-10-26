@@ -1,9 +1,10 @@
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{Binding, BindingInitializer, BindingKind, FnOwner, Parent};
+use bun_sema::check::spans::skip_trivia;
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, IdList, MemberKey, StmtKind,
-    UnOp,
+    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey,
+    StmtKind, UnOp, end_of_expr,
 };
 
 use super::Callee;
@@ -210,9 +211,12 @@ fn is_equality(op: BinOp) -> bool {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // JSC reports a call at the end of its callee, which the source map takes back to this token.
+    // JSC reports a call at the end of its callee, which the source map takes back to this token. A text that runs as written has no source map.
     pub(in crate::lower) fn last_mapped_position(&self, expression: ExprId) -> u32 {
         let hir = self.hir;
+        if self.runs_as_written() {
+            return end_of_expr(hir, expression);
+        }
         let mut last = self.skip_type_syntax(expression);
         loop {
             if self.is_printed_as_literal(last) {
@@ -257,9 +261,42 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    // JSC reports a call at the end of the last token in front of the arguments, which is the `?.` of `f?.()`.
+    pub(in crate::lower) fn call_position(&self, site: Call) -> u32 {
+        let end = self.last_mapped_position(site.callee);
+        match site.chain {
+            Chain::Start if self.runs_as_written() => self.next_token_position(end) + 2,
+            Chain::Start | Chain::Continue | Chain::No => end,
+        }
+    }
+
+    // JSC reports an access to a member at the `.`, the `?.` or the `[` behind the object, which the source map takes back to the last token of the object.
+    pub(in crate::lower) fn member_position(&self, object: ExprId) -> u32 {
+        let end = self.last_mapped_position(object);
+        if !self.runs_as_written() {
+            return end;
+        }
+        let operator = self.next_token_position(end);
+        if !self.hir.text[operator as usize..].starts_with(b"?.") {
+            return operator;
+        }
+        let key = self.next_token_position(operator + 2);
+        match self.hir.text.get(key as usize) {
+            Some(b'[') => key,
+            _ => operator,
+        }
+    }
+
+    pub(in crate::lower) fn next_token_position(&self, position: u32) -> u32 {
+        skip_trivia(&self.hir.text, position as usize) as u32
+    }
+
     // JSC records a name where it ends. The source map takes that to a `)` or `]` that is printed right behind the name.
     pub(in crate::lower) fn name_position(&self, identifier: ExprId) -> u32 {
         let hir = self.hir;
+        if self.runs_as_written() {
+            return hir[identifier].end;
+        }
         let is_last = |list: IdList<ExprId>, member: ExprId| {
             hir.ids[list.range()]
                 .last()
@@ -304,11 +341,25 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                     parent
                 }
+                ExprKind::Unary { op, .. } if !matches!(op, UnOp::PostInc | UnOp::PostDec) => {
+                    parent
+                }
+                ExprKind::Spread(_) => parent,
                 _ if hir.type_assertion_operand(parent).is_some() => parent,
                 _ => break,
             };
         }
         hir[identifier].pos
+    }
+
+    // JSC reports `instanceof` where the right operand starts. The source map knows no `(` around an arrow function, and takes that to the token in front.
+    pub(in crate::lower) fn instanceof_position(&self, left: ExprId, right: ExprId) -> u32 {
+        match self.hir[self.skip_type_syntax(right)].kind {
+            ExprKind::Fn(function) if self.hir[function].kind == FnKind::Arrow => {
+                self.last_mapped_position(left)
+            }
+            _ => self.hir[right].pos,
+        }
     }
 
     // `[n][0]`, of which only `n` is printed.
@@ -670,15 +721,28 @@ impl FileLowering<'_, '_, '_, '_> {
     // JSC's parser knows `Reflect.construct(target, list)` by these two names, whatever `Reflect` is bound to.
     pub(super) fn is_reflect_construct_syntax(&self, callee: ExprId) -> bool {
         let hir = self.hir;
-        let Some((object, MemberKey::Name(name))) = hir.member_key(self.skip_type_syntax(callee))
-        else {
+        let Some((object, key)) = hir.member_key(self.skip_type_syntax(callee)) else {
             return false;
         };
-        let ExprKind::Ident(object) = hir[self.skip_type_syntax(object)].kind else {
+        // Bun's transpiler prints the initializer of a variable in place of its only use.
+        let name = match key {
+            MemberKey::Name(name) => name,
+            MemberKey::Computed(key) => match self.find_printed_initializer(key) {
+                Some(printed) => match hir[self.skip_type_syntax(printed)].kind {
+                    ExprKind::String(text) => text,
+                    _ => return false,
+                },
+                None => return false,
+            },
+            MemberKey::PrivateName(_) => return false,
+        };
+        let object = self.skip_type_syntax(object);
+        let ExprKind::Ident(object_name) = hir[object].kind else {
             return false;
         };
-        self.queries.atom_bytes(object) == b"Reflect"
+        self.queries.atom_bytes(object_name) == b"Reflect"
             && self.queries.atom_bytes(name) == b"construct"
+            && self.find_printed_initializer(object).is_none()
     }
 
     pub(super) fn find_callee_name(&mut self, callee: ExprId) -> Option<StringId> {

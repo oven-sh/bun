@@ -207,7 +207,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             } => {
                 self.set_identifier_target(target, value, source);
                 if scope::find_tested_local(self, identifier).is_some() {
-                    return self.lower_identifier(identifier);
+                    return self.read_stored_identifier(identifier);
                 }
             }
             Reference::FreeName(name) => self.emit_free_name_set(name, value),

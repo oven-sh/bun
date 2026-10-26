@@ -64,6 +64,12 @@ const forms = {
   withFieldThatThrows() { class Fields { field = fail(); } new Fields(1); },
   ownError() { class Problem extends Error {} throw new Problem("thrown"); },
   capturedInConstructor() { function Captures() { Error.captureStackTrace(this); } throw new Captures(1); },
+  ofVariableDeclaredBelow() { new below(1); let below = Thrower; },
+  ofClassDeclaredBelow() { new Below(1); class Below {} },
+  ofVariableDeclaredBelowAsArgument() { pass(1, new below(pass(1))); const below = Thrower; },
+  asObjectOfForIn() { for (const key in new Proxy({}, { ownKeys: fail })) pass(key); },
+  asObjectOfForOf() { for (const item of new Proxy([], { get: fail })) pass(item); },
+  asOperandOfSpread() { pass(...new Proxy([], { get: fail })); },
 };
 const inThisFile = /call-sites-of-expressions-that-construct/;
 function textOf(error) {

@@ -1,12 +1,12 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::Binding;
 use bun_sema::fold::Decision;
-use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, IdList, PropId, Span, UnOp};
+use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, IdList, MemberKey, PropId, Span, UnOp};
 
 use super::ResultUsage;
 use super::logical::LogicalOperator;
 use crate::ir::ValueId;
-use crate::lower::member::{KeyConversion, PropertyName};
+use crate::lower::member::{KeyConversion, PropertyName, Reference};
 use crate::lower::module::file_scope;
 use crate::lower::scope::BindingRef;
 use crate::lower::{FileLowering, FunctionLowering};
@@ -71,7 +71,7 @@ impl FileLowering<'_, '_, '_, '_> {
     // JSC reports a plain store to a member at the end of the object, and every other store at the end of the target.
     fn plain_store_position(&self, expression: ExprId, target: ExprId) -> u32 {
         match self.hir.member_key(self.skip_type_syntax(target)) {
-            Some((object, _)) => self.last_mapped_position(object),
+            Some((object, _)) => self.member_position(object),
             None => self.hir[expression].pos,
         }
     }
@@ -111,12 +111,11 @@ pub(super) fn lower_assignment(
             | BinOp::BitXor),
         ) => {
             let reference = lowering.lower_reference(target, KeyConversion::Once);
+            lowering.set_position_of_updated_read(target);
             let old = lowering.get_reference(&reference);
-            let read_position = lowering.position();
             let old = lowering.convert_through_assertions(target, old);
             let right = lowering.lower_expression(value);
-            let position = lowering.find_update_position(expression, read_position);
-            lowering.set_position(position);
+            lowering.set_update_position(expression, target);
             let updated = lowering.emit_binary(op, old, right);
             lowering.set_position(lowering.file.last_mapped_position(target));
             lowering.put_reference(&reference, updated, Some(expression))
@@ -142,21 +141,31 @@ pub(super) fn lower_assignment(
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     // JSC records a position for the operator of `x += v` only where `x` lives in a scope object. Elsewhere the operator is reported at the last position recorded before it.
-    fn find_update_position(&mut self, expression: ExprId, read_position: u32) -> u32 {
-        let node = self.file.hir[expression];
-        let ExprKind::Assign { target, value, .. } = node.kind else {
-            return node.pos;
-        };
-        let in_front = match self.file.classify_assignment_target(target) {
+    // Nor does it record one for the read of `x` there, or for the test of `o` in `o[k] += v`, which follows a `k` that is no literal.
+    fn set_position_of_updated_read(&mut self, target: ExprId) {
+        let has_no_record = match self.file.classify_assignment_target(target) {
             AssignmentTarget::Identifier { identifier, .. } => {
-                if !self.file.is_kept_in_register(identifier) {
-                    return node.pos;
-                }
-                node.pos
+                self.file.is_kept_in_register(identifier)
             }
-            _ => read_position,
+            _ => match self.file.hir.member_key(self.file.skip_type_syntax(target)) {
+                Some((_, MemberKey::Computed(key))) => !self.file.is_literal_operand(key),
+                _ => false,
+            },
         };
-        self.find_last_record(value).unwrap_or(in_front)
+        if has_no_record {
+            self.set_position_to_last_recorded();
+        }
+    }
+
+    fn set_update_position(&mut self, expression: ExprId, target: ExprId) {
+        match self.file.classify_assignment_target(target) {
+            AssignmentTarget::Identifier { identifier, .. }
+                if !self.file.is_kept_in_register(identifier) =>
+            {
+                self.set_position(self.file.hir[expression].pos);
+            }
+            _ => self.set_position_to_last_recorded(),
+        }
     }
 
     fn lower_plain_assignment(
@@ -205,6 +214,7 @@ fn lower_logical_assignment(
         unreachable!("lower_logical_assignment takes an Assign expression");
     };
     let reference = lowering.lower_reference(target, KeyConversion::Once);
+    lowering.set_position_of_updated_read(target);
     let old = lowering.get_reference(&reference);
     let result = match usage {
         ResultUsage::Value => Some(lowering.builder.create_variable(None)),
@@ -241,6 +251,12 @@ pub(super) fn lower_update(
         unreachable!("lower_update takes a Unary expression");
     };
     let reference = lowering.lower_reference(operand, KeyConversion::Once);
+    // Where the result is used, the update of a name is reported at the update.
+    let is_name = matches!(reference, Reference::Identifier { .. });
+    let has_own_position = is_name && usage == ResultUsage::Value;
+    if !has_own_position {
+        lowering.set_position_of_updated_read(operand);
+    }
     let old = lowering.get_reference(&reference);
     let (is_increment, is_postfix) = match op {
         UnOp::PreInc => (true, false),
@@ -252,7 +268,10 @@ pub(super) fn lower_update(
             return old;
         }
     };
-    lowering.set_position(hir[expression].pos);
+    match has_own_position {
+        true => lowering.set_position(hir[expression].pos),
+        false => lowering.set_update_position(expression, operand),
+    }
     let store_position = match is_postfix {
         true => lowering.file.last_mapped_position(operand),
         false => hir[operand].pos,

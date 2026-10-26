@@ -18,6 +18,8 @@ use crate::load::plugin_modules::append_encoded_segment;
 const VIRTUAL_DIRECTORY: &[u8] = b"text/";
 const VIRTUAL_EXTENSION: &[u8] = b".cjs";
 const STANDALONE_PATH: &[u8] = b"/text.cjs";
+const START_OF_SCRIPT_WRAPPER: &[u8] = b"(function () {\nreturn (\n";
+const START_OF_FUNCTION_WRAPPER: &[u8] = b"(";
 
 pub(crate) struct EvaluatedTexts {
     files: ShardedMap<Vec<u8>, Box<[u8]>>,
@@ -136,14 +138,24 @@ fn try_create_script_text(source: &[u8]) -> Option<Vec<u8>> {
         ParsedShape::OneFunctionExpression | ParsedShape::OneExpression => {}
         ParsedShape::Other => return None,
     }
-    let text = [&b"(function () {\nreturn (\n"[..], source, b"\n);\n})"].concat();
+    let text = [START_OF_SCRIPT_WRAPPER, source, b"\n);\n})"].concat();
     (parses_alone(&text) == Some(ParsedShape::OneFunctionExpression)).then_some(text)
+}
+
+// The engine counts lines and columns from here: from the start of what `eval` is given, and from the `function` of the text that `Function` makes.
+pub(crate) fn find_start_of_written_text(text: &[u8]) -> u32 {
+    let wrapper = match text.starts_with(START_OF_SCRIPT_WRAPPER) {
+        true => START_OF_SCRIPT_WRAPPER,
+        false => START_OF_FUNCTION_WRAPPER,
+    };
+    wrapper.len() as u32
 }
 
 fn create_function_text(parameters: &[&[u8]], body: &[u8]) -> Vec<u8> {
     let parameter_list = parameters.join(&b","[..]);
     [
-        &b"(function anonymous("[..],
+        START_OF_FUNCTION_WRAPPER,
+        b"function anonymous(",
         &parameter_list,
         b"\n) {\n",
         body,

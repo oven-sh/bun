@@ -1,0 +1,7 @@
+{
+  "env": {
+    "BUN_JSC_markedBlockCageSizeInMB": "64"
+  },
+  "skipWithASAN": "it runs out of room where a release build does not",
+  "skipInVariants": "the counts are tuned for the default build"
+}

@@ -1,6 +1,7 @@
 // RUN(INSTANCE): lower
 // INSTANCE-LABEL: function {{*}}kind=Initializer{{*}}thisType={type=L{{*}} flags=[IsFromCompiler]}
-// INSTANCE: b0([[this]]
+// INSTANCE: b0([[received]]
+// INSTANCE: [[this]] = Convert [[received]] declared={type=object flags=[IsFromCompiler, IsClaim]}
 // INSTANCE: [[initial]] = Call {{*}}calleeName="f"
 // INSTANCE: [[values]] = ElemGet
 // INSTANCE: [[runValues]] = Builtin builtin=CompilerHelpersRunValueInitializers
@@ -23,7 +24,8 @@
 
 // RUN(STATIC): lower
 // STATIC-LABEL: function {{*}}kind=Initializer{{*}}thisType={type=function flags=[IsFromCompiler]}
-// STATIC: b0([[class]]
+// STATIC: b0([[received]]
+// STATIC: [[class]] = Convert [[received]] declared={type=object flags=[IsFromCompiler, IsClaim]}
 // STATIC-NOT: PutModuleVariable
 // STATIC: [[values]] = ElemGet
 // STATIC: [[runValues]] = Builtin builtin=CompilerHelpersRunValueInitializers

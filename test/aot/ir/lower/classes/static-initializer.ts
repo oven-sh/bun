@@ -1,11 +1,13 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=Initializer
-// CHECK: PropDefine [[this]], {{*}}key="a"
+// CHECK: b0([[this]]
+// CHECK: [[class]] = Convert [[this]] declared={type=object flags=[IsFromCompiler, IsClaim]}
+// CHECK: PropDefine [[class]], {{*}}key="a"
 // CHECK-NOT: = Call {{*}}calleeName="f"
 // CHECK: = CallDirect function=[[block]]
 // CHECK: = PropGet [[this]] key="a"
-// CHECK: PropDefine [[this]], {{*}}key="b"
-// CHECK: ElemDefine [[this]],
+// CHECK: PropDefine [[class]], {{*}}key="b"
+// CHECK: ElemDefine [[class]],
 // CHECK: function [[block]] {{*}}kind=Method flags=[IsChecked]
 // CHECK: = Call {{*}}calleeName="f"
 

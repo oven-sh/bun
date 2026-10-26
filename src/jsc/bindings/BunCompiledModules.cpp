@@ -524,7 +524,7 @@ JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode
 {
     if (!hasCompiledModules() || isAskingWhyFileFailsToLoad)
         return {};
-    bool refusesCode = AOT::refusesCodeOutsideImage(globalObject);
+    bool refusesCode = AOT::refusesCodeOutsideImage(globalObject, path);
     // An executable does not hold the text of a compiled module.
     if (isCompiledModule(path) && (refusesCode || !compiledModulesRunInPlaceOfFiles()))
         return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it's compiled into this executable, and a compiled module can't be loaded a second time (for example into a Bun.ModuleGraph)."_s));
@@ -614,7 +614,7 @@ String firstCompiledModuleMatching(JSGlobalObject* globalObject, RegExp* filter)
 
 extern "C" bool Bun__refusesCodeOutsideExecutable(JSC::JSGlobalObject* globalObject)
 {
-    return Bun::hasCompiledModules() && JSC::AOT::refusesCodeOutsideImage(globalObject);
+    return Bun::hasCompiledModules() && JSC::AOT::refusesCodeOutsideImage(globalObject, {});
 }
 
 extern "C" bool Bun__isCompiledProgramFile(const BunString* path)

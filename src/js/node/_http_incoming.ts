@@ -66,10 +66,11 @@ const { read, push, resume, removeAllListeners } = internals.readableMethods!;
 const { destroy } = internals.destroyMethods!;
 const {
   emit,
-  emitWithRejectionCapture,
+  storeEmitWithRejectionCapture,
   listenerCount,
   removeAllListeners: eventEmitterRemoveAllListeners,
 } = shared.originals.eventEmitter!;
+const ReadablePrototype: object = Readable.prototype;
 const StreamPrototype = Object.getPrototypeOf(Readable.prototype) as { removeAllListeners: unknown };
 
 const kAutoDestroy = 1 << 2;
@@ -244,7 +245,7 @@ function IncomingMessage(
       this._maxListeners = undefined;
       if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
         ("unlikely");
-        this.emit = emitWithRejectionCapture;
+        storeEmitWithRejectionCapture(this);
       }
       return;
     }
@@ -344,6 +345,21 @@ function readsRawHeadersThroughAccessor(message: $Node.IncomingMessage): boolean
   const parent: object | null = ObjectGetPrototypeOf(message);
   if (parent === IncomingMessagePrototype) return true;
   return parent !== null && ObjectPrototypeLookupGetter.$call(parent, "rawHeaders") === getRawHeaders;
+}
+
+// Whether a read of `message.readableEnded` reaches the accessor of Readable.prototype, which is not configurable.
+function readsReadableEndedThroughAccessor(message: $Node.IncomingMessage): boolean {
+  if (ObjectHasOwn(message, "readableEnded")) return false;
+  let level: object | null = ObjectGetPrototypeOf(message);
+  if (level === IncomingMessagePrototype) {
+    if (ObjectHasOwn(IncomingMessagePrototype, "readableEnded")) return false;
+    level = ObjectGetPrototypeOf(IncomingMessagePrototype);
+  }
+  while (level !== ReadablePrototype) {
+    if (level === null || ObjectHasOwn(level, "readableEnded")) return false;
+    level = ObjectGetPrototypeOf(level);
+  }
+  return true;
 }
 
 ObjectDefineProperty(IncomingMessage.prototype, "headers", {
@@ -472,6 +488,10 @@ function resumeConnection(req: $Node.IncomingMessage) {
   if (socket && socket.readable) resumeReadableConnection(req, socket);
 }
 
+function resumeIfReadable(socket: $Node.HttpSocket) {
+  if (socket.readable) socket.resume();
+}
+
 function resumeReadableConnection(req: $Node.IncomingMessage, socket: $Node.HttpSocket) {
   if (req.upgrade || socket[kHandoffResponse] !== undefined) {
     ("unlikely");
@@ -479,10 +499,11 @@ function resumeReadableConnection(req: $Node.IncomingMessage, socket: $Node.Http
     onIncomingMessageResumeNodeHTTPResponse.$call(req);
   } else if (!socket._paused) {
     const resumeUnlessFlowing = socket[kResumeUnlessFlowing];
-    if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket);
+    if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket, true);
     else {
       ("unlikely");
-      socket.resume();
+      if (IS_COMPILED_AHEAD_OF_TIME) $callNoInline(resumeIfReadable, undefined, socket);
+      else resumeIfReadable(socket);
     }
   }
 }
@@ -987,7 +1008,9 @@ function destroyOnNextTick(req: $Node.IncomingMessage, state: $Node.ReadableStat
     req.destroy !== destroy ||
     req._destroy !== incomingMessageDestroy ||
     req._readableState !== state ||
+    !readsItsSocketUnseen(req) ||
     !isUnheard(req, "end") ||
+    !readsReadableEndedThroughAccessor(req) ||
     !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
   ) {
     ("unlikely");
@@ -1006,7 +1029,8 @@ function mayDumpInPlace(req: $Node.IncomingMessage): boolean {
     !req._dumped &&
     req._dump === dump &&
     req.resume === resume &&
-    req.removeAllListeners === removeAllListeners
+    req.removeAllListeners === removeAllListeners &&
+    readsReadableEndedThroughAccessor(req)
   );
 }
 
@@ -1173,7 +1197,7 @@ function takeBodyData(req: $Node.IncomingMessage, chunk: Buffer | undefined, isL
   }
   if (!req.upgrade && socket && !socket._paused && socket.readable) {
     const resumeUnlessFlowing = socket[kResumeUnlessFlowing];
-    if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket);
+    if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket, false);
     else {
       ("unlikely");
       socket.resume();
@@ -1323,6 +1347,8 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
     req._writableState ||
     req.destroy !== destroy ||
     req._readableState !== state ||
+    !readsReadableEndedThroughAccessor(req) ||
+    !readsItsSocketUnseen(req) ||
     !ticksAreUnseen()
   ) {
     ("unlikely");
@@ -1376,6 +1402,7 @@ function staysUnseen(req: $Node.IncomingMessage): boolean {
     req._dumped &&
     !req._consuming &&
     !req[eofInProgress] &&
+    readsItsSocketUnseen(req) &&
     keepsItsMethods(req)
   );
 }
@@ -1414,8 +1441,14 @@ function keepsItsMethods(req: $Node.IncomingMessage): boolean {
     req.destroy === destroy &&
     req._destroy === incomingMessageDestroy &&
     req.listenerCount === listenerCount &&
+    readsReadableEndedThroughAccessor(req) &&
     hasNoListenerAndNoWritableSide(req)
   );
+}
+
+function readsItsSocketUnseen(req: $Node.IncomingMessage): boolean {
+  const socket = req.socket;
+  return !socket || http.requestRoad.readsDestroyedUnseen!(socket);
 }
 
 function endUnseen(req: $Node.IncomingMessage): void {

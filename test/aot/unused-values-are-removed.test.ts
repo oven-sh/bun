@@ -1,7 +1,9 @@
 // A value that nobody uses, and whose making nobody can see, leaves nothing in the compiled code: each program below is one such
 // statement and `console.log(1)`, and the top-level code that is selected for it holds the call of console.log and nothing else.
 // With the built-in prototypes locked none of the statements runs code of the program. An error for lack of memory keeps nothing.
-// programs/effects/unused-results-of-built-ins-that-must-stay.js has the same statements with operands that run code or make them throw.
+// A text that is made of others goes where the types of its parts say that it is no longer than a string may be.
+// programs/effects/unused-results-of-built-ins-that-must-stay.js has the same statements with operands that run code or make them throw,
+// programs/strings/texts-too-long-that-nobody-reads-* those whose text is too long.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -35,7 +37,10 @@ const removed = {
   "JSON.stringify of a literal": `const u = JSON.stringify({ a: 1 });`,
   "JSON.stringify of nested literals": `const p = { x: 1, label: "p" }; const u = JSON.stringify({ from: p, to: p }, null, 2);`,
   "methods of a constant string": `const u = "abc".toUpperCase().slice(1);`,
-  "methods of a string nobody knows": `const s = String(Math.random()); const u = s.toUpperCase().trim().concat(s).indexOf("1");`,
+  "JSON.stringify of an instance": `class P { x = 1; label = "p"; } const u = JSON.stringify(new P());`,
+  "methods of a string nobody knows": `const s = String(Math.random()); const u = s.toUpperCase().trim().indexOf("1");`,
+  "concat of strings of a known length": `const s = Math.random() < 0.5 ? "a" : "bc"; const u = s.concat(s, "d").indexOf("1");`,
+  "a number nobody knows between constant strings": `const n = Math.random(); const u = ("a" + n + "b").toUpperCase().indexOf("1");`,
   "a template": "const n = 3; const u = `a${n}b`;",
   "Math": `const u = Math.max(1, 2) + Math.floor(2.5);`,
   "a regular expression literal": `const u = /a+b/g;`,

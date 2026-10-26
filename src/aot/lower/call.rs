@@ -249,7 +249,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             is_reflect_construct_syntax: self.file.is_reflect_construct_syntax(site.callee)
                 && matches!(&arguments, Arguments::Values(values) if values.len() >= 2),
         };
-        self.set_position(self.file.last_mapped_position(site.callee));
+        self.set_position(self.file.call_position(site));
         if options.is_reflect_construct_syntax {
             self.builder
                 .set_written_position(self.file.first_position(call));
@@ -343,9 +343,14 @@ impl FileLowering<'_, '_, '_, '_> {
     // Bun's transpiler prints a `new` without arguments without `()`, unless something is read from the result or the result is called.
     fn construct_position(&self, expression: ExprId) -> u32 {
         let site = call_site(self, expression);
-        let is_reported_at_callee = !site.args.is_empty()
-            || self.is_base_of_access(expression)
-            || self.is_printed_as_call(site.callee);
+        let is_reported_at_callee = match self.runs_as_written() {
+            true => site.close_pos != u32::MAX,
+            false => {
+                !site.args.is_empty()
+                    || self.is_base_of_access(expression)
+                    || self.is_printed_as_call(site.callee)
+            }
+        };
         match is_reported_at_callee {
             true => self.last_mapped_position(site.callee),
             false => self.hir[expression].pos,

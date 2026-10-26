@@ -109,6 +109,8 @@ describe.concurrent("keeps nothing of Intl and Temporal for a conversion to a st
       "a request that is sent with a body and headers",
       `const response = await fetch("http://localhost:1", { method: "POST", body: JSON.stringify({ a: 1 }), headers: { "content-type": "application/json" } }); console.log(response.ok);`,
     ],
+    ["a copy that is written as JSON", `console.log(JSON.stringify(structuredClone({ a: 1 })));`],
+    ["the JSON of a file, written again", `console.log(JSON.stringify(await Bun.file("a.json").json()));`],
   ])("%s", async (_, text) => {
     const { escapes, ...rest } = await report(text);
     expect(rest).toEqual({

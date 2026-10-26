@@ -226,6 +226,10 @@ fn create_source_header(
         _ => func.start,
     };
     let mut header = create_header(file, key, kind, position);
+    // JSC records no positions in a function that is written inside a built-in function.
+    if header.enclosing_runtime_function.is_some() {
+        header.position = file.parameters_position(function);
+    }
     header.flags |= compute_source_flags(hir, function);
     if file.is_anonymous_in_bundle(func.name_pos) {
         header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);

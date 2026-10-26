@@ -7,6 +7,8 @@ use super::runtime_value::{emit_module_value, find_module_value};
 use super::{ModuleRoots, file_scope};
 use crate::ir::generated::{Function, FunctionFlags, FunctionKind};
 use crate::ir::{FunctionId, FunctionKey, VariableKey};
+use crate::load::SourceKind;
+use crate::load::evaluated_texts::find_start_of_written_text;
 use crate::lower::fragment::ModuleFragment;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs, function, scope};
@@ -126,10 +128,16 @@ impl FileLowering<'_, '_, '_, '_> {
             true => self.type_ranges.remove_from(text),
             false => Vec::new(),
         };
+        let mut line_starts = compute_ecma_line_starts(text);
+        if self.inputs.sources.kind(self.file) == SourceKind::EvaluatedText {
+            let start = find_start_of_written_text(text);
+            line_starts.retain(|&line_start| line_start > start);
+            line_starts.insert(0, start);
+        }
         ModuleFragment {
             body: roots.body,
             data: roots.data,
-            positions: crate::emit::source_positions(text, compute_ecma_line_starts(text)),
+            positions: crate::emit::source_positions(text, line_starts),
             function_text,
         }
     }

@@ -14,7 +14,10 @@ pub(super) fn destructure_array(
 ) {
     // The `[` of an assignment is the start of an expression, which the source map knows.
     if let PatternNode::Binding(_) = node {
-        lowering.set_position(mapped);
+        lowering.set_position(match lowering.file.runs_as_written() {
+            true => lowering.file.node_position(node),
+            false => mapped,
+        });
     }
     let elements = lowering.file.pattern_elements(node);
     let has_rest = elements.last().is_some_and(|element| element.is_rest);

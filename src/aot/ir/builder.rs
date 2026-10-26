@@ -153,6 +153,7 @@ pub struct FunctionBuilder {
     // In the order of the values. Only a value that is written elsewhere than at its position has an entry.
     pub(super) written_positions: Vec<(ValueId, u32)>,
     recorded_position: Option<u32>,
+    are_records_suspended: bool,
     is_at_recorded_position: bool,
     values_before_first_record: Vec<ValueId>,
     pub(super) ssa: SsaState,
@@ -215,6 +216,7 @@ impl FunctionBuilder {
             written_position: None,
             written_positions: Vec::new(),
             recorded_position: None,
+            are_records_suspended: false,
             is_at_recorded_position: false,
             values_before_first_record: Vec::new(),
             ssa: scratch.ssa,
@@ -387,15 +389,37 @@ impl FunctionBuilder {
         self.is_at_recorded_position = true;
     }
 
-    pub fn last_recorded_position(&self) -> Option<u32> {
-        self.recorded_position
+    pub fn is_at_last_recorded_position(&self) -> bool {
+        self.is_at_recorded_position
+    }
+
+    pub fn number_of_values(&self) -> usize {
+        self.values.len()
+    }
+
+    // What was emitted at the last recorded position from the value `first` on belongs behind what has been recorded since.
+    pub fn move_to_last_recorded_position(&mut self, first: usize) {
+        let Some(position) = self.recorded_position else {
+            return;
+        };
+        for value in &mut self.values[first..] {
+            value.position = Some(position);
+        }
     }
 
     pub fn current_position(&self) -> u32 {
         self.position.unwrap_or(0)
     }
 
+    // What Bun's transpiler does not print leaves no record. Returns what held before.
+    pub fn suspend_records(&mut self, suspend: bool) -> bool {
+        std::mem::replace(&mut self.are_records_suspended, suspend)
+    }
+
     pub fn record_position(&mut self, position: u32) {
+        if self.are_records_suspended {
+            return;
+        }
         if self.recorded_position.is_none() {
             for value in self.values_before_first_record.drain(..) {
                 self.values[value.index()].position = Some(position);

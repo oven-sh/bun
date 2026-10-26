@@ -234,9 +234,13 @@ pub(in crate::lower) fn emit_member_read(
     let Some((object_expression, _)) = hir.member_key(access) else {
         unreachable!("emit_member_read takes a Dot or an Index expression");
     };
-    let object_position = lowering.file.last_mapped_position(object_expression);
-    lowering.set_position(object_position);
+    let object_position = lowering.file.member_position(object_expression);
+    // In `o[k]++` JSC tests `o` behind `k` and records no position for the test. The read that follows has one.
+    if !lowering.builder.is_at_last_recorded_position() {
+        lowering.set_position(object_position);
+    }
     let value = lowering.emit_get(object, name);
+    lowering.builder.record_position(object_position);
     lowering.set_position(hir[access].pos);
     let value = lowering.claim_member_read(access, value);
     lowering.warn_function_introspection(access);

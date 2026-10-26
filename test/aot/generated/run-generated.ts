@@ -13,6 +13,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
+import { withTurnsNobodyKnows } from "../fuzz/turns-nobody-knows";
 import {
   built,
   inShare,
@@ -167,9 +168,18 @@ export function generated(title: string, given: Generated[]) {
             if (mayBeLeftOut(program) && performance.now() > 200_000) return void leftOut++;
             const folder = join(root, title.replaceAll(" ", "-"), String(index));
             const { file, text, files, entryPoints = [] } = program.make();
+            // Every second program keeps its short loops as loops. A program that is here for what it once showed stays as it is.
+            const keepsItsLoops =
+              !program.wasOnceWrong &&
+              !program.linesDepartToday &&
+              !program.written &&
+              Bun.hash.crc32(`${title} ${program.name}`) % 2 === 1;
             for (const [name, content] of Object.entries({ ...files, [file]: text })) {
               mkdirSync(dirname(join(folder, name)), { recursive: true });
-              writeFileSync(join(folder, name), content);
+              writeFileSync(
+                join(folder, name),
+                keepsItsLoops && /\.[cm]?[jt]s$/.test(name) ? withTurnsNobodyKnows(content) : content,
+              );
             }
             const executable = join(folder, isWindows ? "program.exe" : "program");
             try {

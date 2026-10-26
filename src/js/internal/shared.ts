@@ -459,7 +459,7 @@ const originals: {
     | (Pick<
         $Node.EventEmitter,
         "emit" | "addListener" | "once" | "removeListener" | "removeAllListeners" | "listenerCount"
-      > & { emitWithRejectionCapture: $Node.EventEmitter["emit"] })
+      > & { storeEmitWithRejectionCapture(emitter: $Node.EventEmitter): void })
     | undefined;
 } = { eventEmitter: undefined };
 

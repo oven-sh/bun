@@ -272,7 +272,8 @@ impl FileLowering<'_, '_, '_, '_> {
         let is_substituted = is_plain
             && self.scopes.is_used_once(symbol)
             && !bound.is_visible_to_eval(symbol)
-            && bound.symbol_scope(symbol) != module::file_scope(self);
+            && bound.symbol_scope(symbol) != module::file_scope(self)
+            && !self.runs_as_written();
         is_substituted.then_some(symbol)
     }
 

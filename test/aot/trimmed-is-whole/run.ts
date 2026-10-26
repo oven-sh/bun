@@ -20,7 +20,7 @@ interface Program {
   todo?: string;
   buildError?: string;
   evaluatedCodeUsesRemovedApi: boolean;
-  /** The build does not see that the call reaches an evaluator, or the script of the Worker is a text: both executables end with the same EvalError. */
+  /** The build does not see that the call reaches an evaluator: both executables end with the same EvalError. */
   isNotSeen: boolean;
   removes: string[];
   trimmedSays?: string;

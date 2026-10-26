@@ -377,13 +377,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if_false: BlockId,
     ) {
         let left_value = self.lower_expression(left);
-        let recorded = self.find_last_record_in_front_of(op, left);
         let left_field = self.find_compared_field(op, left, right);
         let right_value = self.lower_expression(right);
         let left_field = left_field.filter(|&field| self.is_holder_unchanged(field));
         let right_field = self.find_compared_field(op, right, left);
-        let position = self.find_comparison_position(expression, op, left, right, recorded);
-        self.set_position(position);
+        self.set_comparison_position(expression, op);
         let left_subject = self.find_subject(left, left_value);
         let right_subject = self.find_subject(right, right_value);
         let right_subject = right_subject.filter(|&symbol| Some(symbol) != left_subject);

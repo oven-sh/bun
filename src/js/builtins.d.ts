@@ -46,6 +46,12 @@ declare const CAN_LOAD_CODE_AT_RUN_TIME: boolean;
 declare const CAN_BE_CLUSTER_WORKER: boolean;
 /** True in an executable that was compiled ahead of time, false in `bun run`. Only for a choice between two ways that a program cannot tell apart. */
 declare const IS_COMPILED_AHEAD_OF_TIME: boolean;
+/** Calls `callee`. A compiled executable never inlines the call. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`. */
+declare function $callNoInline<This, Arguments extends unknown[], Result>(
+  callee: (this: This, ...args: Arguments) => Result,
+  thisValue: This,
+  ...args: Arguments
+): Result;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;

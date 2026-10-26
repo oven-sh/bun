@@ -32,7 +32,7 @@
 // "through any": the members of the value are reached through a cast, `(v as any).a`, as a program must write that reads what the declared type lacks.
 // What is hot is a share of the program's own code, so a place among hundreds is not as hot as it is alone. `ballast` adds so many functions that run once for every place: with eight of them a place is as hot as
 // it is alone. `places` is the most that a program holds.
-import { withLoopsOf } from "./where-a-stretch-stands";
+import { isKeptAsWritten, withLoopsOf } from "./where-a-stretch-stands";
 
 /** There are 35,000 programs: one in so many is run every time. */
 export const oneIn = 800;
@@ -527,8 +527,10 @@ function main_${u}(${N}) { const v = make_${u}(n); ${use} }
         // There are three million places: the text of a program is made when it is asked for.
         get text() {
           const some = list().slice(from, from + places);
+          const dealt = isKeptAsWritten(name + (count > places ? "-" + part : "")) ? (_: string, road: string) => road : withLoopsOf;
           let text = (isTyped ? headTyped : head) + 'let last = "";\n' + runOnce(ballast * some.length);
-          for (const [r, b, u] of some) text += withLoopsOf(`${name}-${r}-${b}-${u}`, roads[r](grain === "many" ? u + "_" + b : grain === "pair" ? u + "_" + r : u, cast(uses[u]).replaceAll("$A", () => inBrackets(births[comes(a, b)])).replaceAll("$B", () => inBrackets(births[b])), inBrackets(births[comes(a, b)]), inBrackets(births[b]), isTyped === true || isTyped === "through any" ? `${types[a]} | ${types[b].includes("=>") ? `(${types[b]})` : types[b]}` : types[a]));
+          for (const [r, b, u] of some) text += dealt(`${name}-${r}-${b}-${u}`, roads[r](grain === "many" ? u + "_" + b : grain === "pair" ? u + "_" + r : u, cast(uses[u]).replaceAll("$A", () => inBrackets(births[comes(a, b)])).replaceAll("$B", () => inBrackets(births[b])), inBrackets(births[comes(a, b)]), inBrackets(births[b]), isTyped === true || isTyped === "through any" ? `${types[a]} | ${types[b].includes("=>") ? `(${types[b]})` : types[b]}` : types[a]));
+          if (!text.includes(" + extraTurns")) text = text.replace(/^const extraTurns.*\n/m, "");
           return isTyped ? text.replace(/^/gm, "// @ts-ignore\n").replace(/\/\/ @ts-ignore\n$/, "") + "export {};\n" : text;
         },
       });

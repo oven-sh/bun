@@ -1,4 +1,5 @@
 // Functions make a text and do not read it. Each is called with texts that are too long together, then three million times with short ones, then with the long ones again.
+// The executable throws both times. Plain Bun throws the first time, and the second time unless its JIT has optimized the function by then, so the output is stored.
 let half = "x";
 for (let i = 0; i < 30; i++) half += half;
 const forms = {

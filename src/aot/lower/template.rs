@@ -21,11 +21,7 @@ pub(in crate::lower) fn lower_template_literal(
     for substitution in hir.ids(exprs) {
         strings.extend(lowering.emit_cooked_string(parts.next()));
         let value = lowering.lower_expression(substitution);
-        let recorded = lowering.find_last_record(substitution);
-        match recorded {
-            Some(recorded) => lowering.set_position(recorded),
-            None => lowering.set_position_to_last_recorded(),
-        }
+        lowering.set_position_to_last_recorded();
         strings.push(lowering.builder.to_string(value));
     }
     strings.extend(lowering.emit_cooked_string(parts.next()));

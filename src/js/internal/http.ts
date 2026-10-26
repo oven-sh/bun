@@ -75,6 +75,7 @@ const requestRoad: {
   queueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   mayDumpInPlace?: (request: $Node.IncomingMessage) => boolean;
   beginDump?: (request: $Node.IncomingMessage) => void;
+  readsDestroyedUnseen?: (socket: $Node.HttpSocket) => boolean;
 } = {};
 const responseRoad: {
   makeExchange?: (
@@ -274,7 +275,7 @@ function onDataIncomingMessage(
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!this.upgrade && socket && !socket._paused && socket.readable) {
-      if (socket[kResumeUnlessFlowing] !== undefined) socket[kResumeUnlessFlowing]();
+      if (socket[kResumeUnlessFlowing] !== undefined) socket[kResumeUnlessFlowing](false);
       else {
         ("unlikely");
         socket.resume();
@@ -503,7 +504,7 @@ declare global {
       [kHandoffResponse]?: NodeHTTPResponse;
       [kRequest]?: IncomingMessage;
       [kCloseCallback]?: (this: HttpServerSocket) => void;
-      [kResumeUnlessFlowing]?(): void;
+      [kResumeUnlessFlowing]?(asksWhetherReadable: boolean): void;
     }
 
     /** The server of a connection, as `node:http` reads it: an `http.Server`, or a `net.Server` (an `Http2SecureServer` that allows HTTP/1, a server whose sockets are handed on) that has some of an `http.Server`'s options or none. */
@@ -531,7 +532,7 @@ declare global {
       [kClosedWithUnsentData]: boolean | undefined;
       readonly [kInternalSocketData]: NodeHTTPResponse | null | undefined;
       readonly [kHasQueuedReads]: boolean;
-      [kResumeUnlessFlowing](): void;
+      [kResumeUnlessFlowing](asksWhetherReadable: boolean): void;
       [kRememberPeer](): void;
     }
 

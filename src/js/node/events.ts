@@ -216,15 +216,17 @@ function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions
 
   if (hasNoMaxListeners) this._maxListeners = undefined;
   if (capturesRejections) {
+    ("unlikely");
     // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
     validateBoolean(opts!.captureRejections, "options.captureRejections");
     this[kCapture] = !!opts!.captureRejections;
-    this.emit = emitWithRejectionCapture;
+    storeEmitWithRejectionCapture(this);
   } else {
     const capture = EventEmitterPrototype[kCapture];
     this[kCapture] = capture;
     if (capture) {
-      this.emit = emitWithRejectionCapture;
+      ("unlikely");
+      storeEmitWithRejectionCapture(this);
     }
   }
 }
@@ -478,6 +480,17 @@ const emitWithRejectionCapture = function emit(this: $Node.EventEmitter, type: $
   }
   return true;
 };
+
+// Only an emitter that captures rejections has an own `emit`. Compiled ahead of time, a store that names the property makes room for it in
+// every emitter, and every call of `emit` asks whether it is there.
+const propertiesOfCapturingEmitter = { emit: emitWithRejectionCapture };
+function storeEmitWithRejectionCapture(emitter: $Node.EventEmitter) {
+  if (IS_COMPILED_AHEAD_OF_TIME) {
+    Object.assign(emitter, propertiesOfCapturingEmitter);
+  } else {
+    emitter.emit = emitWithRejectionCapture;
+  }
+}
 
 function _addListener(target: $Node.EventEmitter, type: $Node.EventName, fn: $Node.Listener, prepend: boolean) {
   checkListener(fn);
@@ -756,7 +769,7 @@ Object.defineProperty(EventEmitterPrototype.listenerCount, "name", { value: "lis
 // The methods as they are written here, for the built-in modules that ask whether a method of an emitter is still the one of this module.
 shared.originals.eventEmitter = {
   emit,
-  emitWithRejectionCapture,
+  storeEmitWithRejectionCapture,
   addListener,
   once: onceMethod,
   removeListener,
@@ -1200,8 +1213,12 @@ class EventEmitterAsyncResource extends (EventEmitter as $Node.EventEmitterConst
     // from this[kCapture]. The default branch reads super.emit at call time
     // (Node routes through super.emit) so a userland monkeypatch of
     // EventEmitter.prototype.emit is observed like it is for plain emitters.
-    const emit = this[kCapture] ? emitWithRejectionCapture : super.emit;
-    ArrayPrototypeUnshift.$call(args, emit, this, event);
+    if (this[kCapture]) {
+      ("unlikely");
+      ArrayPrototypeUnshift.$call(args, emitWithRejectionCapture, this, event);
+    } else {
+      ArrayPrototypeUnshift.$call(args, super.emit, this, event);
+    }
     return asyncResource.runInAsyncScope.$apply(
       asyncResource,
       args as Parameters<typeof asyncResource.runInAsyncScope>,

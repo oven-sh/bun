@@ -3,10 +3,11 @@
 // CHECK-LABEL: function {{*}}name="C"
 // CHECK-LABEL: function {{*}}kind=Initializer
 // CHECK: b0([[this]]: [[instance]]):
+// CHECK: [[object]] = Convert [[this]] declared={type=object flags=[IsFromCompiler, IsClaim]}
 // CHECK-NOT: = NewObject
 // CHECK: [[closure]] = NewClosure [[this]] function=
 // CHECK-NEXT: [[onClick]] = Convert [[closure]] declared={type=undefined|null|f{{*}} site=w{{*}}}
-// CHECK-NEXT: PropDefine [[this]], [[onClick]] key="onClick"
+// CHECK-NEXT: PropDefine [[object]], [[onClick]] key="onClick"
 // CHECK-LABEL: function {{*}}name="onClick"
 // CHECK: captures=[{type=[[instance]] flags=[IsFromCompiler]}] thisType
 

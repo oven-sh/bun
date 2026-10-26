@@ -11,9 +11,8 @@ const nothingToCompareWith = new Set<number>([72, 143, 147, 286, 327, 387, 399, 
 
 // Where the lines of the executable are not those of `bun run` today. The programs are built and run all the same.
 const departing: Record<string, number[]> = {
-  "require() of an ES module that awaits throws at once, and `bun run` waits for the module": [75, 284, 576],
-  "an `import()` that nobody awaits runs its target in another turn": [256, 378, 431],
-  "not looked at yet": [124, 564],
+  "a CommonJS module that threw is asked for again, and an executable throws the same error": [75, 284, 576],
+  "a built-in module that is imported for the first time takes steps of the loader under `bun run`": [85],
 };
 const howItDeparts = new Map(
   Object.entries(departing).flatMap(([how, seeds]) => seeds.map(seed => [seed, how] as const)),
@@ -22,9 +21,9 @@ const howItDeparts = new Map(
 // An imported CommonJS file requires an ES module that takes the file's default as a whole or hands on all its names.
 // Or a graph is asked for by `import()` or `require()` while another one is loaded or evaluated.
 const onceWrong = new Set<number>([
-  5, 11, 16, 23, 46, 49, 54, 57, 61, 71, 83, 88, 89, 90, 92, 113, 121, 131, 133, 151, 152, 155, 158, 166, 189, 195, 196,
-  197, 213, 233, 234, 242, 246, 260, 264, 274, 282, 289, 323, 355, 367, 376, 377, 380, 386, 410, 416, 420, 423, 428,
-  478, 481, 482, 483, 497, 501, 524, 537, 544, 560, 567, 576, 580,
+  5, 11, 16, 23, 46, 49, 54, 57, 61, 71, 83, 88, 89, 90, 92, 113, 121, 124, 131, 133, 151, 152, 155, 158, 166, 189, 195,
+  196, 197, 213, 233, 234, 242, 246, 256, 260, 264, 274, 282, 289, 323, 355, 367, 376, 377, 378, 380, 386, 410, 416,
+  420, 423, 428, 431, 478, 481, 482, 483, 497, 501, 524, 537, 544, 560, 564, 567, 576, 580,
 ]);
 
 // An ES module imports two CommonJS files, and the text of the first is made long.

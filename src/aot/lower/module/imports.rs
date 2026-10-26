@@ -4,8 +4,8 @@ use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 
 use crate::builtins::id::{BuiltinId, BuiltinName};
 use crate::builtins::{BuiltinPath, Mutability, Resolved, table};
-use crate::ir::generated::ImportPhase;
-use crate::ir::{PropertyKeyId, StringId, ValueId, VariableKey};
+use crate::ir::generated::{BlockFrequency, ImportPhase};
+use crate::ir::{PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs};
 use crate::modules::{ImportBinding, ModuleRef, Shape, SyntheticExportId, View};
@@ -26,22 +26,60 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.check_initialized(value, name)
     }
 
-    // A name of a library module is a variable that the loader fills.
-    fn emit_synthetic_read(&mut self, export: SyntheticExportId, name: StringId) -> ValueId {
+    // A name of a library module is a variable that the loader fills. `Err`: the value itself.
+    fn find_synthetic_variable(
+        &mut self,
+        export: SyntheticExportId,
+    ) -> Result<VariableKey, ValueId> {
         let modules = self.file.inputs.modules;
         let synthetic = *modules.synthetic_export(export);
         match modules.shape(synthetic.module) {
-            Shape::AsToday | Shape::EsModule => {
-                return self.emit_variable_read(VariableKey::SyntheticExport(export), name);
-            }
+            Shape::AsToday | Shape::EsModule => return Ok(VariableKey::SyntheticExport(export)),
             Shape::Names | Shape::Value => {}
         }
         if modules.settled(synthetic.module, synthetic.name)
             && let Some(value) = self.read_imported_name(synthetic.module, synthetic.name)
         {
-            return value;
+            return Err(value);
         }
-        self.emit_variable_read(VariableKey::Copy(export), name)
+        Ok(VariableKey::Copy(export))
+    }
+
+    fn emit_synthetic_read(&mut self, export: SyntheticExportId, name: StringId) -> ValueId {
+        match self.find_synthetic_variable(export) {
+            Ok(key) => self.emit_variable_read(key, name),
+            Err(value) => value,
+        }
+    }
+
+    // Another module imports the name, so its variable stays empty where the module turns out to lack the name. The namespace object knows what `ns.x` finds then.
+    fn emit_synthetic_member_read(&mut self, export: SyntheticExportId, access: ExprId) -> ValueId {
+        let key = match self.find_synthetic_variable(export) {
+            Ok(key) => key,
+            Err(value) => return value,
+        };
+        let variable = self.file.ensure_variable(key);
+        let value = self.builder.get_module_variable(variable);
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        let split = self.split_on_type(value, TypeTable::ABSENT);
+        self.builder
+            .set_frequency(split.taken, BlockFrequency::Unlikely);
+        self.builder.switch_to(split.taken);
+        let found = match self.file.hir.member_key(access) {
+            Some((object, MemberKey::Name(name))) => {
+                let namespace = self.lower_namespace_receiver(object);
+                self.emit_named_read(namespace, name)
+            }
+            _ => self.builder.undefined(),
+        };
+        self.builder.write_variable(result, found);
+        self.jump(join);
+        self.builder.switch_to(split.not_taken);
+        self.builder.write_variable(result, split.not_taken_value);
+        self.jump(join);
+        self.continue_in(join);
+        self.builder.read_variable(result)
     }
 
     // ES modules see a CommonJS file through its face.
@@ -135,6 +173,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         // Whoever reads `a.c` has read `a` first, which throws in the dead zone of `a`: before `const a = require(..)` has run.
         self.check_member_root(access);
         self.set_position(position);
+        let modules = self.file.inputs.modules;
+        if let ImportBinding::Synthetic(export) = binding
+            && !modules.synthetic_export(export).is_known_member
+        {
+            return Some(self.emit_synthetic_member_read(export, access));
+        }
         Some(emit_import_binding(self, binding, name, path))
     }
 }

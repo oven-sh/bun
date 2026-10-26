@@ -352,11 +352,13 @@ $toClass(OutgoingMessage, "OutgoingMessage", Stream);
 // Every input is fixed for the life of the message, but setHeader and
 // appendHeader consult this once per header: compute once, cache in the
 // constructor-declared slot.
-OutgoingMessage.prototype._isLenientHeaderValidation = function (this: $Node.OutgoingMessage) {
+const outgoingIsLenientHeaderValidation = (OutgoingMessage.prototype._isLenientHeaderValidation = function (
+  this: $Node.OutgoingMessage,
+) {
   const cached = this[kLenientValidation];
   if (cached !== undefined) return cached;
   return (this[kLenientValidation] = computeLenientHeaderValidation(this));
-};
+});
 
 function computeLenientHeaderValidation(message: $Node.OutgoingMessage): boolean {
   // New httpValidation option takes priority (ClientRequest case)
@@ -988,7 +990,7 @@ class Exchange {
   value3: number | string;
   value4: number | string;
   value5: number | string;
-  heldChunk: string;
+  heldChunk: $Node.HttpHeldChunk | null;
   statusCode: number;
   statusMessage: string;
   bytesBuffered: number;
@@ -1033,7 +1035,7 @@ class Exchange {
     this.value3 = 0;
     this.value4 = 0;
     this.value5 = 0;
-    this.heldChunk = "";
+    this.heldChunk = null;
     this.statusCode = 0;
     this.statusMessage = "";
     this.bytesBuffered = 0;
@@ -1399,7 +1401,10 @@ function storeUnexpectedHeader(
 }
 
 function storeShapedHeader(exchange: Exchange, name: string, value: $Node.HttpHeaderValue): void {
-  if (!IS_COMPILED_AHEAD_OF_TIME) {
+  if (
+    !IS_COMPILED_AHEAD_OF_TIME ||
+    exchange.response._isLenientHeaderValidation !== outgoingIsLenientHeaderValidation
+  ) {
     storeSpilledHeader(exchange, name, value);
     return;
   }

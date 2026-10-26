@@ -1,8 +1,8 @@
-a blob THROWS EvalError
-a blob of TypeScript THROWS EvalError
-a revoked blob THROWS EvalError
-a data URL THROWS EvalError
-a data URL in base64 THROWS EvalError
-a blob with a syntax error THROWS EvalError
-eval: true THROWS EvalError
+a blob: error | close 1
+a blob of TypeScript: error | close 1
+a revoked blob: error | close 1
+a data URL: error | close 1
+a data URL in base64: error | close 1
+a blob with a syntax error: error | close 1
+eval: true: error | exit 1
 the main thread lives

@@ -38,6 +38,8 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) returned_declaration: Option<(VarDeclId, u32)>,
     // Where the operators of a binary expression are reported, for the expressions that have operands with operators of their own.
     pub(in crate::lower) operator_positions: FxHashMap<ExprId, u32>,
+    // The part that Bun's transpiler prints of the expression that is being lowered, where it does not print all of it.
+    pub(in crate::lower) printed_part: Option<ExprId>,
     // What the sums are that stand in parentheses as operands of other sums.
     pub(in crate::lower) printed_sums: FxHashMap<ExprId, PrintedOperand>,
     handler: Option<Handler>,
@@ -71,6 +73,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             joined_declarations_end: None,
             returned_declaration: None,
             operator_positions: FxHashMap::default(),
+            printed_part: None,
             printed_sums: FxHashMap::default(),
             handler: None,
             position,

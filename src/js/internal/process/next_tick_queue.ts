@@ -15,7 +15,7 @@ let tickInitHooks!: TickRing["tickInitHooks"];
 let installedNextTick: unknown = {};
 let tickingProcess!: NodeJS.Process;
 let nextTickQueue: any;
-let drainMicrotasks!: () => void;
+let startRing!: () => void;
 let isSetUp = false;
 // The realm has one for good. A constant of the module is read without a look at the global object.
 const asyncContext = $asyncContext;
@@ -25,8 +25,7 @@ function setUp(): void {
   growRing = tickRing.growRing;
   pushWithList = tickRing.pushWithList;
   tickInitHooks = tickRing.tickInitHooks;
-  $putInternalField(nextTickQueue, 0, 0);
-  $putInternalField(nextTickQueue, 2, tickRing.start(tickingProcess, nextTickQueue, drainMicrotasks));
+  startRing();
   isSetUp = true;
 }
 
@@ -43,6 +42,7 @@ function takeTick(callback: TickCallback | undefined, frame: Frame): Tick {
   return tick;
 }
 
+// process.nextTick of a program that is compiled ahead of time.
 function nextTick(cb: TickCallback, ...args: unknown[]) {
   if (typeof cb !== "function") throw $ERR_INVALID_ARG_TYPE("callback", "function", cb);
   if (!isSetUp) setUp();
@@ -143,16 +143,19 @@ function queueTick3(callback: TickCallback, first: unknown, second: unknown, thi
   }
 }
 
-function initializeNextTickQueue(process: NodeJS.Process, marker: unknown, drainMicrotasksFn: () => void) {
+// `start` makes the ring and hands native code the function that runs the ticks.
+function install(process: NodeJS.Process, marker: unknown, start: () => void, processNextTick: typeof nextTick) {
   tickingProcess = process;
   nextTickQueue = marker;
-  drainMicrotasks = drainMicrotasksFn;
-  installedNextTick = nextTick;
-  return nextTick;
+  startRing = start;
+  installedNextTick = processNextTick;
+  return processNextTick;
 }
 
 export default {
-  initializeNextTickQueue,
+  install,
+  setUp,
+  asyncContext,
   nextTick,
   ticksAreUnseen,
   ticksAreUnhooked,

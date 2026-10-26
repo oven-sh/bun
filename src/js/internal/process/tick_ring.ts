@@ -3,8 +3,6 @@ const { ring, takeTick } = require("internal/process/next_tick_queue");
 const asyncHooksTick = require("internal/async_hooks_tick");
 
 const tickInitHooks = asyncHooksTick.tickInitHooks;
-// The realm has one for good. A constant of the module is read without a look at the global object.
-const asyncContext = $asyncContext;
 const kFreeTicksKept = 4096;
 const kHasTickObject = -1;
 
@@ -94,60 +92,11 @@ function newTickObject(callback: TickCallback, args: unknown[] | undefined, fram
 }
 
 let tickingProcess!: NodeJS.Process;
-let nextTickQueue: any;
-let drainMicrotasks!: () => void;
 
-function processTicksAndRejections() {
-  const context = asyncContext;
-  do {
-    for (;;) {
-      const tick = ring.read!;
-      if (tick === ring.write) break;
-      const callback = tick.callback!;
-      const count = tick.count;
-      const frame = tick.frame;
-      tick.callback = undefined;
-      tick.frame = undefined;
-      ring.read = tick.next;
-      var restore = $getInternalField(context, 0);
-      $putInternalField(context, 0, frame);
-      if (count === 0) {
-        callback();
-      } else if (count === 1) {
-        const first = tick.first;
-        tick.first = undefined;
-        callback(first);
-      } else if (count === kHasTickObject) {
-        // The TickObject is read in the async context that is current between ticks.
-        $putInternalField(context, 0, restore);
-        const tock = tick.shown!;
-        tick.shown = undefined;
-        const callback = tock.callback;
-        const args = tock.args;
-        const frame = tock.frame;
-        restore = $getInternalField(context, 0);
-        $putInternalField(context, 0, frame);
-        if (args === undefined) callback();
-        else callback(...args);
-      } else {
-        const first = tick.first;
-        tick.first = undefined;
-        const second = tick.second;
-        tick.second = undefined;
-        if (count === 2) {
-          callback(first, second);
-        } else {
-          const third = tick.third;
-          tick.third = undefined;
-          callback(first, second, third);
-        }
-      }
-      $putInternalField(context, 0, restore);
-    }
-
-    drainMicrotasks();
-  } while (ring.read !== ring.write);
-  $putInternalField(nextTickQueue, 0, 0);
+function takeTickObject(tick: Tick): TickObject {
+  const tock = tick.shown!;
+  tick.shown = undefined;
+  return tock;
 }
 
 function pushTickObject(tock: TickObject): void {
@@ -167,19 +116,24 @@ function pushWithInitHooks(cb: TickCallback, args: unknown[] | undefined, frame:
   const hooks = $newArrayWithSize<(typeof tickInitHooks)[number]>(count);
   for (let i = 0; i < count; i++) $putByValDirect(hooks, i, tickInitHooks[i]);
   for (let i = 0; i < count; i++) {
-    if (hooks[i](asyncId, "TickObject", 0, tock)) tickingProcess.exit(1);
+    try {
+      hooks[i](asyncId, "TickObject", 0, tock);
+    } catch (err: any) {
+      try {
+        console.error(typeof err?.stack === "string" ? err.stack : err);
+      } catch {}
+      tickingProcess.exit(1);
+    }
   }
   pushTickObject(tock);
 }
 
-function start(process: NodeJS.Process, marker: unknown, drainMicrotasksFn: () => void) {
+function start(process: NodeJS.Process, marker: any, processTicksAndRejections: () => void): void {
   ring.read = ring.write = new Tick();
   tickingProcess = process;
-  nextTickQueue = marker;
-  drainMicrotasks = drainMicrotasksFn;
-  return processTicksAndRejections;
+  $putInternalField(marker, 2, processTicksAndRejections);
 }
 
 export type { Frame, Ring, Tick, TickCallback };
 
-export default { growRing, tickInitHooks, pushWithList, pushWithInitHooks, start };
+export default { growRing, tickInitHooks, pushWithList, pushWithInitHooks, pushTickObject, takeTickObject, start };

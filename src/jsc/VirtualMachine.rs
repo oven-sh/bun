@@ -6822,11 +6822,7 @@ impl VirtualMachine {
             f.source_url.eq_ascii(b"bun:wrap") || f.function_name.eq_ascii(b"::bunternal::")
         }
         fn is_unknown_source(url: &bun_core::String) -> bool {
-            url.is_empty()
-                || url.eq_ascii(b"[unknown]")
-                || url.starts_with_ascii(b"[source:")
-                // processTicksAndRejections lives there.
-                || url.eq_ascii(b"internal:process/tick_ring")
+            url.is_empty() || url.eq_ascii(b"[unknown]") || url.starts_with_ascii(b"[source:")
         }
 
         let mut frames_len = exception.stack.frames_len as usize;

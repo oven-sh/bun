@@ -5,7 +5,7 @@
 //
 // A program is one pair of births and one road by which the two reach the use. Every use is a function of its own in that program, and prints the answers it gave, each once, in the order they came.
 // Across kinds a few births stand for their kind; within a kind every pair is made.
-import { withLoopsOf } from "./where-a-stretch-stands";
+import { isKeptAsWritten, withLoopsOf } from "./where-a-stretch-stands";
 
 function parts() {
   const births: Record<string, string[]> = {
@@ -215,7 +215,6 @@ const groups: Record<string, string> = {
 const testsTruth = new Set("and andThenOfTwo truth truthInLoop whileTruthy or orOfTwo not awaitTruth".split(" "));
 const head = `process.on("unhandledRejection", () => {});
 const one = Date.now() > 0 ? 1 : 2;
-const extraTurns§N = process.argv.length > 99 ? 1 : 0;
 const madeOnce = ((k§T) => (a§A) => [k, a])("once");
 function declared(a§A, b§A) { return [a, b]; }
 class Declared { §Fa constructor(a§A) { this.a = a; } }
@@ -394,6 +393,7 @@ export function programsWith(typed = false, { which = "", turns = 60, onePlace =
     // Hidden: the second birth comes through a function that another may replace, so nobody knows its kind until that call is resolved.
     const A = births[a][1], B = hidden ? `hide(${births[b][1]})` : births[b][1], walked = ["string", "walk", "boxed"];
     if (r === "walkOfMember" && (typed || !(walked.includes(births[a][0]) && walked.includes(births[b][0])))) continue;
+    const dealt = (name: string, text: string) => (isKeptAsWritten(`${a}-${b}-${r}${joined ? "-joined" : ""}`) ? text : withLoopsOf(name, text));
     const placesOf = (): [string, () => string][] => {
       // The checker rejects a test of what is always true.
       const isAlwaysTrue = [births[a][0], births[b][0]].every(kind => kind === "promise" || kind === "thenable") || [births[a][0], births[b][0]].every(kind => kind === "function");
@@ -406,11 +406,11 @@ export function programsWith(typed = false, { which = "", turns = 60, onePlace =
       const all: [string, string, boolean][] = [...Object.entries(uses).filter(means).map(([u, body]): [string, string, boolean] => [u, body, false]), ...Object.entries(waits).filter(means).map(([u, body]): [string, string, boolean] => [u, body, true])].filter(([u]) => !(ordersTexts.has(u) && [births[a][0], births[b][0]].includes("function"))).filter(([u]) => !(u === "ownNames" && [births[a][0], births[b][0]].includes("error"))).filter(([u]) => !typed || (takenOfAnyType.has(u) && !(isAlwaysTrue && testsTruth.has(u)) && !(r === "awaited" && u.endsWith("OfTwo"))));
       // What is awaited is no promise any more, and what walks a value is not of its kind.
       if (r !== "walkOfMember" && !(r === "awaited" && [births[a][0], births[b][0]].some(kind => kind === "promise" || kind === "thenable"))) all.push(...guarded(births[a][0], births[b][0], order.indexOf(a) + order.indexOf(b)).filter(([u]) => !(typed && r === "capturedThenChanged" && /^(testKept|inClosure)/.test(u))));
-      const chosen = all.filter(([u, , waits]) => only.test(u) && !(waits && r === "awaited")).map(([u, body, waits]): [string, string, boolean] => [u, withLoopsOf(`${u}-${a}-${b}-${r}`, body), waits]);
-      return (joined ? [joinedInOne("everyUse", chosen.filter(([, , waits]) => !waits)), joinedInOne("everyWait", chosen.filter(([, , waits]) => waits))].filter(([, body]) => body.includes("try")) : chosen).map(([u, body, waits]) => [u, () => withLoopsOf(`${u}-${a}-${b}-${r} road`, road(u, "\0", A, B, { ...(waits ? waitingForm : plainForm), typed }, T)).replaceAll("\0", () => body) + (veiled && r !== "captured" ? veil(u) : "") + (one ? "" : runsOnce(u, body, A, waits ? waitingForm : plainForm, ballast))]);
+      const chosen = all.filter(([u, , waits]) => only.test(u) && !(waits && r === "awaited")).map(([u, body, waits]): [string, string, boolean] => [u, dealt(`${u}-${a}-${b}-${r}`, body), waits]);
+      return (joined ? [joinedInOne("everyUse", chosen.filter(([, , waits]) => !waits)), joinedInOne("everyWait", chosen.filter(([, , waits]) => waits))].filter(([, body]) => body.includes("try")) : chosen).map(([u, body, waits]) => [u, () => dealt(`${u}-${a}-${b}-${r}`, road(u, "\0", A, B, { ...(waits ? waitingForm : plainForm), typed }, T)).replaceAll("\0", () => body) + (veiled && r !== "captured" ? veil(u) : "") + (one ? "" : runsOnce(u, body, A, waits ? waitingForm : plainForm, ballast))]);
     };
     const file = typed ? "program.ts" : "program.mjs";
-    const whole = (text: string) => marked(head + `const turns = process.env.FEWER_TURNS ? 9 : ${T}, attempts = process.env.FEWER_TURNS ? 2 : 6;\n` + (hidden ? "function hide(v) { return v; }\nfunction neverRuns() { hide = new Proxy(hide, {}); }\nif (one === 2) neverRuns();\n" : "") + `let flips = 0;\nfunction other() { return flips++ & 1 ? ${B} : ${A}; }\n` + (typed ? `const firstBirth = () => ${A}, secondBirth = () => ${B};\ntype V = ReturnType<typeof firstBirth> | ReturnType<typeof secondBirth>;\ntype AnyPromise = Promise<any>;\n` : "") + text + (typed ? "export {};\n" : ""), typed);
+    const whole = (text: string) => marked(head + (text.includes("extraTurns") ? "const extraTurns§N = process.argv.length > 99 ? 1 : 0;\n" : "") + `const turns = process.env.FEWER_TURNS ? 9 : ${T}, attempts = process.env.FEWER_TURNS ? 2 : 6;\n` + (hidden ? "function hide(v) { return v; }\nfunction neverRuns() { hide = new Proxy(hide, {}); }\nif (one === 2) neverRuns();\n" : "") + `let flips = 0;\nfunction other() { return flips++ & 1 ? ${B} : ${A}; }\n` + (typed ? `const firstBirth = () => ${A}, secondBirth = () => ${B};\ntype V = ReturnType<typeof firstBirth> | ReturnType<typeof secondBirth>;\ntype AnyPromise = Promise<any>;\n` : "") + text + (typed ? "export {};\n" : ""), typed);
     // The text is made when it is asked for: all of them together are three gigabytes.
     if (one) for (const [u, text] of placesOf()) wanted(`${u}-${a}-${b}-${r}`) && made.push({ name: `${u}-${a}-${b}-${r}`, file, get text() { return whole(text()); } });
     else made.push({ name: `${a}-${b}-${r}`, file, get text() { return whole(placesOf().map(([, text]) => text()).join("")); } });

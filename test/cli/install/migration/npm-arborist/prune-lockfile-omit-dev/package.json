@@ -1,0 +1,7 @@
+{
+  "name": "prune-actual",
+  "version": "1.0.0",
+  "devDependencies": {
+    "once": "^1.4.0"
+  }
+}

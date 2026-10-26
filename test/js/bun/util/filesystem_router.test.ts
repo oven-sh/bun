@@ -1322,8 +1322,8 @@ it("names the routes of one directory the same through a link to it, above it an
 });
 
 // Bun.resolveSync leaves the path of a file it finds in the resolver's cache, and a router that is made
-// takes the file of a route from there. It finds three here, each through a link: to the file, to `dir`
-// and to a directory below `dir`.
+// takes the file of a route from there. It finds three here: a link to a file, a file through a link to
+// `dir`, and a file through a link below `dir`.
 it("names the routes and their files the same when Bun.resolveSync found some of the files first", async () => {
   // What a router gives when it is made first.
   const routed = {

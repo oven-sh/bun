@@ -71,6 +71,7 @@
   PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         PropertyCallback
   PerformanceServerTiming         PerformanceServerTimingConstructorCallback           PropertyCallback
   PerformanceTiming               PerformanceTimingConstructorCallback                 PropertyCallback
+  QuotaExceededError              DOMQuotaExceededErrorConstructorCallback             DontEnum|PropertyCallback
   ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      DontEnum|PropertyCallback
   ReadableStream                  ReadableStreamConstructorCallback                    DontEnum|PropertyCallback
   ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          DontEnum|PropertyCallback

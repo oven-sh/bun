@@ -33,6 +33,7 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
+#include "JSDOMQuotaExceededError.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -322,6 +323,8 @@ void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
 {
+    if (is<DOMQuotaExceededError>(impl))
+        return createWrapper<DOMQuotaExceededError>(globalObject, WTF::move(impl));
     return createWrapper<DOMException>(globalObject, WTF::move(impl));
 }
 

@@ -887,7 +887,8 @@ describe("@types/bun integration test", () => {
   // overrides.d.ts used to hide the inherited signatures and reject every
   // other event name (#40003). @types/node >= 26 declares them on `Process`
   // directly, which masks the bug, so this check pins @types/node@24 instead
-  // of reusing the base fixture.
+  // of reusing the base fixture. @types/node >= 26 also declares
+  // QuotaExceededError, so the last lines prove the declaration of bun-types.
   describe("process event methods with @types/node@24", () => {
     test("removeListener and off accept other event names", async () => {
       const checkDir = join(TEMP_DIR, "types-node-24-check");
@@ -902,7 +903,10 @@ describe("@types/bun integration test", () => {
            process.removeListener("memoryPressure", () => {});
            process.on("memoryPressure", level => {
              level satisfies "warning" | "critical";
-           });`,
+           });
+           const error = new QuotaExceededError("over the quota", { quota: 1, requested: 2 });
+           error.quota satisfies number | null;
+           error satisfies DOMException;`,
       });
       await $`cd ${checkDir} && bun add @types/node@24`.quiet();
       await cp(join(BASE_FIXTURE_DIR, "node_modules", "bun-types"), join(checkDir, "node_modules", "bun-types"), {
@@ -1333,7 +1337,7 @@ describe("@types/bun integration test", () => {
         },
         {
           code: 2353,
-          line: "globals.ts:307:5",
+          line: "globals.ts:317:5",
           message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
         },
         {

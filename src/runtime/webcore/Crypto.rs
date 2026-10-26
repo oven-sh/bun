@@ -98,6 +98,9 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
                 .entropy_slice(slice.len());
             slice[..src.len()].copy_from_slice(src);
         }
+        // Deliberate divergence from WebCrypto and Node.js: they throw a QuotaExceededError above
+        // 65,536 bytes, and Bun fills any length. A review removed that check as a breaking change:
+        // https://github.com/oven-sh/bun/pull/19264#pullrequestreview-2793079268
         _ => {
             bun_boringssl_sys::rand_bytes(slice);
         }

@@ -385,7 +385,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`QuotaExceededError`](https://developer.mozilla.org/en-US/docs/Web/API/QuotaExceededError)
 
-🔴 Not implemented.
+🟡 The class is implemented. No Bun API throws it, and `crypto.getRandomValues()` has no 65,536-byte quota. Instances are not native errors (`Error.isError()` returns `false`), and an instance that `new QuotaExceededError()` makes has no `stack`.
 
 ### [`ReadableByteStreamController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableByteStreamController)
 

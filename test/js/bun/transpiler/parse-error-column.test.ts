@@ -170,7 +170,7 @@ async function printedExcerpts(args: string[], files: Record<string, string>) {
 }
 
 test.concurrent("CLI caret stays under the token for an error at the end of a long line", async () => {
-  // An error in the last 80 bytes of a line is never left-trimmed.
+  // An error in the last 80 bytes of a line of up to 1,000 bytes is never left-trimmed.
   const { excerpts } = await printedExcerpts(["build", "long.js"], { "long.js": fill(150, "a") + "]" });
   expect(excerpts).toEqual([{ excerpt: "1 | " + fill(150, "a") + "]", caret: 4 + 150 }]);
 });
@@ -287,10 +287,11 @@ test.concurrent("CLI caret counts a tab the same with and without non-ASCII text
   expect({ ascii, accent, wide }).toEqual({ ascii: 4 + 18, accent: 4 + 18, wide: 4 + 20 });
 });
 
-// A line of more than 1,000 bytes is not hand-written. Its location keeps an
-// excerpt wherever the error is: up to 40 bytes before the error and 80 after
-// it, or the last 120 bytes of the line. A shorter line keeps the window limits
-// above, so an error in its last 80 bytes keeps the whole line.
+// The location of an error on a line of more than 1,000 bytes keeps an excerpt
+// wherever the error is: up to 40 bytes before the error and 80 after it, or
+// the last 120 bytes of the line. `bun check` and `bun lint` hide such a line.
+// A shorter line keeps the window limits above, so an error in its last 80
+// bytes keeps the whole line.
 const longArray = "[" + fill(80_000, "1,") + "]";
 
 describe.each([["build"], ["run"]])(
@@ -323,6 +324,29 @@ describe.each([["build"], ["run"]])(
   },
 );
 
+/**
+ * What `BuildMessage.position` holds for the first error of `source`: the
+ * column, the length of `lineText`, and the character that a reader finds when
+ * it indexes `lineText` by the column.
+ */
+async function positionOf(name: string, source: string) {
+  using dir = tempDir("parse-col-position", { [name]: source });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const r = await Bun.build({ entrypoints: [${JSON.stringify(join(String(dir), name))}], throw: false });
+       const p = r.logs[0].position;
+       console.log(JSON.stringify({ column: p.column, length: p.lineText.length, atColumn: p.lineText[p.column - 1] }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { position: stdout && JSON.parse(stdout), stderr, exitCode };
+}
+
 test.concurrent.each([
   [1000, "1 | " + fill(999, "a") + "]", 4 + 999, { column: 1000, length: 1000, atColumn: "]" }],
   [1001, "1 | " + fill(119, "a") + "]", 4 + 119, { column: 1001, length: 120, atColumn: undefined }],
@@ -331,24 +355,17 @@ test.concurrent.each([
   const { excerpts, exitCode } = await printedExcerpts(["build", "long.js"], { "long.js": source });
   expect(excerpts).toEqual([{ excerpt, caret }]);
   expect(exitCode).toBe(1);
+  expect(await positionOf("long.js", source)).toEqual({ position, stderr: "", exitCode: 0 });
+});
 
-  // What `BuildMessage.position` holds. A reader that indexes `lineText` by
-  // `column` finds the token in the line that is kept whole.
-  using dir = tempDir("parse-col-position", { "long.js": source });
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const r = await Bun.build({ entrypoints: [${JSON.stringify(join(String(dir), "long.js"))}], throw: false });
-       const p = r.logs[0].position;
-       console.log(JSON.stringify({ column: p.column, length: p.lineText.length, atColumn: p.lineText[p.column - 1] }));`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+test.concurrent("an error at the end of a second line of more than 1,000 bytes, after CR LF", async () => {
+  const line = `var a = ${longArray}; var b = (;`;
+  const { stderr, excerpts, exitCode } = await printedExcerpts(["build", "long.js"], {
+    "long.js": "let ok = 1;\r\n" + line + "\r\n",
   });
-  const [stdout, stderr, built] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ position: JSON.parse(stdout), stderr, exitCode: built }).toEqual({ position, stderr: "", exitCode: 0 });
+  expect(excerpts).toEqual([{ excerpt: "2 | " + line.slice(-120), caret: 4 + 119 }]);
+  expect(stderr.length).toBeLessThan(1024);
+  expect(exitCode).toBe(1);
 });
 
 test.concurrent("a note at the end of a line of more than 1,000 bytes prints a bounded excerpt", async () => {
@@ -424,13 +441,49 @@ describe("bun build prints a bounded excerpt of a CSS line of more than 1,000 by
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("and keeps a line of 1,000 bytes whole", async () => {
-    const some = fill(492, "a{color:red}");
-    const source = some + "}" + some + "a{color:red}b{}";
-    const { excerpts, exitCode } = await printedExcerpts(["build", "long.css"], { "long.css": source });
-    expect(source.length).toBe(1000);
-    expect(excerpts).toEqual([{ excerpt: "1 | " + source, caret: 4 + 492 }]);
+  // The lines that follow count their columns from their own first byte, whatever ends the line before.
+  test.concurrent.each([
+    ["a line feed", "\n", "\n"],
+    ["CR LF", "\r\n", "\r\n"],
+    ["a line feed, as the last line of the file", "\n", ""],
+  ])("for an error on the line after %s", async (_, before, after) => {
+    const some = fill(1_200, "a{color:red}");
+    const line = some + "}" + some;
+    const { stderr, excerpts, exitCode } = await printedExcerpts(["build", "long.css"], {
+      "long.css": "/*! banner */" + before + line + after,
+    });
+    expect(excerpts).toEqual([{ excerpt: "2 | " + line.slice(1_200 - 40, 1_200 + 80), caret: 4 + 40 }]);
+    expect(stderr.length).toBeLessThan(1024);
     expect(exitCode).toBe(1);
+  });
+
+  // 41 rules, a stray `}` at byte 492, 41 rules, and a last rule that brings the line to 1,000 or 1,001 bytes.
+  const some = fill(492, "a{color:red}");
+  const line1000 = some + "}" + some + "a{color:red}b{}";
+  const line1001 = some + "}" + some + "a{color:red}b{ }";
+
+  test.concurrent.each([
+    ["the first line", "", ""],
+    ["a line after a line feed", "/*! banner */\n", "\n"],
+    ["a line after CR LF", "/*! banner */\r\n", "\r\n"],
+  ])("and keeps %s of 1,000 bytes whole, and cuts one of 1,001", async (_, before, after) => {
+    const number = before ? 2 : 1;
+    const [whole, cut] = await Promise.all(
+      [line1000, line1001].map(line => printedExcerpts(["build", "long.css"], { "long.css": before + line + after })),
+    );
+    expect({ bytes: [line1000.length, line1001.length], whole: whole.excerpts, cut: cut.excerpts }).toEqual({
+      bytes: [1000, 1001],
+      whole: [{ excerpt: `${number} | ` + line1000, caret: 4 + 492 }],
+      cut: [{ excerpt: `${number} | ` + line1001.slice(492 - 40, 492 + 80), caret: 4 + 40 }],
+    });
+  });
+
+  test.concurrent("and `position.lineText` is the line of 1,000 bytes, or the excerpt of the longer one", async () => {
+    const [whole, cut] = await Promise.all([positionOf("long.css", line1000), positionOf("long.css", line1001)]);
+    expect({ whole, cut }).toEqual({
+      whole: { position: { column: 493, length: 1000, atColumn: "}" }, stderr: "", exitCode: 0 },
+      cut: { position: { column: 493, length: 120, atColumn: undefined }, stderr: "", exitCode: 0 },
+    });
   });
 });
 

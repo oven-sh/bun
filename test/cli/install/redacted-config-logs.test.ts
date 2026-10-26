@@ -141,52 +141,70 @@ test("bunfig password value is masked in config error output", async () => {
   expect(coloredExit).toBe(1);
 });
 
-test("bunfig token is masked when the error is at the end of a line of more than 1,000 bytes", async () => {
-  // A location keeps only the last 120 bytes of such a line. This line is
-  // redacted, so it stays whole: the redaction has to see the `token` key,
-  // 1,100 bytes to the left of the error, to know that the string is a secret.
-  const secret = Buffer.alloc(1100, "secretvalue").toString();
-  const masked = Buffer.alloc(1100, "*").toString();
-  using dir = tempDir("redacted-bunfig-long-line", {
-    "bunfig.toml": `[install]\ntoken = "${secret}" ]\n`,
-    "package.json": "{}",
-  });
+// A location keeps only the last 120 bytes of a line of more than 1,000 bytes
+// for an error at its end. A redacted line stays whole: the redaction has to
+// see the `token` key, 1,100 bytes to the left of the error, to know that the
+// string is a secret. The two errors reach the log through different functions.
+test.each([
+  {
+    title: "a syntax error",
+    bunfig: (secret: string) => `[install]\ntoken = "${secret}" ]\n`,
+    printed: (masked: string) => `2 | token = "${masked}" ]`,
+    error: "error: Expected a newline or end of file after a key/value pair",
+  },
+  {
+    title: "an invalid value",
+    bunfig: (secret: string) => `install = { registry = { token = "${secret}" }, cafile = 1 }\n`,
+    printed: (masked: string) => `1 | install = { registry = { token = "${masked}" }, cafile = 1 }`,
+    error: "error: Invalid cafile. Expected a string.",
+  },
+])(
+  "bunfig token is masked when $title is at the end of a line of more than 1,000 bytes",
+  async ({ bunfig, printed, error }) => {
+    const secret = Buffer.alloc(1100, "secretvalue").toString();
+    const masked = Buffer.alloc(1100, "*").toString();
+    using dir = tempDir("redacted-bunfig-long-line", {
+      "bunfig.toml": bunfig(secret),
+      "package.json": "{}",
+    });
 
-  await using plain = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using plain = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [plainOut, plainErr, plainExit] = await Promise.all([plain.stdout.text(), plain.stderr.text(), plain.exited]);
+    const [plainOut, plainErr, plainExit] = await Promise.all([plain.stdout.text(), plain.stderr.text(), plain.exited]);
 
-  expect(plainOut).not.toContain("secretvalue");
-  expect(plainErr).not.toContain("secretvalue");
-  expect(plainErr).toContain(`2 | token = "${masked}" ]`);
+    expect(plainOut).not.toContain("secretvalue");
+    expect(plainErr).not.toContain("secretvalue");
+    expect(plainErr).toContain(printed(masked));
+    expect(plainErr).toContain(error);
 
-  await using colored = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using colored = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [coloredOut, coloredErr, coloredExit] = await Promise.all([
-    colored.stdout.text(),
-    colored.stderr.text(),
-    colored.exited,
-  ]);
+    const [coloredOut, coloredErr, coloredExit] = await Promise.all([
+      colored.stdout.text(),
+      colored.stderr.text(),
+      colored.exited,
+    ]);
 
-  expect(coloredOut).not.toContain("secretvalue");
-  expect(coloredErr).not.toContain("secretvalue");
-  expect(coloredErr).toContain(`"${masked}"`);
+    expect(coloredOut).not.toContain("secretvalue");
+    expect(coloredErr).not.toContain("secretvalue");
+    expect(coloredErr).toContain(`"${masked}"`);
 
-  expect(plainExit).toBe(1);
-  expect(coloredExit).toBe(1);
-});
+    expect(plainExit).toBe(1);
+    expect(coloredExit).toBe(1);
+  },
+);
 
 // The config loaders split user:password@ off a registry URL, but a token
 // written as a path segment stays part of it, and these messages echo that

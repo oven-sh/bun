@@ -1112,7 +1112,7 @@ const LINES_BEFORE: u32 = 3;
 const LINES_AFTER: u32 = 2;
 /// A longer line isn't hand-written. No layout shows it, and only one character more than this is stored
 /// (`Diagnostic::source`), because a one-line bundle can have thousands of errors.
-pub const MAX_SHOWN_LINE: usize = 1000;
+pub const MAX_SHOWN_LINE: usize = bun_ast::MAX_WHOLE_LINE_LEN;
 
 /// The options used when there's no configuration file: the ones `bun init` writes, without the purely stylistic rules.
 fn default_compiler_options() -> Json {

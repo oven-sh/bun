@@ -874,22 +874,27 @@ impl Location {
         None
     }
 
-    /// What a `Location` keeps of `line` for an error at the 1-based `column`, and the `line_text_start_column` of it.
-    pub fn line_excerpt(line: &[u8], column: i32) -> (&[u8], u32) {
+    /// What a `Location` keeps of `line_text` for an error at the 1-based `column` of its last line, and the `line_text_start_column` of it.
+    pub fn line_excerpt(line_text: &[u8], column: i32) -> (&[u8], u32) {
         use bun_core::strings;
+        // As `Data::write_format` reads it: without the line breaks around it, `column` counts in what follows the last one.
+        let line = bun_core::trim_left(bun_core::trim_right(line_text, b"\r\n"), b"\n\r");
+        let line = &line[strings::last_index_of_char(line, b'\n').map_or(0, |at| at + 1)..];
         if line.len() <= MAX_WHOLE_LINE_LEN {
-            return (line, 0);
+            return (line_text, 0);
         }
         let column = u32::try_from(column.saturating_sub(1)).unwrap_or(0);
         let at = strings::wtf8_offset_of_utf16_index(line, column);
         let kept = excerpt_range(line, at);
-        let start_column = column.saturating_sub(strings::wtf8_len_utf16(&line[kept.start..at]));
-        (&line[kept], start_column)
+        let before: u32 = strings::wtf8_codepoints(&line[kept.start..at])
+            .map(|(_, codepoint)| strings::codepoint_len_utf16(codepoint))
+            .sum();
+        (&line[kept], column.saturating_sub(before))
     }
 }
 
-/// A longer line isn't hand-written: `bun check` and `bun lint` hide it. A `Location` keeps an excerpt of it wherever the error is.
-const MAX_WHOLE_LINE_LEN: usize = 1000;
+/// `bun check` and `bun lint` hide a longer line as not hand-written. A `Location` keeps an excerpt of it wherever the error is.
+pub const MAX_WHOLE_LINE_LEN: usize = 1000;
 const EXCERPT_LEN_BEFORE: usize = 40;
 const EXCERPT_LEN_AFTER: usize = 80;
 
@@ -3665,5 +3670,161 @@ mod line_column_tracker_tests {
         let bmp_source = Source::init_path_string(b"t.js" as &[u8], bmp);
         let bmp_pos = bmp_source.init_error_position(usize2loc(bmp.len() - 1));
         assert_eq!(bmp_pos.column_count, 19);
+    }
+}
+
+#[cfg(test)]
+mod excerpt_tests {
+    use super::*;
+
+    fn located(contents: &[u8], offset: usize, redact_sensitive_information: bool) -> Location {
+        let source = Source::init_path_string(b"excerpt-test.js" as &[u8], contents);
+        let range = Range {
+            loc: usize2loc(offset),
+            len: 1,
+        };
+        Location::init_or_null_impl(Some(&source), range, None, redact_sensitive_information)
+            .unwrap()
+    }
+
+    fn kept(location: &Location) -> (&[u8], u32) {
+        (
+            location.line_text.as_deref().unwrap(),
+            location.line_text_start_column,
+        )
+    }
+
+    #[test]
+    fn excerpt_range_is_40_bytes_before_and_80_after_or_the_last_120() {
+        let ascii = [b'a'; 300];
+        assert_eq!(excerpt_range(&ascii, 0), 0..80);
+        assert_eq!(excerpt_range(&ascii, 39), 0..119);
+        assert_eq!(excerpt_range(&ascii, 100), 60..180);
+        assert_eq!(excerpt_range(&ascii, 220), 180..300);
+        assert_eq!(excerpt_range(&ascii, 299), 180..300);
+        assert_eq!(excerpt_range(&ascii, 300), 180..300);
+        assert_eq!(excerpt_range(b"", 0), 0..0);
+        assert_eq!(excerpt_range(b"short", 2), 0..5);
+    }
+
+    #[test]
+    fn excerpt_range_ends_on_characters() {
+        // Byte 110 is the third byte of a `€` and byte 230 is its third byte too.
+        let euros = "\u{20AC}".repeat(100);
+        assert_eq!(excerpt_range(euros.as_bytes(), 150), 108..231);
+        // Bytes 163 and 283 are each the third byte of a 4-byte character.
+        let astral = format!("a{}", "\u{10400}".repeat(100));
+        assert_eq!(excerpt_range(astral.as_bytes(), 203), 161..285);
+        // Each end moves 3 bytes at most through bytes that start no character.
+        assert_eq!(excerpt_range(&[0x80; 300], 150), 107..233);
+    }
+
+    #[test]
+    fn a_line_of_up_to_1000_bytes_is_kept_whole_for_an_error_at_its_end() {
+        let mut line = vec![b'a'; 999];
+        line.push(b']');
+        assert_eq!(kept(&located(&line, 999, false)), (&line[..], 0));
+
+        // The same line after another line, with either kind of line break.
+        for first in [&b"let ok;\n"[..], b"let ok;\r\n"] {
+            let contents = [first, &line[..], b"\n"].concat();
+            let location = located(&contents, first.len() + 999, false);
+            assert_eq!(kept(&location), (&line[..], 0));
+            assert_eq!((location.line, location.column), (2, 1000));
+        }
+    }
+
+    #[test]
+    fn a_longer_line_keeps_its_last_120_bytes_for_an_error_at_its_end() {
+        let mut line = vec![b'a'; 1000];
+        line.push(b']');
+        assert_eq!(kept(&located(&line, 1000, false)), (&line[881..], 881));
+
+        for first in [&b"let ok;\n"[..], b"let ok;\r\n"] {
+            let contents = [first, &line[..], b"\n"].concat();
+            let location = located(&contents, first.len() + 1000, false);
+            assert_eq!(kept(&location), (&line[881..], 881));
+            assert_eq!((location.line, location.column), (2, 1001));
+        }
+
+        // 600 `é` are 1,200 bytes and 600 columns. The last 120 bytes start inside one.
+        let accents = format!("{}]", "\u{E9}".repeat(600));
+        let location = located(accents.as_bytes(), 1200, false);
+        assert_eq!(kept(&location), (&accents.as_bytes()[1080..], 540));
+    }
+
+    #[test]
+    fn a_mid_line_error_keeps_40_bytes_before_it_and_80_after() {
+        let line = [&[b'a'; 150][..], b"]", &[b'b'; 150]].concat();
+        assert_eq!(kept(&located(&line, 150, false)), (&line[110..230], 110));
+    }
+
+    #[test]
+    fn a_redacted_line_is_not_cut_at_its_end() {
+        let mut line = vec![b'a'; 1000];
+        line.push(b']');
+        assert_eq!(kept(&located(&line, 1000, true)), (&line[..], 0));
+    }
+
+    #[test]
+    fn line_excerpt_keeps_a_line_of_up_to_1000_bytes_as_given() {
+        let line = vec![b'a'; 1000];
+        assert_eq!(Location::line_excerpt(&line, 1000), (&line[..], 0));
+        let with_breaks = [b"\n", &line[..], b"\r\n"].concat();
+        assert_eq!(
+            Location::line_excerpt(&with_breaks, 1000),
+            (&with_breaks[..], 0)
+        );
+    }
+
+    #[test]
+    fn line_excerpt_cuts_a_longer_line_around_the_column() {
+        let mut line = vec![b'a'; 1000];
+        line.push(b']');
+        let end = (&line[881..], 881);
+        assert_eq!(Location::line_excerpt(&line, 1001), end);
+        assert_eq!(Location::line_excerpt(&line, 501), (&line[460..580], 460));
+        assert_eq!(Location::line_excerpt(&line, 1), (&line[..80], 0));
+        // No column.
+        assert_eq!(Location::line_excerpt(&line, 0), (&line[..80], 0));
+        assert_eq!(Location::line_excerpt(&line, -1), (&line[..80], 0));
+        assert_eq!(Location::line_excerpt(&line, i32::MIN), (&line[..80], 0));
+        // A column past the end puts the caret right after the excerpt.
+        assert_eq!(Location::line_excerpt(&line, 1002), (&line[881..], 881));
+        assert_eq!(Location::line_excerpt(&line, 5000), (&line[881..], 4879));
+    }
+
+    #[test]
+    fn line_excerpt_counts_the_column_in_the_last_line_without_its_line_breaks() {
+        let mut line = vec![b'a'; 1000];
+        line.push(b']');
+        let end = (&line[881..], 881);
+        // The shapes that `get_lines_in_text` gives for a CSS line after the first one.
+        for text in [
+            [b"\n", &line[..], b"\n"].concat(),
+            [b"\n", &line[..]].concat(),
+            [&line[..], b"\r"].concat(),
+            [b"\n", &line[..], b"\r\n"].concat(),
+            [b"a line before\n", &line[..]].concat(),
+        ] {
+            assert_eq!(Location::line_excerpt(&text, 1001), end);
+        }
+    }
+
+    #[test]
+    fn line_excerpt_counts_utf16_columns() {
+        // 600 `é`: 1,200 bytes, 600 columns.
+        let accents = format!("{}]", "\u{E9}".repeat(600));
+        let accents = accents.as_bytes();
+        assert_eq!(
+            Location::line_excerpt(accents, 601),
+            (&accents[1080..], 540)
+        );
+        // 300 U+10400: 1,200 bytes, 600 columns.
+        let astral = format!("{}]", "\u{10400}".repeat(300));
+        let astral = astral.as_bytes();
+        assert_eq!(Location::line_excerpt(astral, 601), (&astral[1080..], 540));
+        // Column 600 is the second half of the last pair. The caret, 600 - 1 - 541 columns in, is at the pair.
+        assert_eq!(Location::line_excerpt(astral, 600), (&astral[1080..], 541));
     }
 }

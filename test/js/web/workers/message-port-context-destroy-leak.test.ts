@@ -80,15 +80,10 @@ test.skipIf(isWindows)(
   120_000,
 );
 
-// The other half of the contract above: once the wrapper and the peer are collected, the
-// self-ref taken by .ref() is the only thing keeping the native port alive. A context that
-// is torn down without a stop phase (a collected ShadowRealm global here) reaches
-// contextDestroyed() -> close() directly, and close() drops that self-ref part-way
-// through, so it has to hold its own reference for the rest of the teardown.
-//
-// ASAN only: the port lives in a bmalloc heap, which Malloc=1 routes to the system
-// allocator so ASAN can see a read of the freed port.
-test.skipIf(!isASAN)("closing a ref()'d port during context destruction does not free it mid-close", async () => {
+// Once the wrapper and the peer are collected, .ref()'s self-reference is the last reference to
+// the native port, and close() drops it partway through.
+// Malloc=1 routes bmalloc to the system allocator so ASAN can catch a read of the freed port.
+test.skipIf(!isASAN)("closing a ref()'d port during context destruction doesn't free it mid-close", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -98,11 +93,8 @@ test.skipIf(!isASAN)("closing a ref()'d port during context destruction does not
        const baseline = globals();
        let realm = new ShadowRealm();
        realm.evaluate("(() => { const { port1 } = new MessageChannel(); port1.ref(); })()");
-       // Collect the wrapper and the peer while the realm is still alive: the ref()'d native
-       // port now survives on its self-ref alone.
+       // Collect the wrapper and the peer while the realm is still alive.
        for (let i = 0; i < 5; i++) Bun.gc(true);
-       // Drop the realm. Destroying its global destroys the context the port is registered on.
-       // The global goes on the first collection; the check proves that teardown ran.
        realm = null;
        Bun.gc(true);
        console.log(globals() === baseline ? "PASS" : "the realm's global was never collected");`,

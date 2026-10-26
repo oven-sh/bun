@@ -165,9 +165,11 @@ mod bun_paths {
 // re-implementing them. The previous local copies diverged from the spec
 // (single-strip vs. while-loop, `is_sep_any` vs. platform `SEP`).
 mod strings {
+    #[cfg(windows)]
+    pub(super) use bun_paths::strings::paths::char_is_any_slash;
     pub(super) use bun_paths::strings::paths::{
-        char_is_any_slash, path_contains_node_modules_folder, without_leading_path_separator,
-        without_trailing_slash_windows_path,
+        path_contains_node_modules_folder, without_leading_path_separator,
+        without_trailing_slash_native, without_trailing_slash_windows_path,
     };
     pub(super) use bun_paths::strings::*;
 }
@@ -2454,13 +2456,13 @@ impl<'a> Resolver<'a> {
     /// A cache key must use native slashes, and must NOT end with a trailing slash.
     /// But drive roots MUST have a trailing slash ('/' and 'C:\')
     /// UNC paths, even if the root, must not have the trailing slash.
+    /// On POSIX a backslash is a file name byte, not a slash, so a key can end with one.
     ///
-    /// The helper function bun.strings.withoutTrailingSlashWindowsPath can be used
-    /// to remove the trailing slash from a path
+    /// `dir_cache_key` derives the key of a path.
     pub(crate) fn assert_valid_cache_key(path: &[u8]) {
         if cfg!(debug_assertions) {
             if path.len() > 1
-                && strings::char_is_any_slash(path[path.len() - 1])
+                && bun_paths::is_sep_native(path[path.len() - 1])
                 && !if cfg!(windows) {
                     path.len() == 3 && path[1] == b':'
                 } else {
@@ -2475,9 +2477,19 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// The key of the directory `path` in `dir_cache` and `fs.entries`: `path` without its
+    /// trailing native separators. Every lookup, fill and bust derives its key here, and the
+    /// walk of a miss takes each parent with `Dirname::dirname_native`.
+    /// On POSIX `open(2)` reads a backslash as part of the name, so `/a/b\` and `/a/b` are
+    /// two directories with two keys. A key is a spelling: `/a/b/.` is a third one.
+    #[inline(always)]
+    pub(crate) fn dir_cache_key(path: &[u8]) -> &[u8] {
+        strings::without_trailing_slash_native(path)
+    }
+
     /// Bust the directory cache for the given path, which may end in a separator.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-        let path = strings::without_trailing_slash_windows_path(path);
+        let path = Self::dir_cache_key(path);
         Self::assert_valid_cache_key(path);
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
@@ -2524,7 +2536,7 @@ impl<'a> Resolver<'a> {
 
     fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
         // On Windows the dirname of `a\hello\` is `a\hello`, so strip first.
-        let path = strings::without_trailing_slash_windows_path(path);
+        let path = Self::dir_cache_key(path);
         let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
 
         let a = self.bust_dir_cache(dir);
@@ -3407,7 +3419,7 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Option<DirInfoRef>> {
         debug_assert!(self.package_manager.is_some());
 
-        let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
+        let dir_path = Self::dir_cache_key(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
         let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
@@ -4272,7 +4284,7 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
-        let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
+        let path_without_trailing_slash = Self::dir_cache_key(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
         let top_result = self
             .dir_cache_mut()
@@ -4319,7 +4331,7 @@ impl<'a> Resolver<'a> {
             safe_path: bun_ptr::RawSlice::EMPTY,
             fd: FD::INVALID,
         });
-        let mut top = Dirname::dirname(&path[..input_path_len]);
+        let mut top = Dirname::dirname_native(&path[..input_path_len]);
 
         let mut top_parent = allocators::Result {
             index: allocators::NOT_FOUND,
@@ -4327,9 +4339,7 @@ impl<'a> Resolver<'a> {
             status: allocators::ItemStatus::NotFound,
         };
         #[cfg(windows)]
-        let root_path = strings::without_trailing_slash_windows_path(
-            ResolvePath::windows_filesystem_root(path),
-        );
+        let root_path = Self::dir_cache_key(ResolvePath::windows_filesystem_root(path));
         #[cfg(not(windows))]
         // we cannot just use "/"
         // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -4395,7 +4405,7 @@ impl<'a> Resolver<'a> {
                 }
             }
             i += 1;
-            top = Dirname::dirname(top);
+            top = Dirname::dirname_native(top);
         }
 
         if top == root_path {
@@ -5883,6 +5893,9 @@ impl<'a> Resolver<'a> {
             }};
         }
 
+        // Not `dir_cache_key`: `path` is an import path, and its directory part is read loosely.
+        // `import("/a/b\\/c.js")` loads `/a/b/c.js`, as node's ESM loader does (it parses a URL).
+        // Node's `require` throws for it.
         let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
 
         // PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
@@ -6135,14 +6148,7 @@ impl<'a> Resolver<'a> {
                 return Some(LoadResult {
                     path: query
                         .entry()
-                        .abs_path_or_fill(|| {
-                            Interned::from_static(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(&buffer[..])
-                                    .expect("unreachable"),
-                            )
-                        })
+                        .abs_path_or_fill(|| Self::intern_extension_path(query.entry().dir, buffer))
                         .as_bytes(),
                     dirname_fd,
                     file_fd: query.entry().cache().fd,
@@ -6151,6 +6157,35 @@ impl<'a> Resolver<'a> {
         }
 
         None
+    }
+
+    /// The path that the entry of a file keeps for every spelling of its directory: `spelled`
+    /// when it spells the directory of the entry, otherwise that directory and the file name.
+    /// An import path can spell the directory as `/a/b\/`, and `/a/b\/c.js` is not a path to
+    /// the file.
+    #[cold]
+    #[inline(never)]
+    fn intern_extension_path(entry_dir: &[u8], spelled: &[u8]) -> Interned {
+        let file_name = bun_paths::basename(spelled);
+        let entry_dir = Self::dir_cache_key(entry_dir);
+        let joined: Vec<u8>;
+        let abs_path: &[u8] =
+            if Self::dir_cache_key(&spelled[..spelled.len() - file_name.len()]) == entry_dir {
+                spelled
+            } else {
+                let sep: &[u8] = if entry_dir.ends_with(SEP_STR.as_bytes()) {
+                    b""
+                } else {
+                    SEP_STR.as_bytes()
+                };
+                joined = [entry_dir, sep, file_name].concat();
+                &joined
+            };
+        Interned::from_static(
+            Fs::file_system::DirnameStore::instance()
+                .append_slice(abs_path)
+                .expect("unreachable"),
+        )
     }
 
     fn dir_info_uncached(
@@ -6945,6 +6980,17 @@ impl Dirname {
     /// returns trailing-sep-INCLUSIVE slice, never `None`,
     /// `is_sep_any` on all platforms. Do NOT replace with `bun_core::dirname`.
     pub fn dirname(path: &[u8]) -> &[u8] {
+        Self::dirname_with(path, bun_paths::is_sep_any)
+    }
+
+    /// `dirname` with the separators of the host only, for the upward walk of the directory
+    /// caches. On POSIX the parent of `/a/b\c` is `/a/`, as `open(2)` reads it.
+    pub(crate) fn dirname_native(path: &[u8]) -> &[u8] {
+        Self::dirname_with(path, bun_paths::is_sep_native)
+    }
+
+    #[inline(always)]
+    fn dirname_with(path: &[u8], is_sep: impl Fn(u8) -> bool) -> &[u8] {
         if path.is_empty() {
             return SEP_STR.as_bytes();
         }
@@ -6969,21 +7015,21 @@ impl Dirname {
         };
 
         let mut end_index: usize = path.len() - 1;
-        while bun_paths::is_sep_any(path[end_index]) {
+        while is_sep(path[end_index]) {
             if end_index == 0 {
                 return root;
             }
             end_index -= 1;
         }
 
-        while !bun_paths::is_sep_any(path[end_index]) {
+        while !is_sep(path[end_index]) {
             if end_index == 0 {
                 return root;
             }
             end_index -= 1;
         }
 
-        if end_index == 0 && bun_paths::is_sep_any(path[0]) {
+        if end_index == 0 && is_sep(path[0]) {
             return &path[0..1];
         }
 

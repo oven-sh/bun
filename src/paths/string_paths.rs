@@ -467,6 +467,25 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     path
 }
 
+/// Strips the trailing separators of the host platform and keeps the filesystem root.
+/// On POSIX a backslash is a file name byte, so only `/` is stripped: `/a/b\` names a
+/// different directory than `/a/b`. On Windows this is `without_trailing_slash_windows_path`.
+#[inline]
+pub fn without_trailing_slash_native(input: &[u8]) -> &[u8] {
+    #[cfg(windows)]
+    {
+        without_trailing_slash_windows_path(input)
+    }
+    #[cfg(not(windows))]
+    {
+        let mut end = input.len();
+        while end > 1 && input[end - 1] == b'/' {
+            end -= 1;
+        }
+        &input[..end]
+    }
+}
+
 pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {
     strings::trim_left(this, &[crate::SEP])
 }
@@ -711,5 +730,30 @@ mod tests {
         assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 98300]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
+    }
+
+    #[test]
+    fn without_trailing_slash_native_strips_host_separators_only() {
+        let strip = |input: &'static str| {
+            core::str::from_utf8(without_trailing_slash_native(input.as_bytes())).unwrap()
+        };
+        assert_eq!(strip("/a/b"), "/a/b");
+        assert_eq!(strip("/a/b/"), "/a/b");
+        assert_eq!(strip("/a/b//"), "/a/b");
+        assert_eq!(strip("/"), "/");
+        assert_eq!(strip("//"), "/");
+        assert_eq!(strip(""), "");
+        if cfg!(windows) {
+            assert_eq!(strip("C:\\a\\"), "C:\\a");
+            assert_eq!(strip("C:\\a/"), "C:\\a");
+            assert_eq!(strip("C:\\"), "C:\\");
+        } else {
+            // A backslash is a file name byte on POSIX.
+            assert_eq!(strip("/a/b\\"), "/a/b\\");
+            assert_eq!(strip("/a/b\\\\"), "/a/b\\\\");
+            assert_eq!(strip("/a/b\\/"), "/a/b\\");
+            assert_eq!(strip("/a/b/\\"), "/a/b/\\");
+            assert_eq!(strip("\\"), "\\");
+        }
     }
 }

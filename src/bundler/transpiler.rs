@@ -404,11 +404,7 @@ impl<'a> Transpiler<'a> {
                                 dir,
                                 bun_paths::SEP,
                             );
-                            break 'name self.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(
-                                    buster_name,
-                                ),
-                            );
+                            break 'name self.resolver.bust_dir_cache(buster_name);
                         }
                     }
 
@@ -423,11 +419,7 @@ impl<'a> Transpiler<'a> {
                     else {
                         break 'name false;
                     };
-                    self.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(
-                            buster_name.as_bytes(),
-                        ),
-                    )
+                    self.resolver.bust_dir_cache(buster_name.as_bytes())
                 };
 
                 // Only re-query if we previously had something cached.

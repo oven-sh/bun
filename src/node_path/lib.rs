@@ -4,6 +4,7 @@
 #![feature(adt_const_params)]
 
 use bun_core::strings;
+use bun_paths::string_paths::without_trailing_slash_native;
 use bun_paths::{self, MAX_PATH_BYTES, Platform};
 
 const PATH_MIN_WIDE: usize = 4096; // 4 KB
@@ -180,23 +181,9 @@ fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     Ok(cwd)
 }
 
-#[cfg(windows)]
-#[inline]
-fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    bun_paths::string_paths::without_trailing_slash_windows_path(s)
-}
-#[cfg(not(windows))]
-#[inline]
-fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    let mut end = s.len();
-    while end > 1 && s[end - 1] == CHAR_FORWARD_SLASH {
-        end -= 1;
-    }
-    &s[..end]
-}
-
 fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
-    let cached_cwd = without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir());
+    let cached_cwd =
+        without_trailing_slash_native(bun_paths::fs::FileSystem::instance().top_level_dir());
     buf[0..cached_cwd.len()].copy_from_slice(cached_cwd);
     Ok(&mut buf[0..cached_cwd.len()])
 }
@@ -204,7 +191,7 @@ fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
 fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
     let result = strings::convert_utf8_to_utf16_in_buffer(
         buf,
-        without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir()),
+        without_trailing_slash_native(bun_paths::fs::FileSystem::instance().top_level_dir()),
     );
     Ok(result)
 }

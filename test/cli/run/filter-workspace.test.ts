@@ -846,6 +846,35 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+
+  // On POSIX a backslash is a file name byte: `packages/x\` is a directory of its own. Its listing is not read as
+  // the listing of `packages/x`, and the package next to it runs one time.
+  test.skipIf(isWindows).each([
+    ["an empty x\\ next to x", "x", {}],
+    ["an x\\ with a package.json and no x", "a", { "package.json": JSON.stringify({ name: "other" }) }],
+  ])("a directory named with a trailing backslash does not stop the other packages: %s", async (_, name, other) => {
+    await using dir = tempDir("filter-backslash-dir", {
+      packages: {
+        [name]: {
+          "package.json": JSON.stringify({ name, scripts: { go: "echo ran-once" } }),
+        },
+        "x\\": other,
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "go"],
+      cwd: dir,
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout.split("ran-once").length - 1).toBe(1);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("selectors", () => {

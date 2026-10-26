@@ -1376,6 +1376,129 @@ it("resolves through many directories without corrupting the dir cache", async (
   expect(exitCode).toBe(0);
 }, 20_000);
 
+// On POSIX a backslash is a file name byte, so `plugins\` is not `plugins`, and here `plugins\` does not exist.
+// The directory cache is one map for the process. Each row looks up `plugins\` through one entry point, then
+// `plugins`, then `plugins\` again. The answer for one spelling must not depend on a lookup of the other.
+// A package lookup from the missing `plugins\` starts in its parent, which has its own copy of the package.
+describe.skipIf(isWindows)(
+  "a lookup from a missing plugins\\ and one from plugins do not answer for each other",
+  () => {
+    const hoisted = "/node_modules/backslash-dir-pkg/index.js";
+    const lookups = {
+      "Bun.resolveSync": [`Bun.resolveSync("backslash-dir-pkg", plugins + B)`, hoisted],
+      "Bun.resolve": [`Bun.resolve("backslash-dir-pkg", plugins + B)`, hoisted],
+      "import.meta.resolveSync": [`import.meta.resolveSync("backslash-dir-pkg", plugins + B + "/noop.js")`, hoisted],
+      "createRequire": [`createRequire(plugins + B + "/noop.js").resolve("backslash-dir-pkg")`, hoisted],
+      "require.resolve with paths in a Worker": [`inWorker()`, hoisted],
+      "require of the directory": [`require(plugins + B)`, "MODULE_NOT_FOUND"],
+      "import of the directory": [`import(plugins + B)`, "ERR_MODULE_NOT_FOUND"],
+      "Bun.build of a require of the directory": [`bundle()`, "not bundled"],
+    };
+
+    test.concurrent.each(Object.entries(lookups))("%s", async (_, [lookup, fromMissing]) => {
+      using dir = tempDir("resolve-trailing-backslash", {
+        "node_modules/backslash-dir-pkg/index.js": `module.exports = "hoisted";`,
+        "plugins/node_modules/backslash-dir-pkg/index.js": `module.exports = "nested";`,
+        "plugins/index.js": `module.exports = require("backslash-dir-pkg");`,
+        "worker.cjs": `
+        const B = String.fromCharCode(92);
+        try {
+          postMessage(require.resolve("backslash-dir-pkg", { paths: [__dirname + "/plugins" + B] }));
+        } catch (e) {
+          postMessage(e.code);
+        }
+      `,
+        "lookup.cjs": `
+        const { writeFileSync } = require("node:fs");
+        const { createRequire } = require("node:module");
+        const B = String.fromCharCode(92);
+        const plugins = __dirname + "/plugins";
+        const bundle = async () => {
+          writeFileSync(__dirname + "/entry.js", "require(" + JSON.stringify(plugins + B) + ");");
+          const build = await Bun.build({ entrypoints: [__dirname + "/entry.js"], throw: false });
+          return build.success ? "bundled" : "not bundled";
+        };
+        const inWorker = () =>
+          new Promise((resolve, reject) => {
+            const worker = new Worker(__dirname + "/worker.cjs");
+            worker.onerror = reject;
+            worker.onmessage = event => {
+              worker.terminate();
+              resolve(event.data);
+            };
+          });
+        const attempt = async lookup => {
+          try {
+            return String(await lookup()).replace(__dirname, "");
+          } catch (e) {
+            return e.code;
+          }
+        };
+        (async () => {
+          const result = {
+            first: await attempt(() => ${lookup}),
+            then: await attempt(() => require.resolve("backslash-dir-pkg", { paths: [plugins] })),
+            // A module in plugins requires the package by name.
+            inside: await attempt(() => require(plugins)),
+            again: await attempt(() => ${lookup}),
+          };
+          console.log(JSON.stringify(result));
+        })();
+      `,
+      });
+      await using proc = Bun.spawn({
+        // Without --no-install, a lookup that finds no node_modules directory asks the registry.
+        cmd: [bunExe(), "--no-install", "lookup.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stripAsanWarning(stderr)).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        first: fromMissing,
+        then: "/plugins/node_modules/backslash-dir-pkg/index.js",
+        inside: "nested",
+        again: fromMissing,
+      });
+      expect(exitCode).toBe(0);
+    });
+  },
+);
+
+// An import path can spell the directory of a file as `fr\/`. The file keeps one path for every spelling.
+test.skipIf(isWindows).concurrent.each([
+  ["fr\\/messages", "fr/messages"],
+  ["fr/messages", "fr\\/messages"],
+])("require(%j) and then require(%j) load the same file", async (first, second) => {
+  using dir = tempDir("resolve-backslash-dir-of-file", {
+    "fr/messages.js": `module.exports = __filename;`,
+    "load.cjs": `
+      const [first, second] = process.argv.slice(2);
+      const load = specifier => {
+        try {
+          return require(__dirname + "/" + specifier).replace(__dirname, "");
+        } catch (e) {
+          return e.code ?? e.name;
+        }
+      };
+      console.log(JSON.stringify([load(first), load(second), load(first)]));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "load.cjs", first, second],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stripAsanWarning(stderr)).toBe("");
+  expect(JSON.parse(stdout)).toEqual(["/fr/messages.js", "/fr/messages.js", "/fr/messages.js"]);
+  expect(exitCode).toBe(0);
+});
+
 // ASAN builds print a warning on stderr that has nothing to do with resolution.
 function stripAsanWarning(stderr: string): string {
   return stderr

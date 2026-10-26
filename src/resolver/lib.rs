@@ -1081,7 +1081,7 @@ pub mod fs {
             store_fd: bool,
             iterator: I,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
-            let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
+            let dir = crate::Resolver::dir_cache_key(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
             let _unlock_guard = self.entries_mutex.lock_guard();

@@ -313,7 +313,7 @@ p.x`);
         `
         struct S { m() { return 1; } *g() { yield 2; } }
         let threw = false;
-        try { S.prototype.m.call({}); } catch (e) { threw = e instanceof TypeError; }
+        try { S.prototype.m.call({}); } catch (e) { threw = e.name === "TypeError"; }
         [threw, new S().m(), [...S.prototype.g.call({})].join()].join();
         `,
       ),

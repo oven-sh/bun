@@ -32,6 +32,10 @@ pub const REQUIRES_FILE_DESCRIPTORS: bool = true;
 #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
 pub const REQUIRES_FILE_DESCRIPTORS: bool = false;
 
+/// True if events match watch items by path, so an item keeps working after its file is deleted
+/// and recreated.
+pub const WATCHES_BY_PATH: bool = cfg!(windows);
+
 /// Open flags for an fd that exists only to receive kqueue VNODE events.
 /// Darwin has O_EVTONLY (no read/write access requested); FreeBSD has no
 /// equivalent, so the watch fd is a plain O_RDONLY. `O_CLOEXEC` keeps the fd
@@ -44,7 +48,7 @@ pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 pub type Event = WatchEvent;
 pub type WatchList = MultiArrayList<WatchItem>;
 pub type HashType = u32;
-pub type WatchItemIndex = u16;
+pub type WatchItemIndex = u32;
 pub const MAX_EVICTION_COUNT: usize = 8096;
 
 const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
@@ -290,13 +294,15 @@ impl Watcher {
             // Shared access suffices (atomics + mutex + column reads); the borrow
             // ends before the free below.
             let me = unsafe { &*this };
+            // `thread_body` clears `watchloop_handle` under this mutex when it returns ownership.
+            me.mutex.lock();
             if me.watchloop_handle.load() {
-                me.mutex.lock();
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
                 me.mutex.unlock();
                 false
             } else {
+                me.mutex.unlock();
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
@@ -354,27 +360,29 @@ impl Watcher {
 
         log!("Watcher started");
 
-        let owner_still_alive = match self.watch_loop() {
-            Err(err) => {
+        if let Err(err) = self.watch_loop() {
+            self.platform.stop();
+            // Hold the mutex so `shutdown` can't free `self` or `ctx` before `on_error` returns.
+            let _guard = self.mutex.lock_guard();
+            if self.running.load() {
                 self.watchloop_handle.store(false);
-                self.platform.stop();
-                let running = self.running.load();
-                if running {
-                    (self.on_error)(self.ctx, err);
-                }
-                running
+                (self.on_error)(self.ctx, err);
+                return true;
             }
-            Ok(()) => false,
-        };
+        }
 
-        // deinit and close descriptors if needed
-        if self.close_descriptors.load() {
+        // `thread_main` frees `self` next, so wait for `shutdown` to release the mutex.
+        let close_descriptors = {
+            let _guard = self.mutex.lock_guard();
+            self.close_descriptors.load()
+        };
+        if close_descriptors {
             let fds = self.watchlist.items_fd();
             for &fd in fds {
                 let _ = bun_sys::close(fd);
             }
         }
-        owner_still_alive
+        false
     }
 
     pub fn flush_evictions(&mut self) {
@@ -557,6 +565,9 @@ impl Watcher {
             // so we must copy into a NUL-terminated scratch buffer (mirrors the
             // directory branch below) instead of pointing at the caller's slice.
             let mut buf = bun_paths::path_buffer_pool::get();
+            if file_path.len() >= buf.len() {
+                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
+            }
             let slice: &ZStr = if CLONE_FILE_PATH {
                 buf[0..file_path.len()].copy_from_slice(file_path);
                 buf[file_path.len()] = 0;
@@ -631,6 +642,9 @@ impl Watcher {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
             let mut buf = bun_paths::path_buffer_pool::get();
+            if file_path.len() >= buf.len() {
+                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
+            }
             let path: &ZStr = if CLONE_FILE_PATH
                 && !file_path.is_empty()
                 && file_path[file_path.len() - 1] == 0

@@ -189,7 +189,7 @@ impl GarbageCollectionController {
         self.gc_last_heap_size.set(vm.block_bytes_allocated());
     }
 
-    /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth, back to fast when it grows or an idle full collection was requested.
+    /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires without heap growth beyond the chatter slack, back to fast when it grows.
     ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.
@@ -201,17 +201,24 @@ impl GarbageCollectionController {
         if this.disabled.get() {
             return;
         }
-        // Timer chatter in a parked app churns a few blocks per tick; real work grows the heap by far more.
-        const IDLE_GROWTH_SLACK: usize = 2 * 1024 * 1024;
+        // Timer chatter in a parked app churns a few blocks per tick, a few MB per 30 s tick with nothing collecting in
+        // between (a TUI at its prompt: 70-200 KB/s); real work grows the heap by far more (one request: 15 MB and up).
+        const IDLE_GROWTH_SLACK_MIN: usize = 2 * 1024 * 1024;
+        const IDLE_GROWTH_SLACK_PER_MS: usize = 256; // 256 KB/s: 7.5 MB over the 30 s tick
+        let interval = this.repeat_interval();
+        let idle_growth_slack =
+            IDLE_GROWTH_SLACK_MIN.max(interval.max(0) as usize * IDLE_GROWTH_SLACK_PER_MS);
         let prev_heap_size = this.gc_last_heap_size.get();
         // SAFETY: per fn contract.
         let vm_ref = unsafe { &*vm };
-        let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + IDLE_GROWTH_SLACK;
-        let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, this.repeat_interval());
+        let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + idle_growth_slack;
+        let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, interval);
         this.perform_gc(full);
-        // Only growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job.
-        // An idle full collection proceeds at this timer's ticks in a program that runs no JS: fast ones for the next 30.
-        if !full && this.gc_last_heap_size.get() <= prev_heap_size {
+        // Growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job. Where the
+        // event loop cannot let an idle collection finish while parked (Windows: Bun__JSC_onBeforeWait), it proceeds at
+        // this timer's ticks instead, fast ones for the next 30.
+        let needs_ticks_to_finish = full && cfg!(windows);
+        if !grew && !needs_ticks_to_finish {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .get()

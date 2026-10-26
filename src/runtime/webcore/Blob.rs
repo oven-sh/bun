@@ -1416,10 +1416,14 @@ impl BlobExt for Blob {
                         false
                     }
                 };
-                let borrowed = matches!(pathlike, PathOrFileDescriptor::Fd(_));
-                let (writer_fd, owns_fd) = match windows_sink_fd(fd, borrowed, is_stdout_or_stderr)
-                {
-                    bun_sys::Result::Ok(fds) => fds,
+                break 'brk_sink match start_windows_sink(
+                    self.global_this()
+                        .expect("Blob.global_this set at construction"),
+                    fd,
+                    matches!(pathlike, PathOrFileDescriptor::Fd(_)),
+                    is_stdout_or_stderr,
+                ) {
+                    bun_sys::Result::Ok(sink) => sink,
                     bun_sys::Result::Err(err) => {
                         return Ok(JSPromise::rejected_promise(
                             cx.global(),
@@ -1428,37 +1432,6 @@ impl BlobExt for Blob {
                         .to_js());
                     }
                 };
-                let sink = webcore::FileSink::init(
-                    fd,
-                    jsc::EventLoopHandle::init(
-                        self.global_this()
-                            .expect("Blob.global_this set at construction")
-                            .bun_vm()
-                            .as_mut()
-                            .event_loop() as *mut (),
-                    ),
-                );
-                sink.writer.with_mut(|w| w.owns_fd = owns_fd);
-
-                use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-                use bun_sys::FdExt as _;
-                let started = sink.writer.with_mut(|w| {
-                    if is_stdout_or_stderr {
-                        w.start_sync(writer_fd, false)
-                    } else {
-                        w.start(writer_fd, true)
-                    }
-                });
-                if let bun_sys::Result::Err(err) = started {
-                    if owns_fd {
-                        writer_fd.close();
-                    }
-                    return Ok(
-                        JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
-                    );
-                }
-
-                break 'brk_sink sink;
             }
 
             #[cfg(not(windows))]
@@ -1595,9 +1568,6 @@ impl BlobExt for Blob {
 
         #[cfg(windows)]
         {
-            use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-            use bun_sys::FdExt as _;
-
             let pathlike = &store.data.as_file().pathlike;
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
             let vm = global_this.bun_vm().as_mut();
@@ -1638,39 +1608,19 @@ impl BlobExt for Blob {
                 )
             };
 
-            let borrowed = matches!(pathlike, PathOrFileDescriptor::Fd(_));
-            let (writer_fd, owns_fd) = match windows_sink_fd(fd, borrowed, is_stdout_or_stderr) {
-                bun_sys::Result::Ok(fds) => fds,
+            // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
+            let sink = match start_windows_sink(
+                self.global_this()
+                    .expect("Blob.global_this set at construction"),
+                fd,
+                matches!(pathlike, PathOrFileDescriptor::Fd(_)),
+                is_stdout_or_stderr,
+            ) {
+                bun_sys::Result::Ok(sink) => sink,
                 bun_sys::Result::Err(err) => {
                     return Err(global_this.throw_value(err.to_js(global_this)));
                 }
             };
-            let sink = webcore::FileSink::init(
-                fd,
-                jsc::EventLoopHandle::init(
-                    self.global_this()
-                        .expect("Blob.global_this set at construction")
-                        .bun_vm()
-                        .as_mut()
-                        .event_loop() as *mut (),
-                ),
-            );
-            // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
-            sink.writer.with_mut(|w| w.owns_fd = owns_fd);
-
-            let start_result = sink.writer.with_mut(|w| {
-                if is_stdout_or_stderr {
-                    w.start_sync(writer_fd, false)
-                } else {
-                    w.start(writer_fd, true)
-                }
-            });
-            if let bun_sys::Result::Err(err) = start_result {
-                if owns_fd {
-                    writer_fd.close();
-                }
-                return Err(global_this.throw_value(err.to_js(global_this)));
-            }
             if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
                 sink.close_with_graph(context);
             }
@@ -5086,22 +5036,47 @@ const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
 /// `uv_close` closes the fd that its pipe or tty handle was given, so one the caller keeps is duplicated.
 #[cfg(windows)]
-fn windows_sink_fd(
+fn start_windows_sink(
+    global: &JSGlobalObject,
     fd: Fd,
     borrowed: bool,
     is_stdout_or_stderr: bool,
-) -> bun_sys::Result<(Fd, bool)> {
+) -> bun_sys::Result<RefPtr<webcore::FileSink>> {
+    use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+    use bun_sys::FdExt as _;
     use bun_sys::windows::libuv as uv;
-    if borrowed
+
+    let duplicate = borrowed
         && !is_stdout_or_stderr
         && matches!(
             uv::uv_guess_handle(fd.uv()),
             uv::HandleType::NamedPipe | uv::HandleType::Tty
-        )
-    {
-        return crate::shell::interpreter::shell_dup(fd).map(|dup| (dup, true));
+        );
+    let writer_fd = if duplicate {
+        crate::shell::interpreter::shell_dup(fd)?
+    } else {
+        fd
+    };
+    let owns_fd = duplicate || !borrowed;
+    let sink = webcore::FileSink::init(
+        fd,
+        jsc::EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>()),
+    );
+    let started = sink.writer.with_mut(|w| {
+        w.owns_fd = owns_fd;
+        if is_stdout_or_stderr {
+            w.start_sync(writer_fd, false)
+        } else {
+            w.start(writer_fd, true)
+        }
+    });
+    if let bun_sys::Result::Err(err) = started {
+        if owns_fd {
+            writer_fd.close();
+        }
+        return bun_sys::Result::Err(err);
     }
-    bun_sys::Result::Ok((fd, !borrowed))
+    bun_sys::Result::Ok(sink)
 }
 
 #[cfg(not(windows))]

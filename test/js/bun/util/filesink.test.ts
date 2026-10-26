@@ -534,9 +534,7 @@ it("close() does not leak the native FileSink", async () => {
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-// A sink never closes a descriptor that the caller opened. The sink keeps itself alive
-// while a write is in flight, and only the close of its writer releases that ref. On
-// Windows the writer did not report a close for such a descriptor.
+// A sink leaves a descriptor that the caller opened open, and the close of its writer frees the sink.
 describe("a sink on a descriptor the caller opened is freed", () => {
   // Runs `write` on a descriptor of `file` and checks that the descriptor is still open.
   async function withDescriptor(file: string, write: (fd: number) => Promise<void>) {
@@ -620,13 +618,11 @@ describe("a sink on a descriptor the caller opened is freed", () => {
       if (fileSinkInternals.liveCount() <= baseline) break;
       await Bun.sleep(10);
     }
-    // Unfixed, every iteration leaks one.
     expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
   });
 });
 
-// Reads a stream of a node:child_process child as it comes. `has(text)` is true once the
-// child has written `text`, false if the stream ended first. `ended` settles at its end.
+// For a stream of a node:child_process child. `has(text)`: the child wrote `text`. `ended`: the stream is over.
 function collect(stream: Readable) {
   let over = false;
   let wake = () => {};
@@ -655,9 +651,7 @@ function collect(stream: Readable) {
   return collected;
 }
 
-// The same for a pipe. The fixture's descriptor 3 is a pipe that the test reads. On Windows
-// a writer took the caller's pipe for its own: it leaked with the pipe if it had written,
-// and closed the caller's pipe when it was collected if it had not.
+// The same for a pipe: descriptor 3 of the fixture is a pipe that the test reads.
 describe.concurrent("a writer on a pipe the caller opened", () => {
   const prelude = `
     const { fileSinkInternals } = require("bun:internal-for-testing");
@@ -698,7 +692,6 @@ describe.concurrent("a writer on a pipe the caller opened", () => {
       Bun.gc(true);
       const baseline = fileSinkInternals.liveCount();
       for (let i = 0; i < 8; i++) await once();
-      // Unfixed, every writer leaks.
       console.log(JSON.stringify({ freed: await collected(baseline, 1), open: pipeIsOpen() }));
     `);
     expect(result).toEqual({
@@ -1530,15 +1523,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   });
 });
 
-// `Bun.write(dest, stream)` settles its promise once the sink has written the last of the
-// stream. When the stream is a pipe, or the last write completes later, that happens in a
-// callback of the event loop, and the sink has to run the reaction before that callback
-// returns: with nothing else alive the process exits next. The sink settles where its
-// writer reports the close. The destinations here are ones that the sink was given and
-// leaves open. On Windows the writer reported no close for those, so the reaction never
-// ran and the sink leaked.
-//
-// As above, the fixtures have no timer, and only one has a 'beforeExit' listener.
+// Nothing else is alive in the fixtures (no timer, one 'beforeExit' listener), so the sink has to run the reaction.
 describe("Bun.write(dest, stream) into a descriptor the sink was given, with nothing else alive", () => {
   const line = "a line from the pipe\n";
 
@@ -1551,19 +1536,15 @@ describe("Bun.write(dest, stream) into a descriptor the sink was given, with not
   };
 
   const inputs = {
-    // The test closes the pipe once the line is through, so the end arrives in a callback
-    // of its own.
+    // The test closes the pipe once the line is through: the end arrives in a callback of its own.
     alone: `Bun.stdin.stream()`,
-    // A slice of exactly the line's length: the reader reports the end together with the
-    // chunk that completes it.
+    // A slice of exactly the line's length: the end arrives with the chunk that completes it.
     withTheLastChunk: `Bun.stdin.slice(0, ${line.length}).stream()`,
-    // No pipe: the stream is over inside Bun.write(). On Windows the write is not, and the
-    // sink ends from the callback that completes it.
+    // No pipe. The stream is over inside Bun.write(), but on Windows the write completes later.
     fromScript: `new Response(new ReadableStream({ start(c) { c.enqueue(${JSON.stringify(line)}); c.close(); } }))`,
   };
 
-  // The fixture prints "wired" and, at exit, one line: what ran, in order (`events`), the
-  // native sinks that are still alive (`sinks`), and whether descriptor `stat` is open.
+  // At exit the fixture prints what ran in order, the native sinks still alive, and whether `stat` is open.
   function fixture(
     dest: string,
     input: string,
@@ -1592,8 +1573,7 @@ describe("Bun.write(dest, stream) into a descriptor the sink was given, with not
     `;
   }
 
-  // Reads a pipe of the fixture as it comes. `printed(text)` is true once the fixture has
-  // printed `text`, false if the pipe closed first; with no text it reads to the end.
+  // `printed(text)`: the fixture printed `text` (false if the pipe closed first). With no text it reads to the end.
   function watch(stream: ReadableStream<Uint8Array>) {
     const decoder = new TextDecoder();
     const reader = stream.getReader();
@@ -1609,8 +1589,7 @@ describe("Bun.write(dest, stream) into a descriptor the sink was given, with not
     return watched;
   }
 
-  // The fixture wires the stream to the sink and prints "wired". Only then is `write` sent,
-  // so it arrives from the event loop, after the script has returned to it.
+  // `write` is sent only after the fixture printed "wired", so it arrives from the event loop.
   async function run({
     dest = "stdout",
     input = "alone",
@@ -1646,9 +1625,7 @@ describe("Bun.write(dest, stream) into a descriptor the sink was given, with not
     return { written, stderr: stderr.text, exitCode };
   }
 
-  // As `run`, with the fixture's descriptor 3 as the destination. `Bun.spawn` hands the
-  // parent a raw descriptor for an extra pipe (a HANDLE on Windows). node:child_process
-  // wraps it in a socket, which reads the same way on every platform.
+  // node:child_process wraps the parent's end of descriptor 3 in a socket. `Bun.spawn` gives a raw handle.
   async function runIntoPipe(input: "alone" | "withTheLastChunk", write: string) {
     const options: SpawnOptions = { stdio: ["pipe", "pipe", "pipe", "pipe"], env: bunEnv as NodeJS.ProcessEnv };
     using child = spawn(bunExe(), ["-e", fixture(dests.pipe, inputs[input], { stat: 3 })], options);
@@ -1691,15 +1668,13 @@ describe("Bun.write(dest, stream) into a descriptor the sink was given, with not
     expect(await run({ awaits: true })).toEqual(settled(line.length));
   });
 
-  // Without a checkpoint of the sink's own, the reaction waits for the one that follows
-  // the 'beforeExit' listeners.
+  // Without a checkpoint of its own, the reaction would run after the 'beforeExit' listeners.
   it.concurrent("'beforeExit' is emitted once, after the reaction", async () => {
     const events = [`resolved ${line.length}`, "beforeExit"];
     expect(await run({ beforeExit: true })).toEqual(settled(line.length, { events }));
   });
 
-  // On Windows this write is not done when the end arrives: the sink ends its writer from
-  // the callback that completes the write.
+  // On Windows this write completes later: the sink ends its writer from the write's callback.
   it.concurrent("into a file the sink was given", async () => {
     expect(await run({ dest: "fd", input: "withTheLastChunk" })).toEqual(settled(line.length));
   });

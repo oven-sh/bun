@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { readFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir, unprivilegedSpawnOptions } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -856,55 +855,58 @@ describe("worker_threads", () => {
 describe("worker thread limit", () => {
   // On Linux, RLIMIT_NPROC counts every thread of the uid, as a cgroup
   // pids.max counts every thread of the cgroup. The kernel does not enforce it
-  // for root, so a root test runner drops to `nobody` through runuser.
-  const isRoot = process.getuid?.() === 0;
-  const hasPrlimit = isLinux && !!Bun.which("prlimit");
-  const hasNobody =
-    isRoot &&
-    !!Bun.which("runuser") &&
-    readFileSync("/etc/passwd", "utf8")
-      .split("\n")
-      .some(line => line.startsWith("nobody:"));
-  const canLimitThreads = hasPrlimit && (!isRoot || hasNobody);
+  // for root, so under a root test runner the child runs unprivileged.
+  const prlimit = isLinux ? Bun.which("prlimit") : null;
 
-  test.skipIf(!canLimitThreads)("new Worker throws ERR_WORKER_INIT_FAILED when the OS refuses the thread", async () => {
+  test.skipIf(!prlimit)("new Worker throws ERR_WORKER_INIT_FAILED when the OS refuses the thread", async () => {
+    using dir = tempDir("worker-thread-limit", {});
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
     // A limit of 1 refuses every new thread, whatever else the uid runs: this
     // process is already one task of the uid. The child sets the limit on
     // itself once its lazy runtime threads exist, so the first thread that is
-    // refused is the worker's.
-    const cmd = [
-      bunExe(),
-      "-e",
-      `let keep = [];
-       for (let i = 0; i < 50; i++) keep.push(new Array(10000).fill(i));
-       keep = [];
-       Bun.gc(true);
-       const limited = Bun.spawnSync([${JSON.stringify(Bun.which("prlimit"))}, "--pid", String(process.pid), "--nproc=1"]);
-       if (limited.exitCode !== 0) throw new Error("prlimit: " + limited.stderr);
-       try {
-         new Worker("data:text/javascript,postMessage(1)");
-         console.log("started");
-       } catch (e) {
-         console.log(JSON.stringify({ code: e.code, message: e.message, name: e.name }));
-       }
-       // A normal exit runs a GC, and its collector thread would be refused too.
-       process.exit(0);`,
-    ];
-    if (isRoot) cmd.unshift(Bun.which("runuser")!, "-u", "nobody", "--");
+    // refused is a worker's.
     await using proc = Bun.spawn({
-      cmd,
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { Worker as NodeWorker } from "node:worker_threads";
+         let keep = [];
+         for (let i = 0; i < 50; i++) keep.push(new Array(10000).fill(i));
+         keep = [];
+         Bun.gc(true);
+         const limited = Bun.spawnSync([${JSON.stringify(prlimit)}, "--pid", String(process.pid), "--nproc=1"]);
+         if (limited.exitCode !== 0) throw new Error("prlimit: " + limited.stderr);
+         const attempt = create => {
+           try {
+             create();
+             return "started";
+           } catch (e) {
+             return { code: e.code, message: e.message, name: e.name };
+           }
+         };
+         console.log(JSON.stringify({
+           web: attempt(() => new Worker("data:text/javascript,postMessage(1)")),
+           node: attempt(() => new NodeWorker(new URL("data:text/javascript,1"))),
+         }));
+         // A normal exit runs a GC, and its collector thread would be refused too.
+         process.exit(0);`,
+      ],
+      cwd: String(dir),
       env: {
         ...bunEnv,
-        // `nobody` has no writable home.
-        HOME: "/tmp",
+        HOME: String(dir),
         // LeakSanitizer needs a tracer thread at exit, which the limit refuses.
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
       },
       stdout: "pipe",
       stderr: "pipe",
+      ...unprivileged,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual({ code: "ERR_WORKER_INIT_FAILED", message: "EAGAIN", name: "Error" });
-    expect(exitCode, stderr).toBe(0);
+    const refused = { code: "ERR_WORKER_INIT_FAILED", message: "EAGAIN", name: "Error" };
+    expect({ result: stdout && JSON.parse(stdout), exitCode }, stderr).toEqual({
+      result: { web: refused, node: refused },
+      exitCode: 0,
+    });
   });
 });

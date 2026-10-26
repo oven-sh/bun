@@ -1371,10 +1371,10 @@ it("names the routes of one directory the same through a link to it, above it an
   `);
 });
 
-// Bun.resolveSync leaves the path of a file it finds in the resolver's cache, and a router that is made
-// takes the file of a route from there. It finds three here: a link to a file, a file through a link to
-// `dir`, and a file through a link below `dir`.
-it("names the routes and their files the same when Bun.resolveSync found some of the files first", async () => {
+// The resolver keeps the path it found a file by, and a router that is made after it gives that path as
+// the file of the route, where a router that is made first gives where the file is. It is so for a
+// router of the path to the directory that the resolver went by, and until reload().
+it("names the file of a route by the path Bun.resolveSync found it by before the router was made", async () => {
   // What a router gives when it is made first.
   const routed = {
     matches: [
@@ -1399,8 +1399,35 @@ it("names the routes and their files the same when Bun.resolveSync found some of
       "./p/index.tsx is site/pages/index.tsx",
       "./site/pages/linked/c is shared/c.tsx",
     ],
-    "site/pages": routed,
-    p: routed,
+    "site/pages": {
+      matches: [
+        "/a is /a in site/pages/a.tsx, src a.tsx",
+        "/sub/7 is /sub/[id] in site/pages/sub/[id].tsx, src sub/[id].tsx",
+        "/linked/deep/d is /linked/deep/d in shared/deep/d.tsx, src ../../shared/deep/d.tsx",
+        "/sub/to-a is /sub/to-a in site/pages/sub/to-a.tsx, src sub/to-a.tsx",
+      ],
+      routes: [
+        "/ is site/pages/index.tsx",
+        "/a is site/pages/a.tsx",
+        "/linked/c is site/pages/linked/c.tsx",
+        "/linked/deep/d is shared/deep/d.tsx",
+        "/sub/[id] is site/pages/sub/[id].tsx",
+        "/sub/b is site/pages/sub/b.tsx",
+        "/sub/to-a is site/pages/sub/to-a.tsx",
+      ],
+    },
+    p: {
+      matches: routed.matches,
+      routes: [
+        "/ is p/index.tsx",
+        "/a is site/pages/a.tsx",
+        "/linked/c is shared/c.tsx",
+        "/linked/deep/d is shared/deep/d.tsx",
+        "/sub/[id] is site/pages/sub/[id].tsx",
+        "/sub/b is site/pages/sub/b.tsx",
+        "/sub/to-a is site/pages/a.tsx",
+      ],
+    },
     "pages-by-link": routed,
     "site-by-link/pages": routed,
     "site/pages after reload(), with three files more": [

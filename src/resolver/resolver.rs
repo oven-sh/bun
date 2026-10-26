@@ -6254,22 +6254,42 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    /// The one writer of `Entry.abs_path`: `entry.dir` joined with the `name` of the first caller.
+    /// `Entry.abs_path`. Every fill of it is `entry.dir` joined with the `name` of the first caller.
     pub fn entry_abs_path(entry: &Fs::file_system::Entry, name: &[u8]) -> Option<&'static [u8]> {
         entry
-            .abs_path_or_try_fill(|| {
-                let parts = [entry.dir, name];
-                let joined = Fs::FileSystem::get()
-                    .abs_buf_checked(&parts, bufs!(entry_abs_path))
-                    .ok_or(())?;
-                Ok::<_, ()>(Interned::from_static(
-                    Fs::file_system::DirnameStore::instance()
-                        .append_slice(joined)
-                        .expect("unreachable"),
-                ))
+            .abs_path_or_try_fill(|| Self::entry_dir_joined(entry, name).ok_or(()))
+            .ok()
+            .map(Interned::as_bytes)
+    }
+
+    /// `entry_abs_path` for a find of the file by `dir`: its fill stores the mark of `dir` with the path.
+    fn entry_found_path(
+        entry: &Fs::file_system::Entry,
+        name: &[u8],
+        dir: &[u8],
+    ) -> Option<&'static [u8]> {
+        entry
+            .abs_path_or_try_fill_marked(|| {
+                let joined = Self::entry_dir_joined(entry, name).ok_or(())?;
+                Ok::<_, ()>((joined, Self::found_by_mark(dir)))
             })
             .ok()
             .map(Interned::as_bytes)
+    }
+
+    fn entry_dir_joined(entry: &Fs::file_system::Entry, name: &[u8]) -> Option<Interned> {
+        let parts = [entry.dir, name];
+        let joined = Fs::FileSystem::get().abs_buf_checked(&parts, bufs!(entry_abs_path))?;
+        Some(Interned::from_static(
+            Fs::file_system::DirnameStore::instance()
+                .append_slice(joined)
+                .expect("unreachable"),
+        ))
+    }
+
+    /// What a find of a file by `dir` stores with `Entry.abs_path`: never 0, the mark of no such find.
+    fn found_by_mark(dir: &[u8]) -> u32 {
+        ::bun_wyhash::hash32(strings::without_trailing_slash_windows_path(dir)).max(1)
     }
 
     /// The path of the file found as `name` in `dir`, and whether it is the real one behind a link.
@@ -6280,10 +6300,10 @@ impl<'a> Resolver<'a> {
         name: &[u8],
     ) -> Option<(&'static [u8], bool)> {
         if listing_is_named(entry.dir, dir) {
-            return Some((Self::entry_abs_path(entry, name)?, false));
+            return Some((Self::entry_found_path(entry, name, dir)?, false));
         }
         if !self.names_as_walked
-            && let Some(real) = Self::entry_abs_path(entry, entry.base())
+            && let Some(real) = Self::entry_found_path(entry, entry.base(), dir)
         {
             return Some((real, true));
         }
@@ -6319,11 +6339,19 @@ impl<'a> Resolver<'a> {
             .map(Interned::as_bytes)
     }
 
-    /// For a reader that ran `kind()` on `entry`: where a link leads, else its filled `abs_path`.
-    pub fn entry_file_path(entry: &Fs::file_system::Entry) -> Option<&'static [u8]> {
+    /// For a reader that came by `dir` and ran `kind()`: where a link leads, else the filled `abs_path`.
+    pub fn entry_file_path(entry: &Fs::file_system::Entry, dir: &[u8]) -> Option<&'static [u8]> {
         let own = entry.abs_path();
         if own.is_empty() {
             return None;
+        }
+        // Where the find that filled `abs_path` came by `dir` too, it is the path that find walked.
+        if entry.abs_path_mark() == Self::found_by_mark(dir) {
+            return if listing_is_named(entry.dir, dir) {
+                Some(own.as_bytes())
+            } else {
+                Self::entry_walked_path(entry, dir, entry.base())
+            };
         }
         let link = entry.cache().symlink;
         Some(if link.is_empty() {
@@ -6333,11 +6361,14 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    /// Fills `Entry.abs_path` only if `entry_file_path` then gives `fd_path`.
+    /// Fills `Entry.abs_path` only if `entry_file_path` then gives `fd_path`, where an open by `dir` led.
     pub fn fill_entry_file_path(
         entry: &Fs::file_system::Entry,
+        dir: &[u8],
         fd_path: &[u8],
     ) -> Option<&'static [u8]> {
+        // The open is the later one: a find that came by `dir` no longer names the file for `dir`.
+        entry.forget_abs_path_mark(Self::found_by_mark(dir));
         let link = entry.cache().symlink;
         if link.is_empty() {
             let own = Fs::FileSystem::get()
@@ -6349,7 +6380,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
         Self::entry_abs_path(entry, entry.base())?;
-        Self::entry_file_path(entry).filter(|kept| *kept == fd_path)
+        Self::entry_file_path(entry, dir).filter(|kept| *kept == fd_path)
     }
 
     /// Opens the real path the parent's entry gives with no stat, unless a listing is under it.

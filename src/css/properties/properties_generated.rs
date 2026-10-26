@@ -10,7 +10,6 @@ use crate as css;
 use crate::SmallList;
 use crate::VendorPrefix;
 use crate::prefixes::Feature as PrefixFeature;
-use crate::targets::Targets;
 
 use super::CSSWideKeyword;
 use super::custom::{CustomProperty, CustomPropertyName, UnparsedProperty};
@@ -1274,16 +1273,6 @@ impl PropertyId {
     pub(crate) fn add_prefix(&mut self, pre: VendorPrefix) {
         if let Some(p) = self.prefix_slot_mut() {
             *p |= pre;
-        }
-    }
-
-    /// Expands the stored prefix to the full set required by `targets`.
-    pub(crate) fn set_prefixes_for_targets(&mut self, targets: &Targets) {
-        let Some(feature) = self.tag().prefix_feature() else {
-            return;
-        };
-        if let Some(p) = self.prefix_slot_mut() {
-            *p = targets.prefixes(*p, feature);
         }
     }
 

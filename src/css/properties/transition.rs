@@ -17,8 +17,8 @@ use crate::css_values::time::Time;
 
 use crate::VendorPrefix;
 use crate::compat;
+use crate::css_parser::PROPERTY_BITSET_BITS;
 use crate::prefixes::Feature;
-use crate::targets::Targets;
 
 /// A value for the [transition](https://www.w3.org/TR/2018/WD-css-transitions-1-20181011/#transition-shorthand-property) property.
 #[derive(Clone, PartialEq)]
@@ -536,6 +536,10 @@ mod transition_handler_body {
             props: &[PropertyId],
             i: u32,
         ) {
+            // `ListedPrefixes` reads none of these ids, so it can be built after the list changes here.
+            debug_assert!(props.iter().chain([propertiez.at(i)]).all(|id| {
+                VendorPrefix::NONE.contains(id.prefix()) && *id != PropertyId::WebKitMaskComposite
+            }));
             propertiez.slice_mut()[i as usize] = props[0].deep_clone(arena);
             if props.len() > 1 {
                 propertiez.insert_slice(i + 1, &props[1..]);
@@ -543,7 +547,8 @@ mod transition_handler_body {
         }
 
         // This handler's own output lists every entry it generates, so an entry that is already listed is not generated again.
-        let as_written: SmallList<PropertyId, 4> = properties.iter().copied().collect();
+        let mut listed: Option<ListedPrefixes> = None;
+        let mut webkit_mask_needed: Option<bool> = None;
         let mut rtl_properties: Option<SmallList<PropertyId, 1>> = None;
         let mut i: u32 = 0;
 
@@ -578,22 +583,44 @@ mod transition_handler_body {
                 _ => {
                     let index = i;
                     let targets = &context.targets;
-                    expand_prefixes(properties.r#mut(index), &as_written, targets);
-                    if let Some(property_id) =
-                        webkit_mask_property_to_insert(properties.at(index), &as_written, targets)
-                    {
-                        properties.insert(index, property_id);
-                        i += 1;
+                    let property_id = *properties.at(index);
+                    // The rtl list differs at inline logical entries only, so this entry's expansion goes into both lists.
+                    if let Some(rtl_props) = &rtl_properties {
+                        debug_assert!(*rtl_props.at(index) == property_id);
                     }
 
-                    if let Some(rtl_props) = &mut rtl_properties {
-                        expand_prefixes(rtl_props.r#mut(index), &as_written, targets);
-                        if let Some(property_id) = webkit_mask_property_to_insert(
-                            rtl_props.at(index),
-                            &as_written,
-                            targets,
-                        ) {
-                            rtl_props.insert(index, property_id);
+                    // Expand vendor prefixes for targets, minus those another entry of the same property is listed with.
+                    if let Some(feature) = property_id.tag().prefix_feature() {
+                        let written = property_id.prefix();
+                        let expanded = targets.prefixes(written, feature);
+                        if expanded != written {
+                            let listed =
+                                listed.get_or_insert_with(|| ListedPrefixes::new(properties));
+                            let added = expanded.difference(written);
+                            let expanded = property_id
+                                .with_prefix(expanded.difference(added & listed.of(&property_id)));
+                            *properties.r#mut(index) = expanded;
+                            if let Some(rtl_props) = &mut rtl_properties {
+                                *rtl_props.r#mut(index) = expanded;
+                            }
+                        }
+                    }
+
+                    // Expand mask properties, which use different vendor-prefixed names, unless the list has that name.
+                    if let Some(webkit) = masking::get_webkit_mask_property(&property_id)
+                        && *webkit_mask_needed.get_or_insert_with(|| {
+                            targets
+                                .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
+                                .contains(VendorPrefix::WEBKIT)
+                        })
+                    {
+                        let listed = listed.get_or_insert_with(|| ListedPrefixes::new(properties));
+                        if !listed.contains(&webkit) {
+                            properties.insert(index, webkit);
+                            if let Some(rtl_props) = &mut rtl_properties {
+                                rtl_props.insert(index, webkit);
+                            }
+                            i += 1;
                         }
                     }
                     i += 1;
@@ -604,33 +631,27 @@ mod transition_handler_body {
         rtl_properties
     }
 
-    /// Expands the prefixes of `property_id` for the targets, minus those that another `as_written` entry of the property has.
-    fn expand_prefixes(property_id: &mut PropertyId, as_written: &[PropertyId], targets: &Targets) {
-        let written = property_id.prefix();
-        property_id.set_prefixes_for_targets(targets);
-        let added = property_id.prefix().difference(written);
-        if added.is_empty() {
-            return;
+    /// The vendor prefixes each property of a `transition` list is listed with; one that takes no prefix counts as unprefixed.
+    struct ListedPrefixes([VendorPrefix; PROPERTY_BITSET_BITS]);
+
+    impl ListedPrefixes {
+        #[cold]
+        fn new(properties: &[PropertyId]) -> Self {
+            let mut listed = [VendorPrefix::empty(); PROPERTY_BITSET_BITS];
+            for property_id in properties {
+                listed[property_id.tag() as usize] |= property_id.prefix().or_none();
+            }
+            Self(listed)
         }
 
-        let listed = as_written
-            .iter()
-            .filter(|p| p.tag() == property_id.tag())
-            .fold(VendorPrefix::empty(), |listed, p| listed | p.prefix());
-        *property_id = property_id.with_prefix(property_id.prefix().difference(added & listed));
-    }
+        fn of(&self, property_id: &PropertyId) -> VendorPrefix {
+            self.0[property_id.tag() as usize]
+        }
 
-    /// The `-webkit-` property with another name (`mask-border` -> `-webkit-mask-box-image`) to insert, unless `as_written` has it.
-    fn webkit_mask_property_to_insert(
-        property_id: &PropertyId,
-        as_written: &[PropertyId],
-        targets: &Targets,
-    ) -> Option<PropertyId> {
-        let webkit = masking::get_webkit_mask_property(property_id)?;
-        let needed = targets
-            .prefixes(VendorPrefix::NONE, Feature::MaskBorder)
-            .contains(VendorPrefix::WEBKIT);
-        (needed && !as_written.contains(&webkit)).then_some(webkit)
+        fn contains(&self, property_id: &PropertyId) -> bool {
+            self.of(property_id)
+                .contains(property_id.prefix().or_none())
+        }
     }
 
     enum LogicalPropertyId {

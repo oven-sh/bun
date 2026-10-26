@@ -7489,6 +7489,293 @@ describe("css tests", () => {
       }
     });
 
+    // An unprefixed mask-box-image entry does not stand in for -webkit-mask-box-image.
+    prefix_test(
+      `
+      .foo {
+        color: red;
+      }
+
+      .foo {
+        transition: mask-box-image .2s, mask-border .2s;
+      }
+    `,
+      `
+      .foo {
+        color: red;
+        transition: mask-box-image .2s, -webkit-mask-box-image .2s, mask-border .2s;
+      }
+    `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    // -webkit-mask-composite is a name of its own, with no prefix to compare.
+    prefix_test(
+      `
+      .foo {
+        color: red;
+      }
+
+      .foo {
+        transition: mask-composite .2s;
+      }
+    `,
+      `
+      .foo {
+        color: red;
+        transition: -webkit-mask-composite .2s, mask-composite .2s;
+      }
+    `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    // An entry inserted for one mask-border does not count as listed for the next one.
+    prefix_test(
+      `
+      .foo {
+        color: red;
+      }
+
+      .foo {
+        transition: mask-border .2s, mask-border .2s;
+      }
+    `,
+      `
+      .foo {
+        color: red;
+        transition: -webkit-mask-box-image .2s, mask-border .2s, -webkit-mask-box-image .2s, mask-border .2s;
+      }
+    `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    // Nor does a prefix added to an earlier entry, with a compiled logical property in between.
+    prefix_test(
+      `
+      .foo {
+        color: red;
+      }
+
+      .foo {
+        transition: transform .2s, margin-block-start .2s, transform .2s;
+      }
+    `,
+      `
+      .foo {
+        color: red;
+        transition: -webkit-transform .2s, transform .2s, margin-top .2s, -webkit-transform .2s, transform .2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    // A logical property that compiles to several entries, in front of a listed prefix.
+    prefix_test(
+      `
+      .foo {
+        transition: inset .2s, transform .2s, -webkit-transform .2s;
+      }
+    `,
+      `
+      .foo {
+        transition: top .2s, bottom .2s, left .2s, right .2s, transform .2s, -webkit-transform .2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    // Only the listed prefix is left out of the expansion.
+    prefix_test(
+      `
+      .foo {
+        transition: -webkit-transform .2s, transform .2s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: -webkit-transform .2s, -o-transform .2s, transform .2s;
+        -o-transition: -webkit-transform .2s, -o-transform .2s, transform .2s;
+        transition: -webkit-transform .2s, -o-transform .2s, transform .2s;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+        opera: Some(12 << 16),
+      },
+    );
+
+    // The entry after an inline logical property is expanded in the ltr and the rtl rules.
+    prefix_test(
+      `
+      .foo {
+        transition: transform .2s, margin-inline-start .2s, transform .2s;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: -webkit-transform .2s, transform .2s, margin-left .2s, -webkit-transform .2s, transform .2s;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: -webkit-transform .2s, transform .2s, margin-left .2s, -webkit-transform .2s, transform .2s;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: -webkit-transform .2s, transform .2s, margin-right .2s, -webkit-transform .2s, transform .2s;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: -webkit-transform .2s, transform .2s, margin-right .2s, -webkit-transform .2s, transform .2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    // A listed prefix or -webkit- name counts for its own property only, wherever it is in the list.
+    for (const [declarations, expected, targets] of [
+      [
+        "transition: -webkit-mask-size 1s, opacity 1s, mask-size 1s, mask-position 1s;",
+        "transition: -webkit-mask-size 1s, opacity 1s, mask-size 1s, -webkit-mask-position 1s, mask-position 1s;",
+        { safari: Some(15 << 16) },
+      ],
+      [
+        "transition: -webkit-mask-box-image-source 1s, mask-border-source 1s, mask-border-slice 1s;",
+        "transition: -webkit-mask-box-image-source 1s, mask-border-source 1s, -webkit-mask-box-image-slice 1s, mask-border-slice 1s;",
+        { safari: Some(15 << 16) },
+      ],
+      [
+        "transition: -moz-transform 1s, transform 2s;",
+        "-moz-transition: -moz-transform 1s, transform 2s; transition: -moz-transform 1s, transform 2s;",
+        { firefox: Some(4 << 16) },
+      ],
+    ] as const) {
+      prefix_test(`.foo { ${declarations} }`, `.foo { ${expected} }`, targets);
+    }
+
+    // A merged rule whose expansion adds two prefixes is minified again to the same list.
+    prefix_test(
+      `
+      .foo {
+        color: red;
+      }
+
+      .foo {
+        transition: transform .2s;
+      }
+    `,
+      `
+      .foo {
+        color: red;
+        -webkit-transition: -webkit-transform .2s, -o-transform .2s, transform .2s;
+        -o-transition: -webkit-transform .2s, -o-transform .2s, transform .2s;
+        transition: -webkit-transform .2s, -o-transform .2s, transform .2s;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+        opera: Some(12 << 16),
+      },
+    );
+
+    // An entry that is minified again with some of its prefixes keeps them and gains the rest.
+    prefix_test(
+      `
+      .foo {
+        color: red;
+      }
+
+      .foo {
+        transition-property: -moz-transform, transform;
+      }
+    `,
+      `
+      .foo {
+        color: red;
+        -webkit-transition-property: -moz-transform, -webkit-transform, transform;
+        -moz-transition-property: -moz-transform, -webkit-transform, transform;
+        transition-property: -moz-transform, -webkit-transform, transform;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+        firefox: Some(10 << 16),
+      },
+    );
+
+    // The rtl rules get the -webkit- entry of a mask-border on each side of an inline logical property.
+    prefix_test(
+      `
+      .foo {
+        transition: mask-border .2s, margin-inline-start .2s, mask-border .2s;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: -webkit-mask-box-image .2s, mask-border .2s, margin-left .2s, -webkit-mask-box-image .2s, mask-border .2s;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: -webkit-mask-box-image .2s, mask-border .2s, margin-left .2s, -webkit-mask-box-image .2s, mask-border .2s;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: -webkit-mask-box-image .2s, mask-border .2s, margin-right .2s, -webkit-mask-box-image .2s, mask-border .2s;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: -webkit-mask-box-image .2s, mask-border .2s, margin-right .2s, -webkit-mask-box-image .2s, mask-border .2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    // Every entry asks what the rest of its list says, and the answer must not cost a walk
+    // of the list per entry. With one, a release build needs over a minute for each list
+    // below, so the child runs into the spawn timeout. `transition` takes the same path.
+    test("a long list is expanded in linear time", async () => {
+      const script = `
+        const { minifyTest } = require("bun:internal-for-testing").cssInternals;
+        const list = (n, entry) => Buffer.alloc(n * (entry.length + 1), entry + ",").toString().slice(0, -1);
+        const safari15 = { safari: 15 << 16 };
+
+        // Each mask-size gains -webkit-mask-size.
+        const prefixed = minifyTest(".a{transition-property:" + list(200_000, "mask-size") + "}", "", safari15);
+        console.log(prefixed === ".a{transition-property:" + list(200_000, "-webkit-mask-size,mask-size") + "}");
+
+        // Each mask-border finds -webkit-mask-box-image at the far end of the list.
+        const listed = ".a{transition-property:" + list(500_000, "mask-border") + ",-webkit-mask-box-image}";
+        console.log(minifyTest(listed, "", safari15) === listed);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        timeout: 20_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ stdout, signalCode: proc.signalCode, exitCode }).toEqual({
+        stdout: "true\ntrue\n",
+        signalCode: null,
+        exitCode: 0,
+      });
+    }, 30_000);
+
     prefix_test(
       `
       .foo {
@@ -8850,29 +9137,65 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
     expect(exitCode).toBe(0);
   });
 
-  test("bun build prints a transition over mask-composite the same when it builds its own output", async () => {
-    using dir = tempDir("css-transition-mask-composite", {
+  test("bun build prints a transition list the same when it builds its own output", async () => {
+    using dir = tempDir("css-transition-rebuild", {
       "a.css": `
-        .a { transition: mask-composite 1s }
-        .b { transition: -webkit-mask-composite 1s, mask-composite 2s }
+        .a { color: red }
+        .a { transition: mask-size .3s }
+        .b { transition: -webkit-mask-box-image 1s, mask-border 2s, opacity 3s }
+        .c { transition-property: -webkit-mask-size, mask-size, opacity; transition-duration: .3s, .3s, .2s }
+        @media (min-width: 1px) { .d { transition: mask-size .3s } }
+        @media (min-width: 1px) { .e { color: blue } }
+        @media (min-width: 1px) { .f { color: green } }
+        .g { transition: mask-composite 1s }
+        .h { transition: -webkit-mask-composite 1s, mask-composite 2s }
       `,
     });
     const entry = join(String(dir), "a.css");
-    const build = async () => {
-      const result = await Bun.build({ entrypoints: [entry] });
-      return await result.outputs[0].text();
+    const build = async (target?: "bun") => {
+      const result = await Bun.build({ entrypoints: [entry], target });
+      const text = await result.outputs[0].text();
+      // The first line is a comment with the path of the file.
+      return text.slice(text.indexOf("\n") + 1);
     };
 
-    // The default targets include a Safari that needs -webkit-mask-composite.
+    // The default targets include a Safari that needs the -webkit- mask properties.
     const first = await build();
-    // The first line is a comment with the path of the file.
-    expect(first.slice(first.indexOf("\n") + 1)).toBe(
+    expect(first).toBe(
       [
         ".a {",
-        "  transition: -webkit-mask-composite 1s, mask-composite 1s;",
+        "  color: red;",
+        "  transition: -webkit-mask-size .3s, mask-size .3s;",
         "}",
         "",
         ".b {",
+        "  transition: -webkit-mask-box-image 1s, mask-border 2s, opacity 3s;",
+        "}",
+        "",
+        ".c {",
+        "  transition-property: -webkit-mask-size, mask-size, opacity;",
+        "  transition-duration: .3s, .3s, .2s;",
+        "}",
+        "",
+        "@media (min-width: 1px) {",
+        "  .d {",
+        "    transition: -webkit-mask-size .3s, mask-size .3s;",
+        "  }",
+        "",
+        "  .e {",
+        "    color: #00f;",
+        "  }",
+        "",
+        "  .f {",
+        "    color: green;",
+        "  }",
+        "}",
+        "",
+        ".g {",
+        "  transition: -webkit-mask-composite 1s, mask-composite 1s;",
+        "}",
+        "",
+        ".h {",
         "  transition: -webkit-mask-composite 1s, mask-composite 2s;",
         "}",
         "",
@@ -8881,5 +9204,9 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
 
     await Bun.write(entry, first);
     expect(await build()).toBe(first);
+
+    // Without browser targets nothing is added.
+    await Bun.write(entry, ".a {\n  transition: mask-size .3s;\n}\n");
+    expect(await build("bun")).toBe(".a {\n  transition: mask-size .3s;\n}\n");
   });
 });

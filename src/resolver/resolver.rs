@@ -4645,6 +4645,19 @@ impl<'a> Resolver<'a> {
             let mut cached_dir_entry_result =
                 listing_slot_for_walk(rfs!(), dir_path, real_dir).expect("unreachable");
 
+            if !real_dir.is_empty() {
+                // The real path is looked up in this listing from here on, with no miss to
+                // bust a `DirInfo` key that was left as not found while it was missing.
+                let real_info = self.dir_cache_mut().get_or_put(real_dir)?;
+                if real_info.status == allocators::ItemStatus::NotFound {
+                    self.dir_cache_mut().remove_hash(real_info.hash);
+                }
+                // A stale listing under the real path is read again by that path, as every
+                // other reader of it does: `open_dir` is where the link leads now, and that
+                // can be another directory.
+                rfs!().entries_at_locked(cached_dir_entry_result.index, self.generation);
+            }
+
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
                 core::ptr::null_mut();
             let mut needs_iter = true;
@@ -4652,7 +4665,9 @@ impl<'a> Resolver<'a> {
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    // A listing under the real path that is still stale did not open by it.
+                    // It stays empty: `open_dir` is not read into it.
+                    if entries.generation >= self.generation || !real_dir.is_empty() {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {

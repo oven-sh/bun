@@ -3294,8 +3294,15 @@ class QuicSession {
     if (oninfo) stream.oninfo = oninfo;
     if (onwanttrailers) stream.onwanttrailers = onwanttrailers;
 
-    if (headers !== undefined) {
-      stream.sendHeaders(headers, { terminal: validatedBody === undefined && !deferredBody });
+    if (
+      headers !== undefined &&
+      !stream.sendHeaders(headers, { terminal: validatedBody === undefined && !deferredBody })
+    ) {
+      const error = ERR_QUIC_OPEN_STREAM_FAILED();
+      // The caller never gets the stream.
+      markPromiseAsHandled(stream.closed);
+      stream.destroy(error);
+      throw error;
     }
 
     if (deferredBody) {

@@ -823,6 +823,10 @@ struct UTF16WidthAccumulator {
     GraphemeBreakState breakState = GraphemeBreakState::Default;
     bool hasPrevVisible = false;
     const bool ambiguousAsWide;
+    // Result of addRun()'s last ESC scan: the ESC it found, or the end of the
+    // text. Kept until the text before it is consumed, so many short ASCII runs
+    // cost one scan of the text overall instead of one scan each.
+    const char16_t* nextEsc = nullptr;
 
     explicit UTF16WidthAccumulator(bool ambiguousAsWide)
         : ambiguousAsWide(ambiguousAsWide)
@@ -865,8 +869,8 @@ struct UTF16WidthAccumulator {
     // caller then hands to the escape recognizer. Returns the number of code
     // units consumed. ESC is below 0x20 and the C1 introducers are above 0x7F
     // outside the bulk kernel's allowlist, so both bulk kernels already stop on
-    // them; only the ASCII run needs an extra scan, over a span that is already
-    // in cache.
+    // them; only the ASCII run needs an extra scan. Every `stopAtEscape` call on
+    // one accumulator must pass a later suffix of the same text (see nextEsc).
     size_t addRun(std::span<const char16_t> input, bool stopAtEscape = false)
     {
         const char16_t* const begin = input.data();
@@ -901,15 +905,20 @@ struct UTF16WidthAccumulator {
                 break;
 
             // Length of the leading all-ASCII (<= 0x7F) run, bounded by the
-            // next escape when `stopAtEscape` so neither scan reads past the
-            // current visible run. Peek the first unit before scanning — a
-            // non-ASCII lead (CJK, emoji) would scan a zero-length prefix.
+            // next ESC when `stopAtEscape`. Peek the first unit before
+            // scanning — a non-ASCII lead (CJK, emoji) would scan a
+            // zero-length prefix.
             size_t idx = 0;
             if (input[0] <= 0x7F) {
                 size_t bound = input.size();
                 if (stopAtEscape) {
-                    if (const char16_t* const esc = ANSI::scanForAnyByte<0x1b>(input.data(), input.data() + input.size()))
-                        bound = static_cast<size_t>(esc - input.data());
+                    const char16_t* const end = input.data() + input.size();
+                    if (!nextEsc || nextEsc < input.data()) {
+                        const char16_t* const esc = ANSI::scanForAnyByte<0x1b>(input.data(), end);
+                        nextEsc = esc ? esc : end;
+                    }
+                    ASSERT(nextEsc <= end);
+                    bound = static_cast<size_t>(nextEsc - input.data());
                 }
                 idx = highway_first_non_ascii16(reinterpret_cast<const uint16_t*>(input.data()), bound);
             }

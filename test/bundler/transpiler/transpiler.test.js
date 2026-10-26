@@ -2163,6 +2163,76 @@ export default class {
       ts.expectPrinted_(input3, output3);
     });
 
+    describe("a namespace that merges with an exported function or class of its block", () => {
+      // Runs the output and returns the value of `result`.
+      const run = (code, result) => new Function(`${ts.parsed(code)};\nreturn ${result};`)();
+
+      describe.each([
+        ["function", "export function fn() {}"],
+        ["async function", "export async function fn() {}"],
+        ["generator function", "export function* fn() {}"],
+        ["function with overloads", "export function fn(a: string): void; export function fn(a?: any) {}"],
+        ["class", "export class fn {}"],
+        ["abstract class", "export abstract class fn {}"],
+      ])("after an exported %s", (_, declaration) => {
+        const pair = `${declaration} export namespace fn { export const x = 1; export enum E { A = 7 } }`;
+
+        it("a later block of the namespace reads a member of the first block", () => {
+          // The outer `x` is not the one that the later block names.
+          const code = `var x = "outer";\nnamespace F { ${pair} }\nnamespace F { export namespace fn { export const y = x } }`;
+          expect(ts.parsed(code)).toContain("fn.y = fn.x;");
+          expect(run(code, "F.fn.y")).toBe(1);
+        });
+
+        it("an enum of another namespace counts on from an enum member", () => {
+          const code = `namespace F { ${pair} }\nnamespace G { export enum Y { P = F.fn.E.A, R } }`;
+          expect(run(code, "G.Y")).toEqual({ P: 7, R: 8, 7: "P", 8: "R" });
+        });
+
+        it("an enum of a later namespace in the same block counts on from an enum member", () => {
+          const code = `namespace F { ${pair} export namespace G { export enum Y { P = fn.E.A, R } } }`;
+          expect(run(code, "F.G.Y")).toEqual({ P: 7, R: 8, 7: "P", 8: "R" });
+        });
+      });
+
+      it("prints the value of an enum member", () => {
+        const out = ts.parsed(
+          "namespace F { export function fn() {} export namespace fn { export enum E { A = 7, B = 'b' } } export const a = [fn.E.A, fn.E.B] }\nexport const b = [F.fn.E.A, F.fn.E.B];",
+        );
+        expect(out).toContain(`F.a = [7 /* A */, "b" /* B */];`);
+        expect(out).toEndWith(`export const b = [7 /* A */, "b" /* B */]`);
+      });
+
+      it("a later block reads a member of the first block when bun runs the file", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `namespace F { export class fn {} export namespace fn { export const x = 1 } }
+            namespace F { export namespace fn { console.log(x) } }`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ stdout, exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
+        void stderr;
+      });
+
+      // Control: only an enum member folds. These reads print the same without the members.
+      it("prints a call, a construction and a member that is not an enum as before", () => {
+        const out = ts.parsed(
+          "namespace F { export function fn() {} export class C { static s = 1 } export function plain() {} export namespace fn { export const v = 1 } export namespace C { export const w = 1 } }\nexport const a = [F.fn(), new F.C(), F.C.s, F.plain(), F.fn.v, F.C.w, typeof F.fn, F.fn.name];",
+        );
+        expect(out).toEndWith(
+          "export const a = [F.fn(), new F.C, F.C.s, F.plain(), F.fn.v, F.C.w, typeof F.fn, F.fn.name]",
+        );
+      });
+    });
+
     const input4 = `export enum x { y }`;
     const output4 = `export var x;
 ((x) => {

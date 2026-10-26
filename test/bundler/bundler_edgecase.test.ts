@@ -1931,6 +1931,72 @@ describe("bundler", () => {
       stdout: "{\n  Y: [class Y],\n} 2 1",
     },
   });
+  itBundled("edgecase/TypeScriptNamespaceSiblingFunctionLaterBlock", {
+    files: {
+      "/entry.ts": `
+        namespace X {
+          export function Y() {
+            return 2;
+          }
+          export namespace Y {
+            export const Z = 1;
+            export enum E {
+              A = 7,
+            }
+          }
+        }
+        namespace X {
+          export namespace Y {
+            export const W = Z + 1;
+          }
+        }
+        namespace N {
+          export enum Q {
+            P = X.Y.E.A,
+            R,
+          }
+        }
+        console.log(X.Y(), X.Y.Z, X.Y.W, N.Q.P, N.Q.R);
+      `,
+    },
+    run: {
+      stdout: "2 1 2 7 8",
+    },
+  });
+  itBundled("edgecase/TypeScriptNamespaceSiblingClassLaterBlock", {
+    files: {
+      "/entry.ts": `
+        namespace X {
+          export class Y {
+            toJSON() {
+              return 2;
+            }
+          }
+          export namespace Y {
+            export const Z = 1;
+            export enum E {
+              A = 7,
+            }
+          }
+        }
+        namespace X {
+          export namespace Y {
+            export const W = Z + 1;
+          }
+        }
+        namespace N {
+          export enum Q {
+            P = X.Y.E.A,
+            R,
+          }
+        }
+        console.log(new X.Y().toJSON(), X.Y.Z, X.Y.W, N.Q.P, N.Q.R);
+      `,
+    },
+    run: {
+      stdout: "2 1 2 7 8",
+    },
+  });
   itBundled("edgecase/TypeScriptNamespaceSiblingEnum", {
     files: {
       "/entry.ts": `

@@ -694,6 +694,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// In addition, there is a map from each relevant symbol reference to the data
     /// associated with that namespace or namespace member: "ref_to_ts_namespace_member".
     /// This gives enough info to be able to resolve queries into the namespace.
+    /// Never `Property`: storing it, as esbuild does, replaces the record of a merged namespace.
     pub(crate) ref_to_ts_namespace_member: HashMap<Ref, js_ast::ts::Data>,
     /// Arena-allocated `TSNamespaceScope`s; their global-heap maps are freed in `Drop`.
     pub(crate) ts_namespace_scopes: Vec<js_ast::StoreRef<js_ast::TSNamespaceScope>>,
@@ -4618,8 +4619,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         data: js_ast::ts::Data::Property,
                     },
                 )?;
-                self.ref_to_ts_namespace_member
-                    .insert(id.r#ref, js_ast::ts::Data::Property);
             }
             js_ast::b::B::BObject(obj) => {
                 for prop in obj.properties.slice() {

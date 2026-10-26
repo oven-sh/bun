@@ -295,8 +295,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 data: TSNamespaceMemberData::Property,
                             },
                         )?;
-                        p.ref_to_ts_namespace_member
-                            .insert(ref_, TSNamespaceMemberData::Property);
                     }
                 }
                 StmtData::SClass(class) => {
@@ -313,8 +311,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 data: TSNamespaceMemberData::Property,
                             },
                         )?;
-                        p.ref_to_ts_namespace_member
-                            .insert(ref_, TSNamespaceMemberData::Property);
                     }
                 }
                 StmtData::SNamespace(ns) => {

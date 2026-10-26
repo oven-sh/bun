@@ -158,9 +158,10 @@ fn checked_len_utf16_after_ascii(text: &[u8], ascii: u32) -> Option<u32> {
     if is_valid_utf8(text) {
         return Some(element_length_utf8_into_utf16(text) as u32);
     }
-    let mut units = wtf8_checked_units(&text[ascii as usize..]);
-    let rest = units.by_ref().count() as u32;
-    (!units.ill_formed()).then_some(ascii + rest)
+    match code_unit_at_from(text, ascii as usize, ascii, u32::MAX) {
+        Wtf8CodeUnitAt::Past(len) => Some(len),
+        _ => None,
+    }
 }
 
 /// What [`wtf8_code_unit_at`] finds at an index.
@@ -189,26 +190,73 @@ pub fn wtf8_code_unit_at(text: &[u8], index: u32) -> Wtf8CodeUnitAt {
 
 /// For an index that is not in the ASCII that `text` starts with.
 fn code_unit_at_after_ascii(text: &[u8], index: u32) -> Wtf8CodeUnitAt {
-    let Some(ascii) = first_non_ascii(text) else {
-        return Wtf8CodeUnitAt::Past(text.len() as u32);
-    };
-    debug_assert!(index >= ascii);
-    let mut units = wtf8_checked_units(&text[ascii as usize..]);
-    let mut seen = ascii;
-    for (offset, unit) in units.by_ref() {
-        if seen == index {
-            return Wtf8CodeUnitAt::Unit {
-                at: ascii as usize + offset,
-                unit,
-            };
+    match first_non_ascii(text) {
+        None => Wtf8CodeUnitAt::Past(text.len() as u32),
+        Some(ascii) => code_unit_at_from(text, ascii as usize, ascii, index),
+    }
+}
+
+/// The bytes that [`code_unit_at_from`] decodes one sequence at a time, at most, per call.
+const DECODED_BLOCK: usize = 64;
+
+/// [`wtf8_code_unit_at`] from the sequence start `at`, which `seen <= index` code units are before.
+fn code_unit_at_from(text: &[u8], mut at: usize, mut seen: u32, index: u32) -> Wtf8CodeUnitAt {
+    // The block grows while the index is after it, and is halved from then on.
+    let (mut block, mut grows) = (DECODED_BLOCK, true);
+    loop {
+        let rest = text.len() - at;
+        let mut end = at + block.min(rest);
+        if rest > DECODED_BLOCK {
+            // A block of UTF-8 that ends before the index is counted, not decoded.
+            end = sequence_start_before(text, end);
+            let counted = &text[at..end];
+            if is_valid_utf8(counted) {
+                let units = element_length_utf8_into_utf16(counted) as u32;
+                if units <= index - seen {
+                    (at, seen) = (end, seen + units);
+                    if grows {
+                        block = (block * 2).min(64 * DECODED_BLOCK);
+                    }
+                    continue;
+                }
+            }
+            grows = false;
+            if block > DECODED_BLOCK {
+                block /= 2;
+                continue;
+            }
         }
-        seen += 1;
+        let mut units = wtf8_checked_units(&text[at..]);
+        while units.at < end - at || units.trail.is_some() {
+            let Some((offset, unit)) = units.next() else {
+                break;
+            };
+            if seen == index {
+                return Wtf8CodeUnitAt::Unit {
+                    at: at + offset,
+                    unit,
+                };
+            }
+            seen += 1;
+        }
+        if units.ill_formed {
+            return Wtf8CodeUnitAt::IllFormed;
+        }
+        at += units.at;
+        if at >= text.len() {
+            return Wtf8CodeUnitAt::Past(seen);
+        }
+        grows = true;
     }
-    if units.ill_formed() {
-        Wtf8CodeUnitAt::IllFormed
-    } else {
-        Wtf8CodeUnitAt::Past(seen)
-    }
+}
+
+/// `end`, or the start of the sequence that the byte at `end` goes on.
+pub(super) fn sequence_start_before(text: &[u8], end: usize) -> usize {
+    let is_continuation = |at: usize| text.get(at).is_some_and(|byte| (0x80..0xC0).contains(byte));
+    (end.saturating_sub(3)..=end)
+        .rev()
+        .find(|&at| !is_continuation(at))
+        .unwrap_or(end)
 }
 
 /// The 4 bytes of the pair whose halves end `before` and start `after`: `"\uD83D" + "\uDE00"`.
@@ -538,6 +586,58 @@ mod tests {
                 assert_eq!(wtf8_code_unit_at(&text, len), IllFormed, "{text:x?}");
                 assert_eq!(wtf8_code_unit_at(&text, len + 9), IllFormed, "{text:x?}");
             }
+        }
+    }
+
+    #[test]
+    fn a_code_unit_far_into_text_is_the_one_that_a_decode_finds() {
+        use Wtf8CodeUnitAt::{IllFormed, Past, Unit};
+        let pieces: [&[u8]; 6] = [
+            b"a",
+            b"\xC3\xA9",
+            b"\xE2\x82\xAC",
+            b"\xF0\x9F\x98\x80",
+            b"\xED\xA0\xBD",
+            b"\xED\xB8\x80",
+        ];
+        let mut state = 0x9E37_79B9_u32;
+        let mut random = move |bound: usize| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 8) as usize % bound
+        };
+        for round in 0..240 {
+            let count = [5, 70, 300, 5000, 9000][round % 5];
+            // ASCII and two bytes, then every length, then halves of pairs too.
+            let kinds = [2, 4, 6][round % 3];
+            let mut text = Vec::new();
+            for _ in 0..count {
+                text.extend_from_slice(pieces[random(kinds)]);
+            }
+            // Every fourth text has one byte that is no sequence, at some sequence start.
+            if round % 4 == 3 {
+                let at = sequence_start_before(&text, random(text.len()));
+                text.insert(at, 0xFF);
+            }
+            let mut units = wtf8_checked_units(&text);
+            let expected: Vec<_> = units.by_ref().map(|(at, unit)| Unit { at, unit }).collect();
+            let len = expected.len() as u32;
+            let end = if units.ill_formed() {
+                IllFormed
+            } else {
+                Past(len)
+            };
+            for index in (0..expected.len()).step_by(1 + expected.len() / 64) {
+                assert_eq!(
+                    wtf8_code_unit_at(&text, index as u32),
+                    expected[index],
+                    "round {round} index {index}"
+                );
+            }
+            for index in [len, len + 1, len.saturating_mul(3), u32::MAX] {
+                assert_eq!(wtf8_code_unit_at(&text, index), end, "round {round}");
+            }
+            let checked_len = (end == Past(len)).then_some(len);
+            assert_eq!(wtf8_checked_len_utf16(&text), checked_len, "round {round}");
         }
     }
 

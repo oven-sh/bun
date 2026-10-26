@@ -18,19 +18,6 @@ use bun_ast::{
 };
 use bun_core::strings;
 
-// `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;
-// local helper so we can re-insert values fetched from `ref_to_ts_namespace_member`.
-#[inline]
-fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
-    match d {
-        TSNamespaceMemberData::Property => TSNamespaceMemberData::Property,
-        TSNamespaceMemberData::Namespace(m) => TSNamespaceMemberData::Namespace(*m),
-        TSNamespaceMemberData::EnumNumber(n) => TSNamespaceMemberData::EnumNumber(*n),
-        TSNamespaceMemberData::EnumString(s) => TSNamespaceMemberData::EnumString(*s),
-        TSNamespaceMemberData::EnumProperty => TSNamespaceMemberData::EnumProperty,
-    }
-}
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
         let p = self;
@@ -316,38 +303,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StmtData::SNamespace(ns) => {
                     if ns.is_export {
                         let ref_ = ns.name.ref_;
-                        if let Some(member_data) = p.ref_to_ts_namespace_member.get(&ref_) {
-                            let member_data = clone_ts_member_data(member_data);
+                        if let Some(&data) = p.ref_to_ts_namespace_member.get(&ref_) {
                             // SAFETY: original_name is arena-owned, valid for 'a.
                             let ns_name: &[u8] =
                                 p.symbols[ref_.inner_index() as usize].original_name.slice();
                             exported_members.put(
                                 ns_name,
                                 TSNamespaceMember {
-                                    data: clone_ts_member_data(&member_data),
+                                    data,
                                     loc: ns.name.loc,
                                 },
                             )?;
-                            p.ref_to_ts_namespace_member.insert(ref_, member_data);
                         }
                     }
                 }
                 StmtData::SEnum(ns) => {
                     if ns.is_export {
                         let ref_ = ns.name.ref_;
-                        if let Some(member_data) = p.ref_to_ts_namespace_member.get(&ref_) {
-                            let member_data = clone_ts_member_data(member_data);
+                        if let Some(&data) = p.ref_to_ts_namespace_member.get(&ref_) {
                             // SAFETY: original_name is arena-owned, valid for 'a.
                             let enum_name: &[u8] =
                                 p.symbols[ref_.inner_index() as usize].original_name.slice();
                             exported_members.put(
                                 enum_name,
                                 TSNamespaceMember {
-                                    data: clone_ts_member_data(&member_data),
+                                    data,
                                     loc: ns.name.loc,
                                 },
                             )?;
-                            p.ref_to_ts_namespace_member.insert(ref_, member_data);
                         }
                     }
                 }

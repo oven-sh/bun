@@ -10,6 +10,7 @@
     reason = "needs std::sync::Condvar::wait_timeout, which bun_threading::Condition does not expose"
 )]
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex as StdMutex};
 use std::time::{Duration, Instant};
@@ -49,6 +50,12 @@ pub fn timeout_from_millis(ms: f64) -> Option<Duration> {
     }
     // Too long to represent is forever too.
     Duration::try_from_secs_f64(ms / 1000.0).ok()
+}
+
+/// The moment `timeout` from now. A timeout so long that the clock cannot represent the moment is never reached, so it is `None`,
+/// which waits for ever.
+fn deadline_after(timeout: Option<Duration>) -> Option<Instant> {
+    timeout.and_then(|t| Instant::now().checked_add(t))
 }
 
 /// How many waiters a script asks to wake: `None` is all of them (`undefined`, `Infinity`).
@@ -107,7 +114,7 @@ impl Mutex {
     /// already holds would deadlock, so it is reported as `Err(TimedOut)` after the timeout
     /// like any other contention; callers that want an error instead check [`Mutex::is_owned`].
     pub fn lock(&self, timeout: Option<Duration>, abort: &dyn Abort) -> Result<(), LockError> {
-        let deadline = timeout.map(|t| Instant::now() + t);
+        let deadline = deadline_after(timeout);
         let mut locked = self.state.lock().unwrap();
         while *locked {
             if abort.aborted() {
@@ -162,78 +169,101 @@ impl Mutex {
 }
 
 /// A condition variable. Waiting releases a [`Mutex`] and takes it again before returning.
+///
+/// Waiters queue in the order they arrive and a notification wakes the ones that are queued at that moment, oldest first: a waiter
+/// that arrives later cannot take a wakeup that was meant for an earlier one.
 #[derive(Debug)]
 pub struct Condition {
-    /// Count of notifications handed out; a waiter sleeps until it changes.
     seq: StdMutex<Waiters>,
     wake: Condvar,
 }
 
 #[derive(Debug)]
 struct Waiters {
-    /// Waiters currently asleep.
-    waiting: u64,
-    /// Wakeups still available to waiters.
-    permits: u64,
+    /// The ticket the next waiter gets.
+    next: u64,
+    /// Tickets of the waiters that have not been notified, oldest first.
+    waiting: VecDeque<u64>,
+    /// Tickets of waiters that were notified and have not yet noticed.
+    woken: Vec<u64>,
 }
 
 impl Condition {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             seq: StdMutex::new(Waiters {
-                waiting: 0,
-                permits: 0,
+                next: 0,
+                waiting: VecDeque::new(),
+                woken: Vec::new(),
             }),
             wake: Condvar::new(),
         })
     }
 
     /// Releases `mutex`, waits for a notification, and relocks `mutex`.
-    /// The caller must hold `mutex`. The relock happens even when the wait times out or is aborted.
+    /// The caller must hold `mutex`. The relock happens even when the wait times out; an abort during the relock gives up on it too.
     pub fn wait(&self, mutex: &Mutex, timeout: Option<Duration>, abort: &dyn Abort) -> WaitOutcome {
-        let deadline = timeout.map(|t| Instant::now() + t);
+        let deadline = deadline_after(timeout);
         let mut w = self.seq.lock().unwrap();
-        w.waiting += 1;
-        // Release only after registering, so a notify between the two cannot be lost.
+        let ticket = w.next;
+        w.next += 1;
+        w.waiting.push_back(ticket);
+        // Release only after queueing, so a notify between the two cannot be lost.
         mutex.unlock();
-        let outcome = loop {
-            if w.permits > 0 {
-                w.permits -= 1;
+        let mut outcome = loop {
+            if let Some(i) = w.woken.iter().position(|&t| t == ticket) {
+                w.woken.swap_remove(i);
                 break WaitOutcome::Notified;
             }
-            if abort.aborted() {
-                break WaitOutcome::Aborted;
-            }
-            let wait = match deadline {
-                Some(d) => {
+            let ended = if abort.aborted() {
+                Some(WaitOutcome::Aborted)
+            } else {
+                None
+            };
+            let wait = match (ended, deadline) {
+                (Some(outcome), _) => {
+                    w.waiting.retain(|&t| t != ticket);
+                    break outcome;
+                }
+                (None, Some(d)) => {
                     let now = Instant::now();
                     if now >= d {
+                        w.waiting.retain(|&t| t != ticket);
                         break WaitOutcome::TimedOut;
                     }
                     SLICE.min(d - now)
                 }
-                None => SLICE,
+                (None, None) => SLICE,
             };
             w = self.wake.wait_timeout(w, wait).unwrap().0;
         };
-        w.waiting -= 1;
         drop(w);
-        // Reacquire even if aborted: the caller expects to hold the lock on return.
-        let _ = mutex.lock(None, &Never);
+        // The caller expects to hold the lock on return, so take it again, polling the abort while waiting for it.
+        if mutex.lock(None, abort).is_err() {
+            outcome = WaitOutcome::Aborted;
+        }
         outcome
     }
 
-    /// Wakes up to `count` waiters (all of them for `None`). Returns how many were woken.
+    /// Wakes up to `count` waiters (all of them for `None`), those that are waiting now, oldest first. Returns how many were woken.
     pub fn notify(&self, count: Option<u64>) -> u64 {
         let mut w = self.seq.lock().unwrap();
-        let available = w.waiting.saturating_sub(w.permits);
-        let n = count.map_or(available, |c| c.min(available));
-        w.permits += n;
+        let queued = w.waiting.len();
+        let n = count.map_or(queued, |c| {
+            usize::try_from(c).map_or(queued, |c| c.min(queued))
+        });
+        for _ in 0..n {
+            let ticket = w
+                .waiting
+                .pop_front()
+                .expect("n is at most the queue length");
+            w.woken.push(ticket);
+        }
         drop(w);
         if n > 0 {
             self.wake.notify_all();
         }
-        n
+        n as u64
     }
 }
 
@@ -349,6 +379,79 @@ mod tests {
     }
 
     #[test]
+    fn a_timeout_too_long_for_the_clock_waits_for_ever_instead_of_panicking() {
+        let m = Mutex::new();
+        assert_eq!(m.lock(Some(Duration::MAX), &Never), Ok(()));
+        assert!(m.unlock());
+        assert!(timeout_from_millis(1e22).is_some());
+        assert_eq!(m.lock(timeout_from_millis(1e22), &Never), Ok(()));
+        let c = Condition::new();
+        let aborted = AtomicU64::new(0);
+        let abort = || aborted.fetch_add(1, Ordering::Relaxed) > 2;
+        assert_eq!(
+            c.wait(&m, Some(Duration::MAX), &abort),
+            WaitOutcome::Aborted
+        );
+        assert!(m.is_owned());
+    }
+
+    #[test]
+    fn a_waiter_that_arrives_after_a_notify_does_not_take_its_wakeup() {
+        let m = Mutex::new();
+        let c = Condition::new();
+        let first = {
+            let (m, c) = (m.clone(), c.clone());
+            std::thread::spawn(move || {
+                m.lock(None, &Never).unwrap();
+                let outcome = c.wait(&m, Some(Duration::from_secs(5)), &Never);
+                m.unlock();
+                outcome
+            })
+        };
+        while c.seq.lock().unwrap().waiting.is_empty() {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        m.lock(None, &Never).unwrap();
+        assert_eq!(c.notify(Some(1)), 1);
+        // The second waiter queues after the notification and must wait out its own timeout.
+        let outcome = c.wait(&m, Some(Duration::from_millis(60)), &Never);
+        m.unlock();
+        assert_eq!(outcome, WaitOutcome::TimedOut);
+        assert_eq!(first.join().unwrap(), WaitOutcome::Notified);
+    }
+
+    #[test]
+    fn notify_wakes_the_oldest_waiters_first() {
+        let m = Mutex::new();
+        let c = Condition::new();
+        let order = Arc::new(StdMutex::new(Vec::new()));
+        let mut threads = Vec::new();
+        for id in 0..3u64 {
+            let (m, c, order) = (m.clone(), c.clone(), order.clone());
+            threads.push(std::thread::spawn(move || {
+                m.lock(None, &Never).unwrap();
+                let outcome = c.wait(&m, Some(Duration::from_secs(2)), &Never);
+                if outcome == WaitOutcome::Notified {
+                    order.lock().unwrap().push(id);
+                }
+                m.unlock();
+            }));
+            while c.seq.lock().unwrap().waiting.len() < usize::try_from(id).unwrap() + 1 {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        assert_eq!(c.notify(Some(1)), 1);
+        while order.lock().unwrap().is_empty() {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(*order.lock().unwrap(), vec![0]);
+        assert_eq!(c.notify(None), 2);
+        for t in threads {
+            t.join().unwrap();
+        }
+    }
+
+    #[test]
     fn notify_all_wakes_every_waiter() {
         let m = Mutex::new();
         let c = Condition::new();
@@ -365,7 +468,7 @@ mod tests {
                 })
             })
             .collect();
-        while c.seq.lock().unwrap().waiting < 4 {
+        while c.seq.lock().unwrap().waiting.len() < 4 {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(c.notify(None), 4);

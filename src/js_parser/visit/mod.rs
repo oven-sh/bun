@@ -742,7 +742,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if val.can_be_const_value() {
                             self.const_values.put(id_ref, val).expect("oom");
                         } else if let ExprData::EIdentifier(target) = val.data
-                            && let Some(value) = self.long_const_read(&target)
+                            && let Some(value) = self.long_const_read(target)
                         {
                             self.const_values.put(id_ref, value).expect("oom");
                         }
@@ -1140,7 +1140,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let class_body = self.current_scope;
                         self.field_init_class_bodies.push(class_body);
                     }
+                    // Class lowering tells a constant computed key by its literal.
+                    let old_const_literal_required =
+                        core::mem::replace(&mut self.const_literal_required, true);
                     self.visit_expr(key);
+                    self.const_literal_required = old_const_literal_required;
                     if is_field {
                         self.field_init_class_bodies.pop();
                     }

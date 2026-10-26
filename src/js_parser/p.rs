@@ -580,7 +580,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
-    /// Set while visiting what needs a literal (a macro, `require()` or `import()` argument, an enum initializer).
+    /// Set while visiting what needs a literal (a macro, `require()` or `import()` argument, an enum initializer, a class key).
     pub(crate) const_literal_required: bool,
 
     /// Set once a read of a long const string stayed a name. It gates `long_const_read`.
@@ -2211,7 +2211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// The string that `id` stands for when it reads a long const string and no `with` object can shadow it.
     #[inline]
-    pub(crate) fn long_const_read(&self, id: &E::Identifier) -> Option<Expr> {
+    pub(crate) fn long_const_read(&self, id: E::Identifier) -> Option<Expr> {
         if self.has_long_const_read && !id.must_keep_due_to_with_stmt() {
             self.long_const_value(id.ref_)
         } else {
@@ -2219,16 +2219,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Takes the read `expr` of a long const string out of the use counts and returns the string.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn take_long_const_read(&mut self, expr: Expr) -> Option<Expr> {
+        if let js_ast::ExprData::EIdentifier(id) = expr.data
+            && let Some(value) = self.long_const_read(id)
+        {
+            self.ignore_usage(id.ref_);
+            return Some(value);
+        }
+        None
+    }
+
     /// Gives a consumer that needs a literal the string in place of a read of a long const string.
     #[inline]
     pub(crate) fn long_const_literal(&mut self, expr: Expr) -> Expr {
-        if let js_ast::ExprData::EIdentifier(id) = expr.data
-            && let Some(value) = self.long_const_read(&id)
+        if self.has_long_const_read
+            && let Some(value) = self.take_long_const_read(expr)
         {
-            self.ignore_usage(id.ref_);
             return value;
         }
         expr
+    }
+
+    /// Replaces a read of a long const string with `true` where only its truthiness is used.
+    #[inline]
+    pub(crate) fn long_const_test(&mut self, expr: &mut Expr) {
+        if self.has_long_const_read && self.take_long_const_read(*expr).is_some() {
+            expr.data = js_ast::ExprData::EBoolean(E::Boolean { value: true });
+        }
     }
 
     /// This function is very very hot.

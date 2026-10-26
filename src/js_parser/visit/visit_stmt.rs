@@ -1800,6 +1800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::While,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.test);
+        p.long_const_test(&mut data.test);
         data.body = p.visit_loop_body(data.body);
 
         data.test = SideEffects::simplify_boolean(p, data.test);
@@ -1826,6 +1827,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         data.body = p.visit_loop_body(data.body);
         p.visit_expr(&mut data.test);
+        p.long_const_test(&mut data.test);
 
         data.test = SideEffects::simplify_boolean(p, data.test);
         stmts.push(*stmt);
@@ -1843,6 +1845,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut data.test);
         p.in_branch_condition = prev_in_branch;
         p.ignore_namespace_local_test_use(&data.test);
+        p.long_const_test(&mut data.test);
 
         if p.options.features.minify_syntax {
             data.test = SideEffects::simplify_boolean(p, data.test);
@@ -1987,6 +1990,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(mut test) = data.test {
             p.visit_expr(&mut test);
+            p.long_const_test(&mut test);
             data.test = Some(SideEffects::simplify_boolean(p, test));
 
             if let Some(result) = SideEffects::to_boolean(p, &data.test.unwrap().data) {

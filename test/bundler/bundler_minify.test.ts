@@ -2130,6 +2130,9 @@ describe("bundler", () => {
           function get() {
             const url = process.env.API_URL;
             if (!url) return require("./dev-only.js").mock;
+            if (url === "localhost") return require("./dev-only.js").mock;
+            if (typeof url !== "string") return require("./dev-only.js").mock;
+            if (url == null) return require("./dev-only.js").mock;
             return [url, url].map(text => text.length).join();
           }
           console.log(get());
@@ -2146,6 +2149,27 @@ describe("bundler", () => {
         }).toEqual({ devOnlyModule: false, copies });
       },
       run: { stdout: `${length},${length}` },
+    });
+  }
+
+  // A const string that is only tested is not in the output at all: a key
+  // from the environment that the code only checks for does not ship.
+  for (const length of [64, 65]) {
+    itBundled(`minify/ConstStringOfLength${length}ThatIsOnlyTestedIsRemoved`, {
+      files: {
+        "/entry.js": /* js */ `
+          const KEY = process.env.SECRET_KEY;
+          const checks = [!!KEY, KEY ? "set" : "unset", KEY && "and", typeof KEY, KEY === undefined, KEY != null, KEY === "", KEY.length];
+          if (!KEY) throw new Error("no key");
+          console.log(checks.join());
+        `,
+      },
+      minifySyntax: true,
+      define: { "process.env.SECRET_KEY": JSON.stringify("sk_" + textOf("k", length - 3)) },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).not.toContain("sk_k");
+      },
+      run: { stdout: `true,set,and,string,false,true,false,${length}` },
     });
   }
 
@@ -2418,7 +2442,7 @@ const constStringRows = [
     "length and typeof",
     (text: string) => `function f() { const S = "${text}"; return [S.length, S["length"], typeof S, S]; }`,
     `function f() {\n  return [64, 64, "string", "<L>"];\n}`,
-    `function f() {\n  const S = "<L>";\n  return [65, 65, typeof S, S];\n}`,
+    `function f() {\n  const S = "<L>";\n  return [65, 65, "string", S];\n}`,
   ],
   [
     "length alone",
@@ -2431,6 +2455,39 @@ const constStringRows = [
     (text: string) => `function f(x) { const S = "${text}"; return [S ? 1 : 2, !S, S && x, S || x, S ?? x, x]; }`,
     `function f(x) {\n  return [1, !1, x, "<L>", "<L>", x];\n}`,
     `function f(x) {\n  const S = "<L>";\n  return [1, !1, x, S, S, x];\n}`,
+  ],
+  [
+    "only tests of the value",
+    (text: string) => `function f(x) { const S = "${text}"; if (!S) return 0; if (S) x(); return S && (S ? x : 2); }`,
+    `function f(x) {\n  x();\n  return x;\n}`,
+    `function f(x) {\n  x();\n  return x;\n}`,
+  ],
+  [
+    "only loop tests of the value",
+    (text: string) =>
+      `function f(x) { const S = "${text}"; while (S) { if (x()) break; } for (; S; ) { if (x()) break; } do { x(); } while (S); }`,
+    `function f(x) {\n  while (!0)\n    if (x())\n      break;\n  for (;; )\n    if (x())\n      break;\n  do\n    x();\n  while ("<L>");\n}`,
+    `function f(x) {\n  while (!0)\n    if (x())\n      break;\n  for (;; )\n    if (x())\n      break;\n  do\n    x();\n  while (!0);\n}`,
+  ],
+  [
+    "typeof and a comparison with a literal",
+    (text: string) =>
+      `function f(x) { const S = "${text}"; return [typeof S, S === "x", "x" !== S, S != null, S === void 0, S === x]; }`,
+    `function f(x) {\n  return ["string", !1, !0, !0, !1, x === "<L>"];\n}`,
+    `function f(x) {\n  const S = "<L>";\n  return ["string", !1, !0, !0, !1, S === x];\n}`,
+  ],
+  [
+    "only typeof and comparisons",
+    (text: string) =>
+      `function f() { const S = "${text}"; return typeof S === "string" && S !== "" && S != null ? 1 : require("./dev-only.js"); }`,
+    `function f() {\n  return 1;\n}`,
+    `function f() {\n  return 1;\n}`,
+  ],
+  [
+    "a computed class member key",
+    (text: string) => `function f() { const S = "${text}"; return class { [S] = 1; static [S]() {} }; }`,
+    `function f() {\n  return class {\n    ["<L>"] = 1;\n    static ["<L>"]() {}\n  };\n}`,
+    `function f() {\n  return class {\n    ["<L>"] = 1;\n    static ["<L>"]() {}\n  };\n}`,
   ],
   [
     "a branch that the value decides",
@@ -2521,8 +2578,9 @@ const constStringRowsOverTheBound = [
   ],
   [
     "reads in a with statement",
-    (text: string) => `function f(o) { const S = "${text}"; with (o) { return [S, delete S, S.length, S ? 1 : 2]; } }`,
-    `function f(o) {\n  const S = "<L>";\n  with (o)\n    return [S, delete S, S.length, S ? 1 : 2];\n}`,
+    (text: string) =>
+      `function f(o) { const S = "${text}"; with (o) { return [S, delete S, S.length, S ? 1 : 2, !S, S && 1, typeof S, S === "x"]; } }`,
+    `function f(o) {\n  const S = "<L>";\n  with (o)\n    return [S, delete S, S.length, S ? 1 : 2, !S, S && 1, typeof S, S === "x"];\n}`,
   ],
   [
     "an alias in a with statement",
@@ -2722,6 +2780,34 @@ console.log(JSON.stringify([reads.toString().length > 100, reads().map(text => t
     expect(exitCode).toBe(0);
   },
 );
+
+// With `useDefineForClassFields: false` a field is assigned in the constructor,
+// which calls an inherited setter. A computed field key is only moved there
+// when it is a literal, so a key that names a const string has to be one.
+test.concurrent("a computed class field key that names a long const string is still lowered", async () => {
+  using dir = tempDir("const-string-class-field", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+    "index.ts": `const KEY = "${textOf("k", 200)}";
+class Base { seen: unknown; set value(value: unknown) { this.seen = value; } }
+class Derived extends Base { [KEY] = 1; value = 2; }
+const derived = new Derived() as any;
+console.log(JSON.stringify([derived.seen, Object.keys(derived), derived[KEY]].flat().map(item => String(item).length)));
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([1, 200, 4, 1]);
+  expect(exitCode).toBe(0);
+});
 
 // A macro converts its arguments to JS values, so it needs the literal of a
 // const string of any length, also through an alias. A string that a macro

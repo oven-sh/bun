@@ -1216,6 +1216,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
 
+                e_.value = p.long_const_literal(e_.value);
                 if let Some(typeof_) = SideEffects::typeof_(&e_.value.data) {
                     *e = p.new_expr(
                         E::String {
@@ -1247,6 +1248,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 match e_.op {
                     Op::UnNot => {
                         p.ignore_namespace_local_test_use(&e_.value);
+                        p.long_const_test(&mut e_.value);
                         if p.options.features.minify_syntax {
                             e_.value = SideEffects::simplify_boolean(p, e_.value);
                         }
@@ -1512,6 +1514,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut e_.test);
         p.in_branch_condition = prev_in_branch;
         p.ignore_namespace_local_test_use(&e_.test);
+        p.long_const_test(&mut e_.test);
 
         e_.test = SideEffects::simplify_boolean(p, e_.test);
 

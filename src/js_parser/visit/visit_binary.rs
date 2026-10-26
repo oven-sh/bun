@@ -82,11 +82,33 @@ fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: boo
     right: &ExprData,
     p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
 ) -> Equality {
+    if p.has_long_const_read
+        && let ExprData::EIdentifier(id) = left
+        && let Some(value) = p.long_const_read(*id)
+    {
+        return long_const_eql::<STRICT, TYPESCRIPT, SCAN_ONLY>(id.ref_, &value.data, right, p);
+    }
     if STRICT {
         ExprData::eql::<_, StrictEql>(left, right, p)
     } else {
         ExprData::eql::<_, LooseEql>(left, right, p)
     }
+}
+
+/// A read of a long const string compares as that string, and a known result removes the read.
+#[cold]
+#[inline(never)]
+fn long_const_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    ref_: js_ast::Ref,
+    value: &ExprData,
+    right: &ExprData,
+    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+) -> Equality {
+    let equality = data_eql::<STRICT, TYPESCRIPT, SCAN_ONLY>(value, right, p);
+    if !matches!(equality, Equality::Unknown) {
+        p.ignore_usage(ref_);
+    }
+    equality
 }
 
 pub struct BinaryExpressionVisitor {
@@ -175,7 +197,10 @@ impl BinaryExpressionVisitor {
         // `ns && …` never yields the namespace (it is truthy); `ns == null` /
         // `ns !== undefined` only test it.
         match e_.op {
-            Op::Code::BinLogicalAnd => p.ignore_namespace_local_test_use(&e_.left),
+            Op::Code::BinLogicalAnd => {
+                p.ignore_namespace_local_test_use(&e_.left);
+                p.long_const_test(&mut e_.left);
+            }
             Op::Code::BinLooseEq
             | Op::Code::BinLooseNe
             | Op::Code::BinStrictEq

@@ -27,7 +27,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TOpenParen => {
                 if level.lt(Level::Call) && p.fn_or_arrow_data_parse.allow_super_call {
-                    p.saw_super_call = true;
+                    if p.struct_ctor_super {
+                        // `super(...)` in a struct constructor runs the parent's constructor on `this`
+                        return Ok(p.struct_super_target(loc));
+                    }
                     return Ok(p.new_expr(E::Super {}, loc));
                 }
             }

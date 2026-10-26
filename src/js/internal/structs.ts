@@ -261,8 +261,6 @@ export default {
   compareExchange: atomicsOverloads.compareExchange,
 };
 
-// The `shared struct` lowering in runtime.js builds its instances through this hook.
-Object.defineProperty(globalThis, Symbol.for("bun.structs.native"), {
-  value: { create: (fields: string[]) => new SharedStruct(fields) },
-  configurable: true,
-});
+// The `shared struct` lowering in runtime.js builds its instances through this hook. Only the first call takes effect, so a
+// script cannot stand in for the native structs by defining a property of the global object.
+$requireESM("bun:wrap").__structBase.n({ create: (fields: string[]) => new SharedStruct(fields) });

@@ -8,7 +8,7 @@ use crate::p::P;
 use bun_ast as js_ast;
 
 use js_ast::op::Level;
-use js_ast::{E, Expr, G, LocRef, S, Stmt};
+use js_ast::{Expr, G, LocRef, S, Stmt};
 use js_lexer::T;
 
 use crate::parser::fs;
@@ -765,21 +765,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && p.lexer.token != T::TEndOfFile
         {
             value = Some(p.parse_expr(Level::Lowest)?);
-        }
-        if p.fn_or_arrow_data_parse.is_struct_constructor {
-            // A struct constructor cannot override its instance: evaluate the operand
-            // for side effects and return undefined.
-            if let Some(operand) = value {
-                let undefined = p.new_expr(E::Undefined, operand.loc);
-                value = Some(p.new_expr(
-                    E::Binary {
-                        op: js_ast::op::Code::BinComma,
-                        left: operand,
-                        right: undefined,
-                    },
-                    operand.loc,
-                ));
-            }
         }
         p.latest_return_had_semicolon = p.lexer.token == T::TSemicolon;
         p.lexer.expect_or_insert_semicolon()?;

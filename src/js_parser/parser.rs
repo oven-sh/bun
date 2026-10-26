@@ -1255,9 +1255,6 @@ pub struct FnOrArrowDataParse {
     pub(crate) allow_super_property: bool,
     pub(crate) is_top_level: bool,
     pub(crate) is_constructor: bool,
-    /// The constructor of a `struct`: its own `return expr` discards `expr`
-    /// (the proposal ignores constructor return overrides).
-    pub(crate) is_struct_constructor: bool,
     pub(crate) is_typescript_declare: bool,
 
     pub(crate) has_argument_decorators: bool,
@@ -1286,7 +1283,6 @@ impl Default for FnOrArrowDataParse {
             allow_super_property: false,
             is_top_level: false,
             is_constructor: false,
-            is_struct_constructor: false,
             is_typescript_declare: false,
             has_argument_decorators: false,
             has_decorators: false,
@@ -1375,6 +1371,7 @@ pub struct PropertyOpts {
     pub(crate) is_class: bool,
     pub(crate) class_has_extends: bool,
     pub(crate) is_struct: bool,
+    pub(crate) is_shared_struct: bool,
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_ts_abstract: bool,
     pub(crate) ts_decorators: ExprNodeList,
@@ -1392,6 +1389,7 @@ impl Default for PropertyOpts {
             is_class: false,
             class_has_extends: false,
             is_struct: false,
+            is_shared_struct: false,
             allow_ts_decorators: false,
             is_ts_abstract: false,
             ts_decorators: bun_alloc::AstAlloc::vec(),

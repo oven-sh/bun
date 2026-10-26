@@ -18,7 +18,7 @@ use bun_ast::ts::Metadata as TsMetadata;
 use js_ast::{
     E, Expr, ExprNodeList,
     G::{self, PropertyKind},
-    S, Stmt, symbol,
+    Stmt, symbol,
 };
 use js_lexer::T;
 
@@ -87,8 +87,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `super()` calls are tracked per constructor (a nested class has its own).
-        let old_saw_super_call = core::mem::replace(&mut p.saw_super_call, false);
+        // `super(...)` in a struct constructor is rewritten by the prefix parser; a constructor
+        // of any other class (also one nested in a struct constructor) keeps the plain meaning.
+        let old_struct_ctor_super = if is_constructor {
+            Some(core::mem::replace(&mut p.struct_ctor_super, opts.is_struct))
+        } else {
+            None
+        };
         let func = p.parse_fn(
             None,
             FnOrArrowDataParse {
@@ -107,7 +112,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_super_property: true,
                 allow_ts_decorators: opts.allow_ts_decorators,
                 is_constructor,
-                is_struct_constructor: opts.is_struct && is_constructor,
                 has_decorators: opts.ts_decorators.len() > 0
                     || (opts.has_class_decorators && is_constructor),
 
@@ -116,35 +120,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
-        let saw_super_call = core::mem::replace(&mut p.saw_super_call, old_saw_super_call);
-        let mut func = func?;
-
-        // A struct constructor may omit `super()`. The proposal then skips the parent
-        // constructor, which a class lowering cannot do, so the implicit call runs it
-        // with no arguments (a known deviation, see the PR description).
-        if opts.is_struct && is_constructor && !saw_super_call {
-            let body_loc = func.body.loc;
-            let target = p.new_expr(E::Super {}, body_loc);
-            let call = p.new_expr(
-                E::Call {
-                    target,
-                    ..Default::default()
-                },
-                body_loc,
-            );
-            let super_stmt = p.s(
-                S::SExpr {
-                    value: call,
-                    ..Default::default()
-                },
-                body_loc,
-            );
-            let mut stmts =
-                bun_alloc::ArenaVec::<Stmt>::with_capacity_in(func.body.stmts.len() + 1, p.arena);
-            stmts.push(super_stmt);
-            stmts.extend_from_slice(func.body.stmts.slice());
-            func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+        if let Some(old) = old_struct_ctor_super {
+            p.struct_ctor_super = old;
         }
+        let mut func = func?;
 
         opts.has_argument_decorators =
             opts.has_argument_decorators || p.fn_or_arrow_data_parse.has_argument_decorators;
@@ -281,6 +260,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut kind = kind_;
         let mut errors = errors_;
+        let private_name_uses_before = p.private_name_uses;
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
         'restart: loop {
             // Every match arm below assigns `key` (or `continue 'restart` /
@@ -679,6 +659,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 let mut initializer: Option<Expr> = None;
                 let mut ts_metadata = TsMetadata::default();
+                // An instance field of a `struct` is not defined by a class field initializer. Its
+                // initializer becomes the body of a method that takes no parameters, run once the
+                // instance is sealed (see `lower_struct_class`): `struct_initializer` is the
+                // expression, `struct_thunk_loc` where that method's scopes are.
+                let is_struct_instance_field =
+                    opts.is_struct && !opts.is_static && kind == PropertyKind::Normal;
+                let mut struct_initializer: Option<Expr> = None;
+                let mut struct_thunk_loc = p.lexer.loc();
 
                 // Forbid the names "constructor" and "prototype" in some cases
                 if !is_computed {
@@ -727,16 +715,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     p.lexer.next()?;
 
-                    // "this" and "super" property access is allowed in field initializers
-                    let old_is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
-                    let old_allow_super_property = p.fn_or_arrow_data_parse.allow_super_property;
-                    p.fn_or_arrow_data_parse.is_this_disallowed = false;
-                    p.fn_or_arrow_data_parse.allow_super_property = true;
+                    if is_struct_instance_field {
+                        let (expr, thunk_loc) = p.parse_struct_field_initializer()?;
+                        struct_initializer = Some(expr);
+                        struct_thunk_loc = thunk_loc;
+                    } else {
+                        // "this" and "super" property access is allowed in field initializers
+                        let old_is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
+                        let old_allow_super_property =
+                            p.fn_or_arrow_data_parse.allow_super_property;
+                        p.fn_or_arrow_data_parse.is_this_disallowed = false;
+                        p.fn_or_arrow_data_parse.allow_super_property = true;
 
-                    initializer = Some(p.parse_expr(Level::Comma)?);
+                        initializer = Some(p.parse_expr(Level::Comma)?);
 
-                    p.fn_or_arrow_data_parse.is_this_disallowed = old_is_this_disallowed;
-                    p.fn_or_arrow_data_parse.allow_super_property = old_allow_super_property;
+                        p.fn_or_arrow_data_parse.is_this_disallowed = old_is_this_disallowed;
+                        p.fn_or_arrow_data_parse.allow_super_property = old_allow_super_property;
+                    }
+                } else if is_struct_instance_field
+                    && !matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_))
+                {
+                    // No initializer: the method still records the field for `lower_struct_class`.
+                    p.push_empty_struct_initializer_scopes(struct_thunk_loc);
                 }
 
                 // Special-case private identifiers
@@ -765,6 +765,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 p.lexer.expect_or_insert_semicolon()?;
+
+                if is_struct_instance_field {
+                    if opts.is_shared_struct && p.private_name_uses != private_name_uses_before {
+                        p.log().add_error(
+                            Some(p.source),
+                            key.loc,
+                            b"Shared structs cannot use private names in instance fields",
+                        );
+                    }
+                    initializer = p.struct_field_initializer_method(
+                        key,
+                        struct_initializer,
+                        struct_thunk_loc,
+                    );
+                }
 
                 let mut prop_flags = flags::PropertySet::empty();
                 if is_computed {

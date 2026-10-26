@@ -109,7 +109,7 @@ bitflags::bitflags! {
         const IS_BARREL_DEFERRED = 1 << 18;
 
         /// Scan phase: `path` is the resolved module's path, not a specifier. See `set_module_path`.
-        const PATH_IS_MODULE = 1 << 19;
+        const PATH_IS_MODULE = 1 << 22;
     }
 }
 

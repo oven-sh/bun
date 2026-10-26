@@ -662,15 +662,11 @@ impl Drop for DevServer {
         }
 
         // `Watcher::shutdown` serialises with `dispatch_file_updates` on
-        // `Watcher.mutex`, so `next_event` is stable from the watcher side.
+        // `Watcher.mutex`, so `state` is stable from the watcher side.
         let atomics = self.watcher_atomics.as_ptr();
         // SAFETY: `atomics` is the `heap::into_raw` pointer from `init()`.
-        let next = unsafe {
-            (*atomics)
-                .next_event
-                .load(::core::sync::atomic::Ordering::Acquire)
-        };
-        if next == crate::bake::dev_server::NextEvent::DONE.0 {
+        let posted = unsafe { (*atomics).state.lock().dev.is_some() };
+        if !posted {
             // SAFETY: `atomics` is the unique owner; no event is queued.
             unsafe {
                 for event in &mut (*atomics).events {

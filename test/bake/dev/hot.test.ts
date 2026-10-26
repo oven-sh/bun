@@ -1,7 +1,22 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { existsSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { isLinux, tempDir } from "harness";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { join } from "node:path";
 import { devTest, emptyHtmlFile } from "../bake-harness";
+
+// Outside the dev server's root, so that the watcher does not report its own trace file.
+const watcherTrace = join(tempDir("dev-server-watcher-trace", { "trace.log": "" }), "trace.log");
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -692,7 +707,8 @@ devTest("dev.write resolves only after the new module body has run", {
   },
 });
 
-devTest("every save that arrives while a bundle runs reaches the next bundle", {
+devTest("watcher batches that arrive while a bundle runs all reach the next bundle", {
+  env: { BUN_WATCHER_TRACE: watcherTrace },
   files: {
     "bunfig.toml": `
       [serve.static]
@@ -748,23 +764,38 @@ devTest("every save that arrives while a bundle runs reaches the next bundle", {
         await Bun.sleep(10);
       }
     };
+    // One write and no truncate: the watcher gets one change per save.
+    const save = (name: string) => {
+      const fd = openSync(dev.join(name + ".ts"), "r+");
+      writeSync(fd, `export const ${name} = "${name}-1";`, 0);
+      closeSync(fd);
+    };
+    // The watcher logs one line per batch, before it handles the batch.
+    const batchesSince = (offset: number) =>
+      readFileSync(watcherTrace).subarray(offset).toString().split("\n").filter(Boolean);
+    const names = (batch: string, name: string) => new RegExp(`[/\\\\"]${name}\\.ts"`).test(batch);
+
     expect(await served()).toContain('"held-0"');
 
     writeFileSync(dev.join("hold/on"), "");
-    writeFileSync(dev.join("held.ts"), `export const held = "held-1";`);
+    save("held");
     await until("the bundle of held.ts to start", () => existsSync(dev.join("hold/entered")));
 
-    // Each save has to reach the dev server as a watcher batch of its own. The
-    // watcher gives no signal, so space them by far more than the window in
-    // which it merges events.
+    const held = statSync(watcherTrace).size;
     const saved = ["a", "b", "c", "d", "e"];
     for (const name of saved) {
-      writeFileSync(dev.join(name + ".ts"), `export const ${name} = "${name}-1";`);
-      await Bun.sleep(100);
+      const from = statSync(watcherTrace).size;
+      save(name);
+      await until(`the watcher to report ${name}.ts`, () => batchesSince(from).some(batch => names(batch, name)));
     }
+    // One write is one inotify event, so on Linux each save is one batch. Other watchers can split a save.
+    if (isLinux) {
+      const batches = batchesSince(held).map(batch => saved.filter(name => names(batch, name)).join("+"));
+      expect(batches.filter(Boolean)).toEqual(saved);
+    }
+    // `on_load` locks `Watcher.mutex`, so the held bundle cannot end before the batch of e.ts is queued.
     unlinkSync(dev.join("hold/on"));
 
-    // One bundle follows the held one. The last save is in it.
     let text = "";
     await until("the bundle after the held one", async () => (text = await served()).includes('"e-1"'));
     expect(saved.filter(name => !text.includes(`"${name}-1"`))).toEqual([]);

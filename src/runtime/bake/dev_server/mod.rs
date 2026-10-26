@@ -54,8 +54,6 @@ bun_output::declare_scope!(SourceMapStore, visible);
 bun_output::define_scoped_log!(debug_log, crate::bake::dev_server::DevServer);
 bun_output::define_scoped_log!(map_log, crate::bake::dev_server::SourceMapStore);
 
-use core::sync::atomic::Ordering;
-
 use bun_collections::StringArrayHashMap;
 use bun_sys::FdExt as _;
 
@@ -102,7 +100,7 @@ pub(crate) use http::{is_allowed_dev_host, is_allowed_host_header};
 pub(crate) use lifecycle::init;
 pub(crate) use protocol::{ConsoleLogKind, HmrTopic, HmrTopicBits, IncomingMessageId, MessageId};
 use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, to_opaque_file_id};
-pub(crate) use watcher_atomics::{NextEvent, WatcherAtomics};
+pub(crate) use watcher_atomics::WatcherAtomics;
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
 /// (the vtable boundary maps between them via an exhaustive match).
@@ -560,7 +558,7 @@ pub(crate) struct DevServer {
     pub(crate) directory_watchers: DirectoryWatchStore,
     /// Heap-owned via `heap::into_raw` so a still-queued
     /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
-    /// `next_event` check in `Drop`.
+    /// `state` check in `Drop`.
     pub(crate) watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,
     pub(crate) testing_batch_events: TestingBatchEvents,
 

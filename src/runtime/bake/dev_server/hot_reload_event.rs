@@ -290,6 +290,7 @@ impl HotReloadEvent {
 
         #[cfg(debug_assertions)]
         {
+            use core::sync::atomic::Ordering;
             // SAFETY: `first` is live and exclusively owned by this thread.
             debug_assert!(unsafe { (*first).debug_mutex.try_lock() });
             // SAFETY: `first` is live (caller contract); atomic load needs no

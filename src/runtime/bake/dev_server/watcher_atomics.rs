@@ -5,37 +5,19 @@ use super::*;
 /// Two pre-allocated `HotReloadEvent`s. The dev server thread holds at most one of them at a time.
 pub(crate) struct WatcherAtomics {
     pub(crate) events: [HotReloadEvent; 2],
-    /// Atomically encodes a `NextEvent`: values 0..2 are an index into
-    /// `events`, plus the `WAITING`/`DONE` sentinels.
-    // Rust cannot align individual fields, so this field is not cache-line
-    // aligned. Wrap in a `#[repr(align(128))]` newtype (init site:
-    // lifecycle.rs) if false sharing ever shows up in profiles.
-    pub(crate) next_event: core::sync::atomic::AtomicU8,
-    /// Watcher-thread-only; index into `events` currently being processed.
-    pub(crate) current_event: Option<u8>,
-    /// Watcher-thread-only; index into `events` queued behind `current_event`.
-    pub(crate) pending_event: Option<u8>,
-    // Debug fields to ensure methods are being called in the right order.
+    /// Not held across a call that locks `Watcher.mutex`, which the watcher thread takes first.
+    pub(crate) state: bun_threading::Guarded<State>,
+    // Debug field to ensure methods are being called in the right order.
     #[cfg(debug_assertions)]
     pub(crate) dbg_watcher_event: Option<*mut HotReloadEvent>,
-    #[cfg(debug_assertions)]
-    pub(crate) dbg_server_event: Option<*mut HotReloadEvent>,
 }
 
-/// Stored in `WatcherAtomics::next_event` (an `AtomicU8`). Modeled as a
-/// transparent newtype rather than a `#[repr(u8)] enum` because any value
-/// other than the named constants is an index into the `events` array, and
-/// Rust enums cannot hold unlisted discriminants.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) struct NextEvent(pub(crate) u8);
-
-impl NextEvent {
-    /// An event is running, and no next event is pending.
-    pub(crate) const WAITING: NextEvent = NextEvent(u8::MAX - 1);
-    /// No event is running.
-    pub(crate) const DONE: NextEvent = NextEvent(u8::MAX);
-    // Any other value represents an index into the `events` array.
+#[derive(Default)]
+pub(crate) struct State {
+    /// Index into `events` of the event the dev server thread was given and has not recycled.
+    pub(crate) dev: Option<u8>,
+    /// The other event has files and waits for `recycle_event_from_dev_server`.
+    queued: bool,
 }
 
 // These take `this: *mut Self` (not `&mut self`) so the returned
@@ -61,57 +43,23 @@ impl WatcherAtomics {
         // SAFETY: caller contract — `this` and `old_event` are live; every
         // `(*this)` / `(*old_event)` below is a field access on those.
         unsafe {
+            let mut state = (*this).state.lock();
             (*old_event).reset();
 
-            #[cfg(debug_assertions)]
-            {
-                // Not atomic because watcher won't modify this value while an event is running.
-                let dbg_event = (*this).dbg_server_event;
-                (*this).dbg_server_event = None;
-                debug_assert!(
-                    dbg_event == Some(old_event),
-                    "recycleEventFromDevServer: old_event: expected {:?}, got {:p}",
-                    dbg_event,
-                    old_event,
-                );
+            let old_index = state.dev.expect("the dev server thread holds an event");
+            debug_assert!(
+                core::ptr::eq(old_event, &raw const (*this).events[old_index as usize]),
+                "recycleEventFromDevServer: old_event: expected index {}, got {:p}",
+                old_index,
+                old_event,
+            );
+            if !core::mem::take(&mut state.queued) {
+                state.dev = None;
+                return None; // done running events
             }
-
-            let event: *mut HotReloadEvent = loop {
-                let next = NextEvent(
-                    (*this)
-                        .next_event
-                        .swap(NextEvent::WAITING.0, Ordering::AcqRel),
-                );
-                match next {
-                    NextEvent::WAITING => {
-                        // Success order is not AcqRel because the swap above performed an Acquire load.
-                        // Failure order is Relaxed because we're going to perform an Acquire load
-                        // in the next loop iteration.
-                        if (*this)
-                            .next_event
-                            .compare_exchange_weak(
-                                NextEvent::WAITING.0,
-                                NextEvent::DONE.0,
-                                Ordering::Release,
-                                Ordering::Relaxed,
-                            )
-                            .is_err()
-                        {
-                            continue; // another event may have been added
-                        }
-                        return None; // done running events
-                    }
-                    NextEvent::DONE => unreachable!(),
-                    _ => break &raw mut (*this).events[next.0 as usize],
-                }
-            };
-
-            #[cfg(debug_assertions)]
-            {
-                // Not atomic because watcher won't modify this value while an event is running.
-                (*this).dbg_server_event = Some(event);
-            }
-            Some(event)
+            let next = old_index ^ 1;
+            state.dev = Some(next);
+            Some(&raw mut (*this).events[next as usize])
         }
     }
 
@@ -128,28 +76,11 @@ impl WatcherAtomics {
         // SAFETY: caller contract — `this` is live; every `(*this)` / `(*ev)`
         // below is a field access on the heap `WatcherAtomics` allocation.
         unsafe {
-            let index: usize = 'find: {
-                if let Some(pending) = (*this).pending_event.take() {
-                    // Take the queued event back so that this batch joins it.
-                    if (*this)
-                        .next_event
-                        .compare_exchange(
-                            pending,
-                            NextEvent::WAITING.0,
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                        )
-                        .is_ok()
-                    {
-                        break 'find pending as usize;
-                    }
-                    // The dev server took it, which means it is done with `current_event`.
-                    (*this).current_event = Some(pending);
-                }
-                match (*this).current_event {
-                    Some(0) => 1,
-                    _ => 0,
-                }
+            let (index, taken_back): (usize, bool) = {
+                let mut state = (*this).state.lock();
+                // Take the queued event back so that this batch joins it.
+                let taken_back = core::mem::take(&mut state.queued);
+                (if state.dev == Some(0) { 1 } else { 0 }, taken_back)
             };
             let ev: *mut HotReloadEvent = &raw mut (*this).events[index];
 
@@ -162,8 +93,9 @@ impl WatcherAtomics {
                 (*this).dbg_watcher_event = Some(ev);
             }
 
-            // Only this thread can reach `ev`: it is not `current_event`, and no index is queued.
+            // Only this thread can reach `ev`: it is neither `state.dev` nor queued.
             let ev_ref = &mut *ev;
+            debug_assert_eq!(ev_ref.is_empty(), !taken_back);
 
             // Initialize the timer if it is empty.
             if ev_ref.is_empty() {
@@ -231,25 +163,14 @@ impl WatcherAtomics {
             let ev_index: u8 =
                 u8::try_from(ev.offset_from((&raw const (*this).events).cast::<HotReloadEvent>()))
                     .unwrap();
-            let old_next = NextEvent((*this).next_event.swap(ev_index, Ordering::AcqRel));
-            match old_next {
-                NextEvent::DONE => {
+            let mut state = (*this).state.lock();
+            match state.dev {
+                // The dev server thread takes `ev` when it recycles the event it holds.
+                Some(_) => state.queued = true,
+                None => {
                     // Dev server is done running events. We need to schedule the event directly.
-                    (*this).current_event = Some(ev_index);
-                    // Relaxed because the dev server is not running events right now.
-                    // (could technically be made non-atomic)
-                    (*this)
-                        .next_event
-                        .store(NextEvent::WAITING.0, Ordering::Relaxed);
-                    #[cfg(debug_assertions)]
-                    {
-                        debug_assert!(
-                            (*this).dbg_server_event.is_none(),
-                            "no event should be running right now",
-                        );
-                        // Not atomic because the dev server is not running events right now.
-                        (*this).dbg_server_event = Some(ev);
-                    }
+                    state.dev = Some(ev_index);
+                    drop(state);
                     (*ev).concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask {
                         task: bun_event_loop::Task::init(ev),
                         ..Default::default()
@@ -263,11 +184,6 @@ impl WatcherAtomics {
                         core::ptr::NonNull::new_unchecked(&raw mut (*ev).concurrent_task),
                     );
                 }
-
-                NextEvent::WAITING => (*this).pending_event = Some(ev_index),
-
-                // Only this thread stores an index, and `watcher_acquire_event` took it back.
-                _ => unreachable!(),
             }
         }
     }
@@ -278,13 +194,9 @@ impl WatcherAtomics {
         let mk_event = || HotReloadEvent::init_empty(owner);
         let atomics: *mut WatcherAtomics = bun_core::heap::into_raw(Box::new(WatcherAtomics {
             events: [mk_event(), mk_event()],
-            next_event: core::sync::atomic::AtomicU8::new(NextEvent::DONE.0),
-            current_event: None,
-            pending_event: None,
+            state: Default::default(),
             #[cfg(debug_assertions)]
             dbg_watcher_event: None,
-            #[cfg(debug_assertions)]
-            dbg_server_event: None,
         }));
         // SAFETY: `atomics` is the fresh `heap::into_raw` result; the
         // allocation is exclusively reachable through it here.

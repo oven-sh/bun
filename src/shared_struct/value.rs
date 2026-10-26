@@ -6,28 +6,37 @@ use bun_threading::Guarded;
 use crate::mutex::{Condition, Mutex};
 use crate::shape::StructShape;
 
-/// A symbol as a slot keeps it. A symbol belongs to the agent that made it, so what crosses is a name for it: a number that
-/// every agent holding the symbol agrees on, and its description. An agent that has no symbol for the number makes one.
+/// Which symbol a [`SymbolRecord`] stands for in every agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SymbolKind {
+    /// A symbol of its own (`Symbol()`), named by a number that the agents holding it agree on.
+    Unique,
+    /// `Symbol.for(description)`: the one that every agent gets for that description.
+    Registered,
+    /// `Symbol.iterator` and the others: the one that every agent has under that description.
+    WellKnown,
+}
+
+/// A symbol as a slot keeps it. A symbol belongs to the agent that made it, so what crosses is a name for it, and its description.
+/// An agent that has no symbol for the name makes one.
 #[derive(Debug)]
 pub struct SymbolRecord {
-    /// Names a symbol that is not registered; zero for a registered one, which is named by its description.
+    /// Names a unique symbol; zero for the other kinds, which are named by their description.
     pub id: u64,
-    /// Made by `Symbol.for`: the same symbol in every agent that asks for its description.
-    pub registered: bool,
-    /// The text of `Symbol(description)`, which `Symbol()` has none of. A registered symbol always has one.
+    pub kind: SymbolKind,
+    /// The text of `Symbol(description)`, which `Symbol()` has none of. A registered or well-known symbol always has one.
     pub description: Option<Arc<[u16]>>,
 }
 
 impl SymbolRecord {
     /// Whether both records stand for the same symbol.
     pub fn same_as(&self, other: &SymbolRecord) -> bool {
-        if self.registered != other.registered {
+        if self.kind != other.kind {
             return false;
         }
-        if self.registered {
-            self.description == other.description
-        } else {
-            self.id == other.id
+        match self.kind {
+            SymbolKind::Unique => self.id == other.id,
+            SymbolKind::Registered | SymbolKind::WellKnown => self.description == other.description,
         }
     }
 }
@@ -533,14 +542,21 @@ mod tests {
         let unique = |id| {
             Value::Symbol(Arc::new(SymbolRecord {
                 id,
-                registered: false,
+                kind: SymbolKind::Unique,
                 description: Some(utf16("d")),
             }))
         };
         let registered = |text| {
             Value::Symbol(Arc::new(SymbolRecord {
                 id: 0,
-                registered: true,
+                kind: SymbolKind::Registered,
+                description: Some(utf16(text)),
+            }))
+        };
+        let well_known = |text| {
+            Value::Symbol(Arc::new(SymbolRecord {
+                id: 0,
+                kind: SymbolKind::WellKnown,
                 description: Some(utf16(text)),
             }))
         };
@@ -568,6 +584,21 @@ mod tests {
         assert!(matches!(b.load(1), Value::Symbol(_)));
         assert!(matches!(
             b.compare_exchange(1, &registered("k"), &Value::Null),
+            Value::Symbol(_)
+        ));
+        assert!(matches!(b.load(1), Value::Null));
+        // A well-known symbol is the one of that description, and neither a registered nor a unique one.
+        b.store(1, &well_known("Symbol.iterator"));
+        assert!(matches!(
+            b.compare_exchange(1, &registered("Symbol.iterator"), &Value::Null),
+            Value::Symbol(_)
+        ));
+        assert!(matches!(
+            b.compare_exchange(1, &well_known("Symbol.species"), &Value::Null),
+            Value::Symbol(_)
+        ));
+        assert!(matches!(
+            b.compare_exchange(1, &well_known("Symbol.iterator"), &Value::Null),
             Value::Symbol(_)
         ));
         assert!(matches!(b.load(1), Value::Null));

@@ -14,8 +14,9 @@ const { Mutex, Condition, SharedArray, SharedStruct, MutexClass, ConditionClass 
 )();
 const nativeCanBeShared = $bindgen("shared_struct_classes.bind.ts", "canBeShared");
 const nativeIsSharedObject = $bindgen("shared_struct_classes.bind.ts", "isSharedObject");
-const nativeIsMutex = $bindgen("shared_struct_classes.bind.ts", "isMutex");
-const nativeIsCondition = $bindgen("shared_struct_classes.bind.ts", "isCondition");
+const nativeMutexInner = $bindgen("shared_struct_classes.bind.ts", "mutexInner");
+const nativeConditionInner = $bindgen("shared_struct_classes.bind.ts", "conditionInner");
+const nativeRegisterWellKnownSymbol = $bindgen("shared_struct_classes.bind.ts", "registerWellKnownSymbol");
 const nativeAtomicLoad = $bindgen("shared_struct_classes.bind.ts", "atomicLoad");
 const nativeAtomicStore = $bindgen("shared_struct_classes.bind.ts", "atomicStore");
 const nativeAtomicExchange = $bindgen("shared_struct_classes.bind.ts", "atomicExchange");
@@ -44,12 +45,23 @@ function lengthOf<T extends Function>(fn: T, length: number): T {
   return fn;
 }
 
-function assertMutex(mutex: unknown) {
-  if (!nativeIsMutex(mutex)) throw new TypeError("Expected an Atomics.Mutex");
+/** The generated object behind a Mutex (the operations are its methods), or a TypeError for anything else. */
+function mutexOf(mutex: unknown) {
+  const inner = nativeMutexInner(mutex);
+  if (inner === undefined) throw new TypeError("Expected an Atomics.Mutex");
+  return inner;
 }
 
-function assertCondition(condition: unknown) {
-  if (!nativeIsCondition(condition)) throw new TypeError("Expected an Atomics.Condition");
+function conditionOf(condition: unknown) {
+  const inner = nativeConditionInner(condition);
+  if (inner === undefined) throw new TypeError("Expected an Atomics.Condition");
+  return inner;
+}
+
+// `Symbol.iterator` and the others cross to another agent as the same symbol there.
+for (const name of Object.getOwnPropertyNames(Symbol)) {
+  const value = (Symbol as unknown as Record<string, unknown>)[name];
+  if (typeof value === "symbol") nativeRegisterWellKnownSymbol(value);
 }
 
 /**
@@ -126,24 +138,24 @@ function lockedMutex(token: unknown) {
 const mutexStatics = {
   /** Blocks until `mutex` is held and returns the token that releases it: `token` if one is given, else a new one. */
   lock(mutex: unknown, unlockToken?: UnlockToken) {
-    assertMutex(mutex);
+    const inner = mutexOf(mutex);
     if (unlockToken !== undefined) assertEmptyToken(unlockToken);
     const token = unlockToken ?? new UnlockToken();
     // A mutex this thread already holds is a deadlock, which the native lock refuses with a TypeError.
-    if (!mutexLock.$call(mutex, undefined)) throw new Error("Atomics.Mutex.lock was interrupted");
-    armToken(token, mutex);
+    if (!mutexLock.$call(inner, undefined)) throw new Error("Atomics.Mutex.lock was interrupted");
+    armToken(token, inner);
     return token;
   },
 
   /** Like `lock`, but `null` when the mutex is not taken within `timeout` milliseconds. */
   lockIfAvailable(mutex: unknown, timeout: number, unlockToken?: UnlockToken) {
-    assertMutex(mutex);
+    const inner = mutexOf(mutex);
     if (unlockToken !== undefined) assertEmptyToken(unlockToken);
     const timeoutMs = timeoutMillis(timeout);
     const token = unlockToken ?? new UnlockToken();
     // Even with no wait at all, a mutex this thread already holds is a TypeError, not a null.
-    if (!mutexLock.$call(mutex, timeoutMs)) return null;
-    armToken(token, mutex);
+    if (!mutexLock.$call(inner, timeoutMs)) return null;
+    armToken(token, inner);
     return token;
   },
 };
@@ -155,8 +167,8 @@ define(Mutex, "UnlockToken", UnlockToken);
 const conditionStatics = {
   /** Releases the mutex that `unlockToken` holds until notified, then takes it again. */
   wait(condition: unknown, unlockToken: UnlockToken) {
-    assertCondition(condition);
-    conditionWait.$call(condition, lockedMutex(unlockToken), undefined);
+    const inner = conditionOf(condition);
+    conditionWait.$call(inner, lockedMutex(unlockToken), undefined);
   },
 
   /**
@@ -164,7 +176,7 @@ const conditionStatics = {
    * and answers whether it did; without one it answers whether it was notified before the timeout.
    */
   waitFor(condition: unknown, unlockToken: UnlockToken, timeout: number, predicate?: () => unknown) {
-    assertCondition(condition);
+    const inner = conditionOf(condition);
     const mutex = lockedMutex(unlockToken);
     const timeoutMs = timeoutMillis(timeout);
     if (predicate !== undefined && !$isCallable(predicate)) {
@@ -173,14 +185,14 @@ const conditionStatics = {
     if (predicate === undefined) {
       // No time at all: report the timeout without giving the mutex up.
       if (timeoutMs === 0) return false;
-      return conditionWait.$call(condition, mutex, timeoutMs);
+      return conditionWait.$call(inner, mutex, timeoutMs);
     }
 
     const deadline = timeoutMs === undefined ? Infinity : performance.now() + timeoutMs;
     while (!predicate()) {
       const remaining = deadline - performance.now();
       if (remaining <= 0) return false;
-      if (!conditionWait.$call(condition, mutex, deadline === Infinity ? undefined : remaining)) {
+      if (!conditionWait.$call(inner, mutex, deadline === Infinity ? undefined : remaining)) {
         return !!predicate();
       }
     }
@@ -189,12 +201,12 @@ const conditionStatics = {
 
   /** Wakes up to `count` waiters (all of them by default) and returns how many were woken. */
   notify(condition: unknown, count?: number) {
-    assertCondition(condition);
+    const inner = conditionOf(condition);
     if (count === undefined) count = Infinity;
     if (typeof count !== "number" || (count !== Infinity && !Number.isInteger(count))) {
       throw new TypeError("Atomics.Condition.notify: count must be an integral Number or Infinity");
     }
-    return conditionNotify.$call(condition, count === Infinity ? undefined : count < 1 ? 0 : count);
+    return conditionNotify.$call(inner, count === Infinity ? undefined : count < 1 ? 0 : count);
   },
 };
 

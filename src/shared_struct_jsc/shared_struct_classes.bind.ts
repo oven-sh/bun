@@ -41,8 +41,13 @@ export const canBeShared = b.fn({ args: { value: b.any }, returns: b.bool });
 
 /** Whether a value is a SharedStruct, a SharedArray, a Mutex or a Condition. */
 export const isSharedObject = b.fn({ args: { value: b.any }, returns: b.bool });
-export const isMutex = b.fn({ args: { value: b.any }, returns: b.bool });
-export const isCondition = b.fn({ args: { value: b.any }, returns: b.bool });
+
+/** The generated Mutex or Condition behind a Mutex or Condition object, else `undefined`. */
+export const mutexInner = b.fn({ capability: "js", args: { value: b.any }, returns: b.any });
+export const conditionInner = b.fn({ capability: "js", args: { value: b.any }, returns: b.any });
+
+/** Tells this agent that a symbol is a well-known one, so another agent gets the same well-known symbol for it. */
+export const registerWellKnownSymbol = b.fn({ ...js, args: { symbol: b.any }, returns: b.any });
 
 /** The sequentially consistent operations of `Atomics`, on a slot of a SharedStruct (`key` is a field name) or a SharedArray (`key` is an index). */
 export const atomicLoad = b.fn({ ...js, args: { target: b.any, key: b.any }, returns: b.any });

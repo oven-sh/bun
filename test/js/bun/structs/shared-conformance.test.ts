@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import vm from "node:vm";
 
 // https://github.com/tc39/proposal-structs: shared structs, Atomics, Mutex and Condition, step by step.
 
@@ -305,6 +306,22 @@ describe("shared struct exotic object", () => {
     }).toThrow(TypeError);
   });
 
+  test("a shared array can be sealed and a harmless descriptor of its length is accepted", () => {
+    const a = new SharedArray(2);
+    a[0] = 1;
+    expect(Object.seal(a)).toBe(a);
+    expect(Object.isSealed(a)).toBe(true);
+    expect(Reflect.defineProperty(a, "length", {})).toBe(true);
+    expect(Reflect.defineProperty(a, "length", { value: 2, writable: false, enumerable: false, configurable: false })).toBe(true);
+    expect(Reflect.defineProperty(a, "length", { value: 3 })).toBe(false);
+    expect(Reflect.defineProperty(a, "length", { writable: true })).toBe(false);
+    expect(Reflect.defineProperty(a, "length", { enumerable: true })).toBe(false);
+    expect(Reflect.defineProperty(a, "length", { configurable: true })).toBe(false);
+    expect(Reflect.defineProperty(a, "length", { get: () => 2 })).toBe(false);
+    expect(Object.isFrozen(a)).toBe(false);
+    expect(() => Object.freeze(a)).toThrow(TypeError);
+  });
+
   test("the same for a shared array", () => {
     const a = new SharedArray(2);
     for (const key of ["0", "1", "2", "length", "foo"]) expect(Reflect.deleteProperty(a, key)).toBe(false);
@@ -315,6 +332,17 @@ describe("shared struct exotic object", () => {
     expect(Reflect.set(a, "5", 1, receiver)).toBe(false);
     expect(Reflect.set(a, "length", 5, receiver)).toBe(false);
     expect(Object.keys(receiver)).toEqual([]);
+  });
+
+  test("a write through an object that inherits from a shared struct is the struct's own write", () => {
+    shared struct S {
+      x;
+    }
+    const s = new S();
+    const child = Object.create(s);
+    child.x = 7;
+    expect(s.x).toBe(7);
+    expect(Object.hasOwn(child, "x")).toBe(false);
   });
 
   test("own property descriptors, and an accessor descriptor that changes nothing", () => {
@@ -341,7 +369,89 @@ describe("shared struct exotic object", () => {
   });
 });
 
+describe("symbols across agents and realms", () => {
+  test("well-known symbols are the same in another agent", async () => {
+    shared struct Box {
+      a;
+      b;
+    }
+    const box = new Box();
+    box.a = Symbol.iterator;
+    box.b = Symbol.asyncIterator;
+    const src = `
+      self.onmessage = ({ data: box }) => {
+        postMessage([box.a === Symbol.iterator, box.b === Symbol.asyncIterator, box.a === box.b, box.a.description]);
+      };
+    `;
+    const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+    const worker = new Worker(url);
+    const result = new Promise<unknown[]>((resolve, reject) => {
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = e => reject(e.error ?? e);
+    });
+    worker.postMessage(box);
+    expect(await result).toEqual([true, true, false, "Symbol.iterator"]);
+    worker.terminate();
+  });
+
+  test("a vm context on the same thread gets the very symbol that another realm stored", () => {
+    shared struct Box {
+      v;
+      w;
+    }
+    const box = new Box();
+    const inContext = vm.runInNewContext(`const s = Symbol("ctx"); box.v = s; s`, { box });
+    expect(typeof inContext).toBe("symbol");
+    // The symbol of the context is what this realm gets too, so it can be compared, stored again and found again.
+    expect(box.v).toBe(inContext);
+    expect(Atomics.compareExchange(box, "v", inContext, 1)).toBe(inContext);
+    expect(box.v).toBe(1);
+    box.w = inContext;
+    expect(vm.runInNewContext(`box.w === s2`, { box, s2: inContext })).toBe(true);
+    expect(Atomics.compareExchange(box, "w", Symbol("ctx"), 2)).toBe(inContext);
+  });
+});
+
 describe("shared struct field names", () => {
+  test("a field can be named by a symbol", async () => {
+    const sym = Symbol("field");
+    const registered = Symbol.for("registered.field");
+    shared struct S {
+      [sym] = 1;
+      a = 2;
+      [registered] = 3;
+    }
+    const s = new S();
+    expect(Reflect.ownKeys(s)).toEqual(["a", sym, registered]);
+    expect(Object.keys(s)).toEqual(["a"]);
+    expect(Object.getOwnPropertySymbols(s)).toEqual([sym, registered]);
+    expect([s[sym], s.a, s[registered]]).toEqual([1, 2, 3]);
+    s[sym] = 5;
+    expect(Atomics.load(s, sym as any)).toBe(5);
+    expect(Atomics.exchange(s, registered as any, 9)).toBe(3);
+    expect(sym in s).toBe(true);
+    expect(Symbol("field") in s).toBe(false);
+    expect(() => Atomics.load(s, Symbol("field") as any)).toThrow(RangeError);
+    const src = `
+      self.onmessage = ({ data: s }) => {
+        const [first, second] = Object.getOwnPropertySymbols(s);
+        const before = s[first];
+        s[first] = before + 1;
+        postMessage([before, first.description, Symbol.keyFor(second), s[second]]);
+      };
+    `;
+    const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+    const worker = new Worker(url);
+    const result = new Promise<unknown[]>((resolve, reject) => {
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = e => reject(e.error ?? e);
+    });
+    worker.postMessage(s);
+    expect(await result).toEqual([5, "field", "registered.field", 9]);
+    worker.terminate();
+    expect(s[sym]).toBe(6);
+  });
+
   test("a field can be named by an array index or by a computed name", () => {
     const key = "k";
     shared struct S {
@@ -450,6 +560,13 @@ describe("Atomics.Mutex and Atomics.Condition objects", () => {
         "use strict";
         (object as any).extra = 1;
       }).toThrow(TypeError);
+      // [[Delete]] is false for every key.
+      expect(Reflect.deleteProperty(object, "x")).toBe(false);
+      expect(() => {
+        "use strict";
+        delete (object as any).x;
+      }).toThrow(TypeError);
+      expect(Object.isSealed(object)).toBe(true);
     }
   });
 

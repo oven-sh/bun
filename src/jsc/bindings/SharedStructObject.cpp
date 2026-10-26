@@ -5,6 +5,7 @@
 // are ordinary generated classes (src/shared_struct_jsc/shared_struct_classes.bind.ts).
 
 #include "SharedStructObject.h"
+#include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSFunction.h>
@@ -88,6 +89,22 @@ public:
         m_ids.set(&symbol->uid(), id);
     }
 
+    // The well-known symbols (`Symbol.iterator` and the others), by description, which a script cannot change.
+    JSC::Symbol* wellKnown(const WTF::String& description)
+    {
+        WTF::Locker locker { cellLock() };
+        auto it = m_wellKnown.find(description);
+        return it == m_wellKnown.end() ? nullptr : it->value.get();
+    }
+
+    void addWellKnown(JSC::VM& vm, const WTF::String& description, JSC::Symbol* symbol)
+    {
+        WTF::Locker locker { cellLock() };
+        auto result = m_wellKnown.add(description, JSC::WriteBarrier<JSC::Symbol>());
+        if (result.isNewEntry)
+            result.iterator->value.set(vm, this, symbol);
+    }
+
 private:
     SharedObjectRegistry(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
@@ -104,6 +121,7 @@ private:
     JSC::WeakGCMap<const void*, JSC::JSObject> m_objects;
     WTF::HashMap<uint64_t, JSC::WriteBarrier<JSC::Symbol>> m_symbols;
     WTF::HashMap<const void*, uint64_t> m_ids;
+    WTF::HashMap<WTF::String, JSC::WriteBarrier<JSC::Symbol>> m_wellKnown;
 };
 
 template<typename Visitor>
@@ -114,23 +132,115 @@ void SharedObjectRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     WTF::Locker locker { thisObject->cellLock() };
     for (auto& entry : thisObject->m_symbols.values())
         visitor.append(entry);
+    for (auto& entry : thisObject->m_wellKnown.values())
+        visitor.append(entry);
 }
 
 DEFINE_VISIT_CHILDREN(SharedObjectRegistry);
 
 const ClassInfo SharedObjectRegistry::s_info = { "SharedObjectRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SharedObjectRegistry) };
 
+// A Mutex or a Condition as a script sees it: an object with no prototype that cannot be extended and whose [[Delete]] is false, the way the
+// proposal makes it. The generated object that implements the lock is `inner`, which no script can reach.
+class JSSharedSync final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::CompleteSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.destructibleObjectSpace();
+    }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static JSSharedSync* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* inner)
+    {
+        auto* structure = Bun::createClassStructure(vm, globalObject, JSC::jsNull(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* sync = new (NotNull, JSC::allocateCell<JSSharedSync>(vm)) JSSharedSync(vm, structure);
+        sync->finishCreation(vm, inner);
+        return sync;
+    }
+
+    static void destroy(JSC::JSCell* cell) { static_cast<JSSharedSync*>(cell)->~JSSharedSync(); }
+    ~JSSharedSync() = default;
+
+    static bool deleteProperty(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&) { return false; }
+    static bool deletePropertyByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned) { return false; }
+
+    JSC::JSObject* inner() const { return m_inner.get(); }
+
+private:
+    JSSharedSync(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm, JSC::JSObject* inner)
+    {
+        Base::finishCreation(vm);
+        ASSERT(inherits(info()));
+        m_inner.set(vm, this, inner);
+    }
+
+    JSC::WriteBarrier<JSC::JSObject> m_inner;
+};
+
+template<typename Visitor>
+void JSSharedSync::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSSharedSync>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_inner);
+}
+
+DEFINE_VISIT_CHILDREN(JSSharedSync);
+
+const ClassInfo JSSharedSync::s_info = { "SharedSync"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSharedSync) };
+
 // The registry of `globalObject`'s realm, made on first use when `create` is set.
 static SharedObjectRegistry* registryOf(VM& vm, JSGlobalObject* globalObject, bool create)
 {
     const Identifier& name = builtinNames(vm).dataPrivateName();
-    if (JSValue existing = globalObject->getDirect(vm, name))
-        return uncheckedDowncast<SharedObjectRegistry>(existing.asCell());
+    if (JSValue existing = globalObject->getDirect(vm, name)) {
+        if (auto* registry = dynamicDowncast<SharedObjectRegistry>(existing))
+            return registry;
+    }
     if (!create)
         return nullptr;
     auto* registry = SharedObjectRegistry::create(vm, globalObject);
     globalObject->putDirect(vm, name, registry, static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     return registry;
+}
+
+// The registry that holds the symbols of the agent (the thread) of `globalObject`: the one of its default realm, which a vm context shares.
+static SharedObjectRegistry* agentRegistry(VM& vm, JSGlobalObject* globalObject)
+{
+    return registryOf(vm, defaultGlobalObject(globalObject), true);
+}
+
+static std::atomic<uint64_t> nextSymbolId { 1 };
+
+// The symbol of this agent that a record stands for (see SymbolRecord in src/shared_struct/value.rs): kind 0 a symbol of its own, named by `id`,
+// 1 a registered one, named by its description, 2 a well-known one, named by its description.
+static Symbol* symbolForRecord(JSGlobalObject* globalObject, uint64_t id, uint8_t kind, const char16_t* chars, size_t length, bool hasDescription)
+{
+    VM& vm = getVM(globalObject);
+    String description = hasDescription ? String(std::span<const char16_t>(chars, length)) : String();
+    if (kind == 1)
+        return Symbol::create(vm, vm.symbolRegistry().symbolForKey(description));
+    auto* registry = agentRegistry(vm, globalObject);
+    if (kind == 2) {
+        if (auto* known = registry->wellKnown(description))
+            return known;
+    } else if (auto* existing = registry->symbolFor(id))
+        return existing;
+    auto* symbol = hasDescription ? Symbol::createWithDescription(vm, description) : Symbol::create(vm);
+    if (kind != 2)
+        registry->remember(vm, id, symbol);
+    return symbol;
 }
 
 static constexpr unsigned slotAttributes = static_cast<unsigned>(PropertyAttribute::DontDelete);
@@ -256,21 +366,28 @@ JSSharedStruct* JSSharedStruct::create(VM& vm, JSGlobalObject* globalObject, con
 {
     auto* structure = createStructure(vm, globalObject);
     auto* ptr = new (NotNull, allocateCell<JSSharedStruct>(vm)) JSSharedStruct(vm, structure, block);
-    ptr->finishCreation(vm);
+    ptr->finishCreation(vm, globalObject);
     return ptr;
 }
 
-void JSSharedStruct::finishCreation(VM& vm)
+void JSSharedStruct::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     size_t count = Bun__SharedBlock__length(m_block);
     m_names.reserveInitialCapacity(count);
     for (size_t i = 0; i < count; i++) {
+        uint64_t id = 0;
+        uint8_t kind = 0;
         const char16_t* chars = nullptr;
         size_t length = 0;
-        Bun__SharedBlock__fieldName(m_block, i, &chars, &length);
-        m_names.append(Identifier::fromString(vm, std::span<const char16_t>(chars, length)));
+        bool hasDescription = false;
+        if (Bun__SharedBlock__fieldSymbol(m_block, i, &id, &kind, &chars, &length, &hasDescription)) {
+            // A field named by a symbol: this agent's symbol for it.
+            Symbol* symbol = symbolForRecord(globalObject, id, kind, chars, length, hasDescription);
+            m_names.append(Identifier::fromUid(vm, &symbol->uid()));
+        } else
+            m_names.append(Identifier::fromString(vm, std::span<const char16_t>(chars, length)));
         m_slots.add(m_names.last().impl(), i);
     }
 }
@@ -367,7 +484,11 @@ void JSSharedStruct::getOwnPropertyNames(JSObject* object, JSGlobalObject* globa
     for (const auto& entry : indexed)
         names.add(self->m_names[entry.second]);
     for (const auto& name : self->m_names) {
-        if (!parseIndex(name))
+        if (!name.isSymbol() && !parseIndex(name))
+            names.add(name);
+    }
+    for (const auto& name : self->m_names) {
+        if (name.isSymbol())
             names.add(name);
     }
     Base::getOwnPropertyNames(object, globalObject, names, mode);
@@ -436,6 +557,15 @@ bool JSSharedArray::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
     auto* self = uncheckedDowncast<JSSharedArray>(object);
     VM& vm = getVM(globalObject);
     if (propertyName == vm.propertyNames->length) {
+        // The length is { value, writable: false, enumerable: false, configurable: false }: a descriptor that leaves it so is accepted.
+        bool unchanged = !descriptor.isAccessorDescriptor()
+            && !(descriptor.configurablePresent() && descriptor.configurable())
+            && !(descriptor.enumerablePresent() && descriptor.enumerable())
+            && !(descriptor.writablePresent() && descriptor.writable());
+        if (unchanged && descriptor.value())
+            unchanged = sameValue(globalObject, descriptor.value(), jsNumber(static_cast<double>(self->m_length)));
+        if (unchanged)
+            return true;
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (shouldThrow)
             throwVMTypeError(globalObject, scope, "Cannot redefine the length of a shared array"_s);
@@ -612,11 +742,9 @@ void Bun__SharedObject__register(JSC::JSGlobalObject* globalObject, const void* 
         Bun::registryOf(globalObject->vm(), globalObject, true)->set(key, object);
 }
 
-static std::atomic<uint64_t> nextSymbolId { 1 };
-
-// What a symbol stands for across agents (see SymbolRecord in src/shared_struct/value.rs). A registered symbol is named by its key, which
-// is its description. Any other symbol gets a number the first time it is stored, kept for as long as the realm lives.
-bool Bun__SharedSymbol__describe(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encoded, uint64_t* id, bool* registered, const char16_t** chars, size_t* length, bool* hasDescription)
+// What a symbol stands for across agents (see SymbolRecord in src/shared_struct/value.rs): a well-known symbol or a registered one is named by its
+// description, any other symbol gets a number the first time it is stored, kept for as long as the agent lives.
+bool Bun__SharedSymbol__describe(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encoded, uint64_t* id, uint8_t* kind, const char16_t** chars, size_t* length, bool* hasDescription)
 {
     JSC::JSValue value = JSC::JSValue::decode(encoded);
     if (!value.isSymbol())
@@ -624,24 +752,29 @@ bool Bun__SharedSymbol__describe(JSC::JSGlobalObject* globalObject, JSC::Encoded
     JSC::VM& vm = globalObject->vm();
     auto* symbol = JSC::asSymbol(value);
     WTF::SymbolImpl& uid = symbol->uid();
-    *registered = !!uid.symbolRegistry();
+    WTF::String description(uid);
     *id = 0;
-    if (!*registered) {
-        auto* registry = Bun::registryOf(vm, globalObject, true);
-        if (auto existing = registry->idOf(&uid))
+    *kind = 0;
+    if (uid.symbolRegistry())
+        *kind = 1;
+    else {
+        auto* registry = Bun::agentRegistry(vm, globalObject);
+        JSC::Symbol* known = registry->wellKnown(description);
+        if (known && &known->uid() == &uid)
+            *kind = 2;
+        else if (auto existing = registry->idOf(&uid))
             *id = *existing;
         else {
-            *id = nextSymbolId.fetch_add(1);
+            *id = Bun::nextSymbolId.fetch_add(1);
             registry->remember(vm, *id, symbol);
         }
     }
-    // The description, widened to UTF-16 in storage that lasts until the next call on this thread.
+    // The description, widened to UTF-16 in storage that lasts until the next call on this thread. The impl of a symbol is a string
+    // holding its description, and a null symbol has none.
     static thread_local WTF::Vector<char16_t> text;
     text.clear();
-    // The impl of a symbol is a string holding its description, and a null symbol has none.
     *hasDescription = !uid.isNullSymbol();
     if (*hasDescription) {
-        WTF::String description(uid);
         text.reserveCapacity(description.length());
         for (unsigned i = 0; i < description.length(); i++)
             text.append(description[i]);
@@ -651,28 +784,38 @@ bool Bun__SharedSymbol__describe(JSC::JSGlobalObject* globalObject, JSC::Encoded
     return true;
 }
 
-// The symbol of this realm that a record stands for: the one it already has, or a new one.
-JSC::EncodedJSValue Bun__SharedSymbol__make(JSC::JSGlobalObject* globalObject, uint64_t id, bool registered, const char16_t* chars, size_t length, bool hasDescription)
+// The symbol of this agent that a record stands for: the one it already has, or a new one.
+JSC::EncodedJSValue Bun__SharedSymbol__make(JSC::JSGlobalObject* globalObject, uint64_t id, uint8_t kind, const char16_t* chars, size_t length, bool hasDescription)
 {
-    JSC::VM& vm = globalObject->vm();
-    WTF::String description = hasDescription ? WTF::String(std::span<const char16_t>(chars, length)) : WTF::String();
-    if (registered)
-        return JSC::JSValue::encode(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(description)));
-    auto* registry = Bun::registryOf(vm, globalObject, true);
-    if (auto* existing = registry->symbolFor(id))
-        return JSC::JSValue::encode(existing);
-    auto* symbol = hasDescription ? JSC::Symbol::createWithDescription(vm, description) : JSC::Symbol::create(vm);
-    registry->remember(vm, id, symbol);
-    return JSC::JSValue::encode(symbol);
+    return JSC::JSValue::encode(Bun::symbolForRecord(globalObject, id, kind, chars, length, hasDescription));
 }
 
-// Makes `object`, a Mutex or a Condition that was just made, what the proposal says those are: an object with no prototype that cannot
-// be extended, so nothing but the functions of `Atomics.Mutex` and `Atomics.Condition` can reach the lock.
-void Bun__SharedObject__makeBare(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encoded)
+// `symbol` is one of `Symbol.iterator` and the others: this agent will give another agent the same one for its description.
+void Bun__SharedSymbol__registerWellKnown(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encoded)
 {
-    JSC::JSObject* object = JSC::JSValue::decode(encoded).getObject();
-    object->setPrototypeDirect(globalObject->vm(), JSC::jsNull());
-    object->methodTable()->preventExtensions(object, globalObject);
+    JSC::JSValue value = JSC::JSValue::decode(encoded);
+    if (!value.isSymbol())
+        return;
+    JSC::VM& vm = globalObject->vm();
+    auto* symbol = JSC::asSymbol(value);
+    WTF::String description(symbol->uid());
+    Bun::agentRegistry(vm, globalObject)->addWellKnown(vm, description, symbol);
+}
+
+// A Mutex or a Condition object for `inner`, the generated object that implements it.
+JSC::EncodedJSValue Bun__SharedSync__wrap(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue inner)
+{
+    auto* sync = Bun::JSSharedSync::create(globalObject->vm(), globalObject, JSC::asObject(JSC::JSValue::decode(inner)));
+    sync->methodTable()->preventExtensions(sync, globalObject);
+    return JSC::JSValue::encode(sync);
+}
+
+// The generated object behind a Mutex or a Condition object, or empty for any other value.
+JSC::EncodedJSValue Bun__SharedSync__inner(JSC::EncodedJSValue encoded)
+{
+    if (auto* sync = dynamicDowncast<Bun::JSSharedSync>(JSC::JSValue::decode(encoded)))
+        return JSC::JSValue::encode(sync->inner());
+    return JSC::JSValue::encode(JSC::JSValue());
 }
 
 static Bun::JSSharedView* sharedViewOf(JSC::JSValue value)

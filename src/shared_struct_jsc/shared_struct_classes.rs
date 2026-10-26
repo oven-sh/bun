@@ -15,7 +15,8 @@ use bun_jsc::{
     from_js_host_call, to_js_host_call,
 };
 use bun_shared_struct::{
-    self as shared, Abort, ShapeError, SharedBlock, StructShape, SymbolRecord, Value, WaitOutcome,
+    self as shared, Abort, FieldKey, ShapeError, SharedBlock, StructShape, SymbolKind,
+    SymbolRecord, Value, WaitOutcome,
 };
 
 use crate::generated_bindgen::shared_struct_classes::{js_Condition, js_Mutex};
@@ -36,26 +37,32 @@ unsafe extern "C" {
         key: *const c_void,
         wrapper: JSValue,
     );
-    /// What a symbol stands for across agents: `*id` (zero for a registered symbol), whether `Symbol.for` made it, and its description
-    /// as `*length` UTF-16 units at `*chars`, valid until the next call. False if `symbol` is not a symbol.
+    /// What a symbol stands for across agents: `*id` (zero but for a unique symbol), `*kind` (0 unique, 1 registered, 2 well-known) and
+    /// its description as `*length` UTF-16 units at `*chars`, valid until the next call. False if `symbol` is not a symbol.
     safe fn Bun__SharedSymbol__describe(
         global: &JSGlobalObject,
         symbol: JSValue,
         id: &mut u64,
-        registered: &mut bool,
+        kind: &mut u8,
         chars: &mut *const u16,
         length: &mut usize,
         has_description: &mut bool,
     ) -> bool;
-    /// The symbol of this realm that a record stands for: the one it already has, or a new one.
+    /// The symbol of this agent that a record stands for: the one it already has, or a new one.
     fn Bun__SharedSymbol__make(
         global: &JSGlobalObject,
         id: u64,
-        registered: bool,
+        kind: u8,
         chars: *const u16,
         length: usize,
         has_description: bool,
     ) -> JSValue;
+    /// Tells the agent of `global` that `symbol` is a well-known symbol, so that it crosses to another agent as the same one.
+    safe fn Bun__SharedSymbol__registerWellKnown(global: &JSGlobalObject, symbol: JSValue);
+    /// A Mutex or Condition object (null prototype, not extensible) that stands for the generated object `inner`.
+    safe fn Bun__SharedSync__wrap(global: &JSGlobalObject, inner: JSValue) -> JSValue;
+    /// The generated object behind a Mutex or Condition object; empty for any other value.
+    safe fn Bun__SharedSync__inner(value: JSValue) -> JSValue;
     /// Loads the structs surface in `global` if that has not happened (so Atomics works on what Rust is about to make). Empty with an
     /// exception pending.
     fn Bun__SharedSurface__ensure(global: &JSGlobalObject) -> JSValue;
@@ -67,8 +74,6 @@ unsafe extern "C" {
         key: *const c_void,
         object: JSValue,
     );
-    /// Gives a Mutex or Condition that was just made no prototype and makes it non-extensible.
-    safe fn Bun__SharedObject__makeBare(global: &JSGlobalObject, object: JSValue);
     safe fn Bun__SharedStruct__createConstructors(
         global: &JSGlobalObject,
         mutex: JSValue,
@@ -199,8 +204,16 @@ fn is_shareable(value: JSValue) -> bool {
         || value.is_big_int()
         || value.is_symbol()
         || !Bun__SharedBlock__fromJS(value).is_null()
-        || value.as_class_ref::<MutexObject>().is_some()
-        || value.as_class_ref::<ConditionObject>().is_some()
+        || sync_inner(value).as_class_ref::<MutexObject>().is_some()
+        || sync_inner(value)
+            .as_class_ref::<ConditionObject>()
+            .is_some()
+}
+
+/// The generated Mutex or Condition behind `value` if it is a Mutex or Condition object, else `value` itself.
+fn sync_inner(value: JSValue) -> JSValue {
+    let inner = Bun__SharedSync__inner(value);
+    if inner.is_empty() { value } else { inner }
 }
 
 /// What a slot holds for `value`; `None` if it cannot be shared.
@@ -235,7 +248,7 @@ fn to_value(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Value>> 
 /// What the symbol `value` stands for across agents.
 fn symbol_record(global: &JSGlobalObject, value: JSValue) -> Arc<SymbolRecord> {
     let mut id = 0;
-    let mut registered = false;
+    let mut kind = 0;
     let mut chars = core::ptr::null();
     let mut length = 0;
     let mut has_description = false;
@@ -243,7 +256,7 @@ fn symbol_record(global: &JSGlobalObject, value: JSValue) -> Arc<SymbolRecord> {
         global,
         value,
         &mut id,
-        &mut registered,
+        &mut kind,
         &mut chars,
         &mut length,
         &mut has_description,
@@ -257,21 +270,35 @@ fn symbol_record(global: &JSGlobalObject, value: JSValue) -> Arc<SymbolRecord> {
             Arc::from(unsafe { core::slice::from_raw_parts(chars, length) })
         }
     });
+    let kind = match kind {
+        1 => SymbolKind::Registered,
+        2 => SymbolKind::WellKnown,
+        _ => SymbolKind::Unique,
+    };
     Arc::new(SymbolRecord {
         id,
-        registered,
+        kind,
         description,
     })
+}
+
+/// What C++ is told a kind is.
+fn kind_code(kind: SymbolKind) -> u8 {
+    match kind {
+        SymbolKind::Unique => 0,
+        SymbolKind::Registered => 1,
+        SymbolKind::WellKnown => 2,
+    }
 }
 
 /// The object behind a SharedStruct, SharedArray, Mutex or Condition; `None` for any other value.
 pub(crate) fn shared_of(value: JSValue) -> Option<Value> {
     if let Some(block) = block_of(value) {
         Some(Value::Struct(block))
-    } else if let Some(mutex) = value.as_class_ref::<MutexObject>() {
+    } else if let Some(mutex) = sync_inner(value).as_class_ref::<MutexObject>() {
         Some(Value::Mutex(Arc::clone(&mutex.inner)))
     } else {
-        value
+        sync_inner(value)
             .as_class_ref::<ConditionObject>()
             .map(|condition| Value::Condition(Arc::clone(&condition.inner)))
     }
@@ -314,7 +341,7 @@ pub(crate) fn to_js(global: &JSGlobalObject, value: Value) -> JsResult<JSValue> 
                 Bun__SharedSymbol__make(
                     global,
                     record.id,
-                    record.registered,
+                    kind_code(record.kind),
                     chars,
                     length,
                     record.description.is_some(),
@@ -324,20 +351,23 @@ pub(crate) fn to_js(global: &JSGlobalObject, value: Value) -> JsResult<JSValue> 
         Value::Mutex(inner) => {
             let key = Arc::as_ptr(&inner).cast::<c_void>();
             standing_for(global, key, || {
-                js_Mutex::to_js(MutexObject::new(inner), global)
+                Bun__SharedSync__wrap(global, js_Mutex::to_js(MutexObject::new(inner), global))
             })?
         }
         Value::Condition(inner) => {
             let key = Arc::as_ptr(&inner).cast::<c_void>();
             standing_for(global, key, || {
-                js_Condition::to_js(ConditionObject::new(inner), global)
+                Bun__SharedSync__wrap(
+                    global,
+                    js_Condition::to_js(ConditionObject::new(inner), global),
+                )
             })?
         }
     })
 }
 
 /// The object that stands for the shared object at `key` in this realm: the one that is alive, else the one `make` builds, which is
-/// then bare (the proposal's Mutex and Condition have no prototype and cannot be extended) and remembered.
+/// then remembered.
 fn standing_for(
     global: &JSGlobalObject,
     key: *const c_void,
@@ -351,7 +381,6 @@ fn standing_for(
     // SAFETY: `global` is live, and the call returns empty only with an exception pending.
     from_js_host_call(global, || unsafe { Bun__SharedSurface__ensure(global) })?;
     let made = make();
-    Bun__SharedObject__makeBare(global, made);
     Bun__SharedObject__register(global, key, made);
     Ok(made)
 }
@@ -406,22 +435,48 @@ pub unsafe extern "C" fn Bun__SharedBlock__isStruct(block: *const c_void) -> boo
     unsafe { block_ref(block) }.shape().is_some()
 }
 
+/// Field `index` of a shared struct: false and its name in `*chars` and `*length` if it is a string; true and what the symbol
+/// stands for (see `Bun__SharedSymbol__describe`) if it is a symbol.
+///
 /// # Safety
 /// `block` is a live shared struct, `index` is below its length, and the out-pointers are valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__SharedBlock__fieldName(
+pub unsafe extern "C" fn Bun__SharedBlock__fieldSymbol(
     block: *const c_void,
     index: usize,
+    id: *mut u64,
+    kind: *mut u8,
     chars: *mut *const u16,
     length: *mut usize,
-) {
+    has_description: *mut bool,
+) -> bool {
     // SAFETY: forwarded.
     let block = unsafe { block_ref(block) };
-    let name = block.shape().expect("a shared struct").name(index);
-    // SAFETY: forwarded. The name lives in the block's shape, so it lasts as long as the view.
+    // SAFETY: forwarded. A name and a description live in the block's shape, so they last as long as the view.
     unsafe {
-        *chars = name.as_ptr();
-        *length = name.len();
+        match block.shape().expect("a shared struct").key(index) {
+            FieldKey::Name(name) => {
+                *chars = name.as_ptr();
+                *length = name.len();
+                false
+            }
+            FieldKey::Symbol(record) => {
+                *id = record.id;
+                *kind = kind_code(record.kind);
+                *has_description = record.description.is_some();
+                match &record.description {
+                    Some(text) => {
+                        *chars = text.as_ptr();
+                        *length = text.len();
+                    }
+                    None => {
+                        *chars = core::ptr::null();
+                        *length = 0;
+                    }
+                }
+                true
+            }
+        }
     }
 }
 
@@ -498,12 +553,17 @@ fn new_struct_block(global: &JSGlobalObject, names: JSValue) -> JsResult<Arc<Sha
     let mut list = Vec::new();
     for i in 0..names.get_length(global)? {
         let name = names.get_index(global, i as u32)?;
-        if !name.is_string_literal() {
-            return Err(
-                global.throw_type_error(format_args!("SharedStruct field names must be strings"))
-            );
+        if name.is_symbol() {
+            list.push(FieldKey::Symbol(symbol_record(global, name)));
+        } else if name.is_string_literal() {
+            list.push(FieldKey::Name(
+                utf16_of(&name.to_bun_string(global)?).into(),
+            ));
+        } else {
+            return Err(global.throw_type_error(format_args!(
+                "SharedStruct field names must be strings or symbols"
+            )));
         }
-        list.push(utf16_of(&name.to_bun_string(global)?));
     }
     match StructShape::new(list) {
         Ok(shape) => {
@@ -596,12 +656,32 @@ pub(crate) fn is_shared_object(value: JsLocal<'_>) -> bool {
     shared_of(value.to_js()).is_some()
 }
 
-pub(crate) fn is_mutex(value: JsLocal<'_>) -> bool {
-    value.to_js().as_class_ref::<MutexObject>().is_some()
+/// The generated Mutex behind `value` if it is a Mutex, else `undefined`: the operations of `Atomics.Mutex` are the methods of it.
+pub(crate) fn mutex_inner(_cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JSValue {
+    let inner = sync_inner(value.to_js());
+    if inner.as_class_ref::<MutexObject>().is_some() {
+        inner
+    } else {
+        JSValue::UNDEFINED
+    }
 }
 
-pub(crate) fn is_condition(value: JsLocal<'_>) -> bool {
-    value.to_js().as_class_ref::<ConditionObject>().is_some()
+pub(crate) fn condition_inner(_cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JSValue {
+    let inner = sync_inner(value.to_js());
+    if inner.as_class_ref::<ConditionObject>().is_some() {
+        inner
+    } else {
+        JSValue::UNDEFINED
+    }
+}
+
+/// Tells this agent that `symbol` is a well-known one (`Symbol.iterator` and the others).
+pub(crate) fn register_well_known_symbol(
+    cx: &mut JsScope<'_>,
+    symbol: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    Bun__SharedSymbol__registerWellKnown(cx.global(), symbol.to_js());
+    Ok(JSValue::UNDEFINED)
 }
 
 /// The block and slot that `target[key]` names. The caller (src/js/internal/structs.ts) has checked that `key` is a string naming an own
@@ -614,6 +694,16 @@ fn slot_of(
     let Some(block) = block_of(target) else {
         return Err(global.throw_type_error(format_args!("Expected a SharedStruct or SharedArray")));
     };
+    if key.is_symbol() {
+        // A symbol names a field of a shared struct only; an array has none.
+        let index = block
+            .shape()
+            .and_then(|shape| shape.index_of_symbol(&symbol_record(global, key)));
+        return match index {
+            Some(index) => Ok((block, Some(index))),
+            None => Err(no_such_field(global)),
+        };
+    }
     let name = utf16_of(&key.to_bun_string(global)?);
     let index = match block.shape() {
         Some(shape) => shape.index_of(&name),
@@ -626,11 +716,14 @@ fn slot_of(
         {
             Ok((block, None))
         }
-        None => Err(global
-            .throw_value(global.create_range_error_instance(format_args!(
-                "Invalid atomic access: no such field"
-            )))),
+        None => Err(no_such_field(global)),
     }
+}
+
+fn no_such_field(global: &JSGlobalObject) -> JsError {
+    global.throw_value(
+        global.create_range_error_instance(format_args!("Invalid atomic access: no such field")),
+    )
 }
 
 /// The slot a write goes to: the length of a shared array is not one, and cannot be written.

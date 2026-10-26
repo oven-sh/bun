@@ -19,8 +19,9 @@ bool Bun__SharedBlock__store(const void* block, size_t index, JSC::JSGlobalObjec
 void Bun__SharedBlock__release(const void* block);
 size_t Bun__SharedBlock__length(const void* block);
 bool Bun__SharedBlock__isStruct(const void* block);
-// The UTF-16 name of field `index` of a shared struct. It lives as long as the block.
-void Bun__SharedBlock__fieldName(const void* block, size_t index, const char16_t** chars, size_t* length);
+// Field `index` of a shared struct. False and its UTF-16 name (which lives as long as the block) if it is named by a string; true and what the
+// symbol stands for (kind 0 unique, 1 registered, 2 well-known, as Bun__SharedSymbol__describe says) if it is named by a symbol.
+bool Bun__SharedBlock__fieldSymbol(const void* block, size_t index, uint64_t* id, uint8_t* kind, const char16_t** chars, size_t* length, bool* hasDescription);
 }
 
 namespace Bun {
@@ -115,7 +116,7 @@ private:
         : Base(vm, structure, block)
     {
     }
-    void finishCreation(JSC::VM&);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     // The slot of a field, if `name` is one.
     std::optional<size_t> slotOf(JSC::PropertyName) const;

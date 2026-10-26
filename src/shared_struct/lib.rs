@@ -12,5 +12,5 @@ mod value;
 pub use mutex::{
     Abort, Condition, LockError, Mutex, Never, WaitOutcome, notify_count, timeout_from_millis,
 };
-pub use shape::{ShapeError, StructShape, is_array_index};
-pub use value::{SharedBlock, SymbolRecord, Value};
+pub use shape::{FieldKey, ShapeError, StructShape, is_array_index};
+pub use value::{SharedBlock, SymbolKind, SymbolRecord, Value};

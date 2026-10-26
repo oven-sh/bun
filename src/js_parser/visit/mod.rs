@@ -2056,7 +2056,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_idx = output.len() - 1;
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
-                            if local.can_merge_with(&prev_local) {
+                            if local.can_merge_before_import_scan(&prev_local) {
                                 // `Vec::append_slice` requires `T: Clone`
                                 // but `G::Decl` lacks the derive (its fields are all
                                 // `Copy`). Per-element bitwise copy instead.

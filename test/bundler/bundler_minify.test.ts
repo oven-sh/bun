@@ -2734,7 +2734,41 @@ test("an import-equals alias of a const string over the inline bound stays", () 
   const print = (minify?: object) => printConstString({ loader: "ts", inline: true, minify }, source, 65);
   expect([print(), print({ syntax: true })]).toEqual([
     `const S = "<L>";\nlet [q] = [1];\nconst A = S;\nconst B = S;\nconsole.log(true, [B].length, q);`,
-    `const S = "<L>";\nlet [q] = [1];\nconst A = S, B = S;\nconsole.log(!0, [B].length, q);`,
+    `const S = "<L>";\nlet [q] = [1];\nconst A = S;\nconst B = S;\nconsole.log(!0, [B].length, q);`,
+  ]);
+});
+
+// The import scan drops an unused `import X = NS.Y` as a whole statement. The
+// minifier merged the next declaration into that statement, so it was dropped too.
+test("a declaration beside an unused import-equals is not dropped with it", () => {
+  const options = { loader: "ts", inline: true, minify: { syntax: true } };
+  const namespace = `var NS;\n((NS) => NS.Y = 1)(NS ||= {});`;
+  expect([
+    printConstString(
+      options,
+      text => `import X = NS.Y;\nconst S = "${text}";\nconsole.log([S].length);\nnamespace NS { export const Y = 1 }`,
+      65,
+    ),
+    printConstString(
+      options,
+      text => `const S = "${text}";\nimport X = NS.Y;\nconsole.log([S].length);\nnamespace NS { export const Y = 1 }`,
+      65,
+    ),
+    printConstString(
+      options,
+      () => `namespace NS { export const Y = 1 }\nimport X = NS.Y;\nconst helper = () => 42;\nconsole.log(helper());`,
+      65,
+    ),
+    printConstString(
+      options,
+      () => `namespace NS { export const Y = 1 }\nimport X = NS.Y;\nimport USED = NS.Y;\nconsole.log(USED);`,
+      65,
+    ),
+  ]).toEqual([
+    `const S = "<L>";\nconsole.log([S].length);\n${namespace}`,
+    `const S = "<L>";\nconsole.log([S].length);\n${namespace}`,
+    `${namespace}\nconst helper = () => 42;\nconsole.log(helper());`,
+    `${namespace}\nconst USED = NS.Y;\nconsole.log(USED);`,
   ]);
 });
 

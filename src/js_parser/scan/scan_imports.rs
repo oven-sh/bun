@@ -138,16 +138,29 @@ impl<'a> ImportScanner<'a> {
                     //
                     let mut did_remove_star_loc = false;
                     let keep_unused_imports = !p.options.features.trim_unused_imports;
+                    // Without trimming (JavaScript), exports deleted on request
+                    // (`replace_exports`) still take the imports that only they used: a binding
+                    // goes when its only uses were in them. An import that nothing used stays, for
+                    // its side effects.
+                    let only_deleted_exports_uses =
+                        keep_unused_imports && p.options.features.replace_exports.count() > 0;
+                    macro_rules! removable {
+                        ($ref_:expr) => {{
+                            let index = $ref_.inner_index();
+                            p.symbols[index as usize].use_count_estimate == 0
+                                && (!only_deleted_exports_uses
+                                    || p.used_by_deleted_exports.contains(&index))
+                        }};
+                    }
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
                     // system and used for type-only imports).
-                    if !keep_unused_imports {
+                    if !keep_unused_imports || only_deleted_exports_uses {
                         let mut found_imports = false;
                         let mut is_unused_in_typescript = true;
 
                         if let Some(default_name) = st.default_name {
                             found_imports = true;
-                            let symbol = &p.symbols[default_name.ref_.inner_index() as usize];
 
                             // TypeScript has a separate definition of unused
                             if is_typescript_enabled
@@ -157,7 +170,7 @@ impl<'a> ImportScanner<'a> {
                             }
 
                             // Remove the symbol if it's never used outside a dead code region
-                            if symbol.use_count_estimate == 0 {
+                            if removable!(default_name.ref_) {
                                 st.default_name = None;
                             }
                         }
@@ -165,7 +178,6 @@ impl<'a> ImportScanner<'a> {
                         // Remove the star import if it's unused
                         if !st.star_name_loc.is_empty() {
                             found_imports = true;
-                            let symbol = &p.symbols[st.namespace_ref.inner_index() as usize];
 
                             // TypeScript has a separate definition of unused
                             if is_typescript_enabled
@@ -183,7 +195,7 @@ impl<'a> ImportScanner<'a> {
                             // defer. Keeping the binding preserves the intended
                             // semantics (the module is linked but never evaluated,
                             // since nothing touches `ns` at runtime).
-                            if symbol.use_count_estimate == 0 && !st.phase_defer {
+                            if removable!(st.namespace_ref) && !st.phase_defer {
                                 // Make sure we don't remove this if it was used for a property
                                 // access while bundling
                                 let mut has_any = false;
@@ -211,7 +223,6 @@ impl<'a> ImportScanner<'a> {
                             let len = items.len();
                             for idx in 0..len {
                                 let ref_ = items[idx].name.ref_;
-                                let symbol = &p.symbols[ref_.inner_index() as usize];
 
                                 // TypeScript has a separate definition of unused
                                 if is_typescript_enabled
@@ -221,7 +232,7 @@ impl<'a> ImportScanner<'a> {
                                 }
 
                                 // Remove the symbol if it's never used outside a dead code region
-                                if symbol.use_count_estimate != 0 {
+                                if !removable!(ref_) {
                                     // ClauseItem isn't `Copy`; bitwise-move it
                                     // (its fields are all POD; arena-owned, never dropped).
                                     if items_end != idx {
@@ -264,10 +275,21 @@ impl<'a> ImportScanner<'a> {
                         // e.g. `import 'fancy-stylesheet-thing/style.css';`
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
-                        if (is_typescript_enabled
+                        // Exports deleted on request (`replace_exports`) take the imports that only
+                        // they used with them.
+                        let unused_after_deleted_exports = p.options.features.replace_exports.count()
+                            > 0
                             && found_imports
-                            && is_unused_in_typescript
-                            && !p.options.preserve_unused_imports_ts)
+                            && st.star_name_loc.is_empty()
+                            // SAFETY: arena-owned slice; see above.
+                            && st.items.slice().is_empty()
+                            && st.default_name.is_none();
+                        if unused_after_deleted_exports
+                            || (!keep_unused_imports
+                                && is_typescript_enabled
+                                && found_imports
+                                && is_unused_in_typescript
+                                && !p.options.preserve_unused_imports_ts)
                             || (!is_typescript_enabled
                                 && p.options.features.trim_unused_imports
                                 && found_imports
@@ -326,18 +348,11 @@ impl<'a> ImportScanner<'a> {
                             // member, while generated symbols (e.g. JSX runtime imports)
                             // link the other way.
                             let symbol = &p.symbols[name_ref.inner_index() as usize];
-                            let mut link = symbol.link.get();
-                            if !link.is_valid() {
+                            if !symbol.has_link() {
                                 continue;
                             }
                             // Follow the chain of replacements to the live symbol.
-                            loop {
-                                let next = p.symbols[link.inner_index() as usize].link.get();
-                                if !next.is_valid() {
-                                    break;
-                                }
-                                link = next;
-                            }
+                            let link = js_ast::symbol::follow_symbols(&p.symbols, name_ref);
                             // SAFETY: arena-owned slice valid for 'p.
                             let name = symbol.original_name.slice();
                             let member = p
@@ -763,8 +778,9 @@ impl<'a> ImportScanner<'a> {
                         p.import_records.items_mut()[st.import_record_index as usize]
                             .flags
                             .insert(import_record::Flags::CONTAINS_IMPORT_STAR);
-                    } else {
+                    } else if !HOT_MODULE_RELOADING_TRANSFORMATIONS {
                         // "export * from 'path'"
+                        // (HMR lowering may merge the statement: `convert_stmt` lists the record it keeps)
                         p.export_star_import_records.push(st.import_record_index);
                     }
                 }

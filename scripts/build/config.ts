@@ -60,6 +60,14 @@ const versionDefaults = {
 };
 
 /**
+ * Returns the `process.versions.webkit` string for `webkitVersion`. A tag
+ * becomes the bare sha and a preview becomes `preview-pr-<N>-<sha8>`.
+ */
+export function webkitVersionName(webkitVersion: string): string {
+  return webkitVersion.startsWith("autobuild-") ? webkitVersion.slice("autobuild-".length) : webkitVersion;
+}
+
+/**
  * The full resolved build configuration. Every field is concrete — no
  * undefined-because-it-depends-on-something-else. This is the single source
  * of truth passed to every build function.
@@ -132,12 +140,26 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /** Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt. */
+  hardened: boolean;
   /**
    * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
    * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
    * acquire atomic load per syscall, zero when compiled out.
    */
   socketFaultInjection: boolean;
+  /**
+   * Default true. Off builds a Bun where `--disallow-code-generation-from-strings=strict` is
+   * always on: the level is a compile-time constant in Rust and C++, so no flag, environment
+   * variable or API of the built binary lowers it. (Not named after the runtime flag:
+   * build.ts would then take that flag for its own.)
+   */
+  codeGenerationFromStrings: boolean;
+  /**
+   * Default true. Off builds a Bun with no `WebAssembly` global: the engine's `useWasm` option is
+   * false whatever `BUN_JSC_useWasm` says.
+   */
+  webAssembly: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -352,7 +374,10 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  hardened?: boolean;
   socketFaultInjection?: boolean;
+  codeGenerationFromStrings?: boolean;
+  webAssembly?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -542,9 +567,9 @@ export function detectLinuxAbi(): Abi {
 export const ANDROID_API_LEVEL_DEFAULT = pins.androidNdk.apiLevel;
 
 /**
- * FreeBSD release we target. 14.x is the current production series; 14.3
- * is the oldest 14.x still on download.freebsd.org. Building against 14.3
- * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
+ * FreeBSD release we target. 14.x is the current production series; 14.4
+ * is the oldest 14.x still on download.freebsd.org. Building against 14.4
+ * produces binaries that run on 14.4+ (FreeBSD guarantees forward ABI
  * compat within a major).
  */
 export const FREEBSD_VERSION_DEFAULT = pins.freebsd.version;
@@ -829,6 +854,8 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   const revision = getGitRevision(cwd, debug && !ci ? buildDir : undefined);
   // Default from versions.ts. Override via --nodejs-version=<v> to test a bump.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
+  // Override via --webkit-version=<hash> to test a branch before bumping the pin.
+  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   return {
     bun: js.bun,
@@ -841,6 +868,7 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
     version,
     revision,
     nodejsVersion,
+    webkitVersion,
     abi,
     linux,
     darwin,
@@ -887,6 +915,7 @@ export type CodegenFields = Pick<
   | "version"
   | "revision"
   | "nodejsVersion"
+  | "webkitVersion"
   | keyof JsToolchain
 >;
 
@@ -941,6 +970,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     version,
     revision,
     nodejsVersion,
+    webkitVersion,
     bun,
     npm,
     jsRuntime,
@@ -976,11 +1006,15 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const ltoDefault = release && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
+  // Fuzzilli: coverage does not link with ThinLTO ("undefined symbol:
+  // __sancov_gen_.1"). The copies of an inline function that ThinLTO does not
+  // keep become available_externally, their module-private guards included,
+  // and inlining one leaves a reference to guards that nothing defines.
   // Android, FreeBSD: not enabled (never built that way; untested).
   // Windows arm64: off — oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
   // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers when JSC
   // goes through LTO), so forcing it off also keeps the fetch from 404ing.
-  if ((asan && lto) || abi === "android" || freebsd || (windows && arm64)) {
+  if ((asan && lto) || fuzzilli || abi === "android" || freebsd || (windows && arm64)) {
     lto = false;
   }
 
@@ -1031,6 +1065,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
+  const hardened = partial.hardened ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1044,6 +1079,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
+  assert(
+    !hardened || (linux && x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
+    "hardened=true requires a Linux x64 glibc release build without asan, assertions or fuzzilli",
+    { hint: "Those are the -hardened WebKit prebuilts there are (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
+  );
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
 
   // ─── Cross-compilation (Android) ───
@@ -1196,11 +1236,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   }
 
   // ─── Versioning ───
-  // Defaults from versions.ts. Override via --webkit-version=<hash> etc.
-  // to test a branch before bumping the pinned default.
+  // Defaults from versions.ts. Override to test a bump before changing the
+  // pinned default.
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
-  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
@@ -1286,7 +1325,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     tinycc,
     valgrind,
     fuzzilli,
+    hardened,
     socketFaultInjection,
+    codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
+    webAssembly: partial.webAssembly ?? true,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1656,9 +1698,12 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.baseline) features.push("baseline");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.hardened) features.push("hardened");
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }
+  if (!cfg.codeGenerationFromStrings) features.push("code-generation-from-strings:off");
+  if (!cfg.webAssembly) features.push("webassembly:off");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

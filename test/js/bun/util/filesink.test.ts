@@ -1692,6 +1692,50 @@ describe("Bun.write(dest, stream) into a descriptor the sink was given, with not
   });
 });
 
+// The stream never ends, so only `graph.dispose()` closes the sink that opened the file.
+it("Bun.write(path, stream) that the script of a Bun.ModuleGraph started is closed with the graph", async () => {
+  using dir = tempDir("filesink-module-graph", {
+    "writes-a-stream.mjs": `
+      export function write(path) {
+        Bun.write(path, new Response(new ReadableStream({ pull: () => new Promise(() => {}) })));
+      }
+    `,
+    "disposes-fixture.mjs": `
+      import { fileSinkInternals } from "bun:internal-for-testing";
+      import { join } from "node:path";
+      const baseline = fileSinkInternals.liveCount();
+      const sinks = () => fileSinkInternals.liveCount() - baseline;
+      const counts = [];
+      for (let i = 0; i < 3; i++) {
+        const graph = new Bun.ModuleGraph();
+        const app = await graph.import(join(import.meta.dir, "writes-a-stream.mjs"));
+        graph.run(() => app.write(join(import.meta.dir, "written-" + i + ".txt")));
+        const open = sinks();
+        graph.dispose();
+        for (let turn = 0; turn < 50 && sinks() > 0; turn++) {
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        counts.push({ open, left: sinks() });
+      }
+      console.log(JSON.stringify(counts));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "disposes-fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const closed = { open: 1, left: 0 };
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({
+    stdout: JSON.stringify([closed, closed, closed]),
+    exitCode: 0,
+  });
+});
+
 // FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref
 // on its stdin sink. That is the only ref when script never read `proc.stdin`, and on_close used the
 // sink after it (ASAN: heap-use-after-free in settle_stream_done). Outside tests only the stop phase

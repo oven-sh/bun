@@ -867,23 +867,58 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = current;
     }
 
-    /// `"lit"[num]` written to `e`, if the 8-bit `str_` has a code unit there.
+    /// `"lit"[number]` and `[a, b][number]` written over `e`, the index expression. `number` is
+    /// whole and not negative.
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn fold_string_index(
+    fn fold_constant_index(
         p: &mut Self,
         e: &mut Expr,
-        str_: &E::String,
-        num: usize,
-        loc: bun_ast::Loc,
+        target: Expr,
+        number: E::Number,
+        is_call_target: bool,
     ) -> bool {
-        let Some(char_) = u32::try_from(num)
-            .ok()
-            .and_then(|num| str_.char_at(num, p.arena))
-        else {
-            return false;
-        };
-        *e = p.new_expr(char_, loc);
-        true
+        let loc = e.loc;
+        // "foo"[2] -> "o"
+        if let Some(str_) = target.data.as_e_string() {
+            if !str_.is_utf16
+                && let Ok(num) = u32::try_from(number.to_usize())
+                && let Some(char_) = str_.char_at(num, p.arena)
+            {
+                *e = p.new_expr(char_, loc);
+                return true;
+            }
+        } else if let Some(array) = target.data.as_e_array() {
+            let int: usize = number.value() as usize;
+            // [x][0] -> x
+            // ['a', 'b', 'c'][1] -> 'b'
+            let inlined = if array.items.len_u32() == 1 && int == 0 {
+                Some(*array.items.at(0))
+            } else if int < array.items.len_u32() as usize
+                && p.expr_can_be_removed_if_unused(&target)
+            {
+                Some(*array.items.at(int))
+            } else {
+                None
+            };
+            if let Some(inlined) = inlined {
+                // ['a', , 'c'][1] -> undefined
+                if matches!(inlined.data, Data::EMissing(..)) {
+                    *e = p.new_expr(E::Undefined {}, inlined.loc);
+                    return true;
+                }
+                if inlined.can_be_inlined_from_property_access() {
+                    // "[obj.m][0]()" => "(0, obj.m)()"
+                    *e = if is_call_target && inlined.has_value_for_this_in_call() {
+                        p.new_expr(E::Number::new(0.0), loc)
+                            .join_with_comma(inlined)
+                    } else {
+                        inlined
+                    };
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     fn e_index(p: &mut Self, e: &mut Expr, in_: ExprIn) {
@@ -1085,50 +1120,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
                     && number.value() % 1.0 == 0.0
+                    && matches!(target.data, Data::EString(..) | Data::EArray(..))
+                    && Self::fold_constant_index(p, e, target, number, is_call_target)
                 {
-                    // "foo"[2] -> "o"
-                    if let Some(str_) = target.data.as_e_string() {
-                        if !str_.is_utf16 {
-                            let num: usize = index
-                                .data
-                                .e_number()
-                                .expect("infallible: variant checked")
-                                .to_usize();
-                            if Self::fold_string_index(p, e, &str_, num, expr.loc) {
-                                return;
-                            }
-                        }
-                    } else if let Some(array) = target.data.as_e_array() {
-                        let int: usize = number.value() as usize;
-                        // [x][0] -> x
-                        // ['a', 'b', 'c'][1] -> 'b'
-                        let inlined = if array.items.len_u32() == 1 && int == 0 {
-                            Some(*array.items.at(0))
-                        } else if int < array.items.len_u32() as usize
-                            && p.expr_can_be_removed_if_unused(&target)
-                        {
-                            Some(*array.items.at(int))
-                        } else {
-                            None
-                        };
-                        if let Some(inlined) = inlined {
-                            // ['a', , 'c'][1] -> undefined
-                            if matches!(inlined.data, Data::EMissing(..)) {
-                                *e = p.new_expr(E::Undefined {}, inlined.loc);
-                                return;
-                            }
-                            if inlined.can_be_inlined_from_property_access() {
-                                // "[obj.m][0]()" => "(0, obj.m)()"
-                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
-                                    p.new_expr(E::Number::new(0.0), expr.loc)
-                                        .join_with_comma(inlined)
-                                } else {
-                                    inlined
-                                };
-                                return;
-                            }
-                        }
-                    }
+                    return;
                 }
             }
         }

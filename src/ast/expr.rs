@@ -1653,14 +1653,6 @@ impl Data {
         }
     }
     #[inline]
-    pub fn e_number(&self) -> Option<E::Number> {
-        if let Data::ENumber(v) = *self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-    #[inline]
     pub fn e_special(&self) -> Option<E::Special> {
         if let Data::ESpecial(v) = *self {
             Some(v)

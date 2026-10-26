@@ -1193,10 +1193,13 @@ fn on_unhandled_rejection(
             ..Default::default()
         },
     );
-    // A formatter throw costs only the text (the fallback payload), unless it is the termination.
-    if let Err(err) = format_result
-        && global_object.take_exception(err).is_termination_exception()
-    {
+    // What formatting threw costs only the text: the thrown value stays the error. A termination ends the report.
+    let thrown = match format_result {
+        Err(err) => Some(global_object.take_exception(err)),
+        // format2() swallows JS throws from nested formatting and returns Ok, with the exception pending.
+        Ok(()) => global_object.try_take_exception(),
+    };
+    if thrown.is_some_and(JSValue::is_termination_exception) {
         return;
     }
     jsc::mark_binding();

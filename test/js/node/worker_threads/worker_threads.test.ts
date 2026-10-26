@@ -734,75 +734,103 @@ describe("error event", () => {
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
 
-  // node (lib/internal/error_serdes.js) copies the error field by field, so a field that cannot be
-  // read costs that field, not the error: the listener always gets an Error carrying the message.
-  // Bun used to emit null when the error could not be printed, and an Error whose message was the
-  // whole rendered diagnostic (source lines included) when it could not be structured-cloned.
-  describe.concurrent("delivers an Error when the thrown error cannot be printed or cloned", () => {
-    // A row leaves out what is incidental to its shape.
-    const shapes: [shape: string, workerSource: string, expected: object][] = [
-      // Bun.inspect() throws on this one; the error itself clones fine.
-      [
-        "throwing inspect.custom",
-        `const e = new TypeError("boom"); e.code = "E_INSPECT";
-         e[Symbol.for("nodejs.util.inspect.custom")] = () => { throw new Error("x"); };
-         throw e;`,
-        { name: "TypeError", message: "boom", code: "E_INSPECT", stack: expect.any(String) },
-      ],
-      // postMessage would refuse to clone these; the error report keeps the fields it can read.
-      [
-        "throwing stack getter",
-        `const e = new RangeError("boom"); e.code = "E_STACK";
-         Object.defineProperty(e, "stack", { get() { throw new Error("x"); } });
-         throw e;`,
-        { name: "RangeError", message: "boom", code: "E_STACK", stack: undefined },
-      ],
-      // With the name unreadable, the error's own constructor decides the type.
-      [
-        "throwing name getter",
-        `const e = new TypeError("boom");
-         Object.defineProperty(e, "name", { get() { throw new Error("x"); } });
-         throw e;`,
-        { name: "TypeError", message: "boom", stack: expect.any(String) },
-      ],
-      [
-        "Symbol name",
-        `const e = new TypeError("boom"); e.name = Symbol("name"); throw e;`,
-        { name: "TypeError", message: "boom" },
-      ],
-      // An unreadable message is left out, as node does.
-      [
-        "Symbol message",
-        `const e = new Error("boom"); e.message = Symbol("message"); throw e;`,
-        { name: "Error", message: "" },
-      ],
-      // bun leaves the default stack text on the error when prepareStackTrace throws, and reports it.
-      [
-        "throwing Error.prepareStackTrace",
-        `Error.prepareStackTrace = () => { throw new Error("x"); }; throw new Error("boom");`,
-        { name: "Error", message: "boom", stack: expect.any(String) },
-      ],
-      [
-        "AggregateError with a throwing stack getter",
-        `const e = new AggregateError([new Error("inner")], "boom");
-         Object.defineProperty(e, "stack", { get() { throw new Error("x"); } });
-         throw e;`,
-        { name: "Error", message: "boom", stack: undefined },
-      ],
-    ];
-
-    test.each(shapes)("%s", async (_shape, workerSource, expected) => {
-      const worker = new Worker(workerSource, { eval: true });
+  // The error printer runs user code. What it throws must not replace the thrown value, nor stay pending.
+  describe.concurrent("the error printer throws on the thrown value", () => {
+    const inspectCustom = `Symbol.for("nodejs.util.inspect.custom")`;
+    // Each makes Bun.inspect(e) throw. The last two leave format2() with Ok and the exception pending.
+    const printerThrows = {
+      "inspect.custom throws": `e[${inspectCustom}] = () => { throw new Error("x"); };`,
+      "a nested getter throws": `const list = [1]; Object.defineProperty(list, 0, { get() { throw new Error("x"); } }); e.list = list;`,
+      "inspect.custom returns a String whose toString throws": `const s = new String("s"); s.toString = () => { throw new Error("x"); }; e[${inspectCustom}] = () => s;`,
+    };
+    const thrownValueOf = async (worker: Worker) => {
       const exited = new Promise<number>(resolve => worker.once("exit", resolve));
       // 'error' precedes 'exit'; a worker that exits without one fails here instead of timing out.
-      const [err] = await Promise.race([
+      const [value] = await Promise.race([
         once(worker, "error"),
         exited.then(code => Promise.reject(new Error(`worker exited with code ${code} without emitting 'error'`))),
       ]);
       await exited;
+      return value;
+    };
 
+    // The clone keeps `name` and `code`. The text fallback has neither.
+    test.each(Object.entries(printerThrows))("the parent gets the Error: %s", async (_shape, hostile) => {
+      const err = await thrownValueOf(
+        new Worker(`const e = new Error("boom"); e.name = "TypeError"; e.code = "E_CODE"; ${hostile} throw e;`, {
+          eval: true,
+        }),
+      );
       expect(err).toBeInstanceOf(Error);
-      expect({ name: err.name, message: err.message, code: err.code, stack: err.stack }).toMatchObject(expected);
+      expect({ name: err.name, message: err.message, code: err.code, stack: err.stack }).toEqual({
+        name: "TypeError",
+        message: "boom",
+        code: "E_CODE",
+        stack: expect.any(String),
+      });
+    });
+
+    test("the parent gets the clone of a value that is not an Error", async () => {
+      const value = await thrownValueOf(
+        new Worker(`throw { a: 1, [${inspectCustom}]() { throw new Error("x"); } };`, { eval: true }),
+      );
+      expect(value).toEqual({ a: 1 });
+    });
+
+    // The second row is thrown under a listener: there the termination is still pending when the printer returns.
+    test.each([
+      [
+        "in inspect.custom",
+        `const e = new TypeError("boom"); e[${inspectCustom}] = () => { process.exit(3); }; throw e;`,
+      ],
+      [
+        "in a nested getter",
+        `const target = new EventTarget();
+         target.addEventListener("x", () => {
+           const e = new TypeError("boom"); const list = [1];
+           Object.defineProperty(list, 0, { get() { process.exit(3); for (;;) {} } }); e.list = list;
+           throw e;
+         });
+         target.dispatchEvent(new Event("x"));`,
+      ],
+    ])("no 'error' event when the worker exits %s", async (_where, source) => {
+      const worker = new Worker(source, { eval: true });
+      const errors: unknown[] = [];
+      worker.on("error", error => errors.push(error));
+      const [code] = await once(worker, "exit");
+      expect({ errors, code }).toEqual({ errors: [], code: 3 });
+    });
+
+    // The worker's own listener runs inside the report. In a subprocess, because a regression aborts the process.
+    test.each(
+      (["node:worker_threads", "Web Worker"] as const).flatMap(kind =>
+        (["inspect.custom throws", "a nested getter throws"] as const).map(shape => [kind, shape] as const),
+      ),
+    )("the worker's own 'error' listener gets the thrown value: %s, %s", async (kind, shape) => {
+      const workerSource = `const e = new TypeError("boom"); ${printerThrows[shape]}
+        addEventListener("error", event => postMessage([event.error === e, event.error instanceof TypeError, event.error.message].join()));
+        throw e;`;
+      const parentSource =
+        kind === "Web Worker"
+          ? `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerSource)}])));
+             worker.onmessage = event => console.log("listener", event.data);
+             worker.onerror = event => console.log("parent", event.error);`
+          : `const worker = new (require("node:worker_threads").Worker)(${JSON.stringify(workerSource)}, { eval: true });
+             worker.on("message", data => console.log("listener", data));
+             worker.on("error", error => console.log("parent", error.name, error.message));`;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", parentSource],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        lines: ["listener true,true,boom", kind === "Web Worker" ? "parent null" : "parent TypeError boom"],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
     });
   });
 });

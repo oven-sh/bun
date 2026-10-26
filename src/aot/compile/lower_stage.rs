@@ -207,7 +207,10 @@ impl Build<'_> {
             files_to_lower.retain(|file| {
                 id != ProjectId::Application || worlds.lowered.binary_search(file).is_err()
             });
-            files_to_lower.retain(|file| left_out.files.binary_search(file).is_err());
+            let graph = &bound.projects.get(id).graph;
+            files_to_lower.retain(|&file| {
+                left_out.files.binary_search(&file).is_err() || graph.is_placeholder(file)
+            });
             DecidedProject {
                 roles,
                 files_to_lower,
@@ -649,6 +652,7 @@ impl Build<'_> {
             reports_type_mismatches: self.options.aot.reports_type_mismatches,
             removable: self.options.removable,
             minifies_identifiers: self.options.minifies_identifiers,
+            obfuscates: self.options.aot.obfuscates,
         }
     }
 

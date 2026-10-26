@@ -81,6 +81,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let own_name = own_key.map(|key| GivenName::from(PropertyName::Constant(key)));
         let name = own_name.or(name);
         let head = self.emit_class_head(class, &plan, name, heritage);
+        // JSC records the definition of `prototype` where the class starts.
+        self.builder.record_position(node.text_start);
         let values = self.define_members(head, &plan);
         self.set_position(node.start);
         let class_object = self.builder.finish_class(head.value, head.layout);

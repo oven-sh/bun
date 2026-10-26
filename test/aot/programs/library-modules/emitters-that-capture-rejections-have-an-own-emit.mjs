@@ -60,23 +60,30 @@ show("default writable", new Writable({ write() {} }));
 show("default duplex", new Duplex({ read() {}, write() {} }));
 show("default socket", new net.Socket());
 show("default resource", new EventEmitterAsyncResource({ name: "r" }));
-const { promise: errorIsHeard, resolve: heardError } = Promise.withResolvers();
+const { promise: rejectionIsHandedOn, resolve: handOn } = Promise.withResolvers();
 const server = http.createServer((req, res) => {
   console.log("req", Object.hasOwn(req, "emit"), req.emit.name, "res", Object.hasOwn(res, "emit"), res.emit.name);
   console.log(Reflect.ownKeys(req).indexOf("emit") >= 0, Reflect.ownKeys(res).indexOf("emit") >= 0);
   res.on("finish", async () => {
     throw new Error("finish");
   });
-  res.on("error", error => {
-    console.log("res error", error.message);
-    heardError();
-  });
+  res.on("close", () => console.log("res close"));
+  res.on("error", error => console.log("res error", error.message));
+  const destroy = res.destroy;
+  res.destroy = function (error) {
+    console.log("res destroy", error?.message, this.destroyed, this.closed);
+    const result = destroy.call(this, error);
+    console.log(result === this, this.errored);
+    handOn();
+    return result;
+  };
   res.end("ok");
 });
 show("default server", server);
 await new Promise(resolve => server.listen(0, resolve));
 const body = await (await fetch(`http://127.0.0.1:${server.address().port}/`)).text();
-await errorIsHeard;
+await rejectionIsHandedOn;
+await turn();
 console.log(body);
 server.close();
 show("new response", new http.ServerResponse(new http.IncomingMessage(new net.Socket())));

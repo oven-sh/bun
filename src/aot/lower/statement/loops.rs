@@ -37,13 +37,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let body_block = self.create_block();
         let after = self.create_block();
         let header = self.begin_loop(statement);
-        self.lower_condition(test, body_block, after);
+        let recorded = self.lower_loop_test(test, body_block, after);
         self.continue_in(body_block);
 
         self.lower_loop_body(statement, body, after, header);
         self.jump(header);
         self.builder.seal(header);
         self.continue_in(after);
+        self.record_again(recorded);
+    }
+
+    // JSC writes the test of a `while` or `for` loop once more behind the body, so what follows the loop follows the records of the test.
+    fn lower_loop_test(&mut self, test: ExprId, body: BlockId, after: BlockId) -> Option<u32> {
+        let records = self.builder.number_of_records();
+        self.lower_condition(test, body, after);
+        let recorded = self.builder.last_recorded_position();
+        recorded.filter(|_| self.builder.number_of_records() != records)
+    }
+
+    fn record_again(&mut self, recorded: Option<u32>) {
+        if let Some(position) = recorded {
+            self.builder.record_position(position);
+        }
     }
 
     pub(super) fn lower_do_while(&mut self, statement: StmtId, body: StmtId, test: ExprId) {
@@ -104,10 +119,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let update_block = self.create_block();
         let after = self.create_block();
         let header = self.begin_loop(statement);
-        match test.some() {
-            Some(test) => self.lower_condition(test, body_block, after),
-            None => self.jump(body_block),
-        }
+        let recorded = match test.some() {
+            Some(test) => self.lower_loop_test(test, body_block, after),
+            None => {
+                self.jump(body_block);
+                None
+            }
+        };
         self.continue_in(body_block);
 
         self.lower_loop_body(statement, body, after, update_block);
@@ -123,5 +141,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(header);
         self.builder.seal(header);
         self.continue_in(after);
+        self.record_again(recorded);
     }
 }

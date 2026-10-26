@@ -1660,7 +1660,7 @@ OutgoingMessage.prototype.appendHeader = function appendHeader(
 
   const exchange = this.$exchange;
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-  if (exchange !== undefined && exchange.shape !== spilledHeadersShape) {
+  if (exchange !== undefined && exchange.response === this && exchange.shape !== spilledHeadersShape) {
     const index = indexInShape(exchange.shape, field);
     if (index < 0) return this.setHeader(name, value);
     let existing = shapedValue(exchange, index);
@@ -1722,7 +1722,8 @@ OutgoingMessage.prototype.getHeaderNames = function getHeaderNames(this: $Node.O
   if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   const exchange = this.$exchange;
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-  if (exchange !== undefined && exchange.shape !== spilledHeadersShape) return keysOf(exchange.shape).slice();
+  if (exchange !== undefined && exchange.response === this && exchange.shape !== spilledHeadersShape)
+    return keysOf(exchange.shape).slice();
   return this[kOutHeaders] !== null ? ObjectKeys(this[kOutHeaders]) : [];
 };
 
@@ -1731,7 +1732,8 @@ OutgoingMessage.prototype.getRawHeaderNames = function getRawHeaderNames(this: $
   if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   const exchange = this.$exchange;
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-  if (exchange !== undefined && exchange.shape !== spilledHeadersShape) return namesOf(exchange.shape).slice();
+  if (exchange !== undefined && exchange.response === this && exchange.shape !== spilledHeadersShape)
+    return namesOf(exchange.shape).slice();
   const headersMap = this[kOutHeaders];
   if (headersMap === null) return [];
 
@@ -1753,7 +1755,7 @@ OutgoingMessage.prototype.getHeaders = function getHeaders(this: $Node.OutgoingM
   const ret = { __proto__: null } as $Node.Dictionary<$Node.HttpHeaderValue>;
   const exchange = this.$exchange;
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-  if (exchange !== undefined && exchange.shape !== spilledHeadersShape) {
+  if (exchange !== undefined && exchange.response === this && exchange.shape !== spilledHeadersShape) {
     const keys = keysOf(exchange.shape);
     for (let index = 0; index < keys.length; index++) ret[keys[index]] = shapedValue(exchange, index);
     return ret;
@@ -1809,7 +1811,7 @@ OutgoingMessage.prototype.removeHeader = function removeHeader(this: $Node.Outgo
 
   if (IS_COMPILED_AHEAD_OF_TIME) spillHeadersReachedThrough(this);
   const exchange = this.$exchange;
-  if (exchange !== undefined && exchange.shape !== spilledHeadersShape) {
+  if (exchange !== undefined && exchange.response === this && exchange.shape !== spilledHeadersShape) {
     removeShapedHeader(exchange, name, key);
     return;
   }

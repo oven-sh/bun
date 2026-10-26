@@ -2,7 +2,12 @@ const framesOf = stack =>
   String(stack)
     .split("\n")
     .slice(1)
-    .map(line => line.trim().replace(/\(.*[\\/]/, "("))
+    .map(line =>
+      line
+        .trim()
+        .replace(/\(.*[\\/]/, "(")
+        .replace(/native:\d+:\d+/, "native"),
+    )
     .join(" < ");
 
 function sitesOf(error) {
@@ -18,8 +23,8 @@ function sitesOf(error) {
           site.isToplevel(),
           site.isConstructor(),
           site.isAsync(),
-          site.getLineNumber(),
-          site.getColumnNumber(),
+          site.isNative() ? typeof site.getLineNumber() : site.getLineNumber(),
+          site.isNative() ? typeof site.getColumnNumber() : site.getColumnNumber(),
           typeof site.getFunction(),
           typeof site.getThis(),
           String(site).replace(/\(.*[\\/]/, "("),

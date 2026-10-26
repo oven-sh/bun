@@ -11,7 +11,7 @@ const namesIn = error =>
         .trim()
         .replace(/^at /, "")
         .replace(/ ?\(.*\)$/, "")
-        .replace(/^\/.*$/, "<file>"),
+        .replace(/^.*[\\/].*$/, "<file>"),
     )
     .join(" < ");
 

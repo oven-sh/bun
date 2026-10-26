@@ -1,4 +1,4 @@
-use bun_sema::hir::ExprId;
+use bun_sema::hir::{ExprId, ExprKind};
 
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, Scope};
@@ -7,6 +7,25 @@ use crate::ir::ValueId;
 use crate::lower::FunctionLowering;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    // JSC reads a global name, and each member on the way to a built-in, where it is written. What is known ahead of time is not read, and leaves the same record.
+    pub(in crate::lower) fn record_read_of_builtin_path(&mut self, expression: ExprId) {
+        let hir = self.file.hir;
+        let inner = self.file.skip_type_syntax(expression);
+        let object = match hir[inner].kind {
+            ExprKind::Ident(_) => None,
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
+            _ => return,
+        };
+        if self.file.builtins.of_expr(inner).is_none() {
+            return;
+        }
+        let position = match object {
+            Some(object) => self.file.member_position(object),
+            None => hir[inner].pos,
+        };
+        self.builder.record_position(position);
+    }
+
     pub(in crate::lower) fn emit_locked_builtin(&mut self, builtin: BuiltinId) -> ValueId {
         match table::entry(builtin).scope {
             Scope::Realm => self.builder.builtin(builtin),

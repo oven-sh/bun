@@ -3043,3 +3043,123 @@ function made125(zero: number, endless: number, less: number, none: number, one:
   row.push(text());
   console.log("(Infinity - Infinity) / 2".padEnd(28), row.join(" "));
 }
+function made126(zero: number, endless: number, less: number, none: number, one: number, two: number) {
+  return endless % less;
+}
+{
+  const row: string[] = [];
+  number[0] = Infinity % -1;
+  row.push(text());
+  number[0] = endless % less;
+  row.push(text());
+  number[0] = made126(0, Infinity, -1, NaN, 1, 2);
+  row.push(text());
+  number[0] = made126(values[0], values[1], values[2], values[3], values[4], values[5]);
+  row.push(text());
+  boxes[0] = Infinity % -1;
+  number[0] = boxes[0] as number;
+  row.push(text());
+  boxes[0] = endless % less;
+  number[0] = boxes[0] as number;
+  row.push(text());
+  boxes[0] = made126(values[0], values[1], values[2], values[3], values[4], values[5]);
+  number[0] = boxes[0] as number;
+  row.push(text());
+  console.log("Infinity % (-1)".padEnd(28), row.join(" "));
+}
+function made127(zero: number, endless: number, less: number, none: number, one: number, two: number) {
+  return -endless % less;
+}
+{
+  const row: string[] = [];
+  number[0] = -Infinity % -1;
+  row.push(text());
+  number[0] = -endless % less;
+  row.push(text());
+  number[0] = made127(0, Infinity, -1, NaN, 1, 2);
+  row.push(text());
+  number[0] = made127(values[0], values[1], values[2], values[3], values[4], values[5]);
+  row.push(text());
+  boxes[0] = -Infinity % -1;
+  number[0] = boxes[0] as number;
+  row.push(text());
+  boxes[0] = -endless % less;
+  number[0] = boxes[0] as number;
+  row.push(text());
+  boxes[0] = made127(values[0], values[1], values[2], values[3], values[4], values[5]);
+  number[0] = boxes[0] as number;
+  row.push(text());
+  console.log("-Infinity % (-1)".padEnd(28), row.join(" "));
+}
+function made128(zero: number, endless: number, less: number, none: number, one: number, two: number) {
+  return endless % two;
+}
+{
+  const row: string[] = [];
+  number[0] = Infinity % 2;
+  row.push(text());
+  number[0] = endless % two;
+  row.push(text());
+  number[0] = made128(0, Infinity, -1, NaN, 1, 2);
+  row.push(text());
+  number[0] = made128(values[0], values[1], values[2], values[3], values[4], values[5]);
+  row.push(text());
+  boxes[0] = Infinity % 2;
+  number[0] = boxes[0] as number;
+  row.push(text());
+  boxes[0] = endless % two;
+  number[0] = boxes[0] as number;
+  row.push(text());
+  boxes[0] = made128(values[0], values[1], values[2], values[3], values[4], values[5]);
+  number[0] = boxes[0] as number;
+  row.push(text());
+  console.log("Infinity % 2".padEnd(28), row.join(" "));
+}
+function made129(zero: number, endless: number, less: number, none: number, one: number, two: number) {
+  return -endless % two;
+}
+{
+  const row: string[] = [];
+  number[0] = -Infinity % 2;
+  row.push(text());
+  number[0] = -endless % two;
+  row.push(text());
+  number[0] = made129(0, Infinity, -1, NaN, 1, 2);
+  row.push(text());
+  number[0] = made129(values[0], values[1], values[2], values[3], values[4], values[5]);
+  row.push(text());
+  boxes[0] = -Infinity % 2;
+  number[0] = boxes[0] as number;
+  row.push(text());
+  boxes[0] = -endless % two;
+  number[0] = boxes[0] as number;
+  row.push(text());
+  boxes[0] = made129(values[0], values[1], values[2], values[3], values[4], values[5]);
+  number[0] = boxes[0] as number;
+  row.push(text());
+  console.log("-Infinity % 2".padEnd(28), row.join(" "));
+}
+function made130(zero: number, endless: number, less: number, none: number, one: number, two: number) {
+  return endless % endless;
+}
+{
+  const row: string[] = [];
+  number[0] = Infinity % Infinity;
+  row.push(text());
+  number[0] = endless % endless;
+  row.push(text());
+  number[0] = made130(0, Infinity, -1, NaN, 1, 2);
+  row.push(text());
+  number[0] = made130(values[0], values[1], values[2], values[3], values[4], values[5]);
+  row.push(text());
+  boxes[0] = Infinity % Infinity;
+  number[0] = boxes[0] as number;
+  row.push(text());
+  boxes[0] = endless % endless;
+  number[0] = boxes[0] as number;
+  row.push(text());
+  boxes[0] = made130(values[0], values[1], values[2], values[3], values[4], values[5]);
+  number[0] = boxes[0] as number;
+  row.push(text());
+  console.log("Infinity % Infinity".padEnd(28), row.join(" "));
+}

@@ -11,6 +11,7 @@
 //   AOT_GENERATED_FLAGS="--aot-threads=1" bun test ..        more flags for every build
 //   AOT_GENERATED_COLLECTS=all bun test ..                   every program collects inside its calls (../fuzz/collections-inside-calls.ts), not every third
 //   AOT_GENERATED_HANDS=all bun test ..                      every program hands its functions to the host (../fuzz/functions-the-host-could-call.ts), not every third
+//   AOT_GENERATED_INSIDE=all bun test ..                     the text of every program stands inside something (../fuzz/the-whole-file-inside-something.ts), not of every third
 //   AOT_GENERATED_IN_ONE_EXECUTABLE=1 bun test ..            an executable for each program, also where programs share one
 import { afterAll, describe, expect, test } from "bun:test";
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "fs";
@@ -18,6 +19,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { dirname, join, sep } from "path";
 import { withCollectionsInsideCalls } from "../fuzz/collections-inside-calls";
 import { withFunctionsTheHostCouldCall } from "../fuzz/functions-the-host-could-call";
+import { places, withTheWholeFileInside } from "../fuzz/the-whole-file-inside-something";
 import { withTurnsNobodyKnows } from "../fuzz/turns-nobody-knows";
 import {
   built,
@@ -208,7 +210,8 @@ export function generated(title: string, given: Generated[]) {
 
   function write(program: Generated, folder: string) {
     const { file, text, files, entryPoints = [] } = program.make();
-    // Every second program keeps its short loops as loops, every third collects inside its calls, and every third stores its functions where the host could find them.
+    // Every second program keeps its short loops as loops, every third collects inside its calls, every third stores its functions where the host could find them, and the text of
+    // every third stands inside a function, a try, a loop or the like.
     // A program that is here for what it once showed stays as it is.
     const staysAsItIs = !!program.wasOnceWrong || !!program.linesDepartToday || !!program.written;
     const keepsItsLoops = !staysAsItIs && Bun.hash.crc32(`${title} ${program.name}`) % 2 === 1;
@@ -219,6 +222,12 @@ export function generated(title: string, given: Generated[]) {
     const handsItsFunctionsOn =
       !staysAsItIs &&
       (process.env.AOT_GENERATED_HANDS === "all" || Bun.hash.crc32(`${program.name}, ${title}`) % 3 === 0);
+    const standsInside =
+      !staysAsItIs &&
+      // What the analysis follows at the top of a file is what such a program is about.
+      !program.flags?.some(flag => flag.startsWith("--aot-limit=MaxValueFlowEdgesLogged")) &&
+      (process.env.AOT_GENERATED_INSIDE === "all" || Bun.hash.crc32(`${program.name}; ${title}`) % 3 === 0);
+    const place = places[Bun.hash.crc32(`${title}; ${program.name}`) % places.length];
     for (const [name, content] of Object.entries({ ...files, [file]: text })) {
       mkdirSync(dirname(join(folder, name)), { recursive: true });
       let written = content;
@@ -227,6 +236,7 @@ export function generated(title: string, given: Generated[]) {
         if (keepsItsLoops) written = withTurnsNobodyKnows(written);
         if (collectsInsideCalls) written = withCollectionsInsideCalls(written, loader);
         if (handsItsFunctionsOn) written = withFunctionsTheHostCouldCall(written, loader);
+        if (standsInside && name === file) written = withTheWholeFileInside(written, loader, place);
       }
       writeFileSync(join(folder, name), written);
     }

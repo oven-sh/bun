@@ -235,7 +235,7 @@ RangeError: bad id -1
 - **Inlined functions keep their frames.**
 - **Some built-in functions have no frame.** Compiled code reaches built-ins such as `Array.prototype.push` and `eval` without a call frame, so a trace can lack the `at push (native)` line that `bun run` prints.
 - **A frame has the name its function had at build time.** Redefining the `name` property of a function that's only called doesn't rename its frames.
-- **A column can point at another part of the same expression.** The line and column of a `throw`, of a call, of a property read and of most destructuring patterns are the same as under `bun run`. In some expressions the two point at different words. Among them are a method call on `null` (`o.a.run()`), an update through a computed key (`o.a[key] += 1`), a property that a destructuring assignment stores to (`({ a: o.b.c } = value)`), a pattern that is the parameter of a generator or of `catch ([a])`, `value instanceof (() => {})` and `class A extends (function* () {}) {}`.
+- **A column can point at another part of the same expression.** The line and column of a `throw`, of a call, of a property read and of a destructuring pattern are the same as under `bun run`. In a few expressions the two point at different words. Among them are the caller of a getter that an update through a computed key runs (`o[key]++`, `o[key] += 1`), and `class A extends (function* () {}) {}`.
 - **A frame of one of Bun's own modules**, such as `node:events`, has a line of that module's source file in Bun's repository. Under `bun run` it has a line of the module as it's built into Bun.
 - **An executable can have a frame that `bun run` lacks.** The transpiler of `bun run` turns `return new Error("…")` into a call in tail position, and a function leaves the stack before such a call. An executable keeps the `new`, so the function that made the error is the first frame.
 - `Error.captureStackTrace`, `Error.prepareStackTrace`, `Error.stackTraceLimit`, `console.trace`, async frames, `uncaughtException` and `unhandledRejection` work as usual.
@@ -271,6 +271,7 @@ RangeError: bad id -1
 
 - **There is no file `compiled.js`.** The name is there so that tools that read stack traces find a path, a line and a column where they expect them. On Windows it's `B:\~BUN\root\compiled.js`.
 - **The `name` of every function and class is `""`.**
+- **Error messages have a short name in place of the name of a variable, function or class**, such as `Cannot access 'a' before initialization`. It's the short name that `--minify` gives it.
 - **The map has the names as they are in your sources**, with `--minify` too.
 - **Property names, strings and the paths of your modules stay in the executable.** The program needs them when it runs.
 

@@ -75,6 +75,10 @@ const rows: Row[] = [
     "an instance without the own property, handed in",
     3.5,
   ],
+  ["the-fields-of-a-merged-object.cjs", [], "products of a literal", "products of an assigned object", 1.1],
+  ["the-fields-of-a-merged-object.cjs", [], "sums of a literal", "sums of an assigned object", 1.1],
+  ["the-fields-of-a-merged-object.cjs", [], "products of a literal", "products of a spread", 1.1],
+  ["the-fields-of-a-merged-object.cjs", [], "sums of a literal", "sums of a spread", 1.1],
 ];
 const [few, many] = [100_000, 400_000];
 

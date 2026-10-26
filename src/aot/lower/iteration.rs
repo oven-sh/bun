@@ -115,7 +115,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         self.push_break_target(statement, BreakTargetKind::Loop, after);
         self.push_continue_target(statement, header);
-        self.lower_iteration_body(statement, left, key, body);
+        self.lower_iteration_body(statement, left, key, body, None);
         self.jump(header);
         self.pop_jump_target();
         self.pop_jump_target();
@@ -176,7 +176,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.file.record_assigned_type_flow(target, stepped);
         }
         let value = self.claim_contents_read(stepped, TypeSiteKind::Element, step.value);
-        self.lower_iteration_body(statement, left, value, body);
+        self.lower_iteration_body(statement, left, value, body, Some(position));
         self.jump(header);
         self.pop_jump_target();
 
@@ -192,6 +192,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.seal(header);
         self.pop_jump_target();
         self.continue_in(after);
+        // JSC writes the step of the iterator behind the body.
+        self.builder.record_position(position);
     }
 
     fn lower_loop_subject(&mut self, statement: StmtId, subject: ExprId) -> ValueId {
@@ -210,10 +212,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         left: StmtId,
         value: ValueId,
         body: StmtId,
+        recorded: Option<u32>,
     ) {
         let hir = self.file.hir;
         let scope = self.file.bound.own_scope(statement);
         self.enter_scope(scope);
+        if let Some(recorded) = recorded {
+            self.builder.record_position(recorded);
+        }
         match hir[left].kind {
             StmtKind::Var(declarations) => match declarations.iter().next() {
                 Some(declaration) => match hir[declaration].kind {
@@ -223,8 +229,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         });
                     }
                     VarKind::Var | VarKind::Let | VarKind::Const => {
-                        let recorded = self.file.last_mapped_head_position(statement, left);
-                        self.builder.record_position(recorded);
                         let mapped = hir[statement].start;
                         self.bind_pattern(hir[declaration].pat, value, None, mapped);
                         self.lower_statement(body);
@@ -233,8 +237,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 None => self.lower_statement(body),
             },
             StmtKind::Expr(target) => {
-                let recorded = self.file.last_mapped_head_position(statement, left);
-                self.builder.record_position(recorded);
                 self.assign_pattern(target, value, None);
                 self.lower_statement(body);
             }

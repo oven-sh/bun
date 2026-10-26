@@ -28,6 +28,17 @@ impl FileLowering<'_, '_, '_, '_> {
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     /// `mapped` is the last token before the declaration that the source map of Bun's transpiler knows.
     pub(crate) fn lower_variable_declaration(&mut self, declaration: VarDeclId, mapped: u32) {
+        // Bun's transpiler prints no declaration for a constant that it prints as its value.
+        let is_printed = !self.file.is_replaced_by_its_value(declaration);
+        let were_suspended = self.builder.suspend_records(true);
+        if is_printed {
+            self.builder.suspend_records(were_suspended);
+        }
+        self.lower_printed_variable_declaration(declaration, mapped);
+        self.builder.suspend_records(were_suspended);
+    }
+
+    fn lower_printed_variable_declaration(&mut self, declaration: VarDeclId, mapped: u32) {
         let (hir, bound) = (self.file.hir, self.file.bound);
         let decl = hir[declaration];
         if decl.flags.contains(Flags::AMBIENT) || self.is_unread_export(decl.pat) {
@@ -78,6 +89,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     name: Some(PropertyName::Constant(key).into()),
                     ..Evaluation::at_tail(tail)
                 };
+                self.record_store_ahead_of_value(binding, hir[decl.pat].pos);
                 let records = self.builder.number_of_records();
                 let value = self.lower_expression_in(initializer, evaluation);
                 let recorded = self.builder.last_recorded_position();

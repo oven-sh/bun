@@ -2,6 +2,8 @@ mod declarations;
 mod loops;
 mod substitution;
 
+pub(in crate::lower) use substitution::Printed;
+
 use bun_sema::bind::{Binding, ScopeId, SymbolId};
 use bun_sema::fold::Decision;
 use bun_sema::hir::{
@@ -131,7 +133,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let value = self.lower_expression(expression);
                 let recorded = self.file.last_mapped_position(expression);
                 self.builder.record_position(recorded);
-                self.set_position(stmt.start);
+                self.set_position(recorded);
                 self.emit_throw(value);
             }
             StmtKind::Break(_) => self.lower_break(statement),

@@ -63,6 +63,7 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
     ]);
     let options = FoldOptions {
         defines: after_constant_globals(&defines, platform, arena, atoms),
+        minifies_syntax: true,
         max_string_bytes: max_string_bytes(limits),
         ..FoldOptions::default()
     };

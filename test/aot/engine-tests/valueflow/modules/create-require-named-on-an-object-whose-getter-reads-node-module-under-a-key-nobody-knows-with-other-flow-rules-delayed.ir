@@ -1,0 +1,40 @@
+# import Module from "node:module"; view = {}; Object.defineProperty(view, globalThis.key, { get: () => Module[globalThis.key] }); view.createRequire("/app/main.js")(globalThis.name)
+# The read of node:module under a key nobody knows does not answer createRequire. The read that names createRequire on the object with the getter does.
+# The call of what createRequire returns loads code by name, and no other call does.
+# OPTIONS: testing=DelayOtherFlowRules
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsCodeByName ModuleRequire f0:v15
+# CHECK-NOT: unseen LoadsCodeByName
+# CHECK: unseen-code yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+layout L0 fields=[{key="get" declared={type=anything}}]
+layout L1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = PropGet v0 key="name" [isFreeName]
+    v3 = NewObject layout=L1
+    v4 = FinishObject v3
+    v5 = NewClosure function=f1
+    v6 = NewObject layout=L0
+    PropDefine v6, v5 key="get"
+    v8 = FinishObject v6
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectDefineProperty
+    v11 = Call v10, v9, v4, v1, v8
+    v12 = PropGet v4 key="createRequire"
+    v13 = String string="/app/main.js"
+    v14 = Call v12, v4, v13
+    v15 = Call v14, -, v2
+    Return v15
+}
+function f1 name="get" module=m0 kind=Arrow results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = Builtin builtin=NodeModule
+    v3 = ElemGet v2, v1
+    Return v3
+}

@@ -115,6 +115,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if matches!(hir[site.callee].kind, ExprKind::Super) {
             return self.lower_super_call(call);
         }
+        self.record_read_of_builtin_path(inner);
         if let Some(value) = self.try_lower_module_call(call, exit) {
             return value;
         }
@@ -154,6 +155,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.lower_evaluated_text_call(expression, text, None, tail);
         }
         let site = call_site(self.file, expression);
+        self.record_read_of_builtin_path(site.callee);
         if let Some(value) = self.try_lower_new(expression, site) {
             return value;
         }
@@ -251,8 +253,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         self.set_position(self.file.call_position(site));
         if options.is_reflect_construct_syntax {
-            self.builder
-                .set_written_position(self.file.first_position(call));
+            // A call site lists the start of a construction only in front of the place where the construction is reported. The key may be a constant that is written earlier.
+            let start = self.file.first_position(call);
+            self.set_position(self.position().max(start));
+            self.builder.set_written_position(start);
         }
         match tail {
             Tail::No => {
@@ -360,7 +364,18 @@ impl FileLowering<'_, '_, '_, '_> {
     fn is_base_of_access(&self, expression: ExprId) -> bool {
         let hir = self.hir;
         let mut child = expression;
-        while let Parent::Expr(parent) = self.bound.parent_of_expr(child) {
+        loop {
+            let parent = match self.bound.parent_of_expr(child) {
+                Parent::Expr(parent) => parent,
+                Parent::VarInit(_) => match self.find_name_replaced_by(child) {
+                    Some(name) => {
+                        child = name;
+                        continue;
+                    }
+                    None => return false,
+                },
+                _ => return false,
+            };
             match hir[parent].kind {
                 ExprKind::As { .. }
                 | ExprKind::Satisfies { .. }
@@ -374,7 +389,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 _ => return false,
             }
         }
-        false
     }
 
     // A native error constructor and `Function` do the same with and without `new`, and Bun's transpiler prints the call. So a stack trace shows the position of a call, and in tail position the caller leaves the stack.

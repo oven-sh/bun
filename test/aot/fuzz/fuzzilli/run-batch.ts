@@ -4,6 +4,7 @@
 //   bun run-batch.ts --bun <the Bun that builds and runs> --programs <folder> --work <folder> --finds <folder> [--count 2000] [--group 500] [--batches 1] [--flags=--aot-threads=1]
 //
 // It takes `count` files out of `programs` for each batch and waits for more. `--batches 0` never ends. `--keep` copies the files instead.
+// `--count 1,3,12` takes one program for the first batch, three for the second, twelve for the third, one for the fourth. Which code the compiler takes for hot depends on what else the executable holds.
 // `--hides-function-text` is for a Bun built with --fuzzilli=on: neither run shows the text of a function, which the two spell differently.
 import {
   appendFileSync,
@@ -38,12 +39,10 @@ const { values: options } = parseArgs({
 });
 const { bun, programs: source, work, finds } = options as Record<string, string>;
 if (!source || !work || !finds) throw new Error("Expected --programs, --work and --finds");
-const [count, groupSize, batches, milliseconds] = [
-  options.count,
-  options.group,
-  options.batches,
-  options.milliseconds,
-].map(Number);
+const [groupSize, batches, milliseconds] = [options.group, options.batches, options.milliseconds].map(Number);
+/** How many programs a batch takes. The batches go through the list in turn. */
+const countsOfPrograms = options.count.split(",").map(Number);
+let count = countsOfPrograms[0];
 const hidesFunctionText = options["hides-function-text"];
 const alsoKept = options["also-keep"].split(",").filter(Boolean);
 const buildFlags = [
@@ -523,14 +522,17 @@ async function stoppedAtAnUnusedReadBeforeTheDeclaration(
   compiled: Ended,
   reference: Ended,
 ) {
-  const mentions = ({ stdout, stderr }: Ended) => (stdout + stderr).split(/ReferenceError|before initialization/).length;
+  const mentions = ({ stdout, stderr }: Ended) =>
+    (stdout + stderr).split(/ReferenceError|before initialization/).length;
   if (mentions(compiled) <= mentions(reference)) return false;
   layOut(folder, [text], extension, 1);
   const rewritten = await spawn("rewrite", [bun, "build", "--no-bundle", `./programs/0${extension}`], folder, {}, 30);
   if (rewritten.exitCode !== 0) return false;
   const otherFiles = /^\/\/ @filename: [^]*/m.exec(text)?.[0] ?? "";
   const asJavaScript = extension.replace("t", "j");
-  layOut(folder, [rewritten.stdout + otherFiles], asJavaScript, 1);
+  // That text still has the test of a variable in front of an empty block, which reads nothing under `bun run`.
+  const withoutTestsOfNothing = rewritten.stdout.replace(/^\s*if \(!*[\w$]+\) \{\}\n/gm, "");
+  layOut(folder, [withoutTestsOfNothing + otherFiles], asJavaScript, 1);
   await build(folder, 1, asJavaScript, 1);
   if (!existsSync(join(folder, "batch"))) return false;
   const ran = await run("rewritten", [join(folder, "batch")], folder, asJavaScript, 1, [0], milliseconds * 20);
@@ -538,8 +540,8 @@ async function stoppedAtAnUnusedReadBeforeTheDeclaration(
 }
 
 /**
- * Whether the two runs print the same but for the names of functions that the program declares in blocks.
- * `bun run` makes a variable with a function expression of such a declaration, and the function has no name of its own then.
+ * Whether the two runs print the same but for the names of functions that the program declares in blocks, and of classes and functions in constants that are used once.
+ * `bun run` makes a variable with a function expression of such a declaration, and puts such a constant in place of its use. Neither has a name of its own then.
  */
 async function agreesButForFunctionsDeclaredInBlocks(
   folder: string,
@@ -553,6 +555,9 @@ async function agreesButForFunctionsDeclaredInBlocks(
   const names = [...rewritten.stdout.matchAll(/\blet ([\w$]+) = (?:async )?function\b/g)]
     .map(([, name]) => name.replaceAll("$", "\\$"))
     .filter(name => new RegExp(`\\bfunction\\*? ?${name}\\b`).test(text));
+  for (const [, name] of text.matchAll(/\bconst ([\w$]+) = (?:class|(?:async )?function)\b/g))
+    if (text.split(new RegExp(`\\b${name.replaceAll("$", "\\$")}\\b`)).length === 3)
+      names.push(name.replaceAll("$", "\\$"));
   if (names.length === 0 || compiled.end !== reference.end) return false;
   const withoutThem = (output: string) =>
     removeDetailsOfErrors(output).replace(new RegExp(`\\b(?:${names.join("|")})\\b ?`, "g"), "");
@@ -599,6 +604,7 @@ async function takePrograms(): Promise<string[]> {
 for (let batch = 0; batches === 0 || batch < batches; batch++) {
   for (const stage in spent) delete spent[stage];
   const started = performance.now();
+  count = countsOfPrograms[batch % countsOfPrograms.length];
   const paths = await takePrograms();
   const extension = extname(paths[0]);
   let texts = paths.map(path => readFileSync(path, "latin1"));
@@ -666,46 +672,47 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
     const inOrdinary = ordinary.get(index);
     const says = (message: string) => second.stderr.includes(message) || second.stdout.includes(message);
     const showsFunctionText = !hidesFunctionText && /function|=>|class /.test(referenceAgain.stdout + second.stdout);
-    let kind = referenceAgain.end.startsWith("the process ended") && !reservedTooManyAddresses(referenceAgain)
-      ? "bun-run-signal"
-      : isLimit(referenceAgain) || reservedTooManyAddresses(referenceAgain)
-        ? "neither finished"
-        : !isLimit(reference) && !agree(reference, referenceAgain)
-          ? "bun run is unsteady"
-          : agree(second, referenceAgain)
-            ? isLimit(first) || isLimit(reference)
-              ? "same with more time"
-              : "unsteady"
-            : second.end.startsWith("the process ended")
-              ? "signal"
-              : documentedMessages.some(says) ||
-                  (!isLimit(second) && referenceAgain.stderr.includes("Maximum call stack size exceeded")) ||
-                  documentedNames.some(name => texts[index].includes(name)) ||
-                  setsThePrototypeOfABuiltIn.test(texts[index]) ||
-                  deletesTheLengthOfAString.test(texts[index]) ||
-                  deletesACharacterOfAString.test(texts[index]) ||
-                  (second.end === referenceAgain.end &&
-                    withNullAsUndefined(second.stdout) === withNullAsUndefined(referenceAgain.stdout) &&
-                    readsThisOfTheModule(texts[index])) ||
-                  (second.end === referenceAgain.end &&
-                    withoutNamesOfFunctions(second.stdout) === withoutNamesOfFunctions(referenceAgain.stdout) &&
-                    hasALiteralAsComputedKey.test(texts[index])) ||
-                  writesToBuiltins.has(index)
-                ? "documented difference"
-                : referenceAgain.stdout === "" &&
-                    refusalsOfBunRun.some(message => referenceAgain.stderr.includes(message))
-                  ? "bun run refuses the file"
-                  : inOrdinary && agree(second, inOrdinary) && classOfError(second) === classOfError(inOrdinary)
-                    ? "as an executable without --aot"
-                    : showsFunctionText || agreeButForLayout(second, referenceAgain)
-                      ? "function text"
-                      : second.end === referenceAgain.end && definesAnAccessorTwice(texts[index])
-                        ? "an accessor defined twice"
-                        : isLimit(second)
-                          ? "limit"
-                          : second.end !== referenceAgain.end
-                            ? "exit-code"
-                            : "stdout";
+    let kind =
+      referenceAgain.end.startsWith("the process ended") && !reservedTooManyAddresses(referenceAgain)
+        ? "bun-run-signal"
+        : isLimit(referenceAgain) || reservedTooManyAddresses(referenceAgain)
+          ? "neither finished"
+          : !isLimit(reference) && !agree(reference, referenceAgain)
+            ? "bun run is unsteady"
+            : agree(second, referenceAgain)
+              ? isLimit(first) || isLimit(reference)
+                ? "same with more time"
+                : "unsteady"
+              : second.end.startsWith("the process ended")
+                ? "signal"
+                : documentedMessages.some(says) ||
+                    (!isLimit(second) && referenceAgain.stderr.includes("Maximum call stack size exceeded")) ||
+                    documentedNames.some(name => texts[index].includes(name)) ||
+                    setsThePrototypeOfABuiltIn.test(texts[index]) ||
+                    deletesTheLengthOfAString.test(texts[index]) ||
+                    deletesACharacterOfAString.test(texts[index]) ||
+                    (second.end === referenceAgain.end &&
+                      withNullAsUndefined(second.stdout) === withNullAsUndefined(referenceAgain.stdout) &&
+                      readsThisOfTheModule(texts[index])) ||
+                    (second.end === referenceAgain.end &&
+                      withoutNamesOfFunctions(second.stdout) === withoutNamesOfFunctions(referenceAgain.stdout) &&
+                      hasALiteralAsComputedKey.test(texts[index])) ||
+                    writesToBuiltins.has(index)
+                  ? "documented difference"
+                  : referenceAgain.stdout === "" &&
+                      refusalsOfBunRun.some(message => referenceAgain.stderr.includes(message))
+                    ? "bun run refuses the file"
+                    : inOrdinary && agree(second, inOrdinary) && classOfError(second) === classOfError(inOrdinary)
+                      ? "as an executable without --aot"
+                      : showsFunctionText || agreeButForLayout(second, referenceAgain)
+                        ? "function text"
+                        : second.end === referenceAgain.end && definesAnAccessorTwice(texts[index])
+                          ? "an accessor defined twice"
+                          : isLimit(second)
+                            ? "limit"
+                            : second.end !== referenceAgain.end
+                              ? "exit-code"
+                              : "stdout";
     // A build warns about the first write to a built-in that it meets, so the build of a group names one program of several.
     if (["limit", "exit-code", "stdout"].includes(kind)) {
       const alone = join(work, `alone-${process.pid}`);

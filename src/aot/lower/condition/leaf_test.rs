@@ -54,6 +54,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         .unwrap_or(LeafTest::Truthiness),
                 };
             }
+            ExprKind::Binary { .. } if find_constant(file, expression).is_some() => {
+                return LeafTest::Truthiness;
+            }
             ExprKind::Binary { op, left, right } => (op, left, right),
             _ => return LeafTest::Truthiness,
         };
@@ -161,7 +164,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         else {
             return None;
         };
-        (!is_decided(file, node)).then_some(operand)
+        let is_folded = is_decided(file, node) || find_constant(file, node).is_some();
+        (!is_folded).then_some(operand)
     }
 
     /// A local of the function that asks, past its dead zone, which has one value from there on. Not a `var`: that is undefined until its declaration runs.

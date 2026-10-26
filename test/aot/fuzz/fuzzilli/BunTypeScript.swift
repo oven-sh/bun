@@ -32,6 +32,10 @@ struct TypeScriptSettings {
     var files = 0
     /// How often tests that narrow a declared type follow a declaration. Twice as often at the start of a function.
     var tested = 12
+    /// How often what follows a declaration is a scene without a cast.
+    var withoutCasts = 25
+    /// How often a program is its scenes without a cast and nothing else.
+    var scenesAlone = 0
     /// Added to what is computed from a program to seed its choices.
     var seed: UInt64 = 0
 
@@ -64,6 +68,8 @@ struct TypeScriptSettings {
             case "int32": settings.int32 = value
             case "files": settings.files = value
             case "tested": settings.tested = value
+            case "without-casts": settings.withoutCasts = value
+            case "scenes-alone": settings.scenesAlone = value
             case "seed": settings.seed = UInt64(value)
             default: fatalError("BUN_FUZZILLI_TYPES: unknown setting \(part)")
             }
@@ -321,8 +327,14 @@ final class TypeScriptPlan {
     private var helpersThatNameTypes = [String: String]()
     private var testedParameters = [Int: [(name: String, type: TypeScriptType, isConstant: Bool)]]()
     private var sitesWithTests = 0
+    /// The scenes of a program that is its scenes alone.
+    private var scenesOfTheProgram = [String]()
+    private var helpersOfTheScenes = Set<String>()
+    private var variablesOfTheScenes = [String]()
+    private var isScenesAlone = false
     private var moduleVariables = [String]()
     private var sceneIsAsync = false
+    private var isWithoutCasts = false
     private var functionsAtTheTop = [String]()
     private var classesSoFar = [String]()
     private var usesInt32 = false
@@ -409,6 +421,8 @@ final class TypeScriptPlan {
         }
 
         seedOfProgram = mix(settings.seed, firstSeed ?? everything)
+        // Fuzzilli tests its connection to the engine with programs that are one `eval`.
+        isScenesAlone = Int(seedOfProgram / 11 % 100) < settings.scenesAlone && !code.contains { $0.op is Eval }
         var scopes = [seedOfProgram]
         for instr in code {
             if instr.isBlockEnd, scopes.count > 1 { scopes.removeLast() }
@@ -979,7 +993,7 @@ final class TypeScriptPlan {
                 return "interface \(name) extends \(base) \(body)"
             }
         }
-        let keys = (Array(table.keys) + Array((methods[name] ?? [:]).keys)).sorted().map { Int($0) == nil ? "\"\($0)\"" : $0 }.joined(separator: " | ")
+        let keys = (Array(table.keys) + Array((methods[name] ?? [:]).keys)).sorted().map { Int($0).map { $0 >= 0 } ?? false ? $0 : "\"\($0)\"" }.joined(separator: " | ")
         let larger = "{\n\((fields + ["    leftOut: string;"]).joined(separator: "\n"))\n}"
         switch spellings[name] {
         case .alias?:
@@ -2273,6 +2287,7 @@ final class TypeScriptPlan {
             }
             """,
         "pass": "function pass<T>(value: T): T { return value; }",
+        "firstOf": "function firstOf<T>(list: T[]): T { return list[0]; }",
         "note": """
             let notes = 0;
             function note(value: unknown): void {
@@ -2508,6 +2523,11 @@ final class TypeScriptPlan {
         /// The name that a declaration over several lines at the top level declares.
         var openDeclaration: String? = nil
         lines = addTests(to: text.split(separator: "\n", omittingEmptySubsequences: false))
+        if isScenesAlone {
+            lines = scenesOfTheProgram.map { Substring($0) }
+            (helpers, moduleVariables) = (helpersOfTheScenes, variablesOfTheScenes)
+            (writtenHelpers, enumMembers, textMembers) = ([:], [:], [:])
+        }
         // The time of the run is in what these print.
         let unsteady = Set(inferred.filter { $0.value.group == "Date" }.map { "v\($0.key.number)" })
         for var line in lines {
@@ -2548,7 +2568,7 @@ final class TypeScriptPlan {
 
         if helpers.contains("passThroughList") { helpers.insert("Same") }
         var library = helpers.sorted().map { Self.helperDeclarations[$0]! } + writtenHelpers.sorted { $0.key < $1.key }.map(\.value)
-        let declarations = declarationOrder.map(declaration(of:)) + helpersThatNameTypes.sorted { $0.key < $1.key }.map(\.value)
+        let declarations = isScenesAlone ? [] : declarationOrder.map(declaration(of:)) + helpersThatNameTypes.sorted { $0.key < $1.key }.map(\.value)
         if enumMembers.isEmpty, (body + declarations).contains(where: { $0.contains("Numbers") }) { enumMembers["N0"] = "0" }
         for (name, members) in [("Numbers", enumMembers), ("Texts", textMembers)] where !members.isEmpty {
             let list = members.sorted(by: { $0.key < $1.key }).map { "    \($0.key) = \($0.value)," }
@@ -3406,8 +3426,20 @@ extension TypeScriptPlan {
     fileprivate func testsBehindDeclaration(of v: Variable, named name: String, isStore: Bool = false) -> [String] {
         guard let index = indexOfDefinition[v], sitesWithTests < 10, inferred[v]?.group != "Date" else { return [] }
         choose(at: index, for: 0x7e57)
+        if isScenesAlone {
+            if sitesWithTests <= Int(seedOfProgram / 1100 % 4) {
+                sitesWithTests += 1
+                let (helpersOfTheRest, variablesOfTheRest) = (helpers, moduleVariables)
+                (helpers, moduleVariables) = (helpersOfTheScenes, variablesOfTheScenes)
+                scenesOfTheProgram += sceneWithoutCasts(of: v, named: name)
+                (helpersOfTheScenes, variablesOfTheScenes) = (helpers, moduleVariables)
+                (helpers, moduleVariables) = (helpersOfTheRest, variablesOfTheRest)
+            }
+            return []
+        }
         guard choices.percent(settings.tested) else { return [] }
         sitesWithTests += 1
+        if choices.percent(settings.withoutCasts) { return sceneWithoutCasts(of: v, named: name) }
         if choices.percent(30), let lines = disturb(v, named: name) { return lines }
         if !isStore, let type = annotations[v], type != .int32, !type.arms.contains(.int32), choices.percent(60) {
             var isExact = type.arms.count == 1 && type.plain != .boolean && !type.isLiterals && !type.mentionsEnumeration
@@ -3702,7 +3734,7 @@ extension TypeScriptPlan {
                 lines.append(compareOnly(text, current))
                 lines.append("const called\(step) = method\(step).call(\(([text] + arguments).joined(separator: ", ")));")
                 (text, current) = ("called\(step)", method.value.result == .void ? .undefined : method.value.result == .int32 ? .number : method.value.result)
-            } else if choices.percent(12) {
+            } else if !isWithoutCasts, choices.percent(12) {
                 let anew = declareAnew(text, current, step)
                 lines += anew.lines
                 lines.append("const anew\(step) = \(anew.text);")
@@ -3775,6 +3807,336 @@ extension TypeScriptPlan {
         "[].push", "Object.keys", "(...all: any[]) => all", "(() => 1).bind(null)", "Symbol",
     ]
 
+    /// Lines that the checker accepts as they stand, behind which a value of the type `from` is where `type` is declared.
+    private func arrive(_ s: String, _ from: TypeScriptType, at type: TypeScriptType, _ step: Int) -> (lines: [String], text: String) {
+        let (t, either) = (type.text, "(\(type.text)) | (\(from.text))")
+        let (narrow, wide) = ("narrow\(step)", "wide\(step)")
+        let right = sample(of: type)
+        switch (choices.below(12), right) {
+        case (0, let right?):
+            return (["const \(narrow): (\(t))[] = [\(right)];", "const \(wide): (\(either))[] = \(narrow);", "\(wide)[1] = \(s);"], "\(narrow)[1]")
+        case (1, let right?):
+            return (["const \(narrow): (\(t))[] = [\(right), \(right)];", "const \(wide): (\(either))[] = \(narrow);", "\(wide)[0] = \(s);"], "\(narrow)[0]")
+        case (2, let right?):
+            return (["const \(narrow): { held: \(t) } = { held: \(right) };", "const \(wide): { held: \(either) } = \(narrow);", "\(wide).held = \(s);"], "\(narrow).held")
+        case (3, let right?):
+            helpers.insert("Keeper")
+            return (["const \(narrow) = new Keeper<\(t)>(\(right));", "const \(wide): Keeper<\(either)> = \(narrow);", "\(wide).held = \(s);"], "\(narrow).held")
+        case (4, _):
+            helpers.insert("Pile")
+            return (["const \(narrow) = new Pile<\(t)>();", "const \(wide): Pile<\(either)> = \(narrow);", "\(wide).add(\(s));"], "\(narrow).top()")
+        case (5, _):
+            return (["const \(narrow) = new Map<string, \(t)>();", "const \(wide): Map<string, \(either)> = \(narrow);", "\(wide).set(\"key\", \(s));"], "\(narrow).get(\"key\")!")
+        case (6, _):
+            return (
+                [
+                    "class Narrow\(step) {", "    held: (\(t))[] = [];", "    take(value: \(t)): void { this.held.push(value); }", "}",
+                    "interface Wide\(step) { take(value: \(either)): void; }", "const \(narrow) = new Narrow\(step)();",
+                    "const \(wide): Wide\(step) = \(narrow);", "\(wide).take(\(s));",
+                ], "\(narrow).held[0]"
+            )
+        case (7, let right?):
+            return (
+                [
+                    "class Narrow\(step) {", "    held: \(t) = \(right);", "    take(value: \(t)): void { this.held = value; }", "}",
+                    "interface Wide\(step) { take(value: \(either)): void; }", "const \(narrow) = new Narrow\(step)();",
+                    "const \(wide): Wide\(step) = \(narrow);", "\(wide).take(\(s));",
+                ], "\(narrow).held"
+            )
+        case (8, let right?):
+            return (["const \(narrow): { held: \(t) } = { held: \(right) };", "Object.assign(\(narrow), { held: \(s) });"], "\(narrow).held")
+        case (9, _):
+            return (
+                [
+                    "const \(narrow): ((\(t)) | undefined)[] = [];", "function take\(step)(first: \(from.text), second?: \(t)): void { \(narrow).push(second); }",
+                    "const one\(step): (first: \(from.text)) => void = take\(step);",
+                    "const two\(step): (first: \(from.text), second: \(from.text)) => void = one\(step);", "two\(step)(\(s), \(s));",
+                ], "\(narrow)[0]!"
+            )
+        case (10, let right?):
+            return (
+                [
+                    "const \(wide): { held: \(either) } = { held: \(right) };", "function is\(step)(value: unknown): value is \(t) { return true; }",
+                    "function change\(step)(): void { \(wide).held = \(s); }", "const \(narrow): (\(t))[] = [];",
+                    "if (is\(step)(\(wide).held)) {", "    change\(step)();", "    \(narrow).push(\(wide).held);", "}",
+                ], "\(narrow)[0]"
+            )
+        default: return (["const \(narrow): (\(t))[] = [];", "const \(wide): (\(either))[] = \(narrow);", "\(wide).push(\(s));"], "\(narrow)[0]")
+        }
+    }
+
+    /// Lines that the checker accepts as they stand, behind which nothing is where `type` is declared.
+    private func leaveOut(_ type: TypeScriptType, _ step: Int) -> (lines: [String], text: String) {
+        let t = type.text
+        let list = "list\(step)"
+        switch (choices.below(14), sample(of: type)) {
+        case (0, let right?): return (["const \(list): (\(t))[] = [\(right)];"], "\(list)[1]")
+        case (1, _): return (["const table\(step): Record<string, \(t)> = {};"], choices.pick(["table\(step).absent", "table\(step)[\"absent\"]"]))
+        case (2, _): return (["const table\(step): { [key: string]: \(t) } = {};", "const key\(step) = \"abs\" + \"ent\";"], "table\(step)[key\(step)]")
+        case (3, _): return (["const [, missing\(step)]: (\(t))[] = [];"], "missing\(step)")
+        case (4, _): return (["const \(list) = new Array<\(t)>(2);"], "\(list)[1]")
+        case (5, _):
+            helpers.insert("firstOf")
+            return ([], "firstOf<\(t)>([])")
+        case (6, _): return (["let later\(step)!: \(t);"], "later\(step)")
+        case (7, let right?):
+            return (
+                [
+                    "class Early\(step) {", "    seen: (\(t))[] = [];", "    held: \(t);", "    constructor() {", "        this.look();",
+                    "        this.held = \(right);", "    }", "    look(): void { this.seen.push(this.held); }", "}",
+                ], "new Early\(step)().seen[0]"
+            )
+        case (8, let right?):
+            return (
+                [
+                    "const seen\(step): (\(t))[] = [];", "class Base\(step) {", "    constructor() { this.look(); }", "    look(): void {}", "}",
+                    "class Derived\(step) extends Base\(step) {", "    held: \(t) = \(right);", "    look(): void { seen\(step).push(this.held); }", "}",
+                    "new Derived\(step)();",
+                ], "seen\(step)[0]"
+            )
+        case (9, let right?):
+            return (["const part\(step): { held?: \(t) } = { held: undefined };", "const whole\(step): { held: \(t) } = { held: \(right), ...part\(step) };"], "whole\(step).held")
+        case (10, let right?): return (["const \(list): (\(t))[] = [\(right), \(right)];", "\(list).length = 0;"], "\(list)[1]")
+        case (11, let right?): return (["const \(list): (\(t))[] = [\(right)];", "\(list).length = 3;"], "\(list)[2]")
+        case (12, let right?): return (["const \(list): (\(t))[] = [\(right), \(right)];", "delete \(list)[0];"], "\(list)[0]")
+        default: return (["const \(list): (\(t))[] = [];"], "\(list)[0]")
+        }
+    }
+
+    /// As `arrive`, but the value gets there inside a generic function or class that is used at a wider type.
+    private func arriveThroughGenerics(_ s: String, _ from: TypeScriptType, at type: TypeScriptType, _ step: Int) -> (lines: [String], text: String) {
+        let (t, either) = (type.text, "(\(type.text)) | (\(from.text))")
+        let (narrow, wide) = ("narrow\(step)", "wide\(step)")
+        switch (choices.below(15), sample(of: type)) {
+        case (0, let right?):
+            return (
+                ["function fill\(step)<T>(box: { held: T }, value: T): void { box.held = value; }", "const \(narrow): { held: \(t) } = { held: \(right) };", "fill\(step)<\(either)>(\(narrow), \(s));"],
+                "\(narrow).held"
+            )
+        case (1, let right?):
+            return (
+                [
+                    "function store\(step)<T, K extends keyof T>(target: T, key: K, value: T[K]): void { target[key] = value; }",
+                    "function which\(step)(): \"held\" | \"other\" { return \"held\"; }", "const \(narrow): { held: \(t); other: \(from.text) } = { held: \(right), other: \(s) };",
+                    "store\(step)(\(narrow), which\(step)(), \(s));",
+                ], "\(narrow).held"
+            )
+        case (2, let right?):
+            return (
+                [
+                    "class Cell\(step)<T> {", "    held: T;", "    constructor(held: T) { this.held = held; }", "    put(value: T): void { this.held = value; }", "}",
+                    "const \(narrow) = new Cell\(step)<\(t)>(\(right));", "const \(wide): Cell\(step)<\(either)> = \(narrow);", "\(wide).put(\(s));",
+                ], "\(narrow).held"
+            )
+        case (3, _):
+            return (
+                [
+                    "class Base\(step)<T> {", "    held!: T;", "    put(value: T): void { this.held = value; }", "}", "class Fixed\(step) extends Base\(step)<\(t)> {}",
+                    "const \(narrow) = new Fixed\(step)();", "const \(wide): Base\(step)<\(either)> = \(narrow);", "\(wide).put(\(s));",
+                ], "\(narrow).held"
+            )
+        case (4, _):
+            return (["function sure\(step)<T>(value: unknown): asserts value is T {}", "const loose\(step): unknown = \(s);", "sure\(step)<\(t)>(loose\(step));"], "loose\(step)")
+        case (5, _):
+            return (
+                [
+                    "function is\(step)<T>(value: unknown): value is T { return true; }", "const loose\(step): unknown = \(s);", "const \(narrow): (\(t))[] = [];",
+                    "if (is\(step)<\(t)>(loose\(step))) \(narrow).push(loose\(step));",
+                ], "\(narrow)[0]"
+            )
+        case (6, _):
+            return (
+                [
+                    "interface Sink\(step)<T> { take(value: T): void; }", "class Narrow\(step) implements Sink\(step)<\(t)> {", "    held: (\(t))[] = [];",
+                    "    take(value: \(t)): void { this.held.push(value); }", "}", "function feed\(step)<T>(sink: Sink\(step)<T>, value: T): void { sink.take(value); }",
+                    "const \(narrow) = new Narrow\(step)();", "feed\(step)<\(either)>(\(narrow), \(s));",
+                ], "\(narrow).held[0]"
+            )
+        case (7, _):
+            return (
+                [
+                    "function remember\(step)<K, V>(map: Map<K, V>, key: K, value: V): void { map.set(key, value); }", "const \(narrow) = new Map<string, \(t)>();",
+                    "remember\(step)<string, \(either)>(\(narrow), \"key\", \(s));",
+                ], "\(narrow).get(\"key\")!"
+            )
+        case (8, let right?): return (["const \(narrow): (\(t))[] = [\(right)];", "Array.prototype.push.call(\(narrow), \(s));"], "\(narrow)[1]")
+        case (9, let right?):
+            return (
+                [
+                    "function swap\(step)<T extends { held: unknown }>(box: T, value: T[\"held\"]): void { box.held = value; }", "const \(narrow): { held: \(t) } = { held: \(right) };",
+                    "swap\(step)<{ held: \(either) }>(\(narrow), \(s));",
+                ], "\(narrow).held"
+            )
+        case (10, let right?):
+            return (
+                [
+                    "function each\(step)<T>(list: T[], visit: (list: T[], value: T) => void, value: T): void { visit(list, value); }", "const \(narrow): (\(t))[] = [\(right)];",
+                    "each\(step)<\(either)>(\(narrow), (list, value) => { list[0] = value; }, \(s));",
+                ], "\(narrow)[0]"
+            )
+        case (11, let right?):
+            return (
+                ["function both\(step)<A, B>(first: A[], second: B[]): (A | B)[] { return first; }", "const \(narrow): (\(t))[] = [\(right)];", "both\(step)<\(t), \(from.text)>(\(narrow), [])[0] = \(s);"],
+                "\(narrow)[0]"
+            )
+        case (12, _):
+            return (
+                [
+                    "class Chain\(step)<T> {", "    items: T[] = [];", "    with<U>(value: U): Chain\(step)<T | U> {", "        const next: Chain\(step)<T | U> = this;",
+                    "        next.items.push(value);", "        return next;", "    }", "}", "const \(narrow) = new Chain\(step)<\(t)>();", "\(narrow).with<\(from.text)>(\(s));",
+                ], "\(narrow).items[0]"
+            )
+        case (13, _):
+            helpers.insert("Pile")
+            return (["function pileUp\(step)<T>(pile: Pile<T>, value: T): Pile<T> { return pile.add(value); }", "const \(narrow) = new Pile<\(t)>();", "pileUp\(step)<\(either)>(\(narrow), \(s));"], "\(narrow).top()")
+        default:
+            return (["function put\(step)<T>(list: T[], value: T): void { list.push(value); }", "const \(narrow): (\(t))[] = [];", "put\(step)<\(either)>(\(narrow), \(s));"], "\(narrow)[0]")
+        }
+    }
+
+    /// As `leaveOut`, but it is generic code, used at the type, that finds nothing.
+    private func leaveOutThroughGenerics(_ type: TypeScriptType, _ step: Int) -> (lines: [String], text: String) {
+        let t = type.text
+        switch (choices.below(13), sample(of: type)) {
+        case (0, _): return (["function lastOf\(step)<T>(list: T[]): T { return list[list.length - 1]; }"], "lastOf\(step)<\(t)>([])")
+        case (1, let right?): return (["function at\(step)<T>(list: readonly T[], index: number): T { return list[index]; }"], "at\(step)<\(t)>([\(right)], 1)")
+        case (2, _): return (["function under\(step)<T>(table: Record<string, T>, key: string): T { return table[key]; }"], "under\(step)<\(t)>({}, \"absent\")")
+        case (3, _): return ([], "Array.from<\(t)>({ length: 2 })[1]")
+        case (4, _): return (["class Slot\(step)<T> {", "    held!: T;", "}"], "new Slot\(step)<\(t)>().held")
+        case (5, _): return (["function none\(step)<T>(): T[] { return []; }", "const [missing\(step)] = none\(step)<\(t)>();"], "missing\(step)")
+        case (6, _): return (["function given\(step)<T>(value?: T): T { return value!; }"], "given\(step)<\(t)>()")
+        case (7, _): return ([], "Object.values<\(t)>({})[0]")
+        case (8, _): return (["function orFirst\(step)<T>(list: T[], fallback: T = list[0]): T { return fallback; }"], "orFirst\(step)<\(t)>([])")
+        case (9, _): return (["function popped\(step)<T>(list: T[]): T { return list.pop()!; }"], "popped\(step)<\(t)>([])")
+        case (10, let right?): return (["function found\(step)<T>(list: T[], test: (value: T) => boolean): T { return list.find(test)!; }"], "found\(step)<\(t)>([\(right)], () => false)")
+        case (11, _): return (["class Late\(step)<T> {", "    private made?: T;", "    get value(): T { return this.made!; }", "}"], "new Late\(step)<\(t)>().value")
+        default: return (["function second\(step)<A, B>(pair: [A, B?]): B { return pair[1]!; }"], "second\(step)<string, \(t)>([\"a\"])")
+        }
+    }
+
+    /// Lines that the checker accepts as they stand, in which what a name holds changes although its type says that it doesn't.
+    private func changeBehindAFixedName(_ type: TypeScriptType, _ step: Int) -> (lines: [String], text: String)? {
+        guard let first = sample(of: type), let second = sample(of: type) else { return nil }
+        let t = type.text
+        let (open, fixed) = ("open\(step)", "fixed\(step)")
+        let isPrimitive = [.number, .string, .boolean, .bigint].contains(type)
+        switch choices.below(isPrimitive ? 4 : 3) {
+        case 0:
+            return (
+                ["const \(open): { held: \(t) } = { held: \(first) };", "const \(fixed): Readonly<{ held: \(t) }> = \(open);", noteUse(of: "\(fixed).held", type), "\(open).held = \(second);"],
+                "\(fixed).held"
+            )
+        case 1:
+            return (
+                ["const \(open): (\(t))[] = [\(first)];", "const \(fixed): readonly (\(t))[] = \(open);", noteUse(of: "\(fixed)[0]", type), "\(open)[0] = \(second);"],
+                "\(fixed)[0]"
+            )
+        case 2:
+            return (
+                [
+                    "class Fixed\(step) {", "    constructor(readonly held: \(t)) {}", "}", "const \(fixed) = new Fixed\(step)(\(first));",
+                    "const \(open): { held: \(t) } = \(fixed);", noteUse(of: "\(fixed).held", type), "\(open).held = \(second);",
+                ], "\(fixed).held"
+            )
+        default:
+            return (
+                ["const \(fixed) = { held: \(first) } as const;", "const \(open): { held: \(t) } = \(fixed);", "note(\(fixed).held);", "\(open).held = \(second);"],
+                "\(fixed).held"
+            )
+        }
+    }
+
+    /// Variables of the function that have nothing to do with the value `s`, changed between the statements and printed at the end.
+    private func addBystanders(to statements: [String], beside s: String) -> (declarations: [String], statements: [String], end: String) {
+        var lines = statements
+        let all = ["tally", "share", "letters", "trail", "ledger", "raise"]
+        var present = Set(["tally"])
+        switch choices.below(5) {
+        case 0, 1: break
+        case 2: present.insert(choices.pick(all))
+        default: present = Set(all)
+        }
+        let changes: [(text: String, names: [String])] = [
+            ("tally++;", []), ("raise();", ["raise"]), ("trail.push(tally);", ["trail"]), ("ledger.turns += 1;", ["ledger"]), ("(() => { tally += 2; return \(s); })();", []),
+            ("letters += \"+\";", ["letters"]), ("for (let i = 0; i < 3; i++) tally += i;", []), ("try { tally++; } finally { trail.push(-1); }", ["trail"]),
+            ("[1, 2].forEach(step => { tally += step; });", []), ("ledger = { turns: ledger.turns + 1 };", ["ledger"]),
+            ("{ const seen = () => [tally, \(s)]; tally++; trail.push(seen().length); }", ["trail"]), ("if (tally > 0) letters += tally; else tally = 5;", ["letters"]),
+            ("share += 0.5;", ["share"]), ("share = share * 2 + tally;", ["share"]), ("trail[trail.length] = share;", ["trail", "share"]),
+            ("(() => { tally = 2; \(s); })();", []), ("{ const later = () => { tally += 3; \(s); }; const before = tally; later(); tally += before; }", []),
+            ("[() => { tally += 4; \(s); }][0]();", []), ("(() => { (() => { tally += 5; \(s); })(); })();", []),
+            ("{ const under = (really: boolean) => { if (really) tally = 6; return \(s); }; under(true); }", []),
+            ("for (let i = 0; i < 2; i++) (() => { tally += i + 1; \(s); })();", []), ("try { (() => { tally += 7; \(s); throw new RangeError(\"out\"); })(); } catch { tally += 10; }", []),
+        ]
+        let possible = changes.filter { $0.names.allSatisfy(present.contains) }.map(\.text)
+        for _ in 0..<(1 + choices.below(present.count == 1 ? 2 : 6)) {
+            let gaps = lines.indices.filter { !lines[$0].hasPrefix(" ") && !lines[$0].hasPrefix("}") && !lines[$0].hasPrefix("else") } + [lines.count]
+            lines.insert(choices.pick(possible), at: choices.pick(gaps))
+        }
+        let declarations = [
+            "tally": "let tally = 0;", "share": "let share = 0.25;", "letters": "let letters = \"\";", "trail": "const trail: number[] = [];", "ledger": "let ledger = { turns: 0 };",
+            "raise": "const raise = (): void => { tally++; };",
+        ]
+        let printed = ["tally": "tally", "share": "share", "letters": "letters", "trail": "trail.join()", "ledger": "ledger.turns"]
+        let parts = all.filter(present.contains).compactMap { printed[$0] }
+        return (all.filter(present.contains).map { declarations[$0]! }, lines, parts.count == 1 ? parts[0] : "[\(parts.joined(separator: ", "))].join(\" \")")
+    }
+
+    /// Another value of the type, computed from the value.
+    private func change(_ s: String, _ type: TypeScriptType) -> String? {
+        switch type {
+        case .number: return choices.pick(["\(s) + 1", "\(s) * 2", "-\(s)"])
+        case .string: return choices.pick(["\(s) + 0", "\(s) + \"x\"", "\(s) + \(s)"])
+        case .boolean: return "!\(s)"
+        case .bigint: return "\(s) + 1n"
+        case .array: return choices.pick(["[...\(s)]", "\(s).slice()", "\(s).concat(\(s))"])
+        default: return nil
+        }
+    }
+
+    /// A function of its own that the checker accepts as it stands, in which a value is where another type is declared, and travels on from there.
+    fileprivate func sceneWithoutCasts(of v: Variable, named name: String) -> [String] {
+        let site = v.number
+        var declared = drawPlainType()
+        while isScenesAlone, case .named = declared { declared = drawPlainType() }
+        sceneIsAsync = false
+        var arrived: (lines: [String], text: String)
+        var canBeStoredTo = true
+        switch choices.below(10) {
+        case 0, 1, 2: arrived = choices.percent(settings.generic) ? leaveOutThroughGenerics(declared, 90) : leaveOut(declared, 90)
+        case 3:
+            arrived = changeBehindAFixedName(declared, 90) ?? leaveOut(declared, 90)
+            canBeStoredTo = false
+        default:
+            var from = drawPlainType()
+            var given = sample(of: from)
+            if !isScenesAlone, let type = annotations[v], type != .int32, !type.arms.contains(.int32), given == nil || choices.percent(40) { (from, given) = (type, name) }
+            if given == nil { (from, given) = (.string, "\"given\"") }
+            arrived = choices.percent(settings.generic) ? arriveThroughGenerics(given!, from, at: declared, 90) : arrive(given!, from, at: declared, 90)
+        }
+        isWithoutCasts = true
+        var journey = choices.percent(20) ? [noteUse(of: "arrived", declared)] : writeJourney(of: "arrived", declared, site: site)
+        isWithoutCasts = false
+        // What is computed from the value goes back to where the value came from.
+        if canBeStoredTo, arrived.text.hasSuffix("]") || arrived.text.hasSuffix(".held") || arrived.text.hasSuffix(".absent"), choices.percent(40), let changed = change("arrived", declared) {
+            journey.insert("\(arrived.text) = \(changed);", at: 0)
+        }
+        let bystanders = addBystanders(to: journey, beside: "arrived")
+        let body = arrived.lines + [choices.percent(70) ? "const arrived: \(declared.text) = \(arrived.text);" : "const arrived = \(arrived.text);"] + bystanders.statements
+        let function = "accepted\(site)"
+        let (isGuardedInside, returnsTheEnd) = (choices.percent(70), choices.percent(40))
+        let caught = ["} catch (error) {", "    note((error as any)?.name);", "    \(Self.messageToStderr)", "}"]
+        var inner = bystanders.declarations
+        inner += isGuardedInside ? ["try {"] + indented(body) + caught : body
+        inner.append(returnsTheEnd ? "return \(bystanders.end);" : "note(\(bystanders.end));")
+        let turns = choices.pick([1, 1, 2, 3])
+        let once = returnsTheEnd ? "note(\(function)());" : "\(function)();"
+        let call = turns == 1 && choices.percent(50) ? once : "for (let turn = 0; turn < \(turns); turn++) \(once)"
+        var lines = ["function \(function)() {"] + indented(inner) + ["}"]
+        lines += isGuardedInside ? [call] : ["try {", "    \(call)"] + caught
+        helpers.insert("note")
+        return ["{"] + indented(lines) + ["}"]
+    }
+
     /// A function of its own that takes values of every kind as a declared type.
     fileprivate func sceneBehindDeclaration(of v: Variable, named name: String, at index: Int) -> [String] {
         let site = v.number
@@ -3795,6 +4157,10 @@ extension TypeScriptPlan {
             body += [noteUse(of: "value", first), noteUse(of: "other", second)]
         }
         if hasSecond, choices.percent(50) { body += writeJourney(of: "other", second, site: site, firstStep: 10) }
+        if choices.percent(40) {
+            let bystanders = addBystanders(to: body, beside: "value")
+            body = bystanders.declarations + bystanders.statements + ["note(\(bystanders.end));"]
+        }
         let gaps = body.indices.filter { !body[$0].hasPrefix(" ") && !body[$0].hasPrefix("}") && !body[$0].hasPrefix("else") } + [body.count]
         if kind == 2 { body.insert("await null;", at: choices.pick(gaps)) }
         if kind == 3 { body.insert("yield 1;", at: choices.pick(gaps)) }

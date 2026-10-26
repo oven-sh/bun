@@ -1,5 +1,5 @@
 use super::inputs::{
-    DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, PathState, TrieNode,
+    DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, LinkForm, PathState, TrieNode,
 };
 use super::{Constant, slice_in};
 use crate::atom::Atom;
@@ -34,6 +34,7 @@ impl<'s> FoldInputs<'s> {
             root_filter,
             features: options.features,
             preserves_unused_imports: options.preserves_unused_imports,
+            minifies_syntax: options.minifies_syntax,
             max_string_bytes: options.max_string_bytes,
             is_called_before_it_runs: false,
         }
@@ -64,26 +65,25 @@ impl<'s> FoldInputs<'s> {
         Some(PathState {
             node: Some(node),
             has_optional_link: false,
+            ends_with_index: false,
             is_dropped: self.nodes[node as usize].ends_dropped_path,
             has_dynamic_root: false,
         })
     }
 
-    pub(super) fn child(
-        &self,
-        state: PathState,
-        name: Atom,
-        is_in_optional_chain: bool,
-    ) -> Option<PathState> {
+    // `bun build` replaces and drops what ends in `.name`; `["name"]` may stand in front of it. With --minify-syntax it has `["name"]` as `.name` first.
+    pub(super) fn child(&self, state: PathState, name: Atom, form: LinkForm) -> Option<PathState> {
         let parent = state.node;
         let node = parent.and_then(|parent| find_node(self.nodes[parent as usize].edges, name));
-        let has_optional_link = state.has_optional_link || is_in_optional_chain;
+        let has_optional_link = state.has_optional_link || form.is_in_optional_chain;
+        let ends_with_index = form.is_index && !self.minifies_syntax;
         let ends_dropped_path = !has_optional_link
             && node.is_some_and(|node| self.nodes[node as usize].ends_dropped_path);
-        let is_dropped = state.is_dropped || ends_dropped_path;
+        let is_dropped = !ends_with_index && (state.is_dropped || ends_dropped_path);
         (node.is_some() || is_dropped).then_some(PathState {
             node,
             has_optional_link,
+            ends_with_index,
             is_dropped,
             has_dynamic_root: state.has_dynamic_root,
         })
@@ -96,7 +96,7 @@ impl<'s> FoldInputs<'s> {
             value,
             DefineValue::RuntimeValue(_) | DefineValue::RuntimeConstant(_)
         );
-        if state.has_optional_link && !is_there_in_every_run {
+        if (state.has_optional_link || state.ends_with_index) && !is_there_in_every_run {
             return None;
         }
         match value {

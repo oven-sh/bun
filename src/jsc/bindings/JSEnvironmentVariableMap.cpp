@@ -1112,6 +1112,8 @@ JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(editWindowsEnvVar);
     args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
+    // Handed over so that windowsEnv reads no member of `Symbol` or `Bun`: an object lists a member that was read in front of those that were not.
+    args.append(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args);
     RETURN_IF_EXCEPTION(scope, nullptr);

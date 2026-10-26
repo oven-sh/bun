@@ -1,10 +1,9 @@
 // The build target determines `process.platform` and `process.arch`.
 //
 // Written out (`process.platform`), a read is replaced by a string literal in every `bun build --compile`, with or without --aot,
-// because the target defines both paths. An assignment isn't replaced, so such a read never sees it. With --aot the same holds for
-// `process["arch"]`: `x["name"]` is `x.name`. Without --aot the brackets stay a read.
+// because the target defines both paths. An assignment isn't replaced, so such a read never sees it.
 //
-// Read any other way (`const { platform } = process`, `globalThis.process.platform`, a variable that holds `process`), it is an
+// Read any other way (`process["arch"]`, `const { platform } = process`, `globalThis.process.platform`, a variable that holds `process`), it is an
 // ordinary property that plain Bun lets a program assign, redefine and delete, which tests do to simulate another platform. If the
 // program can't change the property, --aot folds the read to the string, so a comparison with a platform name is decided at build
 // time and the branch for the other platform is removed. If the program does change it, the output must match plain Bun's.
@@ -272,10 +271,9 @@ async function compile(folder: string, files: Record<string, string>, flags: str
 
 async function runReference(folder: string, { files, reference }: Program) {
   if (reference !== "compiled") return spawned([bunExe(), "run", entryPointsOf(files)[0]], folder, bunEnv);
-  using dotted = tempDir("aot-process-platform-reference", Object.fromEntries(Object.entries(files).map(([name, text]) => [name, text.replaceAll(/\bprocess\["(platform|arch)"\]/g, "process.$1")])));
-  const executable = executableIn(String(dotted), "reference");
-  built(await spawned([bunExe(), "build", "--compile", ...entryPointsOf(files), "--outfile", executable], String(dotted), bunEnv));
-  return await spawned([executable], String(dotted), bunEnv);
+  const executable = executableIn(folder, "reference");
+  built(await spawned([bunExe(), "build", "--compile", ...entryPointsOf(files), "--outfile", executable], folder, bunEnv));
+  return await spawned([executable], folder, bunEnv);
 }
 
 async function expectOutputOfReference(program: Program, flags: string[]) {

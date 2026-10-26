@@ -2,8 +2,8 @@ use std::cell::Cell;
 
 use bun_sema::bind::{Binding, Decl, Parent, PatParent, SymbolId};
 use bun_sema::hir::{
-    Chain, ExprId, ExprKind, FnBody, IdList, NameKind, PatKind, PropKey, PropKind, StmtId,
-    StmtKind, UnOp, VarDeclId, VarKind,
+    Chain, ExprId, ExprKind, Flags, FnBody, FnId, IdList, NameKind, PatKind, PropKey, PropKind,
+    StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
 use smallvec::SmallVec;
 
@@ -34,27 +34,97 @@ struct Replacement<'a> {
     is_access: bool,
     can_be_removed: bool,
     // The variables that are declared behind it, with their initializers. They are in the statement already.
-    printed: &'a [(SymbolId, ExprId)],
+    printed: &'a [(SymbolId, Printed)],
     budget: &'a Budget,
+    // The name of the variable, once it has been reached.
+    found: Cell<Option<ExprId>>,
+}
+
+// What Bun's transpiler prints in place of a name.
+#[derive(Copy, Clone)]
+pub(in crate::lower) enum Printed {
+    Initializer(ExprId),
+    // A function that a block declares. The transpiler declares it as a `let` variable at the start of the block, with a function expression that has no name.
+    Function(FnId),
 }
 
 #[derive(Copy, Clone)]
-struct Printed {
-    initializer: ExprId,
+struct Found {
+    initializer: Printed,
     // The initializer, or what is printed in its place if it is such a name itself.
-    written: ExprId,
+    written: Printed,
+}
+
+// The statements of one list around one of them.
+#[derive(Copy, Clone)]
+struct Siblings {
+    earlier: IdList<StmtId>,
+    all: IdList<StmtId>,
+    is_block: bool,
 }
 
 // `substitute_single_use_symbol_in_stmt` of Bun's transpiler changes the syntax tree. This asks the same of a tree that stays as it is.
 impl FileLowering<'_, '_, '_, '_> {
-    // The initializer that Bun's transpiler prints in place of a name, which is the only use of a `let` or `const` variable.
-    pub(in crate::lower) fn find_printed_initializer(&self, name: ExprId) -> Option<ExprId> {
+    // What Bun's transpiler prints in place of a name, which is the only use of a `let` or `const` variable or of a function that a block declares.
+    pub(in crate::lower) fn find_printed_in_place(&self, name: ExprId) -> Option<Printed> {
         let steps = self
             .inputs
             .limits
             .get(LimitId::MaxStepsToPrintedInitializer);
         let budget = Budget(Cell::new(steps));
         Some(self.find_printed(name, &budget)?.initializer)
+    }
+
+    pub(in crate::lower) fn find_printed_initializer(&self, name: ExprId) -> Option<ExprId> {
+        match self.find_printed_in_place(name)? {
+            Printed::Initializer(initializer) => Some(initializer),
+            Printed::Function(_) => None,
+        }
+    }
+
+    // The name in whose place Bun's transpiler prints the initializer of a variable.
+    pub(in crate::lower) fn find_name_replaced_by(&self, initializer: ExprId) -> Option<ExprId> {
+        let hir = self.hir;
+        let Parent::VarInit(declaration) = self.bound.parent_of_expr(initializer) else {
+            return None;
+        };
+        let symbol = self.find_symbol_used_once(declaration)?;
+        let siblings = self.find_siblings(self.bound.var_stmt[declaration.idx()])?;
+        let steps = self
+            .inputs
+            .limits
+            .get(LimitId::MaxStepsToPrintedInitializer);
+        let budget = Budget(Cell::new(steps));
+        for later in hir
+            .ids(siblings.all)
+            .skip(siblings.earlier.len as usize + 1)
+        {
+            if !budget.take_step() {
+                return None;
+            }
+            if !self.is_printed(later) {
+                continue;
+            }
+            let replacement = Replacement {
+                symbol,
+                is_access: false,
+                can_be_removed: true,
+                printed: &[],
+                budget: &budget,
+                found: Cell::new(None),
+            };
+            let target = self.find_first_expression(later)?;
+            if self.substitute(target, &replacement, false) == Substitution::Success {
+                let name = replacement.found.get()?;
+                let printed = self.find_printed(name, &budget)?.initializer;
+                let is_moved = matches!(printed, Printed::Initializer(moved) if moved == hir[declaration].init);
+                return is_moved.then_some(name);
+            }
+            if !matches!(hir[later].kind, StmtKind::Var(_)) {
+                return None;
+            }
+        }
+        None
     }
 
     // The literal that Bun's transpiler prints in place of the name of a constant.
@@ -68,13 +138,15 @@ impl FileLowering<'_, '_, '_, '_> {
         let PatParent::Var(declaration) = self.bound.pat_parent[pattern.idx()] else {
             return None;
         };
-        self.is_replaced_by_its_value(declaration)
+        // The transpiler knows the value from the declaration on.
+        let is_declared = self.hir[pattern].pos < self.hir[name].pos;
+        (is_declared && self.is_replaced_by_its_value(declaration))
             .then_some(self.hir[declaration].init)
     }
 
-    pub(super) fn is_replaced_by_its_value(&self, declaration: VarDeclId) -> bool {
+    pub(in crate::lower) fn is_replaced_by_its_value(&self, declaration: VarDeclId) -> bool {
         let statement = self.bound.var_stmt[declaration.idx()];
-        let Some(before) = self.find_earlier_statements(statement) else {
+        let Some(siblings) = self.find_siblings(statement) else {
             return false;
         };
         let steps = self
@@ -82,10 +154,10 @@ impl FileLowering<'_, '_, '_, '_> {
             .limits
             .get(LimitId::MaxStepsToPrintedInitializer);
         let budget = Budget(Cell::new(steps));
-        self.is_printed_as_its_value(declaration, before, &budget)
+        self.is_printed_as_its_value(declaration, siblings, &budget)
     }
 
-    fn find_printed(&self, name: ExprId, budget: &Budget) -> Option<Printed> {
+    fn find_printed(&self, name: ExprId, budget: &Budget) -> Option<Found> {
         let hir = self.hir;
         let Binding::Symbol(symbol) = self.bound.binding(name) else {
             return None;
@@ -95,11 +167,14 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let statement = self.find_statement_around(name)?;
         let target = self.find_first_expression(statement)?;
-        let mut printed: SmallVec<[(SymbolId, ExprId); 4]> = SmallVec::new();
-        let list = self.find_earlier_statements(statement)?;
+        let mut printed: SmallVec<[(SymbolId, Printed); 4]> = SmallVec::new();
+        let siblings = self.find_siblings(statement)?;
+        let list = siblings.earlier;
         for index in (0..list.len).rev() {
             let earlier = hir.id_at(list, index as usize);
-            if !self.is_printed(earlier) {
+            let is_moved =
+                siblings.is_block && self.find_function_moved_to_start(earlier).is_some();
+            if is_moved || !self.is_printed(earlier) {
                 continue;
             }
             let StmtKind::Var(declarations) = hir[earlier].kind else {
@@ -109,7 +184,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 if !budget.take_step() {
                     return None;
                 }
-                let before = IdList::new(list.start, index);
+                let before = Siblings {
+                    earlier: IdList::new(list.start, index),
+                    ..siblings
+                };
                 if self.is_printed_as_its_value(declaration, before, budget) {
                     continue;
                 }
@@ -118,19 +196,29 @@ impl FileLowering<'_, '_, '_, '_> {
                 let written = self.find_written(initializer, budget);
                 let replacement = Replacement {
                     symbol: candidate,
-                    is_access: matches!(
-                        hir[written].kind,
-                        ExprKind::Dot { .. } | ExprKind::Index { .. }
-                    ),
-                    can_be_removed: self.is_written_without_effects(written, budget),
+                    is_access: match written {
+                        Printed::Initializer(written) => matches!(
+                            hir[written].kind,
+                            ExprKind::Dot { .. } | ExprKind::Index { .. }
+                        ),
+                        Printed::Function(_) => false,
+                    },
+                    can_be_removed: match written {
+                        Printed::Initializer(written) => {
+                            self.is_written_without_effects(written, budget)
+                        }
+                        Printed::Function(_) => true,
+                    },
                     printed: &printed,
                     budget,
+                    found: Cell::new(None),
                 };
                 if self.substitute(target, &replacement, false) != Substitution::Success {
                     return None;
                 }
+                let initializer = Printed::Initializer(initializer);
                 if candidate == symbol {
-                    return Some(Printed {
+                    return Some(Found {
                         initializer,
                         written,
                     });
@@ -138,14 +226,73 @@ impl FileLowering<'_, '_, '_, '_> {
                 printed.push((candidate, initializer));
             }
         }
+        if !siblings.is_block {
+            return None;
+        }
+        // One `let` statement declares them all, each where its name is declared first, with the last function of that name.
+        let mut moved: SmallVec<[(SymbolId, FnId); 4]> = SmallVec::new();
+        for declared in hir.ids(siblings.all).rev() {
+            if !budget.take_step() {
+                return None;
+            }
+            if let Some(function) = self.find_function_moved_to_start(declared) {
+                moved.push((self.bound.fn_symbol[function.idx()], function));
+            }
+        }
+        for index in 0..moved.len() {
+            let (candidate, _) = moved[index];
+            let is_first = !moved[index + 1..].iter().any(|later| later.0 == candidate);
+            if !is_first {
+                continue;
+            }
+            let last = moved.iter().find(|entry| entry.0 == candidate)?.1;
+            let is_substituted = self.scopes.is_used_once(candidate)
+                && !self.bound.is_visible_to_eval(candidate)
+                && !self.runs_as_written();
+            if !is_substituted {
+                return None;
+            }
+            let replacement = Replacement {
+                symbol: candidate,
+                is_access: false,
+                can_be_removed: true,
+                printed: &printed,
+                budget,
+                found: Cell::new(None),
+            };
+            if self.substitute(target, &replacement, false) != Substitution::Success {
+                return None;
+            }
+            let function = Printed::Function(last);
+            if candidate == symbol {
+                return Some(Found {
+                    initializer: function,
+                    written: function,
+                });
+            }
+            printed.push((candidate, function));
+        }
         None
+    }
+
+    // The function of a declaration that the transpiler moves to the start of the block around it.
+    fn find_function_moved_to_start(&self, statement: StmtId) -> Option<FnId> {
+        let StmtKind::Fn(function) = self.hir[statement].kind else {
+            return None;
+        };
+        let declared = self.hir[function];
+        let is_moved = !matches!(declared.body, FnBody::None)
+            && !declared
+                .flags
+                .intersects(Flags::ASYNC | Flags::GENERATOR | Flags::AMBIENT);
+        is_moved.then_some(function)
     }
 
     // The transpiler prints the value of such a constant wherever its name is written, and no declaration: a `const` with a literal, with nothing but `const` statements in front of it in its block.
     fn is_printed_as_its_value(
         &self,
         declaration: VarDeclId,
-        before: IdList<StmtId>,
+        siblings: Siblings,
         budget: &Budget,
     ) -> bool {
         let hir = self.hir;
@@ -155,22 +302,27 @@ impl FileLowering<'_, '_, '_, '_> {
         let is_literal = matches!(hir[decl.pat].kind, PatKind::Ident(_))
             && is_constant(declaration)
             && decl.init.is_some()
-            && matches!(
+            && self.is_literal_operand(decl.init)
+            && !matches!(
                 hir[self.skip_type_syntax(decl.init)].kind,
-                ExprKind::Number(_)
-                    | ExprKind::String(_)
-                    | ExprKind::True
-                    | ExprKind::False
-                    | ExprKind::Null
+                ExprKind::Binary { left, .. } if self.is_text(left)
             );
+        let is_behind_moved_function = || {
+            let mut all = hir.ids(siblings.all);
+            siblings.is_block
+                && all.any(|other| {
+                    !budget.take_step() || self.find_function_moved_to_start(other).is_some()
+                })
+        };
         is_literal
-            && hir.ids(before).rev().all(|earlier| {
+            && hir.ids(siblings.earlier).rev().all(|earlier| {
                 budget.take_step()
                     && match hir[earlier].kind {
                         StmtKind::Var(declarations) => declarations.iter().all(is_constant),
                         _ => !self.is_printed(earlier),
                     }
             })
+            && !is_behind_moved_function()
     }
 
     fn find_statement_around(&self, expression: ExprId) -> Option<StmtId> {
@@ -207,18 +359,32 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_earlier_statements(&self, statement: StmtId) -> Option<IdList<StmtId>> {
+    fn find_siblings(&self, statement: StmtId) -> Option<Siblings> {
         let hir = self.hir;
-        let list = match self.bound.parent_of_stmt(statement) {
+        let (list, is_block) = match self.bound.parent_of_stmt(statement) {
             Parent::Stmt(parent) => match hir[parent].kind {
-                StmtKind::Block(list) => list,
+                StmtKind::Block(list) => (list, true),
+                StmtKind::Switch { cases, .. } => {
+                    let start = hir[statement].start;
+                    let (mut low, mut high) = (0, cases.len as usize);
+                    while low < high {
+                        let middle = low + (high - low) / 2;
+                        match hir[cases.at(middle)].end <= start {
+                            true => low = middle + 1,
+                            false => high = middle,
+                        }
+                    }
+                    if low == cases.len as usize {
+                        return None;
+                    }
+                    (hir[cases.at(low)].body, true)
+                }
                 _ => return None,
             },
             Parent::FnBody(function) => match hir[function].body {
-                FnBody::Block(list) => list,
+                FnBody::Block(list) => (list, false),
                 FnBody::None | FnBody::Expr(_) => return None,
             },
-            Parent::Case(case) => hir[case].body,
             _ => return None,
         };
         let siblings = &hir.ids[list.range()];
@@ -226,17 +392,21 @@ impl FileLowering<'_, '_, '_, '_> {
         let is_found = siblings
             .get(index)
             .is_some_and(|&sibling| StmtId::from(sibling) == statement);
-        is_found.then(|| IdList::new(list.start, index as u32))
+        is_found.then(|| Siblings {
+            earlier: IdList::new(list.start, index as u32),
+            all: list,
+            is_block,
+        })
     }
 
-    fn find_written(&self, expression: ExprId, budget: &Budget) -> ExprId {
+    fn find_written(&self, expression: ExprId, budget: &Budget) -> Printed {
         let inner = self.skip_unprinted_syntax(expression);
         match self.hir[inner].kind {
             ExprKind::Ident(_) => match self.find_printed(inner, budget) {
                 Some(printed) => printed.written,
-                None => inner,
+                None => Printed::Initializer(inner),
             },
-            _ => inner,
+            _ => Printed::Initializer(inner),
         }
     }
 
@@ -260,7 +430,9 @@ impl FileLowering<'_, '_, '_, '_> {
         if !budget.take_step() {
             return false;
         }
-        let written = self.find_written(expression, budget);
+        let Printed::Initializer(written) = self.find_written(expression, budget) else {
+            return true;
+        };
         match hir[written].kind {
             ExprKind::Missing => true,
             ExprKind::Array(elements) => {
@@ -303,6 +475,7 @@ impl FileLowering<'_, '_, '_, '_> {
             return self.continue_behind(name, replacement);
         };
         if symbol == replacement.symbol {
+            replacement.found.set(Some(name));
             return Substitution::Success;
         }
         let listed = replacement.printed.iter().find(|entry| entry.0 == symbol);
@@ -314,8 +487,16 @@ impl FileLowering<'_, '_, '_, '_> {
             None => None,
         };
         match initializer {
-            Some(initializer) => self.substitute(initializer, replacement, true),
-            None => self.continue_behind(name, replacement),
+            Some(Printed::Initializer(initializer)) => {
+                self.substitute(initializer, replacement, true)
+            }
+            Some(Printed::Function(_)) if replacement.can_be_removed => Substitution::Continue,
+            Some(Printed::Function(_)) => Substitution::Failure,
+            // It is still a name when the transpiler looks for the variable.
+            None if replacement.can_be_removed || self.is_literal_operand(name) => {
+                Substitution::Continue
+            }
+            None => Substitution::Failure,
         }
     }
 
@@ -395,6 +576,10 @@ impl FileLowering<'_, '_, '_, '_> {
             }),
             ExprKind::Array(elements) => each(elements),
             ExprKind::Template { exprs } => each(exprs),
+            ExprKind::TaggedTemplate(site) => {
+                let site = hir[site];
+                then(one(site.callee), true, &|| each(site.args))
+            }
             ExprKind::Object(properties) => {
                 let mut found = Substitution::Continue;
                 for property in properties.iter() {

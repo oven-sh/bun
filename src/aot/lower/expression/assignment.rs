@@ -6,7 +6,7 @@ use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, IdList, MemberKey, PropI
 use super::ResultUsage;
 use super::logical::LogicalOperator;
 use crate::ir::ValueId;
-use crate::ir::generated::FunctionFlags;
+use crate::ir::generated::{ECMAMode, FunctionFlags};
 use crate::lower::member::{KeyConversion, PropertyName, Reference};
 use crate::lower::module::file_scope;
 use crate::lower::scope::BindingRef;
@@ -150,10 +150,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             && !(is_parameter && flags.contains(FunctionFlags::IS_GENERATOR))
     }
 
+    // JSC records the store to a variable that lives in a scope object at the `=`, which the source map takes back to the name: behind the value, and in strict code ahead of it too.
+    pub(in crate::lower) fn record_store_ahead_of_value(&mut self, binding: Binding, name: u32) {
+        if !self.is_kept_in_register(binding) && self.mode() == ECMAMode::Strict {
+            self.builder.record_position(name);
+        }
+    }
+
+    pub(in crate::lower) fn record_store_behind_value(&mut self, binding: Binding, name: u32) {
+        if !self.is_kept_in_register(binding) {
+            self.builder.record_position(name);
+        }
+    }
+
     fn set_position_of_updated_read(&mut self, target: ExprId) {
         let has_no_record = match self.file.classify_assignment_target(target) {
             AssignmentTarget::Identifier { identifier, .. } => {
-                self.is_kept_in_register(self.file.bound.binding(identifier))
+                let is_in_register = self.is_kept_in_register(self.file.bound.binding(identifier));
+                if !is_in_register {
+                    self.builder.record_position(self.file.hir[identifier].pos);
+                }
+                is_in_register
             }
             _ => match self.file.hir.member_key(self.file.skip_type_syntax(target)) {
                 Some((_, MemberKey::Computed(key))) => !self.file.is_literal_operand(key),
@@ -170,6 +187,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             AssignmentTarget::Identifier { identifier, .. }
                 if !self.is_kept_in_register(self.file.bound.binding(identifier)) =>
             {
+                self.builder.record_position(self.file.hir[identifier].pos);
                 self.set_position(self.file.hir[expression].pos);
             }
             _ => self.set_position_to_last_recorded(),
@@ -203,7 +221,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let binding = self.file.bound.binding(identifier);
                 let position = self.file.hir[identifier].pos;
                 let key = self.file.function_name_key(binding, name, position);
-                self.lower_named_evaluation(value, PropertyName::Constant(key))
+                self.record_store_ahead_of_value(binding, position);
+                let assigned = self.lower_named_evaluation(value, PropertyName::Constant(key));
+                self.record_store_behind_value(binding, position);
+                assigned
             }
             _ => self.lower_expression(value),
         }

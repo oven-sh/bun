@@ -4,8 +4,15 @@ use crate::fold::{Constant, Define};
 use crate::hir_from_data::DataValue;
 use crate::session::Session;
 
-const PLAIN: bool = false;
-const OPTIONAL: bool = true;
+const PLAIN: LinkForm = LinkForm::DOT;
+const OPTIONAL: LinkForm = LinkForm {
+    is_in_optional_chain: true,
+    ..LinkForm::DOT
+};
+const INDEX: LinkForm = LinkForm {
+    is_index: true,
+    ..LinkForm::DOT
+};
 
 fn number(value: f64) -> DefineValue<'static> {
     DefineValue::Constant(Constant::Number(value))
@@ -78,14 +85,12 @@ impl<'s> Workspace<'s> {
         &self,
         inputs: &FoldInputs<'s>,
         root: DefineRoot,
-        links: &[(&str, bool)],
+        links: &[(&str, LinkForm)],
     ) -> Option<PathState> {
         let root = inputs.root(root)?;
-        links
-            .iter()
-            .try_fold(root, |state, &(name, is_in_optional_chain)| {
-                inputs.child(state, self.atom(name), is_in_optional_chain)
-            })
+        links.iter().try_fold(root, |state, &(name, form)| {
+            inputs.child(state, self.atom(name), form)
+        })
     }
 }
 
@@ -96,8 +101,8 @@ fn nested_defines_have_separate_values() {
     let workspace = Workspace::new(&session);
     let inputs = workspace.sample_inputs();
     let a = workspace.global("a");
-    let follow = |links: &[(&str, bool)]| workspace.follow(&inputs, a, links);
-    let value_at = |links: &[(&str, bool)]| inputs.value_of(follow(links).unwrap());
+    let follow = |links: &[(&str, LinkForm)]| workspace.follow(&inputs, a, links);
+    let value_at = |links: &[(&str, LinkForm)]| inputs.value_of(follow(links).unwrap());
     assert_eq!(value_at(&[]), None);
     assert_eq!(value_at(&[("b", PLAIN)]), Some(number(1.0)));
     assert_eq!(value_at(&[("b", PLAIN), ("c", PLAIN)]), Some(number(2.0)));
@@ -123,12 +128,46 @@ fn import_meta_root_has_members() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn index_link_hides_value_where_path_ends_with_it() {
+    let session = Session::new();
+    let workspace = Workspace::new(&session);
+    let inputs = workspace.sample_inputs();
+    let a = workspace.global("a");
+    let follow = |links: &[(&str, LinkForm)]| workspace.follow(&inputs, a, links);
+    let value_at = |links: &[(&str, LinkForm)]| inputs.value_of(follow(links).unwrap());
+    assert_eq!(value_at(&[("b", INDEX)]), None);
+    assert_eq!(value_at(&[("b", PLAIN), ("c", INDEX)]), None);
+    assert_eq!(value_at(&[("b", INDEX), ("c", PLAIN)]), Some(number(2.0)));
+
+    let minifying = FoldInputs {
+        minifies_syntax: true,
+        ..inputs
+    };
+    let b = workspace.follow(&minifying, a, &[("b", INDEX)]).unwrap();
+    assert_eq!(minifying.value_of(b), Some(number(1.0)));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn index_link_ends_dropped_path() {
+    let session = Session::new();
+    let workspace = Workspace::new(&session);
+    let inputs = workspace.sample_inputs();
+    let console = workspace.global("console");
+    let follow = |links: &[(&str, LinkForm)]| workspace.follow(&inputs, console, links);
+    assert_eq!(follow(&[("log", INDEX)]), None);
+    assert_eq!(follow(&[("log", PLAIN), ("call", INDEX)]), None);
+    assert!(follow(&[("log", PLAIN)]).unwrap().is_dropped);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn optional_link_hides_value() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
     let inputs = workspace.sample_inputs();
     let a = workspace.global("a");
-    let paths: [&[(&str, bool)]; 4] = [
+    let paths: [&[(&str, LinkForm)]; 4] = [
         &[("b", OPTIONAL)],
         &[("b", OPTIONAL), ("c", PLAIN)],
         &[("b", PLAIN), ("c", OPTIONAL)],
@@ -152,7 +191,7 @@ fn dropped_path_covers_members() {
     let paths: [&[&str]; 3] = [&[], &["log"], &["a", "b"]];
     for is_in_optional_chain in [PLAIN, OPTIONAL] {
         for members in paths {
-            let links: Vec<(&str, bool)> = members
+            let links: Vec<(&str, LinkForm)> = members
                 .iter()
                 .map(|&member| (member, is_in_optional_chain))
                 .collect();
@@ -170,7 +209,7 @@ fn dropped_member_path_excludes_siblings() {
     let workspace = Workspace::new(&session);
     let console = workspace.global("console");
     let inputs = workspace.inputs(&[], &[workspace.path(console, &["debug"])]);
-    let follow = |links: &[(&str, bool)]| workspace.follow(&inputs, console, links);
+    let follow = |links: &[(&str, LinkForm)]| workspace.follow(&inputs, console, links);
     assert!(!follow(&[]).unwrap().is_dropped);
     assert_eq!(follow(&[("log", PLAIN)]), None);
     assert!(follow(&[("debug", PLAIN)]).unwrap().is_dropped);
@@ -189,7 +228,7 @@ fn optional_link_breaks_dropped_path() {
     let tools = workspace.global("tools");
     let inputs = workspace.inputs(&[], &[workspace.path(tools, &["log", "trace"])]);
     let is_dropped =
-        |links: &[(&str, bool)]| workspace.follow(&inputs, tools, links).unwrap().is_dropped;
+        |links: &[(&str, LinkForm)]| workspace.follow(&inputs, tools, links).unwrap().is_dropped;
     assert!(is_dropped(&[("log", PLAIN), ("trace", PLAIN)]));
     assert!(!is_dropped(&[("log", OPTIONAL), ("trace", PLAIN)]));
     assert!(!is_dropped(&[("log", PLAIN), ("trace", OPTIONAL)]));
@@ -338,6 +377,7 @@ fn state_below_dropped_path_has_no_node() {
     let expected = PathState {
         node: None,
         has_optional_link: false,
+        ends_with_index: false,
         is_dropped: true,
         has_dynamic_root: false,
     };

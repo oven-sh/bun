@@ -480,6 +480,74 @@ fn a_request_to_a_file_that_is_left_out_goes() {
 }
 
 #[test]
+fn a_file_that_is_left_out_on_a_cycle_with_a_file_that_runs_keeps_its_requests() {
+    let files = [
+        ("main.mjs", "import { a, b } from './all.mjs'; a(b);"),
+        (
+            "all.mjs",
+            "export * from './a.mjs'; export * from './b.mjs';",
+        ),
+        (
+            "a.mjs",
+            "import { b } from './all.mjs'; export const a = () => b;",
+        ),
+        (
+            "b.mjs",
+            "import { a } from './all.mjs'; export const b = a();",
+        ),
+    ];
+    with_graph(&files, |_, input| {
+        let mut graph = crate::modules::bind_modules(input).graph;
+        let file = |name: &str| file_named(input, name);
+        let all = file("all.mjs");
+        graph.leave_out_files(&[all], &run_serially);
+        assert!(graph.is_left_out(ModuleRef::File(all)));
+        assert!(graph.is_placeholder(all));
+        assert!(graph.record_files().contains(&all));
+        assert!(graph.exports(all).is_empty());
+        let targets_of = |name: &str| -> Vec<ModuleRef> {
+            let requests = graph.requests_of(ModuleRef::File(file(name))).iter();
+            requests.map(|request| request.target).collect()
+        };
+        for importer in ["main.mjs", "a.mjs", "b.mjs"] {
+            assert_eq!(targets_of(importer), [ModuleRef::File(all)], "{importer}");
+        }
+        let behind = ["a.mjs", "b.mjs"].map(|name| ModuleRef::File(file(name)));
+        assert_eq!(targets_of("all.mjs"), behind);
+    });
+}
+
+#[test]
+fn a_file_that_is_left_out_off_every_cycle_hands_its_requests_to_its_importers() {
+    let files = [
+        ("main.mjs", "import { a, b } from './all.mjs'; a(b);"),
+        (
+            "all.mjs",
+            "export * from './a.mjs'; export * from './b.mjs';",
+        ),
+        (
+            "a.mjs",
+            "import { b } from './b.mjs'; export const a = () => b;",
+        ),
+        (
+            "b.mjs",
+            "import { a } from './a.mjs'; export const b = () => a;",
+        ),
+    ];
+    with_graph(&files, |_, input| {
+        let mut graph = crate::modules::bind_modules(input).graph;
+        let (main, all) = (file_named(input, "main.mjs"), file_named(input, "all.mjs"));
+        graph.leave_out_files(&[all], &run_serially);
+        assert!(!graph.is_placeholder(all));
+        assert!(!graph.record_files().contains(&all));
+        let requests = graph.requests_of(ModuleRef::File(main)).iter();
+        let targets: Vec<ModuleRef> = requests.map(|request| request.target).collect();
+        let behind = ["a.mjs", "b.mjs"].map(|name| ModuleRef::File(file_named(input, name)));
+        assert_eq!(targets, behind);
+    });
+}
+
+#[test]
 fn a_module_that_the_graph_has_never_heard_of_has_neutral_answers() {
     with_plan(&[("main.mjs", "export {};")], |plan| {
         let file = plan.file("main.mjs");

@@ -123,8 +123,13 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn finish_module(&mut self, roots: ModuleRoots) -> ModuleFragment {
-        let text: &[u8] = &self.hir.text;
-        let function_text = match self.inputs.options.embeds_function_text {
+        // Nothing of a placeholder runs, so nobody asks for a line or for the text of a function of it.
+        let is_placeholder = self.inputs.modules.is_placeholder(self.file);
+        let text: &[u8] = match is_placeholder {
+            true => &[],
+            false => &self.hir.text,
+        };
+        let function_text = match self.inputs.options.embeds_function_text && !is_placeholder {
             true => self.type_ranges.remove_from(text),
             false => Vec::new(),
         };

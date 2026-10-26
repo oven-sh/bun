@@ -9,7 +9,7 @@ use super::{
 use crate::ir::generated::{ClassSide, MethodKind, RuntimeErrorKind};
 use crate::ir::{ClassSlot, Edge, LayoutId, TypeTable, ValueId};
 use crate::lower::member::{GivenName, PropertyName};
-use crate::lower::{FunctionLowering, layouts};
+use crate::lower::{FileLowering, FunctionLowering, layouts};
 
 #[derive(Default)]
 pub(super) struct MemberValues {
@@ -147,6 +147,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let closure = self.lower_method(node.func, given, head.value);
         let side = class_side(node);
         self.emit_method_definition(head, side, kind, name, closure, next_method_index);
+        if kind == MethodKind::Method
+            && let Some(position) = self.file.find_first_element_position(head.class)
+        {
+            self.builder.record_position(position);
+        }
     }
 
     fn define_accessor_pair(
@@ -200,6 +205,9 @@ fn define_member(
         }
         MemberKind::Property => {
             lowering.set_position(node.name_pos);
+            if is_private && !node.flags.contains(Flags::STATIC) {
+                lowering.builder.record_position(node.name_pos);
+            }
             if node.flags.contains(Flags::STATIC) {
                 lowering.check_static_field_key(name);
             }
@@ -229,6 +237,33 @@ fn define_member(
         | MemberKind::CallSignature
         | MemberKind::ConstructSignature
         | MemberKind::IndexSignature => {}
+    }
+}
+
+impl FileLowering<'_, '_, '_, '_> {
+    // JSC records the definition of every method where the first element of the class starts, the constructor aside. The source map knows the key of an element
+    // and none of `static`, `async`, `*`, `get`, `set` and `[`, which it takes back to the token in front of them.
+    fn find_first_element_position(&self, class: ClassId) -> Option<u32> {
+        let hir = self.hir;
+        let is_constructor =
+            |member: MemberId| hir.runtime_member_kind(member) == MemberKind::Constructor;
+        let mut members = runtime_members(hir, class).peekable();
+        let constructor = members.next_if(|&member| is_constructor(member));
+        let first = hir[members.find(|&member| !is_constructor(member))?];
+        let starts_with_key = first.start == first.name_pos
+            && hir.text[first.start as usize] != b'['
+            && first.kind != MemberKind::StaticBlock;
+        if starts_with_key || self.runs_as_written() {
+            return Some(first.start);
+        }
+        if let Some(constructor) = constructor {
+            return self.last_mapped_function_position(hir[constructor].func);
+        }
+        let before = &hir.text[..first.start as usize];
+        let brace = before
+            .iter()
+            .rposition(|byte| !byte.is_ascii_whitespace())?;
+        (before[brace] == b'{').then_some(brace as u32)
     }
 }
 

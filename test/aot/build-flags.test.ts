@@ -13,6 +13,36 @@ const packages = {
   "node_modules/mine/r.js": `export const jsx = (t, p) => "mine:" + t + JSON.stringify(p); export const jsxs = jsx; export const jsxDEV = jsx; export const Fragment = "f";`,
 };
 
+const pathsThatEndInBrackets = {
+  flags: [
+    '--define=config.flat="built"',
+    '--define=config.level.deep="built"',
+    "--define=config.list=[1]",
+    "--define=config.renamed=config.other",
+    '--define=process.env.OWN="built"',
+    '--define=import.meta.env.OWN="built"',
+    "--drop=tools.trace",
+  ],
+  files: {
+    "main.ts": `declare const config: { flat: string; level: { deep: string }; other: string; list?: number[]; renamed?: string };
+declare const tools: { trace: { (text: string): void; deep(text: string): void } };
+const called: string[] = [];
+const call = (text: string) => void called.push(text);
+(globalThis as any).config = { flat: "run", level: { deep: "run" }, other: "other" };
+(globalThis as any).tools = { trace: Object.assign(call, { deep: call }) };
+console.log(config.flat, config["flat"], config[\`flat\`], (config)[("flat")]);
+console.log(config.level.deep, config["level"].deep, config.level["deep"], config["level"]["deep"]);
+console.log(process.env.OWN, process["env"].OWN, process.env["OWN"], import.meta.env.OWN, import.meta.env["OWN"]);
+console.log(config.list, config["list"], config.renamed, config["renamed"]);
+tools.trace("a");
+tools["trace"]("b");
+tools.trace.deep("c");
+tools["trace"].deep("d");
+tools.trace["deep"]("e");
+console.log("called:", called.join());`,
+  },
+};
+
 const honored: Record<string, { flags: string[]; files: Record<string, string>; prints: string }> = {
   "--define": {
     flags: [
@@ -25,6 +55,17 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
       "main.ts": `declare const LEVEL: number; declare const NAME: string; declare const FLAGS: { a: boolean }; console.log(LEVEL + 1, NAME, FLAGS.a, typeof LEVEL, process.env.NODE_ENV);`,
     },
     prints: "42 named true number staging\n",
+  },
+  "--define and --drop of a path that the program ends in brackets": {
+    ...pathsThatEndInBrackets,
+    prints:
+      "built run run run\nbuilt built run run\nbuilt built undefined built undefined\n[ 1 ] undefined other undefined\ncalled: b,d,e\n",
+  },
+  "--define and --drop of a path that the program ends in brackets, with --minify-syntax": {
+    ...pathsThatEndInBrackets,
+    flags: [...pathsThatEndInBrackets.flags, "--minify-syntax"],
+    prints:
+      "built built built built\nbuilt built built built\nbuilt built built built built\n[ 1 ] [ 1 ] other other\ncalled: \n",
   },
   "--feature": {
     flags: ["--feature=ON"],

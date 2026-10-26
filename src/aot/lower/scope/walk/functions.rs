@@ -90,8 +90,8 @@ impl Walker<'_, '_> {
         if let Ok(index) = found {
             let entry = annex_b_functions[index];
             self.record_store(context, BindingRef::Symbol(entry.var_symbol));
-            self.record_symbol_use(context, entry.block_symbol);
-            self.record_symbol_use(context, entry.var_symbol);
+            self.record_unwritten_symbol_use(context, entry.block_symbol);
+            self.record_unwritten_symbol_use(context, entry.var_symbol);
             self.push_initialization(entry.var_symbol, context);
         }
         self.push_function(function, id);

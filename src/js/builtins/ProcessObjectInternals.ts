@@ -342,7 +342,7 @@ type TickCallback = import("../internal/process/tick_ring").TickCallback;
 type TickFrame = import("../internal/process/tick_ring").Frame;
 
 // A stack trace shows where in this function processTicksAndRejections and nextTick begin: native:7:39 and native:40:20.
-// test/js/node/process/process-nexttick-is-native-code.test.ts holds both.
+// test/js/node/process/process-nexttick-is-native-code.test.ts holds their frames, without the line and column.
 export function initializeNextTickQueue(process: NodeJS.Process, marker: NextTickQueue, drain: DrainMicrotasks) {
   const { ring, takeTick, setUp, asyncContext, install } = require("internal/process/next_tick_queue");
   $putInternalField(marker, 0, 0);
@@ -465,8 +465,9 @@ export function windowsEnv(
   editWindowsEnvVar: EditWindowsEnvVarCb,
   coerceForWrite: CoerceEnvVarForWrite,
   resetForDelete: ResetEnvVarForDelete,
+  customInspect: symbol,
 ) {
-  (internalEnv as any)[Symbol.for("nodejs.util.inspect.custom")] = () => {
+  (internalEnv as any)[customInspect] = () => {
     let o = {};
     for (let k of envMapList) {
       o[k] = internalEnv[k.toUpperCase()];

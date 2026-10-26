@@ -57,10 +57,11 @@ console.log(FLAG);
 if (FLAG) require("./missing");`,
     },
   },
-  "define: brackets are members": {
+  // A path that ends in brackets: build-flags.test.ts. There `bun build` follows --minify-syntax, which `bun run` always has.
+  "define: brackets in front of the last step are members": {
     flags: ['--define=process.env.NODE_ENV="production"'],
     files: {
-      "main.js": `console.log(process["env"]["NODE_ENV"], process.env["NODE_ENV"], process.env[\`NODE_ENV\`]);
+      "main.js": `console.log(process["env"].NODE_ENV, process[\`env\`].NODE_ENV, (process["env"]).NODE_ENV);
 if (process["env"].NODE_ENV !== "production") require("./missing");`,
     },
   },

@@ -30,6 +30,7 @@ pub(crate) fn fold_options<'s>(
         dropped_calls: arena.alloc_slice_copy(&dropped_calls),
         features: arena.alloc_slice_copy(&features),
         preserves_unused_imports: options.trim_unused_imports == Some(false),
+        minifies_syntax: options.minify_syntax && !options.is_library,
         ..FoldOptions::default()
     }
 }

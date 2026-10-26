@@ -263,6 +263,11 @@ impl<'x, 's> Walker<'x, 's> {
     pub(super) fn record_symbol_use(&mut self, context: Context, symbol: SymbolId) {
         let use_count = &mut self.walk.use_counts[symbol.idx()];
         *use_count = (*use_count + 1).min(2);
+        self.record_unwritten_symbol_use(context, symbol);
+    }
+
+    // A use for which the source text has no name.
+    pub(super) fn record_unwritten_symbol_use(&mut self, context: Context, symbol: SymbolId) {
         let last_user = &mut self.last_users[symbol.idx()];
         if *last_user == Some(context.function) {
             return;

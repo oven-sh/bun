@@ -85,6 +85,7 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         rows,
         record_files: Vec::new(),
         left_out_files: Vec::new(),
+        placeholder_files: Vec::new(),
         left_out_inner_modules: Vec::new(),
         other_modules: Vec::new(),
         external_kinds: Vec::new(),

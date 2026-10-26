@@ -478,6 +478,7 @@ mod tests {
             reports_type_mismatches: false,
             removable: Default::default(),
             minifies_identifiers: false,
+            obfuscates: false,
         };
         let lowered = lower_program(files, options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);

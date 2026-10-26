@@ -132,6 +132,7 @@ fn lower_library_file_for(
         reports_type_mismatches: false,
         removable: Default::default(),
         minifies_identifiers: false,
+        obfuscates: false,
     };
     let mut lowered = lower_program(&files, options);
     assert_eq!(lowered.len(), 2, "the entry point and the library file");

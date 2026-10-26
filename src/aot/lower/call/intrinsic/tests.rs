@@ -51,6 +51,7 @@ fn lower_files(files: &[(&str, &str)]) -> LoweredFiles {
         reports_type_mismatches: false,
         removable: Default::default(),
         minifies_identifiers: false,
+        obfuscates: false,
     };
     LoweredFiles(lower_program(files, options))
 }

@@ -7,6 +7,7 @@ use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
 use crate::lower::member::PropertyName;
+use crate::lower::statement::Printed;
 use crate::lower::{FileLowering, FunctionLowering};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -47,10 +48,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     // Where Bun's transpiler prints an initializer in place of the name, JSC records what the initializer records, and nothing for the name.
     fn record_printed_initializer(&mut self, identifier: ExprId) -> bool {
-        let Some(initializer) = self.file.find_printed_initializer(identifier) else {
+        let Some(printed) = self.file.find_printed_in_place(identifier) else {
             return false;
         };
-        if let Some(&recorded) = self.records_of_initializers.get(&initializer) {
+        if let Printed::Initializer(initializer) = printed
+            && let Some(&recorded) = self.records_of_initializers.get(&initializer)
+        {
             self.builder.record_position(recorded);
         }
         true

@@ -236,6 +236,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn lower_by_decision(&mut self, expression: ExprId, evaluation: Evaluation<'_>) -> ValueId {
+        self.record_read_of_builtin_path(expression);
         match self.file.decisions().decision(expression) {
             Decision::Constant(constant) => return self.emit_constant(constant),
             Decision::Data(_) | Decision::DeferredData => {

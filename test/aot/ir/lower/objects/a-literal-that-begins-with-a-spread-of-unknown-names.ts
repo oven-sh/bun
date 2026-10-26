@@ -31,6 +31,16 @@
 // KNOWN: CopyDataProperties [[head]], {{*}} @
 // KNOWN: Return
 
+// Spreads alone, the first of a source whose names its type knows: the literal has a layout of its own, whatever the later sources are.
+// RUN(BOTH): lower
+// BOTH-LABEL: function {{*}}name="ofKnownNamesAndAny"
+// BOTH-NOT: CopyObject
+// BOTH: [[head]] = NewObject
+// BOTH: CopyDataProperties [[head]], {{*}} @
+// BOTH: CopyDataProperties [[head]], {{*}} @
+// BOTH: FinishObject [[head]]
+// BOTH: Return
+
 export function ofTypeVariable<T extends object>(source: T, name: string): T & { name: string } {
   return { ...source, name };
 }
@@ -45,4 +55,8 @@ export function ofAny(source: any, other: { a: number }) {
 
 export function ofKnownNames(source: { a: number }, name: string) {
   return { ...source, name };
+}
+
+export function ofKnownNamesAndAny(source: { a: number }, other: any) {
+  return { ...source, ...other };
 }

@@ -92,6 +92,14 @@ impl FileLowering<'_, '_, '_, '_> {
         if names_of_source_are_unknown {
             return true;
         }
+        // `{ ...defaults, ...options }`: an object of its own kind, which holds the names of every source.
+        if properties.len() > 1
+            && properties
+                .iter()
+                .all(|property| hir[property].kind == PropKind::Spread)
+        {
+            return false;
+        }
         let has_object_type = self
             .queries
             .expression_type(literal)
@@ -343,6 +351,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             PropKind::Spread => {
                 let position = literal_start.unwrap_or(prop.pos);
                 self.lower_spread(object, dictionary, prop.value, position);
+                let recorded =
+                    literal_start.unwrap_or_else(|| self.file.first_position(prop.value));
+                self.builder.record_position(recorded);
             }
             PropKind::Init if is_proto_setter(&prop) => {
                 let prototype = self.lower_expression(prop.value);

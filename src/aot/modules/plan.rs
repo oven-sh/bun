@@ -366,6 +366,7 @@ impl ModuleGraph {
         let erased_statements = &self.plan.erased_statements;
         erased_statements.binary_search(&(file, statement)).is_ok()
             || self.commonjs().erased(file, statement)
+            || self.is_placeholder(file)
     }
 
     /// A late site names the module, or a module that a late site may run asks for it.
@@ -585,7 +586,7 @@ impl ModuleGraph {
         let is_followed = request.kind == ModuleRequestKind::Import
             && request.phase == ImportPhase::Evaluation
             && self.is_code_of_program(request.target)
-            && !self.is_left_out(request.target);
+            && (!self.is_left_out(request.target) || self.is_placeholder(target));
         is_followed.then_some(target)
     }
 

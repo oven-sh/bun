@@ -1,6 +1,6 @@
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
-use super::inputs::{DefineRoot, DefineValue, PathState, RuntimeValueKind};
+use super::inputs::{DefineRoot, DefineValue, LinkForm, PathState, RuntimeValueKind};
 use super::run_order::{ReadOrder, RunOrder};
 use super::{Constant, Decision, FoldedValue};
 use crate::atom::{Atom, known};
@@ -67,8 +67,15 @@ impl<'s> Folder<'_, 's> {
             return Folded::UNKNOWN;
         };
         let is_in_chain = chain != Chain::No;
+        let form = LinkForm {
+            is_in_optional_chain: is_in_chain,
+            is_index: matches!(hir[e].kind, ExprKind::Index { .. }),
+        };
+        // `bun build` follows `["name"]` where the name is ASCII.
         let object_state = self.path_states.get(&obj);
-        let state = object_state.and_then(|&state| self.inputs.child(state, name, is_in_chain));
+        let object_state =
+            object_state.filter(|_| !form.is_index || self.atoms.bytes(name).is_ascii());
+        let state = object_state.and_then(|&state| self.inputs.child(state, name, form));
         if let Some(folded) = self.try_decide_define(e, state) {
             return folded;
         }
@@ -246,7 +253,7 @@ impl<'s> Folder<'_, 's> {
 
     pub(super) fn has_member_in_every_run(&self, object: ExprId, name: Atom) -> bool {
         let member = self.path_states.get(&object);
-        let member = member.and_then(|&state| self.inputs.child(state, name, false));
+        let member = member.and_then(|&state| self.inputs.child(state, name, LinkForm::DOT));
         matches!(
             member.and_then(|member| self.inputs.value_of(member)),
             Some(DefineValue::RuntimeValue(_) | DefineValue::RuntimeConstant(_))

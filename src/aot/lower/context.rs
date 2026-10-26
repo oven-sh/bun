@@ -74,6 +74,7 @@ pub struct LoweringOptions {
     pub reports_type_mismatches: bool,
     pub removable: RemovableOptions,
     pub minifies_identifiers: bool,
+    pub obfuscates: bool,
 }
 
 pub struct LoweringInputs<'a> {

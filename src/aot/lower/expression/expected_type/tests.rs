@@ -11,6 +11,7 @@ fn expected_types(file_name: &str, source: &str, function_name: &str) -> Vec<Typ
         reports_type_mismatches: false,
         removable: Default::default(),
         minifies_identifiers: false,
+        obfuscates: false,
     };
     let lowered = lower_program(&[(file_name, source)], options);
     let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);

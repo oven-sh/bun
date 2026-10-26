@@ -1,6 +1,11 @@
 // Programs whose executable once answered otherwise than plain Bun on one platform alone. A run takes a part of each folder, and which part goes by the commit,
 // so such a program may stay unseen on that platform for many runs. Each is listed here, and every run takes all of them.
+import { expect } from "bun:test";
+import { bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
+import { run } from "./harness/run";
 import { programsBuiltWith } from "./run-programs";
+import { test } from "./supported";
 
 // Windows: an observer had heard nothing yet of the marks made five milliseconds before. The program now waits until it has.
 programsBuiltWith("library-modules", "in-every-run", [], {}, 1, 1, ["contexts-hooks-and-measurements"]);
@@ -31,3 +36,36 @@ programsBuiltWith("static-modules", "in-every-run", [], {}, 1, 1, [
 ]);
 // Windows on x64: a catch clause gets what code of the program throws inside an operation of the run time.
 programsBuiltWith("errors", "in-every-run", [], {}, 1, 1, ["what-is-thrown-inside-an-operation-is-what-is-caught"]);
+// Windows: a function of the library makes the object of the environment there, and it read `Symbol.for`. A built-in object lists the member that was read first in front.
+test("Symbol lists its keys in one order whether or not a variable of the environment was read before", async () => {
+  using dir = tempDir("aot-keys-of-symbol-behind-the-environment", {
+    "program.js": `const variable = process.argv[2] ? process.env.A_VARIABLE_THAT_NOBODY_SETS : undefined;
+if (Symbol.keyFor) Object.entries(Symbol);
+console.log(variable, Reflect.ownKeys(Symbol).slice(-2).join());
+`,
+  });
+  const folder = String(dir);
+  const executable = join(folder, isWindows ? "program.exe" : "program");
+  const build = await run([bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", executable], folder);
+  expect({
+    errors: build.stderr.split("\n").filter(line => line.startsWith("error")),
+    exitCode: build.exitCode,
+  }).toEqual({
+    errors: [],
+    exitCode: 0,
+  });
+  for (const [way, command] of [
+    ["plain", [bunExe(), "run", "program.js"]],
+    ["compiled", [executable]],
+  ] as const) {
+    for (const readsTheEnvironment of [false, true]) {
+      const { stdout, exitCode } = await run([...command, ...(readsTheEnvironment ? ["environment"] : [])], folder);
+      expect({ way, readsTheEnvironment, stdout, exitCode }).toEqual({
+        way,
+        readsTheEnvironment,
+        stdout: "undefined keyFor,for\n",
+        exitCode: 0,
+      });
+    }
+  }
+}, 120_000);

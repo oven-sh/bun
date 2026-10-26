@@ -40,7 +40,8 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     note_commit: &(dyn Fn(FileId, &T) + Sync),
 ) -> CheckedProgram<T> {
     let files = loaded.files();
-    let requested = |file: FileId| match roles.is_checked(file) {
+    let is_left_out = |file: FileId| is_left_out(request, file);
+    let requested = |file: FileId| match roles.is_checked(file) || is_left_out(file) {
         true => Requested::Types,
         false => requested_diagnostics(loaded.origin(file), roles.role(file)),
     };
@@ -102,6 +103,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
     lowered.shared_sort_by_key(|entry| entry.0);
     let (mut diagnostics, mut incomplete) = (report.diagnostics, report.incomplete);
     diagnostics.retain(|diagnostic| !is_reported_with_roles(roles, diagnostic));
+    diagnostics.retain(|diagnostic| !diagnostic.file.is_some_and(is_left_out));
     incomplete.retain(|file| !roles.incomplete.contains(file));
     CheckedProgram {
         lowered,
@@ -110,6 +112,12 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         #[cfg(test)]
         rounds: report.rounds,
     }
+}
+
+// None of its statements is compiled, also where it is lowered for its place among the modules.
+fn is_left_out(request: &CompileRequest<'_, '_>, file: FileId) -> bool {
+    let left_out = request.left_out_bodies;
+    left_out.is_some_and(|left_out| left_out.contains_file(file))
 }
 
 fn is_reported_with_roles(roles: &RoleDecision, diagnostic: &Diagnostic) -> bool {
@@ -149,9 +157,7 @@ fn files_to_check(
             && !loaded.origin(file).can_lose_trust()
             && requested(file) != Requested::Types
             && is_checked_by_kind(files, file)
-            && !request
-                .left_out_bodies
-                .is_some_and(|left_out| left_out.contains_file(file))
+            && !is_left_out(request, file)
     };
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
     let mut to_check: Vec<FileId> = file_ids

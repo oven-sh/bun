@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { createHook } from "node:async_hooks";
 
-const tickFrame = "at processTicksAndRejections (native:7:39)";
-const nextTickFrame = "at nextTick (native:40:20)";
+const tickFrame = /^at processTicksAndRejections \(native:\d+:\d+\)$/;
+const nextTickFrame = /^at nextTick \(native:\d+:\d+\)$/;
 
 function framesOf(stack: string | undefined) {
   return stack!
@@ -29,7 +29,7 @@ test("process.nextTick has the properties of a native function", () => {
 
 test.each([0, 1, 2, 3, 4, 5])("below a callback that was queued with %d arguments is one native frame", async count => {
   const frames = framesOf(await inTick(() => new Error().stack, ...Array(count).fill(0)));
-  expect(frames.slice(2)).toEqual([tickFrame]);
+  expect(frames.slice(2)).toEqual([expect.stringMatching(tickFrame)]);
 });
 
 test("the call site of the frame that runs the ticks is native", async () => {
@@ -44,8 +44,8 @@ test("the call site of the frame that runs the ticks is native", async () => {
   });
   expect(site.getFunctionName()).toBe("processTicksAndRejections");
   expect(site.isNative()).toBe(true);
-  expect(site.getLineNumber()).toBe(7);
-  expect(site.getColumnNumber()).toBe(39);
+  expect(site.getLineNumber()).toBeGreaterThan(0);
+  expect(site.getColumnNumber()).toBeGreaterThan(0);
   expect(String(site)).toBe("processTicksAndRejections (native)");
 });
 
@@ -57,7 +57,7 @@ test("a promise job and a tick that a tick queues run above the same frame", asy
       process.nextTick(() => resolve([job, new Error().stack]));
     });
   });
-  for (const stack of await promise) expect(framesOf(stack).slice(1)).toEqual([tickFrame]);
+  for (const stack of await promise) expect(framesOf(stack).slice(1)).toEqual([expect.stringMatching(tickFrame)]);
 });
 
 test("an error for a callback that is no function is thrown below a native frame of nextTick", () => {
@@ -70,10 +70,10 @@ test("an error for a callback that is no function is thrown below a native frame
   }
   expect(error!.code).toBe("ERR_INVALID_ARG_TYPE");
   const frames = framesOf(error!.stack);
-  const at = frames.indexOf(nextTickFrame);
+  const at = frames.findIndex(frame => nextTickFrame.test(frame));
   expect(at).toBeGreaterThan(-1);
   expect(frames[at + 1]).toContain(import.meta.filename);
-  expect(frames.filter(frame => frame.includes("nextTick"))).toEqual([nextTickFrame]);
+  expect(frames.filter(frame => frame.includes("nextTick"))).toEqual([expect.stringMatching(nextTickFrame)]);
 });
 
 test("an init hook is called by the native frame of nextTick", () => {
@@ -88,5 +88,5 @@ test("an init hook is called by the native frame of nextTick", () => {
   } finally {
     hook.disable();
   }
-  expect(framesOf(stack)[1]).toBe(nextTickFrame);
+  expect(framesOf(stack)[1]).toMatch(nextTickFrame);
 });

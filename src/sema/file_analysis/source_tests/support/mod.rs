@@ -87,6 +87,7 @@ pub(crate) struct Fold<'a> {
     pub(crate) dropped_calls: &'a [Path<'a>],
     pub(crate) features: &'a [&'a str],
     pub(crate) preserves_unused_imports: bool,
+    pub(crate) minifies_syntax: bool,
     pub(crate) max_string_bytes: usize,
 }
 
@@ -96,6 +97,7 @@ impl Fold<'static> {
         dropped_calls: &[],
         features: &[],
         preserves_unused_imports: false,
+        minifies_syntax: false,
         max_string_bytes: MAX_FOLDED_STRING_BYTES,
     };
 }
@@ -377,6 +379,7 @@ impl<'s> Workspace<'s> {
             dropped_calls: self.map_slice(fold.dropped_calls, |&path| self.define_path(path)),
             features: self.intern_all(fold.features),
             preserves_unused_imports: fold.preserves_unused_imports,
+            minifies_syntax: fold.minifies_syntax,
             max_string_bytes: fold.max_string_bytes,
         };
         FoldInputs::new(options, self.arena)

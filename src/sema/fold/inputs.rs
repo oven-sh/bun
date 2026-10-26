@@ -42,6 +42,7 @@ pub struct FoldOptions<'s> {
     pub dropped_calls: &'s [DefinePath<'s>],
     pub features: &'s [Atom],
     pub preserves_unused_imports: bool,
+    pub minifies_syntax: bool,
     pub max_string_bytes: usize,
 }
 
@@ -59,6 +60,7 @@ pub struct FoldInputs<'s> {
     pub(super) root_filter: u64,
     pub(super) features: &'s [Atom],
     pub(super) preserves_unused_imports: bool,
+    pub(super) minifies_syntax: bool,
     pub(super) max_string_bytes: usize,
     pub(super) is_called_before_it_runs: bool,
 }
@@ -69,9 +71,23 @@ const _: fn() = || {
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) struct LinkForm {
+    pub(super) is_in_optional_chain: bool,
+    pub(super) is_index: bool,
+}
+
+impl LinkForm {
+    pub(super) const DOT: LinkForm = LinkForm {
+        is_in_optional_chain: false,
+        is_index: false,
+    };
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct PathState {
     pub(super) node: Option<u32>,
     pub(super) has_optional_link: bool,
+    pub(super) ends_with_index: bool,
     pub(super) is_dropped: bool,
     pub(super) has_dynamic_root: bool,
 }

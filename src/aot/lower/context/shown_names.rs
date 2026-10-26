@@ -10,9 +10,11 @@ use super::{FileLowering, LoweringOptions, SourceKind};
 use crate::ir::StringId;
 
 /// Under --minify-identifiers a binding that a bundle renames has a short name wherever its name is only shown: in `name` of a function, in a frame, in a message.
+/// An obfuscated executable shows no name of a function, and its source map takes those as they are written: only its messages have the short names.
 #[derive(Default)]
 pub(super) struct ShownNames {
     shortens_bindings: bool,
+    shortens_functions: bool,
     /// In order. A direct eval finds what they declare by what is written.
     scopes_around_evals: Vec<ScopeId>,
     interned: FxHashMap<SymbolId, StringId>,
@@ -29,7 +31,7 @@ impl ShownNames {
         bundled: &'static [BundledName],
     ) -> ShownNames {
         let is_with = |kind| matches!(kind, ScopeKind::With(_));
-        if !options.minifies_identifiers
+        if !(options.minifies_identifiers || options.obfuscates)
             || source != SourceKind::Program
             || bound.scopes.iter().any(|scope| is_with(scope.kind))
         {
@@ -47,6 +49,7 @@ impl ShownNames {
         scopes_around_evals.dedup();
         ShownNames {
             shortens_bindings: true,
+            shortens_functions: options.minifies_identifiers,
             scopes_around_evals,
             interned: FxHashMap::default(),
             bundled,
@@ -145,6 +148,9 @@ impl FileLowering<'_, '_, '_, '_> {
 
     /// No two bindings of the program give one name: a table with such names for keys holds.
     fn short_function_name(&mut self, binding: Binding) -> Option<StringId> {
+        if !self.shown_names.shortens_functions {
+            return None;
+        }
         let symbol = self.find_shortened_symbol(binding)?;
         if let Some(&name) = self.shown_names.interned.get(&symbol) {
             return Some(name);

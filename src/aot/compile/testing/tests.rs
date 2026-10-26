@@ -135,6 +135,7 @@ fn lowering_options(embeds_function_text: bool) -> LoweringOptions {
         reports_type_mismatches: false,
         removable: Default::default(),
         minifies_identifiers: false,
+        obfuscates: false,
     }
 }
 

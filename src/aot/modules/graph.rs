@@ -21,6 +21,7 @@ use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::SymbolId;
+use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{ExprId, FnId};
 use bun_sema::import_sites::{ImportSiteKind, JsxImport};
 use bun_sema::program::FileId;
@@ -43,6 +44,8 @@ pub struct ModuleGraph {
     pub(super) rows: Vec<FileRow>,
     pub(super) record_files: Vec<FileId>,
     pub(super) left_out_files: Vec<FileId>,
+    /// Those of `left_out_files` that keep a record without code.
+    pub(super) placeholder_files: Vec<FileId>,
     pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
     pub(super) other_modules: Vec<ModuleRef>,
     pub(super) external_kinds: Vec<((FileId, Atom), ExternalKind)>,
@@ -244,6 +247,7 @@ impl ModuleGraph {
             return self.finish_plan(in_parallel);
         }
         self.plan.is_finished = false;
+        self.placeholder_files = self.find_placeholder_files(files);
         self.pass_requests_through(files);
         self.left_out_files = files.to_vec();
         let synthetic_exports = &self.synthetic_exports;
@@ -260,8 +264,17 @@ impl ModuleGraph {
                 .retain(|export| !leads_to_left_out_file(export.binding));
             row.required_names.retain(|name| !is_left_out(name.module));
         }
-        self.record_files
-            .retain(|file| files.binary_search(file).is_err());
+        for &file in &self.placeholder_files {
+            let index = self.row_by_file[file.idx()].expect("a placeholder has a row");
+            let row = &mut self.rows[index as usize];
+            row.exports.clear();
+            row.required_names.clear();
+            row.has_top_level_await = false;
+        }
+        let placeholder_files = &self.placeholder_files;
+        self.record_files.retain(|file| {
+            files.binary_search(file).is_err() || placeholder_files.binary_search(file).is_ok()
+        });
         // Each importer has a module of its own for what the build does not compile.
         self.other_modules.retain(|module| match *module {
             ModuleRef::External { importer, .. } => files.binary_search(&importer).is_err(),
@@ -308,6 +321,44 @@ impl ModuleGraph {
         self.left_out_inner_modules = left_out;
     }
 
+    // The files that are left out and lie on a cycle of imports with a file that runs. A file of the cycle that asks for one while
+    // it is being evaluated asks for nothing, so what it imports cannot stand in the lists of its importers.
+    fn find_placeholder_files(&self, left_out_files: &[FileId]) -> Vec<FileId> {
+        let row_of = |file: FileId| self.row_by_file.get(file.idx()).copied().flatten();
+        let mut imported: Vec<Vec<u32>> = vec![Vec::new(); self.rows.len()];
+        let of_files = self.rows.iter().map(|row| (row.file, &row.requests));
+        let inner_modules = self.plan.inner_modules().iter().map(|&(file, _)| file);
+        for (importer, requests) in of_files.chain(inner_modules.zip(&self.plan.inner_requests)) {
+            let Some(importer) = row_of(importer) else {
+                continue;
+            };
+            let imports = requests
+                .iter()
+                .filter(|it| it.kind == ModuleRequestKind::Import);
+            imported[importer as usize].extend(imports.filter_map(
+                |request| match request.target {
+                    ModuleRef::File(target) => row_of(target),
+                    _ => None,
+                },
+            ));
+        }
+        let (component_of, components) = strongly_connected_components(&imported);
+        let mut has_file_that_runs = vec![false; components.len()];
+        for (row, &component) in self.rows.iter().zip(&component_of) {
+            has_file_that_runs[component as usize] |=
+                left_out_files.binary_search(&row.file).is_err();
+        }
+        let is_on_cycle_with_file_that_runs = |&file: &FileId| {
+            row_of(file).is_some_and(|row| has_file_that_runs[component_of[row as usize] as usize])
+        };
+        let files = left_out_files.iter().copied();
+        files.filter(is_on_cycle_with_file_that_runs).collect()
+    }
+
+    pub fn is_placeholder(&self, file: FileId) -> bool {
+        self.placeholder_files.binary_search(&file).is_ok()
+    }
+
     fn pass_requests_through(&mut self, left_out_files: &[FileId]) {
         let is_left_out = |file: FileId| left_out_files.binary_search(&file).is_ok();
         let mut lists = Vec::with_capacity(self.rows.len() + self.plan.inner_requests.len());
@@ -329,7 +380,9 @@ impl ModuleGraph {
                     ModuleRef::File(target) | ModuleRef::Inner { file: target, .. }
                         if is_left_out(target) && request.kind == ModuleRequestKind::Require => {}
                     // The body that its sites are written in does not run.
-                    ModuleRef::File(target) if is_left_out(target) => {
+                    ModuleRef::File(target)
+                        if is_left_out(target) && !self.is_placeholder(target) =>
+                    {
                         if seen.insert(request.target) {
                             let imports = self.requests(target).iter().filter(is_import).rev();
                             pending.extend(imports.map(|&request| (request, false)));

@@ -407,7 +407,96 @@ describe.concurrent("modules that do not run", () => {
       console.log(
         `static-modules-slope: ${perFile.toFixed(1)} instructions a file that has run, for each import() over it`,
       );
-      expect(perFile).toBeLessThanOrEqual(400);
+      expect(perFile).toBeLessThanOrEqual(80);
+    },
+    1_800_000,
+  );
+
+  // What is loaded is not asked again whether it leads to a module that the loader has in its hands.
+  test.skipIf(!perf)(
+    "a module that is loaded costs a require() over it next to nothing while an import() waits",
+    async () => {
+      const best: number[] = [];
+      const numbers = [100, 2100];
+      const roots = 20;
+      for (const n of numbers) {
+        for (const calls of [0, roots]) {
+          await slot(async () => {
+            const files = filesOf(rows.C, n);
+            for (let root = 0; root < roots; root++)
+              files[`root${root}.mjs`] = `import * as a from "./m${n - 1}.mjs";\nexport const c = a.c + ${root};\n`;
+            files["waits.mjs"] = `export const c = 1;\nglobalThis.ran = true;\n`;
+            files["calls.cjs"] =
+              `"use strict";\nexports.run = function (calls) {\n  let sum = 0;\n` +
+              Array.from(
+                { length: roots },
+                (_, root) => `  if (calls > ${root}) sum += require("./root${root}.mjs").c;\n`,
+              ).join("") +
+              `  return sum;\n};\n`;
+            files["main.mjs"] =
+              `import * as a from "./m${n - 1}.mjs";\nimport { run } from "./calls.cjs";\n` +
+              `const calls = process.argv.length > 99 ? ${roots} : ${calls};\nconst waits = import("./waits.mjs");\n` +
+              `let sum = a.c + run(calls);\nsum += (await waits).c;\nconsole.log("end");\n`;
+            using directory = tempDir("aot-static-modules-waits", files);
+            using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+            const { executable } = await build(String(directory), "main.mjs");
+            let least = Infinity;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const counted = await run(
+                [perf as string, "stat", "-x,", "-e", "instructions:u", executable],
+                String(elsewhere),
+                bunEnv,
+              );
+              expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({ stdout: "end\n", exitCode: 0 });
+              least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+            }
+            best.push(least);
+          });
+        }
+      }
+      const [fewWithout, fewWith, manyWithout, manyWith] = best;
+      const perModule = (manyWith - manyWithout - (fewWith - fewWithout)) / ((numbers[1] - numbers[0]) * roots);
+      console.log(
+        `static-modules-slope: ${perModule.toFixed(1)} instructions a module that is loaded, for each require() over it while an import() waits`,
+      );
+      expect(perModule).toBeLessThanOrEqual(80);
+    },
+    1_800_000,
+  );
+
+  test.skipIf(!perf)(
+    "an import() of an evaluated module costs the same however many came before it",
+    async () => {
+      const best: number[] = [];
+      const numbers = [0, 1000, 2000];
+      for (const calls of numbers) {
+        await slot(async () => {
+          using directory = tempDir("aot-static-modules-again", {
+            "root.mjs": `export const c = 1;\nglobalThis.ran = true;\n`,
+            "main.mjs":
+              `let sum = (await import("./root.mjs")).c;\nconst calls = process.argv.length > 99 ? 1 : ${calls};\n` +
+              `for (let call = 0; call < calls; call++) sum += (await import("./root.mjs")).c;\nconsole.log("end");\n`,
+          });
+          using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+          const { executable } = await build(String(directory), "main.mjs");
+          let least = Infinity;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const counted = await run(
+              [perf as string, "stat", "-x,", "-e", "instructions:u", executable],
+              String(elsewhere),
+              bunEnv,
+            );
+            expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({ stdout: "end\n", exitCode: 0 });
+            least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+          }
+          best.push(least);
+        });
+      }
+      const [none, some, many] = best;
+      console.log(
+        `static-modules-slope: ${((some - none) / 1000).toFixed(0)} instructions for each of the first thousand import(), ${((many - some) / 1000).toFixed(0)} for each of the second`,
+      );
+      expect(many - some).toBeLessThanOrEqual((some - none) * 1.1);
     },
     1_800_000,
   );

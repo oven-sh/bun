@@ -267,6 +267,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         rows,
         record_files: Vec::new(),
         left_out_files: Vec::new(),
+        placeholder_files: Vec::new(),
         left_out_inner_modules: Vec::new(),
         other_modules: modules.other_modules,
         external_kinds: modules.external_kinds,

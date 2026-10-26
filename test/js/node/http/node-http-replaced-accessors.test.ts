@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
+import { getDefaultHighWaterMark } from "node:stream";
 
 test("a server uses shouldKeepAlive, socket, writableHighWaterMark and getHeader of its response and readableEnded of its request, wherever a program has replaced them", async () => {
+  const highWaterMark = getDefaultHighWaterMark(false);
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "node-http-replaced-accessors-fixture.ts")],
     env: bunEnv,
@@ -124,9 +126,9 @@ socket of the response replaced on the object, and the response has listeners, a
 writableHighWaterMark of the response replaced on the object, end(body): 200 ok keep-alive
     the listener returns
 writableHighWaterMark of the response replaced on the object, write(), end(body): 200 ok keep-alive
-    get writableHighWaterMark: 65536 | the listener returns | get writableHighWaterMark: 65536
+    get writableHighWaterMark: ${highWaterMark} | the listener returns | get writableHighWaterMark: ${highWaterMark}
 writableHighWaterMark of the response replaced on the object, a content-length, write(), end(): 200 ok keep-alive
-    get writableHighWaterMark: 65536 | the listener returns | get writableHighWaterMark: 65536
+    get writableHighWaterMark: ${highWaterMark} | the listener returns | get writableHighWaterMark: ${highWaterMark}
 writableHighWaterMark of the response replaced on the object, a body that is read, end(body): 200 ok keep-alive
     the listener returns
 writableHighWaterMark of the response replaced on the object, a body that is ignored, end(body): 200 ok keep-alive
@@ -134,9 +136,9 @@ writableHighWaterMark of the response replaced on the object, a body that is ign
 writableHighWaterMark of the response replaced on an heir of its prototype, end(body): 200 ok keep-alive
     the listener returns
 writableHighWaterMark of the response replaced on an heir of its prototype, write(), end(body): 200 ok keep-alive
-    get writableHighWaterMark: 65536 | the listener returns | get writableHighWaterMark: 65536
+    get writableHighWaterMark: ${highWaterMark} | the listener returns | get writableHighWaterMark: ${highWaterMark}
 writableHighWaterMark of the response replaced on an heir of its prototype, a content-length, write(), end(): 200 ok keep-alive
-    get writableHighWaterMark: 65536 | the listener returns | get writableHighWaterMark: 65536
+    get writableHighWaterMark: ${highWaterMark} | the listener returns | get writableHighWaterMark: ${highWaterMark}
 writableHighWaterMark of the response replaced on an heir of its prototype, a body that is read, end(body): 200 ok keep-alive
     the listener returns
 writableHighWaterMark of the response replaced on an heir of its prototype, a body that is ignored, end(body): 200 ok keep-alive
@@ -144,9 +146,9 @@ writableHighWaterMark of the response replaced on an heir of its prototype, a bo
 writableHighWaterMark of the response replaced on the object, beside a tick and a promise job, end(body): 200 ok keep-alive
     the listener returns | a tick | a promise job
 writableHighWaterMark of the response replaced on the object, beside a tick and a promise job, write(), end(body): 200 ok keep-alive
-    get writableHighWaterMark: 65536 | the listener returns | a tick | get writableHighWaterMark: 65536 | a promise job
+    get writableHighWaterMark: ${highWaterMark} | the listener returns | a tick | get writableHighWaterMark: ${highWaterMark} | a promise job
 writableHighWaterMark of the response replaced on the object, beside a tick and a promise job, a content-length, write(), end(): 200 ok keep-alive
-    get writableHighWaterMark: 65536 | the listener returns | a tick | get writableHighWaterMark: 65536 | a promise job
+    get writableHighWaterMark: ${highWaterMark} | the listener returns | a tick | get writableHighWaterMark: ${highWaterMark} | a promise job
 writableHighWaterMark of the response replaced on the object, beside a tick and a promise job, a body that is read, end(body): 200 ok keep-alive
     the listener returns | a tick | a promise job
 writableHighWaterMark of the response replaced on the object, beside a tick and a promise job, a body that is ignored, end(body): 200 ok keep-alive
@@ -154,9 +156,9 @@ writableHighWaterMark of the response replaced on the object, beside a tick and 
 writableHighWaterMark of the response replaced on the object, by a listener of prefinish, end(body): 200 ok keep-alive
     the listener returns
 writableHighWaterMark of the response replaced on the object, by a listener of prefinish, write(), end(body): 200 ok keep-alive
-    the listener returns | get writableHighWaterMark: 65536
+    the listener returns | get writableHighWaterMark: ${highWaterMark}
 writableHighWaterMark of the response replaced on the object, by a listener of prefinish, a content-length, write(), end(): 200 ok keep-alive
-    the listener returns | get writableHighWaterMark: 65536
+    the listener returns | get writableHighWaterMark: ${highWaterMark}
 writableHighWaterMark of the response replaced on the object, by a listener of prefinish, a body that is read, end(body): 200 ok keep-alive
     the listener returns
 writableHighWaterMark of the response replaced on the object, by a listener of prefinish, a body that is ignored, end(body): 200 ok keep-alive
@@ -164,9 +166,9 @@ writableHighWaterMark of the response replaced on the object, by a listener of p
 writableHighWaterMark of the response replaced on the object, and the response has listeners, end(body): 200 ok keep-alive
     prefinish | the listener returns | finish | close
 writableHighWaterMark of the response replaced on the object, and the response has listeners, write(), end(body): 200 ok keep-alive
-    get writableHighWaterMark: 65536 | prefinish | the listener returns | get writableHighWaterMark: 65536 | finish | close
+    get writableHighWaterMark: ${highWaterMark} | prefinish | the listener returns | get writableHighWaterMark: ${highWaterMark} | finish | close
 writableHighWaterMark of the response replaced on the object, and the response has listeners, a content-length, write(), end(): 200 ok keep-alive
-    get writableHighWaterMark: 65536 | prefinish | the listener returns | get writableHighWaterMark: 65536 | finish | close
+    get writableHighWaterMark: ${highWaterMark} | prefinish | the listener returns | get writableHighWaterMark: ${highWaterMark} | finish | close
 writableHighWaterMark of the response replaced on the object, and the response has listeners, a body that is read, end(body): 200 ok keep-alive
     the listener returns | prefinish | finish | close
 writableHighWaterMark of the response replaced on the object, and the response has listeners, a body that is ignored, end(body): 200 ok keep-alive
@@ -310,9 +312,9 @@ socket of the response replaced between write() and end(): 200 ok keep-alive
 socket of the response replaced between write() and end(), behind a content-length: 200 ok keep-alive
     the listener returns | set socket: null | get socket: an object
 writableHighWaterMark of the response replaced between write() and end(): 200 ok keep-alive
-    the listener returns | get writableHighWaterMark: 65536
+    the listener returns | get writableHighWaterMark: ${highWaterMark}
 writableHighWaterMark of the response replaced between write() and end(), behind a content-length: 200 ok keep-alive
-    the listener returns | get writableHighWaterMark: 65536
+    the listener returns | get writableHighWaterMark: ${highWaterMark}
 getHeader of the response replaced between write() and end(): 200 ok keep-alive
     the listener returns
 getHeader of the response replaced between write() and end(), behind a content-length: 200 ok keep-alive

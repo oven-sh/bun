@@ -447,7 +447,7 @@ BUN_OPTIONS="--smol --cpu-prof-md" ./myapp
 
 Standalone executables can automatically load configuration files from the directory where they are run. By default:
 
-- **`tsconfig.json`** and **`package.json`** loading is **disabled** — these are typically only needed at development time, and the bundler already uses them when compiling
+- **`tsconfig.json`** and **`package.json`** loading is **disabled** — these are typically only needed at development time, and the bundler already uses them when compiling. This applies to the project's own `package.json` (its `"type"`, `"imports"`, and self-reference through `"exports"`). A package inside `node_modules` is still resolved through its own `package.json`, so a `require()` of a dependency that is not embedded keeps working.
 - **`.env`** and **`bunfig.toml`** loading is **enabled** — these often contain runtime configuration that may vary per deployment
 
 <Note>

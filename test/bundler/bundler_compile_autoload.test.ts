@@ -486,23 +486,35 @@ console.log("PRELOAD");
     },
   });
 
-  // Test that package.json exports are NOT loaded when autoloadPackageJson: false (default)
-  // The import should fail because my-runtime-pkg/utils cannot be resolved without package.json exports
+  // Test that the project's own package.json is NOT loaded when autoloadPackageJson: false (default).
+  // A self-reference through its "exports" fails. A package inside node_modules is still resolved
+  // through its own package.json: that is the resolution algorithm, not a config file.
   itBundled("compile/AutoloadPackageJsonExportsDisabled", {
     compile: {
       autoloadPackageJson: false,
     },
     files: {
       "/entry.js": /* js */ `
-        // Without runtime package.json, my-runtime-pkg/utils cannot be resolved
+        const selfName = "my-app";
         const pkgName = "my-runtime-pkg";
         const subpath = "utils";
-        import(pkgName + "/" + subpath)
-          .then(m => console.log(m.default))
-          .catch(() => console.log("import-failed-as-expected"));
+        const self = import(selfName + "/" + subpath)
+          .then(m => m.default)
+          .catch(() => "self-reference-failed-as-expected");
+        const dep = import(pkgName + "/" + subpath)
+          .then(m => m.default)
+          .catch(e => "import-failed: " + e.message);
+        Promise.all([self, dep]).then(lines => console.log(lines.join("\\n")));
       `,
     },
     runtimeFiles: {
+      "/package.json": JSON.stringify({
+        name: "my-app",
+        exports: {
+          "./utils": "./src/utils.js",
+        },
+      }),
+      "/src/utils.js": `export default "utils-from-self-reference";`,
       "/node_modules/my-runtime-pkg/package.json": JSON.stringify({
         name: "my-runtime-pkg",
         exports: {
@@ -512,7 +524,7 @@ console.log("PRELOAD");
       "/node_modules/my-runtime-pkg/lib/utilities.js": `export default "utilities-from-package-exports";`,
     },
     run: {
-      stdout: "import-failed-as-expected",
+      stdout: "self-reference-failed-as-expected\nutilities-from-package-exports",
       setCwd: true,
     },
   });

@@ -608,7 +608,7 @@ bool Bun__SharedSymbol__describe(JSC::JSGlobalObject* globalObject, JSC::Encoded
         return false;
     JSC::VM& vm = globalObject->vm();
     auto* symbol = JSC::asSymbol(value);
-    JSC::SymbolImpl& uid = symbol->uid();
+    WTF::SymbolImpl& uid = symbol->uid();
     *registered = !!uid.symbolRegistry();
     *id = 0;
     if (!*registered) {
@@ -623,14 +623,15 @@ bool Bun__SharedSymbol__describe(JSC::JSGlobalObject* globalObject, JSC::Encoded
     // The description, widened to UTF-16 in storage that lasts until the next call on this thread.
     static thread_local WTF::Vector<char16_t> text;
     text.clear();
-    WTF::String description = symbol->description();
-    *hasDescription = !description.isNull();
+    // The impl of a symbol is a string holding its description, and a null symbol has none.
+    *hasDescription = !uid.isNullSymbol();
     if (*hasDescription) {
+        WTF::String description(uid);
         text.reserveCapacity(description.length());
         for (unsigned i = 0; i < description.length(); i++)
             text.append(description[i]);
     }
-    *chars = text.data();
+    *chars = text.span().data();
     *length = text.size();
     return true;
 }

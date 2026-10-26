@@ -17,7 +17,7 @@
  *   release-local      → Release build, local WebKit
  *   release-assertions → Release + runtime assertions enabled
  *   release-asan       → Release + address sanitizer
- *   ci-*               → CI-specific modes (cpp-only/link-only/full)
+ *   ci-build           → what CI runs: the full build, linked from an object archive
  *
  * If you don't specify a profile, `debug` is used.
  */
@@ -168,55 +168,9 @@ export const profiles = {
     assertions: true,
   },
 
-  /** CI: compile C++ to libbun.a only (parallelized with the cargo build). */
-  "ci-cpp-only": {
-    buildType: "Release",
-    mode: "cpp-only",
-    ci: true,
-    buildkite: true,
-    webkit: "prebuilt",
-  },
-
-  /**
-   * CI: compile libbun_runtime.a only. Target platform via --os/--arch
-   * overrides (cargo `--target <triple>`). Superseded in CI by
-   * `ci-rust-and-link`; kept for ad-hoc rust-only builds.
-   */
-  "ci-rust-only": {
-    buildType: "Release",
-    mode: "rust-only",
-    ci: true,
-    buildkite: true,
-    webkit: "prebuilt",
-  },
-
-  /** CI: link prebuilt objects downloaded from sibling BuildKite jobs. */
-  "ci-link-only": {
-    buildType: "Release",
-    mode: "link-only",
-    ci: true,
-    buildkite: true,
-    webkit: "prebuilt",
-  },
-
-  /**
-   * CI: cargo build + link on one machine. Polls the sibling build-cpp step
-   * for its archive/dep-lib artifacts, then links and packages. Saves an
-   * agent spawn vs rust-only → link-only. Resolves the full toolchain (link
-   * needs ld/strip/rc), unlike rust-only.
-   */
-  "ci-rust-and-link": {
-    buildType: "Release",
-    mode: "rust-and-link",
-    ci: true,
-    buildkite: true,
-    webkit: "prebuilt",
-  },
-
-  /** CI: deps + C++ + cargo + link on one agent; libbun-*.a, libbun_runtime.a and dep libs are uploaded as artifacts. */
+  /** CI: a release build on one agent; build.ts packages and uploads the zips (scripts/build/ci.ts). */
   "ci-build": {
     buildType: "Release",
-    mode: "archive-link",
     ci: true,
     buildkite: true,
     webkit: "prebuilt",

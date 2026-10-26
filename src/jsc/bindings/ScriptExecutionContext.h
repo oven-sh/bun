@@ -15,6 +15,7 @@ struct BunVmHandleRef;
 #include "CachedScript.h"
 #include "wtf/ThreadSafeWeakPtr.h"
 #include <wtf/URL.h>
+#include <JavaScriptCore/Weak.h>
 
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
@@ -54,6 +55,13 @@ class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, pu
 public:
     ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject);
     ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
+    // A graph's context in `parent`'s realm.
+    explicit ScriptExecutionContext(ScriptExecutionContext& parent);
+    // A further context in `parent`'s global, for a Bun.ModuleGraph: what the graph's
+    // script opens (ActiveDOMObjects here; native handles, timers and sockets in its Rust half)
+    // belongs to it and goes when it stops.
+    static Ref<ScriptExecutionContext> createForModuleGraph(ScriptExecutionContext& parent);
+    void setModuleGraph(JSC::JSObject*);
 
     ~ScriptExecutionContext();
 
@@ -71,13 +79,30 @@ public:
     {
         return m_url;
     }
-    bool isMainThread() const { return m_identifier == 1; }
+    bool isMainThread() const { return realm().m_identifier == 1; }
+    // The Rust half, `bun_jsc::ScriptExecutionContext`: it has this context's identifier. A
+    // graph's context makes and frees its own; a global's is bound to its VM's root context.
+    void* bunContext() const { return m_bunContext; }
+    // The JSModuleGraph a graph's context was made for, until it is collected.
+    JSC::JSObject* moduleGraph() const { return m_moduleGraph.get(); }
+    // A graph's context stops everything it owns, for good. The global keeps running.
+    void stop();
+    // `made` is the context of a graph that script running in this (graph's) context created: one
+    // more thing it opened, stopped with it (at once, if this one already has).
+    void ownGraphContext(ScriptExecutionContext& made);
+    // The graph was collected (a GC finalizer: nothing can be stopped here): stop() from the
+    // event loop, which is what then lets go of this context.
+    void moduleGraphDestroyed();
     bool isContextThread();
 
     // Active objects are not garbage collected even if inaccessible, e.g. because their activity may result in callbacks being invoked.
     void stopActiveDOMObjects();
     // Also read on the GC thread (isContextStopped() from isReachableFromOpaqueRoots).
     bool activeDOMObjectsAreStopped() const { return m_activeDOMObjectsAreStopped.load(std::memory_order_relaxed); }
+    // A graph's context that was stopped (the graph was disposed or collected).
+    bool isStopped() const { return m_isStopped || activeDOMObjectsAreStopped(); }
+    // A Bun.ModuleGraph's context (its graph may already have been collected).
+    bool isForModuleGraph() const { return !!m_parent; }
 
     // Called from the constructor and destructors of ActiveDOMObject.
     void didCreateActiveDOMObject(ActiveDOMObject&);
@@ -116,6 +141,12 @@ public:
     void checkConsistency() const;
 
     void regenerateIdentifier();
+
+    // bun:sqlite and node:sqlite databases are closed with the Bun.ModuleGraph whose script opened
+    // them, as they are with the VM that did. `ownerOfSQLiteDatabase`: the context to record for
+    // one that is being opened (0: the running script is not a graph's).
+    static ScriptExecutionContextIdentifier ownerOfSQLiteDatabase(JSC::JSGlobalObject*);
+    void closeSQLiteDatabases();
     void addToContextsMap();
     void removeFromContextsMap();
 
@@ -126,7 +157,7 @@ public:
     void postTask(EventLoopTask* task);
     void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
-    JSC::VM& vm() { return *m_vm; }
+    JSC::VM& vm() { return *realm().m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
     // This thread only: the loop the VM is running now. What an object that will later be posted to
     // from another thread records alongside identifier() when script here sets it up.
@@ -167,13 +198,23 @@ private:
     // Snapshot of the creating thread's UID; used by isContextThread() so the
     // check stays valid after VM clientData / VMHolder are torn down on exit.
     uint32_t m_contextThreadUID;
+    // A graph's context: the context of the global the graph was made in, whose VM and global
+    // object are this one's.
+    RefPtr<ScriptExecutionContext> m_parent;
+    ScriptExecutionContext& realm() { return m_parent ? *m_parent : *this; }
+    const ScriptExecutionContext& realm() const { return m_parent ? *m_parent : *this; }
+    void* const m_bunContext;
+    JSC::Weak<JSC::JSObject> m_moduleGraph;
 
     WeakHashSet<ActiveDOMObject> m_activeDOMObjects;
+    WeakHashSet<ScriptExecutionContext> m_ownedGraphContexts;
     // Registered in the observer's constructor, removed in its destructor, both
     // on this context's thread: plain pointers, nothing allocated per observer.
     HashSet<ContextDestructionObserver*> m_destructionObservers;
 
     std::atomic<bool> m_activeDOMObjectsAreStopped { false };
+    // A graph's context: stop() ran (its ActiveDOMObjects are stopped one task later).
+    bool m_isStopped { false };
     mutable bool m_activeDOMObjectAdditionForbidden { false };
 
 public:

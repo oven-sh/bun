@@ -1,0 +1,27 @@
+{
+  "_id": "bundled-nested-host",
+  "name": "bundled-nested-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-nested-host",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "bundled-shipped-inner": "1.0.0",
+        "bundled-shipped-sibling": "1.0.0"
+      },
+      "bundleDependencies": [
+        "bundled-shipped-inner"
+      ],
+      "_id": "bundled-nested-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-Tw0jRZj3u/9iqOgXmJkIYMX+Pd5DZPElN2bwaOunL0jHgMcyDP6JsUTpNqqEPOStdq+gS9+7iTEGDYWtqofsVQ==",
+        "shasum": "063f32699eb7cccbec713a45c986b66cd35684d3",
+        "tarball": "http://localhost:4873/bundled-nested-host/-/bundled-nested-host-1.0.0.tgz"
+      }
+    }
+  }
+}

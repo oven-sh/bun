@@ -250,7 +250,7 @@ describe("gRPC streaming calls", () => {
 
   test("rapid successive streaming calls", async () => {
     // Make many streaming calls in rapid succession
-    const promises = [];
+    const promises: Promise<any[]>[] = [];
 
     for (let i = 0; i < 10; i++) {
       promises.push(

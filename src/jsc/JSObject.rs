@@ -136,7 +136,11 @@ impl JSObject {
     }
 
     #[track_caller]
-    pub fn get_index(this: JSValue, global_this: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
+    pub(crate) fn get_index(
+        this: JSValue,
+        global_this: &JSGlobalObject,
+        i: u32,
+    ) -> JsResult<JSValue> {
         // we don't use `call_zero_is_throw`, because it would assert that if there is an
         // exception then the JSValue is zero. the function this ends up calling can return
         // undefined with an exception:

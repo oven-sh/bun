@@ -165,6 +165,458 @@ test("most types", () => {
   });
 });
 
+// Snapshots and console.log share one formatter. These pin what is specific to snapshots, so that a
+// change meant for console.log does not invalidate snapshot files people have committed.
+test("values that console.log prints differently", () => {
+  expect({
+    map: new Map<any, any>([
+      ["k", 1],
+      [{ a: 1 }, new Set([2])],
+    ]),
+    set: new Set([1, "two"]),
+    empty: [new Map(), new Set(), new WeakMap(), new WeakSet()],
+  }).toMatchInlineSnapshot(`
+    {
+      "empty": [
+        Map {},
+            Set {},
+        WeakMap {},
+            WeakSet {},
+      ],
+      "map": 
+    Map {
+        "k" => 1,
+        {
+          "a": 1,
+        } =>     
+    Set {
+          2,
+        }
+    ,
+      }
+    ,
+      "set":   
+    Set {
+        1,
+        "two",
+      }
+    ,
+    }
+  `);
+  expect([Symbol(), Symbol("x"), Symbol.iterator]).toMatchInlineSnapshot(`
+    [
+      Symbol,
+      Symbol(x),
+      Symbol(Symbol.iterator),
+    ]
+  `);
+  expect([class {}, class A {}, class B extends Array {}]).toMatchInlineSnapshot(`
+    [
+      [class],
+      [class A],
+      [class B],
+    ]
+  `);
+  expect([function () {}, function f() {}, async function af() {}, function* g() {}, () => {}]).toMatchInlineSnapshot(`
+    [
+      [Function],
+      [Function: f],
+      [Function: AsyncFunction],
+      [Function: GeneratorFunction],
+      [Function],
+    ]
+  `);
+  expect([new Number(5), new Boolean(true), new String("ab"), new String("")]).toMatchInlineSnapshot(`
+    [
+      Number {},
+      Boolean {},
+      String {
+        "0": "a",
+        "1": "b",
+    }
+    ,
+      String {},
+    ]
+  `);
+  expect([new Error("hi"), new TypeError(""), new (class MyError extends Error {})("boo")]).toMatchInlineSnapshot(`
+    [
+      [Error: hi],
+      [TypeError],
+      [MyError: boo],
+    ]
+  `);
+  expect([Promise.resolve(1), new Date(NaN), /a\/b/gi, 10n, -0]).toMatchInlineSnapshot(`
+    [
+      Promise {},
+      ul,
+      /a\\/b/gi,
+      10n,
+      -0,
+    ]
+  `);
+  expect({
+    get getter() {
+      return 1;
+    },
+    set setter(v: any) {},
+    [Symbol("s")]: 1,
+    "not-an-identifier": 2,
+    [Symbol.for("nodejs.util.inspect.custom")]() {
+      return "ignored";
+    },
+  }).toMatchInlineSnapshot(`
+    {
+      "getter": [native code],
+      [Symbol(nodejs.util.inspect.custom)]: [Function],
+      "not-an-identifier": 2,
+      [Symbol(s)]: 1,
+      "setter": [native code],
+    }
+  `);
+  expect([
+    new Proxy({ a: 1, b: { c: 2 } }, {}),
+    (function () {
+      return arguments;
+    })(1, 2),
+    new Map([[1, 2]]).entries(),
+    [1][Symbol.iterator](),
+  ]).toMatchInlineSnapshot(`
+    [
+      {
+     "a": 1,
+     "b": {
+      "c": 2
+     }
+    },
+      {
+     "0": 1,
+     "1": 2
+    },
+      {},
+      {},
+    ]
+  `);
+  expect([[1, , 3], Object.assign([1], { prop: "not printed" })]).toMatchInlineSnapshot(`
+    [
+      [
+        1,
+        undefined,
+        3,
+      ],
+      [
+        1,
+      ],
+    ]
+  `);
+  expect([
+    new Uint8Array([1, 2]),
+    new Float32Array([0.1, 1e21, NaN, Infinity, -0]),
+    new Float64Array([0.1, 1e-7]),
+    new BigInt64Array([1n, -2n]),
+    new ArrayBuffer(2),
+    new DataView(new ArrayBuffer(1)),
+  ]).toMatchInlineSnapshot(`
+    [
+      Uint8Array [
+        1,
+        2,
+      ],
+      Float32Array [
+        0.1,
+        1000000000000000000000,
+        NaN,
+        inf,
+        -0,
+      ],
+      Float64Array [
+        0.1,
+        0.0000001,
+      ],
+      BigInt64Array [
+        1,
+        -2,
+      ],
+      ArrayBuffer [
+        0,
+        0,
+      ],
+      DataView [
+        0,
+      ],
+    ]
+  `);
+  expect(["a\nb", "a\r\nb", "a\rb", "a\\b", 'q"q', "é", "😀", ""]).toMatchInlineSnapshot(`
+    [
+      
+    "a
+    b"
+    ,
+      
+    "a
+    b"
+    ,
+      
+    "a
+    b"
+    ,
+      "a\\b",
+      "q"q",
+      "é",
+      "😀",
+      "",
+    ]
+  `);
+  expect("top\nlevel").toMatchInlineSnapshot(`
+    "top
+    level"
+  `);
+  expect({ [Symbol.toStringTag]: "Tagged", a: 1 }).toMatchInlineSnapshot(`Tagged 
+Tagged {
+  [Symbol(Symbol.toStringTag)]: "Tagged",
+  "a": 1,
+}
+`);
+  expect([Object.create(null), Object.assign(Object.create(null), { a: 1 })]).toMatchInlineSnapshot(`
+    [
+      {},
+      {
+        "a": 1,
+      },
+    ]
+  `);
+  expect({
+    $$typeof: Symbol.for("react.transitional.element"),
+    type: "div",
+    key: null,
+    props: { a: 1 },
+  }).toMatchInlineSnapshot(`
+    {
+      "$$typeof": Symbol(react.transitional.element),
+      "key": null,
+      "props": {
+        "a": 1,
+      },
+      "type": "div",
+    }
+  `);
+});
+
+test("web and Bun classes", () => {
+  const formData = new FormData();
+  formData.append("a", "b");
+  expect(formData).toMatchInlineSnapshot(`FormData (entries) FormData 
+FormData {
+  "a": "b",
+}
+`);
+  expect(new Headers({ a: "b" })).toMatchInlineSnapshot(`Headers {}`);
+  expect(new Blob(["abc"], { type: "text/plain" })).toMatchInlineSnapshot(`Blob (3 bytes) {
+  type: "text/plain;charset=utf-8"
+}`);
+  expect(new Response("hi", { headers: { a: "b" }, status: 201 })).toMatchInlineSnapshot(`Response (2 bytes) {
+  ok: true,
+  url: "",
+  status: 201,
+  statusText: "",
+  headers: Headers {},
+  redirected: false,
+  bodyUsed: false,
+  Blob (2 bytes)
+}Response {}`);
+  expect(new Request("http://example.com/x", { method: "POST", headers: { a: "b" }, body: "x" }))
+    .toMatchInlineSnapshot(`Request (1 bytes) {
+  method: "POST",
+  url: "http://example.com/x",
+  headers: Headers {}
+  Blob (1 bytes)
+}`);
+  expect([
+    new Event("foo"),
+    new MessageEvent("message", { data: { a: 1 } }),
+    new ErrorEvent("error", { message: "m", error: new Error("e") }),
+  ]).toMatchInlineSnapshot(`
+    [
+      Event Event {
+        "isTrusted": false,
+      },
+      MessageEvent {
+        type: "message",
+        data: {
+          "a": 1,
+        }, 
+      },
+      ErrorEvent {
+        type: "error",
+        message: "m", 
+        error: [Error: e]
+      },
+    ]
+  `);
+  expect(new Bun.S3Client({})).toMatchInlineSnapshot(`S3Client {}`);
+});
+
+test("a native object that refers to itself more than once", () => {
+  const headers: any = new Headers();
+  headers.first = headers;
+  headers.second = [headers, headers];
+  expect(headers).toMatchInlineSnapshot(`Headers 
+Headers {
+  "first": [Circular],
+  "second": [
+    [Circular],
+    [Circular],
+  ],
+}
+`);
+});
+
+test("an event that contains itself", () => {
+  const data: any = {};
+  const event = new MessageEvent("message", { data });
+  data.event = event;
+  expect(event).toMatchInlineSnapshot(`MessageEvent {
+  type: "message",
+  data: {
+    "event": [Circular],
+  }, 
+}`);
+});
+
+test("a Map key that throws while it is printed", () => {
+  const key = new Proxy({ a: 1n }, {});
+  expect(() => expect(new Map([[key, {}]])).toEqual(1)).toThrow("JSON.stringify cannot serialize BigInt");
+});
+
+test("asymmetric matchers", () => {
+  expect([
+    expect.any(Number),
+    expect.not.any(String),
+    expect.anything(),
+    expect.stringContaining("a"),
+    expect.stringMatching(/a/),
+    expect.stringMatching("a"),
+    expect.objectContaining({ a: expect.objectContaining({ b: 1 }) }),
+    expect.closeTo(1.5, 2),
+    expect.resolvesTo.any(Number),
+  ]).toMatchInlineSnapshot(`
+    [
+      Any<Number>,
+      NotAny<String>,
+      Anything,
+      StringContaining "a",
+      StringMatching /a/,
+      StringMatching "a",
+      ObjectContaining {
+        "a": ObjectContaining {
+          "b": 1,
+        },
+      },
+      NumberCloseTo 1 (2 digits),
+      promise resolved to Any<Number>,
+    ]
+  `);
+});
+
+test("long arrays are not truncated", () => {
+  let message = "";
+  try {
+    expect(new Array(150).fill(7)).toEqual([]);
+  } catch (e: any) {
+    message = Bun.stripANSI(e.message);
+  }
+  expect(message).toMatch(/(\n\+   7,){150}\n\+ \]/);
+});
+
+test("indentation stops at 32 levels", () => {
+  let value: any = 1;
+  for (let i = 0; i < 34; i++) value = [value];
+  expect(value).toMatchInlineSnapshot(`
+    [
+      [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      [
+                                        [
+                                          [
+                                            [
+                                              [
+                                                [
+                                                  [
+                                                    [
+                                                      [
+                                                        [
+                                                          [
+                                                            [
+                                                              [
+                                                                [
+                                                                  [
+                                                                    [
+                                                                    [
+                                                                    1,
+                                                                    ],
+                                                                    ],
+                                                                  ],
+                                                                ],
+                                                              ],
+                                                            ],
+                                                          ],
+                                                        ],
+                                                      ],
+                                                    ],
+                                                  ],
+                                                ],
+                                              ],
+                                            ],
+                                          ],
+                                        ],
+                                      ],
+                                    ],
+                                  ],
+                                ],
+                              ],
+                            ],
+                          ],
+                        ],
+                      ],
+                    ],
+                  ],
+                ],
+              ],
+            ],
+          ],
+        ],
+      ],
+    ]
+  `);
+});
+
+test("JSX props are separated by a space", () => {
+  const element = (type: string, props: object) => ({ $$typeof: Symbol.for("react.element"), type, key: null, props });
+  expect(element("div", { a: 1, b: "x" })).toMatchInlineSnapshot(`<div a=1 b="x" />`);
+  expect(element("div", { a: 1, b: "x", c: true, d: null, e: 5, f: 6, g: 7 }))
+    .toMatchInlineSnapshot(`<div a=1 b="x" c=true d=null e=5
+  f=6
+  g=7 />`);
+  expect(element("div", { a: 1, b: "x", children: ["text", element("b", { c: 1, d: 2, children: "bold" })] }))
+    .toMatchInlineSnapshot(`<div a=1 b="x">
+  text
+  <b c=1 d=2>bold</b>
+</div>`);
+});
+
 it("should work with expect.anything()", () => {
   // expect({ a: 0 }).toMatchSnapshot({ a: expect.anything() });
 });

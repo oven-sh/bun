@@ -1524,7 +1524,7 @@ impl JSValue {
     }
 
     /// `JSValue.jsonStringify`.
-    pub fn json_stringify(
+    pub(crate) fn json_stringify(
         self,
         global: &JSGlobalObject,
         indent: u32,
@@ -2274,7 +2274,10 @@ impl JSValue {
     }
     /// `JSValue.getDescription` — symbol description (empty if none),
     /// borrowed from the Symbol.
-    pub fn get_description<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
+    pub(crate) fn get_description<'a>(
+        self,
+        global: &'a JSGlobalObject,
+    ) -> bun_core::StringView<'a> {
         JSC__JSValue__getSymbolDescription(self, global)
     }
     /// `JSValue.symbolFor(global, key)` — `Symbol.for(key)`.
@@ -2438,7 +2441,7 @@ impl JSValue {
     /// stable enumeration order (used by `console.log` with
     /// `ordered_properties`).
     #[inline(always)]
-    pub fn for_each_property_ordered(
+    pub(crate) fn for_each_property_ordered(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2501,7 +2504,7 @@ impl JSValue {
     }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.
-    pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
+    pub(crate) fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         if self.is_empty_or_undefined_or_null() {
             return Ok(bun_core::String::EMPTY);
         }
@@ -2523,7 +2526,7 @@ impl JSValue {
 
     /// Returns the wrapped target of a `JSGlobalProxy` or `ProxyObject`, or
     /// `ZERO` if `self` is not a proxy.
-    pub fn get_proxy_target(self) -> JSValue {
+    pub(crate) fn get_proxy_target(self) -> JSValue {
         Bun__JSValue__getProxyTarget(self)
     }
 

@@ -142,7 +142,6 @@ cfg_jsc! {
     #[path = "Execution.rs"]      pub(crate) mod execution;
     #[path = "jest.rs"]           pub(crate) mod jest;
     #[path = "Order.rs"]          pub(crate) mod order;
-    #[path = "pretty_format.rs"]  pub(crate) mod pretty_format;
     #[path = "ScopeFunctions.rs"] pub(crate) mod scope_functions;
     #[path = "snapshot.rs"]       pub(crate) mod snapshot;
 
@@ -211,20 +210,17 @@ pub(crate) mod expect {
     impl JSValueTestExt for JSValue {
         #[inline]
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
-            use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
-            let fmt_options = FormatOptions {
-                enable_colors: false,
-                add_newline: false,
-                flush: false,
-                quote_strings: true,
-            };
-            JestPrettyFormat::format(
+            use bun_jsc::console_object::{format2, FormatOptions, MessageLevel};
+            format2(
                 MessageLevel::Debug,
                 global,
                 core::slice::from_ref(&self),
-                1,
                 out,
-                fmt_options,
+                FormatOptions {
+                    pretty_format: true,
+                    quote_strings: true,
+                    ..Default::default()
+                },
             )?;
             // `FormatOptions.flush` is false, so the formatter does not flush
             // internally; a buffered `out` would otherwise drop trailing

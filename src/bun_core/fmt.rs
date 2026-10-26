@@ -575,7 +575,7 @@ impl Drop for SharedTempBufferBorrow {
 // UTF-16 formatting
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::Result {
+pub(crate) fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::Result {
     let mut borrow = SharedTempBufferBorrow::new();
     let chunk = borrow.chunk();
 

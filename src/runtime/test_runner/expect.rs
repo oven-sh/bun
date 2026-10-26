@@ -2377,6 +2377,136 @@ impl ExpectCustomAsymmetricMatcher {
 
 }
 
+/// Prints `value` if it is an asymmetric matcher and returns whether it was one.
+pub(crate) fn print_asymmetric_matcher<const ENABLE_ANSI_COLORS: bool>(
+    formatter: &mut ConsoleObject::Formatter<'_>,
+    writer: &mut dyn bun_io::Write,
+    value: JSValue,
+) -> JsResult<bool> {
+    use bun_jsc::{FormatTag, JSType};
+
+    fn print_label(
+        formatter: &mut ConsoleObject::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+        flags: Flags,
+        label: &str,
+        not_label: &str,
+    ) {
+        let prefix = match flags.promise() {
+            Promise::Resolves => "promise resolved to ",
+            Promise::Rejects => "promise rejected to ",
+            Promise::None => "",
+        };
+        let label = if flags.not() { not_label } else { label };
+        formatter.add_for_new_line(prefix.len() + label.len());
+        let _ = write!(writer, "{prefix}{label}");
+    }
+
+    fn print_as<const ENABLE_ANSI_COLORS: bool>(
+        formatter: &mut ConsoleObject::Formatter<'_>,
+        writer: &mut dyn bun_io::Write,
+        tag: FormatTag,
+        value: JSValue,
+        cell: JSType,
+    ) -> JsResult<()> {
+        let global_this = formatter.global_this;
+        formatter.format::<ENABLE_ANSI_COLORS>(
+            ConsoleObject::TagResult { tag: tag.into(), cell },
+            writer,
+            value,
+            global_this,
+        )
+    }
+
+    if let Some(matcher) = value.as_class_ref::<ExpectAnything>() {
+        print_label(formatter, writer, matcher.flags, "Anything", "NotAnything");
+    } else if let Some(matcher) = value.as_class_ref::<ExpectAny>() {
+        let Some(constructor_value) = js_ExpectAny::constructor_value_get_cached(value) else {
+            return Ok(true);
+        };
+
+        print_label(formatter, writer, matcher.flags, "Any<", "NotAny<");
+
+        let class_name = constructor_value.get_class_name(formatter.global_this)?;
+        formatter.add_for_new_line(class_name.length() + 1);
+        let (cyan, reset) = if ENABLE_ANSI_COLORS {
+            (bun_core::pretty_fmt!("<cyan>", true), bun_core::pretty_fmt!("<r>", true))
+        } else {
+            ("", "")
+        };
+        let _ = write!(writer, "{cyan}{class_name}{reset}>");
+    } else if let Some(matcher) = value.as_class_ref::<ExpectCloseTo>() {
+        let Some(number_value) = js_ExpectCloseTo::number_value_get_cached(value) else {
+            return Ok(true);
+        };
+        let Some(digits_value) = js_ExpectCloseTo::digits_value_get_cached(value) else {
+            return Ok(true);
+        };
+
+        let number = number_value.to_int32();
+        let digits = digits_value.to_int32();
+
+        print_label(formatter, writer, matcher.flags, "NumberCloseTo ", "NumberNotCloseTo");
+        let _ = write!(
+            writer,
+            "{} ({} digit{})",
+            number,
+            digits,
+            if digits == 1 { "" } else { "s" },
+        );
+    } else if let Some(matcher) = value.as_class_ref::<ExpectObjectContaining>() {
+        let Some(object_value) = js_ExpectObjectContaining::object_value_get_cached(value) else {
+            return Ok(true);
+        };
+
+        print_label(formatter, writer, matcher.flags, "ObjectContaining ", "ObjectNotContaining ");
+        print_as::<ENABLE_ANSI_COLORS>(formatter, writer, FormatTag::Object, object_value, JSType::Object)?;
+    } else if let Some(matcher) = value.as_class_ref::<ExpectStringContaining>() {
+        let Some(substring_value) = js_ExpectStringContaining::string_value_get_cached(value) else {
+            return Ok(true);
+        };
+
+        print_label(formatter, writer, matcher.flags, "StringContaining ", "StringNotContaining ");
+        print_as::<ENABLE_ANSI_COLORS>(formatter, writer, FormatTag::String, substring_value, JSType::String)?;
+    } else if let Some(matcher) = value.as_class_ref::<ExpectStringMatching>() {
+        let Some(test_value) = js_ExpectStringMatching::test_value_get_cached(value) else {
+            return Ok(true);
+        };
+
+        print_label(formatter, writer, matcher.flags, "StringMatching ", "StringNotMatching ");
+
+        let original_quote_strings = formatter.quote_strings;
+        if test_value.is_reg_exp() {
+            formatter.quote_strings = false;
+        }
+        let result = print_as::<ENABLE_ANSI_COLORS>(formatter, writer, FormatTag::String, test_value, JSType::String);
+        formatter.quote_strings = original_quote_strings;
+        result?;
+    } else if let Some(instance) = value.as_class_ref::<ExpectCustomAsymmetricMatcher>() {
+        let printed = instance
+            .custom_print(value, formatter.global_this, &mut *writer, true)
+            .expect("unreachable");
+        if !printed {
+            // default print (non-overridden by user)
+            let Some(args_value) = js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(value) else {
+                return Ok(true);
+            };
+            let Some(matcher_fn) = js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value) else {
+                return Ok(true);
+            };
+            let matcher_name = matcher_fn.get_name(formatter.global_this)?;
+
+            print_label(formatter, writer, instance.flags, "", "not ");
+            formatter.add_for_new_line(matcher_name.length() + 1);
+            let _ = write!(writer, "{matcher_name} ");
+            print_as::<ENABLE_ANSI_COLORS>(formatter, writer, FormatTag::Array, args_value, JSType::Array)?;
+        }
+    } else {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 /// Reference: `MatcherContext` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 pub(crate) struct ExpectMatcherContext {
     pub(crate) flags: Flags,

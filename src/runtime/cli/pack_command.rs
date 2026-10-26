@@ -113,14 +113,12 @@ impl<'a> Context<'a> {
         bun_core::pretty!("{}\n", bun_fmt::EscapeControlChars(name));
     }
 
-    /// `path` is the bytes that the kernel got, and a script gives this line back to the kernel.
-    /// Through `Display` a byte that is not UTF-8 becomes U+FFFD, and the line names another file.
+    /// A script passes this line on as a path, so bytes that are not UTF-8 go out unchanged.
     pub(crate) fn print_tarball_abs_path(path: &[u8], log_level: LogLevel) {
         Self::begin_tarball_path(log_level);
         match strings::str_utf8(path) {
             Some(path) => bun_core::pretty!("{}\n", bun_fmt::EscapeControlChars(path)),
-            // Some terminals run a byte that is not UTF-8 as a control character. So a terminal
-            // gets U+FFFD for it, as in `bun pm diff`.
+            // Except on a terminal: some run a byte that is not UTF-8 as a control character.
             None if Output::is_stdout_tty() => {
                 bun_core::pretty!("{}\n", bun_fmt::escape_control_chars(path));
             }
@@ -129,8 +127,7 @@ impl<'a> Context<'a> {
                     if i > 0 {
                         Output::print_bytes(SEP_STR.as_bytes());
                     }
-                    // A name that is not UTF-8 is bytes in an encoding that we do not know. Only
-                    // its ASCII bytes can be control characters.
+                    // In a name that is not UTF-8, only ASCII bytes can be control characters.
                     let is_text = strings::str_utf8(name).is_some();
                     for part in name.chunk_by(|a, b| is_text || a.is_ascii() == b.is_ascii()) {
                         if is_text || part.is_ascii() {

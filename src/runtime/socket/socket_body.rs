@@ -204,17 +204,18 @@ extern "C" fn select_alpn_callback(
             // returns NULL or a NUL-terminated string owned by the SSL.
             let servername_ptr = unsafe { boringssl_sys::SSL_get_servername(ssl.cast_const(), 0) };
             let servername_js = if servername_ptr.is_null() {
-                JSValue::UNDEFINED
+                Ok(JSValue::UNDEFINED)
             } else {
                 // SAFETY: BoringSSL hands back a NUL-terminated name.
                 let name = unsafe { core::ffi::CStr::from_ptr(servername_ptr) };
-                EncodedSlice::latin1(name.to_bytes()).to_js_bounded(&global)
+                EncodedSlice::latin1(name.to_bytes()).to_js(&global)
             };
-            let result =
-                match callback.call(&global, this_value, &[this_value, servername_js, buffer]) {
-                    Ok(v) => v,
-                    Err(err) => global.take_exception(err),
-                };
+            let result = match servername_js.and_then(|servername_js| {
+                callback.call(&global, this_value, &[this_value, servername_js, buffer])
+            }) {
+                Ok(v) => v,
+                Err(err) => global.take_exception(err),
+            };
             if let Some(err_value) = result.to_error() {
                 crate::dispatch::fold(
                     handlers.call_error_handler(this_value, &[this_value, err_value]),

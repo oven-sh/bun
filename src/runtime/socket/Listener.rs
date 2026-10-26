@@ -1991,8 +1991,11 @@ fn dispatch_server_name(
     // SAFETY: `hostname` is NUL-terminated per the fn contract.
     let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
     // Peer-supplied SNI bytes, decoded as Latin-1 like Node's `OneByteString`.
-    let js_name = EncodedSlice::latin1(name.to_bytes()).to_js_bounded(&global);
-    let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
+    let result = match EncodedSlice::latin1(name.to_bytes())
+        .to_js(&global)
+        .and_then(|js_name| {
+            callback.call(&global, this_value, &[this_value, js_name, socket_handle])
+        }) {
         Ok(v) => v,
         Err(err) => global.take_exception(err),
     };

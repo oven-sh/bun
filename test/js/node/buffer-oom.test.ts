@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir, tls as tlsCert } from "harness";
 import { join } from "node:path";
 
 const MiB = 1024 ** 2;
@@ -20,7 +20,7 @@ const allocationFailed = {
 async function resultsUnderCap(
   env: Record<string, string | undefined>,
   script: string,
-  { wrap = [], ...options }: { cwd?: string; stdin?: Blob; wrap?: string[] } = {},
+  { wrap = [], ...options }: { cwd?: string; stdin?: Blob; argv0?: string; wrap?: string[] } = {},
 ) {
   await using proc = Bun.spawn({
     cmd: [
@@ -392,5 +392,66 @@ describe("bytes that are copied into a string over the length limit", () => {
       stdin: new Blob([big + "\n"]),
     });
     expect(results).toEqual({ prompt: tooLong });
+  });
+
+  // `process.argv0` is made on the first read. A read that throws makes no
+  // property, so the next read copies the name again. A bcrypt hash has 60
+  // characters, and its promise rejects.
+  test("process.argv0 and Bun.password.hash", async () => {
+    const argv0 = "the-name-that-this-process-was-started-with";
+    const results = await resultsUnderCap(
+      { ...env, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: "30" },
+      `
+      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+      await run("process.argv0", () => process.argv0);
+      await run("process.argv0 again", () => process.argv0);
+      await run("Bun.password.hash", () => Bun.password.hash("password", { algorithm: "bcrypt", cost: 4 }));
+      // The lowest limit that this sets is 1 MiB.
+      setSyntheticAllocationLimitForTesting(${MiB});
+      results["process.argv0 under the limit"] = process.argv0;
+      `,
+      { argv0 },
+    );
+    expect(results).toEqual({
+      "process.argv0": tooLong,
+      "process.argv0 again": tooLong,
+      "Bun.password.hash": tooLong,
+      "process.argv0 under the limit": argv0,
+    });
+  });
+
+  // A TLS server copies the name that the client asks for, for SNICallback
+  // and for ALPNCallback. A copy that fails ends that handshake, not the
+  // process. No SNICallback ran, so the server reports a rejected connection.
+  test("SNICallback and ALPNCallback", async () => {
+    const results = await resultsUnderCap(
+      { ...env, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: "100" },
+      `
+      import tls from "node:tls";
+      const { cert, key } = ${JSON.stringify({ cert: tlsCert.cert, key: tlsCert.key })};
+      const servername = Buffer.alloc(150, "a").toString() + ".example";
+      const handshake = async (label, serverOptions, clientOptions) => {
+        const { promise, resolve } = Promise.withResolvers();
+        const server = tls.createServer({ key, cert, ...serverOptions }, socket => socket.end());
+        server.on("tlsClientError", error => resolve(error.code));
+        server.listen(0, "127.0.0.1", () => {
+          const client = tls.connect({
+            port: server.address().port,
+            host: "127.0.0.1",
+            servername,
+            rejectUnauthorized: false,
+            ...clientOptions,
+          });
+          client.on("error", () => {});
+          client.on("secureConnect", () => resolve("connected"));
+        });
+        results[label] = await promise;
+        server.close();
+      };
+      await handshake("SNICallback", { SNICallback: (name, callback) => callback(null, null) }, {});
+      await handshake("ALPNCallback", { ALPNCallback: ({ protocols }) => protocols[0] }, { ALPNProtocols: ["h2"] });
+      `,
+    );
+    expect(results).toEqual({ SNICallback: "ERR_SSL_CONNECTION_REJECTED", ALPNCallback: "ERR_STRING_TOO_LONG" });
   });
 });

@@ -161,9 +161,10 @@ under 2^30 still end the process there). Carry that error out of the frame:
 lazy-property callback can return `JsResult<JSValue>`; a host getter or an
 `extern "C"` initialiser returns `.to_js(global).or_pending_exception()`; a
 `mutates: true` method takes `heap.create_latin1_string(bytes)?`, whose error
-is not thrown. `to_js_bounded` is only for a short string (a name, a code) in
-a frame with no such way out: a uSockets or BoringSSL trampoline, the builder
-of an error object.
+is not thrown; a trampoline with a JS callback takes the exception
+(`global.take_exception(err)`) and hands it to its error path. `to_js_bounded`
+is only for a short string (a name, a code) in a frame with no such way out,
+such as the builder of an error object.
 
 JSValue → string: `value.to_bun_string(global)?` (owned `String`),
 `value.to_utf8(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or

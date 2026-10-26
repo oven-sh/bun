@@ -1046,10 +1046,23 @@ describe("TextDecoder when the result is too long for a string", () => {
   // BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT lowers the limit to 1 MiB, which every machine can reach.
   it("throws ERR_STRING_TOO_LONG over a lowered limit", async () => {
     const { results, exitCode } = await decodeInChild(
-      `const bytes = new Uint8Array(${1024 * 1024 + 1}).fill(97);${decodeAll}`,
+      `const bytes = new Uint8Array(${1024 * 1024 + 1}).fill(97);${decodeAll}
+      // Not ASCII, so it is transcoded: "é", ASCII up to one unit over the limit, then the start of a sequence.
+      const notAscii = new Uint8Array(${1024 * 1024 + 4}).fill(97);
+      notAscii.set([0xc3, 0xa9]);
+      notAscii.set([0xe2, 0x82], notAscii.length - 2);
+      const transcoder = new TextDecoder();
+      await run("utf-8, stream, not ASCII", () => transcoder.decode(notAscii, { stream: true }));
+      // The chunk that failed left neither its BOM state nor its last bytes in the decoder.
+      results["the next chunk, not ASCII"] = transcoder.decode(Uint8Array.of(0xef, 0xbb, 0xbf, 0x61));`,
       { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(1024 * 1024) },
     );
-    expect(results).toEqual({ ...allTooLong, "one byte less": { length: 1024 * 1024 } });
+    expect(results).toEqual({
+      ...allTooLong,
+      "one byte less": { length: 1024 * 1024 },
+      "utf-8, stream, not ASCII": tooLong,
+      "the next chunk, not ASCII": "a",
+    });
     expect(exitCode).toBe(0);
   });
 

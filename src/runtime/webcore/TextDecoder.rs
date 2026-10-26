@@ -309,8 +309,8 @@ impl TextDecoder {
                 };
 
                 // "BOM seen" is only written by "serialize I/O queue", which a
-                // thrown decode never reaches, so only commit it once the
-                // decode succeeded.
+                // thrown decode never reaches, so only commit it, and the partial
+                // sequence that this chunk ends with, for a chunk that gives a string.
                 let Some((decoded, leftover, leftover_len)) = maybe_decode_result else {
                     // All-ASCII input needed no conversion. `create_latin1_string`
                     // copies, so `input` may borrow the caller's buffer or `joined_owned`.
@@ -321,6 +321,11 @@ impl TextDecoder {
                     }
                     return Ok(string);
                 };
+                // The one way `create_utf16_string_from_vec` fails. Checked before the
+                // state changes, which keeps that call the last thing this arm does.
+                if decoded.len() > bun_core::String::max_length() {
+                    return Err(heap.string_too_long());
+                }
                 if set_bom_seen {
                     self.bom_seen = true;
                 }

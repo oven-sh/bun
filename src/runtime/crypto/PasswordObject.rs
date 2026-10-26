@@ -405,7 +405,7 @@ pub(crate) trait PasswordOp: Send + 'static {
     /// the job.
     fn compute(&self, password: &[u8]) -> Result<Self::Value, HashError>;
     /// Convert the success payload to a `JSValue` on the JS thread.
-    fn to_js(value: Self::Value, g: &JSGlobalObject) -> JSValue;
+    fn to_js(value: Self::Value, g: &JSGlobalObject) -> JsResult<JSValue>;
 }
 
 pub(crate) struct HashOp {
@@ -417,9 +417,9 @@ impl PasswordOp for HashOp {
     fn compute(&self, password: &[u8]) -> Result<Box<[u8]>, HashError> {
         PasswordObject::hash(password, self.algorithm)
     }
-    fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
+    fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JsResult<JSValue> {
         // PHC / bcrypt output is ASCII.
-        EncodedSlice::latin1(&value).to_js_bounded(g)
+        EncodedSlice::latin1(&value).to_js(g)
         // `value` drops here.
     }
 }
@@ -434,8 +434,8 @@ impl PasswordOp for VerifyOp {
     fn compute(&self, password: &[u8]) -> Result<bool, HashError> {
         PasswordObject::verify(password, &self.prev_hash, self.algorithm)
     }
-    fn to_js(value: bool, _g: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(value)
+    fn to_js(value: bool, _g: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(value))
     }
 }
 
@@ -498,10 +498,7 @@ impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
                 let error_instance = password_error_instance(&err, Op::ERR_VERB, global);
                 promise.reject_with_async_stack(global, Ok(error_instance))?;
             }
-            Ok(v) => {
-                let js = Op::to_js(v, global);
-                promise.resolve(global, js)?;
-            }
+            Ok(v) => promise.settle(global, Op::to_js(v, global))?,
         }
         Ok(())
     }

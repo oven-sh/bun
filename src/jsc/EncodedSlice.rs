@@ -116,8 +116,8 @@ pub trait EncodedSliceJsc: Sized {
     /// WTF's converter ends the process when its allocation fails.
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// `to_js` for a short string (a name, a code) in a frame with no way to
-    /// return an error: a trampoline, or the builder of an error object. Such
-    /// a copy fails only when the process is out of memory, which ends it.
+    /// return an error, such as the builder of an error object. Such a copy
+    /// fails only when the process is out of memory, which ends it.
     fn to_js_bounded(&self, global: &JSGlobalObject) -> JSValue;
     /// Transfers ownership of a globally-allocated buffer to JSC's
     /// external-string finalizer.

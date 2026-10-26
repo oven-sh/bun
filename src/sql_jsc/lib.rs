@@ -12,8 +12,10 @@
 pub mod error;
 pub use error::{Error, Result};
 
+pub(crate) mod generated_bindgen;
+
 pub mod jsc;
-pub use jsc::{CallFrame, JSGlobalObject, JSValue};
+pub use jsc::{JSGlobalObject, JSValue};
 
 pub mod mysql;
 pub mod postgres;

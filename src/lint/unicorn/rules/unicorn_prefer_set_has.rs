@@ -30,7 +30,7 @@ const ARRAY_METHODS_RETURNS_ARRAY: [&str; 15] = [
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The names under which the module exports something, once that is asked.
+    /// The names the module exports, computed on first use.
     exported_bindings: Option<FxHashSet<Name<'a>>>,
     nearest_loop_or_function: AncestorMemo<'a, Node<'a>>,
 }
@@ -76,7 +76,7 @@ fn is_kind_of_array_expr(e: Expr) -> bool {
     }
 }
 
-/// The `includes` of `name.includes(a)`, if that is what the reference to `name` is in.
+/// The `includes` in `name.includes(a)`, if the reference to `name` is in such a call.
 fn includes_of_call<'a>(reference: Reference<'a>, name: Name<'a>) -> Option<Ident<'a>> {
     let ident = reference.expr().filter(|it| !it.is_parenthesized())?;
     let member = ident.parent().as_expr().filter(|it| !it.is_parenthesized() && !it.is_private_member())?;
@@ -125,7 +125,7 @@ fn check<'a>(_: &PreferSetHas, declarator: VarDecl<'a>, cx: &mut Cx<'a, PreferSe
     let Some(symbol) = declarator.pat().symbol() else {
         return;
     };
-    // The name in the declaration is no reference for oxlint.
+    // oxlint doesn't count the name in the declaration as a reference.
     let references = || symbol.references().filter(|it| !matches!(it.node(), Node::Pat(_)));
     if !references().all(|it| includes_of_call(it, name).is_some()) {
         return;
@@ -134,7 +134,7 @@ fn check<'a>(_: &PreferSetHas, declarator: VarDecl<'a>, cx: &mut Cx<'a, PreferSe
     match (first_two.next(), first_two.next()) {
         (None, _) => return,
         (Some(_), Some(_)) => {}
-        // Whether it is evaluated several times for one evaluation of the declaration.
+        // A single use only counts if it can run several times per evaluation of the declaration.
         (Some(only), None) => {
             let repeated = cx.state.nearest_loop_or_function.find(only.node(), |_, parent| match parent {
                 Node::Stmt(stmt) if stmt.is_loop() => Some(parent),

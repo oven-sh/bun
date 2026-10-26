@@ -22,8 +22,8 @@ fn is_parse_int(callee: Expr) -> bool {
     }
 }
 
-/// `+(literalPrefix + text) === parseInt(text, radix)`, for a radix of 2, 8 or 16. The left side is
-/// a number only if `text` is digits of that radix and then whitespace, and then the two agree.
+/// `+(literalPrefix + text) === parseInt(text, radix)`, for a radix of 2, 8 or 16. The left side is only a number if
+/// `text` is digits of that radix followed by optional whitespace, and in that case the two sides are equal.
 fn is_same_as_literal(text: &[u8], radix: u32) -> bool {
     let digits = strings::trim_js_whitespace_end(text);
     !digits.is_empty() && digits.iter().all(|c| char::from(*c).is_digit(radix))
@@ -78,7 +78,7 @@ impl Rule for PreferNumericLiterals {
             .data("functionName", call.callee().text())
             .fix(|fixer| {
                 let (file, span) = (fixer.file(), e.span());
-                // oxlint does not look for comments.
+                // oxlint doesn't check for comments.
                 let has_comments = !file.language().is_oxlint && file.comments_in(e).next().is_some();
                 if has_comments || !is_same_as_literal(value.bytes(), radix) {
                     return None;

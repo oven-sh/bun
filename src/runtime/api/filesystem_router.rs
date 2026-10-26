@@ -5,9 +5,9 @@ use bun_paths::strings;
 use bun_ast as Log;
 use bun_core::Utf8Bytes;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
-use bun_jsc::ref_string::RefString;
+use bun_jsc::ref_string::{RefString, StringTooLong};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JsCell, JsResult, LogJsc};
+use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, LogJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
@@ -19,16 +19,9 @@ use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
 use crate::generated_bindgen::filesystem_router::{
-    FileSystemRouterClass, FileSystemRouterInternalFields as _, FileSystemRouterOptions,
-    MatchedRouteClass, Routable, RouteKind, RouterStyle,
+    FileSystemRouterOptions, Routable, RouteKind, RouterStyle, js_FileSystemRouter,
 };
-
-// Note: `FrameworkFileSystemRouter` is declared in this file's
-// `filesystem_router.classes.ts`, so codegen looks for the backing struct here
-// (`crate::api::filesystem_router::FrameworkFileSystemRouter`). The
-// implementation is `bake::router::JSFrameworkRouter`; re-export the
-// real type so the codegen-generated thunks resolve without a stub.
-pub(crate) use crate::bake::router::JSFrameworkRouter as FrameworkFileSystemRouter;
+use crate::node::types::Valid;
 
 const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 
@@ -61,12 +54,11 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
 struct RefCountedString(BackRef<RefString>);
 
 impl RefCountedString {
-    fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Self {
-        let string = vm.ref_counted_string::<true>(bytes, None);
-        let string = BackRef::from(core::ptr::NonNull::new(string).expect("ref_counted_string"));
+    fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Result<Self, StringTooLong> {
+        let string = BackRef::from(vm.ref_counted_string(bytes, None)?);
         // The cache adds no ref on a hit.
         string.ref_();
-        Self(string)
+        Ok(Self(string))
     }
 
     fn bytes(&self) -> &[u8] {
@@ -91,7 +83,7 @@ impl Drop for RefCountedString {
 pub(crate) struct FileSystemRouter {
     origin: Option<RefCountedString>,
     base_dir: RefCountedString,
-    router: Router::Router,
+    router: JsCell<Router::Router>,
     asset_prefix: Option<RefCountedString>,
 }
 
@@ -229,10 +221,8 @@ impl FileSystemRouter {
     }
 }
 
-impl FileSystemRouterClass for FileSystemRouter {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn constructor<'a>(
+impl FileSystemRouter {
+    pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         options: &FileSystemRouterOptions<'a>,
     ) -> bindgen::Result<'a, Self> {
@@ -250,6 +240,7 @@ impl FileSystemRouterClass for FileSystemRouter {
             }
         }
         let global = cx.global();
+        Valid::no_null_bytes(options.dir, "dir", "a string", global)?;
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
         let mut root_dir_path = global.bun_vm().top_level_dir();
@@ -257,7 +248,7 @@ impl FileSystemRouterClass for FileSystemRouter {
             // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
             let Some(joined) =
                 path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    Fs::FileSystem::instance().top_level_dir,
+                    Fs::FileSystem::instance().top_level_dir(),
                     &mut out_buf,
                     &[options.dir],
                 )
@@ -300,25 +291,33 @@ impl FileSystemRouterClass for FileSystemRouter {
         };
 
         let vm = global.bun_vm().as_mut();
-        let base_dir = RefCountedString::new(vm, base_dir_str);
-        router.config.dir = Box::from(base_dir.bytes());
-        let mut ref_counted = |bytes: Option<&[u8]>| {
-            let bytes = bytes.filter(|bytes| !bytes.is_empty())?;
-            Some(RefCountedString::new(vm, bytes))
+        let mut ref_counted = |bytes: &[u8]| {
+            RefCountedString::new(vm, bytes).map_err(|_| global.throw_string_too_long())
         };
+        let base_dir = ref_counted(base_dir_str)?;
+        router.config.dir = Box::from(base_dir.bytes());
+        let not_empty = |bytes: &&[u8]| !bytes.is_empty();
         Ok(FileSystemRouter {
-            origin: ref_counted(options.origin),
+            origin: options
+                .origin
+                .filter(not_empty)
+                .map(&mut ref_counted)
+                .transpose()?,
             base_dir,
-            asset_prefix: ref_counted(options.asset_prefix),
-            router,
+            asset_prefix: options
+                .asset_prefix
+                .filter(not_empty)
+                .map(&mut ref_counted)
+                .transpose()?,
+            router: JsCell::new(router),
         })
     }
 
-    fn asset_prefix(&self) -> Option<impl AsRef<[u8]>> {
+    pub(crate) fn get_asset_prefix(&self) -> Option<impl AsRef<[u8]>> {
         self.asset_prefix.as_ref().map(RefCountedString::bytes)
     }
 
-    fn r#match<'a>(
+    pub(crate) fn r#match<'a>(
         &self,
         heap: &JsHeap<'a>,
         input: Routable<'a>,
@@ -365,6 +364,7 @@ impl FileSystemRouterClass for FileSystemRouter {
         let mut params_list = route_param::List::default();
         let Some(route) = self
             .router
+            .get()
             .routes
             .match_page_with_allocator(&url_path, &mut params_list)
         else {
@@ -397,34 +397,35 @@ impl FileSystemRouterClass for FileSystemRouter {
         Ok(Some(matched.into_js(heap)))
     }
 
-    fn origin(&self) -> Option<impl AsRef<[u8]>> {
+    pub(crate) fn get_origin(&self) -> Option<impl AsRef<[u8]>> {
         self.origin.as_ref().map(RefCountedString::bytes)
     }
 
-    fn reload<'a>(
-        this: JsWrapper<'a, Self>,
+    pub(crate) fn reload<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
-        let config = this.with(&cx.payloads, |this| this.router.config.clone());
+        let config = self.router.get().config.clone();
         let Some((router, _)) = load_router(cx.global(), config, Load::FromDisk)? else {
-            return Err(this.with(&cx.payloads, |this| {
-                cx.heap.error(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(&*this.router.config.dir)
-                ))
-            }));
+            return Err(cx.heap.error(format_args!(
+                "Unable to find directory: {}",
+                bstr::BStr::new(&*self.router.get().config.dir)
+            )));
         };
-        this.with_mut(&mut cx.payloads, |this| this.router = router);
-        this.set_routes_field(&cx.heap, JsLocal::UNDEFINED);
-        Ok(this)
+        self.router.set(router);
+        js_FileSystemRouter::routes_set_cached(this_value.to_js(), cx.global(), JSValue::ZERO);
+        Ok(this_value)
     }
 
-    fn routes(&self) -> impl IntoIterator<Item = (impl AsRef<[u8]>, impl AsRef<[u8]>)> {
-        let names = self.router.get_names();
-        names.iter().zip(self.router.get_entry_points())
+    pub(crate) fn get_routes(
+        &self,
+    ) -> impl IntoIterator<Item = (impl AsRef<[u8]>, impl AsRef<[u8]>)> {
+        let router = self.router.get();
+        router.get_names().iter().zip(router.get_entry_points())
     }
 
-    fn style(&self) -> RouterStyle {
+    pub(crate) fn get_style(&self) -> RouterStyle {
         RouterStyle::Nextjs
     }
 }
@@ -475,14 +476,12 @@ impl MatchedRoute {
     }
 }
 
-impl MatchedRouteClass for MatchedRoute {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn file_path(&self) -> impl AsRef<[u8]> {
+impl MatchedRoute {
+    pub(crate) fn get_file_path(&self) -> impl AsRef<[u8]> {
         self.file_path
     }
 
-    fn kind(&self) -> RouteKind {
+    pub(crate) fn get_kind(&self) -> RouteKind {
         let name = self.name;
         if strings::contains(name, b"[[...") {
             RouteKind::OptionalCatchAll
@@ -495,11 +494,11 @@ impl MatchedRouteClass for MatchedRoute {
         }
     }
 
-    fn name(&self) -> impl AsRef<[u8]> {
+    pub(crate) fn get_name(&self) -> impl AsRef<[u8]> {
         self.name
     }
 
-    fn params<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_params<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         if self.params_list.is_empty() {
             return Self::create_query_object(heap, None);
         }
@@ -518,14 +517,14 @@ impl MatchedRouteClass for MatchedRoute {
         Self::create_query_object(heap, self.param_map.get().as_ref())
     }
 
-    fn pathname(&self) -> impl AsRef<[u8]> {
+    pub(crate) fn get_pathname(&self) -> impl AsRef<[u8]> {
         self.pathname.slice()
     }
 
-    fn query<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_query<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let query_string = &self.pathname.slice()[self.query_start..];
         if query_string.is_empty() {
-            return self.params(heap);
+            return self.get_params(heap);
         }
 
         let map = if self.params_list.is_empty() {
@@ -541,11 +540,11 @@ impl MatchedRouteClass for MatchedRoute {
         Self::create_query_object(heap, map.as_ref())
     }
 
-    fn script_src(&self) -> impl AsRef<[u8]> {
-        self.src()
+    pub(crate) fn get_script_src(&self) -> impl AsRef<[u8]> {
+        self.get_src()
     }
 
-    fn src(&self) -> impl AsRef<[u8]> {
+    pub(crate) fn get_src(&self) -> impl AsRef<[u8]> {
         let mut src: Vec<u8> = Vec::new();
         let origin_url = self
             .origin

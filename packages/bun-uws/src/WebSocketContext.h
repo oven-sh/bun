@@ -109,12 +109,37 @@ private:
             ? webSocketData->inflationStream->inflate(loopData->zlibContext, {data, length}, webSocketContextData->maxPayloadLength, false)
             : loopData->inflationStream->inflate(loopData->zlibContext, {data, length}, webSocketContextData->maxPayloadLength, true);
 
+        if (inflated.closeCode == FAIL_OUT_OF_MEMORY.closeCode) {
+            failOutOfMemory(s);
+            return false;
+        }
         if (inflated.closeCode) {
             failConnection(nullptr, s, inflated.closeCode == FAIL_TOO_BIG_MESSAGE.closeCode ? FAIL_TOO_BIG_MESSAGE : FAIL_INVALID_COMPRESSED_DATA);
             return false;
         }
         data = (char *) inflated.data.data();
         length = inflated.data.length();
+        return true;
+    }
+
+    /* Frees the partially buffered message and fails the connection. Returns true, like handleFragment() on breakage. */
+    __attribute__((noinline)) static bool failOutOfMemory(void *s) {
+        ((WebSocketData *) us_socket_ext((us_socket_t *) s))->fragmentBuffer.release();
+        ((WebSocket<SSL, isServer, USERDATA> *) s)->failOutOfMemory();
+        return true;
+    }
+
+    /* Returns true if the message handler closed the connection or started shutting it down. A connection that's
+     * shutting down doesn't read anymore, so free its fragment buffer right away. */
+    static bool stoppedByHandler(void *s) {
+        if (us_socket_is_closed((us_socket_t *) s)) {
+            return true;
+        }
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) s);
+        if (!webSocketData->isShuttingDown) {
+            return false;
+        }
+        webSocketData->fragmentBuffer.release();
         return true;
     }
 
@@ -147,22 +172,24 @@ private:
                 /* Emit message event & break if we are closed or shut down when returning */
                 if (webSocketContextData->messageHandler) {
                     webSocketContextData->messageHandler((WebSocket<SSL, isServer, USERDATA> *) s, std::string_view(data, length), (OpCode) opCode);
-                    if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
+                    if (stoppedByHandler(s)) {
                         return true;
                     }
                 }
             } else {
-                /* Allocate fragment buffer up front first time, but at most 16 MiB. The length comes from the
-                 * frame header, which the peer controls, so don't trust it for large allocations. */
+                /* Reserve the whole frame up front the first time, capped at 16 MiB because the peer controls the
+                 * length. If that fails, the buffer grows as bytes arrive. */
                 if (!webSocketData->fragmentBuffer.length()) {
-                    webSocketData->fragmentBuffer.reserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024));
+                    (void) webSocketData->fragmentBuffer.tryReserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024));
                 }
                 /* Fragments forming a big message are not caught until appending them */
                 if (refusePayloadLength(length + webSocketData->fragmentBuffer.length(), webSocketState, s)) {
                     failConnection(webSocketState, s, FAIL_TOO_BIG_MESSAGE);
                     return true;
                 }
-                webSocketData->fragmentBuffer.append(data, length);
+                if (!webSocketData->fragmentBuffer.tryAppend(data, length)) {
+                    return failOutOfMemory(s);
+                }
 
                 /* Are we done now? */
                 // todo: what if we don't have any remaining bytes yet we are not fin? forceclose!
@@ -173,7 +200,9 @@ private:
                             webSocketData->compressionStatus = WebSocketData::CompressionStatus::ENABLED;
 
                             /* 9 bytes of padding for libdeflate, 4 for zlib */
-                            webSocketData->fragmentBuffer.append("123456789");
+                            if (!webSocketData->fragmentBuffer.tryAppend("123456789", 9)) {
+                                return failOutOfMemory(s);
+                            }
 
                             data = webSocketData->fragmentBuffer.data();
                             length = webSocketData->fragmentBuffer.length() - 9;
@@ -195,7 +224,7 @@ private:
                     /* Emit message and check for shutdown or close */
                     if (webSocketContextData->messageHandler) {
                         webSocketContextData->messageHandler((WebSocket<SSL, isServer, USERDATA> *) s, std::string_view(data, length), (OpCode) opCode);
-                        if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
+                        if (stoppedByHandler(s)) {
                             return true;
                         }
                     }
@@ -232,7 +261,9 @@ private:
                 }
             } else {
                 /* Here we never mind any size optimizations as we are in the worst possible path */
-                webSocketData->fragmentBuffer.append(data, length);
+                if (!webSocketData->fragmentBuffer.tryAppend(data, length)) {
+                    return failOutOfMemory(s);
+                }
                 webSocketData->controlTipLength += (unsigned int) length;
 
                 if (!remainingBytes && fin) {
@@ -260,7 +291,7 @@ private:
                     }
 
                     /* Same here, we do not care for any particular smart allocation scheme */
-                    webSocketData->fragmentBuffer.resize((unsigned int) webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength);
+                    webSocketData->fragmentBuffer.truncate(webSocketData->fragmentBuffer.length() - webSocketData->controlTipLength);
                     webSocketData->controlTipLength = 0;
                 }
             }

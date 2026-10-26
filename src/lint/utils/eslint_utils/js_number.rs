@@ -1,4 +1,4 @@
-//! The conversions between numbers and strings that ECMAScript defines.
+//! ECMAScript's conversions between numbers and strings.
 //!
 //! | JavaScript | here |
 //! | --- | --- |
@@ -32,8 +32,8 @@ fn decimal_value(text: &[u8]) -> f64 {
         .unwrap_or(f64::NAN)
 }
 
-/// The number that `digits` are in `radix`. `None` if it is not a number, or has more digits than
-/// can be rounded correctly here.
+/// The value of `digits` in `radix`. `None` if it isn't a number, or if it has more digits than this can round
+/// correctly.
 fn integer_value(digits: &[u8], radix: u32) -> Option<f64> {
     if radix == 10 {
         return Some(decimal_value(digits));
@@ -68,8 +68,7 @@ pub fn parse_float(text: &[u8]) -> f64 {
     }
 }
 
-/// `parseInt(text, radix)`, where `radix` has gone through `ToInt32`. `None` if the result cannot
-/// be computed here.
+/// `parseInt(text, radix)`, where `radix` has already gone through `ToInt32`. `None` if this can't compute the result.
 pub fn parse_int(text: &[u8], radix: i32) -> Option<f64> {
     let (sign, mut digits) = split_sign(bun_core::strings::trim_js_whitespace_start(text));
     let mut radix = radix;
@@ -93,9 +92,9 @@ pub fn parse_int(text: &[u8], radix: i32) -> Option<f64> {
     Some(sign * integer_value(&digits[..len], radix)?)
 }
 
-/// `n.toString(radix)` for `radix` in `2..=36`, otherwise in 10. The specification leaves the digits open for a
-/// radix other than 10: this is the algorithm of V8, on which ESLint runs. JavaScriptCore writes other digits for one number
-/// in four.
+/// `n.toString(radix)` for `radix` in `2..=36`, otherwise in base 10. The specification doesn't fix the digits for a
+/// radix other than 10. This is the algorithm of V8, which ESLint runs on. JavaScriptCore prints different digits for
+/// one number in four.
 pub fn to_radix_string(n: f64, radix: u32) -> Vec<u8> {
     const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     if radix == 10 || !(2..=36).contains(&radix) || !n.is_finite() {
@@ -105,7 +104,7 @@ pub fn to_radix_string(n: f64, radix: u32) -> Vec<u8> {
     let value = n.abs();
     let mut integer = value.floor();
     let mut fraction = value - integer;
-    // Half the distance to the next number: digits beyond it say nothing.
+    // Half the distance to the next number. Digits beyond it carry no information.
     let mut delta = (0.5 * (value.next_up() - value)).max(5e-324);
     let mut fraction_digits: Vec<u8> = Vec::new();
     if fraction >= delta {
@@ -116,7 +115,7 @@ pub fn to_radix_string(n: f64, radix: u32) -> Vec<u8> {
             fraction_digits.push(digit);
             fraction -= f64::from(digit);
             if (fraction > 0.5 || (fraction == 0.5 && digit & 1 == 1)) && fraction + delta > 1.0 {
-                // Round up, with the carry.
+                // Round up and propagate the carry.
                 loop {
                     match fraction_digits.pop() {
                         None => {
@@ -137,7 +136,7 @@ pub fn to_radix_string(n: f64, radix: u32) -> Vec<u8> {
             }
         }
     }
-    // The least significant first.
+    // Least significant digit first.
     let mut digits: Vec<u8> = Vec::new();
     while integer / base >= 9_007_199_254_740_992.0 {
         integer /= base;

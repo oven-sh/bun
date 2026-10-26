@@ -459,7 +459,7 @@ describe("CompressionStream and DecompressionStream", () => {
       await drained;
     });
 
-    // Async-codec × native-sink: deliverAsync's m_nativeSinkPtr arm. The other
+    // Async-codec × native-sink: deliverAsync's m_nativeSinkController arm. The other
     // >128KB tests drain via Response().arrayBuffer() (no native sink); the
     // other Bun.serve tests enqueue ≤64KB (below the async threshold).
     test("CompressionStream('gzip') -> native HTTP response sink handles a single >128KB chunk", async () => {
@@ -576,9 +576,9 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     }
   });
 
-  // Native-sink output path: when cs.readable is consumed by a native JSSink
+  // Native-sink output path: when cs.readable is consumed by a native sink
   // (here HTTPResponseSink via Bun.serve), the transform arms write coder output
-  // straight to the sink's m_sinkPtr instead of wrapping each chunk in a
+  // straight to the sink instead of wrapping each chunk in a
   // JSUint8Array and enqueueing it on the readable.
   test.each(["gzip", "brotli", "zstd", "deflate"] as const)(
     "CompressionStream(%s) -> native HTTP response sink round-trips",

@@ -17,7 +17,7 @@ fn trim_leading_zeros(raw: &[u8]) -> &[u8] {
     }
 }
 
-/// The literal for the string `value`, if that is an integer as JavaScript writes them.
+/// The literal for the string `value`, if that's an integer in JavaScript syntax.
 fn bigint_literal_from_string(value: &[u8]) -> Option<Vec<u8>> {
     let trimmed = std::str::from_utf8(value).ok()?.trim().as_bytes();
     let (digits, is_digit): (&[u8], fn(&u8) -> bool) = match trimmed {
@@ -31,15 +31,15 @@ fn bigint_literal_from_string(value: &[u8]) -> Option<Vec<u8>> {
     digits.iter().all(is_digit).then(|| [if is_decimal { trim_leading_zeros(trimmed) } else { trimmed }, b"n"].concat())
 }
 
-/// The literal for the number that is written `raw`.
+/// The literal for the number whose source text is `raw`.
 fn bigint_literal_from_numeric(raw: &[u8]) -> Option<Vec<u8>> {
-    // Also in `0xe`.
+    // This also rejects `0xe`.
     if strings::index_of_any(raw, b"eE.").is_some() {
         return None;
     }
     Some(match raw {
         [b'0', b'b' | b'B' | b'x' | b'X' | b'o' | b'O', ..] => [raw, b"n"].concat(),
-        // `0777n` is no literal.
+        // `0777n` isn't a valid literal.
         [b'0', digits @ ..] if !digits.is_empty() && digits.iter().all(|it| matches!(it, b'0'..=b'7')) => {
             [&b"0o"[..], trim_leading_zeros(raw), b"n"].concat()
         }

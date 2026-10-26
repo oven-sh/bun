@@ -2075,9 +2075,13 @@ impl<'a> Resolver<'a> {
             self.fs_ref().abs_buf_checked(&[entry], &mut buf[..])?
         };
         #[cfg(not(windows))]
-        let path: &'b [u8] = if CustomDir::is_resolved(entry) {
-            entry
-        } else {
+        let path: &'b [u8] = {
+            if CustomDir::is_resolved(entry) {
+                return Some(CustomDir {
+                    path: entry,
+                    searchable_len: entry.len(),
+                });
+            }
             let cwd: &[u8] = if entry.first() == Some(&b'/') {
                 b""
             } else {
@@ -2167,25 +2171,25 @@ impl<'a> Resolver<'a> {
         for custom_path in custom_paths {
             let custom_utf8 = custom_path.to_utf8();
             let entry = custom_utf8.slice();
-            // Node skips an entry that is not a directory when the request cannot leave it.
-            let must_be_directory = stays_inside && !entry.is_empty();
-            let has_parent_segment = cfg!(not(windows))
-                && must_be_directory
-                && strings::split_any(entry, CustomDir::SEPARATORS).any(|segment| segment == b"..");
-            if has_parent_segment && !self.custom_dir_entry_is_directory(entry, &mut buf) {
-                continue;
-            }
             let Some(dir) = self.custom_dir(entry, &mut buf) else {
                 continue;
             };
             let result = if !dir.is_cut() {
-                if must_be_directory
-                    && !has_parent_segment
-                    && !matches!(self.dir_info_cached(dir.path), Ok(Some(_)))
-                {
-                    continue;
+                let dir = dir.path;
+                let result = self.check_relative_path(dir, import_path, kind, global_cache);
+                // Node skips an entry that is not a directory when the request cannot leave it.
+                if stays_inside && !entry.is_empty() && !matches!(result, ResultUnion::NotFound) {
+                    let is_directory = if cfg!(not(windows)) && CustomDir::has_parent_segment(entry)
+                    {
+                        self.custom_dir_entry_is_directory(entry, &mut buf)
+                    } else {
+                        matches!(self.dir_info_cached(dir), Ok(Some(_)))
+                    };
+                    if !is_directory {
+                        continue;
+                    }
                 }
-                self.check_relative_path(dir.path, import_path, kind, global_cache)
+                result
             } else if stays_inside {
                 continue;
             } else {
@@ -7129,6 +7133,11 @@ impl CustomDir<'_> {
         self.searchable_len < self.path.len()
     }
 
+    fn has_parent_segment(entry: &[u8]) -> bool {
+        strings::contains(entry, b"..")
+            && strings::split_any(entry, Self::SEPARATORS).any(|segment| segment == b"..")
+    }
+
     /// Whether `path.resolve(entry)` returns `entry` unchanged and no byte of it is unsearchable.
     #[cfg(not(windows))]
     fn is_resolved(entry: &[u8]) -> bool {
@@ -7153,6 +7162,9 @@ impl CustomDir<'_> {
 
     /// Node's `insidePath`: false when `path.normalize(request)` starts with "..".
     fn request_stays_inside(request: &[u8]) -> bool {
+        if !strings::contains(request, b"..") {
+            return true;
+        }
         let mut depth: usize = 0;
         let mut first_starts_with_dot_dot = false;
         for segment in strings::split_any(request, Self::SEPARATORS) {

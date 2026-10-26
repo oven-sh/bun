@@ -3877,7 +3877,9 @@ fn format_type_for_print(ty: &Type) -> String {
 
 fn is_phi_with_jsx(ty: &Type) -> bool {
     if let Type::Phi { operands } = ty {
-        operands.iter().any(|op| crate::hir::is_jsx_type(op))
+        operands
+            .iter()
+            .any(|&op| crate::hir::is_jsx_type(&op.into()))
     } else {
         false
     }

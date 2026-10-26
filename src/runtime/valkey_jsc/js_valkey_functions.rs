@@ -1,3 +1,4 @@
+use crate::api::js_bundler::BuildArtifact;
 use crate::generated_bindgen::valkey::{HashFields, RedisArgument, RedisChannel, hash_text};
 use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer};
 use bun_collections::VecExt as _;
@@ -74,7 +75,9 @@ fn from_argument(
         RedisArgument::Text(text) => {
             return JSArgument::from_js_maybe_file(global, text.to_js(), FileBlobs::Allow);
         }
-        RedisArgument::Blob(blob) => JSArgument::Blob(Box::new(blob.dupe())),
+        RedisArgument::Blob(blob) | RedisArgument::BuildArtifact(BuildArtifact { blob, .. }) => {
+            JSArgument::Blob(Box::new(blob.dupe()))
+        }
     }))
 }
 

@@ -106,6 +106,7 @@ use std::rc::Rc;
 mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
 use crate::api::bun_secure_context::SecureContext;
+use crate::api::js_bundler::BuildArtifact;
 use crate::socket::udp_socket::get_us_error;
 
 bun_output::declare_scope!(Socket, visible);
@@ -2833,7 +2834,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let buffer = match data {
-            SocketData::Blob(blob) => Ok(Some(BlobOrStringOrBuffer::Blob(Box::new(blob.dupe())))),
+            SocketData::Blob(blob) | SocketData::BuildArtifact(BuildArtifact { blob, .. }) => {
+                Ok(Some(BlobOrStringOrBuffer::Blob(Box::new(blob.dupe()))))
+            }
             SocketData::Request(request) => {
                 BlobOrStringOrBuffer::from_body_value(global, request.get_body_value()).map(Some)
             }

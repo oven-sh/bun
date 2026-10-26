@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { BuildArtifact } from "../api/JSBundler.bind.ts";
 import { SocketOptionsTLS } from "../socket/SocketConfig.bind.ts";
 import { Blob } from "../webcore/Blob.bind.ts";
 
@@ -13,6 +14,7 @@ export const RedisArgument = b.union(
     buffer: b.bufferSource.allowShared,
     text: b.stringLike,
     blob: Blob,
+    buildArtifact: BuildArtifact,
     other: b.ignored,
   },
   { fromJS: true },

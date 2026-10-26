@@ -1,5 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { FrameworkRouterStyle } from "../api/filesystem_router.bind.ts";
+import { BuildArtifact } from "../api/JSBundler.bind.ts";
 import { Blob } from "../webcore/Blob.bind.ts";
 import { Headers, HeadersInit, Request } from "../webcore/response.bind.ts";
 import { NodeHTTPResponse } from "./NodeHTTPResponse.bind.ts";
@@ -47,6 +48,7 @@ export const WebSocketMessage = b.union({
   null: b.null,
   buffer: b.bufferSource.allowShared,
   blob: Blob,
+  buildArtifact: BuildArtifact,
   text: b.string.view,
   stringObject: b.stringObject,
   other: b.opaque,

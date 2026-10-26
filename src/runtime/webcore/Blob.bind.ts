@@ -140,7 +140,10 @@ export const file = b.fn({
   returns: Blob,
 });
 
-export const PathOrBlob = b.union({ blob: Blob, path: PathOrFileDescriptor }, { fromJS: true });
+export const PathOrBlob = b.union(
+  { blob: Blob, buildArtifact: BuildArtifact, path: PathOrFileDescriptor },
+  { fromJS: true },
+);
 
 /** What `Bun.write` itself reads of its options. */
 export const BunWriteOptions = b.dictionary(

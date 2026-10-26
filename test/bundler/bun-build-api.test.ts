@@ -983,6 +983,89 @@ describe("Bun.build", () => {
     expect(await response.text()).toMatchSnapshot("response text");
   });
 
+  test("a BuildArtifact is taken wherever a Blob is", async () => {
+    using dir = tempDir("buildartifact-as-blob", {});
+    const entrypoints = [join(import.meta.dir, "./fixtures/trivial/index.js")];
+    const [artifact] = (await Bun.build({ entrypoints })).outputs;
+    const text = await artifact.text();
+    const echo = { cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"], env: bunEnv, stdin: artifact };
+
+    const frames: unknown[] = [];
+    const bothFrames = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: (request, server) => (server.upgrade(request) ? undefined : new Response(null, { status: 400 })),
+      websocket: {
+        open(ws) {
+          ws.subscribe("topic");
+          ws.send(artifact);
+          server.publish("topic", artifact);
+        },
+        message() {},
+      },
+    });
+    const ws = new WebSocket(`ws://localhost:${server.port}`);
+    ws.binaryType = "nodebuffer";
+    ws.onmessage = ({ data }) => {
+      frames.push(typeof data === "string" ? { text: data } : data.toString());
+      if (frames.length === 2) bothFrames.resolve();
+    };
+    await bothFrames.promise;
+    ws.close();
+
+    let written = "";
+    const allWritten = Promise.withResolvers<void>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(_, chunk) {
+          written += chunk.toString();
+          if (written.length >= text.length) allWritten.resolve();
+        },
+      },
+    });
+    const socket = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+    socket.write(artifact);
+    await allWritten.promise;
+    socket.end();
+
+    let commands = "";
+    using redisServer = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket, chunk) {
+          commands += chunk.toString();
+          socket.write(chunk.includes("HELLO") ? "%0\r\n" : "+OK\r\n");
+        },
+      },
+    });
+    const redis = new Bun.RedisClient(`redis://127.0.0.1:${redisServer.port}`, { autoReconnect: false });
+    await redis.set("key", artifact);
+    redis.close();
+
+    const [onDisk] = (await Bun.build({ entrypoints, outdir: String(dir) })).outputs;
+    await Bun.write(onDisk, "replaced");
+
+    expect({
+      frames,
+      written,
+      redis: commands.includes(text),
+      spawn: await Bun.spawn(echo).stdout.text(),
+      spawnSync: Bun.spawnSync(echo).stdout.toString(),
+      destination: readFileSync(onDisk.path, "utf-8"),
+    }).toEqual({
+      frames: [text, text],
+      written: text,
+      redis: true,
+      spawn: text,
+      spawnSync: text,
+      destination: "replaced",
+    });
+    expect(() => new Bun.Image(artifact)).not.toThrow();
+  });
+
   test.todo("new Response(BuildArtifact) sets etag", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],

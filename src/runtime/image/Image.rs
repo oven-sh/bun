@@ -11,6 +11,7 @@
 use core::cell::Cell;
 use core::mem;
 
+use crate::api::js_bundler::BuildArtifact;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::store as blob_store;
@@ -361,7 +362,7 @@ fn source_from_js(
             // cache the pointer or pin here.
             return Ok(Source::JsBuffer);
         }
-        ImageInput::Blob(blob) => {
+        ImageInput::Blob(blob) | ImageInput::BuildArtifact(BuildArtifact { blob, .. }) => {
             // In-memory blob: dupe its bytes (the store may be sliced/replaced
             // independently).
             let view = blob.shared_view();

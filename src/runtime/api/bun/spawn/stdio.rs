@@ -17,6 +17,7 @@ use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 // `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
 // keep `process` leaf; `subprocess` re-exports it).
 use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
+use crate::api::js_bundler::BuildArtifact;
 
 // `SpawnOptions.Stdio` is platform-dependent: process.rs exposes `PosixStdio` /
 // `WindowsStdio`; alias the active one as `SpawnOptionsStdio` so the body stays
@@ -486,7 +487,8 @@ impl Stdio {
                 *out_stdio = Stdio::Fd(fd);
                 return Ok(());
             }
-            StdioValue::Blob((blob, _)) => {
+            StdioValue::Blob((blob, _))
+            | StdioValue::BuildArtifact((BuildArtifact { blob, .. }, _)) => {
                 // `dupe()` only bumps the store refcount.
                 return out_stdio.extract_blob(
                     cx.global(),

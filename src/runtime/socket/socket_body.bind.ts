@@ -1,5 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
+import { BuildArtifact } from "../api/JSBundler.bind.ts";
 import { ServerWebSocket } from "../server/server.bind.ts";
 import { Blob } from "../webcore/Blob.bind.ts";
 import { Request, Response } from "../webcore/response.bind.ts";
@@ -25,7 +26,13 @@ export const TextOrBytes = b.union({
   other: b.ignored,
 });
 /** What a socket writes. */
-export const SocketData = b.union({ blob: Blob, request: Request, response: Response, data: TextOrBytes });
+export const SocketData = b.union({
+  blob: Blob,
+  buildArtifact: BuildArtifact,
+  request: Request,
+  response: Response,
+  data: TextOrBytes,
+});
 /**
  * `byteOffset`, `byteLength` or `encoding`. A string or a `String` object in the place of the first two is the encoding.
  * `stringObject` and `other` are converted only as the encoding of data that an open socket writes.

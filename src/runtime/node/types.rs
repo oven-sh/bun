@@ -15,6 +15,7 @@ use bun_paths::WPathBuffer;
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
+use crate::api::js_bundler::BuildArtifact;
 use crate::generated_bindgen::blob;
 use crate::generated_bindgen::node_fs_binding as generated;
 use crate::node::util::validators;
@@ -1685,7 +1686,8 @@ impl PathOrBlob {
         destination: blob::PathOrBlob<'_>,
     ) -> JsResult<PathOrBlob> {
         let path = match destination {
-            blob::PathOrBlob::Blob(blob) => {
+            blob::PathOrBlob::Blob(blob)
+            | blob::PathOrBlob::BuildArtifact(BuildArtifact { blob, .. }) => {
                 return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
             }
             blob::PathOrBlob::Path(path) => path,

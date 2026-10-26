@@ -11,6 +11,7 @@ use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
 
+use crate::api::js_bundler::BuildArtifact;
 use crate::generated_bindgen::server::{
     WebSocketCompress, WebSocketMessage, WebSocketTopic, js_ServerWebSocket as js,
     web_socket_message_text,
@@ -253,7 +254,8 @@ pub(super) fn payload_from_js<'a>(
             return Ok(Payload::Buffer(buffer.as_array_buffer(global_this)));
         }
         (
-            WebSocketMessage::Blob(blob),
+            WebSocketMessage::Blob(blob)
+            | WebSocketMessage::BuildArtifact(BuildArtifact { blob, .. }),
             Accept::Any | Accept::AnyOrNullish | Accept::Binary | Accept::Control,
         ) => {
             let Some(bytes) = blob.in_memory_view() else {

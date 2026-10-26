@@ -31,6 +31,10 @@ export const ImageInput = b.union({
   path: b.string.allowStringObject,
   buffer: b.bufferSource.allowShared,
   blob: b.wrapped("Bun::Bindgen::Generated::JSBlob", "GeneratedBlob.h", { rustPath: "bun_jsc::webcore_types::Blob" }),
+  buildArtifact: b.wrapped("Bun::Bindgen::Generated::JSBuildArtifact", "GeneratedJSBundler.h", {
+    rustPath: "crate::api::js_bundler::BuildArtifact",
+    tsType: "Bun.BuildArtifact",
+  }),
   other: b.ignored,
 });
 export const ImageOptions = b.dictionary(

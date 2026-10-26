@@ -48,7 +48,7 @@ use crate::webcore::jsc::{
 };
 use bun_core::{String as BunString, Tag as BunStringTag};
 use bun_http::http_request_body::StreamFraming;
-use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
+use bun_http::{self as http, FetchRedirect, Headers, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -69,17 +69,16 @@ use crate::webcore::{
 };
 use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
-use bun_http_jsc::headers_jsc::from_fetch_headers;
+use bun_http_jsc::headers_jsc::{from_fetch_headers, throw_headers_too_large};
 use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
-use bun_picohttp as picohttp;
 use bun_resolver::data_url::DataURL;
-use bun_s3_signing::{SignOptions, SignResult};
+use bun_s3_signing::SignOptions;
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
-use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
+use self::fetch_tasklet::{BodyArgument, FetchOptions, HTTPRequestBody};
 pub(crate) use self::fetch_tasklet::{
     FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
 };
@@ -410,7 +409,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut proxy: Option<ZigURL> = None;
     let mut redirect_type: FetchRedirect = FetchRedirect::Follow;
     let signal: Option<AbortSignalRef>;
-    let mut range: Option<bun_core::ZBox> = None;
     let mut unix_socket_path: Box<[u8]> = Box::default();
 
     // `url_proxy_buffer` gets reassigned while `url`/`proxy`
@@ -432,7 +430,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut reject_unauthorized = vm.get_tls_reject_unauthorized();
     let mut check_server_identity: JSValue = JSValue::ZERO;
 
-    // signal/unix_socket_path/url_proxy_buffer/headers/body/range/
+    // signal/unix_socket_path/url_proxy_buffer/headers/body/
     // ssl_config are all owning types whose Drop runs on early return.
 
     let options_object: Option<JSValue> = 'brk: {
@@ -1006,14 +1004,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     //
     // body: BodyInit | null | undefined;
     //
+    let mut body_argument = BodyArgument::Bytes;
     let mut body = 'extract_body: {
         if let Some(options) = options_object {
             if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(
-                        &ctx.js_thread(context),
-                        body__,
-                    )?);
+                    let (body, argument) =
+                        HTTPRequestBody::from_js(&ctx.js_thread(context), body__)?;
+                    body_argument = argument;
+                    break 'extract_body Some(body);
                 }
             }
         }
@@ -1037,6 +1036,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     .throw());
             }
 
+            if matches!(*body_value, BodyValue::Locked(_)) {
+                body_argument = BodyArgument::Stream;
+            }
             body_value.to_blob_if_in_memory();
             if matches!(*body_value, BodyValue::Locked(_)) {
                 if let Some(readable) = req.get_body_readable_stream() {
@@ -1086,10 +1088,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(req) = request_init_object {
             if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(
-                        &ctx.js_thread(context),
-                        body__,
-                    )?);
+                    let (body, argument) =
+                        HTTPRequestBody::from_js(&ctx.js_thread(context), body__)?;
+                    body_argument = argument;
+                    break 'extract_body Some(body);
                 }
             }
         }
@@ -1168,11 +1170,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // refcounted via `created_headers` above). `FetchHeaders` is
             // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
             let headers_ref = bun_opaque::opaque_deref_mut(headers_);
-            if url.is_s3() {
-                if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
-                    range = Some(range_.to_owned_slice_z());
-                }
-            }
 
             if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
                 if http::upgrade_header_is_not_h2(upgrade_.to_utf8().slice()) {
@@ -1191,6 +1188,19 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         break 'extract_headers result;
     };
+
+    if url.is_s3()
+        && let Some(request_headers) = &headers
+    {
+        // An S3 object as the body becomes a stream below.
+        let stream_upload = matches!(method, Method::PUT | Method::POST)
+            && (body_argument == BodyArgument::Stream || body.is_s3());
+        if let Some(err) =
+            s3::unsendable_fetch_header_error(global_this, request_headers, stream_upload)
+        {
+            return reject_before_send(global_this, &mut body, err);
+        }
+    }
 
     if proxy.is_some() && !unix_socket_path.is_empty() {
         let err = ctx.to_type_error(
@@ -1645,8 +1655,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // Automatic request-body compression. Only buffered bodies (Blob bytes,
     // ArrayBuffer/TypedArray, string) are handled; ReadableStream and sendfile
-    // are skipped. S3 destinations replace the header set with a signed one,
-    // so compression is skipped there too. The actual compression runs on the
+    // are skipped, and so is S3: the body is the stored object. The actual compression runs on the
     // HTTP thread (HTTPClient::start) so it can reuse LibdeflateState's shared
     // scratch buffer; here we only commit to it by appending Content-Encoding
     // and forwarding the option.
@@ -1761,6 +1770,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 // lifetime is managed by the resolve callback itself).
                 let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
             }
+            debug_assert!(
+                headers
+                    .as_ref()
+                    .is_none_or(|h| s3::first_unsendable_fetch_header(h, true).is_none()),
+                "the upload carries none of the headers of the caller that S3 acts on"
+            );
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
@@ -1819,35 +1834,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             proxy = Some(parse_url_detached!(&url_proxy_buffer[result.url.len()..]));
             drop(old_buffer);
         } else {
-            // replace headers and url of the request
+            // replace the url of the request
             // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
             url_proxy_buffer = core::mem::take(&mut result.url).into();
             url = parse_url_detached!(&url_proxy_buffer[..]);
             // result.url = ""; — fetch now owns this (mem::take above)
         }
 
-        let content_type = headers.as_ref().and_then(|h| h.get_content_type());
-        let mut header_buffer: [picohttp::Header; SignResult::MAX_HEADERS + 1] =
-            [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
-
-        if let Some(range_) = &range {
-            let new_headers = result.mix_with_header(
-                &mut header_buffer,
-                picohttp::Header::new(b"range", range_.as_bytes()),
-            );
-            set_headers(&mut headers, new_headers);
-        } else if let Some(ct) = content_type {
-            if !ct.is_empty() {
-                let new_headers = result.mix_with_header(
-                    &mut header_buffer,
-                    picohttp::Header::new(b"Content-Type", ct),
-                );
-                set_headers(&mut headers, new_headers);
-            } else {
-                set_headers(&mut headers, result.headers());
-            }
-        } else {
-            set_headers(&mut headers, result.headers());
+        if !s3::prepend_signed_headers(&mut headers, result.headers()) {
+            return Err(throw_headers_too_large(global_this));
         }
     }
 
@@ -2030,15 +2025,4 @@ impl<'a> S3StreamWrapper<'a> {
         }
         Ok(())
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// setHeaders helper
-// ──────────────────────────────────────────────────────────────────────────
-
-fn set_headers(headers: &mut Option<Headers>, new_headers: &[picohttp::Header]) {
-    let old = headers.take();
-    *headers = Some(Headers::from_pico_http_headers(new_headers));
-    // `if (old) |*h| h.deinit()` → Drop on `old`.
-    drop(old);
 }

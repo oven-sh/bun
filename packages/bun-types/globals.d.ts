@@ -2066,6 +2066,20 @@ interface BunFetchRequestInit extends RequestInit {
   /**
    * Override the default S3 options
    *
+   * With an `s3://` URL, `fetch` signs the request and sends the request
+   * `headers` with it. The storage service decides what each header does.
+   *
+   * `fetch` rejects with a `TypeError`, before it sends anything, when
+   * `headers` has a header that it cannot send:
+   * - `Host`, `Authorization`, `x-amz-date`, `x-amz-content-sha256` or
+   *   `x-amz-security-token`. Request signing generates them.
+   * - `Content-MD5`, and any other header whose name starts with `x-amz-`.
+   *   They need a signature, and `fetch` does not sign request headers yet.
+   * - With a stream or an `S3File` as the body of an upload: the `If-` headers,
+   *   `Cache-Control`, `Content-Language` and `Expires`. Bun uploads such a
+   *   body in parts. It sends `Content-Type`, `Content-Disposition` and
+   *   `Content-Encoding` with the upload, and no other header.
+   *
    * @example
    * ```js
    * const response = await fetch("s3://bucket/key", {
@@ -2134,6 +2148,7 @@ interface BunFetchRequestInit extends RequestInit {
    * Only buffered bodies (string, `ArrayBuffer`/`TypedArray`, `Blob`) are
    * compressed; `ReadableStream` bodies are sent as-is. If the request
    * already has a `Content-Encoding` header, the body is left unchanged.
+   * A request to an `s3://` URL is not compressed.
    * Not part of the Fetch API specification.
    *
    * @default false

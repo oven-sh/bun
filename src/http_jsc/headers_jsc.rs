@@ -10,7 +10,7 @@ use bun_jsc::{FetchHeaders, HTTPHeaderName, JSGlobalObject, JsError, JsResult};
 use crate::generated_bindgen::headers_jsc::{H2LiveCounts, H3LiveCounts};
 
 /// `Headers` indexes its buffer with `u32` `StringPointer`s, so the total size can't exceed `u32::MAX`.
-fn throw_headers_too_large(global: &JSGlobalObject) -> JsError {
+pub fn throw_headers_too_large(global: &JSGlobalObject) -> JsError {
     global.throw_value(global.create_range_error_instance(format_args!(
         "Headers exceed the maximum total size of {} bytes",
         u32::MAX

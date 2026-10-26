@@ -64,21 +64,18 @@ public:
     bool m_codecChunkOffThread : 1 { false };
 
     // Native byte-producing subclasses only: when `readStreamIntoSink` attaches a
-    // native JSSink controller to this transform, the transform arms write coder
-    // output straight to `m_nativeSinkPtr` via the Rust SinkHandle dispatcher
-    // (Bun__NativeTransformSink__writeBytes) instead of wrapping it in a
-    // JSUint8Array and enqueueing on the readable.
+    // native sink's controller to this transform, the transform arms write coder
+    // output straight to it instead of wrapping it in a JSUint8Array and
+    // enqueueing on the readable.
     // `m_nativeSinkReadyPromise` is the transform-algorithm result returned on
     // sink backpressure; the sink's onReady resolves it.
-    JSC::WriteBarrier<JSC::JSObject> m_nativeSinkCell;
+    JSC::WriteBarrier<JSReadableSinkController> m_nativeSinkController;
     JSC::WriteBarrier<JSC::JSPromise> m_nativeSinkReadyPromise;
     // Compression/Decompression only: transform-algorithm promise of a chunk whose codec
     // steps span turns (off-thread, or waiting for the consumer to take the output so far);
     // the consumer drives it on (WebStreamsInternals.h: nativeCodecContinue / Abandon). While
     // set, the coder holds that chunk's state and ClearAlgorithms defers the coder release.
     JSC::WriteBarrier<JSC::JSPromise> m_codecPromise;
-    void* m_nativeSinkPtr { nullptr };
-    uint8_t m_nativeSinkId { 0 };
 
 protected:
     JSTransformStream(JSC::VM&, JSC::Structure*);

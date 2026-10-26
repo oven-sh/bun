@@ -44,8 +44,7 @@ fn dedent_lines(text: &[u8], base_indent: usize) -> Vec<u8> {
     result
 }
 
-/// Returns `text` without the blank lines at its start, and without the blanks before it on its first line. A line
-/// that has text keeps its indentation.
+/// Returns `text` without the blank lines at its start. The first line with text keeps its indentation.
 fn trim_leading_blank_lines(text: &[u8]) -> &[u8] {
     let first_text = text.len() - strings::trim_unicode_whitespace_start(text).len();
     match strings::last_index_of_char(&text[..first_text], b'\n') {
@@ -54,10 +53,9 @@ fn trim_leading_blank_lines(text: &[u8]) -> &[u8] {
     }
 }
 
-/// Splits `rest`, the lines after an opening fence, at its closing fence: the last line that is ``` behind its
-/// indentation. Returns the code inside, without the blank lines before the fence, and the closing fence. The fence
-/// has the indentation of the code once the example has been formatted. oxfmt 0.72 only finds a fence at the start of
-/// its line, so on its second pass it parses the whole block as code and prints ` *   ```;`.
+/// Splits `rest`, the lines after an opening fence, into the code and the closing fence: the last line that is ```
+/// behind its indentation, since a formatted example indents the fence with the code. oxfmt 0.72 finds it at the
+/// start of the line only, and on its second pass prints the block as code, with ` *   ```;` at the end.
 fn split_at_closing_fence(rest: &[u8]) -> Option<(&[u8], &[u8])> {
     let mut end = rest.len();
     loop {
@@ -125,9 +123,8 @@ fn push_default(out: &mut Vec<u8>, value: &[u8]) {
 impl JsdocFormatter<'_> {
     pub(super) fn format_example_tag(&mut self, normalized_kind: &[u8], tag: JSDocTag<'_>) {
         let raw_text = tag.comment().parsed_preserving_whitespace();
-        // The first line of the code keeps its indentation, like the lines after it, so that `push_raw_code_lines`
-        // sees what an earlier pass wrote in front of all of them. oxfmt trims it, and so moves the lines after it to
-        // the right by the code indent on every pass.
+        // The first line keeps its indentation, so that `push_raw_code_lines` sees what an earlier pass wrote in front
+        // of every line. oxfmt trims it, and moves the lines after it to the right on every pass.
         let mut code = strings::trim_unicode_whitespace_end(trim_leading_blank_lines(&raw_text));
         let out = self.content_lines.begin_line();
         out.push(b'@');
@@ -159,9 +156,8 @@ impl JsdocFormatter<'_> {
         }
     }
 
-    /// Pushes the lines of code that is not formatted. With `keepUnparsableExampleIndent` each line keeps its
-    /// indentation, but for `written`: what an earlier pass wrote in front of the lines, which oxfmt writes once more
-    /// on every pass.
+    /// Pushes code that is not formatted. With `keepUnparsableExampleIndent` a line keeps its indentation, but for
+    /// `written`, what an earlier pass wrote in front of it. oxfmt writes that once more on every pass.
     fn push_raw_code_lines(&mut self, code: &[u8], written: &[u8], indent: &[u8]) {
         let kept = self
             .options

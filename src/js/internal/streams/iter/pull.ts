@@ -417,6 +417,7 @@ function* withFlushSync(source) {
 function* applyStatefulSyncTransform(source, transform, receiver) {
   const output = transform.$call(receiver, withFlushSync(source));
   for (const item of output) {
+    if (item === null) continue;
     const batch: Uint8Array[] = [];
     for (const chunk of flattenTransformYieldSync(item)) {
       batch.push(chunk);
@@ -538,6 +539,7 @@ async function* withFlushAsync(source) {
 async function* applyStatefulAsyncTransform(source, transform, receiver, options) {
   const output = transform.$call(receiver, withFlushAsync(source), options);
   for await (const item of output) {
+    if (item === null) continue;
     // Fast path: item is already a Uint8Array[] batch (e.g. compression transforms)
     if (isUint8ArrayBatch(item)) {
       if (item.length > 0) {

@@ -1620,6 +1620,127 @@ it("stream/iter calls transform() of a transform object with that object as this
   });
 });
 
+it("stream/iter skips a null that a transform object yields", async () => {
+  // Upstream: https://github.com/nodejs/node/commit/5c0578cbf739490e950df9406d675c8101cac692
+  const script = `
+    const { from, fromSync, pipeTo, pipeToSync, pull, pullSync, text, textSync } = require("node:stream/iter");
+
+    // The source of a transform object ends with a null flush signal. These transforms yield it.
+    const forwardsSourceAsync = () => ({
+      async *transform(source) {
+        yield* source;
+      },
+    });
+    const forwardsSourceSync = () => ({
+      *transform(source) {
+        yield* source;
+      },
+    });
+    const yieldsAsync = items => ({
+      async *transform() {
+        for (const item of items) yield item;
+      },
+    });
+    const yieldsSync = items => ({
+      *transform() {
+        for (const item of items) yield item;
+      },
+    });
+    const attempt = async fn => {
+      try {
+        return await fn();
+      } catch (error) {
+        return error.code ?? String(error);
+      }
+    };
+    const bytes = string => new TextEncoder().encode(string);
+
+    (async () => {
+      const output = {};
+
+      output.pull = await attempt(() => text(pull(from("data"), forwardsSourceAsync())));
+      output.pullSync = await attempt(() => textSync(pullSync(fromSync("data"), forwardsSourceSync())));
+      output.pipeTo = await attempt(async () => {
+        const written = [];
+        await pipeTo(from("data"), forwardsSourceAsync(), {
+          write(chunk) {
+            written.push(chunk);
+          },
+          end() {},
+        });
+        return Buffer.concat(written).toString();
+      });
+      output.pipeToSync = await attempt(() => {
+        const written = [];
+        pipeToSync(fromSync("data"), forwardsSourceSync(), {
+          writeSync(chunk) {
+            written.push(chunk);
+            return true;
+          },
+          endSync() {
+            return 0;
+          },
+        });
+        return Buffer.concat(written).toString();
+      });
+
+      const nullBetweenOutput = ["a", null, bytes("b"), null, [bytes("c")]];
+      output.pullNullBetweenOutput = await attempt(() => text(pull(from("data"), yieldsAsync(nullBetweenOutput))));
+      output.pullSyncNullBetweenOutput = await attempt(() =>
+        textSync(pullSync(fromSync("data"), yieldsSync(nullBetweenOutput))),
+      );
+
+      // The second transform gets one flush signal, its own, and not the null that the first one yields.
+      let flushSignals = 0;
+      const countsFlushSignals = {
+        async *transform(source) {
+          for await (const chunks of source) {
+            if (chunks === null) flushSignals++;
+            else yield chunks;
+          }
+        },
+      };
+      output.pullTwoTransforms = await attempt(() =>
+        text(pull(from("data"), forwardsSourceAsync(), countsFlushSignals)),
+      );
+      output.flushSignalsOfSecondTransform = flushSignals;
+
+      // Only an item that is null means "no output".
+      output.pullUndefined = await attempt(() => text(pull(from("data"), yieldsAsync([undefined]))));
+      output.pullSyncUndefined = await attempt(() => textSync(pullSync(fromSync("data"), yieldsSync([undefined]))));
+      output.pullNullInArray = await attempt(() => text(pull(from("data"), yieldsAsync([[null]]))));
+      output.pullSyncNullInArray = await attempt(() => textSync(pullSync(fromSync("data"), yieldsSync([[null]]))));
+
+      console.log(JSON.stringify(output));
+    })();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-warnings", "--experimental-stream-iter", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: {
+      pull: "data",
+      pullSync: "data",
+      pipeTo: "data",
+      pipeToSync: "data",
+      pullNullBetweenOutput: "abc",
+      pullSyncNullBetweenOutput: "abc",
+      pullTwoTransforms: "data",
+      flushSignalsOfSecondTransform: 1,
+      pullUndefined: "ERR_INVALID_ARG_TYPE",
+      pullSyncUndefined: "ERR_INVALID_ARG_TYPE",
+      pullNullInArray: "ERR_INVALID_ARG_TYPE",
+      pullSyncNullInArray: "ERR_INVALID_ARG_TYPE",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("require.resolve.paths agrees with require about gated stream/iter specifiers", async () => {
   // Without the flag the introspection APIs must not report stream/iter as
   // a builtin (node returns a lookup-paths array there); with the flag they

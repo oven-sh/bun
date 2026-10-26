@@ -13,9 +13,6 @@ pub struct StructShape {
 pub enum ShapeError {
     /// The name at this position repeats an earlier one.
     Duplicate(usize),
-    /// The name at this position is an array index, which an object view cannot keep apart
-    /// from an element.
-    ArrayIndex(usize),
 }
 
 /// Whether `name` is a canonical array index: `"0"`, `"17"`, up to `"4294967294"`, no leading zeros.
@@ -38,9 +35,6 @@ impl StructShape {
         let mut index = HashMap::with_capacity(names.len());
         let mut boxed = Vec::with_capacity(names.len());
         for (i, name) in names.into_iter().enumerate() {
-            if is_array_index(&name) {
-                return Err(ShapeError::ArrayIndex(i));
-            }
             let name: Box<[u16]> = name.into();
             if index.insert(name.clone(), i).is_some() {
                 return Err(ShapeError::Duplicate(i));
@@ -90,15 +84,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicates_and_array_indices() {
+    fn rejects_duplicates_and_keeps_array_indices() {
         assert_eq!(
             StructShape::new(vec![utf16("a"), utf16("b"), utf16("a")]).err(),
             Some(ShapeError::Duplicate(2))
         );
-        assert_eq!(
-            StructShape::new(vec![utf16("a"), utf16("12")]).err(),
-            Some(ShapeError::ArrayIndex(1))
-        );
+        // A field may be named by an array index like any other key.
+        let shape = StructShape::new(vec![utf16("a"), utf16("12"), utf16("0")]).unwrap();
+        assert_eq!(shape.index_of(&utf16("12")), Some(1));
         assert!(StructShape::new(vec![utf16("01"), utf16("-1"), utf16("4294967295")]).is_ok());
         assert!(is_array_index(&utf16("4294967294")));
         assert!(!is_array_index(&utf16("")));

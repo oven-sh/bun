@@ -13,7 +13,6 @@ export const Mutex = b.class({
   proto: {
     /** `true` once held, `false` if `timeout` milliseconds passed first or the worker was asked to terminate. */
     lock: { ...heap, args: { timeout: b.f64.loose.optional }, returns: b.bool },
-    tryLock: { returns: b.bool },
     unlock: heap,
   },
 });
@@ -30,11 +29,20 @@ export const Condition = b.class({
   },
 });
 
-/** `{ Mutex, Condition, SharedArray, SharedStruct }`, the constructors of this realm. `SharedArray` and `SharedStruct` are made by hand-written C++. */
+/**
+ * `{ Mutex, Condition, SharedArray, SharedStruct, MutexClass, ConditionClass }`, the constructors of this realm. `Mutex`, `Condition`,
+ * `SharedArray` and `SharedStruct` are made by hand-written C++; `MutexClass` and `ConditionClass` are the generated classes behind the
+ * first two, whose prototypes hold the operations (a Mutex or Condition itself has no prototype).
+ */
 export const classes = b.fn({ returns: b.any, capability: "js" });
 
 /** Whether a value can be stored in a slot of a SharedStruct or SharedArray. */
 export const canBeShared = b.fn({ args: { value: b.any }, returns: b.bool });
+
+/** Whether a value is a SharedStruct, a SharedArray, a Mutex or a Condition. */
+export const isSharedObject = b.fn({ args: { value: b.any }, returns: b.bool });
+export const isMutex = b.fn({ args: { value: b.any }, returns: b.bool });
+export const isCondition = b.fn({ args: { value: b.any }, returns: b.bool });
 
 /** The sequentially consistent operations of `Atomics`, on a slot of a SharedStruct (`key` is a field name) or a SharedArray (`key` is an index). */
 export const atomicLoad = b.fn({ ...js, args: { target: b.any, key: b.any }, returns: b.any });

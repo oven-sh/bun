@@ -36,6 +36,16 @@ unsafe extern "C" {
         key: *const c_void,
         wrapper: JSValue,
     );
+    /// The Mutex or Condition (or view) that stands for the shared object at `key` in this realm, if it is alive; else empty.
+    safe fn Bun__SharedObject__lookup(global: &JSGlobalObject, key: *const c_void) -> JSValue;
+    /// Records that `object` stands for the shared object at `key` in this realm.
+    safe fn Bun__SharedObject__register(
+        global: &JSGlobalObject,
+        key: *const c_void,
+        object: JSValue,
+    );
+    /// Gives a Mutex or Condition that was just made no prototype and makes it non-extensible.
+    safe fn Bun__SharedObject__makeBare(global: &JSGlobalObject, object: JSValue);
     safe fn Bun__SharedStruct__createConstructors(
         global: &JSGlobalObject,
         mutex: JSValue,
@@ -81,10 +91,6 @@ impl MutexObject {
         }
         let timeout = timeout.and_then(shared::timeout_from_millis);
         Ok(self.inner.lock(timeout, &script_stopped()).is_ok())
-    }
-
-    pub(crate) fn try_lock(&self) -> bool {
-        self.inner.try_lock()
     }
 
     pub(crate) fn unlock<'a>(&self, heap: &JsHeap<'a>) -> bun_jsc::bindgen::Result<'a, ()> {
@@ -240,8 +246,49 @@ pub(crate) fn to_js(global: &JSGlobalObject, value: Value) -> JsResult<JSValue> 
             JSValue::big_int_from_decimal(global, digits.as_bytes())?.unwrap_or(JSValue::UNDEFINED)
         }
         Value::Struct(block) => wrap(global, block)?,
-        Value::Mutex(inner) => js_Mutex::to_js(MutexObject::new(inner), global),
-        Value::Condition(inner) => js_Condition::to_js(ConditionObject::new(inner), global),
+        Value::Mutex(inner) => {
+            let key = Arc::as_ptr(&inner).cast::<c_void>();
+            standing_for(global, key, || {
+                js_Mutex::to_js(MutexObject::new(inner), global)
+            })
+        }
+        Value::Condition(inner) => {
+            let key = Arc::as_ptr(&inner).cast::<c_void>();
+            standing_for(global, key, || {
+                js_Condition::to_js(ConditionObject::new(inner), global)
+            })
+        }
+    })
+}
+
+/// The object that stands for the shared object at `key` in this realm: the one that is alive, else the one `make` builds, which is
+/// then bare (the proposal's Mutex and Condition have no prototype and cannot be extended) and remembered.
+fn standing_for(
+    global: &JSGlobalObject,
+    key: *const c_void,
+    make: impl FnOnce() -> JSValue,
+) -> JSValue {
+    let existing = Bun__SharedObject__lookup(global, key);
+    if !existing.is_empty() {
+        return existing;
+    }
+    let made = make();
+    Bun__SharedObject__makeBare(global, made);
+    Bun__SharedObject__register(global, key, made);
+    made
+}
+
+/// `new Atomics.Mutex()`: called from C++ (SharedStructObject.cpp). Empty with an exception pending.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__SharedMutex__create(global: &JSGlobalObject) -> JSValue {
+    to_js_host_call(global, || to_js(global, Value::Mutex(shared::Mutex::new())))
+}
+
+/// `new Atomics.Condition()`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__SharedCondition__create(global: &JSGlobalObject) -> JSValue {
+    to_js_host_call(global, || {
+        to_js(global, Value::Condition(shared::Condition::new()))
     })
 }
 
@@ -385,9 +432,6 @@ fn new_struct_block(global: &JSGlobalObject, names: JSValue) -> JsResult<Arc<Sha
         Err(ShapeError::Duplicate(i)) => {
             Err(global.throw_type_error(format_args!("SharedStruct field name {i} is a duplicate")))
         }
-        Err(ShapeError::ArrayIndex(i)) => Err(global.throw_type_error(format_args!(
-            "SharedStruct field name {i} is an array index"
-        ))),
     }
 }
 
@@ -453,26 +497,65 @@ pub(crate) fn can_be_shared(value: JsLocal<'_>) -> bool {
     is_shareable(value.to_js())
 }
 
-/// The block and slot that `target[key]` names.
+/// Whether `value` is a shared struct, a shared array, a Mutex or a Condition: what the proposal calls a Shared Struct.
+pub(crate) fn is_shared_object(value: JsLocal<'_>) -> bool {
+    shared_of(value.to_js()).is_some()
+}
+
+pub(crate) fn is_mutex(value: JsLocal<'_>) -> bool {
+    value.to_js().as_class_ref::<MutexObject>().is_some()
+}
+
+pub(crate) fn is_condition(value: JsLocal<'_>) -> bool {
+    value.to_js().as_class_ref::<ConditionObject>().is_some()
+}
+
+/// The block and slot that `target[key]` names. The caller (src/js/internal/structs.ts) has checked that `key` is a string naming an own
+/// property of `target`, so this only finds where it is. `None` for the length of a shared array, which is not a slot.
 fn slot_of(
     global: &JSGlobalObject,
     target: JSValue,
     key: JSValue,
-) -> JsResult<(Arc<SharedBlock>, usize)> {
+) -> JsResult<(Arc<SharedBlock>, Option<usize>)> {
     let Some(block) = block_of(target) else {
         return Err(global.throw_type_error(format_args!("Expected a SharedStruct or SharedArray")));
     };
+    let name = utf16_of(&key.to_bun_string(global)?);
     let index = match block.shape() {
-        Some(shape) => shape.index_of(&utf16_of(&key.to_bun_string(global)?)),
-        None => {
-            let n = key.to_number(global)?;
-            (n.fract() == 0.0 && n >= 0.0 && n < block.len() as f64).then_some(n as usize)
-        }
+        Some(shape) => shape.index_of(&name),
+        None => array_index_of(&name).filter(|&n| n < block.len()),
     };
     match index {
-        Some(index) => Ok((block, index)),
-        None => Err(global.throw_invalid_arguments(format_args!("Invalid atomic access index"))),
+        Some(index) => Ok((block, Some(index))),
+        None if block.shape().is_none()
+            && name == "length".encode_utf16().collect::<Vec<u16>>() =>
+        {
+            Ok((block, None))
+        }
+        None => Err(global
+            .throw_value(global.create_range_error_instance(format_args!(
+                "Invalid atomic access: no such field"
+            )))),
     }
+}
+
+/// The slot a write goes to: the length of a shared array is not one, and cannot be written.
+fn element_index(global: &JSGlobalObject, index: Option<usize>) -> JsResult<usize> {
+    index.ok_or_else(|| {
+        global.throw_type_error(format_args!("The length of a shared array is read-only"))
+    })
+}
+
+/// `name` as an element index, if it is one in canonical form (`"0"`, `"17"`, no sign, no leading zero).
+fn array_index_of(name: &[u16]) -> Option<usize> {
+    if !shared::is_array_index(name) {
+        return None;
+    }
+    let mut value = 0usize;
+    for &unit in name {
+        value = value * 10 + usize::from(unit - u16::from(b'0'));
+    }
+    Some(value)
 }
 
 /// `value`, which slot `index` of `view` held, as a JS value: the wrapper the view cached for that object, so that
@@ -513,6 +596,10 @@ pub(crate) fn atomic_load(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let (block, index) = slot_of(global, target.to_js(), key.to_js())?;
+    let Some(index) = index else {
+        // The length of a shared array.
+        return Ok(JSValue::js_number(block.len() as f64));
+    };
     let value = block.load(index);
     let identity = identity_of(&value);
     let result = to_js_from_slot(global, target.to_js(), index, value)?;
@@ -531,6 +618,7 @@ pub(crate) fn atomic_store(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let (block, index) = slot_of(global, target.to_js(), key.to_js())?;
+    let index = element_index(global, index)?;
     let stored = to_shared(global, value.to_js())?;
     block.store(index, &stored);
     remember_slot(global, target.to_js(), index, &stored, value.to_js());
@@ -545,6 +633,7 @@ pub(crate) fn atomic_exchange(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let (block, index) = slot_of(global, target.to_js(), key.to_js())?;
+    let index = element_index(global, index)?;
     let stored = to_shared(global, value.to_js())?;
     let old = block.exchange(index, &stored);
     // The old value's wrapper comes from the cache before the cache takes the new one.
@@ -564,6 +653,7 @@ pub(crate) fn atomic_compare_exchange(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     let (block, index) = slot_of(global, target.to_js(), key.to_js())?;
+    let index = element_index(global, index)?;
     let expected = to_value(global, expected.to_js())?;
     let stored = to_shared(global, replacement.to_js())?;
     let old = match expected {

@@ -9,6 +9,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/WeakGCMapInlines.h>
 
 // Rust, in src/shared_struct_jsc/shared_struct_classes.rs.
 extern "C" {
@@ -17,11 +18,79 @@ const void* Bun__SharedStruct__newBlock(JSC::JSGlobalObject*, JSC::EncodedJSValu
 const void* Bun__SharedArray__newBlock(JSC::JSGlobalObject*, JSC::EncodedJSValue length);
 }
 
+// Rust, which makes a new Mutex or Condition object.
+extern "C" JSC::EncodedJSValue Bun__SharedMutex__create(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__SharedCondition__create(JSC::JSGlobalObject*);
+
+// ZigGlobalObject.cpp: loads the structs surface in a realm if that has not happened yet.
+extern "C" void Bun__ensureStructsSurface(JSC::JSGlobalObject*);
+
 // Defined at the end of this file, which is also where Rust calls them.
 extern "C" JSC::EncodedJSValue Bun__SharedBlock__wrap(JSC::JSGlobalObject*, const void* block);
 
 namespace Bun {
 using namespace JSC;
+
+// The JS object that stands for each shared object in one realm: a shared struct or array view, a Mutex or a Condition. A block that
+// reaches a realm twice, through two parents or a structured clone, is the same object there for as long as that object is alive. It
+// is held weakly, so a view nobody references is free to go. The registry is a cell that the global object holds in a private property.
+class SharedObjectRegistry final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::CompleteSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.destructibleObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static SharedObjectRegistry* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    {
+        auto* structure = Bun::createClassStructure(vm, globalObject, JSC::jsNull(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* registry = new (NotNull, JSC::allocateCell<SharedObjectRegistry>(vm)) SharedObjectRegistry(vm, structure);
+        registry->finishCreation(vm);
+        return registry;
+    }
+
+    static void destroy(JSC::JSCell* cell) { static_cast<SharedObjectRegistry*>(cell)->~SharedObjectRegistry(); }
+    ~SharedObjectRegistry() = default;
+
+    JSC::JSObject* get(const void* key) const { return m_objects.get(key); }
+    void set(const void* key, JSC::JSObject* object) { m_objects.set(key, object); }
+
+private:
+    SharedObjectRegistry(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+        , m_objects(vm)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+        ASSERT(inherits(info()));
+    }
+
+    JSC::WeakGCMap<const void*, JSC::JSObject> m_objects;
+};
+
+const ClassInfo SharedObjectRegistry::s_info = { "SharedObjectRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SharedObjectRegistry) };
+
+// The registry of `globalObject`'s realm, made on first use when `create` is set.
+static SharedObjectRegistry* registryOf(VM& vm, JSGlobalObject* globalObject, bool create)
+{
+    const Identifier& name = builtinNames(vm).dataPrivateName();
+    if (JSValue existing = globalObject->getDirect(vm, name))
+        return uncheckedDowncast<SharedObjectRegistry>(existing.asCell());
+    if (!create)
+        return nullptr;
+    auto* registry = SharedObjectRegistry::create(vm, globalObject);
+    globalObject->putDirect(vm, name, registry, static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    return registry;
+}
 
 static constexpr unsigned slotAttributes = static_cast<unsigned>(PropertyAttribute::DontDelete);
 static constexpr unsigned lengthAttributes = static_cast<unsigned>(PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -107,8 +176,9 @@ bool JSSharedView::redefineSlot(JSGlobalObject* globalObject, size_t index, cons
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (descriptor.isAccessorDescriptor()
-        || (descriptor.configurablePresent() && descriptor.configurable())
+    // [[DefineOwnProperty]] of a shared struct refuses a descriptor that makes the field non-enumerable, configurable or read-only. It
+    // reads nothing else but [[Value]], so an accessor descriptor is accepted and changes nothing (the text of the proposal).
+    if ((descriptor.configurablePresent() && descriptor.configurable())
         || (descriptor.enumerablePresent() && !descriptor.enumerable())
         || (descriptor.writablePresent() && !descriptor.writable())) {
         if (shouldThrow)
@@ -168,16 +238,32 @@ bool JSSharedStruct::getOwnPropertySlot(JSObject* object, JSGlobalObject* global
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
 }
 
+// A property that is not a field cannot be written. [[Set]] ignores the receiver: it writes the field of this struct, and adds nothing to
+// the receiver when there is no such field.
+static bool refuseWrite(JSGlobalObject* globalObject, PutPropertySlot& slot, ASCIILiteral message)
+{
+    if (slot.isStrictMode()) {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(globalObject, scope, message);
+    }
+    return false;
+}
+
+bool JSSharedStruct::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
+{
+    auto* self = uncheckedDowncast<JSSharedStruct>(object);
+    if (auto slotIndex = self->slotOf(Identifier::from(getVM(globalObject), index)))
+        return loadSlot(self, *slotIndex, globalObject, slot);
+    return Base::getOwnPropertySlotByIndex(object, globalObject, index, slot);
+}
+
 bool JSSharedStruct::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     auto* self = uncheckedDowncast<JSSharedStruct>(cell);
-    // A write through an object that inherits from this one is that object's own.
-    if (slot.thisValue() == cell) {
-        if (auto index = self->slotOf(propertyName))
-            return self->store(globalObject, *index, value);
-    }
-    // Not extensible: this refuses a name that is not a field, as it does for any frozen-shaped object.
-    return Base::put(cell, globalObject, propertyName, value, slot);
+    if (auto index = self->slotOf(propertyName))
+        return self->store(globalObject, *index, value);
+    return refuseWrite(globalObject, slot, "Cannot add a property to a shared struct"_s);
 }
 
 bool JSSharedStruct::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
@@ -188,19 +274,46 @@ bool JSSharedStruct::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
 }
 
-bool JSSharedStruct::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+bool JSSharedStruct::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
 {
     auto* self = uncheckedDowncast<JSSharedStruct>(cell);
-    if (self->slotOf(propertyName))
-        return false;
-    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+    VM& vm = getVM(globalObject);
+    if (auto slotIndex = self->slotOf(Identifier::from(vm, index)))
+        return self->store(globalObject, *slotIndex, value);
+    if (shouldThrow) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwVMTypeError(globalObject, scope, "Cannot add a property to a shared struct"_s);
+    }
+    return false;
+}
+
+// [[Delete]] of a shared struct returns false for every key.
+bool JSSharedStruct::deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&)
+{
+    return false;
+}
+
+bool JSSharedStruct::deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned)
+{
+    return false;
 }
 
 void JSSharedStruct::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
     auto* self = uncheckedDowncast<JSSharedStruct>(object);
-    for (const auto& name : self->m_names)
-        names.add(name);
+    // Names that are array indices come first in ascending order, then the others in the order they were declared, as for any object.
+    WTF::Vector<std::pair<uint32_t, size_t>> indexed;
+    for (size_t i = 0; i < self->m_names.size(); i++) {
+        if (auto index = parseIndex(self->m_names[i]))
+            indexed.append({ *index, i });
+    }
+    std::sort(indexed.begin(), indexed.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& entry : indexed)
+        names.add(self->m_names[entry.second]);
+    for (const auto& name : self->m_names) {
+        if (!parseIndex(name))
+            names.add(name);
+    }
     Base::getOwnPropertyNames(object, globalObject, names, mode);
 }
 
@@ -256,12 +369,10 @@ bool JSSharedArray::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsig
 
 bool JSSharedArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    // A write through an object that inherits from this one is that object's own.
-    if (slot.thisValue() == cell) {
-        if (auto index = parseIndex(propertyName))
-            return putByIndex(cell, globalObject, *index, value, slot.isStrictMode());
-    }
-    return Base::put(cell, globalObject, propertyName, value, slot);
+    if (auto index = parseIndex(propertyName))
+        return putByIndex(cell, globalObject, *index, value, slot.isStrictMode());
+    // The length is read-only and no other name is a property.
+    return refuseWrite(globalObject, slot, "Cannot add a property to a shared array or change its length"_s);
 }
 
 bool JSSharedArray::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
@@ -281,23 +392,15 @@ bool JSSharedArray::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
     return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
 }
 
-bool JSSharedArray::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+// [[Delete]] returns false for every key: an element, the length, and a name that is not a property at all.
+bool JSSharedArray::deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned)
 {
-    auto* self = uncheckedDowncast<JSSharedArray>(cell);
-    if (index < self->m_length)
-        return false;
-    return Base::deletePropertyByIndex(cell, globalObject, index);
+    return false;
 }
 
-bool JSSharedArray::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+bool JSSharedArray::deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&)
 {
-    VM& vm = getVM(globalObject);
-    if (propertyName == vm.propertyNames->length)
-        return false;
-    // Delegate an index to deletePropertyByIndex: JSObject's named form re-dispatches an index back here.
-    if (auto index = parseIndex(propertyName))
-        return deletePropertyByIndex(cell, globalObject, *index);
-    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+    return false;
 }
 
 void JSSharedArray::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
@@ -319,6 +422,10 @@ JSC_DECLARE_HOST_FUNCTION(callSharedStruct);
 JSC_DECLARE_HOST_FUNCTION(constructSharedStruct);
 JSC_DECLARE_HOST_FUNCTION(callSharedArray);
 JSC_DECLARE_HOST_FUNCTION(constructSharedArray);
+JSC_DECLARE_HOST_FUNCTION(callMutex);
+JSC_DECLARE_HOST_FUNCTION(constructMutex);
+JSC_DECLARE_HOST_FUNCTION(callCondition);
+JSC_DECLARE_HOST_FUNCTION(constructCondition);
 
 JSC_DEFINE_HOST_FUNCTION(callSharedStruct, (JSGlobalObject * globalObject, CallFrame*))
 {
@@ -371,21 +478,81 @@ JSC_DEFINE_HOST_FUNCTION(constructSharedArray, (JSGlobalObject * globalObject, C
     return JSValue::encode(result);
 }
 
+JSC_DEFINE_HOST_FUNCTION(callMutex, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return throwVMTypeError(globalObject, scope, "Constructor Atomics.Mutex requires 'new'"_s);
+}
+
+// `new Atomics.Mutex()`: Rust makes the object, which has no prototype and cannot be extended.
+JSC_DEFINE_HOST_FUNCTION(constructMutex, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return Bun__SharedMutex__create(globalObject);
+}
+
+JSC_DEFINE_HOST_FUNCTION(callCondition, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return throwVMTypeError(globalObject, scope, "Constructor Atomics.Condition requires 'new'"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(constructCondition, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return Bun__SharedCondition__create(globalObject);
+}
+
 }
 
 extern "C" {
 
-// A new view of `block`, in the realm of `globalObject`. Takes the caller's strong count of `block`.
+// The view of `block` in the realm of `globalObject`: the one that is there if it is alive, else a new one. Takes the caller's strong count
+// of `block`.
 JSC::EncodedJSValue Bun__SharedBlock__wrap(JSC::JSGlobalObject* globalObject, const void* block)
 {
     JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A realm that is handed a shared struct has to be able to use Atomics on it before any script reads one of the lazy names.
+    Bun__ensureStructsSurface(globalObject);
+    if (scope.exception()) {
+        Bun__SharedBlock__release(block);
+        return JSC::JSValue::encode(JSC::JSValue());
+    }
+    auto* registry = Bun::registryOf(vm, globalObject, true);
+    if (JSC::JSObject* existing = registry->get(block)) {
+        Bun__SharedBlock__release(block);
+        return JSC::JSValue::encode(existing);
+    }
     JSC::JSObject* view;
     if (Bun__SharedBlock__isStruct(block))
         view = Bun::JSSharedStruct::create(vm, globalObject, block);
     else
         view = Bun::JSSharedArray::create(vm, globalObject, block);
     view->methodTable()->preventExtensions(view, globalObject);
+    registry->set(block, view);
     return JSC::JSValue::encode(view);
+}
+
+// The object that stands for the shared object at `key` in this realm if there is one alive, else empty. Used for a Mutex or a Condition.
+JSC::EncodedJSValue Bun__SharedObject__lookup(JSC::JSGlobalObject* globalObject, const void* key)
+{
+    auto* registry = Bun::registryOf(globalObject->vm(), globalObject, false);
+    JSC::JSObject* existing = registry ? registry->get(key) : nullptr;
+    return JSC::JSValue::encode(existing ? JSC::JSValue(existing) : JSC::JSValue());
+}
+
+void Bun__SharedObject__register(JSC::JSGlobalObject* globalObject, const void* key, JSC::EncodedJSValue encoded)
+{
+    if (auto* object = JSC::JSValue::decode(encoded).getObject())
+        Bun::registryOf(globalObject->vm(), globalObject, true)->set(key, object);
+}
+
+// Makes `object`, a Mutex or a Condition that was just made, what the proposal says those are: an object with no prototype that cannot
+// be extended, so nothing but the functions of `Atomics.Mutex` and `Atomics.Condition` can reach the lock.
+void Bun__SharedObject__makeBare(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encoded)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(encoded).getObject();
+    object->setPrototypeDirect(globalObject->vm(), JSC::jsNull());
+    object->methodTable()->preventExtensions(object, globalObject);
 }
 
 static Bun::JSSharedView* sharedViewOf(JSC::JSValue value)
@@ -430,8 +597,12 @@ JSC::EncodedJSValue Bun__SharedStruct__createConstructors(JSC::JSGlobalObject* g
 {
     JSC::VM& vm = globalObject->vm();
     JSC::JSObject* classes = JSC::constructEmptyObject(globalObject);
-    classes->putDirect(vm, JSC::Identifier::fromString(vm, "Mutex"_s), JSC::JSValue::decode(mutex));
-    classes->putDirect(vm, JSC::Identifier::fromString(vm, "Condition"_s), JSC::JSValue::decode(condition));
+    // `Mutex` and `Condition` are functions without a prototype, like the proposal's. The generated classes that implement them are
+    // `MutexClass` and `ConditionClass`; their prototypes hold the operations that `Atomics.Mutex.lock` and the rest call.
+    classes->putDirect(vm, JSC::Identifier::fromString(vm, "Mutex"_s), JSC::JSFunction::create(vm, globalObject, 0, "Mutex"_s, Bun::callMutex, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, Bun::constructMutex));
+    classes->putDirect(vm, JSC::Identifier::fromString(vm, "Condition"_s), JSC::JSFunction::create(vm, globalObject, 0, "Condition"_s, Bun::callCondition, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, Bun::constructCondition));
+    classes->putDirect(vm, JSC::Identifier::fromString(vm, "MutexClass"_s), JSC::JSValue::decode(mutex));
+    classes->putDirect(vm, JSC::Identifier::fromString(vm, "ConditionClass"_s), JSC::JSValue::decode(condition));
     classes->putDirect(vm, JSC::Identifier::fromString(vm, "SharedArray"_s), JSC::JSFunction::create(vm, globalObject, 0, "SharedArray"_s, Bun::callSharedArray, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, Bun::constructSharedArray));
     classes->putDirect(vm, JSC::Identifier::fromString(vm, "SharedStruct"_s), JSC::JSFunction::create(vm, globalObject, 1, "SharedStruct"_s, Bun::callSharedStruct, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, Bun::constructSharedStruct));
     return JSC::JSValue::encode(classes);

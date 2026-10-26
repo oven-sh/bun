@@ -92,17 +92,10 @@ impl JavaScript {
                 debug_assert_eq!(temp_log.errors, 0);
                 r
             }
-            Err(err) => {
-                // `Parser::parse` consumes `self`, so `parser` is gone in this
-                // arm. The `&'a mut temp_log` it held is released, so read
-                // `temp_log.errors` directly. The lexer range is lost; fall
-                // back to `Range::None`.
-                // TODO: thread the failing token range through the `Err`
-                // payload (make `_parse` return a `(Error, Range)` pair) so the
-                // diagnostic points at the failing token.
-                if temp_log.errors == 0 {
-                    log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
-                }
+            Err(_) => {
+                // The parser logs every failure, at the failing token when
+                // nothing else described it.
+                debug_assert!(temp_log.errors > 0);
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 return Ok(None);
             }

@@ -5506,6 +5506,16 @@ describe.concurrent.skipIf(isWindows)("a tarball path that is not UTF-8", () => 
         exitCode: 0,
       });
     });
+
+    test("at a --filename that holds the byte", async () => {
+      using dir = tempDir("pack-path-bytes-filename-real", { "package.json": packageJson });
+      const script = `tarball="$("$0" pm pack --quiet --filename ${arg("f-\xff.tgz")})" && test -f "$tarball" && printf '%s\\n' "$tarball"`;
+      expect(await run(String(dir), script)).toEqual({
+        stdout: `${bytes(String(dir))}/f-\xff.tgz\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
   test("--filename that ends with the byte", async () => {

@@ -4490,27 +4490,25 @@ test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function 
   );
 });
 
-// ValidateNoRefAccessInRender gives a function a type that holds the type of
-// what the function returns, so N nested arrows make a type of N levels. Every
-// fixpoint pass of every enclosing function copied that type level by level,
-// and copied it again at each level of a join. PropagateScopeDependenciesHIR
-// computed the set of functions that are assumed to be invoked once more for
-// every nested function. Both took about N^4 steps: on a release build, 200
-// nested arrows in one component took 6.7 seconds and 400 took 152.
+// PropagateScopeDependenciesHIR computed the set of functions that are assumed
+// to be invoked once more for every nested function, and followed the chains
+// of that set again at every level. That is about N^4 steps for N nested
+// arrows: on a release build, 200 of them in one component took 0.3 seconds
+// and 400 took 4.
 test("react-compiler compile time per function does not grow with the function nesting depth", async () => {
   // The test runner collects garbage after every `expect`, on threads of this
   // process. That must not run into the next measurement.
   using _ = disableAggressiveGCScope();
 
   // `components` components that nest `deep` arrows each, against the same
-  // number of arrows in components that nest `shallow` of them. The stack of a
-  // bundler thread (4 MB, 18 MB on Windows) holds about 400 nested arrows on a
-  // release build and about 80 on a debug build.
+  // number of arrows in components that nest `shallow` of them. A component
+  // that is nested more deeply than the stack of a bundler thread holds is not
+  // compiled: a debug build compiles 80 nested arrows and not 90.
   const shallow = 10;
   const { deep, components, rounds, limit } = isDebug
-    ? { deep: 50, components: 1, rounds: 2, limit: 3 }
+    ? { deep: 70, components: 1, rounds: 2, limit: 3 }
     : isASAN
-      ? { deep: 50, components: 10, rounds: 3, limit: 3 }
+      ? { deep: 70, components: 10, rounds: 3, limit: 3 }
       : { deep: 100, components: 20, rounds: 3, limit: 5 };
   const arrow = "() => ";
   const source = (arrows: number, perComponent: number) =>
@@ -4547,10 +4545,10 @@ test("react-compiler compile time per function does not grow with the function n
 
   // Both files hold the same number of arrows, so the two times are about
   // equal when the time per arrow does not depend on the depth. With the fix
-  // the ratio is 0.9 to 1.3 on a debug build and 1.2 to 1.7 on a release
-  // build. Without it, it is 6 on a debug build and 60 on a release build.
-  // The garbage collector and the JIT of this process add to a CPU time, so
-  // the test takes the best of a few rounds.
+  // the ratio is 0.8 to 1.1, on a debug and on a release build. Without it, it
+  // is 5.6 on a debug build and 14 on a release build. The garbage collector
+  // and the JIT of this process add to a CPU time, so the test takes the best
+  // of a few rounds.
   await cpuTime("warmup.jsx", 1);
   let shallowTime = Infinity;
   let deepTime = Infinity;

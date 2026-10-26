@@ -35,6 +35,12 @@ interface Config {
    * If true, the client will receive console logs from the server.
    */
   console: boolean;
+  /**
+   * The ids in the code of this page that its route binds to another id: the "module" file of a
+   * package to its "main" file, when the route has both files. A load from a module goes one step
+   * through it.
+   */
+  forwards?: Record<Id, Id>;
 }
 
 /**

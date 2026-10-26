@@ -17,6 +17,7 @@ pub(crate) struct HotUpdateContext<'a> {
     /// Used to tell if the server should replace or append import records.
     pub server_seen_bit_set: DynamicBitSet,
     pub gts: &'a mut GraphTraceState,
+    pub secondary_paths: &'a bun_bundler::secondary_paths::SecondaryPaths,
 }
 
 /// Sentinel-encoded `Option<FileIndex>` packed into a `u32` (`u32::MAX` == none).
@@ -269,6 +270,7 @@ pub(super) fn finalize_bundle(
         server_bits: DynamicBitSet::default(),
         client_bits: DynamicBitSet::default(),
         failures: Vec::new(),
+        forwards: Vec::new(),
     };
     let mut ctx = HotUpdateContext {
         import_records,
@@ -278,6 +280,7 @@ pub(super) fn finalize_bundle(
         resolved_index_cache: &mut resolved_index_cache,
         server_seen_bit_set: DynamicBitSet::default(), // assigned below
         gts: &mut gts_storage,
+        secondary_paths: bv2.dev_server_secondary_paths(),
     };
 
     let quoted_source_contents = bv2.linker.graph.files.items_quoted_source_contents();
@@ -643,6 +646,7 @@ pub(super) fn finalize_bundle(
             entry_index,
         )?;
     }
+    dev.client_graph.refresh_pairs(ctx.secondary_paths);
 
     // Index all failed files now that the incremental graph has been updated.
     if !dev.incremental_result.failures_removed.is_empty()

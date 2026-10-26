@@ -107,6 +107,12 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// Dev server, client graph: the resolver gave this import a secondary
+        /// path too. The import names a package with "main" and "module". The
+        /// record is bound to the "module" file, and the secondary path is the
+        /// "main" file. `BundleV2::dev_server_secondary_paths` has that path.
+        const HAS_SECONDARY_PATH = 1 << 19;
     }
 }
 

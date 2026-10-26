@@ -670,6 +670,10 @@ impl DevServer {
             route_bundle::Data::Html(html) => Some(html.bundled_file),
         };
 
+        // `gts` is freed before the chunk is written, and the chunk names
+        // these in `config.forwards`.
+        let forwards = core::mem::take(&mut gts.forwards);
+
         // Insert the source map
         let script_id = route_bundle.source_map_id();
         map_log!("inc {:x}, 1 for generateClientBundle", script_id.get());
@@ -708,6 +712,7 @@ impl DevServer {
                     script_id,
                     console_log: self.should_receive_console_log_from_browser(),
                     route_page_files: route_page_files.as_ref(),
+                    forwards: &forwards,
                 })?;
         Ok(client_bundle)
     }

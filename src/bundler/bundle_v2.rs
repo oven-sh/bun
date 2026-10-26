@@ -143,6 +143,9 @@ pub struct BundleV2<'a> {
     /// dense and this is probed once per import in `on_parse_task_complete`
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
+
+    /// Dev server only. See `secondary_paths`.
+    pub(crate) dev_secondary_paths: crate::secondary_paths::SecondaryPaths,
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -2942,6 +2945,16 @@ pub mod bv2_impl {
                 return;
             }
 
+            if self.dev_server.is_some()
+                && import_record.original_target.bake_graph() == bake::Graph::Client
+            {
+                let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                    [import_record.importer_source_index as usize]
+                    .as_mut_slice()[import_record.import_record_index as usize];
+                self.dev_secondary_paths
+                    .note(record, &resolve_result, &path);
+            }
+
             if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
                 let rel = bun_paths::resolve_path::relative_platform::<
@@ -3337,6 +3350,7 @@ pub mod bv2_impl {
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
+                dev_secondary_paths: Default::default(),
             });
             if let Some(bo) = bake_options {
                 // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
@@ -7221,7 +7235,7 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                if let Some(dev_server) = self.dev_server_handle() {
+                if let Some(dev_server) = self.dev_server {
                     'brk: {
                         if path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
                             && (import_record.loader.is_none()
@@ -7249,6 +7263,10 @@ pub mod bv2_impl {
                         }
 
                         import_record.source_index = Index::INVALID;
+                        if ctx.target.bake_graph() == bake::Graph::Client {
+                            self.dev_secondary_paths
+                                .note(import_record, &resolve_result, path);
+                        }
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
                             let rel = bun_paths::resolve_path::relative_platform::<

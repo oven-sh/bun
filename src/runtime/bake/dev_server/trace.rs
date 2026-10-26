@@ -16,6 +16,7 @@ impl DevServer {
             server_bits,
             client_bits,
             failures: Vec::new(),
+            forwards: Vec::new(),
         })
     }
 }
@@ -82,8 +83,20 @@ impl DevServer {
                 }
             }
             route_bundle::Data::Html(html) => {
-                self.client_graph
-                    .trace_imports(html.bundled_file, gts, goal)?;
+                let graph = &mut self.client_graph;
+                let mark = graph.trace_mark(gts);
+                graph.trace_imports(html.bundled_file, gts, goal)?;
+                // The walk above has each file that the client graph reaches
+                // from this route, and so each error of the route. A page gets
+                // one file of a package whose "main" and "module" files are
+                // among them, as a build of those files does.
+                if goal != TraceImportGoal::FindErrors && !graph.pairs.is_empty() {
+                    graph.find_forwards(gts);
+                    if !gts.forwards.is_empty() {
+                        graph.rewind_trace(gts, mark);
+                        graph.trace_imports(html.bundled_file, gts, goal)?;
+                    }
+                }
             }
         }
         Ok(())

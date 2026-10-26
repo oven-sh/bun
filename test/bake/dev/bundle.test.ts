@@ -1944,3 +1944,684 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+
+// An `import` of a package with "main" and "module" resolves to the "module" file, and `require()`
+// to the "main" file. A build that has both files binds every import to "main", so the output has
+// one copy of the package. The dev server decides this for each html route when it builds the page,
+// from the files that its client graph reaches from the route: the chunk of a route with both files
+// has no code for the "module" file, and a `forwards` entry that sends its id to the "main" file.
+const mainAndModule = (name = "dual", dir = "node_modules") => ({
+  [`${dir}/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", main: "cjs.js", module: "esm.js" }),
+  [`${dir}/${name}/cjs.js`]: `module.exports.kind = "main";`,
+  [`${dir}/${name}/esm.js`]: `export const kind = "module";`,
+});
+const moduleKeys = (chunk: string) => [...chunk.matchAll(/^  "([^"\n]+)"(?::|\()/gm)].map(m => m[1]).sort();
+/** What a load of an html route gets: the keys of the modules of its chunk, its `forwards`, its stylesheets. */
+async function pageChunk(dev: Dev, route = "/") {
+  const html = await dev.fetch(route).text();
+  const scripts = [...html.matchAll(/src="([^"]+\.js)"/g)];
+  expect(scripts).toHaveLength(1);
+  const chunk = await dev.fetch(scripts[0][1]).text();
+  return {
+    modules: moduleKeys(chunk),
+    forwards: JSON.parse(chunk.match(/^  forwards: (\{.*\})$/m)?.[1] ?? "{}") as Record<string, string>,
+    stylesheets: html.split(`rel="stylesheet"`).length - 1,
+  };
+}
+for (const [first, second] of [
+  ["/imports", "/requires"],
+  ["/requires", "/imports"],
+]) {
+  devTest(`each html route binds a package with main and module by the files that it reaches (${first} first)`, {
+    files: {
+      ...mainAndModule(),
+      "imports.html": emptyHtmlFile({ scripts: ["imports.js"] }),
+      "imports.js": `
+        import { kind } from "./shared.js";
+        console.log("imports: kind = " + kind);
+        import.meta.hot.accept();
+      `,
+      "requires.html": emptyHtmlFile({ scripts: ["requires.js"] }),
+      "requires.js": `
+        import { kind } from "./shared.js";
+        console.log("requires: kind = " + kind + ", required = " + require("dual").kind);
+        import.meta.hot.accept();
+      `,
+      // Both routes get the same code for this file.
+      "shared.js": `export { kind } from "dual";`,
+      "empty.js": ``,
+    },
+    async test(dev) {
+      const messages = {
+        "/imports": "imports: kind = module",
+        "/requires": "requires: kind = main, required = main",
+      };
+      // The first request of the second route bundles no file of the first route again, and the
+      // open page of the first route gets no update for it.
+      await using one = await dev.client(first);
+      await one.expectMessage(messages[first]);
+      await using two = await dev.client(second);
+      await two.expectMessage(messages[second]);
+      await one.hardReload();
+      await one.expectMessage(messages[first]);
+
+      expect(await pageChunk(dev, "/imports")).toEqual({
+        modules: ["imports.html", "imports.js", "node_modules/dual/esm.js", "shared.js"],
+        forwards: {},
+        stylesheets: 0,
+      });
+      expect(await pageChunk(dev, "/requires")).toEqual({
+        modules: ["node_modules/dual/cjs.js", "requires.html", "requires.js", "shared.js"],
+        forwards: { "node_modules/dual/esm.js": "node_modules/dual/cjs.js" },
+        stylesheets: 0,
+      });
+
+      // One update with a new import in the shared file goes to both pages. Each keeps its binding.
+      await dev.write("shared.js", `import "./empty.js"; export { kind } from "dual";`);
+      await one.expectMessage(messages[first]);
+      await two.expectMessage(messages[second]);
+    },
+  });
+}
+// No importer of the package is bundled again when a route starts or stops to have both files. An
+// open page keeps the files that it runs, and a load of the page gets what the route has now.
+devTest("a load of a page binds a package with main and module by the files that its route has now", {
+  files: {
+    ...mainAndModule(),
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    // Each file takes its own updates in place.
+    "index.js": `
+      import { kind } from "dual";
+      import "./other.js";
+      console.log("kind = " + kind);
+      import.meta.hot.accept();
+    `,
+    "other.js": `
+      console.log("other: no require");
+      import.meta.hot.accept();
+    `,
+    "empty.js": ``,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("other: no require", "kind = module");
+    const requires = `console.log("other: required = " + require("dual").kind); import.meta.hot.accept();`;
+
+    await dev.write("other.js", requires);
+    await c.expectMessage("other: required = main");
+    // The update has the saved file and the file that is new to the dev server.
+    expect(moduleKeys(await c.getMostRecentHmrChunk())).toEqual(["node_modules/dual/cjs.js", "other.js"]);
+    expect(await pageChunk(dev)).toEqual({
+      modules: ["index.html", "index.js", "node_modules/dual/cjs.js", "other.js"],
+      forwards: { "node_modules/dual/esm.js": "node_modules/dual/cjs.js" },
+      stylesheets: 0,
+    });
+    await c.hardReload();
+    await c.expectMessage("other: required = main", "kind = main");
+
+    // The importer and the file that requires take their updates in place.
+    await dev.write(
+      "index.js",
+      `
+        import { kind } from "dual";
+        import "./other.js";
+        console.log("saved: kind = " + kind);
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("saved: kind = main");
+    await dev.write("other.js", requires + " // saved");
+    await c.expectMessage("other: required = main");
+
+    await dev.write("other.js", `console.log("other: no require"); import.meta.hot.accept();`);
+    await c.expectMessage("other: no require");
+    expect(await pageChunk(dev)).toEqual({
+      modules: ["index.html", "index.js", "node_modules/dual/esm.js", "other.js"],
+      forwards: {},
+      stylesheets: 0,
+    });
+    await c.hardReload();
+    await c.expectMessage("other: no require", "saved: kind = module");
+
+    // The import of the package goes, and the next import of the file takes its place in the graph.
+    await dev.write("index.js", `import "./other.js"; console.log("no import"); import.meta.hot.accept();`);
+    await c.expectMessage("no import");
+    await dev.write(
+      "index.js",
+      `import "./other.js"; import "./empty.js"; console.log("another import"); import.meta.hot.accept();`,
+    );
+    await c.expectMessage("another import");
+    expect(await pageChunk(dev)).toEqual({
+      modules: ["empty.js", "index.html", "index.js", "other.js"],
+      forwards: {},
+      stylesheets: 0,
+    });
+  },
+});
+devTest("a route stops to bind a package to main when the file that requires it is deleted", {
+  files: {
+    ...mainAndModule(),
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "dual";
+      import "./optional.js";
+      console.log("kind = " + kind);
+      import.meta.hot.accept();
+    `,
+    "optional.js": `
+      try {
+        require("./requires.cjs");
+      } catch {}
+      import.meta.hot.accept();
+    `,
+    "requires.cjs": `require("dual");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("kind = main");
+    await dev.delete("requires.cjs");
+    await c.hardReload();
+    await c.expectMessage("kind = module");
+  },
+});
+devTest("the page chunk of a route follows a require of a package with main and module when no page is open", {
+  files: {
+    ...mainAndModule(),
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "dual";
+      import "./other.cjs";
+      console.log(kind);
+    `,
+    "other.cjs": `globalThis.required = "none";`,
+  },
+  async test(dev) {
+    expect((await pageChunk(dev)).modules).toEqual(["index.html", "index.js", "node_modules/dual/esm.js", "other.cjs"]);
+    await dev.write("other.cjs", `globalThis.required = require("dual").kind;`);
+    expect(await pageChunk(dev)).toEqual({
+      modules: ["index.html", "index.js", "node_modules/dual/cjs.js", "other.cjs"],
+      forwards: { "node_modules/dual/esm.js": "node_modules/dual/cjs.js" },
+      stylesheets: 0,
+    });
+  },
+});
+devTest("a page that binds a package to main takes the saves of both files of the package in place", {
+  files: {
+    ...mainAndModule("dual", "packages"),
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "./packages/dual";
+      import "./other.js";
+      console.log("kind = " + kind + ", required = " + require("./packages/dual").kind);
+      // The first callback argument is the package that the page runs.
+      let last;
+      import.meta.hot.accept(["./packages/dual", "./other.js"], ([dual, other]) => {
+        const now = JSON.stringify([dual?.kind, other?.other]);
+        if (last !== now) console.log("accepted " + (last = now));
+      });
+      import("./lazy.js").then(lazy => console.log("lazy = " + lazy.lazy));
+    `,
+    "other.js": `export const other = 1;`,
+    "lazy.js": `export const lazy = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("kind = main, required = main", "lazy = 1");
+    // The update has the code of the "module" file. The page does not run it.
+    await dev.write("packages/dual/esm.js", `export const kind = "module 2"; console.log("the module file runs");`);
+    expect(moduleKeys(await c.getMostRecentHmrChunk())).toEqual(["packages/dual/esm.js"]);
+    await dev.write("packages/dual/cjs.js", `module.exports.kind = "main 2";`);
+    await c.expectMessage(`accepted ["main 2",null]`);
+    await dev.write("other.js", `export const other = 2;`);
+    await c.expectMessage(`accepted [null,2]`);
+    await dev.write("packages/dual/esm.js", `export const kind = "module 3"; console.log("the module file runs");`);
+    await dev.write("packages/dual/cjs.js", `module.exports.kind = "main 3";`);
+    await c.expectMessage(`accepted ["main 3",null]`);
+  },
+});
+// A build parses the "module" file too, so an error in it is an error of the route.
+devTest("an error in the module file of a package is an error of a route that binds the package to main", {
+  files: {
+    ...mainAndModule("dual", "packages"),
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "./packages/dual";
+      console.log("kind = " + kind + ", required = " + require("./packages/dual").kind);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("kind = main, required = main");
+    const errors = ["packages/dual/esm.js:1:21: error: Unexpected ;"];
+    await dev.write("packages/dual/esm.js", `export const kind = ;`, { errors });
+    // A request of the route looks for the errors of its files.
+    await c.hardReload({ errors });
+    await c.expectReload(() => dev.write("packages/dual/esm.js", `export const kind = "module";`));
+    await c.expectMessage("kind = main, required = main");
+  },
+});
+// A package.json can name another "main" file while the dev server runs.
+devTest("a route binds a package to the main file that the package.json names now", {
+  files: {
+    ...mainAndModule("dual", "packages"),
+    "packages/dual/esm.js": `import "./module.css"; export const kind = "module";`,
+    "packages/dual/module.css": `.module { color: red; }`,
+    "packages/dual/other.js": `module.exports.kind = "other";`,
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "./packages/dual";
+      import "./requires.cjs";
+      console.log("kind = " + kind + ", required = " + globalThis.required);
+    `,
+    "requires.cjs": `globalThis.required = require("./packages/dual").kind;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("kind = main, required = main");
+    // The dev server reads a package.json again when a file beside it goes. It bundles the file
+    // that requires the package again, and not the file that imports it.
+    await c.expectReload(async () => {
+      await using _batch = await dev.batchChanges();
+      await dev.write(
+        "packages/dual/package.json",
+        JSON.stringify({ name: "dual", version: "1.0.0", main: "other.js", module: "esm.js" }),
+      );
+      await dev.delete("packages/dual/cjs.js");
+    });
+    await c.expectMessage("kind = module, required = other");
+    expect((await pageChunk(dev)).stylesheets).toBe(1);
+    await c.expectReload(() =>
+      dev.write(
+        "index.js",
+        `
+          import { kind } from "./packages/dual";
+          import "./requires.cjs";
+          console.log("saved: kind = " + kind + ", required = " + globalThis.required);
+        `,
+      ),
+    );
+    await c.expectMessage("saved: kind = other, required = other");
+    expect(await pageChunk(dev)).toEqual({
+      modules: ["index.html", "index.js", "packages/dual/other.js", "requires.cjs"],
+      forwards: { "packages/dual/esm.js": "packages/dual/other.js" },
+      stylesheets: 0,
+    });
+  },
+});
+// The "main" file of one package is the "module" file of another: the page has a module under an
+// id that its imports send to another file. An update of that module is not an import of it.
+devTest("a page takes a save of a main file that is the module file of another package", {
+  files: {
+    "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", main: "cjs.js", module: "esm.js" }),
+    "packages/a/esm.js": `export const kind = "a module";`,
+    "packages/a/cjs.js": `module.exports.kind = "a main";`,
+    "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0", main: "index.js", module: "../a/cjs.js" }),
+    "packages/b/index.js": `module.exports.kind = "b main";`,
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind as a } from "./packages/a";
+      import { kind as b } from "./packages/b";
+      console.log(JSON.stringify([a, b, require("./packages/a").kind, require("./packages/b").kind]));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(JSON.stringify(["a main", "b main", "b main", "b main"]));
+    await dev.write("packages/a/cjs.js", `module.exports.kind = "a main 2";`);
+    await c.expectMessage(JSON.stringify(["a main 2", "b main", "b main", "b main"]));
+  },
+});
+// The dev server does not watch a file that no file names.
+devTest("a save of a main file that no file requires starts no bundle", {
+  files: {
+    ...mainAndModule("dual", "packages"),
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "./packages/dual";
+      console.log("kind = " + kind);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("kind = module");
+    await c.expectNoWebSocketActivity(() => dev.write("packages/dual/cjs.js", `module.exports.kind = "saved";`));
+    expect(await pageChunk(dev)).toEqual({
+      modules: ["index.html", "index.js", "packages/dual/esm.js"],
+      forwards: {},
+      stylesheets: 0,
+    });
+  },
+});
+// The dev server parses a barrel file again with each file that imports it.
+devTest("a page that binds a barrel package to main does not run the barrel when an importer is saved", {
+  files: {
+    "node_modules/barrel/package.json": JSON.stringify({
+      name: "barrel",
+      version: "1.0.0",
+      main: "cjs.js",
+      module: "esm.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel/cjs.js": `module.exports.kind = "main";`,
+    "node_modules/barrel/esm.js": `
+      console.log("the module file runs");
+      export { kind } from "./kind.js";
+      export { unused } from "./unused.js";
+    `,
+    "node_modules/barrel/kind.js": `export const kind = "module";`,
+    "node_modules/barrel/unused.js": `export const unused = "unused";`,
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "barrel";
+      console.log("kind = " + kind + ", required = " + require("barrel").kind);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("kind = main, required = main");
+    expect((await pageChunk(dev)).modules).toEqual(["index.html", "index.js", "node_modules/barrel/cjs.js"]);
+    await dev.write(
+      "index.js",
+      `
+        import { kind } from "barrel";
+        console.log("saved: kind = " + kind + ", required = " + require("barrel").kind);
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("saved: kind = main, required = main");
+    expect(moduleKeys(await c.getMostRecentHmrChunk())).toEqual(["index.js", "node_modules/barrel/esm.js"]);
+  },
+});
+// The first request of another route bundles no file of a route again, unless it asks a barrel
+// file of that route for an export that the barrel left out.
+devTest("the first request of a route that requires a package leaves the barrel files of another route", {
+  files: {
+    ...mainAndModule(),
+    "node_modules/barrel/package.json": JSON.stringify({
+      name: "barrel",
+      version: "1.0.0",
+      main: "index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel/index.js": `
+      export { kind } from "dual";
+      export { other } from "./other.js";
+      export { unused } from "./unused.js";
+    `,
+    "node_modules/barrel/other.js": `export const other = "other";`,
+    "node_modules/barrel/unused.js": `export const unused = "unused";`,
+    "a.html": emptyHtmlFile({ scripts: ["a.js"] }),
+    "a.js": `
+      import { kind } from "barrel";
+      import * as namespace from "barrel";
+      import * as star from "./star.js";
+      const required = require("barrel");
+      const imported = await import("barrel");
+      console.log([kind, namespace.other, star.other, required.other, imported.other].join(", "));
+    `,
+    "star.js": `export * from "barrel";`,
+    "b.html": emptyHtmlFile({ scripts: ["b.js"] }),
+    "b.js": `
+      import { kind } from "barrel";
+      console.log("b: kind = " + kind + ", required = " + require("dual").kind);
+    `,
+  },
+  async test(dev) {
+    await using a = await dev.client("/a");
+    await a.expectMessage("module, other, other, other, other");
+    const before = await pageChunk(dev, "/a");
+    {
+      await using b = await dev.client("/b");
+      await b.expectMessage("b: kind = main, required = main");
+    }
+    await a.hardReload();
+    await a.expectMessage("module, other, other, other, other");
+    expect(await pageChunk(dev, "/a")).toEqual(before);
+  },
+});
+// An import of the "module" file by its path carries no "main" file. The file goes to "main" for
+// a route only while a file of the route imports the package by name.
+const byPath = {
+  files: {
+    ...mainAndModule("by-path"),
+    ...mainAndModule("by-name"),
+    "node_modules/by-path/esm.js": `import "./module.css"; export const kind = "module";`,
+    "node_modules/by-path/module.css": `.module { color: red; }`,
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind as byPath } from "./node_modules/by-path/esm.js";
+      import { kind as byName } from "by-name";
+      console.log(JSON.stringify([byPath, require("by-path").kind, byName, require("by-name").kind]));
+      import.meta.hot.accept();
+    `,
+  },
+  // The import of the package by name comes first: the order in which a build binds the file by
+  // its path to "main" too.
+  alsoByName: `
+    import { kind as alsoByName } from "by-path";
+    import { kind as byPath } from "./node_modules/by-path/esm.js";
+    import { kind as byName } from "by-name";
+    console.log(JSON.stringify([byPath, require("by-path").kind, byName, require("by-name").kind, alsoByName]));
+    import.meta.hot.accept();
+  `,
+  message: JSON.stringify(["module", "main", "main", "main"]),
+  chunk: {
+    modules: [
+      "index.html",
+      "index.js",
+      "node_modules/by-name/cjs.js",
+      "node_modules/by-path/cjs.js",
+      "node_modules/by-path/esm.js",
+    ],
+    forwards: { "node_modules/by-name/esm.js": "node_modules/by-name/cjs.js" },
+    stylesheets: 1,
+  },
+};
+devTest("a route does not bind an import by path of the module file of a package to main", {
+  files: byPath.files,
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(byPath.message);
+    expect(await pageChunk(dev)).toEqual(byPath.chunk);
+  },
+});
+devTest("a route binds the module file of a package to main while a file of the route imports the package by name", {
+  files: byPath.files,
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(byPath.message);
+
+    // The import of the file by its path stays, so the graph keeps its edges. The open page keeps
+    // the files that it runs.
+    await dev.write("index.js", byPath.alsoByName);
+    await c.expectMessage(JSON.stringify(["module", "main", "main", "main", "module"]));
+    expect(await pageChunk(dev)).toEqual({
+      modules: ["index.html", "index.js", "node_modules/by-name/cjs.js", "node_modules/by-path/cjs.js"],
+      forwards: {
+        "node_modules/by-name/esm.js": "node_modules/by-name/cjs.js",
+        "node_modules/by-path/esm.js": "node_modules/by-path/cjs.js",
+      },
+      stylesheets: 0,
+    });
+    await c.hardReload();
+    await c.expectMessage(JSON.stringify(["main", "main", "main", "main", "main"]));
+
+    // The files of the test above, on a dev server that had another binding for them.
+    await dev.write("index.js", byPath.files["index.js"]);
+    await c.expectMessage(JSON.stringify(["main", "main", "main", "main"]));
+    expect(await pageChunk(dev)).toEqual(byPath.chunk);
+    await c.hardReload();
+    await c.expectMessage(byPath.message);
+  },
+});
+devTest("a package whose main file and module file are one file has no forward", {
+  files: {
+    "node_modules/one-file/package.json": JSON.stringify({ name: "one-file", main: "index.js", module: "index.js" }),
+    "node_modules/one-file/index.js": `export const kind = "one file";`,
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "one-file";
+      console.log("kind = " + kind + ", required = " + require("one-file").kind);
+    `,
+  },
+  async test(dev) {
+    expect(await pageChunk(dev)).toEqual({
+      modules: ["index.html", "index.js", "node_modules/one-file/index.js"],
+      forwards: {},
+      stylesheets: 0,
+    });
+  },
+});
+// The packages of a route come to the dev server in one order and their files in another.
+devTest("a route binds each of two packages with main and module to main in each order of their imports", {
+  files: {
+    ...mainAndModule("first"),
+    ...mainAndModule("second"),
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind as first } from "first";
+      import { kind as second } from "second";
+      console.log(JSON.stringify([first, second, require("first").kind, require("second").kind]));
+    `,
+  },
+  async test(dev) {
+    const chunk = {
+      modules: ["index.html", "index.js", "node_modules/first/cjs.js", "node_modules/second/cjs.js"],
+      forwards: {
+        "node_modules/first/esm.js": "node_modules/first/cjs.js",
+        "node_modules/second/esm.js": "node_modules/second/cjs.js",
+      },
+      stylesheets: 0,
+    };
+    expect(await pageChunk(dev)).toEqual(chunk);
+    const source = (names: string[]) => `
+      ${names.map(name => `import { kind as ${name} } from "${name}";`).join("\n")}
+      console.log(JSON.stringify([${names.join(", ")}, require("first").kind, require("second").kind]));
+    `;
+    // An import that goes and comes back is the last that the dev server knows.
+    for (const other of ["second", "first"]) {
+      await dev.write("index.js", source([other]));
+      await dev.write("index.js", source(["first", "second"]));
+      expect(await pageChunk(dev)).toEqual(chunk);
+    }
+    await using c = await dev.client("/");
+    await c.expectMessage(JSON.stringify(["main", "main", "main", "main"]));
+  },
+});
+// The graph gives an edge its mark when an import of a package by name comes. Edges that come
+// later are past the end of the marks.
+devTest("a route binds a package to main when later files import its module file by path", {
+  files: {
+    ...mainAndModule(),
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "dual";
+      console.log("kind = " + kind + ", required = " + require("dual").kind);
+    `,
+    ...Object.fromEntries(
+      Array.from({ length: 70 }, (_, i) => [`by-path-${i}.js`, `export { kind } from "./node_modules/dual/esm.js";`]),
+    ),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("kind = main, required = main");
+    await c.expectReload(() =>
+      dev.write(
+        "index.js",
+        `
+          import { kind } from "dual";
+          ${Array.from({ length: 70 }, (_, i) => `import "./by-path-${i}.js";`).join("\n")}
+          console.log("kind = " + kind + ", required = " + require("dual").kind);
+        `,
+      ),
+    );
+    await c.expectMessage("kind = main, required = main");
+  },
+});
+devTest("a route binds a package to main only through its own imports of the package by name", {
+  files: {
+    ...mainAndModule(),
+    "by-name.html": emptyHtmlFile({ scripts: ["by-name.js"] }),
+    "by-name.js": `
+      import { kind } from "dual";
+      console.log("by name: kind = " + kind + ", required = " + require("dual").kind);
+    `,
+    "by-path.html": emptyHtmlFile({ scripts: ["by-path.js"] }),
+    "by-path.js": `
+      import { kind } from "./node_modules/dual/esm.js";
+      console.log("by path: kind = " + kind + ", required = " + require("dual").kind);
+    `,
+    "requires.html": emptyHtmlFile({ scripts: ["requires.js"] }),
+    "requires.js": `console.log("required = " + require("dual").kind);`,
+  },
+  async test(dev) {
+    await using byName = await dev.client("/by-name");
+    await byName.expectMessage("by name: kind = main, required = main");
+    await using byPathPage = await dev.client("/by-path");
+    await byPathPage.expectMessage("by path: kind = module, required = main");
+    expect((await pageChunk(dev, "/by-path")).forwards).toEqual({});
+    expect(await pageChunk(dev, "/requires")).toEqual({
+      modules: ["node_modules/dual/cjs.js", "requires.html", "requires.js"],
+      forwards: {},
+      stylesheets: 0,
+    });
+  },
+});
+// An onResolve plugin that gives no result passes the import on to the resolver.
+devTest("an import that a plugin passed on binds a package with main and module to main", {
+  files: {
+    ...mainAndModule(),
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "plugin",
+        setup(build) {
+          build.onResolve({ filter: /^dual$/ }, () => undefined);
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "dual";
+      console.log("kind = " + kind + ", required = " + require("dual").kind);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("kind = main, required = main");
+  },
+});
+devTest("an html route binds a package to main on a dev server that also has a framework router", {
+  framework: "react",
+  files: {
+    ...mainAndModule(),
+    "bun.app.ts": `
+      import html from "./page.html";
+      export default {
+        routes: {
+          "/pages/*": { dir: "./pages", style: "nextjs-pages" },
+          "/page": html,
+        },
+        fetch() {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+    "pages/index.tsx": `export default function Page() { return null; }`,
+    "page.html": emptyHtmlFile({ scripts: ["page.js"] }),
+    "page.js": `
+      import { kind } from "dual";
+      console.log("kind = " + kind + ", required = " + require("dual").kind);
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/page");
+    await c.expectMessage("kind = main, required = main");
+  },
+});

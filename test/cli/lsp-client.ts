@@ -73,6 +73,8 @@ export class Client {
   private readonly stderr: Promise<string>;
   /** Resolves when the server has closed its standard output. */
   private readonly done: Promise<void>;
+  /** Why nothing can be awaited any more, once the server has closed its standard output. */
+  private ended: Error | undefined;
 
   /** Starts `cmd` in `cwd` with pipes for the three standard streams. */
   constructor(cmd: string[], cwd: string) {
@@ -85,6 +87,7 @@ export class Client {
   private async read() {
     for await (const chunk of this.proc.stdout) this.framer.push(chunk);
     const why = new Error("The server ended before it answered");
+    this.ended = why;
     for (const { reject } of this.waiting.values()) reject(why);
     this.waiting.clear();
     for (const { reject } of this.watchers) reject(why);
@@ -132,6 +135,7 @@ export class Client {
   }
 
   request(method: string, params: unknown = {}): Promise<Message> {
+    if (this.ended) return Promise.reject(this.ended);
     const id = ++this.next;
     return new Promise((resolve, reject) => {
       this.waiting.set(id, { resolve, reject });
@@ -147,6 +151,7 @@ export class Client {
   notification(test: (message: Message) => boolean): Promise<Message> {
     const at = this.unclaimed.findIndex(test);
     if (at >= 0) return Promise.resolve(this.unclaimed.splice(at, 1)[0]);
+    if (this.ended) return Promise.reject(this.ended);
     return new Promise((resolve, reject) => this.watchers.push({ test, resolve, reject }));
   }
 

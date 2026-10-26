@@ -37,6 +37,12 @@ pub(crate) struct Session<'s> {
     loader: &'s Loader<'s>,
     /// What the last lint left to tell, until [`Session::notes`] takes it.
     sinks: &'s Sinks,
+    /// `bun fmt` for the rules that compare a file with its formatted text. What it reads of the Prettier
+    /// configuration is kept from one lint to the next.
+    formatter: &'s crate::fmt::ForRules<'s>,
+    /// With `--infer-globals`, the globals of the programs of the texts linted so far. A program's libraries and types
+    /// are loaded once per session, not once per lint.
+    inferred: Option<&'s Inferred<'s>>,
 }
 
 /// Calls `then` with a session for `environment.cwd`.
@@ -67,6 +73,10 @@ pub(crate) fn with_session<R>(
         );
     }
     let sinks = Sinks::default();
+    let formatter = crate::fmt::ForRules::new(environment, options.bun_format_defaults.as_deref());
+    let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
+    let inferred = (options.infer_globals == Some(true) || by_options)
+        .then(|| Inferred::new(environment, pool.threads(), by_options));
     then(&Session {
         options,
         environment,
@@ -75,6 +85,8 @@ pub(crate) fn with_session<R>(
         js_plugins: &js_plugins,
         loader: &loader,
         sinks: &sinks,
+        formatter: &formatter,
+        inferred: inferred.as_ref(),
     })
 }
 
@@ -136,11 +148,6 @@ impl Session<'_> {
         let names = [bun_sema::session::Session::new()];
         let atoms = bun_sema::atom::InternerPerThread::new_in(&names);
         let memory = bun_sema::session::Session::new();
-        let formatter =
-            crate::fmt::ForRules::new(environment, options.bun_format_defaults.as_deref());
-        let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
-        let inferred = (options.infer_globals == Some(true) || by_options)
-            .then(|| Inferred::new(environment, pool.threads(), by_options));
         let timing = Timing::default();
         let context = Context {
             skipped_in_comments: &sinks.skipped_in_comments,
@@ -167,8 +174,8 @@ impl Session<'_> {
             reads_suppressions: false,
             js_plugins,
             modules: &modules,
-            formatter: &formatter,
-            inferred: inferred.as_ref(),
+            formatter: self.formatter,
+            inferred: self.inferred,
             timing: &timing,
         };
         let run = Run::new(options, environment);

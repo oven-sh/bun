@@ -81,14 +81,24 @@ test("$.json", async () => {
 });
 
 test("$.lines", async () => {
-  expect(await Array.fromAsync(await $`echo hello`.lines())).toEqual(["hello", ""]);
+  expect(await Array.fromAsync(await $`echo hello`.lines())).toEqual(["hello"]);
 
   const lines: string[] = [];
   for await (const line of $`echo hello`.lines()) {
     lines.push(line);
   }
 
-  expect(lines).toEqual(["hello", ""]);
+  expect(lines).toEqual(["hello"]);
+});
+
+test.each([
+  ["a final newline ends the last line", "a\nb\nc\n", ["a", "b", "c"]],
+  ["the last line needs no newline", "a\nb\nc", ["a", "b", "c"]],
+  ["no output is no lines", "", []],
+  ["an empty line in the middle stays", "a\n\nb\n", ["a", "", "b"]],
+  ["a newline alone is one empty line", "\n", [""]],
+])("$.lines: %s", async (_, output, expected) => {
+  expect(await Array.fromAsync($`echo -n ${output}`.lines())).toEqual(expected);
 });
 
 test("$.arrayBuffer", async () => {

@@ -215,11 +215,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     async *lines() {
       const { stdout } = (await this.#quiet(true)) as ShellOutput;
 
-      if (process.platform === "win32") {
-        yield* stdout.toString().split(/\r?\n/);
-      } else {
-        yield* stdout.toString().split("\n");
-      }
+      const lines = stdout.toString().split(process.platform === "win32" ? /\r?\n/ : "\n");
+      // A final newline ends the last line. It does not start an empty one.
+      const count = lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
+      for (let i = 0; i < count; i++) yield lines[i];
     }
 
     async arrayBuffer() {

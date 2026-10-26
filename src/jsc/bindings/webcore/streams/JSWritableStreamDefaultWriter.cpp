@@ -9,6 +9,7 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPromiseDeferred.h"
 #include "JSDOMWrapperCache.h"
 #include "JSStreamPipeToOperation.h"
 #include "JSWritableStream.h"
@@ -386,7 +387,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_closed, (J
 {
     const auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
     if (!writer) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'closed' getter can only be used on a WritableStreamDefaultWriter"_s)));
+        return createRejectedPromiseWithTypeError(*lexicalGlobalObject, "The 'closed' getter can only be used on a WritableStreamDefaultWriter"_s, RejectedPromiseWithTypeErrorCause::NativeGetter);
     return JSValue::encode(writer->m_closedPromise.get());
 }
 
@@ -409,7 +410,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_ready, (JS
 {
     auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
     if (!writer) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'ready' getter can only be used on a WritableStreamDefaultWriter"_s)));
+        return createRejectedPromiseWithTypeError(*lexicalGlobalObject, "The 'ready' getter can only be used on a WritableStreamDefaultWriter"_s, RejectedPromiseWithTypeErrorCause::NativeGetter);
     return JSValue::encode(writer->readyPromise(lexicalGlobalObject));
 }
 

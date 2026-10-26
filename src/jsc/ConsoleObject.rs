@@ -348,6 +348,54 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
+/// Writes the `console.group()` indent before every line of a message, an empty line too, as `kWriteToConsole` does in Node: <https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L294-L299>
+struct GroupIndentWriter<'a> {
+    writer: &'a mut dyn bun_io::Write,
+    depth: u16,
+    at_line_start: bool,
+}
+
+impl<'a> GroupIndentWriter<'a> {
+    /// Returns `writer` itself when no group is open.
+    fn wrap(
+        writer: &'a mut dyn bun_io::Write,
+        depth: u16,
+        slot: &'a mut Option<Self>,
+    ) -> &'a mut dyn bun_io::Write {
+        if depth == 0 {
+            return writer;
+        }
+        slot.insert(GroupIndentWriter {
+            writer,
+            depth,
+            at_line_start: true,
+        })
+    }
+}
+
+impl bun_io::Write for GroupIndentWriter<'_> {
+    fn write_all(&mut self, mut bytes: &[u8]) -> bun_io::Result<()> {
+        while !bytes.is_empty() {
+            if self.at_line_start {
+                formatter::write_indent_n(u32::from(self.depth), self.writer)?;
+                self.at_line_start = false;
+            }
+            let Some(line_feed) = strings::index_of_char_usize(bytes, b'\n') else {
+                return self.writer.write_all(bytes);
+            };
+            let (line, rest) = bytes.split_at(line_feed + 1);
+            self.writer.write_all(line)?;
+            self.at_line_start = true;
+            bytes = rest;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> bun_io::Result<()> {
+        self.writer.flush()
+    }
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
@@ -429,7 +477,10 @@ fn message_with_type_and_level_(
         // SAFETY: no other borrow of the console is live in this
         // early-return arm (the deferred `_indent_guard` only holds the raw
         // pointer, not a reference).
-        let ew = unsafe { vm_console_mut(global) }.error_writer();
+        let this = unsafe { vm_console_mut(global) };
+        let depth = this.default_indent;
+        let mut group_indent = None;
+        let ew = GroupIndentWriter::wrap(this.error_writer(), depth, &mut group_indent);
         let _ = ew.write_all(text.as_bytes());
         let _ = ew.flush();
         return Ok(());
@@ -441,18 +492,11 @@ fn message_with_type_and_level_(
         Output::enable_ansi_colors_stdout()
     };
 
-    // Snapshot before borrowing the writer; `default_indent` is not mutated
-    // again until the deferred `_indent_guard` runs on scope exit, so the two
-    // later reads (FormatOptions / TablePrinter) can use this cached copy
-    // instead of re-dereferencing the raw `console` pointer.
     // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
     let default_indent = unsafe { vm_console_mut(global) }.default_indent;
 
     // SAFETY: see [`vm_console`] — `console` points at the live boxed
-    // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
-    // `vm_console_mut`) so the resulting `writer` borrow does not pin a
-    // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
-    // arm below.
+    // `ConsoleObject` for this VM; JS-thread-only.
     let raw_writer: &mut bun_core::io::Writer = unsafe {
         if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
             (*console).error_writer()
@@ -460,8 +504,8 @@ fn message_with_type_and_level_(
             (*console).writer()
         }
     };
-    // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
-    let writer: &mut dyn bun_io::Write = raw_writer;
+    let mut group_indent = None;
+    let writer = GroupIndentWriter::wrap(raw_writer, default_indent, &mut group_indent);
 
     // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
     // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
@@ -481,7 +525,6 @@ fn message_with_type_and_level_(
         enable_colors,
         add_newline: true,
         flush: true,
-        default_indent,
         max_depth: console_depth,
         error_display_level: match level {
             MessageLevel::Error => ErrorDisplayLevel::Full,
@@ -504,7 +547,6 @@ fn message_with_type_and_level_(
                 JSValue::UNDEFINED
             };
             let mut table_printer = TablePrinter::init(global, level, tabular_data, properties)?;
-            table_printer.value_formatter.indent += u32::from(default_indent);
 
             if enable_colors {
                 let _ = table_printer.print_table::<true>(writer);
@@ -548,12 +590,8 @@ fn message_with_type_and_level_(
             print_options,
         )?;
     } else if message_type == MessageType::Log {
-        // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
-        // the only later uses are in the mutually-exclusive `Trace` block, and
-        // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
-        let _ = w.write_all(b"\n");
-        let _ = w.flush();
+        let _ = writer.write_all(b"\n");
+        let _ = writer.flush();
     }
 
     if message_type == MessageType::Trace {
@@ -1177,7 +1215,6 @@ pub struct FormatOptions {
     pub quote_strings: bool,
     pub max_depth: u16,
     pub single_line: bool,
-    pub default_indent: u16,
     pub error_display_level: ErrorDisplayLevel,
 }
 
@@ -1191,7 +1228,6 @@ impl Default for FormatOptions {
             quote_strings: false,
             max_depth: 2,
             single_line: false,
-            default_indent: 0,
             error_display_level: ErrorDisplayLevel::Full,
         }
     }
@@ -1312,13 +1348,9 @@ pub fn format2(
         fmt.quote_strings = options.quote_strings;
         fmt.max_depth = options.max_depth;
         fmt.single_line = options.single_line;
-        fmt.indent = u32::from(options.default_indent);
         fmt.can_throw_stack_overflow = true;
         fmt.error_display_level = options.error_display_level;
         let tag = formatter::Tag::get(vals[0], global)?;
-        if fmt.write_indent(writer).is_err() {
-            return Ok(());
-        }
 
         if matches!(tag.tag, TagPayload::String) {
             if options.enable_colors {
@@ -1374,14 +1406,9 @@ pub fn format2(
     fmt.quote_strings = options.quote_strings;
     fmt.max_depth = options.max_depth;
     fmt.single_line = options.single_line;
-    fmt.indent = u32::from(options.default_indent);
     fmt.can_throw_stack_overflow = true;
     fmt.error_display_level = options.error_display_level;
     let mut tag: formatter::TagResult;
-
-    if fmt.write_indent(writer).is_err() {
-        return Ok(());
-    }
 
     let mut any = false;
     if options.enable_colors {
@@ -2699,7 +2726,10 @@ pub mod formatter {
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
     /// `self.indent` is a disjoint field read, so passing it by value here
     /// keeps the borrow checker happy.
-    fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
+    pub(super) fn write_indent_n(
+        indent: u32,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
             let written: u8 = total_remain.min(32) as u8;
@@ -5718,7 +5748,9 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     } + 1;
     *counter.value_ptr = current;
 
-    let writer = this.writer();
+    let depth = this.default_indent;
+    let mut group_indent = None;
+    let writer = GroupIndentWriter::wrap(this.writer(), depth, &mut group_indent);
     if Output::enable_ansi_colors_stdout() {
         let _ = writeln!(
             writer,
@@ -5784,7 +5816,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
+    global: &JSGlobalObject,
     label: &BunString,
 ) {
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
@@ -5800,16 +5832,29 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
         return;
     };
     let Some(value) = prev else { return };
-    // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
-    );
-    match slice.len() {
-        0 => Output::print_errorln(format_args!("")),
-        _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(slice))),
-    }
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let this = unsafe { vm_console_mut(global) };
+    let depth = this.default_indent;
+    let mut group_indent = None;
+    let writer = GroupIndentWriter::wrap(this.error_writer(), depth, &mut group_indent);
+    write_elapsed(writer, &value, slice);
+    let _ = writer.write_all(b"\n");
+    let _ = writer.flush();
+}
 
-    Output::flush();
+/// `[1.23ms] label`, the start of a `console.timeEnd` / `console.timeLog` line.
+fn write_elapsed(writer: &mut dyn bun_io::Write, timer: &bun_core::time::Timer, label: &[u8]) {
+    let elapsed = Output::Elapsed {
+        colors: Output::enable_ansi_colors_stderr(),
+        // get the duration in microseconds, then display it in milliseconds
+        ms: (timer.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
+    };
+    let _ = write!(writer, "{elapsed}");
+    if !label.is_empty() {
+        let _ = writer.write_all(b" ");
+        let _ = writer.write_all(label);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -5831,15 +5876,15 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
     };
-    // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
-    );
-    match slice.len() {
-        0 => {}
-        _ => Output::print_error(format_args!(" {}", bstr::BStr::new(slice))),
-    }
-    Output::flush();
+    let console = vm_console(global);
+    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
+    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
+    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
+    // across the `fmt.format(...)` calls below, which can re-enter JS.
+    let (depth, raw_writer) = unsafe { ((*console).default_indent, (*console).error_writer()) };
+    let mut group_indent = None;
+    let writer = GroupIndentWriter::wrap(raw_writer, depth, &mut group_indent);
+    write_elapsed(writer, &value, slice);
 
     // print the arguments
     // `Formatter` has a `Drop` impl, so struct-update from a
@@ -5849,26 +5894,20 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
         .and_then(|ctx| ctx.runtime_options.console_depth)
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.can_throw_stack_overflow = true;
-    let console = vm_console(global);
-    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
-    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
-    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
-    // across the `fmt.format(...)` calls below, which can re-enter JS.
-    let mut writer = unsafe { (*console).error_writer() };
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
-            return;
+            break;
         };
-        let _ = bun_io::Write::write_all(&mut writer, b" ");
+        let _ = writer.write_all(b" ");
         if Output::enable_ansi_colors_stderr() {
-            let _ = fmt.format::<true>(tag, &mut writer, arg, global);
+            let _ = fmt.format::<true>(tag, writer, arg, global);
         } else {
-            let _ = fmt.format::<false>(tag, &mut writer, arg, global);
+            let _ = fmt.format::<false>(tag, writer, arg, global);
         }
     }
-    let _ = bun_io::Write::write_all(&mut writer, b"\n");
-    let _ = bun_io::Write::flush(&mut writer);
+    let _ = writer.write_all(b"\n");
+    let _ = writer.flush();
 }
 
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's

@@ -145,37 +145,37 @@ null
 🎉 Unicode!
   Inside unicode group
   Tab\tNewline
-Quote"Backslash
+  Quote"Backslash
     Special chars"
 `);
   expect(stderr).toMatchInlineSnapshot(`
 "Warning log
   warn: console.warn an error
-      at <file>:NN:NN
-
+        at <file>:NN:NN
+  
   52 | console.group("Different logs");
-53 | console.log("Regular log");
-54 | console.info("Info log");
-55 | console.warn("Warning log");
-56 | console.warn(new Error("console.warn an error"));
-57 | console.error(new Error("console.error an error"));
-                       ^
-error: console.error an error
-      at <file>:NN:NN
-
   53 | console.log("Regular log");
-54 | console.info("Info log");
-55 | console.warn("Warning log");
-56 | console.warn(new Error("console.warn an error"));
-57 | console.error(new Error("console.error an error"));
-58 | console.error(new NamedError("console.error a named error"));
-                   ^
-NamedError: console.error a named error
-      at <file>:NN:NN
-
+  54 | console.info("Info log");
+  55 | console.warn("Warning log");
+  56 | console.warn(new Error("console.warn an error"));
+  57 | console.error(new Error("console.error an error"));
+                         ^
+  error: console.error an error
+        at <file>:NN:NN
+  
+  53 | console.log("Regular log");
+  54 | console.info("Info log");
+  55 | console.warn("Warning log");
+  56 | console.warn(new Error("console.warn an error"));
+  57 | console.error(new Error("console.error an error"));
+  58 | console.error(new NamedError("console.error a named error"));
+                     ^
+  NamedError: console.error a named error
+        at <file>:NN:NN
+  
   NamedError: console.warn a named error
-      at <file>:NN:NN
-
+        at <file>:NN:NN
+  
   Error log"
 `);
 });
@@ -240,6 +240,148 @@ it("console.groupCollapsed starts a group, as console.group does", async () => {
     stderr: ["  warn in collapsed", "    error in collapsed in group", ""].join("\n"),
     exitCode: 0,
   });
+});
+
+async function runConsole(args: string[], env = bunEnv) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // console.timeLog and console.timeEnd print a different elapsed time in each run.
+  const normalize = (text: string) => text.replaceAll("\r\n", "\n").replace(/\d+\.\d\dm?s\b/g, "<time>");
+  return { stdout: normalize(stdout), stderr: normalize(stderr), exitCode };
+}
+
+// What `text` looks like when the console prints it inside `depth` groups.
+function insideGroups(text: string, depth: number) {
+  const indent = Buffer.alloc(depth * 2, " ").toString();
+  const lines = text.split("\n");
+  return lines.map((line, i) => (i === lines.length - 1 ? line : indent + line)).join("\n");
+}
+
+const groupIndentFixture = join(import.meta.dir, "console-group-indent.fixture.js");
+
+// Node prints the output of every console method through one function, which
+// puts the group indent in front of every line:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L294-L299
+it.concurrent.each([
+  ["without colors", [groupIndentFixture], bunEnv],
+  ["with colors", [groupIndentFixture], { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" }],
+  ["in a Worker", ["-e", "new Worker(process.argv[1], { argv: [process.argv[2]] })", groupIndentFixture], bunEnv],
+])("console.group indents each line of every console message, %s", async (_, args, env) => {
+  const [outside, inOneGroup, inTwoGroups] = await Promise.all(
+    [0, 1, 2].map(depth => runConsole([...args, String(depth)], env)),
+  );
+  expect(outside.stdout).toEndWith("done\n");
+  expect(outside.exitCode).toBe(0);
+  expect(inOneGroup).toEqual({
+    stdout: insideGroups(outside.stdout, 1),
+    stderr: insideGroups(outside.stderr, 1),
+    exitCode: 0,
+  });
+  expect(inTwoGroups).toEqual({
+    stdout: insideGroups(outside.stdout, 2),
+    stderr: insideGroups(outside.stderr, 2),
+    exitCode: 0,
+  });
+});
+
+it.concurrent("console.group indents count, time, table and the lines after a line feed", async () => {
+  expect(
+    await runConsole([
+      "-e",
+      `console.group("G");
+       console.log("log");
+       console.count("cnt");
+       console.time("t");
+       console.timeLog("t", { a: 1 });
+       console.timeEnd("t");
+       console.timeEnd("not started");
+       console.table([{ a: 1 }]);
+       console.log("two\\nlines");
+       console.log();
+       console.warn();
+       console.group("Nested");
+       console.count("cnt");
+       console.groupEnd();
+       console.groupEnd();
+       console.count("cnt");`,
+    ]),
+  ).toEqual({
+    stdout: [
+      "G",
+      "  log",
+      "  cnt: 1",
+      "  ┌───┬───┐",
+      "  │   │ a │",
+      "  ├───┼───┤",
+      "  │ 0 │ 1 │",
+      "  └───┴───┘",
+      "  two",
+      "  lines",
+      "  ",
+      "  Nested",
+      "    cnt: 2",
+      "cnt: 3",
+      "",
+    ].join("\n"),
+    stderr: ["  [<time>] t {", "    a: 1,", "  }", "  [<time>] t", "  ", ""].join("\n"),
+    exitCode: 0,
+  });
+});
+
+it.concurrent("console.group indents a console.assert that fails with no message", async () => {
+  expect(
+    await runConsole(["-e", `console.group("G"); console.assert(false); console.groupEnd(); console.assert(false);`], {
+      ...bunEnv,
+      // A console.assert that fails aborts a build that validates exception checks: #44950.
+      BUN_JSC_validateExceptionChecks: undefined,
+      BUN_JSC_dumpSimulatedThrows: undefined,
+    }),
+  ).toEqual({ stdout: "G\n", stderr: "  Assertion failed\nAssertion failed\n", exitCode: 0 });
+});
+
+it.concurrent("console.warn and console.error with no arguments print their line to stderr", async () => {
+  expect(
+    await runConsole(["-e", "console.log(); console.info(); console.debug(); console.warn(); console.error();"]),
+  ).toEqual({ stdout: "\n\n\n", stderr: "\n\n", exitCode: 0 });
+});
+
+it.concurrent.each([
+  ["outside a group", "", ""],
+  ["inside a group", "console.group();", "  "],
+])("console.timeLog ends its line when an argument throws, %s", async (_, group, indent) => {
+  expect(
+    await runConsole([
+      "-e",
+      // `$$typeof` is the property that the formatter reads before it prints an object.
+      `${group}
+       console.time("t");
+       try {
+         console.timeLog("t", "a", { get $$typeof() { throw new Error("thrown"); } }, "b");
+       } catch (e) {
+         console.log(e.message);
+       }`,
+    ]),
+  ).toEqual({ stdout: `${indent}thrown\n`, stderr: `${indent}[<time>] t a\n`, exitCode: 0 });
+});
+
+it.concurrent("bun -p prints its result inside a group that is still open", async () => {
+  expect(await runConsole(["-p", `console.group("G"); "two\\nlines"`])).toEqual({
+    stdout: "G\n  two\n  lines\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("console.group does not indent process.stdout.write or console.write", async () => {
+  expect(
+    await runConsole([
+      "-e",
+      `console.group("G");
+       process.stdout.write("process.stdout.write\\n");
+       console.write("console.write\\n");
+       console.log("log");`,
+    ]),
+  ).toEqual({ stdout: "G\nprocess.stdout.write\nconsole.write\n  log\n", stderr: "", exitCode: 0 });
 });
 
 it("console.log with SharedArrayBuffer", () => {

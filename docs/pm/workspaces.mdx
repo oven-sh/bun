@@ -56,6 +56,8 @@ The `"workspaces"` key in the root `package.json` lists the subdirectories to tr
 
 A negative pattern removes what the globs match, wherever it is in the list. `!dir/**` removes `dir` and everything below it. A negative pattern does not remove a directory that is listed by its path. `bun run --filter` and `--workspaces` skip the excluded packages too.
 
+A `**` does not go through a symlink. A symlink is a workspace when another part of the pattern matches it: `packages/*` matches the symlink `packages/shared`, and `packages/**` does not. `bun run --filter` and `--workspaces` use the same rule.
+
 Each workspace has its own `package.json`. To reference another package in the monorepo, use a semver range or the workspace protocol (for example `workspace:*`) as the version in your `package.json`.
 
 ```json packages/pkg-a/package.json icon="file-json"

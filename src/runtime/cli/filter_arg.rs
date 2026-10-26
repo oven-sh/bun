@@ -46,13 +46,22 @@ type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
 // Borrows the `OwnedWalker` stored next to it in `ActiveWalk`, with the lifetime erased.
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
+/// Where the packages that `--filter` and `--workspaces` choose from come from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Candidates {
+    /// The "workspaces" of a package.json at or above the cwd.
+    Workspaces,
+    /// No package.json has "workspaces": every package.json below the cwd.
+    EveryPackageJson,
+}
+
 fn get_candidate_package_patterns<'a>(
     log: &mut Log,
     out_patterns: &mut Vec<Box<[u8]>>,
     negated: &mut NegatedWorkspaces,
     workdir_: &[u8],
     root_buf: &'a mut PathBuffer,
-) -> Result<&'a [u8], crate::Error> {
+) -> Result<(&'a [u8], Candidates), crate::Error> {
     bun_ast::expr::data::Store::create();
     bun_ast::stmt::data::Store::create();
     let _store_guard = bun_ast::StoreResetGuard::new();
@@ -132,7 +141,7 @@ fn get_candidate_package_patterns<'a>(
 
             let parent_trimmed = strings::without_trailing_slash(workdir);
             root_buf[0..parent_trimmed.len()].copy_from_slice(parent_trimmed);
-            return Ok(&root_buf[0..parent_trimmed.len()]);
+            return Ok((&root_buf[0..parent_trimmed.len()], Candidates::Workspaces));
         }
 
         workdir = match bun_core::dirname(workdir) {
@@ -145,7 +154,7 @@ fn get_candidate_package_patterns<'a>(
     out_patterns.push(Box::<[u8]>::from(b"**/package.json".as_slice()));
     let root_dir = strings::without_trailing_slash(workdir_);
     root_buf[0..root_dir.len()].copy_from_slice(root_dir);
-    Ok(&root_buf[0..root_dir.len()])
+    Ok((&root_buf[0..root_dir.len()], Candidates::EveryPackageJson))
 }
 
 pub(crate) struct WorkspacePackage {
@@ -174,17 +183,17 @@ pub(crate) fn select_packages(
     let mut glob_patterns: Vec<Box<[u8]>> = Vec::new();
     let mut negated = NegatedWorkspaces::default();
     let mut root_buf = bun_paths::path_buffer_pool::get();
-    let root_dir: Box<[u8]> = get_candidate_package_patterns(
+    let (root_dir, candidates) = get_candidate_package_patterns(
         // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded and no other `&mut Log` is live.
         unsafe { ctx.log_mut() },
         &mut glob_patterns,
         &mut negated,
         cwd,
         &mut root_buf,
-    )?
-    .into();
+    )?;
+    let root_dir: Box<[u8]> = root_dir.into();
 
-    let mut iter = PackageFilterIterator::init(&glob_patterns, &negated, &root_dir)?;
+    let mut iter = PackageFilterIterator::init(&glob_patterns, &negated, &root_dir, candidates)?;
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
     while let Some(package_json_path) = iter.next()? {
         let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
@@ -350,6 +359,7 @@ struct PackageFilterIterator<'a> {
     negated: &'a NegatedWorkspaces,
     pattern_idx: usize,
     root_dir: &'a [u8],
+    candidates: Candidates,
     /// The walk for `patterns[pattern_idx]`; `None` until `next` starts it.
     active: Option<ActiveWalk>,
 }
@@ -359,12 +369,14 @@ impl<'a> PackageFilterIterator<'a> {
         patterns: &'a [Box<[u8]>],
         negated: &'a NegatedWorkspaces,
         root_dir: &'a [u8],
+        candidates: Candidates,
     ) -> Result<PackageFilterIterator<'a>, crate::Error> {
         Ok(PackageFilterIterator {
             patterns,
             negated,
             pattern_idx: 0,
             root_dir,
+            candidates,
             active: None,
         })
     }
@@ -374,16 +386,21 @@ impl<'a> PackageFilterIterator<'a> {
         let pattern: &[u8] = &self.patterns[self.pattern_idx];
         // bun_glob copies `pattern`/`cwd` internally.
         // outer `?` propagates the error, inner converts `Maybe(Self)` to a Result.
-        let walker = OwnedWalker(bun_core::heap::alloc_nn(GlobWalker::init_with_cwd(
+        let mut walker = GlobWalker::init_with_cwd(
             pattern,
             self.root_dir,
             true,
             true,
-            true,
+            self.candidates == Candidates::EveryPackageJson,
             false,
             true,
             Some(glob_ignore_fn),
-        )??));
+        )??;
+        if self.candidates == Candidates::Workspaces {
+            // The symlink rule of `bun install`, which walks the same entries.
+            walker.follow_matched_symlinks();
+        }
+        let walker = OwnedWalker(bun_core::heap::alloc_nn(walker));
         // SAFETY: `walker` does not touch the allocation until it frees it, and `iter` is dropped
         // before that on every path (as the later local here, as the earlier field of `ActiveWalk`
         // afterwards), so this is the only access to the walker while the erased borrow is live.

@@ -809,12 +809,10 @@ describe("bun", () => {
     });
     const stdoutval = stdout.toString();
     const count = (needle: string) => stdoutval.split(needle).length - 1;
-    // `pkga` is matched once. `cyc` is matched at `packages/cyc` and once more
-    // through its own `loop` alias, where the cycle is detected and descent
-    // stops instead of recursing until the path length limit.
+    // Each package is matched once: `**` does not go through the `loop` link.
     expect({ scripta: count("scripta"), scriptcyc: count("scriptcyc"), exitCode }).toEqual({
       scripta: 1,
-      scriptcyc: 2,
+      scriptcyc: 1,
       exitCode: 0,
     });
   });
@@ -1406,6 +1404,12 @@ describe.concurrent('a symlink in "workspaces"', () => {
     ["beside", ["pk/lnk/../*"], ["pk/pkga"]],
     // The walk opens an entry by its name on disk.
     ["upper", ["packages/*"], ["packages/MyLib", "packages/lib", "real/s"]],
+    // `**` does not go through a link.
+    ["member", ["packages/**"], ["packages/lib"]],
+    ["member", ["**"], ["packages/lib", "real/s", "real/s/nested"]],
+    ["vendor", ["packages/**"], ["packages/app"]],
+    ["nested", ["up/**"], ["real/one", "real/one/deep"]],
+    ["upper", ["packages/**"], ["packages/MyLib", "packages/lib"]],
   ];
   test.each(rows.map(row => [`${row[0]} layout, ${JSON.stringify(row[1])}`, ...row] as const))(
     "bun run and bun install find the same members for the %s",
@@ -1416,8 +1420,47 @@ describe.concurrent('a symlink in "workspaces"', () => {
     },
   );
 
+  test.each(
+    [
+      ["run", "--filter", "*"],
+      ["run", "--workspaces"],
+      ["--filter", "*"],
+      ["run", "--parallel", "--filter", "*"],
+      ["run", "--sequential", "--workspaces"],
+      ["run", "--filter", "./packages/**"],
+    ].map(args => [args.join(" "), args] as const),
+  )("bun %s does not run a package behind a link below `**`", async (_, args) => {
+    using dir = fixture(layouts.member, { workspaces: ["packages/**"] });
+    expect(await run(String(dir), args)).toMatchObject({ ran: ["packages/lib"], exitCode: 0 });
+  });
+
+  test.each([["real-s"], ["real-s-nested"], ["./packages/s"]])(
+    "a package behind a link below `**` is not selectable with --filter %s",
+    async filter => {
+      using dir = fixture(layouts.member, { workspaces: ["packages/**"] });
+      const result = await run(String(dir), ["run", "--filter", filter]);
+      expect(result.stderr).toContain(`error: No workspace packages matched the filter ${JSON.stringify(filter)}`);
+      expect(result).toMatchObject({ ran: [], exitCode: 1 });
+    },
+  );
+
   // A file link and a FIFO need POSIX.
   describe.skipIf(isWindows)("that leads to no directory", () => {
+    // The last part of the walked pattern is `package.json`. It matches the link in "packages/*".
+    test.each([
+      [["packages/*"], ["packages/lib", "packages/m"]],
+      [["packages/**"], ["packages/lib"]],
+    ])("a package.json that is a link has the members of bun install, for %j", async (workspaces, members) => {
+      using dir = fixture({ packages: ["packages/lib"], links: [] }, { workspaces });
+      const manifest = { name: "m", version: "1.0.0", scripts: { present: "echo ran:packages/m" } };
+      await Bun.write(join(String(dir), "shared", "m.json"), JSON.stringify(manifest));
+      mkdirSync(join(String(dir), "packages", "m"));
+      symlinkSync("../../shared/m.json", join(String(dir), "packages", "m", "package.json"));
+
+      expect(await run(String(dir), ["run", "--workspaces"])).toMatchObject({ ran: members, exitCode: 0 });
+      expect(await installedMembers(String(dir))).toEqual(members);
+    });
+
     // `AGENTS.md` is a file. The links to it have upper-case names.
     test.each([
       ['"packages/*" and "packages/*/*"', ["packages/*", "packages/*/*"]],
@@ -1467,7 +1510,9 @@ describe.concurrent('a symlink in "workspaces"', () => {
 
     test.each([
       ["member", ["packages/*"], ["packages/lib", "real/s"]],
+      ["member", ["packages/**"], ["packages/lib"]],
       ["nested", ["up/*"], ["other/b", "real/one"]],
+      ["nested", ["up/**"], ["real/one", "real/one/deep"]],
       ["upper", ["packages/*"], ["packages/MyLib", "packages/lib", "real/s"]],
     ] as const)("the %s layout has the same members for %j", async (layout, workspaces, members) => {
       using dir = fixture(layouts[layout], { workspaces: [...workspaces] });

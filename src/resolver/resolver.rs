@@ -2379,7 +2379,7 @@ impl<'a> Resolver<'a> {
                     return ResultUnion::Success(result);
                 }
 
-                // A path that a main-field or index lookup picked is final.
+                // A path that the "browser" map picked for a main field or an index file is final.
                 if res.package_json.is_some()
                     && self.care_about_browser_field
                     && !res.browser_remapped

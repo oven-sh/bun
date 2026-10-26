@@ -2557,6 +2557,32 @@ describe("bundler", () => {
       stdout: "a a a a a\na a a lib index",
     },
   });
+  // The file that the map picks for an entry file is final also when it is in
+  // the scope of another package.json whose map names it. Bun 1.3.14 and
+  // esbuild give the same answer.
+  itBundled("packagejson/BrowserMapMainFieldAppliedOnceOtherScope", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import toSibling from 'to-sibling'
+        import toNested from 'to-nested'
+        console.log(toSibling, toNested)
+      `,
+      "/Users/user/project/node_modules/to-sibling/package.json": `{"main":"./main.js","browser":{"./main.js":"../sibling/a.js"}}`,
+      "/Users/user/project/node_modules/to-sibling/main.js": `module.exports = 'main'`,
+      "/Users/user/project/node_modules/sibling/package.json": `{"browser":{"./a.js":"./browser.js"}}`,
+      "/Users/user/project/node_modules/sibling/a.js": `module.exports = 'a'`,
+      "/Users/user/project/node_modules/sibling/browser.js": `module.exports = 'browser'`,
+      "/Users/user/project/node_modules/to-nested/package.json": `{"main":"./main.js","browser":{"./main.js":"./sub/a.js"}}`,
+      "/Users/user/project/node_modules/to-nested/main.js": `module.exports = 'main'`,
+      "/Users/user/project/node_modules/to-nested/sub/package.json": `{"browser":{"./a.js":"./b.js"}}`,
+      "/Users/user/project/node_modules/to-nested/sub/a.js": `module.exports = 'a'`,
+      "/Users/user/project/node_modules/to-nested/sub/b.js": `module.exports = 'b'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "a a",
+    },
+  });
   itBundled("packagejson/BrowserMapMainFieldAppliedOnceTsconfigPaths", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

@@ -1074,7 +1074,8 @@ pub enum Formatted {
     Text(Vec<u8>),
     /// The file is ignored, or in a language that isn't formatted: the text stays as it is.
     Unchanged,
-    /// This text isn't formatted, because of what is in it: a syntax error. What `bun fmt` would print.
+    /// This text isn't formatted, because of what is in it (a syntax error) or what it is (a file with no parser, a
+    /// language bun fmt doesn't support). What `bun fmt` would print.
     NotFormatted {
         stderr: Vec<u8>,
     },
@@ -1091,6 +1092,9 @@ enum Printed {
     /// The text isn't formatted: the file is ignored, or in a language that isn't. `stdout` is the text as it came
     /// in, or nothing with `--ignore-unknown`.
     Unchanged(Outcome),
+    /// This file isn't formatted: no parser for it, or a language bun fmt doesn't support. Other files in the
+    /// directory are: see [`Formatted::NotFormatted`].
+    NotFormatted(Outcome),
     /// The run fails before the text is parsed: see [`Formatted::Failed`].
     Failed(Outcome),
 }
@@ -1098,7 +1102,10 @@ enum Printed {
 impl Printed {
     fn into_outcome(self) -> Outcome {
         match self {
-            Printed::Out(out) | Printed::Unchanged(out) | Printed::Failed(out) => out,
+            Printed::Out(out)
+            | Printed::Unchanged(out)
+            | Printed::NotFormatted(out)
+            | Printed::Failed(out) => out,
         }
     }
 
@@ -1106,7 +1113,9 @@ impl Printed {
         match self {
             Printed::Unchanged(_) => Formatted::Unchanged,
             Printed::Out(out) if out.exit_code == 0 => Formatted::Text(out.stdout),
-            Printed::Out(out) => Formatted::NotFormatted { stderr: out.stderr },
+            Printed::Out(out) | Printed::NotFormatted(out) => {
+                Formatted::NotFormatted { stderr: out.stderr }
+            }
             Printed::Failed(out) => Formatted::Failed { stderr: out.stderr },
         }
     }
@@ -1440,7 +1449,11 @@ impl<'r> Run<'r> {
                 self.out.stdout = text;
                 return Printed::Unchanged(self.out);
             }
-            return Printed::Failed(self.out);
+            // A plugin that isn't installed is missing for every file of its language.
+            return match not_installed.is_empty() {
+                true => Printed::NotFormatted(self.out),
+                false => Printed::Failed(self.out),
+            };
         }
         let missing_plugins = configs.missing_plugins(&scope, Some(&path));
         if language == Language::Supported && !allows && !missing_plugins.is_empty() {
@@ -1457,7 +1470,7 @@ impl<'r> Run<'r> {
             if exits_zero_on_error {
                 out.exit_code = 0;
             }
-            return Printed::Failed(out);
+            return Printed::NotFormatted(out);
         }
         let kind = Kind::with_options(&path, &options.options);
         tailwind::only_where_sorted(&mut options.options, kind);

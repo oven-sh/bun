@@ -28,6 +28,7 @@ use bun_core::strings;
 use bun_lint::js_plugin::{Engine, Vm, Work};
 use bun_lint::linter::LintMessage;
 use bun_lint::options::Json;
+use bun_lint::source::LineBreaks;
 use bun_sema::util::FxHashMap;
 use bun_threading::{Condition, Guarded};
 use rpc::{ErrorCode, Frame, Incoming, Reader, Writer, dig, number, object};
@@ -262,6 +263,8 @@ struct Known {
     had_types: bool,
     /// How a comment turns a rule off in the document's language, if one can.
     directives: Option<Directives>,
+    /// What the lines of `messages` are counted with: Markdown and JSON count only newlines.
+    line_breaks: LineBreaks,
     messages: Vec<LintMessage>,
     /// The text with every fix applied, once a code action has asked for it. `Some(None)`: there is none.
     fixed: Option<Option<Vec<u8>>>,
@@ -481,12 +484,14 @@ impl<'s> Server<'s> {
         }
     }
 
-    fn places<'d>(&self, document: &'d Document) -> Places<'d> {
+    /// `breaks`: those of the document's result, EcmaScript before it has one.
+    fn places<'d>(&self, document: &'d Document, breaks: LineBreaks) -> Places<'d> {
         let client = self.client();
         Places::new(
             (&document.uri, &document.version, &document.path),
             Lines::new(&document.text, client.encoding),
             &document.text,
+            breaks,
             client.has_versioned_edits,
         )
     }
@@ -706,11 +711,12 @@ impl Worker<'_, '_> {
     }
 
     fn note(&mut self, document: &Document, result: Option<FileResult>) {
+        let linted = result.as_ref().and_then(|it| it.linted.as_ref());
         let known = Known {
             serial: document.serial,
             had_types: result.as_ref().is_some_and(|it| it.had_types),
-            directives: (result.as_ref().and_then(|it| it.linted.as_ref()))
-                .and_then(|it| Directives::of(&it.config, &document.path)),
+            directives: linted.and_then(|it| Directives::of(&it.config, &document.path)),
+            line_breaks: linted.map_or_else(Default::default, |it| it.config.line_breaks),
             messages: result.map(|it| it.messages).unwrap_or_default(),
             fixed: None,
         };
@@ -778,9 +784,10 @@ impl Worker<'_, '_> {
                     && (session.zip(result.as_ref())).is_some_and(|(session, result)| {
                         session.wants_types(&document.path, result)
                     });
-                let places = server.places(&document);
                 self.note(&document, result);
                 let known = self.known.get(&document.uri);
+                let breaks = known.map_or_else(Default::default, |it| it.line_breaks);
+                let places = server.places(&document, breaks);
                 let messages = known.map(|it| &it.messages[..]).unwrap_or_default();
                 let diagnostics = messages.iter().map(|it| places.diagnostic(it));
                 server.publish(&document, diagnostics.collect());
@@ -825,10 +832,11 @@ impl Worker<'_, '_> {
         range: Range,
         only: Option<&[Vec<u8>]>,
     ) -> Vec<Json> {
-        let places = self.server.places(document);
+        let server = self.server;
         let Some(known) = self.problems(session, document) else {
             return Vec::new();
         };
+        let places = server.places(document, known.line_breaks);
         let with_types = known.had_types;
         let fixable = known.messages.iter().filter(|it| it.fix.is_some()).count();
         let mut actions = match wants(only, QUICK_FIX) {
@@ -854,7 +862,7 @@ impl Worker<'_, '_> {
     fn format(&mut self, document: &Document, range: Option<Range>) -> Option<Vec<Json>> {
         let server = self.server;
         let mut options = self.format_options.clone()?;
-        let places = server.places(document);
+        let places = server.places(document, LineBreaks::EcmaScript);
         let range =
             range.map(|(start, end)| (places.lines.offset(start), places.lines.offset(end)));
         if let Some((start, end)) = range {

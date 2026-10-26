@@ -582,6 +582,91 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // The lint tool's `--config=` follows `lint`; only what precedes it is bun's own, for both halves of the server.
+  test(
+    "formats with the bunfig.toml when bun lint --lsp is given the lint tool's --config=",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({ rules: { "no-debugger": "error" } }),
+        "bunfig.toml": "[fmt]\nsemi = false\n",
+        "a.js": "",
+      });
+      await using client = new Client([...command, "--config=.oxlintrc.json"], String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.js");
+      const text = "debugger;\nconst a = 1;\n";
+      open(client, path, text);
+      const published = await client.diagnostics(path);
+      expect(published.params.diagnostics).toEqual([expect.objectContaining({ code: "no-debugger" })]);
+      const formatted = await format(client, path);
+      expect(formatted.error).toBeUndefined();
+      expect(applyEdits(text, formatted.result)).toBe("debugger\nconst a = 1\n");
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // Markdown counts only newlines as line breaks, as the one-shot does: a U+2028 in a line is not a line break. An
+  // eslint.config.mjs is read in the plugins' VM, which the server has only on Unix.
+  test.skipIf(isWindows)(
+    "places a problem of a Markdown document with the line breaks of its language",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "node_modules/@eslint/markdown/package.json": JSON.stringify({
+          name: "@eslint/markdown",
+          version: "8.0.3",
+          main: "index.js",
+        }),
+        "node_modules/@eslint/markdown/index.js": `
+          const language = { parse: ({ body }) => ({ ok: true, ast: { lines: body.split("\\n") } }) };
+          const rule = { create: context => ({ Line: () => context.report({ line: 1, message: "the package" }) }) };
+          module.exports = {
+            meta: { name: "@eslint/markdown", version: "1.0.0" },
+            languages: { commonmark: language, gfm: language },
+            rules: { "no-html": rule },
+          };`,
+        "eslint.config.mjs": `
+          import markdown from "@eslint/markdown";
+          export default [
+            { files: ["**/*.md"], plugins: { markdown }, language: "markdown/gfm", rules: { "markdown/no-html": "error" } },
+          ];`,
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.md");
+      const text = "# Title\u2028one line\n\n<b>a</b>\n";
+      open(client, path, text, "markdown");
+      const published = await client.diagnostics(path);
+      expect(published.params.diagnostics.map((it: any) => [it.code, it.range.start])).toEqual([
+        ["markdown/no-html", { line: 2, character: 0 }],
+      ]);
+      const [diagnostic] = published.params.diagnostics;
+      const actions = await client.request("textDocument/codeAction", {
+        textDocument: { uri: uriOf(path) },
+        range: diagnostic.range,
+        context: { diagnostics: [diagnostic] },
+      });
+      expect(actions.error).toBeUndefined();
+      const action = actions.result.find((it: any) => it.title === "Disable markdown/no-html for this line");
+      expect(applyEdits(text, action.edit.changes[uriOf(path)])).toBe(
+        "# Title\u2028one line\n\n<!-- eslint-disable-next-line markdown/no-html -->\n<b>a</b>\n",
+      );
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test.each([
     ["--fix", "--fix"],
     ["--stdin", "--stdin"],

@@ -148,10 +148,12 @@ pub(crate) struct Places<'t> {
 }
 
 impl<'t> Places<'t> {
+    /// `breaks`: what the linter counts the lines of its messages with, which depends on the document's language.
     pub(crate) fn new(
         (uri, version, path): (&'t [u8], &'t Json, &'t [u8]),
         lines: Lines<'t>,
         text: &'t [u8],
+        breaks: LineBreaks,
         has_versioned_edits: bool,
     ) -> Places<'t> {
         Places {
@@ -160,7 +162,7 @@ impl<'t> Places<'t> {
             path,
             text,
             lines,
-            offsets: Offsets::new(text, LineBreaks::EcmaScript.line_starts(text)),
+            offsets: Offsets::new(text, breaks.line_starts(text)),
             has_versioned_edits,
         }
     }

@@ -484,6 +484,48 @@ exports.format = async (text, options) => {
     timeout,
   );
 
+  // The editor registers the formatter for TOML too, and Prettier has no parser for it: that is about the one file,
+  // not the folder, so it is logged and the rest of the folder still formats.
+  test(
+    "logs a file that has no parser instead of showing it, and formats the next file",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {
+        ".prettierrc": '{ "semi": false }\n',
+        "bunfig.toml": "[install]\nexact = true\n",
+        "a.js": "",
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const toml = join(String(dir), "bunfig.toml");
+      open(client, toml, "[install]\nexact   = true\n", "toml");
+      const told = () =>
+        client.received
+          .filter(it => it.method === "window/showMessage" || it.method === "window/logMessage")
+          .map(it => [it.method, it.params.type, it.params.message]);
+      const logged = () => told().filter(it => it[2].includes("No parser could be inferred for file"));
+      const first = await format(client, toml);
+      expect(first).toMatchObject({ result: null });
+      expect(first.error).toBeUndefined();
+      expect(logged()).toEqual([["window/logMessage", 2, expect.stringContaining("bunfig.toml")]]);
+      const second = await format(client, toml);
+      expect(second).toMatchObject({ result: null });
+      expect(second.error).toBeUndefined();
+      expect(logged()).toHaveLength(2);
+      open(client, join(String(dir), "a.js"), "a;\n");
+      const formatted = await format(client, join(String(dir), "a.js"));
+      expect(formatted.error).toBeUndefined();
+      expect(applyEdits("a;\n", formatted.result)).toBe("a\n");
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect(told().filter(it => it[0] === "window/showMessage")).toEqual([]);
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test(
     "refuses a second initialize, and answers a cancelled request with RequestCancelled",
     async () => {

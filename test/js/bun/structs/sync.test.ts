@@ -6,7 +6,9 @@ describe("Atomics.Mutex", () => {
   test("lock returns a reusable unlock token", () => {
     const m = new Atomics.Mutex();
     const token = Atomics.Mutex.lock(m);
-    expect(Atomics.Mutex.lockIfAvailable(m, 0)).toBeNull();
+    // This thread holds it, which is a deadlock, not a timeout.
+    expect(() => Atomics.Mutex.lockIfAvailable(m, 0)).toThrow(TypeError);
+    expect(() => Atomics.Mutex.lock(m)).toThrow(TypeError);
     expect(token.locked).toBe(true);
     expect(token.unlock()).toBe(true);
     expect(token.unlock()).toBe(false);
@@ -24,7 +26,7 @@ describe("Atomics.Mutex", () => {
     const m = new Atomics.Mutex();
     {
       using _token = Atomics.Mutex.lock(m);
-      expect(Atomics.Mutex.lockIfAvailable(m, 0)).toBeNull();
+      expect(() => Atomics.Mutex.lockIfAvailable(m, 0)).toThrow(TypeError);
     }
     expect(Atomics.Mutex.lockIfAvailable(m, 0)).not.toBeNull();
   });

@@ -63,13 +63,17 @@ describe("SharedArray", () => {
     expect(a[1]).toBe(inner);
   });
 
-  test("Atomics on array indices", () => {
+  test("Atomics on array indices, which are property keys: strings", () => {
     const a = new SharedArray(1);
-    Atomics.store(a, 0, 5);
-    expect(Atomics.load(a, 0)).toBe(5);
-    expect(Atomics.exchange(a, 0, 6)).toBe(5);
-    expect(Atomics.compareExchange(a, 0, 6, 7)).toBe(6);
-    expect(Atomics.load(a, 0)).toBe(7);
+    Atomics.store(a, "0", 5);
+    expect(Atomics.load(a, "0")).toBe(5);
+    expect(Atomics.exchange(a, "0", 6)).toBe(5);
+    expect(Atomics.compareExchange(a, "0", 6, 7)).toBe(6);
+    expect(Atomics.load(a, "0")).toBe(7);
+    expect(a[0]).toBe(7);
+    // `length` is a field too, and a read-only one.
+    expect(Atomics.load(a, "length")).toBe(1);
+    expect(() => Atomics.store(a, "length", 2)).toThrow(TypeError);
   });
 
   test("is visible to a worker without copying", async () => {

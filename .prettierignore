@@ -47,6 +47,7 @@ src/js/internal/repl/acorn-walk.js
 # accept (bun fmt: "Unexpected keyword or identifier")
 test/js/bun/structs/condition.test.ts
 test/js/bun/structs/shared-array.test.ts
+test/js/bun/structs/shared-conformance.test.ts
 test/js/bun/structs/shared-struct.test.ts
 test/js/bun/structs/struct-typescript.test.ts
 test/js/bun/structs/struct-conformance.test.ts

@@ -58,9 +58,10 @@ describe("structs in node:vm contexts", () => {
       array[1] = "two";
       const mutex = new Atomics.Mutex();
       const token = Atomics.Mutex.lock(mutex);
-      const second = Atomics.Mutex.lockIfAvailable(mutex, 0);
+      let deadlock = false;
+      try { Atomics.Mutex.lockIfAvailable(mutex, 0); } catch (e) { deadlock = e instanceof TypeError; }
       token.unlock();
-      [array.length, array[0], array[1], second === null, Reflect.canBeShared(array)].join();
+      [array.length, array[0], array[1], deadlock, Reflect.canBeShared(array)].join();
     `);
     expect(result).toBe("2,1,two,true,true");
   });
@@ -121,7 +122,8 @@ describe("structs in node:vm contexts", () => {
   test("a mutex from the main realm is the same lock in a context", () => {
     const mutex = new Atomics.Mutex();
     const token = Atomics.Mutex.lock(mutex);
-    expect(vm.runInNewContext("Atomics.Mutex.lockIfAvailable(mutex, 0) === null", { mutex })).toBe(true);
+    // The context runs on this thread, which holds the lock.
+    expect(() => vm.runInNewContext("Atomics.Mutex.lockIfAvailable(mutex, 0)", { mutex })).toThrow();
     token.unlock();
     expect(vm.runInNewContext("Atomics.Mutex.lockIfAvailable(mutex, 0) !== null", { mutex })).toBe(true);
   });

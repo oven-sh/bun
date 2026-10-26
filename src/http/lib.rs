@@ -221,6 +221,8 @@ pub struct Flags {
     /// Whether this request stays out of the keep-alive pool. See `PoolBypass`.
     pub(crate) pool_bypass: PoolBypass,
     pub(crate) disable_decompression: bool,
+    /// Do not decode a 206 that holds a part of the encoded body: see `is_stored_part`.
+    pub(crate) keep_partial_content_encoded: bool,
     pub(crate) did_have_handshaking_error: bool,
     /// `PooledSocket::verification` of the socket this request took from the
     /// pool, so a weaker request re-pooling it doesn't downgrade the record.
@@ -249,6 +251,7 @@ impl Default for Flags {
             disable_keepalive: false,
             pool_bypass: PoolBypass::Off,
             disable_decompression: false,
+            keep_partial_content_encoded: false,
             did_have_handshaking_error: false,
             reused_socket_verification: PeerVerification::None,
             force_last_modified: false,
@@ -5100,6 +5103,19 @@ impl<'a> HTTPClient<'a> {
                 }
                 _ => {}
             }
+        }
+
+        // A 206 whose length is the range it names is a part of the encoded body and cannot decode.
+        if self.flags.keep_partial_content_encoded
+            && response.status_code == 206
+            && self.state.encoding.is_compressed()
+            && self.state.transfer_encoding != Encoding::Chunked
+            && header_value_iterator::is_stored_part(
+                response.headers.get(b"content-range"),
+                self.state.content_length,
+            )
+        {
+            self.state.encoding = Encoding::Identity;
         }
 
         if self.verbose != HTTPVerboseLevel::None {

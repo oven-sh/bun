@@ -2161,6 +2161,7 @@ impl FetchTasklet {
                 idle_timeout_seconds: fetch_options.idle_timeout_seconds,
                 disable_keepalive: Some(fetch_options.disable_keepalive),
                 disable_decompression: Some(fetch_options.disable_decompression),
+                keep_partial_content_encoded: false,
                 max_redirects: fetch_options.max_redirects,
                 reject_unauthorized: Some(fetch_options.reject_unauthorized),
                 verbose: Some(fetch_options.verbose),

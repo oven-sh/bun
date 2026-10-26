@@ -476,8 +476,8 @@ for (let credentials of allCredentials) {
               const s3file = bucket.file(tmpfile.name, options!);
               const stored = Bun.gzipSync(Buffer.alloc(600, "hello "));
               await s3file.write(stored, { contentEncoding: "gzip" });
-              // The content-encoding is metadata of the object. A slice is a range of the bytes
-              // that the object holds.
+              // The content-encoding is metadata of the object. A part of the object is a range
+              // of the bytes that it holds.
               expect({
                 head: hex(await s3file.slice(0, 10).bytes()),
                 middle: hex(await s3file.slice(10, 20).bytes()),
@@ -1534,17 +1534,30 @@ describe("s3-server", () => {
 });
 
 // S3 keeps the `Content-Encoding` of an upload as metadata of the object. It sends the header back
-// with the bytes that the object holds, whole or as a range of them. Two tests need the request
-// log of the server or a server in front of it, so the server is in the process of the test.
+// with the bytes that the object holds, whole or as a range of them. Some tests need the request
+// log of the server or a response that the server does not give, so a server is in the process.
 describe("s3 object that has a content-encoding", () => {
   const text = Buffer.alloc(600, "hello ");
   let server: S3Server;
   let client: S3Client;
   beforeAll(() => {
-    server = serve({ buckets: ["encoded", "wire", "front"] });
+    server = serve({ buckets: ["encoded", "wire"] });
     client = new S3Client(server.clientOptions("encoded"));
   });
   afterAll(() => server.stop());
+
+  /** Each range of `file` through `bytes()` and `stream()`, and the bytes of `stored` that it names. */
+  async function readParts(file: S3File, stored: Uint8Array, ranges: [number, number?][]) {
+    const actual: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    for (const range of ranges) {
+      const slice = file.slice(...range);
+      actual[`slice(${range}).bytes()`] = hex(await slice.bytes());
+      actual[`slice(${range}).stream()`] = hex(await slice.stream().bytes());
+      expected[`slice(${range}).bytes()`] = expected[`slice(${range}).stream()`] = hex(stored.subarray(...range));
+    }
+    return { actual, expected };
+  }
 
   it.each([
     ["gzip", Bun.gzipSync(text)],
@@ -1552,38 +1565,46 @@ describe("s3 object that has a content-encoding", () => {
     ["deflate", Bun.deflateSync(text)],
     ["br", brotliCompressSync(text)],
     ["zstd", Bun.zstdCompressSync(text)],
-  ] as const)("a read of a %s object that sends a range returns the stored bytes", async (contentEncoding, stored) => {
+  ] as const)("a slice that is a part of a %s object holds the stored bytes", async (contentEncoding, stored) => {
     const file = client.file(randomUUIDv7());
     await file.write(stored, { contentEncoding });
 
-    const actual: Record<string, string> = {};
-    const expected: Record<string, string> = {};
-    const ranges: [number, number?][] = [[0, 10], [10], [10, 20], [0, stored.length], [0, stored.length + 100]];
-    for (const range of ranges) {
-      const slice = file.slice(...range);
-      actual[`slice(${range}).bytes()`] = hex(await slice.bytes());
-      actual[`slice(${range}).stream()`] = hex(await slice.stream().bytes());
-      expected[`slice(${range}).bytes()`] = expected[`slice(${range}).stream()`] = hex(stored.subarray(...range));
-    }
+    const { actual, expected } = await readParts(file, stored, [[0, 10], [10], [10, 20]]);
     expect(actual).toEqual(expected);
 
-    // These send no range. They read the file as before.
-    expect({
+    // A read of the whole object is as before, with no range or with a range that covers it.
+    const whole: Record<string, string> = {
       "text()": await file.text(),
       "stream()": await file.stream().text(),
       "slice()": await file.slice().text(),
       "slice(0)": await file.slice(0).text(),
       "slice(type)": await file.slice("text/plain").text(),
-    }).toEqual({
-      "text()": text.toString(),
-      "stream()": text.toString(),
-      "slice()": text.toString(),
-      "slice(0)": text.toString(),
-      "slice(type)": text.toString(),
-    });
+      "slice(0, size)": await file.slice(0, stored.length).text(),
+      "slice(0, size).stream()": await file.slice(0, stored.length).stream().text(),
+      "slice(0, size + 100)": await file.slice(0, stored.length + 100).text(),
+    };
+    expect(whole).toEqual(Object.fromEntries(Object.keys(whole).map(read => [read, text.toString()])));
   });
 
-  it("a slice of an object whose bytes do not match its content-encoding", async () => {
+  // The decoder can finish such a part, so these reads returned decoded bytes before.
+  const more = Buffer.alloc(900, "world ");
+  it.each([
+    ["gzip", Bun.gzipSync(text), Bun.gzipSync(more)],
+    ["zstd", Bun.zstdCompressSync(text), Bun.zstdCompressSync(more)],
+  ] as const)(
+    "a part that is a whole %s stream of the object holds the stored bytes",
+    async (contentEncoding, a, b) => {
+      const stored = Buffer.concat([a, b]);
+      const file = client.file(randomUUIDv7());
+      await file.write(stored, { contentEncoding });
+
+      const ranges: [number, number?][] = [[0, a.length], [a.length], [a.length, stored.length]];
+      const { actual, expected } = await readParts(file, stored, ranges);
+      expect(actual).toEqual(expected);
+    },
+  );
+
+  it("a slice that is a part of an object whose bytes do not match its content-encoding", async () => {
     const file = client.file(randomUUIDv7());
     await file.write("Hello Bun!", { contentEncoding: "gzip" });
     expect({
@@ -1592,14 +1613,13 @@ describe("s3 object that has a content-encoding", () => {
     }).toEqual({ head: "Hello", tail: "Bun!" });
   });
 
-  it("only a request with a range accepts no coding", async () => {
+  it("a read of a range sends the accept-encoding of a read of the whole object", async () => {
     const file = new S3Client(server.clientOptions("wire")).file("object");
     await file.write(Bun.gzipSync(text), { contentEncoding: "gzip" });
     await file.slice(0, 10).bytes();
     await file.slice(0, 10).stream().bytes();
     await file.bytes();
     await file.stream().bytes();
-    await file.delete();
 
     expect(
       server.requests
@@ -1607,42 +1627,144 @@ describe("s3 object that has a content-encoding", () => {
         .map(({ operation, headers }) => [operation, headers.get("range"), headers.get("accept-encoding")]),
     ).toEqual([
       ["PutObject", null, "gzip, deflate, br, zstd"],
-      ["GetObject", "bytes=0-9", "identity"],
-      ["GetObject", "bytes=0-9", "identity"],
+      ["GetObject", "bytes=0-9", "gzip, deflate, br, zstd"],
+      ["GetObject", "bytes=0-9", "gzip, deflate, br, zstd"],
       ["GetObject", null, "gzip, deflate, br, zstd"],
       ["GetObject", null, "gzip, deflate, br, zstd"],
-      ["DeleteObject", null, "gzip, deflate, br, zstd"],
     ]);
   });
 
-  it("a slice through a server that compresses unless the request accepts only identity", async () => {
-    // As a reverse proxy with a default encoding does. It compresses a 206 too.
-    await using front = Bun.serve({
-      port: 0,
+  it("only a 206 that holds a part of the stored bytes stays as it is", async () => {
+    const stored = Bun.gzipSync(text);
+    const half = text.subarray(0, 300);
+    const inTransit = Bun.gzipSync(half);
+    const chunked = (body: Uint8Array) =>
+      Buffer.concat([Buffer.from(body.length.toString(16) + "\r\n"), body, Buffer.from("\r\n0\r\n\r\n")]);
+    const gzip = "Content-Encoding: gzip";
+    const partRange = `Content-Range: bytes 0-9/${stored.length}`;
+    const wholeRange = `Content-Range: bytes 0-${stored.length - 1}`;
+    const halfRange = "Content-Range: bytes 0-299/600";
+    // The key of the object chooses the 206: its headers, its body, and what the read returns.
+    const responses: Record<string, { headers: string[]; body: Uint8Array; expected: string }> = {
+      "part": {
+        headers: [gzip, partRange, "Content-Length: 10"],
+        body: stored.subarray(0, 10),
+        expected: hex(stored.subarray(0, 10)),
+      },
+      "whole": {
+        headers: [gzip, `${wholeRange}/${stored.length}`, `Content-Length: ${stored.length}`],
+        body: stored,
+        expected: hex(text),
+      },
+      "whole-of-unknown-size": {
+        headers: [gzip, `${wholeRange}/*`, `Content-Length: ${stored.length}`],
+        body: stored,
+        expected: hex(text),
+      },
+      // A proxy compressed the part of an object that has no content-encoding.
+      "in-transit-chunked": {
+        headers: [gzip, halfRange, "Transfer-Encoding: chunked"],
+        body: chunked(inTransit),
+        expected: hex(half),
+      },
+      "in-transit-chunked-with-the-old-length": {
+        headers: [gzip, halfRange, "Transfer-Encoding: chunked", "Content-Length: 300"],
+        body: chunked(inTransit),
+        expected: hex(half),
+      },
+      "in-transit-with-its-length": {
+        headers: [gzip, halfRange, `Content-Length: ${inTransit.length}`],
+        body: inTransit,
+        expected: hex(half),
+      },
+      // Without a length the part is not known to be one. The read fails as before.
+      "part-without-length": {
+        headers: [gzip, partRange],
+        body: stored.subarray(0, 10),
+        expected: "ZlibError",
+      },
+    };
+    using listener = Bun.listen<{ request: string }>({
       hostname: "127.0.0.1",
-      async fetch(request) {
-        const response = await server.fetch(request);
-        if (request.method !== "GET" || request.headers.get("accept-encoding") === "identity") return response;
-        const headers = new Headers(response.headers);
-        headers.set("content-encoding", "gzip");
-        headers.delete("content-length");
-        return new Response(Bun.gzipSync(await response.arrayBuffer()), { status: response.status, headers });
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { request: "" };
+        },
+        data(socket, chunk) {
+          socket.data.request += chunk.toString("latin1");
+          if (!socket.data.request.includes("\r\n\r\n")) return;
+          const key = socket.data.request.split(" ")[1].split("/").pop()!;
+          const { headers, body } = responses[key];
+          const head = ["HTTP/1.1 206 Partial Content", ...headers, "Connection: close", "", ""].join("\r\n");
+          socket.end(Buffer.concat([Buffer.from(head), body]));
+        },
       },
     });
-    const file = new S3Client({ ...server.clientOptions("front"), endpoint: front.url.href }).file("object");
-    await file.write(text);
+    const scripted = new S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+      endpoint: `http://127.0.0.1:${listener.port}`,
+    });
 
-    expect(await file.slice(6, 11).text()).toBe("hello");
+    const actual: Record<string, { bytes: string; stream: string }> = {};
+    const expected: typeof actual = {};
+    for (const key in responses) {
+      const slice = scripted.file(key).slice(0, 10);
+      actual[key] = {
+        bytes: await slice.bytes().then(hex, error => error.code),
+        stream: await slice
+          .stream()
+          .bytes()
+          .then(hex, error => error.code),
+      };
+      expected[key] = { bytes: responses[key].expected, stream: responses[key].expected };
+    }
+    expect(actual).toEqual(expected);
   });
 
-  it("Bun.Image reads a slice", async () => {
-    // A 1x1 PNG. The object names a coding that its bytes do not have.
+  it("fetch() still decodes a range, so a part of the object rejects there", async () => {
+    const stored = Bun.gzipSync(text);
+    const key = randomUUIDv7();
+    const file = client.file(key);
+    await file.write(stored, { contentEncoding: "gzip" });
+
+    const headers = { range: "bytes=0-9" };
+    const read = (response: Promise<Response>) =>
+      response.then(response => response.bytes()).then(hex, error => ({ name: error.name, code: error.code }));
+    expect({
+      slice: hex(await file.slice(0, 10).bytes()),
+      presigned: await read(fetch(file.presign(), { headers })),
+      s3: await read(fetch(`s3://encoded/${key}`, { s3: server.clientOptions(), headers })),
+    }).toEqual({
+      slice: hex(stored.subarray(0, 10)),
+      presigned: { name: "TypeError", code: "ZlibError" },
+      s3: { name: "TypeError", code: "ZlibError" },
+    });
+  });
+
+  it("the start of the stream of the whole object is decompressed data", async () => {
+    const file = client.file(randomUUIDv7());
+    await file.write(Bun.gzipSync(text), { contentEncoding: "gzip" });
+
+    const reader = file.stream().getReader();
+    const { value } = await reader.read();
+    await reader.cancel();
+    expect({ length: value!.length > 0, start: hex(value!) }).toEqual({
+      length: true,
+      start: hex(text.subarray(0, value!.length)),
+    });
+  });
+
+  it("Bun.Image reads a slice that is a part of the object", async () => {
+    // A 1x1 PNG and 16 more bytes. The object names a coding that its bytes do not have.
     const png = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
       "base64",
     );
     const file = client.file(randomUUIDv7());
-    await file.write(png, { contentEncoding: "gzip" });
+    await file.write(Buffer.concat([png, Buffer.alloc(16)]), { contentEncoding: "gzip" });
 
     expect(await file.slice(0, png.length).image().metadata()).toEqual({ width: 1, height: 1, format: "png" });
   });

@@ -621,7 +621,9 @@ Internally, Bun uses the HTTP `Range` header to request only the bytes you want.
 
 The offsets count the bytes that the object holds in S3. `stat().size` is the number of those bytes.
 
-S3 stores the `Content-Encoding` of an upload as metadata of the object. A slice with an end, or with a start other than `0`, sends a `Range` header. Bun returns the bytes of that response as they are and does not decompress them, also when the range covers the whole object. `slice()`, `slice(0)` and `slice(type)` send no `Range`. They read the file itself.
+S3 stores the `Content-Encoding` of an upload as metadata of the object. When a slice holds only a part of such an object, Bun returns that part of the stored bytes and does not decompress it. A slice that covers the whole object is decompressed, like a read of the file. To read the start of the decompressed data, read `s3file.stream()` and stop when you have enough.
+
+Bun knows a part by the `Content-Range` and the `Content-Length` of the response. When a proxy in front of the endpoint removes the `Content-Length`, the read of a part rejects.
 
 `stat()` does not report the `Content-Encoding`. To read it, send a `HEAD` request with `fetch("s3://my-bucket/my-file.txt", { method: "HEAD" })` and read the `content-encoding` header.
 
@@ -882,7 +884,7 @@ const response = await fetch("s3://my-bucket/my-file.txt", {
 });
 ```
 
-`fetch()` decompresses a response that has a `Content-Encoding`, including a range. To read a range of such an object, pass `decompress: false`.
+`fetch()` decompresses a response that has a `Content-Encoding`, including a range. When the range holds only a part of such an object, the read of the body rejects. To read a part of the object, use `slice`.
 
 ### UTF-8, UTF-16, and BOM (byte order mark)
 

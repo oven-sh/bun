@@ -64,6 +64,35 @@ pub fn fold_transfer_encoding(value: &[u8], coding: &mut Encoding) -> crate::Res
     Ok(())
 }
 
+/// True if a 206 holds exactly `bytes first-last/complete` of a known, longer `complete`.
+pub fn is_stored_part(content_range: Option<&[u8]>, content_length: Option<usize>) -> bool {
+    let Some(value) = content_range else {
+        return false;
+    };
+    if value.len() < 6 || !strings::eql_case_insensitive_ascii(&value[..6], b"bytes ", true) {
+        return false;
+    }
+    let Some((range, complete)) = strings::split_once_char(&value[6..], b'/') else {
+        return false;
+    };
+    let Some((first, last)) = strings::split_once_char(range, b'-') else {
+        return false;
+    };
+    let (Some(first), Some(last), Some(complete)) = (
+        bun_http_types::parse_content_length_strict(first),
+        bun_http_types::parse_content_length_strict(last),
+        bun_http_types::parse_content_length_strict(complete),
+    ) else {
+        return false;
+    };
+    let Some(length) = last.checked_sub(first).and_then(|n| n.checked_add(1)) else {
+        return false;
+    };
+    last < complete
+        && length < complete
+        && content_length.and_then(|n| u64::try_from(n).ok()) == Some(length)
+}
+
 /// `Some(false)` if any token is `close` (wins), `Some(true)` if `keep-alive`, else `None`.
 pub fn connection_header_keep_alive(value: &[u8]) -> Option<bool> {
     let mut keep_alive = None;

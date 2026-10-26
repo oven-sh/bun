@@ -1163,9 +1163,15 @@ fn download_stream(
         }
     };
 
+    let mut header_buffer =
+        [bun_picohttp::Header::ZERO; bun_s3_signing::credentials::SignResult::MAX_HEADERS + 1];
     let headers = 'brk: {
         if let Some(range_) = &range {
-            break 'brk s3_simple_request::headers_with_range(&result, range_);
+            let _headers = result.mix_with_header(
+                &mut header_buffer,
+                bun_picohttp::Header::new(b"range", range_),
+            );
+            break 'brk bun_http::Headers::from_pico_http_headers(_headers);
         } else {
             break 'brk bun_http::Headers::from_pico_http_headers(result.headers());
         }
@@ -1249,7 +1255,7 @@ fn download_stream(
             signals: Some(task.signals),
             reject_unauthorized: Some(reject_unauthorized),
             tls_props: crate::socket::http_client_defaults(vm),
-            disable_decompression: Some(range.is_some()),
+            keep_partial_content_encoded: range.is_some(),
             ..Default::default()
         },
     ));

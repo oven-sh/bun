@@ -572,16 +572,6 @@ pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8]) -> Box<[u8]> {
     }
 }
 
-/// S3 labels a range with the whole object's `Content-Encoding`, so a ranged read takes no coding.
-pub(crate) fn headers_with_range(sign_result: &SignResult, range: &[u8]) -> Headers {
-    let mut buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 2];
-    let len = sign_result
-        .mix_with_header(&mut buffer, picohttp::Header::new(b"range", range))
-        .len();
-    buffer[len] = picohttp::Header::new(b"accept-encoding", b"identity");
-    Headers::from_pico_http_headers(&buffer[..=len])
-}
-
 /// What puts an S3 request on the HTTP thread asks first: this file's function and
 /// `client::download_stream` before anything else, the caller of `client::list_objects` before
 /// it allocates. (A `MultiPartUpload` asks its own abort handle: see `process_buffered`.)
@@ -648,7 +638,9 @@ pub(crate) fn execute_simple_s3_request(
     let headers = 'brk: {
         let mut header_buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
         if let Some(range_) = &options.range {
-            break 'brk headers_with_range(&result, range_);
+            let _headers =
+                result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
+            break 'brk Headers::from_pico_http_headers(_headers);
         } else {
             if let Some(content_type) = options.content_type {
                 if !content_type.is_empty() {
@@ -736,7 +728,7 @@ pub(crate) fn execute_simple_s3_request(
             // SAFETY: `task_ptr` outlives the request; the store is only read
             // through these pointers by the HTTP client.
             signals: Some(unsafe { (*task_ptr).signal_store.to() }),
-            disable_decompression: Some(options.range.is_some()),
+            keep_partial_content_encoded: options.range.is_some(),
             ..Default::default()
         },
     );

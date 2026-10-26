@@ -508,12 +508,11 @@ declare module "bun" {
      * Creates a new S3File representing a slice of the original file.
      * Uses HTTP Range headers for efficient partial downloads.
      *
-     * The offsets count the bytes that the object holds in S3. A slice with
-     * an end, or with a start other than `0`, sends a `Range` header. When
-     * the object has a `Content-Encoding`, Bun returns the bytes of that
-     * response as they are and does not decompress them, also when the range
-     * covers the whole object. `slice()`, `slice(0)` and `slice(type)` send
-     * no `Range`. They read the file itself.
+     * The offsets count the bytes that the object holds in S3. When a slice
+     * holds only a part of an object that has a `Content-Encoding`, Bun
+     * returns that part of the stored bytes and does not decompress it.
+     * A slice that covers the whole object is decompressed, like a read of
+     * the file.
      *
      * @param begin Starting byte offset
      * @param end Ending byte offset (exclusive)

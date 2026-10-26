@@ -4607,7 +4607,8 @@ impl<'a> Resolver<'a> {
                 open_dir_count.set(open_dir_count.get() + 1);
             }
 
-            let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
+            // A listing that `read_directory` cached first names the directory with no separator at the end.
+            let dir_path: &'static [u8] = if queue_top_safe_path.last() == Some(&SEP) {
                 // SAFETY: non-empty `safe_path` is always a dirname_store-backed
                 // `&'static [u8]` (set from `entries.dir` above); widen the
                 // `RawSlice`-tied borrow back to its true `'static` lifetime.

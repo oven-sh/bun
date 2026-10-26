@@ -1319,3 +1319,33 @@ it(".query and .params support names that look like array indices", () => {
   expect(params).toEqual({ 0: "hello" });
   expect(params[0]).toBe("hello");
 });
+
+// The failed lookup makes the resolver read the routes directory again by its path with no separator at
+// the end. The router over `z` then cached the routes directory under that path, and reload() did not return.
+it("reload() returns after a failed lookup in the routes directory and a router over a directory in it", async () => {
+  using dir = tempDir("fsr-reload-after-failed-lookup", {
+    "index.tsx": "export default 1;",
+    "z/a.tsx": "export default 1;",
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const routes = import.meta.dir;
+      try {
+        Bun.resolveSync("./missing.ts", routes);
+      } catch {}
+      new Bun.FileSystemRouter({ dir: path.join(routes, "z"), style: "nextjs" });
+      const router = new Bun.FileSystemRouter({ dir: routes, style: "nextjs", fileExtensions: [".tsx"] });
+      router.reload();
+      console.log(Object.keys(router.routes).sort().join(" "));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "/ /z/a\n", stderr: "", exitCode: 0 });
+});

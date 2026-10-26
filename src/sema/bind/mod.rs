@@ -1752,6 +1752,13 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
+    /// Whether the declaration makes the object of a namespace, or adds to it, when it runs.
+    pub fn makes_namespace_object(&self, f: &File, m: ModuleId) -> bool {
+        matches!(f[m].name, ModuleName::Ident(_))
+            && !f[m].is_erased
+            && self.module_instance_state[m.idx()] != ModuleInstanceState::NonInstantiated
+    }
+
     #[inline]
     pub fn symbol(&self, id: SymbolId) -> Symbol<'_> {
         let symbol = self.symbols.get(id.idx());

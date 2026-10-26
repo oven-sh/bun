@@ -244,8 +244,8 @@ struct FlowRuns {
     /// property as in `TestSubjects::chains`, and the node. Sorted.
     assignments: Vec<(u32, u32, u32)>,
     /// Indexed like `assignments`. For `x += 1` or `x++`: the first of the assignments like it that
-    /// lead up to it in its run, with no shared node and nothing else that concerns `x` in between,
-    /// calls aside. For any other entry: the entry itself. See `skip_compound_assignments`.
+    /// lead up to it in its run, with nothing else that concerns `x` in between, calls aside. For
+    /// any other entry: the entry itself. See `skip_compound_assignments`.
     first_compound_assignment: Vec<u32>,
     /// The assignments at which a walk resolves the name of a key, in ascending order.
     computed_key_nodes: Vec<u32>,
@@ -6569,7 +6569,7 @@ impl<'p, 's> Checker<'p, 's> {
                             if is_compound
                                 && walk.steps > LONG_WALK
                                 && let Some((arrived_at, assignments, nodes)) =
-                                    self.skip_compound_assignments(walk, flow)
+                                    self.skip_compound_assignments(walk, flow, depth == 0)
                                 && walk.steps.saturating_add(nodes) < MAX_STEPS
                             {
                                 passed += assignments;
@@ -7931,11 +7931,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// how many compound assignments it passed, and how many nodes. Each of them takes the base
     /// type of a literal type, as the one at `flow` does afterwards, so only the depth of the walk
     /// depends on them. Without this, n references between n assignments `x += 1` take n * n steps.
+    ///
+    /// The outermost invocation of a walk passes shared nodes too, which every assignment in a
+    /// `try` block is: `sharedFlows` has no entry until an invocation returns, and the outermost one
+    /// returns last, so nothing looks up what it adds.
     #[inline(never)]
     fn skip_compound_assignments(
         &mut self,
         walk: &Walk,
         flow: FlowId,
+        is_outermost: bool,
     ) -> Option<(FlowId, u32, u32)> {
         let reference = &walk.reference;
         let file = reference.file;
@@ -7959,6 +7964,14 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let position = runs.position[flow.idx()];
+        if !is_outermost {
+            first += runs.assignments[first..here].partition_point(|it| {
+                runs.nodes[runs.position[it.2 as usize] as usize].next_shared < position
+            });
+            if first == here {
+                return None;
+            }
+        }
         let start = runs.nodes[position as usize].run_start;
         let busy_call = self.find_last_busy_call(file, start, position);
         let runs = &self.flow_memo.runs;
@@ -8181,7 +8194,6 @@ impl<'p, 's> Checker<'p, 's> {
                 if earlier.0 == root
                     && from < to
                     && nodes[from as usize].run_start == nodes[to as usize].run_start
-                    && nodes[from as usize].next_shared >= to
                     && count_up_to(earlier.2) == count_up_to(node)
                     && count_keys_up_to(earlier.2) == count_keys_up_to(node)
                 {

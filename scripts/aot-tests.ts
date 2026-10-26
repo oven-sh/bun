@@ -104,6 +104,7 @@ export const testsOfEngineSources = [
   "aot/flow-results-name-the-list-they-read.test",
   "aot/lists-of-operations-in-the-compiler-only-shrink.test",
   "aot/the-compiler-reads-no-environment-variable.test",
+  "aot/the-frame-of-an-operation-outlives-whoever-is-handed-its-address.test",
   "aot/what-is-only-expected-of-a-position-is-widened-in-one-place.test",
   "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off.test",
 ];

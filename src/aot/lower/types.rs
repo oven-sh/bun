@@ -145,6 +145,14 @@ pub(in crate::lower) fn lists_int32(
     file.find_fact(ty, KeptFact::ListsInt32, shape_table::lists_int32)
 }
 
+pub(in crate::lower) fn lists_only_integers(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    ty: CheckerTypeId,
+) -> bool {
+    let compute = shape_table::lists_only_integers;
+    file.find_fact(ty, KeptFact::ListsOnlyIntegers, compute)
+}
+
 pub(in crate::lower) fn is_mapped_alike_in_every_file(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,

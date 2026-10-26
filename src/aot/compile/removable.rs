@@ -11,16 +11,14 @@ use bun_js_parser::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
 };
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::{
-    Binding, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl, ModuleInstanceState,
-};
+use bun_sema::bind::{Binding, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, Chain, ClassId, EnumId, EnumMemberId, ExprId, ExprKind, Flags, FnBody,
     ImportEqualsId, ImportEqualsTarget, JsxId, MemberId, MemberKey, MemberKind, ModifierId,
-    ModifierKind, ModuleId, ModuleName, NameKind, NodeData, PatId, PatKind, PropId, PropKey,
-    PropKind, Span, StmtId, StmtKind, UnOp, VarDeclId, VarKind,
+    ModifierKind, NameKind, NodeData, PatId, PatKind, PropId, PropKey, PropKind, Span, StmtId,
+    StmtKind, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{FileId, Files};
@@ -219,7 +217,7 @@ impl<'a, 's> Removable<'a, 's> {
             StmtKind::Var(declarations) => declarations.iter().all(|it| self.declaration(it)),
             StmtKind::Class(class) => self.class(class),
             StmtKind::Enum(declaration) => self.enumeration(declaration),
-            StmtKind::Module(namespace) => self.is_namespace_without_code(namespace),
+            StmtKind::Module(namespace) => !self.bound.makes_namespace_object(hir, namespace),
             StmtKind::ImportEquals(alias) => self.import_equals(alias),
             StmtKind::If { test, yes, no } => {
                 self.expression(test) && self.never_runs(yes) && self.never_runs(no)
@@ -475,19 +473,6 @@ impl<'a, 's> Removable<'a, 's> {
             node.computed_name.is_none()
                 && (self.member_constant(member).is_some() || self.expression(node.init))
         })
-    }
-
-    fn is_namespace_without_code(&self, namespace: ModuleId) -> bool {
-        let node = &self.hir[namespace];
-        match node.name {
-            ModuleName::String(_) | ModuleName::Global => true,
-            ModuleName::Ident(_) => match self.bound.module_instance_state[namespace.idx()] {
-                ModuleInstanceState::NonInstantiated => true,
-                ModuleInstanceState::Instantiated | ModuleInstanceState::ConstEnumOnly => {
-                    node.flags.contains(Flags::AMBIENT)
-                }
-            },
-        }
     }
 
     fn import_equals(&self, alias: ImportEqualsId) -> bool {

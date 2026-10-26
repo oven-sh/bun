@@ -2,7 +2,7 @@ use crate::atom::known;
 use crate::hir::{
     Class, Expr, ExprId, ExprKind, File, Flags, Func, IdList, Member, MemberKind, ModifierKind,
     Param, PatId, PatKind, Span, StmtId, TypeNodeId, TypeParamId, end_of_expr, has_body,
-    modifier_text, start_of,
+    is_nested_namespace, modifier_text, start_of,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -127,7 +127,8 @@ impl Finder<'_, '_> {
         let file = self.file;
         for index in 0..file.stmts.len() {
             let statement = StmtId(index as u32);
-            if file.is_erased_statement(statement) {
+            // The `b` of `namespace a.b` goes with `a` or stays with it.
+            if file.is_erased_statement(statement) && !is_nested_namespace(file, statement) {
                 let end = self.end_of_erased_statement(file[statement].loc.end as usize);
                 self.add(file[statement].start, end as u32);
             }

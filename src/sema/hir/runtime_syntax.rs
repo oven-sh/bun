@@ -1,7 +1,7 @@
 use super::{
-    ClassId, ExprId, ExprKind, File, FileIn, Flags, FnBody, FnId, FnKind, IdList, MemberId,
-    MemberKind, ModifierId, ModifierKind, Module, ModuleId, ModuleName, NameKind, PatPropId, Prop,
-    PropId, PropKey, PropKind, Span, StmtId, StmtKind, Storage, VarDeclId, has_body, rare,
+    ClassId, ExprFlags, ExprId, ExprKind, File, FileIn, Flags, FnBody, FnId, FnKind, IdList,
+    MemberId, MemberKind, ModifierId, ModifierKind, NameKind, PatPropId, Prop, PropId, PropKey,
+    PropKind, Span, StmtId, StmtKind, Storage, VarDeclId, has_body, is_nested_namespace, rare,
 };
 use crate::atom::{Atom, known};
 use crate::node::Node;
@@ -99,40 +99,62 @@ impl<S: Storage> FileIn<S> {
             }
             StmtKind::Enum(enumeration) => (self.enums.get(enumeration.idx()))
                 .is_some_and(|it| it.flags.contains(Flags::AMBIENT)),
-            StmtKind::Module(module) => self.modules.get(module.idx()).is_some_and(|it| {
-                it.flags.intersects(Flags::AMBIENT | Flags::REPARSED)
-                    || self.declares_only_types(module)
-            }),
+            StmtKind::Module(module) => {
+                (self.modules.get(module.idx())).is_some_and(|it| it.is_erased)
+            }
             _ => false,
         }
     }
 
-    fn declares_only_types(&self, namespace: ModuleId) -> bool {
-        let mut namespaces = vec![namespace];
-        while let Some(namespace) = namespaces.pop() {
-            let Some(&Module {
-                name: ModuleName::Ident(_),
-                has_body: true,
-                body,
-                ..
-            }) = self.modules.get(namespace.idx())
-            else {
-                return false;
-            };
-            for statement in self.ids(body) {
-                match self.stmts.get(statement.idx()).map(|it| it.kind) {
-                    Some(StmtKind::Interface(_) | StmtKind::TypeAlias(_)) => {}
-                    Some(StmtKind::Module(inner))
-                        if (self.modules.get(inner.idx()))
-                            .is_some_and(|it| !it.flags.contains(Flags::AMBIENT)) =>
-                    {
-                        namespaces.push(inner);
-                    }
-                    _ => return false,
-                }
+    /// Whether `bun run` drops a namespace that has these modifiers and this body: it keeps no statement of the body.
+    /// The namespaces in the body have their answers already.
+    pub fn erases_namespace(&self, flags: Flags, body: IdList<StmtId>) -> bool {
+        let mut is_prologue = true;
+        flags.intersects(Flags::AMBIENT | Flags::REPARSED)
+            || self.ids(body).all(|statement| {
+                let is_dropped_directive = is_prologue && self.is_use_strict(statement);
+                is_prologue &= is_dropped_directive || self.is_erased_statement(statement);
+                is_dropped_directive || !self.is_kept_in_namespace(statement)
+            })
+    }
+
+    fn is_use_strict(&self, statement: StmtId) -> bool {
+        let Some(StmtKind::Expr(text)) = self.stmts.get(statement.idx()).map(|it| it.kind) else {
+            return false;
+        };
+        let kind = self.exprs.get(text.idx()).map(|it| it.kind);
+        matches!(kind, Some(ExprKind::String(known::use_strict)))
+            && !self.expr_flags(text).contains(ExprFlags::TEMPLATE_LITERAL)
+    }
+
+    fn is_kept_in_namespace(&self, statement: StmtId) -> bool {
+        let Some(kind) = self.stmts.get(statement.idx()).map(|it| it.kind) else {
+            return true;
+        };
+        // `export declare` names a member of the object, so the object is there.
+        let is_member =
+            |flags: Flags| !flags.contains(Flags::AMBIENT) || flags.contains(Flags::EXPORT);
+        match kind {
+            StmtKind::Empty => false,
+            StmtKind::ImportEquals(alias) => (self.import_equals.get(alias.idx()))
+                .is_none_or(|it| it.flags.contains(Flags::EXPORT)),
+            StmtKind::Var(declarations) => declarations.iter().any(|it| is_member(self[it].flags)),
+            StmtKind::Fn(function) => self.fns.get(function.idx()).is_none_or(|it| {
+                is_member(it.flags) && (has_body(it) || it.flags.contains(Flags::AMBIENT))
+            }),
+            StmtKind::Class(class) => {
+                (self.classes.get(class.idx())).is_none_or(|it| is_member(it.flags))
             }
+            StmtKind::Enum(enumeration) => {
+                (self.enums.get(enumeration.idx())).is_none_or(|it| is_member(it.flags))
+            }
+            // The `b` of `namespace a.b` is kept as a statement of `a` even where it is dropped itself.
+            StmtKind::Module(inner) => {
+                self.modules.get(inner.idx()).is_none_or(|it| !it.is_erased)
+                    || is_nested_namespace(self, statement)
+            }
+            _ => !self.is_erased_statement(statement),
         }
-        true
     }
 
     pub fn only_declares(&self) -> bool {

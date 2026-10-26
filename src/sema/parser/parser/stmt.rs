@@ -1151,6 +1151,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body,
             has_body,
             specifies_module,
+            is_erased: flags.contains(Flags::AMBIENT),
             stmt: StmtId::NONE,
         });
         let modifiers = self.take_modifiers(base);
@@ -1209,6 +1210,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body,
             has_body: true,
             specifies_module,
+            is_erased: self.f.erases_namespace(flags, body),
             stmt: StmtId::NONE,
         });
         let statement = self.add_stmt(StmtKind::Module(declaration), start, modifiers);

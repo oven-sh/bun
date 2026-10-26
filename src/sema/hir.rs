@@ -1865,6 +1865,8 @@ pub struct Module {
     /// `ModuleDeclaration.Keyword` is `module`. The `b` of `module a.b` has the same value as the
     /// `a`.
     pub specifies_module: bool,
+    /// `bun run` drops the declaration, so it makes no object. See [`FileIn::erases_namespace`].
+    pub is_erased: bool,
     /// The statement node of this declaration.
     pub stmt: StmtId,
 }
@@ -3603,7 +3605,7 @@ pub fn names_bound_by(hir: &File, pat: PatId, into: &mut Vec<(Atom, PatId)>) {
 }
 
 /// `NodeFlagsNestedNamespace`: the statement `s` is the `B` of `namespace A.B`. It starts with its name.
-pub fn is_nested_namespace(hir: &File, s: StmtId) -> bool {
+pub fn is_nested_namespace<S: Storage>(hir: &FileIn<S>, s: StmtId) -> bool {
     matches!(hir[s].kind, StmtKind::Module(m) if hir[s].start == hir[m].name_pos)
 }
 

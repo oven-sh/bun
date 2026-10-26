@@ -152,6 +152,8 @@ pub struct FunctionBuilder {
     written_position: Option<u32>,
     // In the order of the values. Only a value that is written elsewhere than at its position has an entry.
     pub(super) written_positions: Vec<(ValueId, u32)>,
+    is_written_position_for_callers: bool,
+    pub(super) values_written_for_callers: Vec<ValueId>,
     stands_in_tail_position: bool,
     pub(super) values_in_tail_position: Vec<ValueId>,
     recorded_position: Option<u32>,
@@ -218,6 +220,8 @@ impl FunctionBuilder {
             position: None,
             written_position: None,
             written_positions: Vec::new(),
+            is_written_position_for_callers: false,
+            values_written_for_callers: Vec::new(),
             stands_in_tail_position: false,
             values_in_tail_position: Vec::new(),
             recorded_position: None,
@@ -449,6 +453,13 @@ impl FunctionBuilder {
     pub fn set_written_position(&mut self, written: u32) {
         let differs = self.position.is_some_and(|position| position != written);
         self.written_position = differs.then_some(written);
+        self.is_written_position_for_callers = false;
+    }
+
+    // Until the next position: where what is emitted is reported while something that it calls runs. The position is where its own errors are reported.
+    pub fn set_position_for_callers(&mut self, position: u32) {
+        self.set_written_position(position);
+        self.is_written_position_for_callers = true;
     }
 
     // What is emitted from here on stands for a call in tail position: a stack trace that passes through it does not list the function.
@@ -482,6 +493,9 @@ impl FunctionBuilder {
         });
         if let Some(written) = self.written_position {
             self.written_positions.push((value, written));
+            if self.is_written_position_for_callers {
+                self.values_written_for_callers.push(value);
+            }
         }
         if self.stands_in_tail_position {
             self.values_in_tail_position.push(value);

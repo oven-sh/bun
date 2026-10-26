@@ -191,7 +191,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 is_in_register
             }
             _ => match self.file.hir.member_key(self.file.skip_type_syntax(target)) {
-                Some((_, MemberKey::Computed(key))) => !self.file.is_literal_operand(key),
+                // The test of `o` is reported there. A getter or a trap that the read calls has its caller at `o`.
+                Some((object, MemberKey::Computed(key))) if !self.file.is_literal_operand(key) => {
+                    self.set_position_to_last_recorded();
+                    let position = self.file.member_position(object);
+                    self.builder.set_position_for_callers(position);
+                    return;
+                }
                 _ => false,
             },
         };

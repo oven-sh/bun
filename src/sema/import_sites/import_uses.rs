@@ -1,7 +1,5 @@
 use super::statements::value_import_symbols;
-use crate::bind::{
-    Binding, Bound, Decl, ImplicitReferenceKind, ModuleInstanceState, Parent, SymbolId,
-};
+use crate::bind::{Binding, Bound, Decl, ImplicitReferenceKind, Parent, SymbolId};
 use crate::fold::Decisions;
 use crate::hir::{ExprId, File, Flags, ImportEqualsId, ImportId, NodeData};
 use crate::util::PositionSet;
@@ -85,11 +83,9 @@ fn alias_evaluation(hir: &File<'_>, bound: &Bound<'_>, alias: ImportEqualsId) ->
     match bound.parent_of_stmt(import.stmt) {
         Parent::None => AliasEvaluation::Never,
         Parent::File if !import.flags.contains(Flags::EXPORT) => AliasEvaluation::WhenUsed,
-        Parent::Module(namespace) => match bound.module_instance_state[namespace.idx()] {
-            ModuleInstanceState::NonInstantiated => AliasEvaluation::Never,
-            ModuleInstanceState::Instantiated | ModuleInstanceState::ConstEnumOnly => {
-                AliasEvaluation::Always
-            }
+        Parent::Module(namespace) => match bound.makes_namespace_object(hir, namespace) {
+            true => AliasEvaluation::Always,
+            false => AliasEvaluation::Never,
         },
         _ => AliasEvaluation::Always,
     }

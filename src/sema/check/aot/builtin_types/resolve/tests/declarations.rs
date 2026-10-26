@@ -442,6 +442,7 @@ impl TreeBuilder<'_, '_> {
             body,
             has_body: true,
             specifies_module: false,
+            is_erased: self.file.erases_namespace(flags, body),
             stmt: StmtId::NONE,
         })
     }

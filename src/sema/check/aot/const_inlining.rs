@@ -1,5 +1,5 @@
 use super::enum_constants::READS_OTHER_FILE_OR_VARIABLE;
-use crate::bind::{Bound, ModuleInstanceState, Parent};
+use crate::bind::{Bound, Parent};
 use crate::check::Checker;
 use crate::check::decl::Evaluated;
 use crate::check::errors_enums_names::Location;
@@ -202,13 +202,7 @@ fn ends_const_local_prefix(hir: &File<'_>, bound: &Bound<'_>, statement: StmtId)
             has_body(&hir[function]) && !hir[function].flags.contains(Flags::AMBIENT)
         }
         StmtKind::Class(class) => !hir[class].flags.contains(Flags::AMBIENT),
-        StmtKind::Module(module) => {
-            !hir[module].flags.contains(Flags::AMBIENT)
-                && match bound.module_instance_state[module.idx()] {
-                    ModuleInstanceState::NonInstantiated => false,
-                    ModuleInstanceState::Instantiated | ModuleInstanceState::ConstEnumOnly => true,
-                }
-        }
+        StmtKind::Module(module) => bound.makes_namespace_object(hir, module),
         StmtKind::Import(import) => !hir.is_type_only_import(import),
         StmtKind::ExportNamed(export) => !hir.is_type_only_export(export),
         StmtKind::ExportStar { type_only, .. } => !type_only,

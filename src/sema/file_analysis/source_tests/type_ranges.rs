@@ -137,6 +137,11 @@ const KEPT_TEXT_ROWS: &[(&str, &str, &str)] = &[
     ),
     (
         "a.ts",
+        "namespace N.M { export interface I {} } namespace O { declare const v: T; } a();",
+        "namespace N.M {  }  a();",
+    ),
+    (
+        "a.ts",
         "class A { constructor(private readonly x: T, public y?: U) {} }",
         "class A { constructor(x, y) {} }",
     ),

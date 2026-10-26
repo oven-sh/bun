@@ -310,4 +310,41 @@ for (let round = 0; round < 24; round++) {
 console.log(sum);
 `,
     ),
+    "many-loops-add-optional-fields-in-changing-orders.ts": text(
+      `// Each of 2,250 functions stores one optional field into every object of a list, in a loop, and the objects get their fields in orders that change from round to round.
+// All the objects have the same names. What a loop remembers of the last object it saw holds for that loop and for objects with the same keys in the same order, and for nothing else:
+// the order of the keys of every object is the order in which this program stored them.
+const steps = [1, 3, 7, 9];`,
+      [
+        225,
+        n => `type T${n} = { base: number; f0?: number; f1?: number; f2?: number; f3?: number; f4?: number; f5?: number; f6?: number; f7?: number; f8?: number; f9?: number };
+function make${n}(): T${n} { return { base: ${n} }; }
+function add${n}_0(list: T${n}[]): void { for (let i = 0; i < list.length; i++) list[i].f0 = 0; }
+function add${n}_1(list: T${n}[]): void { for (let i = 0; i < list.length; i++) list[i].f1 = 1; }
+function add${n}_2(list: T${n}[]): void { for (let i = 0; i < list.length; i++) list[i].f2 = 2; }
+function add${n}_3(list: T${n}[]): void { for (let i = 0; i < list.length; i++) list[i].f3 = 3; }
+function add${n}_4(list: T${n}[]): void { for (let i = 0; i < list.length; i++) list[i].f4 = 4; }
+function add${n}_5(list: T${n}[]): void { for (let i = 0; i < list.length; i++) list[i].f5 = 5; }
+function add${n}_6(list: T${n}[]): void { for (let i = 0; i < list.length; i++) list[i].f6 = 6; }
+function add${n}_7(list: T${n}[]): void { for (let i = 0; i < list.length; i++) list[i].f7 = 7; }
+function add${n}_8(list: T${n}[]): void { for (let i = 0; i < list.length; i++) list[i].f8 = 8; }
+function add${n}_9(list: T${n}[]): void { for (let i = 0; i < list.length; i++) list[i].f9 = 9; }
+const adders${n}: ((list: T${n}[]) => void)[] = [add${n}_0, add${n}_1, add${n}_2, add${n}_3, add${n}_4, add${n}_5, add${n}_6, add${n}_7, add${n}_8, add${n}_9];
+function run${n}(round: number): string { const list = [make${n}(), make${n}()]; const step = steps[(round + ${n}) % 4]; const count = 1 + ((round * 5 + ${n}) % 10); for (let n = 0, j = round % 10; n < count; n++, j = (j + step) % 10) adders${n}[j](list); return Object.keys(list[0]).join() + " " + Object.keys(list[1]).join(); }`,
+      ],
+      `const runs: ((round: number) => string)[] = [${Array.from({ length: 225 }, (_, n) => "run" + n).join(", ")}];
+let sum = 0;
+function mix(text: string) {
+  for (let i = 0; i < text.length; i++) sum = (Math.imul(sum, 31) + text.charCodeAt(i)) | 0;
+}
+for (let round = 0; round < 24; round++) {
+  for (let g = 0; g < runs.length; g++) {
+    const keys = runs[g](round);
+    mix(keys);
+    if (round === 23 && g % 75 === 0) console.log(keys);
+  }
+}
+console.log(sum);
+`,
+    ),
   });

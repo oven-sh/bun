@@ -1,4 +1,4 @@
-use bun_sema::bind::{Binding, CommonJsVariable, Decl, ModuleInstanceState, ScopeId, SymbolId};
+use bun_sema::bind::{Binding, CommonJsVariable, Decl, ScopeId, SymbolId};
 use bun_sema::hir::{ExprId, ExprKind, Flags, Span, StmtId, StmtKind, VarDeclId, VarKind};
 
 use super::{Context, PatternRole, Task, WalkedLoop, WalkedTry, Walker};
@@ -86,9 +86,7 @@ impl Walker<'_, '_> {
                 }
             }
             StmtKind::Module(id) => {
-                let state = bound.module_instance_state[id.idx()];
-                let is_erased = state == ModuleInstanceState::NonInstantiated;
-                if !is_erased && !hir[id].flags.contains(Flags::AMBIENT) {
+                if bound.makes_namespace_object(hir, id) {
                     self.push_initialization(bound.declared_symbol(Decl::Module(id)), context);
                     self.enter_scope(bound.module_scope[id.idx()], context);
                     self.push_statements(hir.ids(hir[id].body), context);

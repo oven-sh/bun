@@ -1,5 +1,5 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, BindingKind, Decl, InitialState, ModuleInstanceState, SymbolId};
+use bun_sema::bind::{Binding, BindingKind, Decl, InitialState, SymbolId};
 use bun_sema::hir::{self, Flags, ModuleName};
 
 use crate::ir::ValueId;
@@ -34,10 +34,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let (hir, bound) = (self.file.hir, self.file.bound);
         match declaration {
             Decl::Enum(it) => !hir[it].flags.contains(Flags::AMBIENT),
-            Decl::Module(it) => {
-                !hir[it].flags.contains(Flags::AMBIENT)
-                    && bound.module_instance_state[it.idx()] != ModuleInstanceState::NonInstantiated
-            }
+            Decl::Module(it) => bound.makes_namespace_object(hir, it),
             _ => false,
         }
     }
@@ -94,16 +91,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let bound = self.file.bound;
         let data = self.file.hir[declaration];
         let name = match data.name {
-            ModuleName::Ident(name) => name,
-            ModuleName::String(_) | ModuleName::Global => return,
+            ModuleName::Ident(name) if bound.makes_namespace_object(self.file.hir, declaration) => {
+                name
+            }
+            ModuleName::Ident(_) | ModuleName::String(_) | ModuleName::Global => return,
         };
-        if data.flags.contains(Flags::AMBIENT) {
-            return;
-        }
-        match bound.module_instance_state[declaration.idx()] {
-            ModuleInstanceState::NonInstantiated => return,
-            ModuleInstanceState::Instantiated | ModuleInstanceState::ConstEnumOnly => {}
-        }
         let container = self.find_container(Decl::Module(declaration), name);
         self.ensure_container(container);
         let scope = bound.module_scope[declaration.idx()];

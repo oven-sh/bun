@@ -203,6 +203,7 @@ impl<'c> KeptMemo<'c> {
 pub enum KeptFact {
     IsMappedAlikeInEveryFile,
     ListsInt32,
+    ListsOnlyIntegers,
     HasLayoutInEveryValue,
 }
 

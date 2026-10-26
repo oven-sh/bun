@@ -12,8 +12,8 @@ use super::builder::{
 };
 use super::generated::{
     BlockHead, Body, Function, Opcode, ParameterHead, STANDS_IN_TAIL_POSITION, TargetHead,
-    TerminatorHead, ValueHead, WRITTEN_POSITION_FOLLOWS, visit_terminator_fields,
-    visit_value_fields,
+    TerminatorHead, ValueHead, WRITTEN_POSITION_FOLLOWS, WRITTEN_POSITION_IS_FOR_CALLERS,
+    visit_terminator_fields, visit_value_fields,
 };
 use super::ids::{BlockId, Id, TypeId, ValueId};
 
@@ -32,6 +32,7 @@ impl FunctionBuilder {
             mut function,
             values,
             written_positions,
+            values_written_for_callers,
             values_in_tail_position,
             field_words,
             mut blocks,
@@ -52,6 +53,7 @@ impl FunctionBuilder {
         let mut encoder = Encoder {
             values: &values,
             written_positions: &written_positions,
+            values_written_for_callers: &values_written_for_callers,
             values_in_tail_position: &values_in_tail_position,
             field_words: &field_words,
             blocks: &blocks,
@@ -233,6 +235,7 @@ impl FinishScratch {
 struct Encoder<'a> {
     values: &'a [PendingValue],
     written_positions: &'a [(ValueId, u32)],
+    values_written_for_callers: &'a [ValueId],
     values_in_tail_position: &'a [ValueId],
     field_words: &'a [u32],
     blocks: &'a [PendingBlock],
@@ -277,6 +280,9 @@ impl Encoder<'_> {
         let written = written_positions.binary_search_by_key(&id, |&(value, _)| value);
         let written = written.ok().map(|index| written_positions[index].1);
         let mut mark = written.map_or(0, |_| WRITTEN_POSITION_FOLLOWS);
+        if self.values_written_for_callers.binary_search(&id).is_ok() {
+            mark |= WRITTEN_POSITION_IS_FOR_CALLERS;
+        }
         if self.values_in_tail_position.binary_search(&id).is_ok() {
             mark |= STANDS_IN_TAIL_POSITION;
         }

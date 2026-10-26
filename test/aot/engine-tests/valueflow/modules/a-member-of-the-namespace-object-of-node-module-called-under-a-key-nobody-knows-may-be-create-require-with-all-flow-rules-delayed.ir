@@ -1,5 +1,5 @@
 # import * as Module from "node:module"; Module[globalThis.key]("/app/main.js")(globalThis.name)
-# The call reads its callee from its own receiver, so it may call createRequire, which the read by itself does not answer.
+# What the read answers is only called, so it may be createRequire.
 # The call of what that call returns loads code by name, and no other call does.
 # OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
 # RUN: valueflow-solve unseen

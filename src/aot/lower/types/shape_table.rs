@@ -463,6 +463,36 @@ pub(super) fn lists_int32(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
     }
 }
 
+// Nothing, where the type lists no number.
+fn find_whether_numbers_are_integers(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    ty: CheckerTypeId,
+) -> Option<bool> {
+    match file.queries.type_shape(ty).ok()?.kind {
+        ShapeKind::Int32 { .. } => Some(true),
+        ShapeKind::Number => Some(false),
+        ShapeKind::NumberLiteral(value) => {
+            Some(number_literal_type(value).integer_range().is_some())
+        }
+        ShapeKind::NumericEnumMember(value) => {
+            Some(enum_member_type(value).integer_range().is_some())
+        }
+        ShapeKind::Union(members) => members
+            .iter()
+            .filter_map(|&member| find_whether_numbers_are_integers(file, member))
+            .reduce(|all, member| all && member),
+        _ => None,
+    }
+}
+
+// An `int32`, the members of a numeric enum and literals: the build takes each for an `int32` where one is declared.
+pub(super) fn lists_only_integers(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    ty: CheckerTypeId,
+) -> bool {
+    find_whether_numbers_are_integers(file, ty) == Some(true)
+}
+
 // TypeScript's `0` is also the type of `-0`, which no integer range holds.
 fn number_literal_type(value: f64) -> Type {
     let integer = value as i64;

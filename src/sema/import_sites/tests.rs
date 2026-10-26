@@ -174,13 +174,15 @@ fn add_namespace(file: &mut FileBuilder, alias: StmtId, has_value: bool) -> Stmt
         let value = file.expr(ExprKind::Null, 0, 0);
         body.push(file.stmt(StmtKind::Expr(value), 0));
     }
+    let body = file.list(&body);
     let namespace = Module {
         name: ModuleName::Ident(known::object),
         name_pos: 0,
         flags: Flags::empty(),
-        body: file.list(&body),
+        body,
         has_body: true,
         specifies_module: false,
+        is_erased: file.erases_namespace(Flags::empty(), body),
         stmt: StmtId::NONE,
     };
     let namespace = file.add_module(namespace);

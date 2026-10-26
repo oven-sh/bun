@@ -161,6 +161,7 @@ pub struct ValueView<'a> {
     pub opcode: Opcode,
     pub position: Option<u32>,
     pub written_position: Option<u32>,
+    pub is_written_position_for_callers: bool,
     pub fields: &'a [u32],
 }
 

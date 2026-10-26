@@ -131,11 +131,8 @@
     }
   },
   "one try block of many calls": {
-    "millionInstructions": 7110,
-    "megabytes": 220,
-    "growth": {
-      "instructions": 5.02
-    }
+    "millionInstructions": 3815,
+    "megabytes": 220
   },
   "modules that export everything of the one before": {
     "millionInstructions": 3567,
@@ -186,11 +183,8 @@
     }
   },
   "names that one function reads from an object nobody knows": {
-    "millionInstructions": 13000,
-    "megabytes": 420,
-    "growth": {
-      "peakBytes": 6.0
-    }
+    "millionInstructions": 4777,
+    "megabytes": 220
   },
   "floored divisions that each take the result of the one before": {
     "millionInstructions": 15200,
@@ -216,11 +210,11 @@
   },
   "terms of one sum that name a constant": {
     "millionInstructions": 3417,
-    "megabytes": 142
+    "megabytes": 220
   },
   "functions with a row of constants that are each computed from the one before": {
     "millionInstructions": 5178,
-    "megabytes": 142
+    "megabytes": 220
   },
   "a declaration where an expression belongs, nested in itself": {
     "millionInstructions": 6900,

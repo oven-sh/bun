@@ -68,6 +68,9 @@ impl Printer<'_> {
         print_value_fields(value.opcode, value.fields, self);
         self.print_position(value.position);
         self.print_position(value.written_position);
+        if value.is_written_position_for_callers {
+            self.out.push_str(" callers");
+        }
         self.out.push('\n');
     }
 

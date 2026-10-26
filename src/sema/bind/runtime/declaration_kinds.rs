@@ -1,9 +1,7 @@
 use super::declarations::scope_boundary;
 use super::has_simple_parameter_list;
 use crate::atom::Atom;
-use crate::bind::{
-    BoundBuilder, BoundIn, Decl, FnOwner, ModuleInstanceState, Parent, PatParent, ScopeId, SymbolId,
-};
+use crate::bind::{BoundBuilder, BoundIn, Decl, FnOwner, Parent, PatParent, ScopeId, SymbolId};
 use crate::hir::*;
 use smallvec::SmallVec;
 
@@ -143,10 +141,7 @@ pub(super) fn creates_binding(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) 
         Decl::Param(pat) => {
             parameter_function(bound, pat).is_none_or(|f| function_creates_binding(hir, f))
         }
-        Decl::Module(m) => {
-            !is_ambient()
-                && bound.module_instance_state[m.idx()] != ModuleInstanceState::NonInstantiated
-        }
+        Decl::Module(m) => bound.makes_namespace_object(hir, m),
         Decl::EnumMember(m) => {
             let owner = bound.enum_member_owner[m.idx()];
             !hir[owner].flags.contains(Flags::AMBIENT)

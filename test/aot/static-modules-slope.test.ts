@@ -670,6 +670,160 @@ describe.concurrent("modules that do not run", () => {
     1_800_000,
   );
 
+  test.skipIf(!perf)(
+    "a module that a require() finds in a graph that is being loaded costs a few steps of a load",
+    async () => {
+      const best: number[] = [];
+      const numbers = [100, 1100];
+      const levels = 40;
+      for (const n of numbers) {
+        await slot(async () => {
+          const files: Record<string, string> = {};
+          // The part that is required: each module imports up to eight others.
+          for (let i = 0; i < n; i++) {
+            const below = Array.from({ length: 8 }, (_, k) => 8 * i + k + 1).filter(j => j < n);
+            files[`part${i}.mjs`] =
+              below.map(j => `import { c as c${j} } from "./part${j}.mjs";\n`).join("") +
+              `export const c = (1${below.map(j => ` + c${j}`).join("")}) % 1000;\nglobalThis.ran++;\n`;
+          }
+          // The way down is long, so the graph is still being loaded when the part is required, and it goes on below the place where the part hangs.
+          for (let level = 0; level < levels; level++)
+            files[`way${level}.mjs`] =
+              (level + 1 < levels ? `import { c as below } from "./way${level + 1}.mjs";\n` : `const below = 0;\n`) +
+              (level === levels - 10 ? `import { c as part } from "./part0.mjs";\n` : `const part = 0;\n`) +
+              `export const c = below + part + 1;\nglobalThis.ran++;\n`;
+          files["small.mjs"] = `export const c = 1;\nglobalThis.ran++;\n`;
+          files["over.mjs"] =
+            `import { c as below } from "./part0.mjs";\nexport const c = below + 1;\nglobalThis.ran++;\n`;
+          files["main.mjs"] =
+            `globalThis.ran = 0;\nconst small = import("./small.mjs"), graph = import("./way0.mjs");\n` +
+            `let turns = Promise.resolve();\nfor (let turn = 0; turn < 12; turn++) turns = turns.then(() => {});\n` +
+            `turns.then(() => { if (globalThis.ran > 1) throw new Error("the graph has run"); require("./over.mjs"); });\n` +
+            `await small;\nawait graph;\nconsole.log("end", globalThis.ran);\n`;
+          using directory = tempDir("aot-static-modules-found", files);
+          using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+          const { executable } = await build(String(directory), "main.mjs");
+          let least = Infinity;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const counted = await run(
+              [perf as string, "stat", "-x,", "-e", "instructions:u", executable],
+              String(elsewhere),
+              bunEnv,
+            );
+            expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({
+              stdout: `end ${n + levels + 2}\n`,
+              exitCode: 0,
+            });
+            least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+          }
+          best.push(least);
+        });
+      }
+      const perModule = (best[1] - best[0]) / (numbers[1] - numbers[0]);
+      console.log(
+        `static-modules-slope: ${perModule.toFixed(0)} instructions a module that a require() finds in a graph that is being loaded`,
+      );
+      expect(perModule).toBeLessThanOrEqual(9500);
+    },
+    1_800_000,
+  );
+
+  test.skipIf(!perf)(
+    "a module costs the same whether one module or two thousand are imported beside it where the loader goes through the graph",
+    async () => {
+      const best: number[] = [];
+      const numbers = [100, 200, 2100];
+      for (const n of numbers) {
+        await slot(async () => {
+          const files: Record<string, string> = {};
+          for (let i = 0; i < n; i++)
+            files[`m${i}.mjs`] = `import { x } from "./calls.cjs";\nexport const c = x + ${i};\n`;
+          files["root.mjs"] =
+            Array.from({ length: n }, (_, i) => `import * as m${i} from "./m${i}.mjs";\n`).join("") +
+            `export const c = ${Array.from({ length: n }, (_, i) => `m${i}.c`).join(" + ")};\n`;
+          // The file requires a module that imports it, so the build leaves the order of the graph to the loader.
+          files["calls.cjs"] =
+            `"use strict";\nexports.x = process.argv.length;\n` +
+            `exports.run = function (calls) { return calls ? require("./m0.mjs").c : 0; };\n`;
+          files["main.mjs"] =
+            `import { run } from "./calls.cjs";\nconst graph = import("./root.mjs");\n` +
+            `let sum = run(process.argv.length > 99 ? 1 : 0);\nsum += (await graph).c;\nconsole.log("end");\n`;
+          using directory = tempDir("aot-static-modules-beside", files);
+          using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+          const { executable } = await build(String(directory), "main.mjs");
+          let least = Infinity;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const counted = await run(
+              [perf as string, "stat", "-x,", "-e", "instructions:u", executable],
+              String(elsewhere),
+              bunEnv,
+            );
+            expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({ stdout: "end\n", exitCode: 0 });
+            least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+          }
+          best.push(least);
+        });
+      }
+      const few = (best[1] - best[0]) / (numbers[1] - numbers[0]);
+      const many = (best[2] - best[1]) / (numbers[2] - numbers[1]);
+      console.log(
+        `static-modules-slope: ${few.toFixed(0)} instructions a module beside a hundred others, ${many.toFixed(0)} beside two thousand, where the loader goes through the graph`,
+      );
+      expect(many).toBeLessThanOrEqual(few * 1.15);
+    },
+    1_800_000,
+  );
+
+  test.skipIf(!perf)(
+    "a graph that is required costs the same while an import() of a module that no module imports waits",
+    async () => {
+      const best: number[] = [];
+      const numbers = [100, 2100];
+      for (const n of numbers) {
+        for (const waits of [false, true]) {
+          await slot(async () => {
+            const files: Record<string, string> = {};
+            for (let i = 0; i < n; i++) {
+              const below = Array.from({ length: 8 }, (_, k) => 8 * i + k + 1).filter(j => j < n);
+              files[`part${i}.mjs`] =
+                below.map(j => `import { c as c${j} } from "./part${j}.mjs";\n`).join("") +
+                `export const c = (1${below.map(j => ` + c${j}`).join("")}) % 1000;\nglobalThis.ran++;\n`;
+            }
+            files["waits.mjs"] = `export const c = 1;\nglobalThis.ran++;\n`;
+            files["main.mjs"] =
+              `globalThis.ran = 0;\n${waits ? `const waits = import("./waits.mjs");\n` : ""}` +
+              `const sum = require("./part0.mjs").c;\n${waits ? `await waits;\n` : `globalThis.ran++;\n`}` +
+              `console.log("end", globalThis.ran);\n`;
+            using directory = tempDir("aot-static-modules-nobody-imports", files);
+            using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+            const { executable } = await build(String(directory), "main.mjs");
+            let least = Infinity;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const counted = await run(
+                [perf as string, "stat", "-x,", "-e", "instructions:u", executable],
+                String(elsewhere),
+                bunEnv,
+              );
+              expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({
+                stdout: `end ${n + 1}\n`,
+                exitCode: 0,
+              });
+              least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+            }
+            best.push(least);
+          });
+        }
+      }
+      const [fewWithout, fewWith, manyWithout, manyWith] = best;
+      const perModule = (manyWith - manyWithout - (fewWith - fewWithout)) / (numbers[1] - numbers[0]);
+      console.log(
+        `static-modules-slope: ${perModule.toFixed(1)} instructions more for a module of a graph that is required while an import() of a module that no module imports waits`,
+      );
+      expect(perModule).toBeLessThanOrEqual(30);
+    },
+    1_800_000,
+  );
+
   // Bare requires nest one compiled frame a level.
   test("a chain of 20,000 requires at the top ends, and the native stack holds", async () => {
     await slot(async () => {

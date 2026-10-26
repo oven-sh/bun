@@ -3,6 +3,7 @@ arrays/a-callback-of-map-spreads-what-is-not-iterable-and-every-pass-is-verified
 arrays/a-copy-of-a-local-array-is-walked-by-callbacks-that-change-the-array
 arrays/a-frozen-array-is-given-a-stack
 arrays/a-list-is-filled-from-the-entries-of-a-map-an-array-or-a-set
+arrays/a-list-of-fractions-is-replaced-inside-the-loop-that-reads-it-in-a-validating-build
 arrays/a-list-that-holds-the-answer-of-a-push-twice-is-read-past-its-end
 arrays/a-list-that-is-a-literal-or-is-filled-is-walked-by-two-loops
 arrays/a-list-written-three-hundred-deep-is-taken-apart-by-flat
@@ -420,6 +421,7 @@ classes/a-method-is-called-on-a-parameter-without-a-type
 classes/a-name-that-looks-like-a-number-is-stored-to-the-prototype-object-of-a-class
 classes/a-subclass-without-a-constructor-is-constructed-as-one-that-calls-super-itself
 classes/a-subclass-without-a-constructor-is-made-at-the-price-of-one-that-calls-super-itself
+classes/an-imported-interface-is-the-type-of-a-decorated-field
 classes/bare-field-is-undefined-below-a-replaced-grandparent
 classes/bare-field-is-undefined-below-a-replaced-parent
 classes/bare-field-is-undefined-on-an-instance-kept-by-a-replaced-parent
@@ -517,6 +519,8 @@ closed-world/members-that-are-no-functions-are-read-on-built-in-modules-that-wer
 closed-world/package-outside-sees-no-module-object-of-the-program
 closed-world/plugin-of-bun-named-on-a-star-import-made-of-getters
 closed-world/plugin-of-bun-named-on-an-object-filled-under-the-keys-of-the-module
+closed-world/plugin-of-bun-named-on-getters-over-the-keys-of-a-star-import-of-bun
+closed-world/plugin-of-bun-named-on-getters-over-the-keys-of-the-default-import-of-bun
 closed-world/plugin-of-bun-named-on-getters-over-the-keys-of-the-global-bun
 closed-world/process-get-builtin-module-is-read-from-a-table-under-a-key-put-together-at-run-time-and-called
 closed-world/replaceable-members-out-of-a-table-beside-an-external-package
@@ -714,6 +718,7 @@ constructor-functions/this-of-a-callback-that-is-not-strict
 constructor-functions/this-of-a-function-that-is-not-strict-is-a-primitive-or-nothing
 copied-properties/a-copy-born-in-the-cell-of-its-holder
 copied-properties/a-copy-born-in-the-cell-of-its-holder-is-kept-by-closures-over-one-variable
+copied-properties/a-literal-spreads-options-that-other-code-holds-too
 copied-properties/a-literal-with-members-takes-the-spread-of-its-own-kind-from-text-made-at-run-time
 copied-properties/a-setter-of-a-class-takes-an-object-that-the-source-got-by-a-spread
 copied-properties/a-setter-of-the-target-takes-what-a-rest-pattern-has-left
@@ -831,6 +836,7 @@ errors/a-proxy-of-what-is-no-function-is-called
 errors/a-read-of-an-accessor-of-a-web-class-on-its-prototype-leaves-no-frame
 errors/a-read-of-an-accessor-without-a-function-object-leaves-no-frame
 errors/a-read-through-super-under-a-null-prototype-quotes-the-expression
+errors/an-error-with-a-joined-message-is-thrown-into-a-catch-that-reads-nothing-and-every-pass-is-verified
 errors/call-sites-and-limits-of-stack-traces-that-list-a-built-in-function
 errors/call-sites-of-a-default-constructor-and-frames-under-a-local-named-reflect
 errors/call-sites-of-expressions-that-construct
@@ -841,6 +847,7 @@ errors/every-kind-of-place-that-throws
 errors/frames-of-a-printed-error-below-expressions-that-construct
 errors/frames-of-commonjs-files-that-throw-while-they-are-imported
 errors/frames-of-errors-that-built-in-functions-make-above-compiled-functions
+errors/frames-of-exceptions-that-host-functions-make-above-compiled-functions
 errors/frames-of-functions-that-return-what-require-answers
 errors/iterating-what-is-not-iterable
 errors/messages-name-the-built-in-function-that-cannot-be-constructed
@@ -907,6 +914,7 @@ errors/stack-lines-of-expressions-written-over-several-lines
 errors/stack-positions-after-types-on-the-same-line
 errors/stack-positions-behind-calls-of-a-function-that-create-require-made
 errors/stack-positions-behind-class-declarations-that-closures-and-other-files-see
+errors/stack-positions-behind-enums-that-functions-declare
 errors/stack-positions-behind-members-that-are-tags-of-templates
 errors/stack-positions-behind-spreads-of-operands-in-parentheses
 errors/stack-positions-behind-stores-to-exports-that-another-file-reads
@@ -927,6 +935,7 @@ errors/stack-positions-of-expressions-that-throw-in-commonjs
 errors/stack-positions-of-operators-beside-parentheses-and-literals
 errors/stack-positions-of-operators-in-chains
 errors/stack-positions-of-updates-of-names-and-elements
+errors/stack-positions-of-updates-under-keys-whose-reads-call-getters-and-traps
 errors/stack-trace-limits-where-tail-calls-remove-frames
 errors/the-right-side-of-instanceof-is-an-object-that-is-not-a-function
 errors/traces-of-many-places-asked-round-after-round
@@ -1264,6 +1273,7 @@ language/iterate-a-string-object-or-a-collection
 language/keys-made-of-primitives-are-closed
 language/maps-and-sets-of-every-key-kind-vs-model
 language/members-are-replaced-for-every-reader
+language/members-of-console-and-process-are-replaced-beside-a-file-that-defines-globals-under-computed-names
 language/members-that-can-be-replaced-are-replaced-beside-a-file-that-defines-globals-under-computed-names
 language/not-a-number-with-its-sign-set-is-tested-and-unboxed
 language/nullable-integers
@@ -1406,6 +1416,7 @@ modules/esbuild-require-shim-loads-files-and-packages
 modules/every-kind-of-path-starts-at-a-folder-of-the-executable
 modules/fifteen-ways-to-store-to-an-import-or-a-namespace
 modules/files-behind-a-barrel-without-side-effects-import-the-barrel-back
+modules/files-of-a-graph-run-between-its-import-and-its-link
 modules/functions-behind-getters-of-a-commonjs-file-that-return-names-of-a-second-file-are-called-through-the-namespace
 modules/functions-of-a-commonjs-file-are-called-on-what-require-gives-of-a-module-that-hands-them-on
 modules/functions-of-a-commonjs-file-are-called-through-its-namespace-and-read-their-this
@@ -1581,6 +1592,7 @@ objects/a-key-in-brackets-is-converted-before-the-value-beside-it-is-read
 objects/a-large-map-and-set-keep-one-entry-in-a-thousand-in-a-validating-build
 objects/a-literal-or-a-class-defines-one-accessor-twice
 objects/a-literal-that-begins-like-one-the-program-hands-out-gets-accessors-under-indexes
+objects/a-literal-with-computed-members-is-written-as-json-beside-a-constant-literal-of-the-same-names
 objects/a-member-named-tojson-that-only-some-objects-get
 objects/a-member-of-what-object-create-made-is-read-twice-over-where-a-class-is-declared
 objects/a-name-of-an-object-filled-by-key-is-defined-anew-and-more-names-follow-across-collections
@@ -1804,6 +1816,7 @@ static-modules/rulings/the-cache-lists-no-module-of-the-executable
 static-modules/rulings/ways-under-a-computed-key-are-shown-to-nobody-where-no-file-names-one
 strings/a-block-reads-one-started-string-and-starts-another
 strings/a-character-of-a-returned-part-goes-through-a-function-that-also-gets-numbers
+strings/a-line-is-joined-from-what-the-last-turn-of-a-loop-left-and-every-pass-is-verified
 strings/a-part-of-a-string-returned-behind-a-loop-is-read-by-position
 strings/a-part-of-a-string-returned-behind-a-loop-is-read-by-position-typed
 strings/a-pattern-out-of-run-time-text-goes-on-behind-a-hundred-million-steps-back
@@ -1850,6 +1863,7 @@ strings/lookups-by-concatenated-keys
 strings/pattern-texts-that-the-build-knows
 strings/patterns-made-at-run-time-are-refused-when-they-are-made
 strings/regexp-empty-groups-fixed-count
+strings/regexp-literals-are-matched-with-what-is-a-string-or-becomes-one
 strings/regexp-literals-made-at-first-read
 strings/regexp-literals-nested-deep-are-kept-in-variables-closures-and-fields
 strings/regexp-run-time-pattern-frame-limit
@@ -1881,6 +1895,7 @@ structural-types/a-declared-namespace-merges-with-a-real-one
 structural-types/a-field-typed-by-an-interface-is-given-what-a-plain-function-constructs
 structural-types/a-literal-does-not-pass-for-an-interface-that-extends-a-built-in-class
 structural-types/a-module-imported-by-a-computed-name-is-untyped
+structural-types/a-namespace-of-which-no-statement-is-left-makes-no-object
 structural-types/a-namespace-reads-its-own-members-before-they-are-set
 structural-types/a-primitive-is-this-of-a-function-with-a-declared-this
 structural-types/a-proxy-and-its-target-are-two-objects
@@ -1921,6 +1936,7 @@ tree-shaking/the-module-field-of-a-package-stands-beside-main
 tree-shaking/what-the-program-is-started-as-decides-a-branch
 type-parameters/a-result-that-never-has-its-declared-layout-is-read-by-name
 type-predicates/instanceof-asks-a-method-defined-by-a-descriptor-on-what-a-bound-function-was-made-of
+type-predicates/instanceof-asks-what-a-bound-function-was-made-of-beside-a-constructor-nobody-names
 type-rules/a-default-whose-type-holds-undefined-leaves-it-in-the-binding
 type-rules/a-generic-type-has-the-names-of-a-type-with-an-int32-member
 type-rules/a-literal-with-the-names-of-a-type-with-int32-members-holds-fractions
@@ -1939,6 +1955,7 @@ type-rules/int32-members-in-a-script-beside-a-script-and-a-module
 type-rules/int32-members-of-call-results-beside-an-unrelated-entry-point
 type-rules/int32-members-of-unions-beside-an-unrelated-entry-point
 type-rules/loop-bounds-that-arrive-boxed
+type-rules/members-typed-by-enums-and-literals-are-taken-for-int32-beside-entry-points-with-the-same-names
 type-rules/object-cast-to-primitive-passes-the-cast
 type-rules/private-fields-external-data
 type-rules/types-with-the-same-names-say-int32-in-one-file-and-number-in-another
@@ -1972,6 +1989,7 @@ typed-objects/json-stringify-generated-records-2
 typed-objects/keys-of-objects-of-two-layouts-that-also-hold-indexes-are-written-as-json
 typed-objects/literal-with-computed-key-is-born-typed
 typed-objects/literals-with-a-symbol-key-beside-declared-types-of-the-same-members-are-printed
+typed-objects/many-loops-add-optional-fields-in-changing-orders
 typed-objects/narrowed-identity-recursive-types
 typed-objects/null-checks-before-each-kind-of-access
 typed-objects/null-checks-of-narrow-references
@@ -1983,6 +2001,7 @@ typed-objects/stores-into-an-environment-that-is-copied-out-of-the-frame-and-eve
 typed-objects/stores-to-frozen-and-readonly
 typed-objects/structured-clone-uncloneable-marker
 typed-objects/tdz-captured-variables
+typed-objects/the-entries-of-a-record-literal-that-holds-a-symbol-where-a-string-is-declared
 typed-objects/typescript-unsoundness-open-cases
 typed-objects/young-objects-between-old-ones
 typed-objects/young-objects-between-old-ones-and-every-pass-is-verified
@@ -2037,8 +2056,11 @@ ways-into-library-modules/net-socket-through-a-function-that-calls-a-member-of-w
 ways-into-library-modules/net-socket-through-a-member-of-a-dynamic-import-of-node-module-called-under-a-key-put-together-at-run-time
 ways-into-library-modules/net-socket-through-a-member-of-a-star-import-of-node-module-called-under-a-key-put-together-at-run-time
 ways-into-library-modules/net-socket-through-a-member-of-node-module-called-under-a-key-put-together-at-run-time
+ways-into-library-modules/net-socket-through-a-member-of-node-module-kept-in-a-constant-under-a-key-put-together-at-run-time
+ways-into-library-modules/net-socket-through-a-member-of-node-module-read-under-a-key-put-together-at-run-time-and-called-with-call
 ways-into-library-modules/net-socket-through-create-require-found-by-a-loop-over-the-keys-of-a-table-of-functions
 ways-into-library-modules/net-socket-through-create-require-in-a-copy-of-node-module-read-far-down-a-chain-of-calls
+ways-into-library-modules/net-socket-through-create-require-named-on-a-dynamic-import-of-node-module
 ways-into-library-modules/net-socket-through-create-require-named-on-a-proxy-of-node-module
 ways-into-library-modules/net-socket-through-create-require-named-on-a-proxy-whose-get-trap-reads-node-module
 ways-into-library-modules/net-socket-through-create-require-named-on-a-star-import-made-of-copied-values

@@ -1144,6 +1144,46 @@ fn default_exports_of_types() {
             "declare namespace T { const a: number; } export default T;",
             false,
         ),
+        (
+            "namespace T { declare const a: number; } export default T;",
+            false,
+        ),
+        (
+            "namespace T { declare function f(): void; interface I {}; } export default T;",
+            false,
+        ),
+        (
+            "namespace T { namespace U { declare class C {} } } export default T;",
+            false,
+        ),
+        (
+            "namespace T { export declare namespace U { const a: number; } } export default T;",
+            false,
+        ),
+        (
+            "namespace T { declare const a: number; } namespace T {} export default T;",
+            false,
+        ),
+        (
+            "namespace T { export declare const a: number; } export default T;",
+            true,
+        ),
+        (
+            "namespace T { export declare function f(): void; } export default T;",
+            true,
+        ),
+        (
+            "namespace T { namespace U { export declare class C {} } } export default T;",
+            true,
+        ),
+        (
+            "namespace T.U { declare const a: number; } export default T;",
+            true,
+        ),
+        (
+            "namespace T { declare const a: number; } namespace T { a; } export default T;",
+            true,
+        ),
         ("declare global { interface T {} } export default T;", false),
         (
             "interface T {} declare const T: number; export default T;",

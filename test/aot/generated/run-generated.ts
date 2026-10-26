@@ -73,6 +73,8 @@ export type Generated = {
   plainEnv?: Record<string, string>;
   /** Lines whose answer is written down in the test and not asked of plain Bun: a line that starts with a key ends with its value. */
   written?: Record<string, string>;
+  /** Nothing is put into its text: it declares names such as `Bun`, `Symbol` and `globalThis` itself, and what a run puts into a text uses them. */
+  keepsItsText?: true;
   /** More flags for the build of this program. */
   flags?: string[];
   /** The executable runs once more under each of these and prints the same. */
@@ -222,7 +224,8 @@ export function generated(title: string, given: Generated[]) {
   });
 
   // A program that is here for what it once showed stays as it is.
-  const staysAsItIs = (program: Generated) => !!program.wasOnceWrong || !!program.linesDepartToday || !!program.written;
+  const staysAsItIs = (program: Generated) =>
+    !!program.wasOnceWrong || !!program.linesDepartToday || !!program.written || !!program.keepsItsText;
   const isDrawnToOpenTheWorld = (program: Generated) =>
     !staysAsItIs(program) &&
     (process.env.AOT_GENERATED_OPENS === "all" || Bun.hash.crc32(`${program.name} : ${title}`) % 6 === 0);

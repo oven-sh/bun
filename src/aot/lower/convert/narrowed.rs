@@ -9,7 +9,7 @@ use crate::ir::generated::{FunctionFlags, FunctionKind, TypeSiteKind};
 use crate::ir::{DeclaredType, Id, LayoutId, Mapped, PositionFlags, TypeId, TypeTable, ValueId};
 use crate::lower::positions::SiteOrigin;
 use crate::lower::private_names::PrivateHolder;
-use crate::lower::types::{has_layout_in_every_value, lists_int32};
+use crate::lower::types::{has_layout_in_every_value, lists_int32, lists_only_integers};
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, expression, function};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -79,16 +79,18 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The checker narrows only references, but an `int32` member is claimed at every read, whatever the receiver is. Under a key that is no constant it is claimed where an `int32` is expected or computed with.
+    // The checker narrows only references, but an `int32` member is claimed at every read, whatever the receiver is. Under a key that is no constant it is claimed where an `int32` is expected or computed with. A member whose numbers are integers without being written `int32`, as the members of a numeric enum and literals are, is claimed where an `int32` is expected of it or of what is computed with it.
     fn reads_int32_member(&mut self, access: ExprId) -> bool {
         let Some((_, key)) = self.hir.member_key(access) else {
             return false;
         };
-        let is_int32 = match self.queries.expression_type(access) {
-            Ok(ty) => lists_int32(self, ty),
-            Err(_) => false,
+        let Ok(ty) = self.queries.expression_type(access) else {
+            return false;
         };
-        is_int32 && (self.has_constant_key(key) || self.is_used_as_int32(access))
+        let is_int32 = lists_int32(self, ty);
+        (is_int32 && self.has_constant_key(key))
+            || ((is_int32 || lists_only_integers(self, ty))
+                && self.is_used_as_int32(access, is_int32))
     }
 
     fn is_expected_to_be_int32(&mut self, expression: ExprId) -> bool {
@@ -99,7 +101,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // A bitwise operator makes an `int32` of any operand, and an equality says the same of any two numbers.
-    fn is_used_as_int32(&mut self, expression: ExprId) -> bool {
+    fn is_used_as_int32(&mut self, expression: ExprId, is_int32: bool) -> bool {
         let hir = self.hir;
         let mut child = expression;
         loop {
@@ -109,7 +111,7 @@ impl FileLowering<'_, '_, '_, '_> {
             let Parent::Expr(parent) = self.bound.parent_of_expr(child) else {
                 return false;
             };
-            match hir[parent].kind {
+            let is_computed_with = match hir[parent].kind {
                 ExprKind::As { .. }
                 | ExprKind::Satisfies { .. }
                 | ExprKind::AsConst(_)
@@ -117,13 +119,13 @@ impl FileLowering<'_, '_, '_, '_> {
                 | ExprKind::Binary {
                     op: BinOp::And | BinOp::Or | BinOp::Nullish,
                     ..
-                } => child = parent,
-                ExprKind::Cond { test, .. } if test != child => child = parent,
+                } => false,
+                ExprKind::Cond { test, .. } if test != child => false,
                 ExprKind::Binary {
                     op: BinOp::Comma,
                     right,
                     ..
-                } if right == child => child = parent,
+                } if right == child => false,
                 ExprKind::Binary {
                     op:
                         BinOp::Add
@@ -141,14 +143,20 @@ impl FileLowering<'_, '_, '_, '_> {
                 | ExprKind::Unary {
                     op: UnOp::Plus | UnOp::Minus,
                     ..
-                } => return true,
+                } => true,
                 ExprKind::Call(site) => {
                     let callee = hir[site].callee;
-                    return callee != child
-                        && self.builtins.builtin_of_expression(callee).is_some();
+                    if callee == child || self.builtins.builtin_of_expression(callee).is_none() {
+                        return false;
+                    }
+                    true
                 }
                 _ => return false,
+            };
+            if is_computed_with && is_int32 {
+                return true;
             }
+            child = parent;
         }
     }
 
@@ -250,8 +258,8 @@ impl FileLowering<'_, '_, '_, '_> {
                     let is_int32 = declared.is_some_and(|declared| lists_int32(self, declared));
                     let has_int32_slot =
                         is_receiver_converted && receiver != Receiver::UnionWithObjectType;
-                    if is_int32 && !has_int32_slot {
-                        position = self.widen_int32(position);
+                    if !has_int32_slot {
+                        position = self.widen_integers(access, position, is_int32);
                     }
                     match member.is_optional {
                         true => self.add_undefined(position),
@@ -297,14 +305,24 @@ impl FileLowering<'_, '_, '_, '_> {
         let position = self.field_position(layout, field);
         let is_united = self.fragment.layout_keys()[layout.index()].has_united_definitions();
         let has_int32_slot = is_receiver_converted && !is_united;
-        if has_int32_slot || !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
+        if has_int32_slot {
             return position;
         }
-        self.widen_int32(position)
+        let is_int32 = position.flags.contains(PositionFlags::IS_INT32_PROMISE);
+        self.widen_integers(access, position, is_int32)
     }
 
-    // What is an `int32` in the object types seen so far may be a `number` in one that comes later or lies in another file, and a receiver that nothing converted may be any object. Each such read claims the `int32` for itself.
-    fn widen_int32(&mut self, position: DeclaredType) -> DeclaredType {
+    // What is an integer in the object types seen so far may be any number in one that comes later or lies in another file, and a receiver that nothing converted may be any object. Each such read of an `int32` claims it for itself, and so does a read of other integers where an `int32` is expected of it or of what is computed with it.
+    fn widen_integers(
+        &mut self,
+        access: ExprId,
+        position: DeclaredType,
+        is_int32: bool,
+    ) -> DeclaredType {
+        let has_integers = self.fragment.types.get(position.ty).integer_range();
+        if !is_int32 && !(has_integers.is_some() && self.is_used_as_int32(access, false)) {
+            return position;
+        }
         let ty = self.fragment.types.union(position.ty, TypeTable::NUMBER);
         let flags = position.flags.without(PositionFlags::IS_INT32_PROMISE);
         DeclaredType::new(Mapped::checked(ty), position.site, flags)
@@ -636,6 +654,41 @@ export function byKeyAsNumber(pixel: Pixel, only: keyof Pixel) { return pixel[on
         );
         assert_eq!(narrowed_types_in(&files, "byKey"), vec![int32; 2]);
         for function_name in ["instance", "counted", "byKeyAsNumber"] {
+            let narrowed = narrowed_types_in(&files, function_name);
+            assert!(narrowed.is_empty(), "{function_name}: {narrowed:?}");
+        }
+    }
+
+    #[test]
+    fn member_whose_numbers_are_integers_is_converted_where_an_int32_is_expected() {
+        let main = "/// <reference path=\"./bun-declarations.d.ts\" />
+import type { int32 } from \"bun\";
+enum Color { Red, Green, Blue }
+const enum Side { Left = 1, Right = 2 }
+interface Holder { color: Color; side?: Side; level: 1 | 2 | 3 }
+class Pixel { color: Color = Color.Red; }
+export function plain(holder: Holder): int32 { const kept: int32 = holder.color; return holder[\"side\"] ?? kept; }
+export function computed(holder: Holder): int32 { return -holder.level + 1; }
+export function unnamed(make: () => Holder, list: Holder[]): int32 { const kept: int32 = make().color; return list[kept].level; }
+export function either(value: Holder | Pixel): int32 { return value.color; }
+export function unnamedInstance(make: () => Pixel): int32 { return make().color; }
+export function instance(pixel: Pixel): int32 { return pixel.color; }
+export function unused(holder: Holder, make: () => Holder, value: Holder | Pixel) { return [holder.color, holder.level === 1, holder.color & 1, make().color, value.color, holder.level + 1, make().level < 2, Math.min(value.color, 1)]; }
+export function fractions(holder: { ratio: 0.5 | 1; zero: 0 | 1; size: number }) { return holder.ratio + holder.zero + holder.size; }
+";
+        let declarations = "declare module \"bun\" {
+  type int32 = number & { readonly \"bun.int32\"?: true };
+}
+";
+        let files = [("main.ts", main), ("bun-declarations.d.ts", declarations)];
+        let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
+        let level = Type::integers(1, 3);
+        assert_eq!(narrowed_types_in(&files, "plain"), vec![int32.clone(); 2]);
+        assert_eq!(narrowed_types_in(&files, "computed"), [level.clone()]);
+        assert_eq!(narrowed_types_in(&files, "unnamed"), [int32.clone(), level]);
+        assert_eq!(narrowed_types_in(&files, "either"), [int32.clone()]);
+        assert_eq!(narrowed_types_in(&files, "unnamedInstance"), [int32]);
+        for function_name in ["instance", "unused", "fractions"] {
             let narrowed = narrowed_types_in(&files, function_name);
             assert!(narrowed.is_empty(), "{function_name}: {narrowed:?}");
         }

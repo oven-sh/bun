@@ -28,7 +28,7 @@ import { ClassK3, functionK2 } from "./libraryK1";
 function callerK6(count: number) {
   const list: number[] = [];
   for (let i = 0; i < count; i++) list.push(i);
-  console.log(functionK2(list), new ClassK3().methodK4(process.argv.join(" ")));
+  console.log(functionK2(list), new ClassK3().methodK4(process.argv.join(" ")), new ClassK3().methodK4(String(count)));
 }
 callerK6(process.argv.length);
 `,

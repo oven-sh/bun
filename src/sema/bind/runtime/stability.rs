@@ -8,8 +8,7 @@ use super::{
 };
 use crate::atom::Atom;
 use crate::bind::{
-    Bound, BoundBuilder, ClassOwner, Decl, FnOwner, ModuleInstanceState, Parent, PatParent,
-    ScopeKind, SymbolId,
+    Bound, BoundBuilder, ClassOwner, Decl, FnOwner, Parent, PatParent, ScopeKind, SymbolId,
 };
 use crate::hir::*;
 use smallvec::SmallVec;
@@ -230,12 +229,10 @@ impl StabilityPass<'_, '_> {
                 self.add_container(symbol, decl);
             }
         }
-        for (index, declaration) in hir.modules.iter().enumerate() {
-            let decl = Decl::Module(ModuleId(index as u32));
-            let is_instantiated =
-                bound.module_instance_state[index] != ModuleInstanceState::NonInstantiated;
-            if is_instantiated
-                && !declaration.flags.contains(Flags::AMBIENT)
+        for index in 0..hir.modules.len() {
+            let module = ModuleId(index as u32);
+            let decl = Decl::Module(module);
+            if bound.makes_namespace_object(hir, module)
                 && let Some(symbol) = bound.declared_binding_symbol(decl)
             {
                 self.add_container(symbol, decl);

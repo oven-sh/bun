@@ -346,7 +346,7 @@ export const shapes: Shape[] = [
       "main.js": `function run(a) {\n  let s = "";\n${lines(size, index => `  s += a + "${index},";`)}  return s.length;\n}\nconsole.log(run("x"));\n`,
     }),
   },
-  // `n += ..` needs the type of n at the statement before, so the checker's walk is as deep as the block is long: past its greatest depth every statement pays a walk of that depth.
+  // `n += ..` needs the type of n at the statement before, and so on up to the start of the block. In a `try` block each assignment also leads to the handler.
   {
     name: "one try block of many calls",
     counted: "calls",

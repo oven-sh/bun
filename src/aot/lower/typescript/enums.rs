@@ -58,6 +58,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.set_position(data.name_pos);
             let created = object::finish_object(self, builder);
             self.initialize_container(container, created);
+            self.record_call_behind_members(declaration, &members);
             return;
         }
         let container_object = self.ensure_container(container);
@@ -67,6 +68,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             lowering.emit_set(container_object, name, value);
         });
         self.leave_scope(scope);
+        self.record_call_behind_members(declaration, &members);
+    }
+
+    // Bun's transpiler prints the members in a function, which it calls behind them. The source map takes the call back to the last token of the members:
+    // the name that a number is mapped back to, which stands where the member does, or the text of a member that is a string.
+    fn record_call_behind_members(
+        &mut self,
+        declaration: EnumId,
+        members: &[(EnumMemberId, EnumMemberValue)],
+    ) {
+        let hir = self.file.hir;
+        let Some(&(last, value)) = members.last() else {
+            self.builder
+                .record_position(hir[hir[declaration].stmt].start);
+            return;
+        };
+        let member = hir[last];
+        let is_text = matches!(
+            value,
+            EnumMemberValue::String(_) | EnumMemberValue::ComputedString(_)
+        );
+        let position = match member.init.some() {
+            Some(initializer) if is_text => self.file.last_mapped_position(initializer),
+            _ => member.pos,
+        };
+        self.builder.record_position(position);
     }
 
     fn lower_enum_members(

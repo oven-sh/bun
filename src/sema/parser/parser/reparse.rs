@@ -477,6 +477,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 body: self.f.list(&[statement]),
                 has_body: true,
                 specifies_module: false,
+                is_erased: true,
                 stmt: StmtId::NONE,
             };
             let module = self.f.add_module(module);

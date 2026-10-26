@@ -17,6 +17,7 @@ use crate::config_version::ConfigVersion;
 use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
 use crate::npm::Negatable;
+use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::repository::RepositoryExt as _;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
@@ -126,7 +127,7 @@ impl Version {
     /// `true` when this lockfile version is at least `other`. Used to gate
     /// strict parse-time checks introduced in a later version.
     #[inline]
-    pub(crate) const fn at_least(self, other: Version) -> bool {
+    pub const fn at_least(self, other: Version) -> bool {
         (self as u32) >= (other as u32)
     }
 }
@@ -134,32 +135,45 @@ impl Version {
 /// The first written package that holds a lockfile at v1. It owns its text
 /// so the caller can change the lockfile after it reads the error.
 pub struct VersionBlocker {
-    /// `name@version` for an npm package, the name alone for a git one.
-    package: Box<[u8]>,
+    name: Box<[u8]>,
     pub kind: VersionBlockerKind,
 }
 
 pub enum VersionBlockerKind {
     /// An npm tarball outside the default registry with no supported integrity hash.
-    MissingIntegrity { url: Box<[u8]> },
+    MissingIntegrity { version: Box<[u8]>, url: Box<[u8]> },
     /// A git `.bun-tag` that is not a safe path component.
     UnsafeGitTag { tag: Box<[u8]> },
 }
 
+impl VersionBlocker {
+    /// Whether an install, which reads with the reader's registries, rejects the entry at
+    /// version 2.
+    pub fn rejected_by_install(&self, options: &PackageManagerOptions) -> bool {
+        match &self.kind {
+            VersionBlockerKind::UnsafeGitTag { .. } => true,
+            VersionBlockerKind::MissingIntegrity { url, .. } => {
+                !url_is_under_registry(url, options.scope_for_package_name(&self.name).url.href())
+            }
+        }
+    }
+}
+
 impl core::fmt::Display for VersionBlocker {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let package = bun_core::fmt::for_terminal(bstr::BStr::new(&self.package));
+        let name = bun_core::fmt::for_terminal(bstr::BStr::new(&self.name));
         match &self.kind {
-            VersionBlockerKind::MissingIntegrity { url } => write!(
+            VersionBlockerKind::MissingIntegrity { version, url } => write!(
                 f,
-                "Missing integrity hash for npm package resolved to a tarball URL outside the default registry: \"{}\" resolves to {}",
-                package,
+                "Missing integrity hash for npm package resolved to a tarball URL outside the default registry: \"{}@{}\" resolves to {}",
+                name,
+                bstr::BStr::new(version),
                 bun_core::fmt::for_terminal(bstr::BStr::new(url)),
             ),
             VersionBlockerKind::UnsafeGitTag { tag } => write!(
                 f,
                 "Invalid git dependency tag: \"{}\" has \"bun-tag\": \"{}\"",
-                package,
+                name,
                 bun_core::fmt::for_terminal(bstr::BStr::new(tag)),
             ),
         }
@@ -291,14 +305,16 @@ impl Stringifier {
                         let url = npm.url.slice(buf);
                         if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
                             return Err(VersionBlocker {
-                                package: format!(
-                                    "{}@{}",
-                                    bstr::BStr::new(name),
-                                    npm.version.fmt(buf)
-                                )
-                                .into_bytes()
-                                .into_boxed_slice(),
-                                kind: VersionBlockerKind::MissingIntegrity { url: url.into() },
+                                name: name.into(),
+                                kind: VersionBlockerKind::MissingIntegrity {
+                                    version: npm
+                                        .version
+                                        .fmt(buf)
+                                        .to_string()
+                                        .into_bytes()
+                                        .into_boxed_slice(),
+                                    url: url.into(),
+                                },
                             });
                         }
                     }
@@ -310,7 +326,7 @@ impl Stringifier {
                         let tag = res.repository().resolved.slice(buf);
                         if !crate::repository::is_safe_resolved_tag(tag) {
                             return Err(VersionBlocker {
-                                package: name.into(),
+                                name: name.into(),
                                 kind: VersionBlockerKind::UnsafeGitTag { tag: tag.into() },
                             });
                         }

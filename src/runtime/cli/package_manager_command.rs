@@ -8,8 +8,9 @@ use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, reachable, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
-    CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
-    package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
+    CommandLineArguments, Options as PackageManagerOptions, Subcommand, fetch_cache_directory_path,
+    get_cache_directory, package_json_write_back, package_manager_options::LogLevel,
+    setup_global_dir,
 };
 use bun_install::{
     DependencyID, PackageID, PackageManager, ResolutionTag, TextLockfile, migration,
@@ -170,6 +171,8 @@ impl PackageManagerCommand {
         let dry_run = pm.options.dry_run;
         let not_silent = log_level != LogLevel::Silent;
         let pm_raw: *mut PackageManager = pm;
+        // `pm.options` outlives the load, which borrows `pm` for the lockfile only.
+        let options: *const PackageManagerOptions = &raw const pm.options;
         let log: *mut bun_ast::Log = pm.log;
         let mut load_lockfile =
             pm.load_lockfile_from_cwd_with_mode::<false>(TextLockfile::ReadMode::Rewrite);
@@ -198,7 +201,12 @@ impl PackageManagerCommand {
             Ok((_, to)) => to,
             // `bun install` keeps a loaded 1 or 2 without scoped override rules. Only a new
             // lockfile for this project would be held at 1.
-            Err(blocker) if on_resave == from && from != TextLockfile::Version::V1 => {
+            // SAFETY: `options` is a field of `pm` outside the lockfile the load borrows.
+            Err(blocker)
+                if on_resave == from
+                    && from != TextLockfile::Version::V1
+                    && !blocker.rejected_by_install(unsafe { &*options }) =>
+            {
                 if not_silent {
                     bun_core::prettyln!("bun.lock is already at lockfileVersion {}", from as u32);
                     bun_core::warn!(
@@ -210,13 +218,21 @@ impl PackageManagerCommand {
                 Global::exit(0);
             }
             Err(blocker) => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: bun.lock is held at lockfileVersion 1: {}",
-                    blocker
-                );
+                if from.at_least(TextLockfile::Version::V2) && on_resave == from {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: bun.lock is at lockfileVersion {}, but version 2 rejects an entry: {}",
+                        from as u32,
+                        blocker
+                    );
+                } else {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: bun.lock is held at lockfileVersion 1: {}",
+                        blocker
+                    );
+                }
                 match blocker.kind {
                     TextLockfile::VersionBlockerKind::MissingIntegrity { .. } => bun_core::note!(
-                        "version 2 needs an integrity hash for a tarball that is not under {}, whatever registry the reader has configured. Add \"integrity\" to the entry in bun.lock, or delete the entry and run 'bun install' to resolve it again",
+                        "version 2 needs an integrity hash for a tarball that is not under {}, whatever registry the reader has configured. Set the last string of the package's array in bun.lock to the tarball's hash, or delete the entry and run 'bun install' to resolve it again",
                         Npm::Registry::DEFAULT_URL
                     ),
                     TextLockfile::VersionBlockerKind::UnsafeGitTag { .. } => bun_core::note!(

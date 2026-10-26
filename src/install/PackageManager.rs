@@ -1038,7 +1038,7 @@ impl PackageManager {
         self.root_package_id.id = None;
     }
 
-    /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as
+    /// Reshaped for borrowck — `Lockfile::load_from_dir_with_mode` takes the manager as
     /// a separate argument while the receiver borrows `self.lockfile`, which
     /// is a self-referential split borrow. Encapsulated here so callers stay
     /// in safe code: the returned `LoadResult` mutably borrows `self` for its
@@ -1059,7 +1059,7 @@ impl PackageManager {
         let pm: *mut PackageManager = self;
         // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
         // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
-        // never alias overlapping bytes. `Lockfile::load_from_cwd` reads
+        // never alias overlapping bytes. `Lockfile::load_from_dir_with_mode` reads
         // `manager.options`/`manager.log` only and never re-projects
         // `manager.lockfile`. Both raw pointers below are derived from `self`,
         // so the caller's borrow stays on the Stacked-Borrows stack.

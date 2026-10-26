@@ -886,6 +886,33 @@ it.concurrent(
   },
 );
 
+// A version 2 file with an entry version 2 rejects does not load for `bun
+// install`. The command says so instead of calling the file up to date.
+it.concurrent("bun pm migrate reports a version 2 lockfile that version 2 itself rejects", async () => {
+  const gitUrl = "git+ssh://git@127.0.0.1:1/example/repo.git#main";
+  const v2Lockfile = JSON.stringify({
+    lockfileVersion: 2,
+    configVersion: 1,
+    workspaces: { "": { name: "root", dependencies: { dep: gitUrl } } },
+    packages: {
+      dep: [`dep@${gitUrl}`, {}, "../escape"],
+    },
+  });
+
+  using dir = tempDir("lockfile-v2-pm-migrate-git-rejected", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: gitUrl } }),
+    "bun.lock": v2Lockfile,
+  });
+
+  const [out, err, exitCode] = await runPm(String(dir), "migrate");
+  expect(err).toContain(
+    `error: bun.lock is at lockfileVersion 2, but version 2 rejects an entry: Invalid git dependency tag: "dep" has "bun-tag": "../escape"\n`,
+  );
+  expect(out).toBe("");
+  expect(await file(join(String(dir), "bun.lock")).text()).toBe(v2Lockfile);
+  expect(exitCode).toBe(1);
+});
+
 // The v1 parser drops an integrity hash it cannot read, with a warning. A
 // migration would write the entry without the hash, so it reads the hash the
 // way version 2 does and refuses.

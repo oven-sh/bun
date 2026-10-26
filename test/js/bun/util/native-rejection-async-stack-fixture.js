@@ -3,6 +3,7 @@
 // promise fast paths, each with and without an AsyncLocalStorage context.
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { readFile } = require("node:fs/promises");
+const vm = require("node:vm");
 
 const missing = "/nonexistent-path/does-not-exist.txt";
 
@@ -67,6 +68,29 @@ async function forwardingThenable() {
       native().then(onFulfilled, onRejected);
     },
   };
+}
+
+// The promise meets the Promise functions of another realm. JSC then takes the
+// same slow paths for that one promise, with no watchpoint fired.
+const {
+  Promise: OtherRealmPromise,
+  then: otherRealmPromiseThen,
+  otherRealmAwait,
+} = vm.runInNewContext(
+  `({
+    Promise,
+    then: Promise.prototype.then,
+    async otherRealmAwait() {
+      await native();
+    },
+  })`,
+  { native },
+);
+async function otherRealmThen() {
+  await otherRealmPromiseThen.call(native(), stats => stats);
+}
+async function otherRealmResolve() {
+  await OtherRealmPromise.resolve(native());
 }
 
 // The rejection goes to the promise that `reject` belongs to. These await it.
@@ -136,6 +160,9 @@ const shapes = [
   thenChain,
   promiseSubclass,
   forwardingThenable,
+  otherRealmAwait,
+  otherRealmThen,
+  otherRealmResolve,
   thenResolveReject,
   catchReject,
   thenResolveRejectResult,

@@ -1536,3 +1536,53 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
 });
+
+// The formatter reads native getters to print their values. The `closed` and `ready` getters of stream readers and
+// writers return a rejected promise when the printed object is not an instance.
+describe("a native getter that rejects for the printed object", () => {
+  async function run(script) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+  const collectRejections = `
+    const rejections = [];
+    process.on("unhandledRejection", error => rejections.push(error.message));
+    setImmediate(() => console.log(JSON.stringify(rejections)));`;
+
+  it.concurrent("reports no unhandled rejection", async () => {
+    const { stdout, exitCode } = await run(`${collectRejections}
+      class Subclass extends ReadableStreamDefaultReader {}
+      for (const Class of [ReadableStreamDefaultReader, ReadableStreamBYOBReader, WritableStreamDefaultWriter, Subclass]) {
+        for (const value of [Class.prototype, Object.create(Class.prototype), { nested: Object.create(Class.prototype) }]) {
+          console.error(value);
+          Bun.inspect(value);
+          Bun.inspect(value, { sorted: true });
+        }
+      }`);
+    expect(JSON.parse(stdout)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("leaves the exit code at 0", async () => {
+    const { stdout, exitCode } = await run(`console.log(ReadableStreamDefaultReader.prototype);`);
+    expect(stdout).toStartWith("ReadableStreamDefaultReader {");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("leaves a rejection that user code holds reported", async () => {
+    const { stdout, exitCode } = await run(`${collectRejections}
+      const writer = Object.create(WritableStreamDefaultWriter.prototype);
+      console.error({ promise: Promise.reject(new Error("own property")) });
+      console.error(new CustomEvent("event", { detail: Promise.reject(new Error("behind a native getter")) }));
+      console.error(new CustomEvent("event", { detail: writer.ready }));
+      writer.closed;`);
+    expect(JSON.parse(stdout)).toEqual([
+      "own property",
+      "behind a native getter",
+      "The 'ready' getter can only be used on a WritableStreamDefaultWriter",
+      "The 'closed' getter can only be used on a WritableStreamDefaultWriter",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});

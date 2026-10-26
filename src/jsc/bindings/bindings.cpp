@@ -5316,6 +5316,18 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
+// Only the walk asked for this read, so a promise that the getter rejects in this call and returns is the walk's to handle.
+static JSC::JSValue getNativeGetterValueForDisplay(JSC::JSGlobalObject* globalObject, const JSC::PropertySlot& slot, JSC::PropertyName property)
+{
+    auto* rejections = defaultGlobalObject(globalObject);
+    auto* newestBefore = rejections->newestQueuedRejection();
+    JSC::JSValue value = slot.getValue(globalObject, property);
+    auto* newest = rejections->newestQueuedRejection();
+    if (newest && newest != newestBefore && value == JSC::JSValue(newest)) [[unlikely]]
+        newest->markAsHandled();
+    return value;
+}
+
 template<bool nonIndexedOnly>
 static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
@@ -5517,7 +5529,7 @@ restart:
                     } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (slot.isCustom()) {
-                        propertyValue = slot.getValue(globalObject, property);
+                        propertyValue = getNativeGetterValueForDisplay(globalObject, slot, property);
                     } else if (slot.isValue()) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
@@ -5531,6 +5543,8 @@ restart:
                     } else {
                         propertyValue = slot.getPureResult();
                     }
+                } else if (slot.isCustom()) {
+                    propertyValue = getNativeGetterValueForDisplay(globalObject, slot, property);
                 } else {
                     propertyValue = slot.getValue(globalObject, property);
                 }
@@ -5667,7 +5681,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
                 propertyValue = slot.getValue(globalObject, property);
             } else if (slot.isCustom()) {
-                propertyValue = slot.getValue(globalObject, property);
+                propertyValue = getNativeGetterValueForDisplay(globalObject, slot, property);
             } else if (slot.isValue()) {
                 propertyValue = slot.getValue(globalObject, property);
             } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
@@ -5676,6 +5690,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             }
         } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
             propertyValue = slot.getPureResult();
+        } else if (slot.isCustom()) {
+            propertyValue = getNativeGetterValueForDisplay(globalObject, slot, property);
         } else {
             propertyValue = slot.getValue(globalObject, property);
         }

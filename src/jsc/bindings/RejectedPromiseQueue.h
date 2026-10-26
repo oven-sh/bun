@@ -25,6 +25,8 @@ public:
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
+    // The last rejection to enter, or null. JS thread only.
+    JSC::JSPromise* newest() const { return m_entries.isEmpty() ? nullptr : static_cast<JSC::JSPromise*>(m_entries.last().promise.get().asCell()); }
 
 private:
     struct Entry {

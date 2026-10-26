@@ -604,14 +604,10 @@ test("error.stack doesnt lose frames", () => {
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
 });
 
-test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv isn't an array", async () => {
-  await using child = spawn({
-    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "-e", "setInterval(() => {}, 1000);"],
-    env: bunEnv,
-    stdout: "ignore",
-    stderr: "pipe",
-  });
+type InspectorReply = { result?: any; error?: { message: string } };
 
+// Connects a WebSocket client to a child that runs with `--inspect=ws://127.0.0.1:0/` and a piped stderr.
+async function connectToInspector(child: Subprocess<"ignore", "ignore", "pipe">) {
   let stderr = "";
   let url: string | undefined;
   const decoder = new TextDecoder();
@@ -622,31 +618,41 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   }
   if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
 
-  type Reply = { result?: any; error?: { message: string } };
-  const pending = new Map<number, (reply: Reply) => void>();
-  // A crash closes the socket. Resolve instead of rejecting so the failure shows up in the snapshot below.
-  const closed = Promise.withResolvers<Reply>();
-  const opened = Promise.withResolvers<Reply>();
+  const pending = new Map<number, (reply: InspectorReply) => void>();
+  // A crash closes the socket. Resolve instead of rejecting so the failure shows up in the caller's assertion.
+  const closed = Promise.withResolvers<InspectorReply>();
+  const opened = Promise.withResolvers<InspectorReply>();
   const webSocket = new WebSocket(url);
   webSocket.addEventListener("open", () => opened.resolve({}));
   webSocket.addEventListener("close", () => closed.resolve({ error: { message: "the inspector closed the socket" } }));
   webSocket.addEventListener("error", () => closed.resolve({ error: { message: "the inspector socket failed" } }));
   webSocket.addEventListener("message", ({ data }) => {
-    const reply: Reply & { id: number } = JSON.parse(data.toString());
+    const reply: InspectorReply & { id: number } = JSON.parse(data.toString());
     pending.get(reply.id)?.(reply);
     pending.delete(reply.id);
   });
 
   let nextId = 1;
-  function send(method: string, params: object = {}): Promise<Reply> {
+  function send(method: string, params: object = {}): Promise<InspectorReply> {
     const id = nextId++;
-    const { promise, resolve } = Promise.withResolvers<Reply>();
+    const { promise, resolve } = Promise.withResolvers<InspectorReply>();
     pending.set(id, resolve);
     webSocket.send(JSON.stringify({ id, method, params }));
     return Promise.race([promise, closed.promise]);
   }
 
   expect(await Promise.race([opened.promise, closed.promise])).toEqual({});
+  return { send, webSocket };
+}
+
+test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv isn't an array", async () => {
+  await using child = spawn({
+    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "-e", "setInterval(() => {}, 1000);"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const { send, webSocket } = await connectToInspector(child);
 
   const argv: Record<string, unknown> = {};
   for (const expression of ["undefined", "0", `"abc"`, "{}", `["a", "b"]`]) {
@@ -667,6 +673,42 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
       "{}": [],
     }
   `);
+
+  expect(child.exitCode).toBe(null);
+  webSocket.close();
+});
+
+// A preview reads native getters with the previewed object as the receiver. The `closed` and `ready` getters of
+// stream readers and writers return a rejected promise when that receiver is not an instance.
+test("a preview of an object that inherits from a stream reader or writer prototype reports no unhandled rejection", async () => {
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "--inspect=ws://127.0.0.1:0/",
+      "-e",
+      `globalThis.rejections = [];
+       process.on("unhandledRejection", error => rejections.push(error.message));
+       globalThis.reader = Object.create(ReadableStreamDefaultReader.prototype);
+       globalThis.byobReader = Object.create(ReadableStreamBYOBReader.prototype);
+       globalThis.writer = Object.create(WritableStreamDefaultWriter.prototype);
+       globalThis.holder = { reader, byobReader, writer };
+       setInterval(() => {}, 1000);`,
+    ],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const { send, webSocket } = await connectToInspector(child);
+
+  for (const expression of ["reader", "byobReader", "writer", "holder"]) {
+    const evaluated = await send("Runtime.evaluate", { expression, generatePreview: true });
+    const objectId = evaluated.result?.result.objectId;
+    await send("Runtime.getDisplayableProperties", { objectId, generatePreview: true });
+    await send("Runtime.getProperties", { objectId, ownProperties: true, generatePreview: true });
+  }
+
+  const rejections = await send("Runtime.evaluate", { expression: "rejections", returnByValue: true });
+  expect(rejections.result?.result.value).toEqual([]);
 
   expect(child.exitCode).toBe(null);
   webSocket.close();

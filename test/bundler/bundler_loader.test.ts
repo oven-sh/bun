@@ -766,11 +766,31 @@ describe("bundler", async () => {
       onAfterBundle(api) {
         const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
         const output = api.readFile(join("/out", jsFile));
-        expect(output).toContain('"plain.css"(hmr, module, exports) {');
-        expect(output).toContain('hmr.require("plain.css")');
-        expect(output).toContain('"styles.module.css"(hmr, module, exports) {');
-        expect(output).toMatch(/foo: "foo_[\w-]+"/);
-        expect(output).toContain('hmr.require("styles.module.css")');
+        const modules = output.slice(output.lastIndexOf("})({"));
+        expect(modules).toContain('"plain.css"(hmr, module, exports) {');
+        expect(modules).toContain('hmr.require("plain.css")');
+        expect(modules).toContain('"styles.module.css"(hmr, module, exports) {');
+        expect(modules).toMatch(/foo: "foo_[\w-]+"/);
+        expect(modules).toContain('hmr.require("styles.module.css")');
+      },
+    });
+
+    // The binding of a stylesheet import has no declaration in this format (#18258).
+    itBundled("bake-dev/loader-css-import-binding", {
+      format: "internal_bake_dev",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          import * as sheet from "./plain.css";
+          console.log(sheet);
+        `,
+        "/plain.css": `.plain { color: blue; }`,
+      },
+      onAfterBundle(api) {
+        const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+        const output = api.readFile(join("/out", jsFile));
+        const modules = output.slice(output.lastIndexOf("})({"));
+        expect(modules).toMatch(/\(hmr\) => \{\s*console\.log\(sheet\);\s*\}, false\]/);
       },
     });
   });

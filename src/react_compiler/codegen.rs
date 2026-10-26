@@ -390,9 +390,7 @@ pub(crate) fn codegen_function(
 // Context
 // =============================================================================
 
-/// The temporaries in scope. A block takes a mark on entry and restores to it
-/// on exit. Nothing removes an entry, so a restore is a truncate plus the
-/// replay of `replaced`.
+/// The temporaries in scope. A block restores to its mark on exit: a truncate, then `replaced` put back.
 #[derive(Default)]
 struct Temporaries {
     map: IdMap<DeclarationId, Option<Expr>>,
@@ -582,8 +580,7 @@ fn codegen_reactive_function(
     })
 }
 
-/// The nested function sees the temporaries of `cx` and gets its own
-/// declarations and cache slots.
+/// The nested function sees the temporaries of `cx`. Its declarations and cache slots are its own.
 fn codegen_nested_function(
     cx: &mut Context,
     func: &ReactiveFunction,

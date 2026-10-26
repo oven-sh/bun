@@ -24,6 +24,7 @@ const {
   hasObserver,
   startPerf,
   stopPerf,
+  kEntryTypeHttp,
   kInternalSendOptions,
   isStoppedModuleGraphRunning,
 } = require("internal/shared");
@@ -896,7 +897,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // like Node's resOnFinish so res.on-replacing middleware cannot swallow it.
         http_res.on("finish", emitResponseFinish);
 
-        if (hasObserver("http")) {
+        if (hasObserver(kEntryTypeHttp)) {
           startPerf(http_res, kServerResponseStatistics, {
             type: "http",
             name: "HttpRequest",
@@ -2672,8 +2673,8 @@ function renderNativeHeaders(res) {
 
 const kMustCloseConnection = Symbol("kMustCloseConnection");
 function stopServerResponsePerf(this: any) {
-  if (this[kServerResponseStatistics] && hasObserver("http")) {
-    stopPerf(this, kServerResponseStatistics, {
+  if (this[kServerResponseStatistics] && hasObserver(kEntryTypeHttp)) {
+    stopPerf(this, kServerResponseStatistics, kEntryTypeHttp, {
       detail: {
         res: {
           statusCode: this.statusCode,

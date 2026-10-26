@@ -264,7 +264,7 @@ const { QuicEndpointStats, QuicStreamStats, QuicSessionStats, kCreateDisconnecte
 
 const { QuicEndpointState, QuicSessionState, QuicStreamState } = require("internal/quic/state");
 
-const { hasObserver, startPerf, stopPerf } = require("internal/shared");
+const { hasObserver, startPerf, stopPerf, kEntryTypeQuic } = require("internal/shared");
 
 const kPerfEntry = Symbol("kPerfEntry");
 
@@ -1715,7 +1715,7 @@ class QuicStream {
     inner.isLocal = isLocal;
     inner.state = new QuicStreamState(kPrivateConstructor, handle.state, handle.stateByteOffset);
 
-    if (hasObserver("quic")) {
+    if (hasObserver(kEntryTypeQuic)) {
       startPerf(this, kPerfEntry, { type: "quic", name: "QuicStream" });
     }
 
@@ -2491,8 +2491,8 @@ class QuicStream {
         stats: this.stats,
       });
     }
-    if (this[kPerfEntry] && hasObserver("quic")) {
-      stopPerf(this, kPerfEntry, {
+    if (this[kPerfEntry] && hasObserver(kEntryTypeQuic)) {
+      stopPerf(this, kPerfEntry, kEntryTypeQuic, {
         detail: {
           stats: this.stats,
           direction: this.direction,
@@ -2825,7 +2825,7 @@ class QuicSession {
     inner.stats = new QuicSessionStats(kPrivateConstructor, handle.stats, handle.statsByteOffset);
     inner.state = new QuicSessionState(kPrivateConstructor, handle.state, handle.stateByteOffset);
 
-    if (hasObserver("quic")) {
+    if (hasObserver(kEntryTypeQuic)) {
       startPerf(this, kPerfEntry, { type: "quic", name: "QuicSession" });
     }
 
@@ -3566,8 +3566,8 @@ class QuicSession {
     inner.state[kFinishClose]();
     inner.stats[kFinishClose]();
 
-    if (this[kPerfEntry] && hasObserver("quic")) {
-      stopPerf(this, kPerfEntry, {
+    if (this[kPerfEntry] && hasObserver(kEntryTypeQuic)) {
+      stopPerf(this, kPerfEntry, kEntryTypeQuic, {
         detail: {
           stats: inner.stats,
           handshake: inner.handshakeInfo,
@@ -4453,7 +4453,7 @@ class QuicEndpoint {
 
     endpointRegistry.add(this);
 
-    if (hasObserver("quic")) {
+    if (hasObserver(kEntryTypeQuic)) {
       startPerf(this, kPerfEntry, { type: "quic", name: "QuicEndpoint" });
     }
 
@@ -4784,8 +4784,8 @@ class QuicEndpoint {
     const inner = this.#inner;
     inner.stats[kFinishClose]();
     inner.state[kFinishClose]();
-    if (this[kPerfEntry] && hasObserver("quic")) {
-      stopPerf(this, kPerfEntry, {
+    if (this[kPerfEntry] && hasObserver(kEntryTypeQuic)) {
+      stopPerf(this, kPerfEntry, kEntryTypeQuic, {
         detail: { stats: this.stats },
       });
     }

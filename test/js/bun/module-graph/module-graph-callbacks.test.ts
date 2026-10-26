@@ -30,6 +30,7 @@ const dir = String(
       import { EventEmitter, once } from "node:events";
       import { pipeline } from "node:stream/promises";
       import timersPromises from "node:timers/promises";
+      import perfHooks from "node:perf_hooks";
       import { WebSocketServer } from "ws";
 
       const data = import.meta.dir + "/data.txt";
@@ -73,6 +74,13 @@ const dir = String(
             const observer = new PerformanceObserver(() => { seen("entries"); observer.disconnect(); resolve(); });
             observer.observe({ entryTypes: ["mark"] });
             performance.mark("callbacks-test");
+          }),
+        // An entry type of Node's: every runner's observer gets the entry of whichever runner is first.
+        performanceObserverOfNodeType: seen =>
+          new Promise(resolve => {
+            const observer = new perfHooks.PerformanceObserver(() => { seen("entries"); observer.disconnect(); resolve(); });
+            observer.observe({ entryTypes: ["function"] });
+            perfHooks.performance.timerify(function callbacksTest() {})();
           }),
         writableStreamSignal: seen =>
           new Promise(resolve => {

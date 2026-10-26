@@ -26,8 +26,13 @@
 #include "config.h"
 #include "PerformanceObserver.h"
 
+#include "JSDOMExceptionHandling.h"
+#include "JSPerformanceEntry.h"
+#include "JSPerformanceObserver.h"
 #include "Performance.h"
-#include "PerformanceObserverEntryList.h"
+#include "ScriptExecutionContext.h"
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSCInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -38,6 +43,8 @@ PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecution
     : m_callback(WTF::move(callback))
 {
     m_performance = uncheckedDowncast<Zig::GlobalObject>(scriptExecutionContext.globalObject())->performance();
+    auto* context = m_callback->scriptExecutionContext();
+    m_isOfModuleGraph = context && context->isForModuleGraph();
 }
 
 ScriptExecutionContext* PerformanceObserver::scriptExecutionContext() const
@@ -51,102 +58,193 @@ void PerformanceObserver::disassociate()
     m_registered = false;
 }
 
-ExceptionOr<void> PerformanceObserver::observe(Init&& init)
+// A registered observer has its wrapper (JSPerformanceObserverOwner::isReachableFromOpaqueRoots).
+static JSPerformanceObserver* wrapperOf(const PerformanceObserver& observer)
+{
+    return static_cast<JSPerformanceObserver*>(observer.wrapper());
+}
+
+JSC::JSArray* PerformanceObserver::pendingEntries() const
+{
+    auto* wrapper = wrapperOf(*this);
+    return wrapper ? wrapper->m_pendingEntries.get() : nullptr;
+}
+
+ExceptionOr<void> PerformanceObserver::observe(JSDOMGlobalObject& globalObject, Init&& init)
 {
     if (!m_performance)
         return Exception { TypeError };
 
-    bool isBuffered = false;
-    OptionSet<PerformanceEntry::Type> filter;
-    if (init.entryTypes) {
-        if (init.type)
-            return Exception { TypeError, "either entryTypes or type must be provided"_s };
-        if (m_registered && m_isTypeObserver)
+    // What a disposed Bun.ModuleGraph had queued still runs: its observers observe nothing more (Performance::disconnectObserversOf).
+    if (m_isOfModuleGraph) {
+        auto* context = scriptExecutionContext();
+        if (!context || context->isStopped())
+            return {};
+    }
+
+    auto& vm = globalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Node's checks in node's order, null members included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L257-L301
+    if (!init.hasEntryTypes && !init.hasType)
+        return Exception { TypeError, "no type or entryTypes were provided"_s };
+    if (init.entryTypes && init.type)
+        return Exception { TypeError, "either entryTypes or type must be provided"_s };
+
+    switch (m_mode) {
+    case Mode::Unset:
+        m_mode = init.hasType ? Mode::Type : Mode::EntryTypes;
+        break;
+    case Mode::Type:
+        if (init.hasEntryTypes)
             return Exception { InvalidModificationError, "observer type can't be changed once registered"_s };
+        break;
+    case Mode::EntryTypes:
+        if (init.hasType)
+            return Exception { InvalidModificationError, "observer type can't be changed once registered"_s };
+        break;
+    }
+
+    // `entryTypes` replaces what is observed, `type` adds to it.
+    auto filter = m_typeFilter;
+    if (m_mode == Mode::EntryTypes) {
+        if (!init.entryTypes) {
+            // null: what the conversion of any other value that is not a sequence throws.
+            throwSequenceTypeError(globalObject, scope);
+            return Exception { ExistingExceptionError };
+        }
+        filter = {};
         for (auto& entryType : *init.entryTypes) {
             if (auto type = PerformanceEntry::parseEntryTypeString(entryType))
                 filter.add(*type);
         }
-        if (filter.isEmpty())
+        if (filter.isEmpty()) {
+            // Node disconnects (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L313-L316). The specification keeps an observer of web types registered.
+            if (!m_registered || deliversOnImmediate())
+                disconnect();
             return {};
-        m_typeFilter = filter;
-    } else {
-        if (!init.type)
-            return Exception { TypeError, "no type or entryTypes were provided"_s };
-        if (m_registered && !m_isTypeObserver)
-            return Exception { InvalidModificationError, "observer type can't be changed once registered"_s };
-        m_isTypeObserver = true;
-        if (auto type = PerformanceEntry::parseEntryTypeString(*init.type))
-            filter.add(*type);
-        else
-            return {};
-        if (init.buffered) {
-            isBuffered = true;
-            auto oldSize = m_entriesToDeliver.size();
-            m_performance->appendBufferedEntriesByType(*init.type, m_entriesToDeliver);
-            auto begin = m_entriesToDeliver.begin();
-            auto oldEnd = begin + oldSize;
-            auto end = m_entriesToDeliver.end();
-            std::stable_sort(oldEnd, end, PerformanceEntry::startTimeCompareLessThan);
-            std::inplace_merge(begin, oldEnd, end, PerformanceEntry::startTimeCompareLessThan);
         }
-        m_typeFilter.add(filter);
+    } else {
+        // A `type` that is null, or not a type there is, observes nothing and is not an error.
+        auto type = init.type ? PerformanceEntry::parseEntryTypeString(*init.type) : std::nullopt;
+        if (!type)
+            return {};
+        filter.add(*type);
     }
 
+    if (filter.containsAny(PerformanceEntry::nodeTypes())) {
+        m_performance->willObserveNodeTypes(globalObject);
+        RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+    }
+
+    // The buffered entries join the queue in start order, as in node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L304-L310
+    if (init.type && init.buffered) {
+        Vector<RefPtr<PerformanceEntry>> buffered;
+        m_performance->appendBufferedEntriesByType(*init.type, buffered);
+        std::stable_sort(buffered.begin(), buffered.end(), PerformanceEntry::startTimeCompareLessThan);
+        for (auto& entry : buffered) {
+            JSC::JSValue wrapper = toJS(&globalObject, &globalObject, *entry);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            queueEntry(vm, *asObject(wrapper));
+        }
+    }
+
+    auto previousFilter = m_registered ? m_typeFilter : OptionSet<PerformanceEntry::Type> {};
+    bool wasDeliveredOnImmediate = deliversOnImmediate();
+    m_typeFilter = filter;
     if (!m_registered) {
         m_performance->registerPerformanceObserver(*this);
         m_registered = true;
     }
-    if (isBuffered)
-        deliver();
+    m_performance->observedTypesDidChange(previousFilter, filter);
+
+    // A buffered observe() takes its place in the next delivery, as in node. Any other observe() leaves the place as it is, unless it moved queued entries to the other kind of delivery.
+    bool needsDelivery = init.type && init.buffered ? deliversOnImmediate() || pendingEntries() : pendingEntries() && wasDeliveredOnImmediate != deliversOnImmediate();
+    if (needsDelivery)
+        m_performance->scheduleDelivery(*this);
 
     return {};
 }
 
-Vector<RefPtr<PerformanceEntry>> PerformanceObserver::takeRecords()
+JSC::JSArray* PerformanceObserver::takeRecords()
 {
-    return std::exchange(m_entriesToDeliver, {});
+    auto* wrapper = wrapperOf(*this);
+    if (!wrapper)
+        return nullptr;
+    auto* entries = wrapper->m_pendingEntries.get();
+    wrapper->m_pendingEntries.clear();
+    return entries;
 }
 
 void PerformanceObserver::disconnect()
 {
-    if (m_performance)
+    if (m_performance) {
+        if (m_registered)
+            m_performance->observedTypesDidChange(m_typeFilter, {});
         m_performance->unregisterPerformanceObserver(*this);
+    }
 
     m_registered = false;
-    m_entriesToDeliver.clear();
+    if (auto* wrapper = wrapperOf(*this))
+        wrapper->m_pendingEntries.clear();
     m_typeFilter = {};
+    m_mode = Mode::Unset;
 }
 
-void PerformanceObserver::queueEntry(PerformanceEntry& entry)
+// The first entry, and one that does not fit in the array as it is.
+void PerformanceObserver::queueEntrySlow(JSC::VM& vm, JSPerformanceObserver& wrapper, JSC::JSObject& entry)
 {
-    m_entriesToDeliver.append(&entry);
+    auto* globalObject = wrapper.globalObject();
+    // On out of memory the entry is not queued, and its producer goes on.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* pending = wrapper.m_pendingEntries.get();
+    bool isFirst = !pending;
+    if (isFirst) {
+        pending = JSC::JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), 0, 4);
+        if (!pending) [[unlikely]]
+            return;
+    }
+    // Defines the element: unlike push(), it calls no setter that script put on Array.prototype.
+    pending->putDirectIndex(globalObject, pending->length(), &entry);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return;
+    }
+    if (isFirst)
+        wrapper.m_pendingEntries.set(vm, &wrapper, pending);
 }
 
 void PerformanceObserver::deliver()
 {
-    if (m_entriesToDeliver.isEmpty())
+    if (!pendingEntries())
         return;
 
-    auto* context = m_callback->scriptExecutionContext();
-    if (!context)
+    // Its context is gone: nothing can call it, so it holds no queue and no place in the counts.
+    if (!m_callback->scriptExecutionContext()) {
+        disconnect();
         return;
+    }
 
-    Vector<RefPtr<PerformanceEntry>> entries = std::exchange(m_entriesToDeliver, {});
-    auto list = PerformanceObserverEntryList::create(WTF::move(entries));
-
-    m_callback->handleEvent(*this, list, *this);
+    auto* entries = takeRecords();
+    JSC::EnsureStillAliveScope keepEntries(entries);
+    m_callback->handleEvent(*this, *entries, *this);
 }
 
-Vector<String> PerformanceObserver::supportedEntryTypes(ScriptExecutionContext& context)
+// Node's list: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L82-L93
+Vector<String> PerformanceObserver::supportedEntryTypes()
 {
-    Vector<String> entryTypes = {
+    return {
+        "dns"_s,
+        "function"_s,
+        "gc"_s,
+        "http"_s,
+        "http2"_s,
         "mark"_s,
         "measure"_s,
-        "resource"_s
+        "net"_s,
+        "quic"_s,
+        "resource"_s,
     };
-
-    return entryTypes;
 }
 
 } // namespace WebCore

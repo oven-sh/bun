@@ -1,5 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
+export default b.module({ rustPath: "crate::node::node_fs_binding" });
+
 /** Arguments are parsed in `node_fs.rs`, which throws Node's errors. */
 const operation = (length: number) =>
   ({ args: { args: b.any.variadic }, returns: b.any, capability: "js", throws: true, length }) as const;
@@ -51,7 +53,7 @@ const operations: Record<string, readonly [number, number]> = {
 
 const getter = { getter: b.any, capability: "js" } as const;
 
-/** What `createBinding` makes: `src/js/internal/fs/binding.ts`. */
+/** The default export of `src/js/internal/fs/binding.ts`. */
 export const NodeJSFS = b.class({
   rustPath: "crate::node::node_fs_binding::Binding",
   proto: Object.fromEntries(
@@ -69,4 +71,30 @@ export const NodeJSFS = b.class({
       ["Stats", getter] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),
   ),
+});
+
+export const binding = b.value({ returns: NodeJSFS, capability: "js" });
+
+export const RmOptions = b.dictionary({
+  retryDelay: b.u32,
+  maxRetries: b.u32,
+  recursive: b.bool,
+  force: b.bool,
+});
+/** `(path, options)`, parsed as `fs.rm` parses them. */
+export const rmOptionsForTesting = b.fn({
+  args: { args: b.any.variadic },
+  returns: RmOptions,
+  capability: "js",
+  throws: true,
+  length: 2,
+});
+export const stringToFlagsForTesting = b.fn({ args: { flags: b.any }, returns: b.i32, capability: "js", throws: true });
+/** Without `size` it makes nothing. */
+export const createMemfdForTesting = b.fn({
+  args: { size: b.f64.optional },
+  returns: b.i32.optional,
+  capability: "js",
+  throws: true,
+  length: 1,
 });

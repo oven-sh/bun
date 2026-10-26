@@ -60,9 +60,14 @@ impl Candidates {
                 });
             }
         }
-        // A directory gives its entries in no fixed order.
-        found.sort_by(|a, b| (a.dir, &a.name).cmp(&(b.dir, &b.name)));
         Ok(found)
+    }
+
+    /// Whether the files differ from `before`. A directory gives its entries in no fixed order.
+    pub fn changed_since(&self, before: &[Found]) -> bool {
+        self.look().is_ok_and(|now| {
+            now.len() != before.len() || now.iter().any(|file| !before.contains(file))
+        })
     }
 }
 

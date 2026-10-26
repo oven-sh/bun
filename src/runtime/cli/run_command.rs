@@ -2905,8 +2905,7 @@ impl RunCommand {
         Ok(false)
     }
 
-    /// Under --watch, waits for a change to the files that `target` can resolve to, then restarts the process.
-    /// Returns when no save can end that wait.
+    /// Under --watch, restarts the process when a file that `target` can resolve to changes. Returns when no save can end that wait.
     fn wait_for_entry_file(
         resolver: &mut bun_resolver::Resolver<'_>,
         top_level_dir: &[u8],
@@ -2944,7 +2943,7 @@ impl RunCommand {
         let Ok(before) = candidates.look() else {
             return;
         };
-        // A directory with a package.json runs through its `main`, which can name any file.
+        // Index 1 is the target as a directory. With a package.json it runs through its `main`, which can name any file.
         if before.iter().any(|file| file.is(1, b"package.json")) {
             return;
         }
@@ -2965,7 +2964,7 @@ impl RunCommand {
             if bun_io::ParentDeathWatchdog::parent_is_gone() {
                 Global::exit(bun_io::ParentDeathWatchdog::EXIT_CODE as u32);
             }
-            candidates.look().is_ok_and(|now| now != before)
+            candidates.changed_since(&before)
         });
     }
 

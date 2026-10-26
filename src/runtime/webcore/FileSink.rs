@@ -548,14 +548,8 @@ impl FileSink {
         }
     }
 
-    /// `writer.end()`; `on_close` follows and may free `self`, except (Windows) for an fd the writer
-    /// does not own, which is never closed: settle a piped stream here then.
+    /// `writer.end()`; `on_close` follows and may free `self`.
     fn end_writer(&self) {
-        #[cfg(windows)]
-        if !self.writer.get().owns_fd {
-            self.settle_stream_done();
-            self.release_pipe();
-        }
         self.writer.with_mut(|w| w.end());
     }
 
@@ -1618,12 +1612,6 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
     unsafe {
         let _guard = RefPtr::init_ref(this);
         (*this).done.set(true);
-        #[cfg(windows)]
-        if !(*this).writer.get().owns_fd {
-            // Never closed, so `on_close` does not follow: settle a piped stream here.
-            (*this).settle_stream_done();
-            (*this).release_pipe();
-        }
         (*this).writer.with_mut(|w| w.close());
         FileSink::run_pending(this);
         FileSink::clear_keep_alive_ref(this);

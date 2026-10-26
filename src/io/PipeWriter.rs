@@ -2073,8 +2073,9 @@ pub trait WindowsStreamingWriterParent: WindowsWriterParent {
 #[cfg(windows)]
 pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub source: Option<Source>,
-    /// if the source of this writer is a file descriptor, calling end() will not close it.
-    /// if it is a path, then we claim ownership and the backing fd will be closed by end().
+    /// Whether `close()` closes the fd of a file source. If the caller keeps the fd (`false`), the
+    /// file stays open. A pipe or tty handle is always closed: give the writer a duplicate of one
+    /// that the caller keeps.
     pub owns_fd: bool,
     pub parent: *mut Parent,
     pub is_done: bool,
@@ -2687,9 +2688,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.is_done = true;
 
         if !self.has_pending_data() {
-            if !self.owns_fd {
-                return;
-            }
             self.close();
         }
     }

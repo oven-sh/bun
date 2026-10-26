@@ -2,7 +2,7 @@ use crate::bun::{is_listed, list_option};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Disallow an empty object as the other branch of a conditional expression that is spread into an object.
+/// Disallow an empty object as the fallback in `...(condition ? value : {})`.
 pub struct NoUselessSpreadFallback {
     ignore_conditions_that_call: Box<[Box<[u8]>]>,
 }
@@ -17,7 +17,7 @@ fn is_empty_object(e: Expr) -> bool {
     matches!(e.kind(), ExprKind::Object(properties) if properties.is_empty())
 }
 
-/// The text of `e` as an operand of `&&`.
+/// Returns `e`'s text, parenthesized if needed, for use as an operand of `&&`.
 fn operand_text(e: Expr) -> Vec<u8> {
     match ast_utils::get_precedence(e) < ast_utils::get_binary_operator_precedence(BinOp::And) {
         true => [b"(", e.text(), b")"].concat(),
@@ -46,7 +46,7 @@ impl Rule for NoUselessSpreadFallback {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // Of an object literal or of the attributes of an element. What is spread into an array has to be iterable.
+        // Only spreads into an object literal or JSX attributes. A value spread into an array has to be iterable.
         if !matches!(e.parent(), Node::Prop(it) if it.kind() == PropKind::Spread) {
             return;
         }

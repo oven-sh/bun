@@ -57,7 +57,7 @@ impl PropNames {
     }
 }
 
-/// `None` if something other than an object literal is spread.
+/// Returns `None` if anything other than an object literal is spread.
 fn prop_names(jsx: Jsx) -> Option<PropNames> {
     let mut names = PropNames::default();
     for attribute in jsx.attrs() {

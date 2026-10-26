@@ -77,6 +77,18 @@ export const cpuTargetFlags: Flag[] = [
   },
 ];
 
+/**
+ * `--hardened=on`. The same list as `HARDENING` in oven-sh/WebKit's
+ * .github/scripts/lanes.mjs, which the `-hardened` prebuilts are compiled with.
+ */
+export const hardeningFlags = [
+  "-fstack-protector-strong",
+  "-D_FORTIFY_SOURCE=2",
+  "-fstack-clash-protection",
+  "-ftrivial-auto-var-init=zero",
+  "-ftrivial-auto-var-init-max-size=4096",
+];
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GLOBAL COMPILER FLAGS
 //   Applied to BOTH bun's own sources AND forwarded to vendored deps
@@ -407,8 +419,13 @@ export const globalFlags: Flag[] = [
     // has always shipped on Linux, FreeBSD and Android, and a canary
     // load+check in most JSC frames is not free.
     flag: "-fno-stack-protector",
-    when: c => c.unix && !c.darwin,
+    when: c => c.unix && !c.darwin && !c.hardened,
     desc: "No stack protector (pin the toolchain-independent default)",
+  },
+  {
+    flag: hardeningFlags,
+    when: c => c.hardened,
+    desc: "Stack protector, checked libc calls, stack clash protection, zeroed locals up to 4 KB",
   },
   {
     // Every clang turns the protector on for a Darwin target (level 1, what

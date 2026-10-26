@@ -290,5 +290,6 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     a[Tag::RemoveCommand as usize] = false;
     a[Tag::UnlinkCommand as usize] = false;
     a[Tag::UpdateCommand as usize] = false;
+    a[Tag::WhyCommand as usize] = false;
     a
 });

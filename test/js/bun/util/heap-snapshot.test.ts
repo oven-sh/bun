@@ -224,3 +224,25 @@ describe("CommonJS Module cached slots are visible in heap snapshots", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+it("console.takeHeapSnapshot() can be called repeatedly", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        for (let i = 0; i < 3; i++) {
+          console.takeHeapSnapshot();
+          Bun.gc(true);
+        }
+        console.error("OK");
+      `,
+    ],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("OK\n");
+  expect(exitCode).toBe(0);
+});

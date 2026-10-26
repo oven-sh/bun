@@ -46,7 +46,7 @@ impl Rule for NumberLiteralCase {
                     (false, true) => (LOWERCASE_HEXADECIMAL_DIGITS, raw_span.shrink(2, 0)),
                     (false, false) => return,
                 };
-                // The `n` of a `BigInt` stays.
+                // Keep the `n` of a `BigInt`.
                 let upper = |it: &u8| {
                     if *it == b'n' {
                         b'n'

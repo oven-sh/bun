@@ -190,7 +190,10 @@ values;`,
 
   // We clone the RegExp object in the C++ code so this test ensures that there
   // is no funny business regarding the filter regular expression and multiple
-  // threads
+  // threads. The JS thread uses the filter inside onLoad, which runs while the
+  // bundler thread still matches the filter against the other files. A loop
+  // after Bun.build() would run before this build reaches the bundler thread,
+  // because the builds of the other concurrent tests are queued ahead of it.
   it("doesn't explode when there are a lot of concurrent files AND the filter regex is used on the JS thread", async () => {
     const filter = /\.ts/;
     const { entry, outdir, bundle } = await writeManyJsonEntry("regex", "(() => values)();");
@@ -198,7 +201,8 @@ values;`,
     const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
     const external = napiModule.createExternal();
 
-    const resultPromise = Bun.build({
+    let matches = 0;
+    const result = await Bun.build({
       outdir,
       entrypoints: [entry],
       plugins: [
@@ -208,6 +212,9 @@ values;`,
             build.onBeforeParse({ filter }, { napiModule, symbol: "plugin_impl", external });
 
             build.onLoad({ filter: /\.json/ }, async ({ defer, path }) => {
+              for (let i = 0; i < 100; i++) {
+                matches += filter.test("a.ts") ? 1 : 0;
+              }
               await defer();
               const count = napiModule.getFooCount(external);
               return {
@@ -220,16 +227,7 @@ values;`,
       ],
     });
 
-    // Now saturate this thread with uses of the filter regex to test that nothing bad happens
-    // when the JS thread and the bundler thread use regexes concurrently
-    let dummy = 0;
-    for (let i = 0; i < 10000; i++) {
-      // Match the filter regex on some dummy string
-      dummy += filter.test("foo") ? 1 : 0;
-    }
-
-    const result = await resultPromise;
-
+    expect(matches).toBe(100 * 100);
     expect(result.logs).toEqual([]);
     expect(result.success).toBeTrue();
     expect(await runBundle(bundle)).toEqual({ stdout: hundredLines({ fooCount: 9 }), stderr: "", exitCode: 0 });

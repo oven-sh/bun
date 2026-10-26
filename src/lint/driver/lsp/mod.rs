@@ -187,7 +187,7 @@ struct Queue {
 
 /// A workspace folder, or what is in none.
 struct Root {
-    /// `/` for what is in no folder.
+    /// The root of the drive, like `/` or `C:/`, for what is in no folder.
     path: Vec<u8>,
     is_folder: bool,
     queue: Guarded<Queue>,
@@ -927,7 +927,10 @@ impl<'d> Desk<'d, '_, '_> {
         let folder = inside.max_by_key(|it| it.len()).cloned();
         drop(folders);
         let is_folder = folder.is_some();
-        let path = folder.unwrap_or_else(|| b"/".to_vec());
+        let path = folder.unwrap_or_else(|| {
+            let top = paths::ancestors(paths::dirname(path)).last();
+            top.unwrap_or(b"/").to_vec()
+        });
         let known = |it: &&Arc<Root>| it.path == path && it.is_folder == is_folder;
         if let Some(root) = self.roots.iter().find(known) {
             return Some(Arc::clone(root));
@@ -1251,12 +1254,14 @@ impl<'d> Desk<'d, '_, '_> {
                 let language = part("languageId")
                     .and_then(Json::as_str)
                     .unwrap_or_default();
-                // What is no file is as good as one at the top of the first folder.
+                // What is no file is as good as one at the top of the first folder, or of the working directory.
                 let path = path_of(uri)
                     .map(|it| paths::normalize(&it))
                     .unwrap_or_else(|| {
                         let folders = server.folders.lock();
-                        let directory = folders.first().map_or(&b"/"[..], |it| &it[..]);
+                        let directory = folders
+                            .first()
+                            .map_or(&server.environment.cwd[..], |it| &it[..]);
                         paths::join(directory, &name_of(uri, language))
                     });
                 let version = part("version").cloned().unwrap_or(Json::Null);

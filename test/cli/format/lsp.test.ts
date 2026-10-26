@@ -462,7 +462,7 @@ exports.format = async (text, options) => {
         [
           "window/showMessage",
           1,
-          expect.stringContaining(`bun fmt: Cannot load the configuration file ${join(String(dir), ".prettierrc")}`),
+          expect.stringMatching(/^bun fmt: Cannot load the configuration file .*[\\/]\.prettierrc:\n/),
         ],
       ]);
       const second = await format(client, join(String(dir), "a.js"));

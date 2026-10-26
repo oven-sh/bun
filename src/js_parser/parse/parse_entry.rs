@@ -898,6 +898,15 @@ impl<'a> Parser<'a> {
             debug_assert!(!p.options.tree_shaking);
         }
 
+        // `e_call` and `e_template` unwrap the context when they dispatch a macro call.
+        debug_assert!(
+            !P::<'_, TS, false>::ALLOW_MACROS
+                || p.options.macro_context.is_some()
+                || p.options.features.no_macros
+                || p.options.features.is_macro_runtime,
+            "a parse that visits needs a macro context or `features.no_macros`"
+        );
+
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
         if p.options.features.minify_syntax || p.options.features.inlining {

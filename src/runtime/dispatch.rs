@@ -1494,6 +1494,13 @@ pub(crate) unsafe fn __bun_fire_timer(
                 Ok(())
             }
         ),
+        EventLoopTimerTag::DevServerHalfSavedHold => in_features!(
+            [Bundler],
+            (t: *mut EventLoopTimer = t) -> JsResult<()> {
+                DevServer::on_half_saved_hold_timer(t);
+                Ok(())
+            }
+        ),
         EventLoopTimerTag::BunTest => in_features!(
             [Test],
             (container: *mut BunTest = owner!(BunTest, timer), now: *const ElTimespec = now)

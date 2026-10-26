@@ -217,6 +217,37 @@ impl HotReloadEvent {
         }
     }
 
+    /// Moves the files of `first` and of the events behind it into `entry_points`, recycles the events, and returns the half-saved files.
+    /// SAFETY: the contract of `run`, for `first` and its owner `dev`.
+    pub(crate) unsafe fn drain(
+        first: *mut HotReloadEvent,
+        dev: *mut DevServer,
+        entry_points: &mut EntryPointList,
+    ) -> Vec<Box<[u8]>> {
+        let mut half_saved: Vec<Box<[u8]>> = Vec::new();
+        let mut current: *mut HotReloadEvent = first;
+        loop {
+            // SAFETY: `current` is a live event in `dev.watcher_atomics`, a heap allocation of its own, so `&mut *dev` for these calls does not alias it.
+            unsafe {
+                (*current).process_file_list(&mut *dev, entry_points);
+                (*dev).find_half_saved_files((*current).files.keys(), &mut half_saved);
+            }
+            // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
+            let Some(next) = (unsafe {
+                WatcherAtomics::recycle_event_from_dev_server(
+                    (*dev).watcher_atomics.as_ptr(),
+                    current,
+                )
+            }) else {
+                return half_saved;
+            };
+            current = next;
+            // SAFETY: `current` is a live event that this thread now owns.
+            #[cfg(debug_assertions)]
+            debug_assert!(unsafe { (*current).debug_mutex.try_lock() });
+        }
+    }
+
     pub(crate) fn reset(&mut self) {
         #[cfg(debug_assertions)]
         self.debug_mutex.unlock();
@@ -308,48 +339,16 @@ impl HotReloadEvent {
         }
 
         let mut entry_points = EntryPointList::default();
+        // SAFETY: `first` is live; `timer` was set by `WatcherAtomics::watcher_acquire_event` before submission.
+        let mut timer = unsafe { (*first).timer };
+        // SAFETY: `first` is a live event that this thread owns, and `dev` is its live owner.
+        let half_saved = unsafe { Self::drain(first, dev, &mut entry_points) };
 
-        // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
-        // `process_file_list` mutates graph/watcher/transpiler fields of `dev`,
-        // all disjoint from `dev.watcher_atomics.events[_]` (where `first` lives).
-        unsafe { (*first).process_file_list(&mut *dev, &mut entry_points) };
-
-        // SAFETY: `first` is live; `timer` was set by
-        // `WatcherAtomics::watcher_acquire_event` before submission.
-        let timer = unsafe { (*first).timer };
-
-        // Note: raw-ptr loop because `recycle_event_from_dev_server` returns
-        // a pointer into `dev.watcher_atomics.events`; re-borrow each iteration
-        // to avoid aliasing UB.
-        let mut current: *mut HotReloadEvent = first;
-        loop {
-            // SAFETY: `current` always points at a live event owned by
-            // `dev.watcher_atomics`; `&mut *dev` re-borrowed for the call only,
-            // disjoint per the note above.
-            unsafe { (*current).process_file_list(&mut *dev, &mut entry_points) };
-            // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
-            match unsafe {
-                WatcherAtomics::recycle_event_from_dev_server(
-                    (*dev).watcher_atomics.as_ptr(),
-                    current,
-                )
-            } {
-                Some(next) => {
-                    current = next;
-                    #[cfg(debug_assertions)]
-                    {
-                        // SAFETY: `current` is a live event we now exclusively own.
-                        debug_assert!(unsafe { (*current).debug_mutex.try_lock() });
-                    }
-                }
-                None => break,
-            }
-        }
-
-        // SAFETY: `dev` is valid; no `&mut *current` is live past this point.
+        // SAFETY: `dev` is valid; no `&mut` to an event is live past this point.
         let dev_ref = unsafe { &mut *dev };
 
-        if entry_points.set.count() == 0 {
+        let batching = !matches!(dev_ref.testing_batch_events, TestingBatchEvents::Disabled);
+        if entry_points.set.count() == 0 && (batching || dev_ref.half_saved_hold.is_none()) {
             return;
         }
 
@@ -365,6 +364,12 @@ impl HotReloadEvent {
                 return;
             }
             TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
+        }
+
+        if dev_ref.hold_half_saved(&mut entry_points, half_saved, &mut timer)
+            || entry_points.set.count() == 0
+        {
+            return;
         }
 
         if let Err(_err) = dev_ref.start_async_bundle(entry_points, true, timer) {

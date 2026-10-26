@@ -68,6 +68,9 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             directory_watchers: _,
             watcher_atomics: _,
             testing_batch_events: _,
+            half_saved_hold: _,
+            half_saved_hold_timer: _,
+            files_left_empty: _,
             generation: _,
             bundles_since_last_error: _,
             framework: _,
@@ -99,6 +102,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .deferred_request_pool
     //   .emit_incremental_visualizer_events
     //   .emit_memory_visualizer_events
+    //   .half_saved_hold_timer
     //   .frontend_only
     //   .generation
     //   .graph_safety_lock
@@ -242,6 +246,12 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         }
         TestingBatchEvents::EnableAfterBundle => {}
     }
+    // .half_saved_hold
+    if let Some(hold) = &dev.half_saved_hold {
+        other_bytes += hold.memory_cost();
+    }
+    // .files_left_empty
+    other_bytes += memory_cost_array_hash_map(&dev.files_left_empty);
 
     MemoryCost {
         assets,

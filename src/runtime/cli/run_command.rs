@@ -1697,6 +1697,8 @@ impl Run<'_> {
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
+                // No timer fires until the loop above runs again.
+                crate::bake::dev_server::release_half_saved_holds();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
                 // reloads.

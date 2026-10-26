@@ -54,6 +54,44 @@ devTest("html file is watched", {
   },
 });
 
+devTest("an html file and an image in it are not rebuilt while a save keeps them empty", {
+  // Longer than the save keeps the file empty, so the speed of the machine does not decide the result.
+  env: { BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: "30000" },
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <h1>Hello</h1>
+      <img src="image.svg" alt="test image">
+      </body></html>
+    `,
+    "image.svg": `<svg xmlns="http://www.w3.org/2000/svg"><text>FIRST</text></svg>`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    const url: string = await c.js`document.querySelector("img").src`;
+    await dev.fetch(url).expect.toInclude("FIRST");
+
+    // An edit to the html file of a route reloads the page.
+    await c.expectReload(async () => {
+      await dev.saveInPlace("index.html", dev.read("index.html").replace("Hello", "World"), {
+        // The route still has the page of its last bundle.
+        whileEmpty: async () => void (await dev.fetch("/").expect.toInclude("<h1>Hello</h1>")),
+      });
+    });
+    expect(await c.js`document.querySelector("h1").textContent`).toBe("World");
+
+    // So does an edit to an image of the page: the html has the url of the image's content.
+    await c.expectReload(async () => {
+      await dev.saveInPlace("image.svg", `<svg xmlns="http://www.w3.org/2000/svg"><text>SECOND</text></svg>`, {
+        whileEmpty: async () => void (await dev.fetch(url).expect.toInclude("FIRST")),
+      });
+    });
+    const changed: string = await c.js`document.querySelector("img").src`;
+    expect(changed).not.toBe(url);
+    await dev.fetch(changed).expect.toInclude("SECOND");
+  },
+});
+
 devTest("image tag", {
   files: {
     "index.html": `

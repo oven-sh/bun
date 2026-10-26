@@ -197,6 +197,10 @@ enum WatchSynchronization {
   AnyBuildFinished = 3,
   // Sent on every build finished, you must wait for web sockets:
   AnyBuildFinishedWaitForWebSockets = 4,
+  // A file event added its files to the hold of a half-saved file:
+  EventHeld = 5,
+  // The hold of a half-saved file ended:
+  HoldEnded = 6,
 }
 
 export class Dev extends EventEmitter {
@@ -209,6 +213,10 @@ export class Dev extends EventEmitter {
   nodeEnv: "development" | "production";
   batchingChanges: { write?: () => void } | null = null;
   stressTestEndurance = false;
+  /** How many file events have added their files to the hold of a half-saved file. */
+  eventsHeld = 0;
+  /** How many holds of a half-saved file have ended. */
+  holdsEnded = 0;
 
   socket?: WebSocket;
 
@@ -248,6 +256,8 @@ export class Dev extends EventEmitter {
       }
       if (data[0] === "r".charCodeAt(0)) {
         verboseSynchronization("watch_synchronization: " + WatchSynchronization[data[1]]);
+        if (data[1] === WatchSynchronization.EventHeld) this.eventsHeld++;
+        if (data[1] === WatchSynchronization.HoldEnded) this.holdsEnded++;
         this.emit("watch_synchronization", data[1]);
       }
       this.emit("hmr", data);
@@ -283,6 +293,49 @@ export class Dev extends EventEmitter {
       }
       dev.on("watch_synchronization", handle);
     });
+  }
+
+  /**
+   * Runs `change` and returns the watch synchronization messages the dev
+   * server published while handling it, by name and in order. `change` must
+   * make the watcher report something (the project directory is watched once
+   * a route has been bundled), and the dev server publishes one `SeenFiles`
+   * per hot-reload event it processes that invalidates nothing.
+   *
+   * Once the first message arrives, batch mode is toggled on: the dev server
+   * acknowledges that on the same topic, and the acknowledgement is ordered
+   * after everything it published while processing `change`, so when it
+   * arrives the list is complete. Batch mode is toggled off again before
+   * returning.
+   */
+  async watchSynchronizationMessagesFor(change: () => void | Promise<void>): Promise<string[]> {
+    assert(this.batchingChanges === null, "watchSynchronizationMessagesFor cannot be used inside batchChanges");
+    const messages: WatchSynchronization[] = [];
+    const firstMessage = Promise.withResolvers<void>();
+    const batchStarted = Promise.withResolvers<void>();
+    function onEvent(kind: WatchSynchronization) {
+      if (kind === WatchSynchronization.Started) {
+        batchStarted.resolve();
+        return;
+      }
+      messages.push(kind);
+      firstMessage.resolve();
+    }
+    this.on("watch_synchronization", onEvent);
+    try {
+      await change();
+      await firstMessage.promise;
+      this.socket!.send("H");
+      await batchStarted.promise;
+    } finally {
+      this.off("watch_synchronization", onEvent);
+    }
+    // Leaving batch mode is answered with ResultDidNotBundle (nothing was
+    // batched) or, if `change` did invalidate something, with a build.
+    const batchEnded = this.waitForHotReload(false);
+    this.socket!.send("H");
+    await batchEnded;
+    return messages.map(kind => WatchSynchronization[kind]);
   }
 
   async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
@@ -385,6 +438,68 @@ export class Dev extends EventEmitter {
   async writeNoChanges(file: string): Promise<void> {
     const content = this.read(file);
     await this.write(file, content, { dedent: false });
+  }
+
+  /** Resolves once `count` more file events have added their files to the hold of a half-saved file. */
+  async heldEvents(count = 1): Promise<void> {
+    const target = this.eventsHeld + count;
+    const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
+    while (this.eventsHeld < target) {
+      if (Date.now() > deadline) throw new Error("Timeout waiting for the dev server to hold a file event");
+      await Bun.sleep(1);
+    }
+  }
+
+  /** Resolves once `count` more holds of a half-saved file have ended. */
+  async endedHolds(count = 1): Promise<void> {
+    const target = this.holdsEnded + count;
+    const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
+    while (this.holdsEnded < target) {
+      if (Date.now() > deadline) throw new Error("Timeout waiting for the dev server to end a hold");
+      await Bun.sleep(1);
+    }
+  }
+
+  /**
+   * Saves the file as an editor does that leaves it half-saved for a moment:
+   * the file is emptied ("open", "ftruncate") or renamed away ("rename")
+   * first, and the text is written later. `whileEmpty` runs before the text is
+   * written. Fails if a page gets an update before the text is written.
+   * Resolves once every page has applied the first update that follows.
+   */
+  saveInPlace(
+    file: string,
+    text: string,
+    options: { emptyWith?: "open" | "ftruncate" | "rename"; whileEmpty?: () => Promise<void> } = {},
+  ): Promise<void> {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const clients = [...this.connectedClients];
+      // An ack a client still owes for an earlier build must not count for this save.
+      await Promise.all(clients.map(client => client.drainAcks()));
+      const acks = () => clients.reduce((sum, client) => sum + client.acksReceived, 0);
+      const before = acks();
+      const held = this.eventsHeld;
+      const filePath = this.join(file);
+      let fd: number | undefined;
+      if (options.emptyWith === "rename") fs.renameSync(filePath, filePath + "~");
+      else fd = fs.openSync(filePath, options.emptyWith === "ftruncate" ? "r+" : "w");
+      try {
+        if (options.emptyWith === "ftruncate") fs.ftruncateSync(fd!, 0);
+        // The dev server either holds the file event, or it bundles the file and the page gets an
+        // update. On kqueue it does neither: a truncation is no file event there.
+        const deadline = Date.now() + 250 * WAIT_MULTIPLIER;
+        while (acks() === before && this.eventsHeld === held && Date.now() < deadline) await Bun.sleep(1);
+        expect(acks()).toBe(before);
+        await options.whileEmpty?.();
+        fd ??= fs.openSync(filePath, "wx");
+        fs.writeSync(fd, text);
+      } finally {
+        if (fd !== undefined) fs.closeSync(fd);
+      }
+      if (options.emptyWith === "rename") fs.unlinkSync(filePath + "~");
+      // No turn of the event loop since the write, so the ack of the first update is still to come.
+      await Promise.all(clients.map(client => client.nextAck("applying the saved text")));
+    });
   }
 
   /**
@@ -925,7 +1040,7 @@ export class Client extends EventEmitter {
    * loaded. Register it before the load starts.
    */
   async waitForPageLoad(): Promise<void> {
-    const acked = this.#nextAck("loading the page", (isWindows ? 10_000 : 5_000) * WAIT_MULTIPLIER);
+    const acked = this.nextAck("loading the page", (isWindows ? 10_000 : 5_000) * WAIT_MULTIPLIER);
     await Promise.all([this.output.waitForLine(hmrClientInitRegex), acked]);
   }
 
@@ -943,12 +1058,12 @@ export class Client extends EventEmitter {
     // is not lost.
     const target = await this.#request<number>("ping", "pong", [], "draining its acks");
     while (this.acksReceived < target) {
-      await this.#nextAck("draining its acks");
+      await this.nextAck("draining its acks");
     }
   }
 
   /** The next `received-hmr-event` ack. Rejects if the client exits or the timeout passes first. */
-  #nextAck(waitingFor: string, timeout = 2000 * WAIT_MULTIPLIER): Promise<void> {
+  nextAck(waitingFor: string, timeout = 2000 * WAIT_MULTIPLIER): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       if (this.exited) return reject(clientExitedWhile(waitingFor, this.exitCode ?? "unknown"));
       const cleanup = () => {
@@ -1567,6 +1682,11 @@ const tempDir =
 // Ensure temp directory exists
 if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
+}
+
+/** A path beside the test projects and outside all of them, for a file that no dev server must watch. */
+export function pathOutsideProjects(name: string): string {
+  return path.join(tempDir, name);
 }
 
 // react-server-dom-bun's only published build was compiled against this react build. RSC

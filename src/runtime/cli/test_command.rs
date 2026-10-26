@@ -2802,6 +2802,7 @@ impl TestCommand {
     }
 
     fn run_event_loop_for_watch(vm: &mut VirtualMachine) {
+        crate::bake::dev_server::release_half_saved_holds();
         vm.event_loop_ref().tick_possibly_forever();
 
         loop {
@@ -2810,6 +2811,8 @@ impl TestCommand {
                 vm.event_loop_ref().auto_tick_active();
             }
 
+            // No timer fires until the loop above runs again.
+            crate::bake::dev_server::release_half_saved_holds();
             vm.event_loop_ref().tick_possibly_forever();
         }
     }

@@ -70,6 +70,7 @@ mod ensure_route;
 pub(crate) mod error_report_request;
 mod failures;
 mod finalize;
+mod half_saved_hold;
 pub(crate) mod hmr_socket;
 mod hot_reload_event;
 mod http;
@@ -92,6 +93,8 @@ pub(crate) use directory_watch_store::DirectoryWatchStore;
 use ensure_route::{HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_route_is_bundled};
 use failures::mark_all_route_children;
 pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
+use half_saved_hold::HalfSavedHold;
+pub(crate) use half_saved_hold::release_half_saved_holds;
 use hmr_socket::hmr_socket_behavior;
 pub(crate) use hot_reload_event::HotReloadEvent;
 use http::{
@@ -563,6 +566,10 @@ pub(crate) struct DevServer {
     /// `next_event` check in `Drop`.
     pub(crate) watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,
     pub(crate) testing_batch_events: TestingBatchEvents,
+    pub(crate) half_saved_hold: Option<HalfSavedHold>,
+    pub(crate) half_saved_hold_timer: EventLoopTimer,
+    /// The files that a hold left empty or missing. No file event has seen bytes in them since.
+    pub(crate) files_left_empty: StringArrayHashMap<()>,
 
     /// Number of bundles that have been executed. This is currently not read, but
     /// will be used later to determine when to invoke graph garbage collection.
@@ -613,7 +620,10 @@ pub(crate) struct DevServer {
     pub(crate) broadcast_console_log_from_browser_to_server: bool,
 }
 
-bun_event_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
+bun_event_loop::impl_timer_owner!(DevServer;
+    from_timer_ptr => memory_visualizer_timer,
+    from_half_saved_hold_timer_ptr => half_saved_hold_timer,
+);
 
 const INTERNAL_PREFIX: &str = "/_bun";
 

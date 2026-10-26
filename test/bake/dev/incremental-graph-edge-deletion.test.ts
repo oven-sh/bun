@@ -4,6 +4,9 @@ import { devTest } from "../bake-harness";
 // where it was incorrectly setting first_dep to .none when there was still a next dependency
 devTest("incremental graph handles edge deletion with next dependency", {
   timeoutMultiplier: 4, // 1 minute timeout
+  // The edges are deleted when the empty file is bundled. By default the dev server holds the
+  // update of a file that was just emptied, and the rewrite 10 ms later would arrive in that time.
+  env: { BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: "0" },
   files: {
     "index.html": `<html>
 <head><title>Test</title></head>

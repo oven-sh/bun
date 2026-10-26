@@ -109,6 +109,12 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 .unwrap_or(bun_core::env::IS_DEBUG)
         );
         w!(testing_batch_events, TestingBatchEvents::Disabled);
+        w!(half_saved_hold, None);
+        w!(
+            half_saved_hold_timer,
+            EventLoopTimer::init_paused(EventLoopTimerTag::DevServerHalfSavedHold)
+        );
+        w!(files_left_empty, Default::default());
         w!(
             broadcast_console_log_from_browser_to_server,
             options.broadcast_console_log_from_browser_to_server
@@ -577,6 +583,9 @@ impl Drop for DevServer {
                 directory_watchers: _,
                 watcher_atomics: _,
                 testing_batch_events: _,
+                half_saved_hold: _,
+                half_saved_hold_timer: _,
+                files_left_empty: _,
                 generation: _,
                 bundles_since_last_error: _,
                 framework: _,
@@ -622,6 +631,7 @@ impl Drop for DevServer {
             let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
             self.timer_heap().remove(timer_ptr);
         }
+        self.take_half_saved_hold();
         self.graph_safety_lock.lock();
         // Hand ownership of the heap allocation to the watcher thread (which frees it in
         // `thread_main` once `running` flips false). Auto-dropping the `Box`

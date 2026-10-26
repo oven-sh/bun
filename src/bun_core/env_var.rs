@@ -98,6 +98,8 @@ new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: unsigned, "BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES", {});
 // How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
 new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
+// For the tests: how long the dev server holds a hot reload for a half-saved file. 0 turns the hold off.
+new!(pub BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: unsigned, "BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS", { default: 100 });
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // Debug-only: when set, `NumberRenamer` dumps the symbol table before
 // renaming (`src/js_printer/renamer.rs`). Presence-checked, value ignored.

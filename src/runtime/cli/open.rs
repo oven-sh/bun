@@ -432,7 +432,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct EditorContext {
+pub(crate) struct EditorContext {
     pub(crate) editor: Option<Editor>,
     // Note: `name`/`path` are never freed; `path` is backed by
     // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena) or aliases `name`.
@@ -489,7 +489,7 @@ impl EditorContext {
                     editor_,
                     // SAFETY: see note above — exclusive per-call reborrow.
                     unsafe { &mut *buf_ptr },
-                    Fs::FileSystem::instance().top_level_dir,
+                    Fs::FileSystem::instance().top_level_dir(),
                     &mut out,
                 ) {
                     self.editor = Some(editor_);
@@ -520,7 +520,7 @@ impl EditorContext {
                 editor_,
                 // SAFETY: see note above — exclusive per-call reborrow.
                 unsafe { &mut *buf_ptr },
-                Fs::FileSystem::instance().top_level_dir,
+                Fs::FileSystem::instance().top_level_dir(),
                 &mut out,
             ) {
                 self.editor = Some(editor_);
@@ -548,7 +548,7 @@ impl EditorContext {
             env,
             // SAFETY: see note above — exclusive per-call reborrow.
             unsafe { &mut *buf_ptr },
-            Fs::FileSystem::instance().top_level_dir,
+            Fs::FileSystem::instance().top_level_dir(),
             &mut out,
         ) {
             self.editor = Some(editor_);

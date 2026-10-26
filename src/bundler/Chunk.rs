@@ -22,11 +22,12 @@ use crate::bun_css;
 use crate::bun_fs;
 
 use crate::Graph::Graph;
+#[cfg(debug_assertions)]
+use crate::LinkerContext;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
-    cheap_prefix_normalizer,
+    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -92,9 +93,9 @@ pub struct Chunk {
 
     pub compile_results_for_chunk: CompileResultSlots,
 
-    /// Pre-built JSON fragment for this chunk's metafile output entry.
-    /// Generated during parallel chunk generation, joined at the end.
-    pub(crate) metafile_chunk_json: Box<[u8]>,
+    /// Byte length of the output emitted for this chunk: what `code()` returned plus
+    /// the source map comment. The metafile reports it as `outputs[..].bytes`.
+    pub(crate) final_output_size: usize,
 
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
@@ -195,15 +196,6 @@ impl CompileResultSlots {
     }
 }
 
-impl core::ops::Index<usize> for CompileResultSlots {
-    type Output = CompileResult;
-    #[inline]
-    fn index(&self, i: usize) -> &CompileResult {
-        // SAFETY: reads happen only after the pool join; no concurrent writer.
-        unsafe { &*self.0[i].get() }
-    }
-}
-
 impl Default for Chunk {
     fn default() -> Self {
         Chunk {
@@ -223,7 +215,7 @@ impl Default for Chunk {
             renamer: bun_renamer::ChunkRenamer::default(),
             nested_scopes_to_rename: Vec::new(),
             compile_results_for_chunk: CompileResultSlots::default(),
-            metafile_chunk_json: Box::default(),
+            final_output_size: 0,
             flags: Flags::default(),
         }
     }
@@ -380,34 +372,6 @@ impl Chunk {
     #[inline]
     pub(crate) fn entry_bits(&self) -> &AutoBitSet {
         &self.entry_bits
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Order {
-    pub source_index: IndexInt,
-    pub distance: u32,
-    pub tie_breaker: u32,
-}
-
-impl Order {
-    fn less_than(_ctx: Order, a: Order, b: Order) -> bool {
-        (a.distance < b.distance) || (a.distance == b.distance && a.tie_breaker < b.tie_breaker)
-    }
-
-    /// Sort so files closest to an entry point come first. If two files are
-    /// equidistant to an entry point, then break the tie by sorting on the
-    /// stable source index derived from the DFS over all entry points.
-    pub(crate) fn sort(a: &mut [Order]) {
-        index_sort::sort_slice_unstable_by(a, |a, b| {
-            if Order::less_than(Order::default(), *a, *b) {
-                core::cmp::Ordering::Less
-            } else if Order::less_than(Order::default(), *b, *a) {
-                core::cmp::Ordering::Greater
-            } else {
-                core::cmp::Ordering::Equal
-            }
-        });
     }
 }
 
@@ -611,20 +575,6 @@ impl IntermediateOutput {
         dst
     }
 
-    pub(crate) fn get_size(&self) -> usize {
-        match self {
-            IntermediateOutput::Pieces(pieces) => {
-                let mut total: usize = 0;
-                for piece in pieces.slice() {
-                    total += piece.data.len();
-                }
-                total
-            }
-            IntermediateOutput::Joiner(joiner) => joiner.len,
-            IntermediateOutput::Empty => 0,
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn code<'d>(
         &mut self,
@@ -739,8 +689,7 @@ impl IntermediateOutput {
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
-        let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
-        let mut file_path_buf = bun_paths::path_buffer_pool::get();
+        let mut file_path_posix: Vec<u8> = Vec::new();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -856,17 +805,24 @@ impl IntermediateOutput {
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
+                            // Normalize like the write pass below so the counted length matches.
+                            let file_path: &[u8] = {
+                                file_path_posix.clear();
+                                file_path_posix.extend_from_slice(file_path);
+                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                                    &mut file_path_posix,
+                                );
+                                &file_path_posix
+                            };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
+                                    bun_paths::resolve_path::relative_platform::<
                                         bun_paths::platform::Posix,
                                         false,
-                                    >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
-                                    )
+                                    >(from_chunk_dir, file_path)
                                 },
                             );
                             count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
@@ -1042,29 +998,24 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // normalize windows paths to '/'
-                            // The source slices are reachable only
-                            // through `&Graph` / `&[Chunk]` here; materialising `&mut` from a
-                            // shared-provenance pointer is UB regardless of whether the write
-                            // happens. Copy into a pooled scratch buffer and normalise that.
+                            // Normalize Windows paths to '/' in a copy because the source is borrowed immutably.
                             let file_path: &[u8] = {
-                                let n = file_path.len();
-                                let dst = &mut file_path_buf[..n];
-                                dst.copy_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
-                                dst
+                                file_path_posix.clear();
+                                file_path_posix.extend_from_slice(file_path);
+                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                                    &mut file_path_posix,
+                                );
+                                &file_path_posix
                             };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform_buf::<
+                                    bun_paths::resolve_path::relative_platform::<
                                         bun_paths::platform::Posix,
                                         false,
-                                    >(
-                                        &mut relative_platform_buf[..], from_chunk_dir, file_path
-                                    )
+                                    >(from_chunk_dir, file_path)
                                 },
                             );
 
@@ -1546,7 +1497,7 @@ impl CssImportOrder {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(debug_assertions)]
     pub(crate) fn fmt<'a, 'ctx>(
         &'a self,
         ctx: &'a LinkerContext<'ctx>,
@@ -1555,7 +1506,7 @@ impl CssImportOrder {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(debug_assertions)]
 pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     inner: &'a CssImportOrder,
     // Note: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
@@ -1566,6 +1517,7 @@ pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     ctx: &'a LinkerContext<'ctx>,
 }
 
+#[cfg(debug_assertions)]
 impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(writer, "{} = ", <&'static str>::from(&self.inner.kind))?;

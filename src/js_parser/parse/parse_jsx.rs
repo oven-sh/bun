@@ -363,7 +363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     return Ok(p.new_expr(
                         E::JSXElement {
-                            tag: end_tag.data.as_expr(),
+                            tag: tag.data.as_expr(),
                             children: ExprNodeList::move_from_list(children),
                             properties,
                             key_prop_index: key_prop_i,

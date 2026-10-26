@@ -67,7 +67,6 @@
     "test/bundler/transpiler/with-statement-works.js", // parser doesn't allow `with` statement
     "test/js/node/module/extensions-fixture", // these files are not meant to be linted
     "test/cli/run/module-type-fixture",
-    "test/bundler/transpiler/with-statement-works.js", // parser doesn't allow `with` statement
 
     // TODO: fix these
     "src/js/node/http2.ts",
@@ -76,7 +75,7 @@
 
   "overrides": [
     {
-      "files": ["test/**", "examples/**", "packages/bun-internal/test/runners/**"],
+      "files": ["test/**"],
       "rules": {
         "no-unused-vars": "off",
         "no-unused-private-class-members": "off",

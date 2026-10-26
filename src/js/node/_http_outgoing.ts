@@ -1062,6 +1062,10 @@ class Exchange {
     this.wasEmptied = false;
     this.requestState = requestState;
   }
+
+  [Symbol.for("nodejs.util.inspect.custom")](): string {
+    return "[Exchange]";
+  }
 }
 
 declare global {

@@ -1,3 +1,4 @@
+use super::namespace_members::find_outermost_type_assertion;
 use crate::ir::{InParallel, for_each_mut};
 use crate::known_helpers::{Helper, KnownHelpers, Quiet, Shape};
 use bun_sema::atom::{Atom, known};
@@ -201,19 +202,9 @@ fn find_functions_around(
     Some(functions)
 }
 
-fn outermost_type_assertion(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -> ExprId {
-    let mut outermost = operand;
-    while let Parent::Expr(parent) = bound.parent_of_expr(outermost)
-        && hir.type_assertion_operand(parent) == Some(outermost)
-    {
-        outermost = parent;
-    }
-    outermost
-}
-
 /// The call without arguments that a name is the callee of.
 fn find_plain_call_of(hir: &hir::File<'_>, bound: &Bound<'_>, name: ExprId) -> Option<ExprId> {
-    let callee = outermost_type_assertion(hir, bound, name);
+    let callee = find_outermost_type_assertion(hir, bound, name);
     let Parent::Expr(call) = bound.parent_of_expr(callee) else {
         return None;
     };
@@ -473,7 +464,7 @@ impl Finder<'_, '_> {
 
     fn is_exports_of(&self, module: ExprId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
-        let object = outermost_type_assertion(hir, bound, module);
+        let object = find_outermost_type_assertion(hir, bound, module);
         let Parent::Expr(member) = bound.parent_of_expr(object) else {
             return false;
         };
@@ -491,7 +482,7 @@ impl Finder<'_, '_> {
                 ..
             }
         );
-        let outermost = outermost_type_assertion(hir, bound, member);
+        let outermost = find_outermost_type_assertion(hir, bound, member);
         let is_deleted = match bound.parent_of_expr(outermost) {
             Parent::Expr(user) => matches!(
                 hir[user].kind,
@@ -784,6 +775,7 @@ impl WrappedModules {
     }
 
     /// The inner module whose exports object the expression resolves to by binding: the first parameter of its function, or `.exports` of the second.
+    #[cfg(test)]
     pub fn is_exports_object(
         &self,
         files: &Files<'_>,
@@ -812,6 +804,7 @@ impl WrappedModules {
     }
 
     /// Every variable that the statement declares is the holder of an inner module.
+    #[cfg(test)]
     pub fn is_erased_statement(&self, files: &Files<'_>, file: FileId, statement: StmtId) -> bool {
         if self.of_file(file).is_empty() {
             return false;

@@ -612,6 +612,7 @@ impl ThreadPool {
         self.max_threads as usize
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     pub fn started_threads(&self) -> usize {
         usize::from(self.sync.load(Ordering::Relaxed).spawned())
     }

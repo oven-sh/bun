@@ -66,7 +66,7 @@ async function expectSameOutput(files: Record<string, string>, entry: string) {
   const ran = await spawned([join(root, isWindows ? "app.exe" : "app")], root, env);
   const plain = await spawned([bunExe(), entry], root, env);
   // index.aot.ts is the one file of a package with the condition.
-  const aotFiles = readBuildReport(report).statistics.TypedVersionsUsed;
+  const aotFiles = readBuildReport(report).statistics.AotFilesUsed;
   expect({ said, aotFiles, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
     said: [],
     aotFiles: 1,

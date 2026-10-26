@@ -46,6 +46,13 @@ pub(super) enum NamedMember<B = PendingBinding> {
     Fixed(Member),
 }
 
+pub(super) struct PendingJsxImport {
+    pub import: JsxImport,
+    pub binding: PendingBinding,
+    /// The module that the import names.
+    pub exporter: Option<ModuleRef>,
+}
+
 #[derive(Default)]
 pub(super) struct FileImports {
     pub bindings: Vec<(SymbolId, PendingBinding)>,
@@ -58,9 +65,7 @@ pub(super) struct FileImports {
     pub named_members: Vec<((ModuleRef, Atom), NamedMember)>,
     /// The module that the access is written on, the module that has the variable, and its name there.
     pub called_members: Vec<(ModuleRef, ModuleRef, Atom)>,
-    pub jsx: Vec<(JsxImport, PendingBinding)>,
-    /// For each of `jsx`, in the same order: the module that the import names.
-    pub jsx_exporters: Vec<Option<ModuleRef>>,
+    pub jsx: Vec<PendingJsxImport>,
     pub namespace_values: Vec<ModuleRef>,
     /// The CommonJS modules whose `module.exports` something in the file looks at.
     pub exports_values: Vec<ModuleRef>,
@@ -433,8 +438,11 @@ impl<'a, 's> FileBinder<'a, 's> {
                     (None, UNBOUND)
                 }
             };
-            self.imports.jsx_exporters.push(exporter);
-            self.imports.jsx.push((import, binding));
+            self.imports.jsx.push(PendingJsxImport {
+                import,
+                binding,
+                exporter,
+            });
         }
     }
 

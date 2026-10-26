@@ -6,5 +6,7 @@
     clippy::cast_ptr_alignment
 )]
 #![allow(clippy::trivially_copy_pass_by_ref, clippy::chunks_exact_to_as_chunks)]
+// One generator writes every copy.
+#![cfg_attr(mordant, allow(generic_body_not_generic, reimplemented_helper))]
 
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/aot_schema.rs"));

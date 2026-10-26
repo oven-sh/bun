@@ -112,9 +112,9 @@ impl LayoutState {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(crate) fn add_conversion(&mut self, layout: LayoutId, target: LayoutId) {
+    pub(crate) fn add_conversion(&mut self, source: LayoutId, target: LayoutId) {
         self.layouts.conversion_targets.insert(target);
-        self.fragment.add_supertype(layout, target);
+        self.fragment.add_supertype(source, target);
     }
 
     pub(crate) fn note_view(&mut self, layout: LayoutId) {

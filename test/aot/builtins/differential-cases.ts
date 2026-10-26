@@ -2,7 +2,7 @@
 // which code of its operands runs, with what, and when; what it stores, deletes, freezes and keeps; what it returns and throws;
 // which memory its result depends on. Retention in native memory that nothing hands back, and allocation of strings, cannot be seen.
 // The table is about executables, and an executable describes a value that a native function rejects without running code of the
-// program (docs/compiler/compatibility.mdx). So do the processes that make the calls here: executableEnv.
+// program (docs/compiler/compatibility.mdx). So do the processes that make the calls here: differential/describe-values-as-an-executable.ts.
 //
 //   AOT_BUILTINS_UPDATE=1   checks every declared overload and writes differential/not-checked.txt: those that do not pass, each with the reason
 //   AOT_BUILTINS_TABLE=<f>  takes the table from the generator's aot_builtin_table.json in place of the one in this build of Bun
@@ -40,7 +40,7 @@ const secondsPerAttempt = 600;
 const secondsPerCall = Number(process.env.AOT_BUILTINS_SECONDS_A_CALL) || 45;
 const secondsAsleepPerCall = 10;
 // At a level above 0 every matcher of expect() ends with a collection: thousands of them for one entry, ten times the time of the calls themselves.
-const executableEnv = { ...bunEnv, BUN_INTERNAL_DESCRIBE_VALUES_WITHOUT_SCRIPT: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
+const workerEnv = { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
 const maxAttemptsPerWorker = 400;
 
 const dump: TableDump = tablePath === null ? aotBuiltinEntries() : JSON.parse(readFileSync(tablePath, "utf8"));
@@ -306,8 +306,14 @@ function defineDescriptionTests(): void {
     for (const program of ["rejected-argument-description", "rejected-argument-whose-fields-nobody-reads"]) {
       test(program, async () => {
         await using run = Bun.spawn({
-          cmd: [bunExe(), join(programs, `${program}.ts`)],
-          env: executableEnv,
+          cmd: [
+            bunExe(),
+            "--expose-internals",
+            "--preload",
+            join(import.meta.dir, "differential/describe-values-as-an-executable.ts"),
+            join(programs, `${program}.ts`),
+          ],
+          env: workerEnv,
           stdout: "pipe",
           stderr: "inherit",
         });
@@ -382,7 +388,7 @@ export function differential(part: number, parts: number): void {
           reportsPath,
         ],
         cwd: workingFolder,
-        env: executableEnv,
+        env: workerEnv,
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",

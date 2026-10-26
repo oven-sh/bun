@@ -113,6 +113,7 @@ export default b.declarations(
       "jsFunction_aotNameClass",
       "jsFunction_arrayBufferViewHasBuffer",
       "jsFunction_builtinFeatureUses",
+      "jsFunction_describeRejectedValuesWithoutScript",
       "jsFunction_emitMemoryPressure",
       "jsFunction_hasReifiedStatic",
       "jsFunction_isASANEnabled",

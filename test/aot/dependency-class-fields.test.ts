@@ -37,7 +37,7 @@ test("the file under a package's aot condition defines its fields whatever the a
   );
   expect({ errors: built ? errors : "", built }).toEqual({ errors: "", built: 0 });
   expect(errors).not.toContain("fields");
-  expect(readBuildReport(report).statistics.TypedVersionsUsed).toBe(1);
+  expect(readBuildReport(report).statistics.AotFilesUsed).toBe(1);
   const { stdout, exitCode } = await run([outfile], String(dir));
   expect({ stdout, exitCode }).toEqual({ stdout: "x,y z\n", exitCode: 0 });
 }, 120_000);

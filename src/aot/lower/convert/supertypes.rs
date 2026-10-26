@@ -211,7 +211,15 @@ impl FileLowering<'_, '_, '_, '_> {
         kind: ConversionKind,
     ) {
         let mut comparison = Comparison::default();
-        comparison.add_pair(source, target, kind == ConversionKind::Asserted, 0, false);
+        comparison.add_pair(
+            ComparedPair {
+                source,
+                target,
+                is_asserted: kind == ConversionKind::Asserted,
+            },
+            0,
+            false,
+        );
         self.compare_pending_pairs(comparison, position);
     }
 
@@ -257,7 +265,15 @@ impl FileLowering<'_, '_, '_, '_> {
             for &target in targets.iter().filter(|&&target| target != source) {
                 self.visit_differing_members(source, target, false, |file, _, from, to| {
                     if let Ok(true) = file.queries.is_assignable(from, to) {
-                        comparison.add_pair(from, to, false, MAX_COMPARED_DEPTH, true);
+                        comparison.add_pair(
+                            ComparedPair {
+                                source: from,
+                                target: to,
+                                is_asserted: false,
+                            },
+                            MAX_COMPARED_DEPTH,
+                            true,
+                        );
                     }
                 });
             }
@@ -352,7 +368,15 @@ impl FileLowering<'_, '_, '_, '_> {
             picked.retain(|&mut member| self.queries.is_assignable(member, target) == Ok(true));
             others.extend(if picked.is_empty() { objects } else { picked });
             for source in others {
-                comparison.add_pair(source, target, true, comparison.depth, false);
+                comparison.add_pair(
+                    ComparedPair {
+                        source,
+                        target,
+                        is_asserted: true,
+                    },
+                    comparison.depth,
+                    false,
+                );
             }
             return;
         }
@@ -787,7 +811,15 @@ impl FileLowering<'_, '_, '_, '_> {
         // Nothing is compared below a member: those are types that nobody else asks the checker for.
         self.visit_differing_members(source, target, false, |_, kind, from, to| {
             if is_read_through(kind) {
-                comparison.add_pair(from, to, false, MAX_COMPARED_DEPTH, comparison.is_accepted);
+                comparison.add_pair(
+                    ComparedPair {
+                        source: from,
+                        target: to,
+                        is_asserted: false,
+                    },
+                    MAX_COMPARED_DEPTH,
+                    comparison.is_accepted,
+                );
             }
         });
     }
@@ -813,38 +845,59 @@ impl Comparison {
     // A part of the two types: a result, an element, the contents.
     fn follow(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
         if self.follows_parts() {
-            self.add_pair(source, target, false, self.depth + 1, self.is_accepted);
+            self.add_pair(
+                ComparedPair {
+                    source,
+                    target,
+                    is_asserted: false,
+                },
+                self.depth + 1,
+                self.is_accepted,
+            );
         }
     }
 
     // The same value under another of its types: a member of a union, a constraint.
     fn follow_value(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
-        self.add_pair(source, target, false, self.depth, self.is_accepted);
+        self.add_pair(
+            ComparedPair {
+                source,
+                target,
+                is_asserted: false,
+            },
+            self.depth,
+            self.is_accepted,
+        );
     }
 
     fn follow_accepted_value(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
-        self.add_pair(source, target, false, self.depth, true);
+        self.add_pair(
+            ComparedPair {
+                source,
+                target,
+                is_asserted: false,
+            },
+            self.depth,
+            true,
+        );
     }
 
     fn follow_guessed_value(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
-        self.add_pair(source, target, false, self.depth, false);
+        self.add_pair(
+            ComparedPair {
+                source,
+                target,
+                is_asserted: false,
+            },
+            self.depth,
+            false,
+        );
     }
 
-    fn add_pair(
-        &mut self,
-        source: CheckerTypeId,
-        target: CheckerTypeId,
-        is_asserted: bool,
-        depth: u8,
-        is_accepted: bool,
-    ) {
-        if source != target {
+    fn add_pair(&mut self, pair: ComparedPair, depth: u8, is_accepted: bool) {
+        if pair.source != pair.target {
             self.pending.push(PendingPair {
-                pair: ComparedPair {
-                    source,
-                    target,
-                    is_asserted,
-                },
+                pair,
                 depth,
                 is_accepted,
             });

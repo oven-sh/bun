@@ -246,7 +246,7 @@ impl Build<'_> {
             .filter(|&&file| files.compiled(file).is_some_and(|it| it.is_aot_source))
             .filter(|&&file| roles.role(file) == FileRole::Checked);
         let count = typed.count() as u64;
-        self.statistics.count(StatisticId::TypedVersionsUsed, count);
+        self.statistics.count(StatisticId::AotFilesUsed, count);
     }
 
     /// A typed package is checked and lowered by a program of its own, under the `compilerOptions` of its `package.json`.
@@ -600,6 +600,7 @@ impl Build<'_> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn with_lowering_inputs<R>(
         &self,
         loaded: &LoadedBuild<'_, '_>,
@@ -621,6 +622,31 @@ impl Build<'_> {
         left_out_functions: FxHashSet<FunctionRef>,
         then: impl FnOnce(&LoweringInputs<'_>) -> R,
     ) -> R {
+        let (mut then, mut result) = (Some(then), None);
+        let left_out = left_out_functions;
+        self.create_inputs_for_reached_code(
+            loaded,
+            bound,
+            project,
+            roles,
+            left_out,
+            &mut |inputs| {
+                let then = then.take().expect("the inputs are created once");
+                result = Some(then(inputs));
+            },
+        );
+        result.expect("the inputs are created once")
+    }
+
+    fn create_inputs_for_reached_code(
+        &self,
+        loaded: &LoadedBuild<'_, '_>,
+        bound: &BoundBuild<'_>,
+        project: ProjectId,
+        roles: &RoleDecision,
+        left_out_functions: FxHashSet<FunctionRef>,
+        then: &mut dyn FnMut(&LoweringInputs<'_>),
+    ) {
         let loaded_project = loaded.project(project);
         let bound_project = bound.projects.get(project);
         let (files, sources) = (loaded_project.loaded.files(), &loaded_project.sources);
@@ -689,7 +715,7 @@ impl Build<'_> {
             files: &file_inputs,
             limits: &self.limits,
             options: self.lowering_options(),
-        })
+        });
     }
 }
 

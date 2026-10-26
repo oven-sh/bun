@@ -9,6 +9,7 @@ mod tests;
 use bun_sema::bind::{BindingStability, CodeUnit, Decl, ScopeId, SymbolId};
 use bun_sema::hir::{ExprId, FnId};
 
+pub(in crate::lower) use self::loop_updates::is_let_declaration;
 use super::analysis::{ArgumentsObjects, ScopeAnalysis, SlotKey, find_by_key, sort_unique};
 use super::lexical_owners::compute_lexical_owners;
 use super::walk::{EvalUse, ScopeWalk, walk_file};
@@ -44,6 +45,7 @@ struct BindingSharing {
     variables: Vec<(BindingRef, VariableKey)>,
     shared: Vec<BindingRef>,
     fields_for_eval: Vec<BindingRef>,
+    fields_for_handlers: Vec<BindingRef>,
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
 }
 

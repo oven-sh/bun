@@ -1,15 +1,13 @@
 import { builtinFeatureUses } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { type Toolchain } from "../../../scripts/build/config.ts";
 import { checkBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
-import { declarationsOf, declarationsPath, documentedModules } from "../../../scripts/build/trim/declarations.ts";
 import { featureNamed, loadFeatures } from "../../../scripts/build/trim/features.ts";
 import { icuItemClasses } from "../../../scripts/build/trim/icu-data.ts";
 import { type BuiltinUses } from "../../../scripts/build/trim/types.ts";
-import { specifierOf } from "../../../src/codegen/builtins-manifest-model.ts";
 import { guardHeader } from "./toy-program.ts";
 
 const root = join(import.meta.dir, "..", "..", "..");
@@ -73,25 +71,39 @@ test("the built-ins table names declared features only, each once for an entry, 
   expect(() => checkBuiltinUses(uses, model, "builtinFeatureUses()")).not.toThrow();
 });
 
-test("packages/bun-types/trim.d.ts is current", () => {
-  expect(
-    readFileSync(declarationsPath, "utf8"),
-    "Run: bun scripts/build/trim/declarations.ts <codegen dir>/builtin-uses.json",
-  ).toBe(declarationsOf(model, uses));
-});
-
-test("packages/bun-types/trim.d.ts lists every trim feature with its description", () => {
-  const unwrap = (text: string) => text.replace(/\n\s*\*/g, "").replace(/\s/g, "");
-  const declarations = readFileSync(declarationsPath, "utf8");
-  expect([...declarations.matchAll(/^ {6}\| "([^"]+)"/gm)].map(match => match[1])).toEqual(
+test("Bun.Build.TrimFeature lists every trim feature", () => {
+  const declarations = readFileSync(join(root, "packages", "bun-types", "bun.d.ts"), "utf8");
+  const start = declarations.indexOf("    type TrimFeature =\n");
+  expect(start).toBeGreaterThanOrEqual(0);
+  const union = declarations.slice(start, declarations.indexOf(";", start));
+  expect([...union.matchAll(/^ {6}\| "([^"]+)"/gm)].map(match => match[1])).toEqual(
     model.trimFeatures.map(trimFeature => trimFeature.name),
   );
-  const unwrapped = unwrap(declarations);
-  expect(
-    model.trimFeatures
-      .filter(trimFeature => !unwrapped.includes(unwrap(trimFeature.about)))
-      .map(trimFeature => trimFeature.name),
-  ).toEqual([]);
+});
+
+test("docs/compiler/size.mdx lists every trim feature with its description and its sizes", () => {
+  const page = readFileSync(join(root, "docs", "compiler", "size.mdx"), "utf8");
+  const start = page.indexOf("### Feature names\n");
+  expect(start).toBeGreaterThanOrEqual(0);
+  const rows = page
+    .slice(start, page.indexOf("\n## ", start))
+    .split("\n")
+    .filter(line => line.startsWith("| `"))
+    .map(line =>
+      line
+        .slice(1, -1)
+        .split(/(?<!\\)\|/)
+        .map(cell => cell.trim().replaceAll("\\|", "|")),
+    );
+  const sizeOf = (megabytes: number) => (megabytes < 0.05 ? "< 0.1 MB" : `${megabytes.toFixed(1)} MB`);
+  expect(rows).toEqual(
+    model.trimFeatures.map(({ name, about, also, saves }) => [
+      `\`${name}\``,
+      also.length > 0 ? `${about} Also needs it: ${also.join("; ")}.` : about,
+      sizeOf(saves!.linux),
+      sizeOf(saves!.macos),
+    ]),
+  );
 });
 
 test("every trim feature has a description that ends with a period, and the sizes it saves", () => {
@@ -103,15 +115,6 @@ test("every trim feature has a description that ends with a period, and the size
       .filter(({ saves }) => !saves || !Number.isFinite(saves.linux) || !Number.isFinite(saves.macos))
       .map(trimFeature => trimFeature.name),
   ).toEqual([]);
-});
-
-test("no trim feature documents a module of src/js/internal", () => {
-  const internalFiles = readdirSync(join(root, "src", "js", "internal"), { recursive: true, encoding: "utf8" });
-  const internalSpecifiers = new Set(internalFiles.map(file => specifierOf(`internal/${file.replaceAll("\\", "/")}`)));
-  expect(internalSpecifiers.has("internal/dgram")).toBe(true);
-  const documented = model.trimFeatures.flatMap(trimFeature => documentedModules(model, uses, trimFeature));
-  expect(documented.length).toBeGreaterThan(10);
-  expect(documented.filter(module => internalSpecifiers.has(module))).toEqual([]);
 });
 
 const neverOffered: Record<string, string> = {

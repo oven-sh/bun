@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 
-// Under LeakSanitizer the build and the executable both end without a leak record, and without a list of suppressions: a record
-// that is suppressed still starts the symbolizer, which takes seconds to read a Bun with debug information, at every exit.
-// What the run time keeps for the life of the process has to be reachable or come from the allocator LeakSanitizer does not track.
+// Under LeakSanitizer, and without a list of suppressions, the build ends without a leak record, and the executable ends with
+// none that `bun run` of the same program does not end with too. Each runs twice: as built, and with Malloc=1, which sends WTF's
+// allocations to the allocator that LeakSanitizer tracks.
 
 const programs: Record<string, Record<string, string>> = {
   "a line of output": {
@@ -79,6 +79,46 @@ const env = {
   ASAN_OPTIONS: "allow_user_segv_handler=1:detect_leaks=1:abort_on_error=0",
   LSAN_OPTIONS: "malloc_context_size=30",
 };
+const envWithSystemMalloc = { ...env, Malloc: "1", LSAN_OPTIONS: "malloc_context_size=30:use_unaligned=1" };
+
+function getFunctionName(frame: string): string {
+  if (frame.startsWith("<")) return frame;
+  let depth = 0;
+  let name = "";
+  for (const character of frame) {
+    if (character === "<" || character === "(") depth++;
+    else if (character === ">" || character === ")") depth--;
+    else if (depth === 0) name += character;
+  }
+  return name
+    .replace(/ const$/, "")
+    .trim()
+    .split(" ")
+    .at(-1)!;
+}
+
+const isAllocator = (frame: string) =>
+  /^(malloc|calloc|realloc|posix_memalign|aligned_alloc|operator new|pas_|bmalloc_|__rust_|__rdl_|<(alloc|core|std)::)/.test(
+    frame,
+  ) || /^(WTF|std|alloc|core|hashbrown)::/.test(getFunctionName(frame));
+
+/** Each leak record of a report, by the first function on its stack that is neither an allocator nor a container. */
+function getLeakRecords(stderr: string): Map<string, string> {
+  const report =
+    /\n=+\n==\d+==ERROR: LeakSanitizer: detected memory leaks\n[^]*?\nSUMMARY: AddressSanitizer: .*\n/.exec(
+      stderr,
+    )?.[0] ?? "";
+  expect(stderr.replace(report, "")).toBe("");
+  const records = new Map<string, string>();
+  for (const record of report.split(/\n(?=(?:Direct|Indirect) leak of )/).slice(1)) {
+    const frames = Array.from(
+      record.matchAll(/^ +#\d+ 0x[0-9a-f]+ in (.+?)(?: \/\S+| \(\S+\+0x[0-9a-f]+\).*)?$/gm),
+      match => match[1],
+    );
+    records.set(getFunctionName(frames.find(frame => !isAllocator(frame)) ?? record), record);
+  }
+  return records;
+}
 
 test.skipIf(!isASAN).each(Object.keys(programs))(
   "%s",
@@ -96,15 +136,27 @@ test.skipIf(!isASAN).each(Object.keys(programs))(
     const withSystemMalloc = await runCommand(
       [bunExe(), "build", "--compile", "--aot", ...Object.keys(programs[name]), "--outfile", executable + "-2"],
       String(dir),
-      { ...env, Malloc: "1", LSAN_OPTIONS: "malloc_context_size=30:use_unaligned=1" },
+      envWithSystemMalloc,
     );
     expect(withSystemMalloc.stderr).not.toContain("LeakSanitizer");
     expect(withSystemMalloc.exitCode).toBe(0);
 
-    const { stdout, stderr, exitCode } = await runCommand([executable], String(dir), env);
-    expect(stderr).toBe("");
-    expect(stdout).toBe(expected[name]);
-    expect(exitCode).toBe(0);
+    for (const runEnv of [env, envWithSystemMalloc]) {
+      const compiled = await runCommand([executable], String(dir), runEnv);
+      expect(compiled.stdout).toBe(expected[name]);
+      const records = getLeakRecords(compiled.stderr);
+      if (records.size === 0) {
+        expect(compiled.exitCode).toBe(0);
+        continue;
+      }
+      const plain = await runCommand([bunExe(), "run", "entry.ts"], String(dir), runEnv);
+      expect(plain.stdout).toBe(expected[name]);
+      const plainRecords = getLeakRecords(plain.stderr);
+      expect(
+        [...records].filter(([allocatedBy]) => !plainRecords.has(allocatedBy)).map(([, record]) => record),
+      ).toEqual([]);
+      expect(compiled.exitCode).toBe(plain.exitCode);
+    }
   },
   240_000,
 );

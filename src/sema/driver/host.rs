@@ -545,7 +545,7 @@ impl Disk {
 
     /// As on a system where the threads that read files are not the threads that parse them.
     #[cfg(test)]
-    pub(crate) fn reading_on_threads_of_their_own(mut self) -> Self {
+    pub(crate) fn with_reader_threads(mut self) -> Self {
         if self.io_pool.is_none() {
             self.io_pool = Some(bun_threading::io_thread_pool::acquire().into());
         }

@@ -1,5 +1,7 @@
 use super::import_graph::ImportGraph;
-use super::{Build, LoadedBuild, LoadedProject, ProgramsOfOneLoad, mentions_worker_constructor};
+use super::{
+    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, mentions_worker_constructor,
+};
 use crate::builtins::{BuiltinNames, RuntimeModule};
 use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::load::fold_inputs::{
@@ -42,6 +44,7 @@ const MAX_ASSET_READERS: usize = 64;
 /// What plugins make of the assets is needed when the executable is written. A plugin can take seconds for one.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum AssetReads {
+    #[cfg(test)]
     FinishedByLoad,
     /// They go on while `then` runs, which calls `LoadedBuild::finish_asset_reads`.
     FinishedLater,
@@ -104,7 +107,16 @@ struct SharedLoadInputs<'c, 's> {
     messages: &'c LoadMessages,
 }
 
+fn create_runtime_modules(archive: &'static Archive, options: &Options<'_>) -> RuntimeModules {
+    let runtime_modules = RuntimeModules::new(archive, options.load.omits_builtin_modules)
+        .with_test_aliases(options.load.runs_tests);
+    #[cfg(test)]
+    let runtime_modules = runtime_modules.with_replaced_sources(&options.load.in_memory_files);
+    runtime_modules
+}
+
 impl<'a> Build<'a> {
+    #[cfg(test)]
     pub(crate) fn with_loaded_projects<R>(
         &mut self,
         then: impl for<'b, 's> FnOnce(&mut Build<'a>, LoadedBuild<'b, 's>) -> Result<R, Stage>,
@@ -154,10 +166,7 @@ impl<'a> Build<'a> {
         let atoms = Interner::new_in(application_session);
         let builtin_names = BuiltinNames::new(&atoms);
         let archive = Archive::embedded();
-        let runtime_modules = RuntimeModules::new(archive, options.load.omits_builtin_modules)
-            .with_test_aliases(options.load.runs_tests);
-        #[cfg(test)]
-        let runtime_modules = runtime_modules.with_replaced_sources(&options.load.in_memory_files);
+        let runtime_modules = create_runtime_modules(archive, options);
         let messages = LoadMessages::default();
         let provided = messages.with_log(|log| {
             self.provider
@@ -210,6 +219,7 @@ impl<'a> Build<'a> {
             limits: &limits,
         });
         let host = match asset_reads {
+            #[cfg(test)]
             AssetReads::FinishedByLoad => host,
             AssetReads::FinishedLater => host.reading_in_background_after_load(),
         };

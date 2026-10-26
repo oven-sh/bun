@@ -199,6 +199,7 @@ calls/errors-of-native-methods-list-the-method-in-their-stack
 calls/function-call-reached-as-a-value
 calls/function-value-results-typed
 calls/functions-bound-in-code-that-runs-once
+calls/functions-made-from-text-recurse-until-the-stack-ends
 calls/guard-held-across-a-call-that-is-taken-in
 calls/host-builtins-by-value
 calls/host-getters-and-string-builtins-by-value
@@ -348,6 +349,9 @@ closure-factories/a-factory-that-can-tell-its-closures-apart
 closure-factories/a-helper-object-changes-between-the-links-of-a-chain
 closure-factories/a-helper-object-defines-members-under-written-names
 closure-factories/a-helper-that-defines-members-is-replaced
+closure-factories/a-method-begins-with-the-read-of-a-field-and-counts-its-calls
+closure-factories/a-method-begins-with-the-read-of-a-field-that-its-closure-captures
+closure-factories/a-method-of-a-helper-object-calls-itself
 closure-factories/a-sloppy-factory-reads-arguments-callee
 closure-factories/a-variable-that-holds-a-factory-is-assigned-again
 closure-factories/closures-of-one-factory-look-alike-and-are-distinct
@@ -1130,10 +1134,12 @@ strings/a-text-is-read-between-and-behind-its-appends
 strings/a-text-made-in-either-arm-grows-in-a-try-whose-catch-reads-it
 strings/a-text-takes-the-place-of-what-a-pattern-finds
 strings/a-text-that-is-read-cut-back-and-joined-with-objects-while-it-grows
+strings/an-append-that-makes-a-string-too-long-leaves-it-unchanged
 strings/anything-compared-with-the-empty-string
 strings/append-escaped-html
 strings/append-one-region-at-a-time
 strings/append-short-pieces
+strings/appends-in-a-try-and-its-catch
 strings/array-entries
 strings/atomic-group-idiom-character-class
 strings/code-units-of-letters-and-pieces-cut-from-a-string
@@ -1167,6 +1173,7 @@ strings/split-prefix-forms
 strings/string-builder-in-the-frame
 strings/strings-built-and-consumed-locally
 strings/strings-in-pieces-become-numbers-inside-built-ins-validated
+strings/strings-that-grow-around-a-loop-on-two-paths
 strings/switches-over-short-texts
 strings/texts-are-cut-and-replaced-at-texts-of-every-length
 strings/texts-built-of-numbers-and-constants-in-front-of-calls-and-of-reads-that-throw

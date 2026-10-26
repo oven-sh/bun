@@ -550,6 +550,7 @@ impl<'a, 's> Resolver<'a, 's> {
             module_object_mentions: output.module_object_mentions.into_boxed_slice(),
             stores_with_module_exports: output.stores_with_module_exports.into_boxed_slice(),
             mentioned,
+            #[cfg(test)]
             exposed,
             uses,
             loads_unknown_modules,

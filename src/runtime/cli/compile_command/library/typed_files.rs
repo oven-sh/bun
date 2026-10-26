@@ -3,7 +3,7 @@ use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
 use bun_core::ZBox;
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::{join_abs_string, platform_to_posix_in_place, relative_platform};
-use bun_sema_driver::sound_files::javascript_path_beside;
+use bun_sema_driver::typed_files::javascript_path_beside;
 
 use crate::cli::check_command::{
     CompilerOptions, TypedFilesRequest, WrittenJavaScript, take_module_types,

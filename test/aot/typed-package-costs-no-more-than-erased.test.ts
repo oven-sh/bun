@@ -74,7 +74,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-package-costs-no-more-than-era
           built(build);
           expect(build.stdout + build.stderr).not.toMatch(/compiled (untyped|without (its |their )?types)/);
           const { summary, statistics } = JSON.parse(readFileSync(report, "utf8"));
-          expect(statistics.TypedVersionsUsed).toBe(1);
+          expect(statistics.AotFilesUsed).toBe(1);
           seen[way].bytesOfCode = summary.codeBytes;
           seen[way].bytesOfPackage = bytesOfPackage(readFileSync(map, "utf8"));
           if (!whyNotCounted)

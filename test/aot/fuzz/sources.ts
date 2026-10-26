@@ -67,6 +67,12 @@
 //   one-name-taken-apart-beside-other-kinds one function takes apart what a variable of type any holds, by a pattern, a spread, a loop or a built-in, and another stores a thing of another kind under that name (one-name-taken-apart-beside-other-kinds.ts)
 //   results-of-awaited-steps-used-behind-a-test the result of an awaited step of an async generator, used behind a test of that result: a pattern, `?.`, `== null`, `&&`, typeof (results-of-awaited-steps-used-behind-a-test.ts)
 //   lists-made-of-what-is-walked-and-used-on-a-rare-path a function makes a list of what it was handed, by the rest of a pattern, a spread or Array.from, and uses it on a path that seldom runs (lists-made-of-what-is-walked-and-used-on-a-rare-path.ts)
+//   strings-grown-piece-by-piece-on-many-paths a string grows piece by piece in a loop and the pieces are appended on more than one path: both arms of a test, a try and its handler, behind a continue; some pieces throw in the middle of an append; some programs run a million turns (strings-grown-piece-by-piece-on-many-paths.ts)
+//   compiled-code-calls-text-made-at-run-time compiled code calls functions whose text is made at run time, in every way a function can be called, and that text calls compiled code back: parameters declared, arguments given and locals of the callee are crossed (compiled-code-calls-text-made-at-run-time.ts)
+//   long-array-literals-of-mixed-constants an array literal of a few thousand elements of every kind, around the lengths at which a literal may be built in another way, in every place a literal can stand (long-array-literals-of-mixed-constants.ts)
+//   very-many-values-alive-across-very-many-blocks one function holds thousands of values at once, each read in a block of its own and used far from where it was made: forward, backward, a while later, round a loop, in a handler; the builds take minutes (very-many-values-alive-across-very-many-blocks.ts)
+//   methods-of-helper-objects-define-members-under-written-names a method of a helper object defines a closure on a target under a key it is handed, the calls hand it written names, and the method calls itself or its neighbours in every way (methods-of-helper-objects-define-members-under-written-names.ts)
+//   functions-that-keep-very-many-values-alive one function keeps 40 to 5,000 values alive at once, through a loop, into a catch block or over calls that collect, and sums them all (functions-that-keep-very-many-values-alive.ts)
 //   a-full-heap-is-let-go-and-built-ins-make-things objects are kept until no more fit, all or half of them are let go, and at once one built-in that makes things is called thousands of times: there is room again, so no call may fail (a-full-heap-is-let-go-and-built-ins-make-things.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
@@ -525,6 +531,72 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       const program: Program = { text: generate(new Random(seed)), extension: "ts" };
       return bed.accepts(program) && bed.allows(program.text)
         ? { source: "lists-made-of-what-is-walked-and-used-on-a-rare-path", seed, ...program, notes: "typed" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "functions-that-keep-very-many-values-alive.ts"))) {
+    const { generate } = await import("./functions-that-keep-very-many-values-alive.ts");
+    sources["functions-that-keep-very-many-values-alive"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "functions-that-keep-very-many-values-alive", seed, ...program, notes: "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "strings-grown-piece-by-piece-on-many-paths.ts"))) {
+    const { generate } = await import("./strings-grown-piece-by-piece-on-many-paths.ts");
+    sources["strings-grown-piece-by-piece-on-many-paths"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "strings-grown-piece-by-piece-on-many-paths", seed, ...program, notes: "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "compiled-code-calls-text-made-at-run-time.ts"))) {
+    const { generate } = await import("./compiled-code-calls-text-made-at-run-time.ts");
+    sources["compiled-code-calls-text-made-at-run-time"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "compiled-code-calls-text-made-at-run-time", seed, ...program, notes: "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "methods-of-helper-objects-define-members-under-written-names.ts"))) {
+    const { generate } = await import("./methods-of-helper-objects-define-members-under-written-names.ts");
+    sources["methods-of-helper-objects-define-members-under-written-names"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "methods-of-helper-objects-define-members-under-written-names", seed, ...program, notes: "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "long-array-literals-of-mixed-constants.ts"))) {
+    const { generate } = await import("./long-array-literals-of-mixed-constants.ts");
+    sources["long-array-literals-of-mixed-constants"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const program: Program = { text: generate(new Random(seed)), extension: "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? { source: "long-array-literals-of-mixed-constants", seed, ...program, notes: "untyped" }
+        : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "very-many-values-alive-across-very-many-blocks.ts"))) {
+    const { generate } = await import("./very-many-values-alive-across-very-many-blocks.ts");
+    sources["very-many-values-alive-across-very-many-blocks"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text)
+        ? {
+            source: "very-many-values-alive-across-very-many-blocks",
+            seed,
+            ...program,
+            notes: typed ? "typed" : "untyped",
+          }
         : undefined;
     };
   }

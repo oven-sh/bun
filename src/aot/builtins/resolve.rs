@@ -203,6 +203,7 @@ pub struct ResolvedBuiltins {
     module_object_mentions: Box<[ModuleObjectMention]>,
     stores_with_module_exports: Box<[ExprId]>,
     mentioned: Box<[BuiltinId]>,
+    #[cfg(test)]
     exposed: Box<[BuiltinId]>,
     uses: RuntimeUses,
     loads_unknown_modules: bool,
@@ -268,6 +269,7 @@ impl ResolvedBuiltins {
         &self.mentioned
     }
 
+    #[cfg(test)]
     pub fn exposed(&self) -> &[BuiltinId] {
         &self.exposed
     }

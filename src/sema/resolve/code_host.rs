@@ -180,6 +180,7 @@ pub struct EnclosingPackage<'a> {
 }
 
 impl EnclosingPackage<'_> {
+    #[cfg(test)]
     pub fn relative_path<'p>(&self, path: &'p [u8]) -> &'p [u8] {
         let relative = path.strip_prefix(self.directory).unwrap_or(path);
         relative.strip_prefix(b"/").unwrap_or(relative)

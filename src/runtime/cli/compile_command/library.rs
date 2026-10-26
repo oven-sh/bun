@@ -111,8 +111,8 @@ fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
     join_abs_string::<Auto>(working_directory, &[path]).to_vec()
 }
 
-fn is_inside(directory: &[u8], path: &[u8]) -> bool {
-    let below = path.strip_prefix(directory);
+fn is_inside(ancestor: &[u8], path: &[u8]) -> bool {
+    let below = path.strip_prefix(ancestor);
     below.is_some_and(|below| {
         below
             .first()

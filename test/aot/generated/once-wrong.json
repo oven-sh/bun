@@ -1,0 +1,51 @@
+{
+  "a class with very many members": [
+    "4095: public fields of a class and private fields of its heir.",
+    "4096: a large class with a large heir and a small one.",
+    "4096: declared fields of a class and of its heir.",
+    "4096: public fields of a class and of its heir.",
+    "4096: public fields of a class and private fields of its heir.",
+    "4096: public fields of five classes in a row.",
+    "4096: stores of a constructor function and public fields of its heir.",
+    "5000: a large class with a large heir and a small one.",
+    "5000: declared fields of a class and of its heir.",
+    "5000: public fields of a class and of its heir.",
+    "5000: public fields of a class and private fields of its heir.",
+    "5000: public fields of five classes in a row.",
+    "5000: stores of a constructor function and public fields of its heir."
+  ],
+  "built-ins make things behind a full heap that was let go": [
+    "seed 2.",
+    "seed 6.",
+    "seed 20.",
+    "seed 23.",
+    "seed 27.",
+    "seed 28.",
+    "seed 32.",
+    "seed 37.",
+    "seed 39."
+  ],
+  "odd callables at every way to call or construct them": ["construct extends"],
+  "text parsed as a type gives what plain JSON.parse gives": [
+    "seed 117.",
+    "seed 12.",
+    "seed 126.",
+    "seed 135.",
+    "seed 158.",
+    "seed 167.",
+    "seed 178.",
+    "seed 184.",
+    "seed 197.",
+    "seed 20."
+  ],
+  "the frames of a native method that refuses a frozen list": ["push."],
+  "the frames of push where a list refuses one more element": [
+    "frozen, empty.",
+    "frozen, of numbers that are no integers.",
+    "frozen, of texts.",
+    "frozen, with a hole.",
+    "not extensible.",
+    "of a fixed length.",
+    "sealed."
+  ]
+}

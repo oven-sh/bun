@@ -394,8 +394,9 @@ const XXH_PRIME_3: u64 = 0x1656_67B1_9E37_79F9;
 const XXH_PRIME_4: u64 = 0x85EB_CA77_C2B2_AE63;
 const XXH_PRIME_5: u64 = 0x27D4_EB2F_1656_67C5;
 
-fn xxh_round(lane: u64, input: u64) -> u64 {
-    lane.wrapping_add(input.wrapping_mul(XXH_PRIME_2))
+fn xxh_round(accumulator: u64, input: u64) -> u64 {
+    accumulator
+        .wrapping_add(input.wrapping_mul(XXH_PRIME_2))
         .rotate_left(31)
         .wrapping_mul(XXH_PRIME_1)
 }

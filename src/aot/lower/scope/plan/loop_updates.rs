@@ -10,7 +10,7 @@ use crate::lower::scope::walk::ScopeWalk;
 
 type StoreTargets = SmallVec<[ExprId; 4]>;
 
-fn is_let_declaration(hir: &hir::File<'_>, statement: StmtId) -> bool {
+pub(in crate::lower) fn is_let_declaration(hir: &hir::File<'_>, statement: StmtId) -> bool {
     if statement.is_none() {
         return false;
     }

@@ -1,5 +1,5 @@
 use super::computed::{installed_name, rewritten_extensions, written_package_name};
-use super::manifest::{ExportsEntry, ExportsMap, build_exports_entry};
+use super::manifest::{ExportsEntry, ExportsMap, build_exports_entry, non_empty_string_property};
 use super::*;
 use crate::module_format::DeclaredModuleType;
 use crate::program::HostModuleId;
@@ -404,7 +404,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
         let self_reference = ancestors(start)
             .find_map(|ancestor| Some((ancestor, self.read_manifest(ancestor)?)))
             .filter(|(_, manifest)| {
-                let name = text_property(manifest, b"name").unwrap_or_default();
+                let name = non_empty_string_property(manifest, b"name").unwrap_or_default();
                 self.read_exports(manifest).is_some()
                     && written_package_name(specifier) == Some(name)
             });
@@ -616,7 +616,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
         let prefers_main = !(self.prefers_module_field && self.kind != CodeImportKind::Require);
         let load_main = |value| self.load_from_main_field(directory, value, &MAIN_FIELD_EXTENSIONS);
         for field in MAIN_FIELDS {
-            let Some(value) = text_property(manifest, field) else {
+            let Some(value) = non_empty_string_property(manifest, field) else {
                 continue;
             };
             let is_main = field == b"main";
@@ -630,7 +630,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
             if is_main {
                 return Some(found_file(found));
             }
-            let main = match text_property(manifest, b"main") {
+            let main = match non_empty_string_property(manifest, b"main") {
                 Some(main_value) => load_main(main_value),
                 None => self.load_as_index(directory, &MAIN_FIELD_EXTENSIONS),
             };
@@ -699,11 +699,6 @@ fn found_file(path: Vec<u8>) -> FoundCode {
         required: None,
         links_followed: false,
     }
-}
-
-fn text_property<'j>(manifest: &'j Json, key: &[u8]) -> Option<&'j [u8]> {
-    let text = get_first(manifest, key)?.as_str()?;
-    (!text.is_empty()).then_some(text)
 }
 
 fn parse_package_specifier(specifier: &[u8]) -> Option<(&[u8], Vec<u8>)> {

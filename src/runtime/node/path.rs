@@ -899,6 +899,19 @@ fn format<'a, const WINDOWS: bool>(
     cx: &mut JsScope<'a>,
     path_object: JsLocal<'a>,
 ) -> TextResult<'a> {
+    let separator = if WINDOWS {
+        CHAR_BACKWARD_SLASH
+    } else {
+        CHAR_FORWARD_SLASH
+    };
+    format_with_separator(cx, path_object, separator)
+}
+
+fn format_with_separator<'a>(
+    cx: &mut JsScope<'a>,
+    path_object: JsLocal<'a>,
+    separator: u8,
+) -> TextResult<'a> {
     let path_object = path_object.to_js();
     let members = {
         let global = cx.global();
@@ -945,11 +958,7 @@ fn format<'a, const WINDOWS: bool>(
             ext,
             name,
         },
-        if WINDOWS {
-            CHAR_BACKWARD_SLASH
-        } else {
-            CHAR_FORWARD_SLASH
-        },
+        separator,
         scratch.slice(),
     ))
 }

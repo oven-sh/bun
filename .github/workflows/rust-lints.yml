@@ -13,6 +13,8 @@ on:
       - "src/codegen/**"
       - "src/trim/features/**"
       - "test/aot/ir/**"
+      # src/aot/report/wording/tests.rs includes it.
+      - "docs/compiler/explain.mdx"
       - "test/internal/aot-schema-generator.test.ts"
       - "scripts/build/**"
       - "scripts/build.ts"

@@ -1,18 +1,9 @@
-use bun_sema::hir::{self, ExprId, StmtId, StmtKind, VarKind};
+use bun_sema::hir::{ExprId, StmtId, StmtKind};
 
 use crate::ir::BlockId;
 use crate::lower::control::BreakTargetKind;
+use crate::lower::scope::is_let_declaration;
 use crate::lower::{FunctionLowering, dispose};
-
-fn is_let_declaration(hir: &hir::File<'_>, statement: StmtId) -> bool {
-    if statement.is_none() {
-        return false;
-    }
-    let StmtKind::Var(declarations) = hir[statement].kind else {
-        return false;
-    };
-    !declarations.is_empty() && matches!(hir[declarations.at(0)].kind, VarKind::Let)
-}
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn begin_loop(&mut self, statement: StmtId) -> BlockId {

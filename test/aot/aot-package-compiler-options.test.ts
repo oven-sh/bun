@@ -129,7 +129,7 @@ async function compile(root: string) {
   const report = join(root, "report.json");
   const built = await spawned([bunExe(), "compile", "./app.ts", "--aot-report=" + report], root, env);
   const said = (built.stdout + built.stderr).split(/\r?\n/).filter(line => /^(warn|error): /.test(line));
-  return { said, exitCode: built.exitCode, aotFiles: readBuildReport(report).statistics.TypedVersionsUsed };
+  return { said, exitCode: built.exitCode, aotFiles: readBuildReport(report).statistics.AotFilesUsed };
 }
 
 describe.concurrent("the file under a package's aot condition means what its package.json says", () => {

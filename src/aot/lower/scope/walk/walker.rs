@@ -245,6 +245,7 @@ impl<'x, 's> Walker<'x, 's> {
             function,
             lexical_scope: self.lexical_owners[scope.idx()],
             enclosing_loop: None,
+            enclosing_try: None,
             is_repeated: function != WalkedFunctionId::MODULE_BODY,
             is_conditional: false,
         };
@@ -286,6 +287,12 @@ impl<'x, 's> Walker<'x, 's> {
             let walked_loop = &mut self.walk.loops[index as usize];
             walked_loop.stored.push(binding);
             next = walked_loop.parent;
+        }
+        let mut next = context.enclosing_try;
+        while let Some(index) = next {
+            let walked_try = &mut self.walk.tries[index as usize];
+            walked_try.stored.push(binding);
+            next = walked_try.parent;
         }
     }
 

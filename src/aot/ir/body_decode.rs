@@ -1,6 +1,4 @@
-use super::body::{
-    BlockView, FieldWord, StreamError, TargetView, TerminatorView, ValueView, WELL_FORMED, Words,
-};
+use super::body::{BlockView, StreamError, TargetView, TerminatorView, ValueView};
 use super::generated::{
     BlockHead, InternalErrorKind, Opcode, ParameterHead, TargetHead, TerminatorHead,
     TerminatorKind, ValueHead, visit_terminator_fields, visit_value_fields,
@@ -30,8 +28,8 @@ fn split_fields(
         .ok_or(InternalErrorKind::ListOutOfBounds)
 }
 
-fn consumed_words<'a>(words: &'a [u32], rest: &[u32]) -> &'a [u32] {
-    &words[..words.len() - rest.len()]
+fn consumed_words<'a>(words: &'a [u32], unread: &[u32]) -> &'a [u32] {
+    &words[..words.len() - unread.len()]
 }
 
 fn value_id_range_end(first: u32, count: u32) -> Option<u32> {
@@ -157,86 +155,10 @@ pub(super) fn read_target(words: &[u32]) -> Result<(TargetView<'_>, &[u32]), Int
     Ok((target, rest))
 }
 
-fn read_words<const N: usize, W: Words + ?Sized>(words: &W, at: usize) -> [u32; N] {
-    core::array::from_fn(|index| words.get(at + index).expect(WELL_FORMED))
-}
-
-pub(super) fn walk_body<W: Words + ?Sized>(
-    words: &W,
-    block_count: u32,
-    visit: &mut dyn FnMut(FieldWord, usize),
-) {
-    let mut at = 0;
-    for _ in 0..block_count {
-        at = walk_block(words, at, visit);
-    }
-}
-
-fn walk_block<W: Words + ?Sized>(
-    words: &W,
-    at: usize,
-    visit: &mut dyn FnMut(FieldWord, usize),
-) -> usize {
-    let head = read_words::<{ BlockHead::WORDS }, W>(words, at);
-    let head = BlockHead::from_words(&head).expect(WELL_FORMED);
-    let mut at = BlockHead::visit_words(words, at, visit).expect(WELL_FORMED);
-    for _ in 0..head.parameter_count {
-        at = ParameterHead::visit_words(words, at, visit).expect(WELL_FORMED);
-    }
-    if head.has_handler {
-        at = walk_target(words, at, visit);
-    }
-    for _ in 0..head.value_count {
-        at = walk_value(words, at, visit);
-    }
-    walk_terminator(words, at, visit)
-}
-
-fn walk_value<W: Words + ?Sized>(
-    words: &W,
-    at: usize,
-    visit: &mut dyn FnMut(FieldWord, usize),
-) -> usize {
-    let head = read_words::<{ ValueHead::WORDS }, W>(words, at);
-    let head = ValueHead::from_words(&head).expect(WELL_FORMED);
-    let opcode = Opcode::from_wire(head.opcode).expect(WELL_FORMED);
-    visit_value_fields(opcode, words, at + ValueHead::WORDS, visit).expect(WELL_FORMED)
-}
-
-fn walk_terminator<W: Words + ?Sized>(
-    words: &W,
-    at: usize,
-    visit: &mut dyn FnMut(FieldWord, usize),
-) -> usize {
-    let head = read_words::<{ TerminatorHead::WORDS }, W>(words, at);
-    let head = TerminatorHead::from_words(&head).expect(WELL_FORMED);
-    let kind = TerminatorKind::from_wire(head.kind).expect(WELL_FORMED);
-    let first_field = at + TerminatorHead::WORDS;
-    let mut at = visit_terminator_fields(kind, words, first_field, visit).expect(WELL_FORMED);
-    for _ in 0..head.target_count {
-        at = walk_target(words, at, visit);
-    }
-    at
-}
-
-fn walk_target<W: Words + ?Sized>(
-    words: &W,
-    at: usize,
-    visit: &mut dyn FnMut(FieldWord, usize),
-) -> usize {
-    let head = read_words::<{ TargetHead::WORDS }, W>(words, at);
-    let head = TargetHead::from_words(&head).expect(WELL_FORMED);
-    let first_argument = at + TargetHead::WORDS;
-    let first_proof = first_argument + head.argument_count as usize;
-    for argument in first_argument..first_proof {
-        visit(FieldWord::Operand, argument);
-    }
-    first_proof + head.proof_count as usize
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::body::Body;
+    use super::super::body::{Body, FieldWord, WELL_FORMED};
+    use super::super::body_walk::walk_body;
     use super::super::builder::Edge;
     use super::super::generated::BlockRole;
     use super::super::ids::{PropertyKeyId, TypeId};

@@ -7,7 +7,7 @@ use bun_aot::engine::{
 use bun_ast::Loader;
 use bun_bundler::aot::{AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint};
 use bun_bundler::options::{self, OutputFile};
-use bun_core::{ZBox, fmt as bun_fmt};
+use bun_core::ZBox;
 use bun_exe_format::identity::{
     HostDescription, RuntimeDescription, find_file_identity, find_process_identity,
     read_stamp_of_builtin_modules,
@@ -26,8 +26,8 @@ use bun_sys::Fd;
 use bun_trim::{Feature, TrimPlan, UnseenCode, UsedFeature, UsedFeatures, UsedLocales};
 
 use super::{
-    BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest, configuration,
-    reports, trimming,
+    AssetError, BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest,
+    configuration, reports, trimming,
 };
 use crate::cli::build_command::collect_compile_assets;
 
@@ -455,9 +455,9 @@ fn add_assets_under_root(
     entry_name: &[u8],
     root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), String> {
-    let working_directory = bun_sys::getcwd_alloc()
-        .map_err(|error| format!("failed to read the working directory: {error}"))?;
+) -> Result<(), AssetError> {
+    let working_directory =
+        bun_sys::getcwd_alloc().map_err(AssetError::WorkingDirectoryUnreadable)?;
     let mut modules_without_text = modules_without_text(output_files);
     let mut taken: std::collections::BTreeMap<Box<[u8]>, Option<usize>> = output_files
         .iter()
@@ -472,7 +472,8 @@ fn add_assets_under_root(
         .collect();
     for asset in assets {
         let mut files = Vec::new();
-        collect_compile_assets(core::slice::from_ref(asset), b"", &mut files)?;
+        collect_compile_assets(core::slice::from_ref(asset), b"", &mut files)
+            .map_err(AssetError::NotCollected)?;
 
         let asset_path = trim_trailing_separators(asset);
         let asset_name = bun_paths::basename(asset_path);
@@ -481,10 +482,9 @@ fn add_assets_under_root(
         let first_name_length = bun_core::strings::index_of_char_usize(embedded_path, b'/')
             .unwrap_or(embedded_path.len());
         if &embedded_path[..first_name_length] == bun_paths::basename(entry_name) {
-            return Err(format!(
-                "asset {} would embed at the same path as the entry point; use a different outfile",
-                bun_fmt::quote(asset),
-            ));
+            return Err(AssetError::EmbedsAtEntryPoint {
+                asset: asset.clone(),
+            });
         }
         for mut file in files {
             if let Some(under_root) = &under_root {
@@ -502,11 +502,10 @@ fn add_assets_under_root(
             let is_same_file = earlier
                 .is_some_and(|index| output_files[index].value.as_slice() == file.value.as_slice());
             if !is_same_file {
-                return Err(format!(
-                    "asset {} collides with another embedded file at {}",
-                    bun_fmt::quote(asset),
-                    bun_fmt::quote(&file.dest_path),
-                ));
+                return Err(AssetError::Collides {
+                    asset: asset.clone(),
+                    path: file.dest_path,
+                });
             }
         }
     }
@@ -540,9 +539,9 @@ fn path_under_root(
 fn add_assets_in_place(
     assets: &[Box<[u8]>],
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), String> {
-    let working_directory = bun_sys::getcwd_alloc()
-        .map_err(|error| format!("failed to read the working directory: {error}"))?;
+) -> Result<(), AssetError> {
+    let working_directory =
+        bun_sys::getcwd_alloc().map_err(AssetError::WorkingDirectoryUnreadable)?;
     let mut real_path_buffer = bun_paths::path_buffer_pool::get();
     // What a module has embedded stands at the path of its source already.
     let embedded: std::collections::BTreeSet<Box<[u8]>> = output_files
@@ -553,7 +552,8 @@ fn add_assets_in_place(
     let mut modules_without_text = modules_without_text(output_files);
     for asset in assets {
         let mut files = Vec::new();
-        collect_compile_assets(core::slice::from_ref(asset), b"", &mut files)?;
+        collect_compile_assets(core::slice::from_ref(asset), b"", &mut files)
+            .map_err(AssetError::NotCollected)?;
 
         let asset_path = trim_trailing_separators(asset);
         let asset_name = bun_paths::basename(asset_path);
@@ -563,7 +563,10 @@ fn add_assets_in_place(
         )
         .to_vec();
         let real_path = bun_sys::realpath(&ZBox::from_bytes(&written_path), &mut real_path_buffer)
-            .map_err(|error| format!("failed to read asset {}: {error}", bun_fmt::quote(asset)))?;
+            .map_err(|error| AssetError::Unreadable {
+                asset: asset.clone(),
+                error,
+            })?;
 
         for mut file in files {
             let path_in_asset = file

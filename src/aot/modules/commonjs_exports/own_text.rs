@@ -127,11 +127,18 @@ impl OwnText {
 struct Replacement {
     /// The outermost assignment of the statement.
     statement: ExprId,
-    is_statement_in_order: bool,
+    order: StatementOrder,
     /// `exports = module.exports = e`: the name goes along.
     renames_exports: bool,
-    /// `{ a, b: e, c() {} }`, where that is what is stored.
-    literal: Option<ExprId>,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum StatementOrder {
+    OutOfOrder,
+    InOrder {
+        /// `{ a, b: e, c() {} }`, where that is what is stored.
+        literal: Option<ExprId>,
+    },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -568,9 +575,8 @@ impl Scan<'_, '_, '_> {
             // A compound assignment, or a part of a pattern.
             return self.replacements.push(Replacement {
                 statement: target,
-                is_statement_in_order: false,
+                order: StatementOrder::OutOfOrder,
                 renames_exports: false,
-                literal: None,
             });
         };
         let (mut statement, mut renames_exports) = (assignment, false);
@@ -594,11 +600,16 @@ impl Scan<'_, '_, '_> {
         {
             (statement, renames_exports) = (user, true);
         }
+        let order = match text.is_statement_in_order(statement, self.body) {
+            true => StatementOrder::InOrder {
+                literal: self.find_literal(value),
+            },
+            false => StatementOrder::OutOfOrder,
+        };
         self.replacements.push(Replacement {
             statement,
-            is_statement_in_order: text.is_statement_in_order(statement, self.body),
+            order,
             renames_exports,
-            literal: self.find_literal(value),
         });
     }
 
@@ -770,8 +781,10 @@ impl Scan<'_, '_, '_> {
                     || (replacement.renames_exports && mention.is_exports_name))
         };
         let mut creations = self.found.creations.iter();
-        if !replacement.is_statement_in_order
-            || self.stores_to_exports_name != usize::from(replacement.renames_exports)
+        let StatementOrder::InOrder { literal } = replacement.order else {
+            return false;
+        };
+        if self.stores_to_exports_name != usize::from(replacement.renames_exports)
             || !self.mentions.iter().all(names_new_value)
             // What such a function stores when it is called in front of the statement lands on the first object.
             || creations.any(|it| text.is_in_function_declaration(it.node, self.body))
@@ -781,7 +794,6 @@ impl Scan<'_, '_, '_> {
         {
             return false;
         }
-        let literal = replacement.literal;
         literal.is_some_and(|literal| self.add_literal(literal))
     }
 
@@ -926,7 +938,9 @@ impl Scan<'_, '_, '_> {
     }
 
     fn finish(&mut self) {
-        let renaming = |it: &&Replacement| it.renames_exports && it.is_statement_in_order;
+        let renaming = |it: &&Replacement| {
+            it.renames_exports && matches!(it.order, StatementOrder::InOrder { .. })
+        };
         let renamed = self.replacements.iter().filter(renaming).count();
         // Nobody knows what the name holds from then on.
         self.found.needs_wrapped_body |= self.stores_to_exports_name != renamed;
@@ -1062,12 +1076,16 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
         for statement in text.hir.ids(text.hir.body) {
             // `export = e` of TypeScript is the statement `module.exports = e`.
             if let StmtKind::ExportAssign(value) = text.hir[statement].kind {
-                let literal = scans[0].find_literal(value);
+                let order = match text.is_in_order(value, CodeUnit::File) {
+                    true => StatementOrder::InOrder {
+                        literal: scans[0].find_literal(value),
+                    },
+                    false => StatementOrder::OutOfOrder,
+                };
                 scans[0].replacements.push(Replacement {
                     statement: value,
-                    is_statement_in_order: text.is_in_order(value, CodeUnit::File),
+                    order,
                     renames_exports: false,
-                    literal,
                 });
             }
         }

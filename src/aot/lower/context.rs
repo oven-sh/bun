@@ -166,6 +166,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             modules: inputs.modules,
             builtins: file_inputs.builtins,
             max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
+            max_handler_arguments: inputs.limits.get(LimitId::MaxHandlerArguments) as usize,
+            max_handler_arguments_per_block: inputs.limits.get(LimitId::MaxHandlerArgumentsPerBlock)
+                as usize,
         });
         let has_types_in_function_text = inputs.options.embeds_function_text && !hir.is_js;
         let type_ranges = match has_types_in_function_text {

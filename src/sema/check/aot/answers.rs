@@ -14,6 +14,7 @@ pub enum GaveUp {
 
 impl GaveUp {
     pub const COUNT: usize = 4;
+    #[cfg(test)]
     pub const ALL: [GaveUp; GaveUp::COUNT] = [
         GaveUp::Unresolved,
         GaveUp::ErrorType,

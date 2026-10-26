@@ -190,7 +190,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Unary {
                 op: UnOp::Not,
                 operand,
-            } => self.lower_condition(operand, if_false, if_true),
+            } => {
+                let (if_operand_true, if_operand_false) = (if_false, if_true);
+                self.lower_condition(operand, if_operand_true, if_operand_false);
+            }
             ExprKind::Binary {
                 op: op @ (BinOp::And | BinOp::Or),
                 ..

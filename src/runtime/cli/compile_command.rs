@@ -112,6 +112,22 @@ pub(crate) struct CompileOutcome {
     pub(crate) executable_time: Duration,
 }
 
+pub(crate) enum AssetError {
+    WorkingDirectoryUnreadable(bun_sys::Error),
+    Unreadable {
+        asset: Box<[u8]>,
+        error: bun_sys::Error,
+    },
+    EmbedsAtEntryPoint {
+        asset: Box<[u8]>,
+    },
+    Collides {
+        asset: Box<[u8]>,
+        path: Box<[u8]>,
+    },
+    NotCollected(String),
+}
+
 pub(crate) enum CompileFailure {
     NoCompiler,
     CrossCompilation,
@@ -131,7 +147,7 @@ pub(crate) enum CompileFailure {
         refused_entry_points: Option<Vec<u32>>,
         files_checked: u32,
     },
-    Assets(String),
+    Assets(AssetError),
     Trim(TrimError),
     Executable(CompileError),
     Graph(bun_standalone_graph::Error),

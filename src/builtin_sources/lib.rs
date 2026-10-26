@@ -134,6 +134,7 @@ impl Manifest {
             .map(|module| module.id)
     }
 
+    #[cfg(test)]
     pub fn has_source(&self, id: u32) -> bool {
         self.module(id).is_some_and(|module| module.path.is_some())
     }

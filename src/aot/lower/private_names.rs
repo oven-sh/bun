@@ -9,7 +9,7 @@ use super::known_call::PrivateStateAccess;
 use super::{FileLowering, FunctionLowering, call, layouts};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::RuntimeErrorKind;
-use crate::ir::{BlockId, Edge, LayoutId, PrivateStatePart, TypeId, TypeTable, ValueId};
+use crate::ir::{BlockId, LayoutId, PrivateStatePart, TypeId, TypeTable, ValueId};
 use crate::known_helpers::{FilePrivateStates, PrivateStateKind};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -64,13 +64,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn continue_if(&mut self, condition: ValueId, otherwise: BlockId) {
-        let passed = self.create_block();
-        self.builder
-            .branch(condition, Edge::to(passed), Edge::to(otherwise));
-        self.continue_in(passed);
-    }
-
     fn continue_if_type(&mut self, value: ValueId, tested: TypeId, otherwise: BlockId) -> ValueId {
         let split = self.split_on_type(value, tested);
         self.builder.switch_to(split.not_taken);
@@ -84,7 +77,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let collection = self.continue_if_type(access.collection, TypeTable::OBJECT, otherwise);
         let recorded = self.get_private_state_slot(access.state, PrivateStatePart::Collection);
         let is_recorded = self.builder.strict_eq(collection, recorded);
-        self.continue_if(is_recorded, otherwise);
+        self.emit_guard(is_recorded, otherwise);
     }
 
     fn emit_entry_of_collection(&mut self, access: PrivateStateAccess, value: Option<ValueId>) {
@@ -119,7 +112,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let builtin = self.emit_locked_builtin(builtin);
         let is_builtin = self.builder.strict_eq(constructor, builtin);
-        self.continue_if(is_builtin, done);
+        self.emit_guard(is_builtin, done);
         let part = PrivateStatePart::Collection;
         let recorded = self.get_private_state_slot(created.symbol, part);
         self.continue_if_type(recorded, TypeTable::UNDEFINED, done);

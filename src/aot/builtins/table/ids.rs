@@ -88,6 +88,7 @@ impl RuntimeFunction {
         self.0
     }
 
+    #[cfg(test)]
     pub fn from_wire(word: u32) -> Option<RuntimeFunction> {
         let function = RuntimeFunction(word);
         super::lookup::runtime_function(function).map(|_| function)

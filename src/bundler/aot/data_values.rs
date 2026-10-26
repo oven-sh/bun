@@ -450,15 +450,21 @@ impl ValueSink for DataValueBuilder<'_, '_> {
 }
 
 #[derive(Copy, Clone)]
+struct TextSpan {
+    start: usize,
+    length: usize,
+}
+
+#[derive(Copy, Clone)]
 enum Event {
     Undefined,
     Null,
     Boolean(bool),
     Number(f64),
-    String(usize, usize),
-    BigInt(usize, usize),
+    String(TextSpan),
+    BigInt(TextSpan),
     Array(usize),
-    Key(usize, usize),
+    Key(TextSpan),
     Object(usize),
 }
 
@@ -476,23 +482,26 @@ impl PortableValue {
                 Event::Null => sink.null(),
                 Event::Boolean(value) => sink.boolean(value),
                 Event::Number(value) => sink.number(value),
-                Event::String(start, length) => sink.string(self.text_at(start, length)),
-                Event::BigInt(start, length) => sink.big_int(self.text_at(start, length)),
+                Event::String(span) => sink.string(self.text_at(span)),
+                Event::BigInt(span) => sink.big_int(self.text_at(span)),
                 Event::Array(length) => sink.array(length),
-                Event::Key(start, length) => sink.key(self.text_at(start, length)),
+                Event::Key(span) => sink.key(self.text_at(span)),
                 Event::Object(length) => sink.object(length),
             }
         }
     }
 
-    fn text_at(&self, start: usize, length: usize) -> &[u8] {
-        &self.text[start..start + length]
+    fn text_at(&self, span: TextSpan) -> &[u8] {
+        &self.text[span.start..span.start + span.length]
     }
 
-    fn push_text(&mut self, text: &[u8]) -> (usize, usize) {
+    fn push_text(&mut self, text: &[u8]) -> TextSpan {
         let start = self.text.len();
         self.text.extend_from_slice(text);
-        (start, text.len())
+        TextSpan {
+            start,
+            length: text.len(),
+        }
     }
 }
 
@@ -514,13 +523,13 @@ impl ValueSink for PortableValue {
     }
 
     fn string(&mut self, text: &[u8]) {
-        let (start, length) = self.push_text(text);
-        self.events.push(Event::String(start, length));
+        let span = self.push_text(text);
+        self.events.push(Event::String(span));
     }
 
     fn big_int(&mut self, digits: &[u8]) {
-        let (start, length) = self.push_text(digits);
-        self.events.push(Event::BigInt(start, length));
+        let span = self.push_text(digits);
+        self.events.push(Event::BigInt(span));
     }
 
     fn array(&mut self, length: usize) {
@@ -528,8 +537,8 @@ impl ValueSink for PortableValue {
     }
 
     fn key(&mut self, text: &[u8]) {
-        let (start, length) = self.push_text(text);
-        self.events.push(Event::Key(start, length));
+        let span = self.push_text(text);
+        self.events.push(Event::Key(span));
     }
 
     fn object(&mut self, length: usize) {

@@ -31,6 +31,7 @@ pub(in crate::lower) use self::analysis::{
 pub(in crate::lower) use self::environments::environment_layout;
 pub(crate) use self::eval::lower_direct_eval;
 pub(crate) use self::identifiers::find_tested_local;
+pub(in crate::lower) use self::plan::is_let_declaration;
 pub(crate) use self::state::ScopeState;
 pub(in crate::lower) use self::state::{DeadZone, LocalBinding};
 pub(in crate::lower) use self::walk::{Initialization, WalkedFunction, WalkedFunctionId};
@@ -44,6 +45,10 @@ pub(crate) struct ScopeInput<'x, 's> {
     pub(crate) builtins: &'x ResolvedBuiltins,
     /// What a closure has room for in this build.
     pub(crate) max_captures: usize,
+    /// How many values the blocks of one `try` may hand to its handler in this build.
+    pub(crate) max_handler_arguments: usize,
+    /// How many values each of those blocks may hand over however many blocks there are.
+    pub(crate) max_handler_arguments_per_block: usize,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]

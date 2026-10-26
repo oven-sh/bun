@@ -19,7 +19,6 @@ use super::wrapped::WrappedModules;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
-use crate::load::ProjectId;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::SymbolId;
 use bun_sema::hir::{ExprId, FnId};
@@ -39,7 +38,6 @@ pub(super) enum StoredSiteAnswer {
 }
 
 pub struct ModuleGraph {
-    pub(super) project: ProjectId,
     pub(super) row_by_file: Vec<Option<u32>>,
     /// Ascending by file.
     pub(super) rows: Vec<FileRow>,
@@ -133,10 +131,6 @@ fn add_seen_namespaces(file: &FileRow, seen: &mut Vec<ModuleRef>) {
 }
 
 impl ModuleGraph {
-    pub fn project(&self) -> ProjectId {
-        self.project
-    }
-
     pub fn kind(&self, file: FileId) -> ModuleKind {
         self.row(file).interop.kind
     }
@@ -502,6 +496,7 @@ impl ModuleGraph {
         self.row(file).has_no_side_effects
     }
 
+    #[cfg(test)]
     pub fn has_dynamic_names(&self, file: FileId) -> bool {
         self.row(file).has_dynamic_names
     }

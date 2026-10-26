@@ -35,6 +35,7 @@ impl FeatureSet {
         self.0[word_position(feature)] |= word_mask(feature);
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     pub fn remove(&mut self, feature: Feature) {
         self.0[word_position(feature)] &= !word_mask(feature);
     }
@@ -55,12 +56,7 @@ impl FeatureSet {
         }
     }
 
-    pub fn intersect_with(&mut self, other: &FeatureSet) {
-        for (word, other_word) in self.0.iter_mut().zip(other.0) {
-            *word &= other_word;
-        }
-    }
-
+    #[cfg(any(test, feature = "test_support"))]
     pub fn intersects(&self, other: &FeatureSet) -> bool {
         self.0
             .iter()
@@ -79,6 +75,7 @@ impl FeatureSet {
         *self == FeatureSet::EMPTY
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     pub fn len(&self) -> usize {
         self.0.iter().map(|word| word.count_ones() as usize).sum()
     }
@@ -165,18 +162,14 @@ mod tests {
         union.union_with(&right_set);
         let mut difference = left_set;
         difference.subtract(&right_set);
-        let mut intersection = left_set;
-        intersection.intersect_with(&right_set);
 
         for &feature in Feature::ALL {
             let in_left = left.contains(&feature);
             let in_right = right.contains(&feature);
             assert_eq!(union.contains(feature), in_left || in_right);
             assert_eq!(difference.contains(feature), in_left && !in_right);
-            assert_eq!(intersection.contains(feature), in_left && in_right);
         }
         assert!(left_set.intersects(&right_set));
-        assert!(intersection.is_subset_of(&left_set));
         assert!(!left_set.is_subset_of(&right_set));
     }
 

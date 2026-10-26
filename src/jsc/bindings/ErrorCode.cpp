@@ -30,6 +30,7 @@
 #include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
+#include <atomic>
 #include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ErrorStackTrace.h"
@@ -352,12 +353,17 @@ static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, cha
 }
 
 // The compiler counts on it that a native function runs no script while it describes an argument that it rejects.
+static std::atomic<bool> describesWithoutScriptForTesting { false };
+
+void describeRejectedValuesWithoutScriptForTesting()
+{
+    describesWithoutScriptForTesting.store(true, std::memory_order_relaxed);
+}
+
 static bool describesWithoutScript(JSC::JSGlobalObject* globalObject)
 {
 #if ENABLE(AOT)
-    // test/aot/builtins/differential.test.ts asks a plain Bun what a native function does in an executable.
-    static const bool isAskedForByTest = getenv("BUN_INTERNAL_DESCRIBE_VALUES_WITHOUT_SCRIPT");
-    return globalObject->aotInstance() || isAskedForByTest;
+    return globalObject->aotInstance() || describesWithoutScriptForTesting.load(std::memory_order_relaxed);
 #else
     UNUSED_PARAM(globalObject);
     return false;

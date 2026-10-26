@@ -1,8 +1,12 @@
 use core::cell::Cell;
 
-use super::body_decode::{read_block, read_target, read_terminator, read_value, walk_body};
+#[cfg(any(test, feature = "ir_text"))]
+use super::body_decode::{read_block, read_target, read_terminator, read_value};
+use super::body_walk::walk_body;
 pub use super::generated::Body;
+#[cfg(any(test, feature = "ir_text"))]
 use super::generated::{BlockFrequency, BlockRole, InternalErrorKind, Opcode, TerminatorKind};
+#[cfg(any(test, feature = "ir_text"))]
 use super::ids::{BlockId, TypeId, ValueId, optional_id_from_word};
 use super::references::{IdMap, Reference, ReferenceKind};
 
@@ -32,6 +36,7 @@ pub enum FieldWord {
     Reference(ReferenceKind),
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct StreamError {
     pub kind: InternalErrorKind,
@@ -40,6 +45,7 @@ pub struct StreamError {
 }
 
 impl Body {
+    #[cfg(any(test, feature = "ir_text"))]
     pub fn blocks(&self) -> impl Iterator<Item = BlockView<'_>> {
         let (mut rest, mut next_value) = (&*self.code, 0);
         (0..self.block_count).map(move |id| {
@@ -50,6 +56,7 @@ impl Body {
         })
     }
 
+    #[cfg(any(test, feature = "ir_text"))]
     pub fn check_stream(&self) -> Result<(), StreamError> {
         let (mut rest, mut next_value) = (&*self.code, 0);
         for id in 0..self.block_count {
@@ -87,6 +94,7 @@ impl Body {
     }
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 #[derive(Copy, Clone)]
 pub struct BlockView<'a> {
     pub id: BlockId,
@@ -101,6 +109,7 @@ pub struct BlockView<'a> {
     pub(super) terminator: &'a [u32],
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 impl<'a> BlockView<'a> {
     pub fn parameter_count(&self) -> usize {
         self.parameter_types.len()
@@ -145,6 +154,7 @@ impl<'a> BlockView<'a> {
     }
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 #[derive(Copy, Clone)]
 pub struct ValueView<'a> {
     pub id: ValueId,
@@ -153,6 +163,7 @@ pub struct ValueView<'a> {
     pub fields: &'a [u32],
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 #[derive(Copy, Clone)]
 pub struct TerminatorView<'a> {
     pub kind: TerminatorKind,
@@ -162,6 +173,7 @@ pub struct TerminatorView<'a> {
     pub(super) targets: &'a [u32],
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 impl<'a> TerminatorView<'a> {
     pub fn target_count(&self) -> usize {
         self.target_count as usize
@@ -180,6 +192,7 @@ impl<'a> TerminatorView<'a> {
     }
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 #[derive(Copy, Clone)]
 pub struct TargetView<'a> {
     pub block: BlockId,
@@ -187,6 +200,7 @@ pub struct TargetView<'a> {
     pub proofs: &'a [u32],
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 impl<'a> TargetView<'a> {
     pub fn arguments(&self) -> impl ExactSizeIterator<Item = ValueId> + use<'a> {
         self.arguments.iter().map(|&word| ValueId::from_word(word))

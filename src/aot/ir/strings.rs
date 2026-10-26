@@ -2,6 +2,7 @@ use super::generated::NameClass;
 use super::ids::{Id, StringId};
 use super::name_class::classify_name;
 use super::parallel::{InParallel, for_each_mut};
+#[cfg(test)]
 use super::types::release_spare_capacity;
 use super::wtf8::join_surrogate_pairs;
 use crate::builtins::id::BuiltinName;
@@ -245,6 +246,7 @@ impl StringTable {
         id
     }
 
+    #[cfg(test)]
     pub fn release_spare_capacity(&mut self) {
         match &mut self.strings {
             StringList::Own(own) => {
@@ -302,6 +304,7 @@ impl StringTable {
         }
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

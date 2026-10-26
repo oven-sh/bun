@@ -10,7 +10,7 @@ use bun_options_types::context::ContextData;
 use bun_paths::resolve_path::platform_to_posix_in_place;
 use bun_sema::json::Json;
 use bun_sema::resolve::AOT_CONDITION;
-use bun_sema_driver::sound_files::typed_path_beside;
+use bun_sema_driver::typed_files::typed_path_beside;
 
 use super::declarations::{declaration_path, is_declaration_file};
 use super::typed_files::is_typed_file;

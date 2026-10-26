@@ -32,6 +32,8 @@ const needNoCompiler = [
   "aot/lists-of-operations-in-the-compiler-only-shrink.test.ts",
   "aot/every-threshold-of-the-compiler-is-declared-as-one.test.ts",
   "aot/every-field-of-flows-results-is-written-and-read.test.ts",
+  "aot/flow-results-name-the-list-they-read.test.ts",
+  "aot/every-test-runs-in-ci.test.ts",
   "aot/what-is-only-expected-of-a-position-is-widened-in-one-place.test.ts",
   "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off.test.ts",
   "aot/host-object-accessors.test.ts",

@@ -106,6 +106,9 @@ struct WaiterPool {
     idle: Vec<NonNull<PluginWaiter>>,
 }
 
+// SAFETY: `idle` points into `all`, and both are reached only under the lock around the pool.
+unsafe impl Send for WaiterPool {}
+
 impl WaiterPool {
     fn acquire(&mut self) -> NonNull<PluginWaiter> {
         if let Some(waiter) = self.idle.pop() {
@@ -131,6 +134,9 @@ struct PendingLoad {
     waiter: NonNull<PluginWaiter>,
 }
 
+// SAFETY: reached only under the lock around the list that holds it.
+unsafe impl Send for PendingLoad {}
+
 impl PendingLoad {
     fn name(&self) -> (&[u8], &[u8]) {
         (&self.namespace, &self.path)
@@ -143,9 +149,21 @@ struct PendingDeferredLoad {
     file: Option<Cow<'static, [u8]>>,
 }
 
+struct SharedPlugins(NonNull<Plugin>);
+
+// SAFETY: the plugins never change, and the one method called on them locks each filter itself.
+unsafe impl Send for SharedPlugins {}
+// SAFETY: as `Send`.
+unsafe impl Sync for SharedPlugins {}
+
+struct Carrier(NonNull<BundleV2<'static>>);
+
+// SAFETY: reached only under the lock around it.
+unsafe impl Send for Carrier {}
+
 pub(crate) struct PluginRequests {
-    plugins: NonNull<Plugin>,
-    post: Guarded<NonNull<BundleV2<'static>>>,
+    plugins: SharedPlugins,
+    post: Guarded<Carrier>,
     waiters: Guarded<WaiterPool>,
     deferred: Guarded<Vec<PendingDeferredLoad>>,
     drain_waiter: Box<PluginWaiter>,
@@ -154,12 +172,6 @@ pub(crate) struct PluginRequests {
     specifiers_matched: ShardedMap<Vec<u8>, bool>,
     files_matched: ShardedMap<Vec<u8>, bool>,
 }
-
-// SAFETY: `plugins` never changes, and the one method called on it locks each filter itself.
-// `drain_waiter` and the two memos are `Sync`. Every other field is reached only under its lock.
-unsafe impl Send for PluginRequests {}
-// SAFETY: as `Send`.
-unsafe impl Sync for PluginRequests {}
 
 impl PluginRequests {
     pub(crate) fn new(bundle: NonNull<BundleV2<'static>>) -> PluginRequests {
@@ -171,8 +183,8 @@ impl PluginRequests {
         let in_memory_files =
             in_memory_files.flat_map(|files| in_memory_files_by_path(files, working_directory));
         PluginRequests {
-            plugins: carrier.plugins.expect("plugin requests need plugins"),
-            post: Guarded::new(bundle),
+            plugins: SharedPlugins(carrier.plugins.expect("plugin requests need plugins")),
+            post: Guarded::new(Carrier(bundle)),
             waiters: Guarded::default(),
             deferred: Guarded::default(),
             drain_waiter: Box::default(),
@@ -316,7 +328,7 @@ impl PluginRequests {
     fn plugins(&self) -> &Plugin {
         // SAFETY: the plugins outlive the build. `Plugin` is an opaque FFI type, so a shared
         // reference claims nothing about the bytes the JS thread changes.
-        unsafe { self.plugins.as_ref() }
+        unsafe { self.plugins.0.as_ref() }
     }
 
     fn with_bundle<R>(&self, work: impl FnOnce(&mut BundleV2<'static>) -> R) -> R {
@@ -324,7 +336,7 @@ impl PluginRequests {
         // SAFETY: the carrier outlives `self`. The lock admits one posting thread at a time. A post
         // writes `drain_defer_task.waiter` alone, which no other thread touches before the hop is
         // posted, and otherwise reads fields that do not change while the build runs.
-        work(unsafe { bundle.as_mut() })
+        work(unsafe { bundle.0.as_mut() })
     }
 
     fn post_load(&self, request: &LoadRequest<'_>) -> PendingLoad {

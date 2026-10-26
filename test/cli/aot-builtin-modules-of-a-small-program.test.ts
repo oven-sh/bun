@@ -8,7 +8,7 @@ import { test } from "../aot/supported";
 
 // An executable holds the built-in modules that are imported by a constant name. A mention of `module` brings none with it: not where the
 // file asks whether it is the main one or whether hot reloading is on, and not where `module` goes into a variable. The yardstick is a
-// program that requires six of them by name: megabytes, and seconds of build.
+// program that requires six of them by name: megabytes of code.
 
 const programs: Record<string, string> = {
   "plain.cjs": `console.log("run");`,
@@ -68,32 +68,36 @@ test("tests of module.parent and module.hot bring no built-in module into the ex
 
 test("nor do they make bun run --aot compile built-in modules", async () => {
   using dir = tempDir("builtin-modules-of-a-small-program", { ...programs, ...yardstick });
-  const seconds: Record<string, number> = {};
-  for (const entry of [...Object.keys(programs), withSixModules]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--debug-aot", entry],
-      cwd: String(dir),
-      env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ entry, stdout, exitCode }).toEqual({ entry, stdout: "run\n", exitCode: 0 });
-    seconds[entry] = Number(proc.resourceUsage()!.cpuTime.total) / 1e6;
-  }
-  // Where Bun itself is slow to start, that is most of every time here.
-  const start = Math.min(...Object.values(seconds));
+  // The run prints how many bytes it compiled: the same number every time.
+  const imageBytes: Record<string, number> = {};
+  await Promise.all(
+    [...Object.keys(programs), withSixModules].map(entry =>
+      slot(async () => {
+        const { stdout, stderr, exitCode } = await run([bunExe(), "run", "--debug-aot", entry], String(dir), {
+          ...bunEnv,
+          BUN_JSC_crashIfInterpreterIsUsed: "1",
+          BUN_AOT_VERBOSE: "1",
+        });
+        expect({ entry, stdout, exitCode }).toEqual({ entry, stdout: "run\n", exitCode: 0 });
+        imageBytes[entry] = Number(/\[aot\] image: (\d+) bytes/.exec(stderr)?.[1]);
+      }),
+    ),
+  );
+  const sixModules = imageBytes[withSixModules] - imageBytes["plain.cjs"];
+  expect(sixModules).toBeGreaterThan(1024 * 1024);
   for (const entry of Object.keys(programs)) {
     expect({
       entry,
-      seconds: seconds[entry],
-      withSixModules: seconds[withSixModules],
-      costsAsMuchAsADoor: seconds[entry] - start > (seconds[withSixModules] - start) / 4,
+      imageBytes: imageBytes[entry],
+      plain: imageBytes["plain.cjs"],
+      withSixModules: imageBytes[withSixModules],
+      grows: !(imageBytes[entry] - imageBytes["plain.cjs"] <= sixModules / 32),
     }).toEqual({
       entry,
-      seconds: expect.any(Number),
+      imageBytes: expect.any(Number),
+      plain: expect.any(Number),
       withSixModules: expect.any(Number),
-      costsAsMuchAsADoor: false,
+      grows: false,
     });
   }
 }, 120_000);

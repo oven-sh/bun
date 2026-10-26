@@ -81,7 +81,7 @@ fn has_local(forms: &[BindingForm], placements: &Placements, binding: BindingRef
 }
 
 // A scope has a greater number than the scope around it.
-fn encloses(context: &Context<'_, '_>, outer: ScopeId, inner: ScopeId) -> bool {
+pub(super) fn encloses(context: &Context<'_, '_>, outer: ScopeId, inner: ScopeId) -> bool {
     scope_chain(context.input.bound, inner).find(|&scope| scope <= outer) == Some(outer)
 }
 

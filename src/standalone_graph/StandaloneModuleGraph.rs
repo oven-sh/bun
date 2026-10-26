@@ -199,12 +199,6 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
 }
 
 impl StandaloneModuleGraph {
-    // `&mut` only for `File::sourcemap` (`LazySourceMap::load`); every other
-    // per-`File` access goes through `get_ref()` / `find_ref()`.
-    pub fn entry_point(&mut self) -> &mut File {
-        &mut self.files.values_mut()[self.entry_point_id as usize]
-    }
-
     // by normalized file path
     pub fn find(&mut self, name: &[u8]) -> Option<&mut File> {
         if !is_bun_standalone_file_path(name) {

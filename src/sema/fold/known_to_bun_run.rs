@@ -30,11 +30,16 @@ impl Folder<'_, '_> {
         let (mut e, mut is_negated) = (e, false);
         let is_truthy = loop {
             match self.hir[e].kind {
-                ExprKind::Unary { op, operand } if op == UnOp::Not => {
+                ExprKind::Unary {
+                    op: UnOp::Not,
+                    operand,
+                } => {
                     (e, is_negated) = (operand, !is_negated);
                 }
-                ExprKind::Unary { op, .. } if op == UnOp::Void => break Some(false),
-                ExprKind::Unary { op, .. } if op == UnOp::Typeof => break Some(true),
+                ExprKind::Unary { op: UnOp::Void, .. } => break Some(false),
+                ExprKind::Unary {
+                    op: UnOp::Typeof, ..
+                } => break Some(true),
                 _ => break self.condition_in_bun_run(e),
             }
         };

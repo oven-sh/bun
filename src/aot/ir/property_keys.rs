@@ -99,6 +99,7 @@ impl PropertyKeyTable {
         self.list.len()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
     }

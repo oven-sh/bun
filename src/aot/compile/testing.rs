@@ -1,21 +1,15 @@
-#[cfg(test)]
 mod tests;
 
 use super::lower_stage::find_files_to_lower;
 use super::{BoundBuild, Build, LoadedBuild, LoadedProject};
-#[cfg(test)]
 use super::{BuildFailed, LinkedProgram, link_program};
-#[cfg(test)]
 use crate::diagnostics::ProgramView;
 use crate::engine::ExecutableIdentity;
-#[cfg(test)]
 use crate::ir::Program;
 use crate::known_helpers::KnownHelpers;
-#[cfg(test)]
 use crate::link::ProgramNames;
 use crate::load::ProjectId;
 use crate::load::source_provider::{SourceProvider, WithoutServices};
-#[cfg(test)]
 use crate::lower::LeftOutDeclarations;
 use crate::lower::{LoweredFile, LoweringInputs, LoweringOptions, lower_file};
 use crate::modules::{BindInput, DeferredExports};
@@ -28,7 +22,6 @@ use bun_builtin_sources::VIRTUAL_ROOT;
 use bun_options_types::aot_options::AotOptions;
 use bun_sema::json::Json;
 use bun_sema::program::FileId;
-#[cfg(test)]
 use bun_sema::program::Files;
 use bun_sema::resolve::{CodeOptions, JsxRuntime, TranspileSettings};
 use bun_sema_driver::host::from_native;
@@ -40,21 +33,9 @@ use std::sync::Once;
 const PROJECT_DIRECTORY: &[u8] = b"/project";
 const CONFIGURATION_FILE: &str = "tsconfig.json";
 
-#[cfg(test)]
 pub(super) const BUNDLED_LIBS: Libs<'static> = Libs::Bundled(bun_sema_standalone::TYPESCRIPT_LIBS);
 
-#[cfg(test)]
 pub(crate) const TYPED_PACKAGE_JSON: &str = r#"{"name":"p","version":"1.0.0","type":"module","exports":{"aot":"./x.aot.ts","default":"./x.js"}}"#;
-
-pub fn lower_program_with_libs(
-    files: &[(&str, &str)],
-    settings: &TranspileSettings,
-    libs: Libs<'_>,
-) -> Vec<(FileId, LoweredFile)> {
-    with_build(libs, files, settings, &WithoutServices, |build| {
-        lower_files(build, ProjectId::Application)
-    })
-}
 
 pub fn with_bind_input_and_libs<R>(
     files: &[(&str, &str)],
@@ -67,7 +48,6 @@ pub fn with_bind_input_and_libs<R>(
     })
 }
 
-#[cfg(test)]
 pub fn lower_program(
     files: &[(&str, &str)],
     options: LoweringOptions,
@@ -90,7 +70,6 @@ pub fn lower_program(
     })
 }
 
-#[cfg(test)]
 pub(crate) fn lower_program_without(
     files: &[(&str, &str)],
     choose: impl FnOnce(&Files<'_>) -> LeftOutDeclarations,
@@ -123,7 +102,6 @@ pub(crate) fn lower_program_without(
     })
 }
 
-#[cfg(test)]
 pub fn lower_program_with_settings(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -131,7 +109,6 @@ pub fn lower_program_with_settings(
     lower_program_with_provider(files, settings, &WithoutServices)
 }
 
-#[cfg(test)]
 pub fn lower_program_with_provider(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -142,7 +119,6 @@ pub fn lower_program_with_provider(
     })
 }
 
-#[cfg(test)]
 pub fn lower_program_with_limits(
     files: &[(&str, &str)],
     limits: LimitValues,
@@ -151,7 +127,6 @@ pub fn lower_program_with_limits(
     lower_application(&TestProject { limits, ..project })
 }
 
-#[cfg(test)]
 pub fn lower_and_link_program<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -168,7 +143,6 @@ pub fn lower_and_link_program<R>(
     })
 }
 
-#[cfg(test)]
 pub fn link_program_with_react_compiler(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -177,7 +151,6 @@ pub fn link_program_with_react_compiler(
     link_project(&TestProject::new(files, settings).with_react_compiler(mode))
 }
 
-#[cfg(test)]
 pub fn with_bind_input<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -186,7 +159,6 @@ pub fn with_bind_input<R>(
     with_bind_input_and_libs(files, settings, BUNDLED_LIBS, then)
 }
 
-#[cfg(test)]
 pub fn with_bind_input_and_provider<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -198,7 +170,6 @@ pub fn with_bind_input_and_provider<R>(
     })
 }
 
-#[cfg(test)]
 pub fn with_runtime_bind_input<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(&BindInput<'_, '_>) -> R,
@@ -209,7 +180,6 @@ pub fn with_runtime_bind_input<R>(
     })
 }
 
-#[cfg(test)]
 pub(crate) fn with_loaded_build<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -218,7 +188,6 @@ pub(crate) fn with_loaded_build<R>(
     with_loaded_build_and_react_compiler(files, settings, ReactCompilerMode::Disabled, then)
 }
 
-#[cfg(test)]
 pub(crate) fn with_loaded_build_and_react_compiler<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -229,7 +198,6 @@ pub(crate) fn with_loaded_build_and_react_compiler<R>(
     with_loaded_project(&project, then)
 }
 
-#[cfg(test)]
 pub(crate) fn with_loaded_test_run<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -240,7 +208,6 @@ pub(crate) fn with_loaded_test_run<R>(
     with_loaded_project(&project, then)
 }
 
-#[cfg(test)]
 pub(crate) fn with_loaded_build_and_options<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -251,7 +218,6 @@ pub(crate) fn with_loaded_build_and_options<R>(
     with_loaded_project(&project, then)
 }
 
-#[cfg(test)]
 fn with_loaded_project<R>(
     project: &TestProject,
     then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
@@ -261,7 +227,6 @@ fn with_loaded_project<R>(
     })
 }
 
-#[cfg(test)]
 pub(crate) fn with_project_view<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(ProgramView<'_, '_>) -> R,
@@ -271,7 +236,6 @@ pub(crate) fn with_project_view<R>(
     })
 }
 
-#[cfg(test)]
 pub(crate) fn with_lowering_inputs<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(&Files<'_>, &LoweringInputs<'_>, FileId) -> R,
@@ -289,7 +253,6 @@ pub(crate) fn with_lowering_inputs<R>(
     })
 }
 
-#[cfg(test)]
 pub fn default_settings() -> TranspileSettings {
     TranspileSettings {
         jsx: bun_sema::resolve::JsxSettings::default(),
@@ -299,20 +262,17 @@ pub fn default_settings() -> TranspileSettings {
     }
 }
 
-#[cfg(test)]
 fn lower_application(project: &TestProject) -> Vec<(FileId, LoweredFile)> {
     run_build(project, BUNDLED_LIBS, &WithoutServices, |build| {
         lower_files(build, ProjectId::Application)
     })
 }
 
-#[cfg(test)]
 fn link_project(project: &TestProject) -> Result<LinkedProgram, BuildFailed> {
     let mut log = Log::init();
     link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &mut log)
 }
 
-#[cfg(test)]
 fn find_replaced_runtime_sources(runtime: &Files<'_>, files: &[(&str, &str)]) -> Vec<FileId> {
     let mut replaced_sources: Vec<FileId> = files
         .iter()
@@ -438,10 +398,8 @@ pub(super) fn run_build<R>(
     }
 }
 
-#[cfg(test)]
 pub(crate) struct TemporaryDirectory(std::path::PathBuf);
 
-#[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 impl TemporaryDirectory {
     pub(crate) fn new(name: &str) -> TemporaryDirectory {
@@ -469,7 +427,6 @@ impl TemporaryDirectory {
     }
 }
 
-#[cfg(test)]
 impl Drop for TemporaryDirectory {
     #[allow(clippy::disallowed_methods)]
     fn drop(&mut self) {
@@ -558,7 +515,6 @@ impl TestProject {
         }
     }
 
-    #[cfg(test)]
     fn with_aot_options(self, aot: AotOptions) -> TestProject {
         let thread_count = aot.thread_count.or(self.aot.thread_count);
         TestProject {
@@ -570,7 +526,6 @@ impl TestProject {
         }
     }
 
-    #[cfg(test)]
     fn with_react_compiler(self, react_compiler: ReactCompilerMode) -> TestProject {
         TestProject {
             react_compiler,

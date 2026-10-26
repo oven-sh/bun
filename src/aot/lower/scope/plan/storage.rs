@@ -15,6 +15,7 @@ pub(super) fn place_bindings(
     captures: &CapturePlan,
 ) -> Placements {
     let bindings = captures.fields.iter().chain(&sharing.fields_for_eval);
+    let bindings = bindings.chain(&sharing.fields_for_handlers);
     let fields = bindings.map(|&binding| (context.scope_of(binding), binding));
     let mut fields: Vec<(ScopeId, BindingRef)> = fields.collect();
     sort_unique(&mut fields);

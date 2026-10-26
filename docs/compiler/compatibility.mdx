@@ -98,7 +98,7 @@ These packages work under `bun run` and don't work in an executable. Each does s
 Most of them end in the same `TypeError`. It names the object and the property, and its stack trace points to the line in the package. Where the table cuts a `TypeError` short with `...`, it ends like this one:
 
 ```txt
-TypeError: Cannot assign to Function.prototype.call$0 because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+TypeError: Cannot assign to Function.prototype.call$0 because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ```
 
 | Package                                                                                                           | What it does                                                                                                                                                                                      | What you see                                                                                                                                   | Why                                                                                            | Instead                                                                                                    |
@@ -251,7 +251,7 @@ The exceptions are the names that the language looks up by itself. A prototype o
 | `next`, `return`, `throw` | `for...of`, spread, destructuring and `yield*`, on the object that `[Symbol.iterator]()` returned | Every prototype of the third group, but `next` on `Date.prototype`                                                       |
 
 ```txt
-TypeError: Cannot assign to Array.prototype.next because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+TypeError: Cannot assign to Array.prototype.next because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ```
 
 Put the method on your own object or class instead. A class that extends `Array` can have a `then`, a `toJSON` or a `next`.
@@ -283,7 +283,7 @@ bun compile ./response.ts && ./response
 ```
 
 ```txt
-TypeError: Cannot assign to Response.prototype.text because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+TypeError: Cannot assign to Response.prototype.text because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 HELLO
 ```
 
@@ -351,7 +351,7 @@ try {
 ```
 
 ```txt
-Error: None of console._stderr, console._stdout, process.stderr or process.stdout was compiled into this executable because your code never uses them. To keep them, use one of them somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+Error: None of console._stderr, console._stdout, process.stderr or process.stdout was compiled into this executable because your code never uses them. To keep them, use one of them somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ```
 
 The error is catchable. Using `process.stdout` anywhere in your own code fixes it.
@@ -570,7 +570,7 @@ bun compile ./load.ts && ./load node:path && ./load node:dgram
 
 ```txt
 true
-error: Cannot load 'node:dgram': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+error: Cannot load 'node:dgram': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ```
 
 A built-in module that a dynamic name finds works like one that you import, even if it's only in the executable because another built-in module imports it.
@@ -657,7 +657,7 @@ With the option, a name that comes from outside of the program finds every [buil
 `process.getBuiltinModule(name)` is the exception. It never loads a file, so it doesn't make the executable ready for code that wasn't compiled. In a program that has no other dynamic import, it only finds a module that's in the executable, with the option too.
 
 ```txt
-error: Cannot load 'node:dgram': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+error: Cannot load 'node:dgram': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 ```
 
 In `Bun.build`, the option is `compile: { allowCodeFromDisk: true }`.

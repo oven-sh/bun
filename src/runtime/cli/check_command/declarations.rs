@@ -7,7 +7,7 @@ use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
 use bun_sema::program::FileId;
 use bun_sema_driver::host::{Provided, from_native, to_native};
-use bun_sema_driver::sound_files::{ModuleTypes, tsconfig_of_package};
+use bun_sema_driver::typed_files::{ModuleTypes, tsconfig_of_package};
 use bun_sema_driver::{Category, PlanOptions, Report, Request, ScriptKind, format};
 use bun_threading::Guarded;
 

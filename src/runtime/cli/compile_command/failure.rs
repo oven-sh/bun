@@ -1,9 +1,10 @@
 use std::io::Write as _;
 
+use bun_core::fmt as bun_fmt;
 use bun_exe_format::identity::IdentityError;
 use bun_options_types::compile_target::CompileTarget;
 
-use super::{CompileFailure, RequestOrigin};
+use super::{AssetError, CompileFailure, RequestOrigin};
 
 impl CompileFailure {
     // Lines without `error: `. The first is the error, a line that starts with `note: ` is a note.
@@ -50,7 +51,7 @@ impl CompileFailure {
                 );
             }
             CompileFailure::Build { .. } => {}
-            CompileFailure::Assets(text) => out.extend_from_slice(text.as_bytes()),
+            CompileFailure::Assets(error) => write_asset_error(error, out),
             CompileFailure::Trim(error) => error.write_message(out),
             CompileFailure::Executable(error) => out.extend_from_slice(error.slice()),
             CompileFailure::Graph(error) => {
@@ -64,6 +65,33 @@ impl CompileFailure {
             }
         }
     }
+}
+
+fn write_asset_error(error: &AssetError, out: &mut Vec<u8>) {
+    let _ = match error {
+        AssetError::WorkingDirectoryUnreadable(error) => {
+            write!(out, "failed to read the working directory: {error}")
+        }
+        AssetError::Unreadable { asset, error } => {
+            write!(
+                out,
+                "failed to read asset {}: {error}",
+                bun_fmt::quote(asset)
+            )
+        }
+        AssetError::EmbedsAtEntryPoint { asset } => write!(
+            out,
+            "asset {} would embed at the same path as the entry point; use a different outfile",
+            bun_fmt::quote(asset),
+        ),
+        AssetError::Collides { asset, path } => write!(
+            out,
+            "asset {} collides with another embedded file at {}",
+            bun_fmt::quote(asset),
+            bun_fmt::quote(path),
+        ),
+        AssetError::NotCollected(text) => out.write_all(text.as_bytes()),
+    };
 }
 
 fn write_unavailable(origin: RequestOrigin, out: &mut Vec<u8>) {

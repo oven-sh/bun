@@ -25,6 +25,7 @@ pub struct Program {
     pub web_assembly_modules: Vec<WebAssemblyModule>,
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 #[derive(Copy, Clone)]
 pub struct NameTables<'a> {
     pub strings: &'a StringTable,
@@ -32,6 +33,7 @@ pub struct NameTables<'a> {
     pub types: &'a TypeTable,
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 impl Program {
     pub fn new() -> Program {
         Program::default()

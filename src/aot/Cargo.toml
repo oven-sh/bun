@@ -50,7 +50,8 @@ smallvec.workspace = true
 # tests/ir_tests.rs links the library as any other crate does.
 bun_aot = { workspace = true, features = ["ir_text"] }
 # The native symbols that Bun's C and C++ side provides to `bun_core`.
-bun_sema_standalone = { path = "../sema/standalone" }
+bun_sema_standalone = { path = "../sema/standalone", features = ["test_support"] }
+bun_trim = { workspace = true, features = ["test_support"] }
 
 [lints]
 workspace = true

@@ -56,7 +56,7 @@ async function answerOf(folder: string) {
     .map(line => JSON.parse(line));
   return {
     said,
-    aotFiles: readBuildReport(report).statistics.TypedVersionsUsed,
+    aotFiles: readBuildReport(report).statistics.AotFilesUsed,
     exitCode: [built.exitCode, ran.exitCode],
     answer: result.answer,
     lastAnswer: result.lastAnswer,

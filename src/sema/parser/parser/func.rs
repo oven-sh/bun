@@ -979,7 +979,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let has_return_colon = self.token() == T::Colon;
         // JavaScript has no return types. In `a ? b ? (c, d) : e => e : 5` the colon is the inner conditional's.
         let is_colon_of_conditional = self.is_ecmascript && !self.is_flow() && !allow_return_type;
-        if has_return_colon && !allow_ambiguity && (self.lx.compiles || is_colon_of_conditional) {
+        if has_return_colon && !allow_ambiguity && (self.lx.compiles() || is_colon_of_conditional) {
             return None;
         }
         let ret = match has_return_colon {

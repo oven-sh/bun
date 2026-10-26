@@ -279,7 +279,7 @@ fn read_side_effects<'h>(
     }
 }
 
-fn non_empty_string_property<'j>(json: &'j Json, key: &[u8]) -> Option<&'j [u8]> {
+pub(super) fn non_empty_string_property<'j>(json: &'j Json, key: &[u8]) -> Option<&'j [u8]> {
     let text = get_first(json, key)?.as_str()?;
     (!text.is_empty()).then_some(text)
 }

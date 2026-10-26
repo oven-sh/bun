@@ -64,7 +64,7 @@ test("a listener added through a value that the compiler can't follow leaves the
     stdout: "",
     error:
       "error: None of Bun.spawn, process.channel, process.disconnect or process.send was compiled into this executable because your code never uses them. " +
-      "To keep them, use one of them somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)",
+      "To keep them, use one of them somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)",
     exitCode: 1,
   });
 }, 120_000);

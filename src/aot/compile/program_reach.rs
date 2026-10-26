@@ -117,13 +117,17 @@ impl ModuleUnits {
     }
 }
 
+struct Unit {
+    functions: SmallVec<[FnId; 1]>,
+    part: Part,
+    // The region that the unit is written in.
+    region_around: u32,
+}
+
 // The regions of a file: the code at its top level, then its units.
 #[derive(Default)]
 struct FileUnits {
-    functions: Vec<SmallVec<[FnId; 1]>>,
-    parts: Vec<Part>,
-    // By unit: the region that the unit is written in.
-    regions_around: Vec<u32>,
+    units: Vec<Unit>,
     unit_of_symbol: FxHashMap<SymbolId, u32>,
     unit_of_function: FxHashMap<FnId, u32>,
     unit_of_class: FxHashMap<ClassId, u32>,
@@ -164,7 +168,10 @@ impl FileUnits {
 
     // The module whose body the region is.
     fn find_module_with_body(&self, region: u32) -> Option<usize> {
-        match region.checked_sub(1).map(|unit| self.parts[unit as usize]) {
+        match region
+            .checked_sub(1)
+            .map(|unit| self.units[unit as usize].part)
+        {
             None => Some(0),
             Some(Part::InnerModule(index)) => Some(index as usize),
             Some(Part::Bodies | Part::Declarator(_) | Part::Class(_) | Part::Statement(_)) => None,
@@ -286,10 +293,12 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 
     fn add_unit(&mut self, part: Part, functions: SmallVec<[FnId; 1]>) -> u32 {
-        let unit = self.units.functions.len() as u32;
-        self.units.functions.push(functions);
-        self.units.parts.push(part);
-        self.units.regions_around.push(self.region);
+        let unit = self.units.units.len() as u32;
+        self.units.units.push(Unit {
+            functions,
+            part,
+            region_around: self.region,
+        });
         unit
     }
 
@@ -383,7 +392,7 @@ impl<'a, 's> FileScan<'a, 's> {
         let members = hir[class].members.iter().map(|member| hir[member].func);
         let functions =
             members.filter(|&function| !function.is_none() && hir::has_body(&hir[function]));
-        self.units.functions[unit as usize] = functions.collect();
+        self.units.units[unit as usize].functions = functions.collect();
     }
 
     fn add_statement_part(&mut self, statement: StmtId) {
@@ -492,7 +501,7 @@ impl<'a, 's> FileScan<'a, 's> {
     // What runs when the class is defined stays with the code around it: the class it extends, a computed key.
     fn add_class_unit(&mut self, class: ClassId) {
         let hir = self.hir;
-        let unit = self.units.functions.len() as u32;
+        let unit = self.units.units.len() as u32;
         let mut functions = SmallVec::new();
         let mut pieces = Vec::new();
         for member in hir[class].members.iter() {
@@ -704,7 +713,7 @@ impl<'a, 's> FileScan<'a, 's> {
             if let Some(index) = self.units.find_module_with_body(region) {
                 return self.units.modules[index].module;
             }
-            region = self.units.regions_around[region as usize - 1];
+            region = self.units.units[region as usize - 1].region_around;
         }
         ModuleRef::File(self.file)
     }
@@ -1302,7 +1311,7 @@ impl<'a, 's> FileScan<'a, 's> {
     fn scan(mut self) -> FileUnits {
         self.find_sites();
         self.collect_units();
-        let region_count = self.units.functions.len() + 1;
+        let region_count = self.units.units.len() + 1;
         self.units.interests = vec![Vec::new(); region_count];
         self.units.is_region_reached = vec![false; region_count];
         self.add_references();
@@ -1453,7 +1462,7 @@ impl<'a, 's> Walk<'a, 's> {
             if region == TOP_LEVEL {
                 break;
             }
-            region = units.regions_around[region as usize - 1];
+            region = units.units[region as usize - 1].region_around;
         }
     }
 
@@ -2270,18 +2279,16 @@ pub(crate) fn find_left_out_code(
             }
         }
         let reached = units.is_region_reached[1..].iter();
-        for ((functions, &part), &is_reached) in
-            units.functions.iter().zip(&units.parts).zip(reached)
-        {
+        for (unit, &is_reached) in units.units.iter().zip(reached) {
             if is_reached {
                 continue;
             }
-            let functions = functions.iter();
+            let functions = unit.functions.iter();
             left_out
                 .functions
                 .extend(functions.map(|&function| FunctionRef { file, function }));
             let declarations = &mut left_out.declarations;
-            match part {
+            match unit.part {
                 Part::Bodies | Part::InnerModule(_) => {}
                 Part::Declarator(declarator) => declarations.leave_out_declarator(file, declarator),
                 Part::Class(class) => declarations.leave_out_class(file, class),

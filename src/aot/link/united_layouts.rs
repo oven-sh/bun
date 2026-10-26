@@ -6,9 +6,6 @@ use crate::ir::{
 use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-const FLAGS_THAT_ALL_GIVE: FieldFlags =
-    FieldFlags(FieldFlags::IS_REQUIRED.0 | FieldFlags::IS_METHOD.0 | FieldFlags::IS_IMMUTABLE.0);
-
 // `ty` holds what either holds.
 fn unite_positions(first: DeclaredType, other: DeclaredType, ty: TypeId) -> DeclaredType {
     // Nothing tests a store into a position that is only expected, so its slot proves nothing.
@@ -74,8 +71,10 @@ fn unite_fields(united: &mut Field, other: &Field, index: usize, uniting: &mut U
         (true, false) => {}
         (false, _) => united.declared = declared,
     }
-    let given_by_all = united.flags & other.flags & FLAGS_THAT_ALL_GIVE;
-    united.flags = united.flags.without(FLAGS_THAT_ALL_GIVE) | given_by_all;
+    let flags_that_all_give =
+        FieldFlags::IS_REQUIRED | FieldFlags::IS_METHOD | FieldFlags::IS_IMMUTABLE;
+    let given_by_all = united.flags & other.flags & flags_that_all_give;
+    united.flags = united.flags.without(flags_that_all_give) | given_by_all;
 }
 
 fn find_twin<'a>(other: &'a Layout, index: usize, field: &Field) -> Option<&'a Field> {

@@ -937,7 +937,7 @@ pub(super) struct EmitResolverLinks {
 pub(super) struct AliasesInTables {
     by_table: FxHashMap<Table, Rc<Vec<(Atom, Sym)>>>,
     /// How many of those tables were read, for a test.
-    #[cfg(feature = "baselines")]
+    #[cfg(any(test, feature = "test_support"))]
     tables_read: usize,
 }
 
@@ -1735,7 +1735,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// How many export tables and global tables `aliases_in_table` has read, for a test.
-    #[cfg(feature = "baselines")]
+    #[cfg(any(test, feature = "test_support"))]
     pub fn tables_read_for_aliases(&self) -> usize {
         self.aliases_in_tables.tables_read
     }
@@ -1754,7 +1754,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_cached && let Some(known) = self.aliases_in_tables.by_table.get(&table) {
             return Rc::clone(known);
         }
-        #[cfg(feature = "baselines")]
+        #[cfg(any(test, feature = "test_support"))]
         {
             self.aliases_in_tables.tables_read += usize::from(is_cached);
         }

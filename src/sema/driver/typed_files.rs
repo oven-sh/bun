@@ -151,7 +151,7 @@ fn parse<'s>(
     atoms: &Interner<'s>,
     path: &[u8],
     text: &[u8],
-) -> Result<File<'s>, String> {
+) -> Result<File<'s>, TypedFilesError> {
     let kind = if path.ends_with(b".tsx") {
         ScriptKind::Tsx
     } else {
@@ -168,13 +168,13 @@ fn parse<'s>(
         true,
     );
     match file.has_errors || file.has_parse_diagnostics || file.ran_out_of_stack {
-        true => Err(format!(
-            "{} does not parse as TypeScript (offset {})",
-            BStr::new(path),
-            file.diagnostics
+        true => Err(TypedFilesError::NotTypeScript {
+            path: path.to_vec(),
+            offset: file
+                .diagnostics
                 .first()
-                .map_or(file.error_pos, |first| first.start)
-        )),
+                .map_or(file.error_pos, |first| first.start),
+        }),
         false => Ok(file),
     }
 }
@@ -1226,7 +1226,7 @@ impl Mappings {
         mappings: &[u8],
         javascript: &[u8],
         sources: &[Source<'_>],
-    ) -> Result<Mappings, String> {
+    ) -> Result<Mappings, TypedFilesError> {
         let generated_lines = compute_ecma_line_starts(javascript);
         let source_lines: Vec<Vec<u32>> = sources
             .iter()
@@ -1252,7 +1252,7 @@ impl Mappings {
                         b'0'..=b'9' => byte - b'0' + 52,
                         b'+' => 62,
                         b'/' => 63,
-                        _ => return Err("the source map has a character that is not base64".into()),
+                        _ => return Err(TypedFilesError::MappingsNotBase64),
                     } as i64;
                     value |= (digit & 31) << shift;
                     shift += 5;
@@ -2836,7 +2836,7 @@ fn add_types(
     mappings: &[u8],
     sources: &[Source<'_>],
     bundle: &Bundle<'_>,
-) -> Result<TypedText, String> {
+) -> Result<TypedText, TypedFilesError> {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let mut mappings = Mappings::decode(mappings, javascript, sources)?;
@@ -3978,7 +3978,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         }
     }
 
-    fn finish(mut self) -> Result<TypedText, String> {
+    fn finish(mut self) -> Result<TypedText, TypedFilesError> {
         let (javascript, output, output_file) = (self.javascript, self.output, self.output.file);
         self.hoisted.extend_from_slice(&self.linked.hoisted);
         let is_directive = |statement: &Stmt| matches!(statement.kind, StmtKind::Expr(expr) if matches!(output_file[expr].kind, ExprKind::String(_)) && output.parentheses(expr).is_empty());
@@ -3992,7 +3992,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         }
         let mut text = self.insertions.apply(javascript);
         if !self.hoisted.is_empty() && !text.is_empty() && !text.ends_with(b"\n") {
-            return Err("the JavaScript does not end with a line break".into());
+            return Err(TypedFilesError::NoFinalLineBreak);
         }
         text.extend_from_slice(&self.hoisted);
         let has_default_export = output.has_default_export();
@@ -4061,9 +4061,9 @@ fn add_types_by_source_map(
     javascript: &[u8],
     source_map: &[u8],
     bundle: &Bundle<'_>,
-) -> Result<TypedText, String> {
+) -> Result<TypedText, TypedFilesError> {
     let source_map = crate::host::parse_json_object(&bun_sema::session::Arena::new(), source_map)
-        .ok_or("the source map is not JSON")?;
+        .ok_or(TypedFilesError::SourceMapNotJson)?;
     let strings = |field: &[u8]| -> Vec<&[u8]> {
         source_map
             .get(field)
@@ -4075,7 +4075,7 @@ fn add_types_by_source_map(
     };
     let (paths, texts) = (strings(b"sources"), strings(b"sourcesContent"));
     if paths.len() != texts.len() {
-        return Err("the source map does not hold the text of its sources".into());
+        return Err(TypedFilesError::SourceMapWithoutSources);
     }
     let directory = &path[..bun_core::strings::last_index_of_char(path, b'/').unwrap_or(0)];
     let is_known = |path: &Vec<u8>| {
@@ -4100,7 +4100,7 @@ fn add_types_by_source_map(
     let mappings = source_map
         .get(b"mappings")
         .and_then(Json::as_str)
-        .ok_or("the source map has no mappings")?;
+        .ok_or(TypedFilesError::SourceMapWithoutMappings)?;
     let typed = add_types(path, javascript, mappings, &sources, bundle)?;
     Ok(TypedText {
         source: paths.first().filter(|path| is_known(path)).cloned(),
@@ -4470,7 +4470,56 @@ pub struct Output<'a> {
     pub entry_point: Option<&'a [u8]>,
 }
 
-pub struct SoundFiles {
+#[derive(Debug)]
+pub enum TypedFilesError {
+    NotTypeScript {
+        path: Vec<u8>,
+        offset: u32,
+    },
+    MappingsNotBase64,
+    NoFinalLineBreak,
+    SourceMapNotJson,
+    SourceMapWithoutSources,
+    SourceMapWithoutMappings,
+    NotNamedJavaScript {
+        path: Vec<u8>,
+    },
+    InOutput {
+        path: Vec<u8>,
+        why: Box<TypedFilesError>,
+    },
+}
+
+impl core::fmt::Display for TypedFilesError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            TypedFilesError::NotTypeScript { path, offset } => write!(
+                f,
+                "{} does not parse as TypeScript (offset {offset})",
+                BStr::new(path)
+            ),
+            TypedFilesError::MappingsNotBase64 => {
+                f.write_str("the source map has a character that is not base64")
+            }
+            TypedFilesError::NoFinalLineBreak => {
+                f.write_str("the JavaScript does not end with a line break")
+            }
+            TypedFilesError::SourceMapNotJson => f.write_str("the source map is not JSON"),
+            TypedFilesError::SourceMapWithoutSources => {
+                f.write_str("the source map does not hold the text of its sources")
+            }
+            TypedFilesError::SourceMapWithoutMappings => {
+                f.write_str("the source map has no mappings")
+            }
+            TypedFilesError::NotNamedJavaScript { path } => {
+                write!(f, "{} is not named .js, .mjs or .cjs", BStr::new(path))
+            }
+            TypedFilesError::InOutput { path, why } => write!(f, "{}: {why}", BStr::new(path)),
+        }
+    }
+}
+
+pub struct TypedFiles {
     pub modules_of_untyped_values: Vec<Vec<u8>>,
     pub typed: Vec<(Vec<u8>, Vec<u8>)>,
     pub declarations_while_checked: Vec<(Vec<u8>, Vec<u8>)>,
@@ -4532,11 +4581,11 @@ fn typed_outputs(
     outputs: &[Output<'_>],
     modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
-) -> Result<Vec<(Vec<u8>, TypedText)>, String> {
+) -> Result<Vec<(Vec<u8>, TypedText)>, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = Vec::new();
     for output in outputs {
-        let shown = BStr::new(inside(outdir, output.path).unwrap_or(output.path));
+        let shown = inside(outdir, output.path).unwrap_or(output.path);
         let bundle = Bundle {
             modules,
             emitted_declarations,
@@ -4544,9 +4593,14 @@ fn typed_outputs(
         };
         let typed =
             add_types_by_source_map(output.path, output.javascript, output.source_map, &bundle)
-                .map_err(|why| format!("{shown}: {why}"))?;
-        let typed_path = typed_path_beside(output.path)
-            .ok_or_else(|| format!("{shown} is not named .js, .mjs or .cjs"))?;
+                .map_err(|why| TypedFilesError::InOutput {
+                    path: shown.to_vec(),
+                    why: Box::new(why),
+                })?;
+        let typed_path =
+            typed_path_beside(output.path).ok_or_else(|| TypedFilesError::NotNamedJavaScript {
+                path: shown.to_vec(),
+            })?;
         found.push((typed_path, typed));
     }
     for (typed_path, typed) in &mut found {
@@ -4560,7 +4614,7 @@ fn import_typed_outputs(
     typed_path: &[u8],
     text: &[u8],
     outputs: &[Output<'_>],
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, TypedFilesError> {
     if outputs.len() < 2 {
         return Ok(text.to_vec());
     }
@@ -4631,14 +4685,14 @@ pub fn annotate_implicit_any(
     is_changed
 }
 
-pub fn sound_files(
+pub fn build_typed_files(
     outdir: &[u8],
     outputs: &[Output<'_>],
     modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
-) -> Result<SoundFiles, String> {
+) -> Result<TypedFiles, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
-    let mut found = SoundFiles {
+    let mut found = TypedFiles {
         modules_of_untyped_values: Vec::new(),
         typed: Vec::new(),
         declarations_while_checked: Vec::new(),

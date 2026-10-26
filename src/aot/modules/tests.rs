@@ -3,7 +3,6 @@ mod code_unit_order;
 use super::testing::{describe_module, file_named, with_graph, with_runtime_graph};
 use super::*;
 use crate::builtins::RuntimeModule;
-use crate::load::ProjectId;
 use crate::statistics::LimitValues;
 use bstr::BStr;
 use bun_sema::atom::Atom;
@@ -372,7 +371,6 @@ fn only_es_modules_with_live_await_have_top_level_await() {
 fn entry_point_kind_and_source_kind_reach_graph() {
     let files = [("main.ts", "import 'node:path';\nexport {};\n")];
     with_graph(&files, |graph, input| {
-        assert_eq!(graph.project(), ProjectId::Application);
         check_entry_points(graph, input);
         let main = file_named(input, "main.ts");
         let entry_points = input.sources.entry_points();
@@ -381,7 +379,6 @@ fn entry_point_kind_and_source_kind_reach_graph() {
         assert_eq!(entry_points[0].kind, EntryPointKind::Main);
     });
     with_runtime_graph(&files, |graph, input| {
-        assert_eq!(graph.project(), ProjectId::Runtime);
         check_entry_points(graph, input);
         let has_kind = |kind| {
             let mut entry_points = input.sources.entry_points().iter();

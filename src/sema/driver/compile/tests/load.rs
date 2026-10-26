@@ -626,7 +626,7 @@ fn file_queued_again_is_read_and_parsed_again() {
         let (ended, has_ended) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let disk = match reads_on_other_threads {
-                true => project_disk(&FILES, 4).reading_on_threads_of_their_own(),
+                true => project_disk(&FILES, 4).with_reader_threads(),
                 false => project_disk(&FILES, 4),
             };
             let host = SlowToQueueAgain(&disk, Default::default());

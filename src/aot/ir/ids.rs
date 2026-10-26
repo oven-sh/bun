@@ -5,6 +5,7 @@ use core::num::NonZeroU32;
 pub const ABSENT_WORD: u32 = u32::MAX;
 
 pub trait Id: Copy + Eq + Ord + Hash + Default {
+    #[cfg(any(test, feature = "ir_text"))]
     const PREFIX: &'static str;
 
     fn new(index: usize) -> Self;
@@ -51,6 +52,7 @@ macro_rules! id {
         }
 
         impl Id for $name {
+            #[cfg(any(test, feature = "ir_text"))]
             const PREFIX: &'static str = $prefix;
 
             #[inline]

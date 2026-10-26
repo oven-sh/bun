@@ -29,8 +29,16 @@ impl ReachedTargets {
                 count += 1;
             }
         }
+        ReachedTargets::compute_for_numbered_targets(bit_of, count, successors)
+    }
+
+    fn compute_for_numbered_targets(
+        bit_of: Vec<u32>,
+        count: u32,
+        successors: &[Vec<FileId>],
+    ) -> ReachedTargets {
         let words = (count as usize).div_ceil(64);
-        let mut sets = vec![0u64; file_count * words];
+        let mut sets = vec![0u64; successors.len() * words];
         for (file, &bit) in bit_of.iter().enumerate() {
             if bit != u32::MAX {
                 sets[file * words + bit as usize / 64] |= 1 << (bit % 64);

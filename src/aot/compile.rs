@@ -18,6 +18,7 @@ mod runtime_reach;
 #[cfg(test)]
 mod runtime_reach_tests;
 mod summary;
+#[cfg(test)]
 pub mod testing;
 #[cfg(test)]
 mod tests;

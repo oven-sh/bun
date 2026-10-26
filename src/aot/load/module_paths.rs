@@ -242,7 +242,12 @@ fn append_sanitized_path(output: &mut Vec<u8>, relative_path: &[u8]) {
 pub(super) fn check_unique_public_paths<'a>(
     paths: impl Iterator<Item = (FileId, ModulePaths<'a>)>,
 ) -> Result<(), InternalError> {
-    let mut modules: Vec<(FileId, ModulePaths<'a>)> = paths.collect();
+    check_unique_public_paths_of(paths.collect())
+}
+
+fn check_unique_public_paths_of(
+    mut modules: Vec<(FileId, ModulePaths<'_>)>,
+) -> Result<(), InternalError> {
     let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
     seen.reserve(modules.len());
     if modules

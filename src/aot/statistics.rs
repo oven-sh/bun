@@ -60,6 +60,7 @@ impl Counters {
         });
     }
 
+    #[cfg(test)]
     pub fn exceeds(
         &mut self,
         limits: &LimitValues,
@@ -83,10 +84,12 @@ impl Counters {
         }
     }
 
+    #[cfg(test)]
     pub fn counts(&self) -> &[(StatisticId, u64)] {
         &self.counts
     }
 
+    #[cfg(test)]
     pub fn losses(&self) -> &[Loss] {
         &self.losses
     }
@@ -133,6 +136,7 @@ impl Statistics {
         &self.values
     }
 
+    #[cfg(test)]
     pub fn losses(&self) -> &[LocatedLoss] {
         &self.losses
     }

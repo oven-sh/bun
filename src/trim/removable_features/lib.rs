@@ -90,6 +90,7 @@ const _: () = {
 
 impl Feature {
     pub const ALL: &'static [Feature] = generated::ALL_FEATURES;
+    #[cfg(test)]
     pub const COUNT: u32 = generated::ALL_FEATURES[generated::ALL_FEATURES.len() - 1] as u32 + 1;
     pub const INDEX_LIMIT: usize = 512;
     pub const FIRST_EMBEDDER_INDEX: u16 = 128;

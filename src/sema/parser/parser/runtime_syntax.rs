@@ -17,7 +17,6 @@ pub(crate) enum Prologue {
 #[derive(Copy, Clone)]
 pub(super) struct CodeDialect {
     is_ecmascript: bool,
-    compiles: bool,
 }
 
 const EMPTY_TEMPLATE_PART: TemplatePart = TemplatePart {
@@ -236,17 +235,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     pub(super) fn enter_typescript_dialect(&mut self) -> CodeDialect {
         let outer = CodeDialect {
             is_ecmascript: self.is_ecmascript,
-            compiles: self.lx.compiles,
         };
         self.is_ecmascript = false;
         self.lx.is_ecmascript = false;
-        self.lx.compiles = false;
         outer
     }
 
     pub(super) fn leave_typescript_dialect(&mut self, outer: CodeDialect) {
         self.is_ecmascript = outer.is_ecmascript;
         self.lx.is_ecmascript = outer.is_ecmascript;
-        self.lx.compiles = outer.compiles;
     }
 }

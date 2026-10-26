@@ -134,20 +134,21 @@ struct SectionPlan {
 
 fn plan_sections(totals: &ListCounts) -> Result<SectionPlan, EmitError> {
     let mut offset = HEADER_SIZE_IN_BYTES as u64;
-    let sections = ProgramList::ALL.map(|list| {
-        let count = totals[list as usize];
-        let section = Section {
-            offset_in_bytes: offset as u32,
-            count: count as u32,
-        };
-        let size = count.saturating_mul(list.element_size() as u64);
+    let starts = ProgramList::ALL.map(|list| {
+        let start = offset;
+        let size = totals[list as usize].saturating_mul(list.element_size() as u64);
         offset = round_up(offset.saturating_add(size), 4);
-        section
+        start
     });
     offset = round_up(offset, 8);
     let Ok(size_in_bytes) = u32::try_from(offset) else {
         return Err(EmitError::ProgramTooLarge { bytes: offset });
     };
+    let sections = ProgramList::ALL.map(|list| Section {
+        offset_in_bytes: u32::try_from(starts[list as usize])
+            .expect("a section starts before the end"),
+        count: totals[list as usize] as u32,
+    });
     Ok(SectionPlan {
         sections,
         size_in_bytes,
@@ -199,15 +200,20 @@ fn carve<'o>(mut output: OutputSlice<'o>, plan: &SectionPlan, tasks: &mut [Task<
     );
 }
 
+impl Header {
+    fn new(plan: &SectionPlan) -> Header {
+        Header {
+            magic: MAGIC,
+            schema_hash: SCHEMA_HASH,
+            size_in_bytes: plan.size_in_bytes,
+            sections: plan.sections,
+        }
+    }
+}
+
 fn write_header(mut output: OutputSlice<'_>, plan: &SectionPlan) {
     let mut words = Vec::<u32>::with_capacity(Header::WORDS);
-    let header = Header {
-        magic: MAGIC,
-        schema_hash: SCHEMA_HASH,
-        size_in_bytes: plan.size_in_bytes,
-        sections: plan.sections,
-    };
-    header.append_to(&mut words);
+    Header::new(plan).append_to(&mut words);
     output.put_words(&words);
     assert!(
         output.is_empty(),

@@ -73,6 +73,16 @@ pub(super) struct WalkedLoop {
     pub(super) stored: Vec<BindingRef>,
 }
 
+#[derive(Debug)]
+pub(super) struct WalkedTry {
+    // The scope around the statement.
+    pub(super) boundary: ScopeId,
+    pub(super) function: WalkedFunctionId,
+    pub(super) parent: Option<u32>,
+    // One entry for each store in the block that the handler or the finalizer covers.
+    pub(super) stored: Vec<BindingRef>,
+}
+
 #[derive(Default)]
 pub(super) struct ScopeWalk {
     pub(super) functions: Vec<WalkedFunction>,
@@ -89,6 +99,7 @@ pub(super) struct ScopeWalk {
     pub(super) slot_initializations: Vec<((ScopeId, ScopeSlot), u32)>,
     pub(super) hoisted_functions: Vec<(ScopeId, SymbolId, FnId)>,
     pub(super) loops: Vec<WalkedLoop>,
+    pub(super) tries: Vec<WalkedTry>,
     // Each identifier that a symbol is stored through, with the function that it stands in.
     pub(super) symbol_stores: Vec<(SymbolId, ExprId, WalkedFunctionId)>,
     // The time behind which none of those stores runs in the activation that owns the symbol, as long as they all stand in its own function.
@@ -117,6 +128,7 @@ struct Context {
     function: WalkedFunctionId,
     lexical_scope: ScopeId,
     enclosing_loop: Option<u32>,
+    enclosing_try: Option<u32>,
     is_repeated: bool,
     is_conditional: bool,
 }

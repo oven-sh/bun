@@ -16,10 +16,10 @@ toLocaleString of nothing ""
 toLocaleString with a locale that does not exist threw RangeError: invalid language tag: not a locale
 toLocaleString on an array threw TypeError: Receiver should be a typed array view
 length of toLocaleString and at 0,1
-toLocaleString calls what the program put on Number.prototype threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
-toLocaleString converts what the method answers threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
-toLocaleString does not convert a symbol threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
-toLocaleString skips the elements that the method removes threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+toLocaleString calls what the program put on Number.prototype threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+toLocaleString converts what the method answers threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+toLocaleString does not convert a symbol threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+toLocaleString skips the elements that the method removes threw TypeError: Cannot assign to Number.prototype.toLocaleString because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 dispose runs last in, first out deferred adopted value used | undefined true
 dispose of many 329776
 dispose keeps every error threw SuppressedError(error: RangeError: first; suppressed: SuppressedError(error: RangeError: third; suppressed: undefined))

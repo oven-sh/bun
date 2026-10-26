@@ -111,7 +111,7 @@ fn collect_synthetic_export_keys(
     for file_imports in imports {
         let symbols = file_imports.bindings.iter().map(|it| (it.1, true));
         let members = file_imports.members.iter().map(|it| (it.1, false));
-        let jsx = file_imports.jsx.iter().map(|it| (it.1, true));
+        let jsx = file_imports.jsx.iter().map(|it| (it.binding, true));
         // A key of `const { n } = require(K)` reads `undefined` where the module has no `n`.
         let named = file_imports.named_members.iter();
         let named = named.filter_map(|it| match it.1 {

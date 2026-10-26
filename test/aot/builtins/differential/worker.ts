@@ -1,5 +1,6 @@
 // One process of the differential test: bun --expose-internals worker.ts <request.json> <reports.jsonl>
 // A built-in may end the process, never return, or leave an exception for the event loop, so none is called in the process of the test.
+import "./describe-values-as-an-executable";
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { callsOf, checkCall, emptyReport, type CallReport } from "./check-call";

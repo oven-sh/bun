@@ -128,8 +128,7 @@ fn create_page_transpiler<'h>(
     options.metafile_json_path = Box::default();
     options.metafile_markdown_path = Box::default();
     options.bytecode = false;
-    options.output_dir = Box::default();
-    options.output_dir_handle = None;
+    options.clear_output_dir();
     options.entry_points = Box::default();
     options.compile_mode = CompileMode::Executable;
     options.public_path.clone_from(&context.module_prefix);

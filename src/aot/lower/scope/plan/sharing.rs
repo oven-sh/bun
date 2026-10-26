@@ -5,6 +5,7 @@ use bun_sema::program::Sym;
 use smallvec::SmallVec;
 
 use super::loop_updates::is_stored_only_by_own_loop_update;
+use super::tables::encloses;
 use super::{BindingSharing, Context, NormalizedUses};
 use crate::ir::{ClassSlot, VariableKey};
 use crate::lower::captures::{CapturedBinding, is_initialized_before};
@@ -84,6 +85,7 @@ pub(super) fn compute_sharing(
         }
     }
     sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
+    sharing.fields_for_handlers = collect_fields_for_handlers(context);
     sharing.captured_uses.sort_unstable();
     sharing.variables.sort_unstable();
     sharing.shared.sort_unstable();
@@ -348,6 +350,29 @@ fn collect_fields_for_eval(
             && is_initialized_before(functions, binding, eval_use.function, eval_use.time);
         if !is_passed_by_value {
             fields.push(binding.binding);
+        }
+    }
+    sort_unique(&mut fields);
+    fields
+}
+
+// Each block of a `try` hands to the handler every local that the `try` stores, and each store begins a block.
+// Where that is too much, the handler reads those names from fields.
+fn collect_fields_for_handlers(context: &Context<'_, '_>) -> Vec<BindingRef> {
+    let mut fields = Vec::new();
+    for walked in &context.walk.tries {
+        let is_seen_by_handler = |binding: &BindingRef| {
+            context.owner_of(*binding) == Some(walked.function)
+                && encloses(context, context.scope_of(*binding), walked.boundary)
+        };
+        let stored = walked.stored.iter().copied().filter(is_seen_by_handler);
+        let mut stored: Vec<BindingRef> = stored.collect();
+        let store_count = stored.len();
+        sort_unique(&mut stored);
+        if stored.len() > context.input.max_handler_arguments_per_block
+            && stored.len().saturating_mul(store_count) > context.input.max_handler_arguments
+        {
+            fields.append(&mut stored);
         }
     }
     sort_unique(&mut fields);

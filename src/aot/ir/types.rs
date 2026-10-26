@@ -110,18 +110,20 @@ impl Type {
         }
     }
 
+    pub fn integer_range(&self) -> Option<(i64, i64)> {
+        let has_integers = self.flags.contains(TypeFlags::HAS_INTEGERS);
+        has_integers.then_some((self.minimum, self.maximum))
+    }
+
+    #[cfg(test)]
     pub fn is_never(&self) -> bool {
         *self == Type::default()
     }
 
+    #[cfg(any(test, feature = "ir_text"))]
     pub fn is_anything(&self) -> bool {
         let has_every_primitive = self.primitives.contains(Primitives::OBSERVABLE);
         has_every_primitive && self.flags.contains(TypeFlags::ANY_OBJECT)
-    }
-
-    pub fn integer_range(&self) -> Option<(i64, i64)> {
-        let has_integers = self.flags.contains(TypeFlags::HAS_INTEGERS);
-        has_integers.then_some((self.minimum, self.maximum))
     }
 
     pub fn is_internal(&self) -> bool {
@@ -367,6 +369,7 @@ impl TypeTable {
             .reserve(additional, |&id| hash_of(types.get(id.index())));
     }
 
+    #[cfg(test)]
     pub fn release_spare_capacity(&mut self) {
         match &mut self.types {
             TypeList::Own(types) => release_spare_capacity(types),

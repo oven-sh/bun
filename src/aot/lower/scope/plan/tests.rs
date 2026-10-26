@@ -2,6 +2,7 @@ mod captures;
 mod classes;
 mod evals;
 mod forms;
+mod handlers;
 mod holders;
 mod loop_updates;
 mod module_level;

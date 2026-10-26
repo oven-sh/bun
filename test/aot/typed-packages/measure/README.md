@@ -38,7 +38,7 @@ hold the packages of `package.json` here, installed. `--typed-modules` (any numb
 | `released` | as npm ships it | `bun build --compile --production` by `--released` |
 | `typed-by-ceiling-bun`, `no-tests-in-packages`, `no-tests-anywhere` | with its `.aot.ts` file | `--ceiling <bun>`, see below |
 
-A `typed` build whose `--aot-report` counts no file under an `"aot"` condition (`statistics.TypedVersionsUsed`) stops the run: such a cell would be a second `as-installed`.
+A `typed` build whose `--aot-report` counts no file under an `"aot"` condition (`statistics.AotFilesUsed`) stops the run: such a cell would be a second `as-installed`.
 
 ## What a cell is
 

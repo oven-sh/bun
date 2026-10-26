@@ -1423,6 +1423,11 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
 }
 
 impl<'a> BundleOptions<'a> {
+    pub(crate) fn clear_output_dir(&mut self) {
+        self.output_dir = Box::default();
+        self.output_dir_handle = None;
+    }
+
     pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
     }

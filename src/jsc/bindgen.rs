@@ -417,7 +417,10 @@ impl<'a, T> JsLocal<'a, T> {
         Self::from_raw(value)
     }
 
-    /// SAFETY: As [`Self::from_extern`], or `value` is empty: the caller has no such argument.
+    /// # Safety
+    /// As [`Self::from_extern`], or `value` is empty: the caller has no such argument.
+    // Generated bindings call it for a `b.any.orAbsent` argument of a function with a Rust body.
+    #[cfg_attr(mordant, allow(unused_pub))]
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn from_extern_or_absent(value: JSValue, _: &JsHeap<'a>) -> Option<Self> {

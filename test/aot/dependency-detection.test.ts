@@ -311,7 +311,7 @@ async function buildAndCheck(directory: string) {
   })) {
     const report = join(directory, name + ".json");
     const { said, exitCode } = await withoutBundler(directory, ...command, "--aot-report=" + report);
-    answers[name] = { codes: codesOf(said), exitCode, aotFiles: readBuildReport(report).statistics.TypedVersionsUsed };
+    answers[name] = { codes: codesOf(said), exitCode, aotFiles: readBuildReport(report).statistics.AotFilesUsed };
   }
   return answers;
 }

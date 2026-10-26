@@ -1,4 +1,4 @@
-use super::interop::{Interop, file_interop};
+use super::interop::{Interop, ModuleKind, file_interop};
 use super::requests::{ScannedSite, Scans};
 use super::wrapped::WrappedModules;
 use super::{BindInput, ModuleRef, compare_modules};
@@ -32,6 +32,15 @@ impl ModuleSet {
                 importer,
                 specifier,
             } => Interop::of_external(self.external_kind(importer, specifier)),
+        }
+    }
+
+    pub(super) fn find_commonjs_file(&self, module: ModuleRef) -> Option<FileId> {
+        match module {
+            ModuleRef::File(file) if self.interop(module).kind == ModuleKind::CommonJs => {
+                Some(file)
+            }
+            _ => None,
         }
     }
 

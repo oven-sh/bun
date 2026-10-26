@@ -54,8 +54,6 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_ecmascript: bool,
     /// The goal symbol is Script.
     pub(crate) is_script: bool,
-    /// The file is JavaScript parsed for `bun compile`.
-    pub(crate) compiles: bool,
     /// `Options::compiles`: text that is not UTF-8 is read as `bun run` reads it, so the value of every token is WTF-8, and the lines of JSX text are trimmed as `bun run` trims them.
     pub(crate) decodes_ill_formed_text: bool,
     /// `Dialect::typescript_5`
@@ -264,6 +262,12 @@ fn is_utf8(text: &[u8]) -> bool {
 }
 
 impl<'a> Lexer<'a> {
+    /// The file is JavaScript parsed for `bun compile`.
+    #[inline]
+    pub(crate) fn compiles(&self) -> bool {
+        self.decodes_ill_formed_text && self.is_ecmascript
+    }
+
     pub(crate) fn new(
         src: &'a [u8],
         stops: ScannerStops<'a>,
@@ -288,7 +292,6 @@ impl<'a> Lexer<'a> {
             is_jsx: false,
             is_ecmascript: false,
             is_script: false,
-            compiles: false,
             decodes_ill_formed_text: false,
             is_typescript_5: false,
             is_babel: false,
@@ -453,10 +456,10 @@ impl<'a> Lexer<'a> {
     /// Adds an entry to `flagged`. Returns false if the caller has to reject the text instead.
     #[cold]
     fn flag(&mut self, code: u32, start: usize, end: usize) -> bool {
-        if self.is_ecmascript && !self.compiles {
+        if self.is_ecmascript && !self.compiles() {
             self.flagged.push((code, start as u32, end as u32));
         }
-        self.has_legacy_octal |= self.compiles;
+        self.has_legacy_octal |= self.compiles();
         self.is_ecmascript
     }
 
@@ -805,7 +808,7 @@ impl<'a> Lexer<'a> {
                 b' ' | b'\t' | 0x0B | 0x0C => Some(pos + 1),
                 b'<' | b'-' | b'#' => match self.end_of_html_or_hashbang_comment(pos) {
                     Some(end) => {
-                        if self.compiles && self.at(pos) == b'<' && !self.html_open_error(pos) {
+                        if self.compiles() && self.at(pos) == b'<' && !self.html_open_error(pos) {
                             return;
                         }
                         // A formatter has to print `<!-- comment` and `--> comment` too.

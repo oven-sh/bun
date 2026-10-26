@@ -2264,6 +2264,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Sets how much stack the thread has from here on. Queries that need more yield "unresolved".
+    #[cfg(any(test, feature = "test_support"))]
     pub fn set_stack_limit(&mut self, bytes: usize) {
         self.stack_base = stack_pointer();
         self.stack_limit = bytes;

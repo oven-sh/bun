@@ -10,6 +10,7 @@ use super::{ScopeAnalysis, ScopeInput, analyze_scopes};
 use crate::builtins::{ImportTargets, ResolveInput, SourceDialect, resolve_file};
 use crate::compile::testing::with_lowering_inputs;
 use crate::ir::FunctionKey;
+use crate::ir::generated::LimitId;
 use crate::lower::captures::max_captures;
 
 pub(in crate::lower) fn with_scope_input<R>(
@@ -27,6 +28,9 @@ pub(in crate::lower) fn with_scope_input<R>(
             modules: inputs.modules,
             builtins: file_inputs.expect("the entry point is lowered").builtins,
             max_captures: max_captures(),
+            max_handler_arguments: LimitId::MaxHandlerArguments.value_on_x86_64() as usize,
+            max_handler_arguments_per_block: LimitId::MaxHandlerArgumentsPerBlock.value_on_x86_64()
+                as usize,
         })
     })
 }
@@ -56,6 +60,9 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             modules: inputs.modules,
             builtins: &builtins,
             max_captures: max_captures(),
+            max_handler_arguments: LimitId::MaxHandlerArguments.value_on_x86_64() as usize,
+            max_handler_arguments_per_block: LimitId::MaxHandlerArgumentsPerBlock.value_on_x86_64()
+                as usize,
         })
     })
 }

@@ -66,7 +66,7 @@ async function compile(root: string) {
   const build = await spawned([bunExe(), "compile", "./app.ts", "--aot-report=" + report], app, env);
   const said = (build.stdout + build.stderr).split(/\r?\n/).filter(line => /^(note|warn|error): /.test(line));
   const ran = build.exitCode === 0 ? await spawned([join(app, isWindows ? "app.exe" : "app")], app, env) : undefined;
-  const aotFiles = build.exitCode === 0 ? readBuildReport(report).statistics.TypedVersionsUsed : undefined;
+  const aotFiles = build.exitCode === 0 ? readBuildReport(report).statistics.AotFilesUsed : undefined;
   return { said, aotFiles, exitCode: build.exitCode, signal: build.signal, stdout: ran?.stdout };
 }
 

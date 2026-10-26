@@ -270,7 +270,10 @@ impl FragmentBuilder {
     }
 
     pub(crate) fn define_function(&mut self, id: FunctionId, function: impl Into<Arc<Function>>) {
-        let function = function.into();
+        self.define_shared_function(id, function.into());
+    }
+
+    fn define_shared_function(&mut self, id: FunctionId, function: Arc<Function>) {
         debug_assert!(
             is_function_type(self.function_key(id))
                 || self.function_key(id).home_file() == self.file

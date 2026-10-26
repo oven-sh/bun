@@ -184,7 +184,6 @@ pub(crate) enum OptionError<'a> {
     InvalidValue {
         option: OptionName,
         value: &'a [u8],
-        allowed: &'static str,
     },
     DeveloperWord {
         word: Vec<u8>,
@@ -198,6 +197,19 @@ pub(crate) enum OptionError<'a> {
     KeyBelongsInCompile {
         key: &'a [u8],
     },
+}
+
+fn allowed_values(option: OptionName) -> &'static str {
+    match option {
+        OptionName::Explain => EXPLAIN_ALLOWED,
+        OptionName::TrimLocales => LOCALES_ALLOWED,
+        OptionName::ReportDetail => REPORT_DETAIL_ALLOWED,
+        OptionName::References => "one of narrow, wide",
+        OptionName::Threads => "a whole number above zero",
+        OptionName::CodeGenerationFromStrings => "\"strict\", or no value",
+        OptionName::List => "registry",
+        _ => unreachable!("{option:?} takes any value"),
+    }
 }
 
 fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) {
@@ -291,17 +303,13 @@ impl OptionError<'_> {
                     b" is not available in this build of Bun. Its executables only run code that was compiled into them",
                 );
             }
-            OptionError::InvalidValue {
-                option,
-                value,
-                allowed,
-            } => {
+            OptionError::InvalidValue { option, value } => {
                 out.extend_from_slice(b"Invalid value for ");
                 write_spelling(*option, origin, out);
                 out.extend_from_slice(b": \"");
                 out.extend_from_slice(value);
                 out.extend_from_slice(b"\". Must be ");
-                out.extend_from_slice(allowed.as_bytes());
+                out.extend_from_slice(allowed_values(*option).as_bytes());
             }
             OptionError::DeveloperWord { word, sentence } => {
                 out.extend_from_slice(b"--aot-");
@@ -475,7 +483,6 @@ pub(crate) fn explain_set<'a>(values: &[&'a [u8]]) -> Result<ExplainSet, OptionE
                 return Err(OptionError::InvalidValue {
                     option: OptionName::Explain,
                     value,
-                    allowed: EXPLAIN_ALLOWED,
                 });
             }
         }
@@ -528,7 +535,6 @@ fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError
         return Err(OptionError::InvalidValue {
             option: OptionName::TrimLocales,
             value,
-            allowed: LOCALES_ALLOWED,
         });
     }
 
@@ -560,7 +566,6 @@ fn resolve_report_detail(value: &[u8]) -> Result<ReportDetail, OptionError<'_>> 
         _ => Err(OptionError::InvalidValue {
             option: OptionName::ReportDetail,
             value,
-            allowed: REPORT_DETAIL_ALLOWED,
         }),
     }
 }
@@ -593,7 +598,6 @@ pub(crate) fn apply_developer_word<'a>(
                 return Err(OptionError::InvalidValue {
                     option: OptionName::References,
                     value: text,
-                    allowed: "one of narrow, wide",
                 });
             }
         },
@@ -604,7 +608,6 @@ pub(crate) fn apply_developer_word<'a>(
             let invalid = OptionError::InvalidValue {
                 option: OptionName::Threads,
                 value: text,
-                allowed: "a whole number above zero",
             };
             options.thread_count = Some(count.ok_or(invalid)?);
         }
@@ -713,7 +716,6 @@ pub(crate) fn prepend_code_generation_flag<'a>(
         return Err(OptionError::InvalidValue {
             option: OptionName::CodeGenerationFromStrings,
             value: level,
-            allowed: "\"strict\", or no value",
         });
     }
     let level_separator: &[u8] = if level.is_empty() { b"" } else { b"=" };
@@ -828,7 +830,6 @@ fn list_and_exit(list: &[u8], origin: RequestOrigin) -> ! {
             &OptionError::InvalidValue {
                 option: OptionName::List,
                 value: list,
-                allowed: "registry",
             },
             origin,
         );

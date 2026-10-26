@@ -61,6 +61,7 @@ impl EmitError {
     }
 }
 
+#[cfg(any(test, feature = "ir_text"))]
 pub fn emit(mut program: Program, in_parallel: InParallel<'_>) -> Result<ProgramBytes, EmitError> {
     emit_from(&mut program, in_parallel)
 }

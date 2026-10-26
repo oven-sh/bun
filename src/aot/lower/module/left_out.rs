@@ -60,8 +60,4 @@ impl LeftOutDeclarations {
     pub fn is_statement_left_out(&self, file: FileId, statement: StmtId) -> bool {
         self.0.contains(&(file, Declaration::Statement(statement)))
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
 }

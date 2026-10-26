@@ -230,7 +230,12 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             accessed: imports.accessed,
             fixed_members: imports.fixed_members,
             named_members: finish_named_members(imports.named_members, &synthetic),
-            jsx: finish_bindings(imports.jsx, &synthetic),
+            jsx: finish_bindings(
+                (imports.jsx.into_iter())
+                    .map(|it| (it.import, it.binding))
+                    .collect(),
+                &synthetic,
+            ),
             namespace_values: imports.namespace_values,
             evaluating_sites,
             unread_sites: imports.unread_sites,
@@ -253,7 +258,6 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let inner_requests = requests.inner_modules.into_iter();
     plan.inner_requests = inner_requests.map(|(_, requests)| requests).collect();
     let graph = ModuleGraph {
-        project: input.sources.project(),
         row_by_file: vec![None; file_count],
         rows,
         record_files: Vec::new(),

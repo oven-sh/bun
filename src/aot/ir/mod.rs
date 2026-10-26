@@ -21,7 +21,9 @@ pub mod types;
 #[rustfmt::skip]
 pub mod generated;
 
+#[cfg(any(test, feature = "ir_text"))]
 mod body_decode;
+mod body_walk;
 mod finish;
 mod name_class;
 #[cfg(any(test, feature = "ir_text"))]
@@ -37,9 +39,9 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
-pub use body::{
-    BlockView, Body, FieldWord, StreamError, TargetView, TerminatorView, ValueView, Words,
-};
+#[cfg(any(test, feature = "ir_text"))]
+pub use body::{BlockView, StreamError, TargetView, TerminatorView, ValueView};
+pub use body::{Body, FieldWord, Words};
 pub use builder::{BuilderScratch, Edge, FunctionBuilder, Handler, LocalVariable};
 pub use declared::{DeclaredType, Mapped, PositionFlags};
 pub use entry_parameters::EntryPosition;
@@ -53,7 +55,9 @@ pub use name_class::classify_name;
 pub use parallel::{InParallel, drop_each, for_each_mut, run_serially};
 #[cfg(any(test, feature = "ir_text"))]
 pub use print::{Printer, print_function, print_program};
-pub use program::{NameTables, Program};
+#[cfg(any(test, feature = "ir_text"))]
+pub use program::NameTables;
+pub use program::Program;
 pub use property_keys::{PropertyKey, PropertyKeyKind, PropertyKeyTable, WellKnownSymbol};
 pub use references::{IdMap, Reference, ReferenceKind};
 pub use sections::{ListCounts, SectionWriter, WireSpan};

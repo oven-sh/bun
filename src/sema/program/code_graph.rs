@@ -310,6 +310,7 @@ impl<'s> Files<'s> {
             .analysis
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     #[inline]
     pub fn code_answers(&self, file: FileId) -> &'s [CodeAnswer<'s>] {
         match self.compiled(file) {

@@ -1,6 +1,6 @@
 use super::{
     LinkedBinding, LoadedValue, NamespaceReferent, ReferentCertainty, ReferentContext,
-    ResolvedReferent, StaticInitializer, StaticReferent, UnknownReferent,
+    ResolvedReferent, StaticReferent, UnknownReferent,
 };
 use crate::atom::{Atom, known};
 use crate::bind::decorator_metadata::has_decorators;
@@ -267,37 +267,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         expr: ExprId,
     ) -> ResolvedReferent<C::Builtin, C::Module> {
         self.run(Step::Expression(file, expr))
-    }
-
-    // The expression whose value the name has for as long as the program runs: the initializer of a binding that nothing stores to, through imports and other such names.
-    pub(super) fn resolve_initializer(
-        mut self,
-        mut file: FileId,
-        mut expr: ExprId,
-    ) -> Option<StaticInitializer> {
-        let mut holder = None;
-        loop {
-            let hir = self.context.hir(file);
-            expr = hir.skip_type_assertions(expr);
-            if !matches!(hir[expr].kind, ExprKind::Ident(_)) {
-                return Some(StaticInitializer { file, expr, holder });
-            }
-            let mut step = self.step_identifier(file, expr);
-            (file, expr) = loop {
-                step = match step {
-                    Step::Symbol(symbol) => {
-                        holder = Some(symbol);
-                        self.step_symbol(symbol)
-                    }
-                    Step::Linked(LinkedBinding::Binding(symbol)) => Step::Symbol(symbol),
-                    Step::Expression(file, expr) => break (file, expr),
-                    Step::Linked(_) | Step::Found(_) => return None,
-                };
-            };
-            if !self.pending_members.is_empty() || self.certainty != ReferentCertainty::Proven {
-                return None;
-            }
-        }
     }
 
     pub(super) fn resolve_symbol(self, symbol: Sym) -> ResolvedReferent<C::Builtin, C::Module> {

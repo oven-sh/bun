@@ -58,7 +58,7 @@ describe.skipIf(!!unsupported)(
             );
             built(build);
             expect(build.stdout + build.stderr).not.toMatch(/compiled (untyped|without (its |their )?types)/);
-            expect(JSON.parse(readFileSync(report, "utf8")).statistics.TypedVersionsUsed).toBe(1);
+            expect(JSON.parse(readFileSync(report, "utf8")).statistics.AotFilesUsed).toBe(1);
             if (!whyNotCounted)
               seen[way].turn = await countTurn(
                 bunExe(),

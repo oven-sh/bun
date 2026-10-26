@@ -15,7 +15,7 @@ function loadChild(): $BunModules["internal/cluster/child"] {
   // An executable of a program that never names node:cluster holds nothing of a worker.
   throw Object.assign(
     new Error(
-      "Cannot load 'node:cluster': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)",
+      "Cannot load 'node:cluster': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)",
     ),
     { code: "MODULE_NOT_FOUND" },
   );

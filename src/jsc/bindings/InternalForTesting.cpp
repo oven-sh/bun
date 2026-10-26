@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "ErrorCode.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
@@ -95,6 +96,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_readFreedStringUnderASAN, (JSC::JSGlobalObje
 #else
     return JSValue::encode(jsUndefined());
 #endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_describeRejectedValuesWithoutScript, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    describeRejectedValuesWithoutScriptForTesting();
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_aotBuiltinMismatches, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

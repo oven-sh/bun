@@ -108,6 +108,9 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
 // stringified, everything else through util.inspect. `quotesLikeInspect` quotes strings.
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
 
+// bun:internal-for-testing: from here on this process describes a rejected value as an executable does.
+void describeRejectedValuesWithoutScriptForTesting();
+
 enum Bound {
     LOWER,
     UPPER,

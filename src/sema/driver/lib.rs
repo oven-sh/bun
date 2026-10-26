@@ -8,7 +8,7 @@ pub mod declaration_imports;
 pub mod format;
 pub mod host;
 pub mod outline;
-pub mod sound_files;
+pub mod typed_files;
 
 pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;

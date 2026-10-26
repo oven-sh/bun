@@ -453,9 +453,9 @@ impl Scan<'_, '_> {
     }
 
     // `new Set(list)` and `Object.freeze(list)` hold what the list holds.
-    fn holds_its_only_argument(&self, expression: ExprId, argument: ExprId) -> bool {
+    fn holds_its_only_argument(&self, holder_call: ExprId, argument: ExprId) -> bool {
         let hir = self.request.hir;
-        let (call, holder) = match hir[expression].kind {
+        let (call, holder) = match hir[holder_call].kind {
             ExprKind::New(call) => (call, BuiltinId::Set),
             ExprKind::Call(call) => (call, BuiltinId::ObjectFreeze),
             _ => return false,

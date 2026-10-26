@@ -12,9 +12,9 @@ use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::session::Session;
 use bun_sema_driver::host::{Disk, Provided, from_native};
-use bun_sema_driver::sound_files::{
-    ModuleTypes, Output, annotate_implicit_any, emitted_declarations_of, module_types, sound_files,
-    tsconfig_of_sources, typed_path_beside,
+use bun_sema_driver::typed_files::{
+    ModuleTypes, Output, annotate_implicit_any, build_typed_files, emitted_declarations_of,
+    module_types, tsconfig_of_sources, typed_path_beside,
 };
 use bun_sema_driver::{Diagnostic, PlanOptions, Report, Request};
 use bun_threading::Guarded;
@@ -79,10 +79,14 @@ impl NotedModuleTypes {
         is_wanted: impl Fn(&ModuleTypes) -> bool,
     ) {
         if let Some(found) = module_types(checker, file).filter(is_wanted) {
-            let mut noted = self.0.lock();
-            noted.retain(|known| known.0 != file.0);
-            noted.push((file.0, found));
+            self.replace(file, found);
         }
+    }
+
+    fn replace(&self, file: FileId, found: ModuleTypes) {
+        let mut noted = self.0.lock();
+        noted.retain(|known| known.0 != file.0);
+        noted.push((file.0, found));
     }
 
     pub(super) fn take(&self) -> Vec<ModuleTypes> {
@@ -298,7 +302,7 @@ pub(crate) fn typed_files_for_build(
             }
         }
     };
-    let without_emitted_declarations = sound_files(outdir, &outputs, modules, &[]);
+    let without_emitted_declarations = build_typed_files(outdir, &outputs, modules, &[]);
     let untyped_modules = without_emitted_declarations
         .as_ref()
         .map_or(&[][..], |found| &found.modules_of_untyped_values[..]);
@@ -341,7 +345,7 @@ pub(crate) fn typed_files_for_build(
     let emitted_modules = emitted_modules.take();
     let found = match emitted_modules.is_empty() {
         true => without_emitted_declarations,
-        false => sound_files(outdir, &outputs, modules, &emitted_modules),
+        false => build_typed_files(outdir, &outputs, modules, &emitted_modules),
     };
     let mut warn = |why: core::fmt::Arguments<'_>| {
         log.add_warning_fmt(

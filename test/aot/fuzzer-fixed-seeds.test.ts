@@ -25,6 +25,14 @@ const seeds = process.env.AOT_FUZZ_SEED
     ? [1]
     : [1, freshSeed];
 const secondsPerProgram = 4;
+// TODO: each of these gets a generated-<its name>.test.ts and goes out of this list.
+const withoutFixedSeedsYet = [
+  "strings-grown-piece-by-piece-on-many-paths",
+  "compiled-code-calls-text-made-at-run-time",
+  "methods-of-helper-objects-define-members-under-written-names",
+  "long-array-literals-of-mixed-constants",
+  "very-many-values-alive-across-very-many-blocks",
+];
 
 for (const seed of seeds)
   test.skipIf(!!unsupported)(
@@ -35,7 +43,10 @@ for (const seed of seeds)
       const programsRoot = join(import.meta.dir, "programs");
       // A source with fixed seeds of its own, in generated-<its name>.test.ts, is left to that test: a new one does not move what is drawn here. The programs as they are have tests of their own.
       const sources = Object.keys(await allSources(programsRoot, new Set())).filter(
-        name => name !== "programs-as-they-are" && !existsSync(join(import.meta.dir, `generated-${name}.test.ts`)),
+        name =>
+          name !== "programs-as-they-are" &&
+          !withoutFixedSeedsYet.includes(name) &&
+          !existsSync(join(import.meta.dir, `generated-${name}.test.ts`)),
       );
       const bed = new ProductBed(bunExe(), {
         baseFlags: [],

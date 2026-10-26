@@ -198,7 +198,7 @@ export function toldByThePackage(asked: AskedOfThePackage, kept: KeptByThePackag
   const hasLostTypes = /TS1000(09|10): .*published/.test(build.text);
   // The statistic counts the files that kept their types. Behind `// @ts-nocheck` index.aot.ts is compiled without them, and the build says so.
   const isCompiledUnchecked = laying === "ts-nocheck in front" && /compiled without types/.test(build.text);
-  const usesAotFile = hasLostTypes || isCompiledUnchecked || JSON.parse(readFileSync(join(folder, "app/report.json"), "utf8")).statistics.TypedVersionsUsed > 0;
+  const usesAotFile = hasLostTypes || isCompiledUnchecked || JSON.parse(readFileSync(join(folder, "app/report.json"), "utf8")).statistics.AotFilesUsed > 0;
   const compiledFrom = usesAotFile ? "index.aot.ts" + (hasLostTypes ? " without its types" : "") : laying === "the condition points at index.d.ts" ? "index.d.ts" : "index.js";
   count(`${laying}: compiled from ${compiledFrom}`);
   if (hasAotFile && !usesAotFile && compilesAotFile.has(laying)) return finding("index.aot.ts is not compiled", folder, seed, notes, build.text);

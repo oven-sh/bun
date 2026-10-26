@@ -222,7 +222,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             false => name.start,
         };
         match self.recovers() {
-            true if self.lx.compiles => self.f.error(DiagnosticKind::JsDoc, start, name.end, 1003),
+            true if self.lx.compiles() => {
+                self.f.error(DiagnosticKind::JsDoc, start, name.end, 1003)
+            }
             true => self.f.error(DiagnosticKind::Parse, start, name.end, 1003),
             false => self.report(),
         }

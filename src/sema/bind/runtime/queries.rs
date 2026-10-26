@@ -164,6 +164,7 @@ impl RuntimeBindings<'_> {
         self.is_module = is_module;
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     pub fn stores(&self) -> &[SymbolStore] {
         &self.references.stores
     }
@@ -201,6 +202,7 @@ impl RuntimeBindings<'_> {
         }
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     pub fn private_names(&self) -> &[PrivateName] {
         &self.private_names.names
     }
@@ -210,6 +212,7 @@ impl RuntimeBindings<'_> {
         Some(self.private_names.names[name.idx()].class)
     }
 
+    #[cfg(test)]
     pub fn field_initializer_scopes(&self) -> &[(MemberId, ScopeId)] {
         &self.field_initializer_scopes
     }

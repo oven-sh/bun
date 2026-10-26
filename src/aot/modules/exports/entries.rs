@@ -4,7 +4,7 @@ use crate::modules::failures::{SitePart, WrittenPart};
 use crate::modules::imports::{
     ImportedItem, find_imported_value_site, imported_items, may_name_value,
 };
-use crate::modules::interop::{ImportPhase, ModuleKind};
+use crate::modules::interop::ImportPhase;
 use crate::modules::module_set::ModuleSet;
 use crate::modules::requests::{FileScan, ScannedSite, Scans, import_phase};
 use crate::modules::{BindInput, ModuleRef, find_library_files};
@@ -57,13 +57,6 @@ pub(in crate::modules) struct CollectedEntries {
     pub commonjs_namespace_loads: Vec<FileId>,
 }
 
-fn find_commonjs_file(modules: &ModuleSet, module: ModuleRef) -> Option<FileId> {
-    match module {
-        ModuleRef::File(file) if modules.interop(module).kind == ModuleKind::CommonJs => Some(file),
-        _ => None,
-    }
-}
-
 fn collect_namespace_loads(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -79,11 +72,11 @@ fn collect_namespace_loads(
                 _ => continue,
             }
             match scanned {
-                ScannedSite::Module(module) => loads.extend(find_commonjs_file(modules, *module)),
+                ScannedSite::Module(module) => loads.extend(modules.find_commonjs_file(*module)),
                 ScannedSite::Candidates(range) => {
                     let spelled = &scan.spellings[range.start as usize..range.end as usize];
                     let candidates = spelled.iter().map(|spelled| spelled.module);
-                    loads.extend(candidates.filter_map(|it| find_commonjs_file(modules, it)));
+                    loads.extend(candidates.filter_map(|it| modules.find_commonjs_file(it)));
                 }
                 ScannedSite::Unresolved | ScannedSite::AllModules | ScannedSite::Erased => {}
             }
@@ -154,7 +147,7 @@ struct EntryCollector<'a, 's> {
 impl EntryCollector<'_, '_> {
     fn commonjs_file_at(&self, site: usize) -> Option<FileId> {
         match &self.scan.sites[site] {
-            ScannedSite::Module(module) => find_commonjs_file(self.modules, *module),
+            ScannedSite::Module(module) => self.modules.find_commonjs_file(*module),
             _ => None,
         }
     }

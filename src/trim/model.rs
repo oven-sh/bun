@@ -29,6 +29,7 @@ pub enum UnseenCodeCause {
 }
 
 impl UnseenCodeCause {
+    #[cfg(any(test, feature = "test_support"))]
     pub const ALL: [UnseenCodeCause; 10] = [
         UnseenCodeCause::ProgramNotCompiled,
         UnseenCodeCause::ReportMissing,
@@ -91,6 +92,7 @@ impl UsedFeatures {
         }
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     pub fn from_features(features: &[Feature]) -> UsedFeatures {
         let without_witness = |feature: &Feature| UsedFeature {
             feature: *feature,

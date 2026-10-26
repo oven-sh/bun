@@ -63,13 +63,6 @@ pub(super) struct Faces {
     is_decided: bool,
 }
 
-fn find_commonjs_file(modules: &ModuleSet, module: ModuleRef) -> Option<FileId> {
-    match module {
-        ModuleRef::File(file) if modules.interop(module).kind == ModuleKind::CommonJs => Some(file),
-        _ => None,
-    }
-}
-
 /// The CommonJS files whose namespace object something may look at: `ns` as a value, `import()`, `export *`.
 pub(in crate::modules) fn collect_seen_namespaces(
     modules: &ModuleSet,
@@ -81,7 +74,7 @@ pub(in crate::modules) fn collect_seen_namespaces(
         let bindings = file_imports.bindings.iter();
         let namespaces = bindings.filter_map(|&(_, binding)| match binding {
             PendingBinding::Bound(ImportBinding::Namespace { module, .. }) => {
-                find_commonjs_file(modules, module)
+                modules.find_commonjs_file(module)
             }
             _ => None,
         });
@@ -102,7 +95,7 @@ pub(in crate::modules) fn collect_members_of_namespaces(
     let mut variables = Vec::new();
     let mut add = |binding: PendingBinding, exporter: ModuleRef| {
         if let PendingBinding::Synthetic { module, name } = binding
-            && let Some(exporter) = find_commonjs_file(modules, exporter)
+            && let Some(exporter) = modules.find_commonjs_file(exporter)
         {
             variables.push(ImportedVariable {
                 exporter,
@@ -119,9 +112,9 @@ pub(in crate::modules) fn collect_members_of_namespaces(
             }
         }
         // What JSX imports without a statement.
-        for (&(_, binding), &exporter) in file_imports.jsx.iter().zip(&file_imports.jsx_exporters) {
-            if let Some(exporter) = exporter {
-                add(binding, exporter);
+        for jsx in &file_imports.jsx {
+            if let Some(exporter) = jsx.exporter {
+                add(jsx.binding, exporter);
             }
         }
     }
@@ -425,6 +418,7 @@ impl CommonJsExports {
     }
 
     /// The module that throws for the first name that the graph of imports below `root` imports and no CommonJS module has.
+    #[cfg(test)]
     pub fn check(&self, root: FileId) -> Option<ModuleRef> {
         (!self.checked_copies(root).is_empty()).then_some(ModuleRef::Check(root))
     }
@@ -451,10 +445,5 @@ impl CommonJsExports {
     pub fn checked_copies(&self, check: FileId) -> &[(SyntheticExportId, ModuleFailureId)] {
         let copies = self.faces.checks.get(&check);
         copies.map_or(&[], |copies| &copies[..])
-    }
-
-    /// The CommonJS files whose namespace object an ES module may look at: `ns` as a value, `import()`, `export *`.
-    pub fn seen_namespaces(&self) -> &[FileId] {
-        &self.faces.seen_namespaces
     }
 }

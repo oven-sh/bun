@@ -805,6 +805,13 @@ export const readFreedStringUnderASAN: () => number | undefined = $newCppFunctio
   0,
 );
 
+/** From here on this process describes a value that a native function rejects as an executable does: without running code of the program. */
+export const describeRejectedValuesWithoutScript: () => void = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_describeRejectedValuesWithoutScript",
+  0,
+);
+
 /** Where the compiler's table of built-ins and this realm disagree, one message each. Empty: they agree, or this Bun has no compiler. */
 export const aotBuiltinMismatches: () => string[] = $newCppFunction(
   "InternalForTesting.cpp",

@@ -72,6 +72,7 @@ impl JsxImportSet {
         self.0 |= 1 << import as u8;
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     pub fn is_empty(self) -> bool {
         self.0 == 0
     }

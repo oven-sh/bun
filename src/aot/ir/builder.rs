@@ -324,6 +324,7 @@ impl FunctionBuilder {
         self.position = position;
     }
 
+    #[cfg(test)]
     pub fn position(&self) -> Option<u32> {
         self.position
     }

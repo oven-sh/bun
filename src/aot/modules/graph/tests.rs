@@ -81,7 +81,6 @@ fn file_with_sites(file: u32, sites: Vec<(ImportSiteKind, StoredSiteAnswer)>) ->
 
 fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
     ModuleGraph {
-        project: ProjectId::Application,
         row_by_file: vec![None; file_count],
         rows,
         record_files: Vec::new(),
@@ -490,12 +489,7 @@ fn file_flags_are_read_per_file() {
         runtime_module: Some(RuntimeModule::NodePath),
         ..source_text_file(FileId(2))
     };
-    let graph = ModuleGraph {
-        project: ProjectId::Runtime,
-        ..unfinished_graph(3, vec![plain, flagged, runtime_source])
-    }
-    .finish(&run_serially);
-    assert_eq!(graph.project(), ProjectId::Runtime);
+    let graph = unfinished_graph(3, vec![plain, flagged, runtime_source]).finish(&run_serially);
     for (file, expected) in [(FileId(0), false), (FileId(1), true)] {
         assert_eq!(graph.is_library(file), expected);
         assert_eq!(graph.has_dynamic_names(file), expected);

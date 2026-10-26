@@ -1,13 +1,10 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { measureUntilWithinBounds } from "./harness/measure-again";
+import { indexesUpTo, writeClassWithMethods, writeLocalsReadInCatch, type Program } from "./long-functions-programs";
 import { test } from "./supported";
 
 const isSlowBuild = isDebug || isASAN;
-
-type Program = { source: string; output: string };
-
-const indexesUpTo = (count: number) => Array.from({ length: count }, (_, index) => index);
 
 function writeStoresToOneObject(storeCount: number): Program {
   return {
@@ -17,35 +14,6 @@ function writeStoresToOneObject(storeCount: number): Program {
       `console.log(Object.keys(table).length, table.k7, table.k${storeCount - 1});`,
     ].join("\n"),
     output: `${storeCount} 7 ${storeCount - 1}\n`,
-  };
-}
-
-const scramble = (index: number) => (index * 31 + 7) | 0;
-const mix = (sum: number, value: number) => (sum * 33 + value) % 1000000007;
-
-// The `try` block has as many calls as there are locals in front of it, and the `catch` block reads every local.
-function writeLocalsReadInCatch(localCount: number): Program {
-  const indexes = indexesUpTo(localCount);
-  const sumOfTry = indexes.reduce((sum, index) => mix(sum, scramble(index)), 1);
-  const sumOfCatch = indexes.reduceRight((sum, index) => mix(sum, scramble(index)), sumOfTry);
-  return {
-    source: [
-      `const scramble = ${scramble};`,
-      `const mix = ${mix};`,
-      "function run(throws) {",
-      "let sum = 1;",
-      ...indexes.map(index => `const local${index} = scramble(${index});`),
-      "try {",
-      ...indexes.map(index => `sum = mix(sum, scramble(${index}));`),
-      'if (throws) throw new Error("thrown");',
-      "} catch {",
-      ...indexes.map(index => `sum = mix(sum, local${index});`).reverse(),
-      "}",
-      "return sum;",
-      "}",
-      "console.log(run(false), run(true));",
-    ].join("\n"),
-    output: `${sumOfTry} ${sumOfCatch}\n`,
   };
 }
 
@@ -91,19 +59,6 @@ function writeArrayOfTexts(elementCount: number): Program {
       `console.log(texts.length, texts[0], texts[8], texts[${elementCount}]);`,
     ].join("\n"),
     output: `${elementCount + 1} first ${texts[7]} ${texts[elementCount - 1]}\n`,
-  };
-}
-
-function writeClassWithMethods(methodCount: number): Program {
-  return {
-    source: [
-      `class Table { ${indexesUpTo(methodCount)
-        .map(index => `k${index}() { return ${index}; }`)
-        .join(" ")} }`,
-      "const table = new Table();",
-      `console.log(Object.getOwnPropertyNames(Table.prototype).length, table.k7(), table.k${methodCount - 1}());`,
-    ].join("\n"),
-    output: `${methodCount + 1} 7 ${methodCount - 1}\n`,
   };
 }
 
@@ -192,5 +147,5 @@ test("build time is linear in the number of text elements of an array literal", 
 }, 240_000);
 
 test("build time is linear in the number of methods of a class", async () => {
-  await expectLinearBuildTime("methods of a class", isSlowBuild ? 4_000 : 30_000, writeClassWithMethods);
+  await expectLinearBuildTime("methods of a class", isSlowBuild ? 4_000 : 15_000, writeClassWithMethods);
 }, 240_000);

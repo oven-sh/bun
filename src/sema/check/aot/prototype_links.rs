@@ -2,9 +2,7 @@ use super::answers::{ClassDeclaration, ClassParent, ClassRef, FunctionRef};
 use super::constructor_function_parents::LinkedFunctions;
 use super::queries::Queries;
 use crate::atom::{Atom, known};
-use crate::bind::{
-    Binding, BindingKind, Bound, Decl, Parent, PatParent, StaticInitializer, SymbolId,
-};
+use crate::bind::{Binding, BindingKind, Bound, Decl, Parent, PatParent, SymbolId};
 use crate::check::Program;
 use crate::hir::{
     self, BinOp, Branches, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, IdList, MemberKey,
@@ -39,16 +37,6 @@ pub trait NamedValues: Sync {
     }
 
     fn find_library_export(&self, _specifier: Atom, _name: Atom) -> Option<ClassDeclaration> {
-        None
-    }
-
-    // `bun_sema::bind::static_initializer`
-    fn find_initializer(&self, _: FileId, _: ExprId) -> Option<StaticInitializer> {
-        None
-    }
-
-    // `Object.freeze(value)`: the argument.
-    fn find_frozen_value(&self, _: FileId, _: ExprId) -> Option<ExprId> {
         None
     }
 }

@@ -1,6 +1,6 @@
 use super::{
     ExportId, ExprId, ExprKind, FileIn, Flags, ImportId, PropKey, PropKind, StmtId, StmtKind,
-    Storage, mention_bit, rare,
+    Storage, rare,
 };
 use crate::atom::Atom;
 
@@ -31,8 +31,9 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    #[cfg(any(test, feature = "test_support"))]
     pub fn may_mention(&self, text: &[u8]) -> bool {
-        let bit = mention_bit(text);
+        let bit = super::mention_bit(text);
         self.mentioned
             .get(bit as usize / 64)
             .is_none_or(|word| word >> (bit % 64) & 1 != 0)

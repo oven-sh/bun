@@ -30,6 +30,7 @@ impl FeatureEdges {
         &self.edges[start..end]
     }
 
+    #[cfg(test)]
     pub fn entering(&self, feature: Feature) -> impl Iterator<Item = &FeatureEdge> {
         self.edges.iter().filter(move |edge| edge.to == feature)
     }

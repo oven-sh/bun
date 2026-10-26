@@ -136,11 +136,13 @@ impl DiagnosticBuffer {
         self.int32_flows.append(&mut other.int32_flows);
     }
 
+    #[cfg(test)]
     pub fn has_errors(&self) -> bool {
         self.iter()
             .any(|diagnostic| diagnostic.severity == Severity::Error)
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.diagnostics.is_empty()
     }

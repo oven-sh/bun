@@ -33,6 +33,13 @@ pub(super) fn hash_key<K: Hash>(key: &K) -> u64 {
     FxBuildHasher.hash_one(key)
 }
 
+/// Replaces each count with the sum of the counts up to and including it.
+fn sum_in_place(counts: &mut [u32]) {
+    for index in 1..counts.len() {
+        counts[index] += counts[index - 1];
+    }
+}
+
 pub(super) struct ShardIndex {
     ids: Vec<u32>,
     starts: [u32; SHARD_COUNT + 1],
@@ -48,9 +55,7 @@ impl ShardIndex {
         for hash in hashes.clone() {
             starts[shard_of(hash) + 1] += 1;
         }
-        for shard in 0..SHARD_COUNT {
-            starts[shard + 1] += starts[shard];
-        }
+        sum_in_place(&mut starts);
         let mut cursors = starts;
         let mut ids = vec![0u32; hashes.len()];
         for (id, hash) in hashes.enumerate() {
@@ -80,9 +85,7 @@ impl<I: Id + Sync> FindsByUnit<I> {
         for &(unit, _) in shards.iter().copied().flatten() {
             cursors[unit as usize + 1] += 1;
         }
-        for unit in 0..unit_count {
-            cursors[unit + 1] += cursors[unit];
-        }
+        sum_in_place(&mut cursors);
         let mut finds = vec![(0, I::default()); cursors[unit_count] as usize];
         let mut place = |&find: &(u32, I)| {
             let cursor = &mut cursors[find.0 as usize];

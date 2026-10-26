@@ -100,7 +100,7 @@ async function compile(root: string, folder = "app", entry = "app.ts") {
   const written = report?.functions?.map(({ file }) => file).filter(file => /\.aot\.[cm]?ts$/.test(file));
   return {
     said,
-    aotFiles: report?.statistics.TypedVersionsUsed,
+    aotFiles: report?.statistics.AotFilesUsed,
     functionsFrom: written && [...new Set(written.map(file => fromRoot(join(app, file))))].sort(),
     exitCode: built.exitCode,
     signal: built.signal,

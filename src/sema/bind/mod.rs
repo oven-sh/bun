@@ -21,8 +21,8 @@ pub use runtime::{
 };
 pub use static_referent::{
     LinkedBinding, LoadedValue, NamespaceReferent, ReferentCertainty, ReferentContext,
-    ResolvedReferent, StaticInitializer, StaticReferent, UnknownReferent, export_referent,
-    static_initializer, static_referent, symbol_referent,
+    ResolvedReferent, StaticReferent, UnknownReferent, export_referent, static_referent,
+    symbol_referent,
 };
 
 use crate::atom::{Atom, known};
@@ -2506,6 +2506,7 @@ fn few_map_to_arena<K: Ord, V>(map: FxHashMap<K, V>, arena: &Arena) -> ArenaFewM
 
 impl BoundBuilder {
     /// Moves the side tables into `arena`, with every list at its final size.
+    #[cfg(test)]
     pub fn into_arena<'s>(mut self, arena: &'s Arena) -> Bound<'s> {
         self.move_to_arena(arena)
     }

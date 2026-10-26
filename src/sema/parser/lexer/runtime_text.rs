@@ -32,7 +32,7 @@ pub(super) fn read_as_bun_run(text: &[u8]) -> Vec<u8> {
 impl Lexer<'_> {
     #[inline(always)]
     pub(super) fn reads_html_comments(&self) -> bool {
-        self.is_script || self.compiles
+        self.is_script || self.compiles()
     }
 
     #[cold]

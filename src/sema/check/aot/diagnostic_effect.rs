@@ -16,6 +16,7 @@ pub enum FileOrigin {
 
 impl FileOrigin {
     pub const COUNT: usize = 8;
+    #[cfg(any(test, feature = "test_support"))]
     pub const ALL: [FileOrigin; FileOrigin::COUNT] = [
         FileOrigin::NoFile,
         FileOrigin::ProgramSource,

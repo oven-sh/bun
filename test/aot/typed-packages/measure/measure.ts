@@ -229,7 +229,7 @@ function build(row: Row, column: Column, folders: Record<string, string>): void 
   if (built.exitCode !== 0) throw new Error(`${row.name} ${column.name}: the build ended with ${built.exitCode}\n${log.slice(-2000)}`);
   const notes = log.split("\n").filter(line => /without (its |their )?types|^Dependencies:|^STB:/.test(line));
   console.log(`built ${row.name} ${column.name}: ${statSync(executable).size} B${notes.map(note => `\n    ${note.slice(0, 200)}`).join("")}`);
-  if (column.typed && !row.typedSources && !JSON.parse(readFileSync(`${executable}.report.json`, "utf8")).statistics.TypedVersionsUsed)
+  if (column.typed && !row.typedSources && !JSON.parse(readFileSync(`${executable}.report.json`, "utf8")).statistics.AotFilesUsed)
     throw new Error(`${row.name} ${column.name}: no file under an "aot" condition was compiled`);
 }
 

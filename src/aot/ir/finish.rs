@@ -309,17 +309,20 @@ impl Encoder<'_> {
         self.words.extend_from_slice(&target.proofs);
     }
 
+    fn append_fields(&mut self, fields: &Range<u32>) -> &[Cell<u32>] {
+        let fields = &self.field_words[fields.start as usize..fields.end as usize];
+        let start = self.words.len();
+        self.words.extend_from_slice(fields);
+        Cell::from_mut(&mut self.words[start..]).as_slice_of_cells()
+    }
+
     fn encode_fields(
         &mut self,
         fields: &Range<u32>,
         visit_fields: impl FnOnce(&[Cell<u32>], &mut dyn FnMut(FieldWord, usize)) -> Option<usize>,
     ) {
         let (value_numbers, value_count) = (self.value_numbers, self.value_count);
-        let field_words = self.field_words;
-        let fields = &field_words[fields.start as usize..fields.end as usize];
-        let start = self.words.len();
-        self.words.extend_from_slice(fields);
-        let cells = Cell::from_mut(&mut self.words[start..]).as_slice_of_cells();
+        let cells = self.append_fields(fields);
         let end = visit_fields(cells, &mut |field: FieldWord, at: usize| match field {
             FieldWord::Operand => {
                 let pending = ValueId::from_word(cells[at].get());

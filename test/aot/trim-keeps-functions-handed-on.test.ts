@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import { builtinEntries } from "../bundler/compile-trim-features";
 import { inShare, takesWhatIsFixed } from "./run-programs";
 import { retainsFeature } from "./runtime-use-expectations";
@@ -122,7 +123,9 @@ if (takesWhatIsFixed) {
 }
 
 for (const callable of callables) {
-  const ways = waysToHandOn.filter(([way]) => inShare(`${callable.path} after ${way}`, 400));
+  const ways = waysToHandOn.filter(([way]) =>
+    inShare(`${callable.path} after ${way}`, isDebug || isASAN ? 4_000 : 400),
+  );
   if (ways.length)
     expectWaysToKeepFeatures(`${callable.path}, after ${ways.map(([way]) => way).join(" and ")}`, [callable], ways);
 }

@@ -21,18 +21,19 @@ import {
   isToldWhatToTake,
   wanted as programsWanted,
   slot,
+  spawned,
   takeFromShare,
   takesWhatIsFixed,
-  spawned,
   unsupported,
   withoutCoreDump,
   withoutCrashReport,
 } from "../run-programs";
+import onceWrong from "./once-wrong.json";
 
 export type Generated = {
   name: string;
   isAlwaysRun: boolean;
-  /** It once showed a fault. It is meant for every run, and no run leaves it to another commit. */
+  /** It once showed a fault. It is meant for every run, and no run leaves it to another commit. once-wrong.json marks programs by title and name too. */
   wasOnceWrong?: boolean;
   /** `file` is what runs. `entryPoints` are files that the build is given behind it. */
   make: () => { file: string; text: string; files?: Record<string, string>; entryPoints?: string[] };
@@ -96,7 +97,11 @@ function departingGroups(ours: string[], theirs: string[], notCompared: RegExp) 
   return departing.slice(0, 20);
 }
 
-export function generated(title: string, programs: Generated[]) {
+export function generated(title: string, given: Generated[]) {
+  const listed = (onceWrong as Record<string, string[]>)[title] ?? [];
+  const programs = given.map(program => (listed.includes(program.name) ? { ...program, wasOnceWrong: true } : program));
+  const unknown = listed.filter(name => !given.some(program => program.name === name));
+  if (unknown.length) test(`once-wrong.json names programs of "${title}"`, () => expect(unknown).toEqual([]));
   const kept = process.env.AOT_GENERATED_KEEP;
   const root = kept ?? String(tempDir("aot-generated", {}));
   if (!kept) afterAll(() => rmSync(root, { recursive: true, force: true }));

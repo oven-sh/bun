@@ -6,6 +6,8 @@ use hashbrown::HashTable;
 use hashbrown::hash_table::Entry;
 
 /// The distinct entries whose hashes fall into one shard, in the order in which they were added.
+// `entries` is handed on as a slice of its own, and a table that grows reads `hashes` alone.
+#[cfg_attr(mordant, allow(parallel_vecs))]
 pub(super) struct Shard<E, H = u64> {
     table: HashTable<u32>,
     entries: Vec<E>,

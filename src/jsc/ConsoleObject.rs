@@ -496,7 +496,10 @@ fn message_with_type_and_level_(
     let default_indent = unsafe { vm_console_mut(global) }.default_indent;
 
     // SAFETY: see [`vm_console`] — `console` points at the live boxed
-    // `ConsoleObject` for this VM; JS-thread-only.
+    // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
+    // `vm_console_mut`) so the resulting `writer` borrow does not pin a
+    // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
+    // arm below.
     let raw_writer: &mut bun_core::io::Writer = unsafe {
         if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
             (*console).error_writer()
@@ -590,8 +593,14 @@ fn message_with_type_and_level_(
             print_options,
         )?;
     } else if message_type == MessageType::Log {
-        let _ = writer.write_all(b"\n");
-        let _ = writer.flush();
+        // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
+        // the only later uses are in the mutually-exclusive `Trace` block, and
+        // `message_type == Log` here.
+        let w = unsafe { (*console).writer() };
+        let mut group_indent = None;
+        let w = GroupIndentWriter::wrap(w, default_indent, &mut group_indent);
+        let _ = w.write_all(b"\n");
+        let _ = w.flush();
     }
 
     if message_type == MessageType::Trace {

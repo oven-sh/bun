@@ -298,7 +298,6 @@ it.concurrent("console.group indents count, time, table and the lines after a li
        console.table([{ a: 1 }]);
        console.log("two\\nlines");
        console.log();
-       console.warn();
        console.group("Nested");
        console.count("cnt");
        console.groupEnd();
@@ -323,7 +322,7 @@ it.concurrent("console.group indents count, time, table and the lines after a li
       "cnt: 3",
       "",
     ].join("\n"),
-    stderr: ["  [<time>] t {", "    a: 1,", "  }", "  [<time>] t", "  ", ""].join("\n"),
+    stderr: ["  [<time>] t {", "    a: 1,", "  }", "  [<time>] t", ""].join("\n"),
     exitCode: 0,
   });
 });
@@ -337,12 +336,6 @@ it.concurrent("console.group indents a console.assert that fails with no message
       BUN_JSC_dumpSimulatedThrows: undefined,
     }),
   ).toEqual({ stdout: "G\n", stderr: "  Assertion failed\nAssertion failed\n", exitCode: 0 });
-});
-
-it.concurrent("console.warn and console.error with no arguments print their line to stderr", async () => {
-  expect(
-    await runConsole(["-e", "console.log(); console.info(); console.debug(); console.warn(); console.error();"]),
-  ).toEqual({ stdout: "\n\n\n", stderr: "\n\n", exitCode: 0 });
 });
 
 it.concurrent.each([

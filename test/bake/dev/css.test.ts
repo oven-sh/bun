@@ -415,6 +415,9 @@ devTest("css import repaired after a failed build follows every later edit", {
     await dev.write("second.css", `@import "./third.css"; h1 { color: green; }`);
     await c.style("h1").color.expect.toBe("green");
     await c.style("h2").color.expect.toBe("teal");
+    // The root still follows the file that the repaired file imports.
+    await dev.write("third.css", `h2 { color: orange; }`);
+    await c.style("h2").color.expect.toBe("orange");
     for (const color of ["purple", "teal"]) {
       await dev.write("second.css", `@import "./third.css"; h1 { color: ${color}; }`);
       await c.style("h1").color.expect.toBe(color);
@@ -423,7 +426,7 @@ devTest("css import repaired after a failed build follows every later edit", {
 
     await c.hardReload();
     await c.style("h1").color.expect.toBe("teal");
-    await c.style("h2").color.expect.toBe("teal");
+    await c.style("h2").color.expect.toBe("orange");
     await c.style("body").color.expect.toBe("red");
   },
 });

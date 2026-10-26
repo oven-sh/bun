@@ -2077,7 +2077,9 @@ impl Package<u64> {
         let nameless_alias = dependency::nameless_npm_alias(version);
         if external_alias.value.is_empty() || nameless_alias.is_some() {
             // Packages that others publish do have these, and that is not this project's error.
-            if !(features.is_main || features.is_workspace) {
+            // The global package.json is bun's own file: `bun add -g .` before 1.4.4 wrote an
+            // empty key into it, and a hard error there leaves no bun command that can read past it.
+            if !(features.is_main || features.is_workspace) || pm.options.global {
                 log.add_warning_fmt_no_excerpt(
                     source,
                     key_loc,

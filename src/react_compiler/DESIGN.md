@@ -185,6 +185,7 @@ long as the AST. A string is copied there with `bun_ast::data_store_dupe_str`.
 A list is an `AstVec`, built in one of the five files that write the output
 AST: `codegen.rs`, `program.rs`, `pipeline.rs`, `imports.rs` and
 `diagnostics/js_string.rs`. Only these files name `AstAlloc` or `AstVec`, or
-call `.leak()`.
+call `.leak()`: `test/internal/source-lints/react-compiler-arena.test.ts` fails
+on any other.
 
 `bun lint` runs the same passes (`lint.rs`), so the same rules hold for it.

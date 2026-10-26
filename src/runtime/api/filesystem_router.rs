@@ -91,7 +91,7 @@ pub(crate) struct FileSystemRouter {
 enum Load {
     /// From the resolver's cache of the directory. A warning is an error.
     Cached,
-    /// From the disk: the bust has each directory read and each route file opened. Warnings pass.
+    /// From the disk: each directory is read again and each route file is opened. Warnings pass.
     FromDisk,
 }
 
@@ -132,6 +132,7 @@ fn load_router(
         &root_dir_info,
         &mut RouterResolver(resolver),
         &config_dir,
+        load == Load::FromDisk,
     );
     if loaded.is_err() || (load == Load::Cached && log.errors + log.warnings > 0) {
         let error = log.to_js(global, format_args!("loading routes"))?;

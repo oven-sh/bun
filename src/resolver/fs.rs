@@ -140,8 +140,6 @@ pub struct Entry {
 
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
-    /// The file was found or opened since a bust last had the listing read again.
-    file_asked: AtomicBool,
 
     abs_path: OnceLock<Interned>,
 }
@@ -188,38 +186,19 @@ impl Entry {
 
     /// Returns `abs_path`, calling `fill` under `mutex` to compute it the first time.
     /// Nothing else writes `abs_path`, and a failed `fill` doesn't publish anything.
-    /// The caller found the file or opened it, which `file_asked` tells until the next bust.
     pub fn abs_path_or_try_fill<E>(
         &self,
         fill: impl FnOnce() -> Result<Interned, E>,
     ) -> Result<Interned, E> {
         if let Some(p) = self.abs_path.get() {
-            self.mark_file_asked();
             return Ok(*p);
         }
         let _guard = self.mutex.lock_guard();
         if let Some(p) = self.abs_path.get() {
-            self.mark_file_asked();
             return Ok(*p);
         }
         let p = fill()?;
-        let p = *self.abs_path.get_or_init(|| p);
-        self.mark_file_asked();
-        Ok(p)
-    }
-
-    /// `abs_path` outlives a bust, so a reader that opens the file once per bust asks this.
-    #[inline]
-    pub fn file_asked(&self) -> bool {
-        self.file_asked.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    fn mark_file_asked(&self) {
-        // Loaded first, so that a resolve that hits the cache writes nothing to a shared `Entry`.
-        if !self.file_asked.load(Ordering::Relaxed) {
-            self.file_asked.store(true, Ordering::Release);
-        }
+        Ok(*self.abs_path.get_or_init(|| p))
     }
 
     pub fn abs_path_or_fill(&self, fill: impl FnOnce() -> Interned) -> Interned {
@@ -465,14 +444,6 @@ impl DirEntry {
 
     /// Replaces the listing with `fresh`, a new read of the same directory, and keeps its keys.
     pub(crate) fn refill(&mut self, mut fresh: DirEntry) {
-        // A bust made this read: an `Entry` it kept is asked for its file again, as a new one is.
-        if self.generation == crate::fs::GENERATION_STALE {
-            for &entry in fresh.data.values() {
-                // SAFETY: EntryStore-owned pointer, valid for lifetime of store
-                let entry = unsafe { &*entry };
-                entry.file_asked.store(false, Ordering::Release);
-            }
-        }
         fresh.owners = self.owners.take();
         *self = fresh;
     }
@@ -623,7 +594,6 @@ impl DirEntry {
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(AtomicBool::new(found_kind.is_none()));
-                addr_of_mut!((*p).file_asked).write(AtomicBool::new(false));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
                     symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we

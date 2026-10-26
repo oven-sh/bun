@@ -418,8 +418,9 @@ values;`,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('\x1b[31m\x1b[2m"native_plugin_test"\x1b[0m');
+    expect(exitCode).not.toBe(0);
   });
 
   it("detects when plugin sets function pointer but does not user context pointer", async () => {

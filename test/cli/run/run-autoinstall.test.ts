@@ -1460,62 +1460,6 @@ test.concurrent("--install=fallback to install missing packages", async () => {
   expect(stdout).toBe("true false\n");
 });
 
-// A package from the cache has its own copy of the "exports" lookup. There too,
-// `pkg/kept.js` is looked up again as `pkg/kept`, but not a subpath with a null
-// target: the package excludes it.
-test.concurrent('a null "exports" target of an auto-installed package is not retried without ".js"', async () => {
-  const manifest = {
-    name: "pkg",
-    version: "1.0.0",
-    exports: {
-      "./name.js": null,
-      "./name": "./name.js",
-      "./b/*": "./dir/*",
-      "./b/*.js": null,
-      "./kept": "./kept.js",
-    },
-  };
-  const tarball = await new Bun.Archive(
-    {
-      "package/package.json": JSON.stringify(manifest),
-      "package/name.js": `module.exports = "name.js";`,
-      "package/dir/q.js": `module.exports = "dir/q.js";`,
-      "package/kept.js": `module.exports = "kept.js";`,
-    },
-    { compress: "gzip" },
-  ).bytes();
-  const requests: string[] = [];
-  using registry = Bun.serve({
-    port: 0,
-    fetch(req) {
-      const { origin, pathname } = new URL(req.url);
-      requests.push(pathname);
-      if (pathname === "/pkg-1.0.0.tgz") return new Response(tarball);
-      if (pathname !== "/pkg") return new Response("not found", { status: 404 });
-      return Response.json({
-        name: "pkg",
-        "dist-tags": { latest: "1.0.0" },
-        versions: { "1.0.0": { ...manifest, dist: { tarball: `${origin}/pkg-1.0.0.tgz` } } },
-      });
-    },
-  });
-  using dir = tempDir("autoinstall-exports-null", {
-    "index.cjs": `
-      const attempt = s => { try { return require(s); } catch (e) { return e.code; } };
-      console.log(JSON.stringify(["pkg/name", "pkg/name.js", "pkg/b/q.js", "pkg/kept.js"].map(attempt)));
-    `,
-    "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
-  });
-
-  const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.cjs");
-  expect({ loaded: stdout.startsWith("[") ? JSON.parse(stdout) : stdout, stderr }).toEqual({
-    loaded: ["name.js", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "kept.js"],
-    stderr: "",
-  });
-  expect(requests).toEqual(["/pkg", "/pkg-1.0.0.tgz"]);
-  expect(exitCode).toBe(0);
-});
-
 // `bun install` lowers the process-wide cap on concurrent HTTP requests when a download keeps
 // failing at the connection level, and nothing raises the cap again. The runtime's package manager
 // shares that cap with fetch() and lives as long as the program: one failed auto-install left the

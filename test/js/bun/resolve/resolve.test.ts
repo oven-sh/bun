@@ -2045,13 +2045,6 @@ describe.concurrent('null targets in package.json "exports"', () => {
       { "cosmos/tx.js": NOT_FOUND, "cosmos/tx": "cosmos/tx.js", "cosmos/tx.js?v=1": NOT_FOUND },
       { "cosmos/tx.js?v=1": "cosmos/tx.js" },
     ],
-    "null-folder-key": [
-      { "./*": "./*", "./lib/": null, "./lib/x": "./lib/x.js" },
-      ["lib/x.js"],
-      { "lib/x.js": NOT_FOUND, "lib/x": "lib/x.js" },
-      // Node 17 and later do not match a key that ends in "/".
-      { "lib/x.js": "lib/x.js" },
-    ],
   };
   // A self-reference, and an "imports" target that names a package subpath.
   const excludedProject: Project = {
@@ -2067,7 +2060,7 @@ describe.concurrent('null targets in package.json "exports"', () => {
   };
 
   // The subpath has no key, its target has no file, or its key has no usable
-  // target. Node refuses every one of these ".js" spellings.
+  // target. Node refuses these ".js" spellings.
   const retried: Packages = {
     // react: "./jsx-runtime": "./jsx-runtime.js"
     "no-key": [{ "./name": "./name.js" }, ["name.js"], { "name.js": "name.js" }, { "name.js": NOT_FOUND }],
@@ -2096,6 +2089,12 @@ describe.concurrent('null targets in package.json "exports"', () => {
       ["dist/auth/index.js"],
       { "auth.js": "dist/auth/index.js" },
       { "auth.js": NOT_FOUND },
+    ],
+    // Node 17 and later do not match a key that ends in "/", and load the file through "./*".
+    "null-folder-key": [
+      { "./*": "./*", "./lib/": null, "./lib/x": "./lib/x.js" },
+      ["lib/x.js"],
+      { "lib/x.js": "lib/x.js", "lib/x": "lib/x.js" },
     ],
     // The null is on a key that the subpath does not match.
     "null-elsewhere": [
@@ -2158,7 +2157,7 @@ describe.concurrent('null targets in package.json "exports"', () => {
     await expectToLoad("bun", excluded, excludedProject);
   });
 
-  test('the ".js" retry still runs when the lookup does not end at a null target', async () => {
+  test('the ".js" retry still runs after every other failed lookup', async () => {
     await expectToLoad("bun", retried);
   });
 
@@ -2172,6 +2171,69 @@ describe.concurrent('null targets in package.json "exports"', () => {
       expectToLoad("node", retried),
       expectToLoad("node", arrays, arraysProject),
     ]);
+  });
+
+  // A package that auto-install loads from the cache goes through a second copy of the same lookup.
+  test('the ".js" retry does not run after a null target in an auto-installed package', async () => {
+    const manifest = {
+      name: "pkg",
+      version: "1.0.0",
+      exports: {
+        "./name.js": null,
+        "./name": "./name.js",
+        "./b/*": "./dir/*",
+        "./b/*.js": null,
+        "./kept": "./kept.js",
+      },
+    };
+    const tarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify(manifest),
+        ...namedFiles("package/", ["name.js", "dir/q.js", "kept.js"]),
+      },
+      { compress: "gzip" },
+    ).bytes();
+    const requests: string[] = [];
+    using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { origin, pathname } = new URL(req.url);
+        requests.push(pathname);
+        if (pathname === "/pkg-1.0.0.tgz") return new Response(tarball);
+        if (pathname !== "/pkg") return new Response("not found", { status: 404 });
+        return Response.json({
+          name: "pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { ...manifest, dist: { tarball: `${origin}/pkg-1.0.0.tgz` } } },
+        });
+      },
+    });
+    using dir = tempDir("exports-js-retry-autoinstall", {
+      "index.cjs": `
+        const attempt = s => { try { return require(s); } catch (e) { return e.code; } };
+        console.log(JSON.stringify(["pkg/name", "pkg/name.js", "pkg/b/q.js", "pkg/kept.js"].map(attempt)));
+      `,
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      loaded: stdout.startsWith("[") ? JSON.parse(stdout) : stdout,
+      stderr: stripAsanWarning(stderr),
+      requests,
+    }).toEqual({
+      loaded: ["name.js", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "kept.js"],
+      stderr: "",
+      requests: ["/pkg", "/pkg-1.0.0.tgz"],
+    });
+    expect(exitCode).toBe(0);
   });
 
   test("require.resolve() with `paths` goes on to the next root", () => {

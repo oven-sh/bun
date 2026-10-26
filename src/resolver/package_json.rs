@@ -1858,6 +1858,9 @@ impl<'a> ESModule<'a> {
                         {
                             // Return the object { resolved, exact: false }.
                             result.status = Status::Inexact;
+                        } else if result.status == Status::Null {
+                            // Node does not match a key that ends in "/", so its null is not an exclusion.
+                            result.status = Status::Undefined;
                         }
                         return result;
                     }

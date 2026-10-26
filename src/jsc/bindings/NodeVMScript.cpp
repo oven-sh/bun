@@ -159,6 +159,7 @@ static void writeResults(JSGlobalObject* globalObject, ThrowScope& scope, NodeVM
 
     if (cachedDataRejected != TriState::Indeterminate && !setResult(globalObject, scope, script, names.cachedDataRejected(vm), jsBoolean(cachedDataRejected == TriState::True)))
         return;
+    // Node writes cachedDataProduced only together with cachedData, never `false`: https://github.com/nodejs/node/blob/v26.3.0/src/node_contextify.cc#L1131-L1147
     if (producedCachedData) {
         if (!setResult(globalObject, scope, script, names.cachedData(vm), producedCachedData))
             return;

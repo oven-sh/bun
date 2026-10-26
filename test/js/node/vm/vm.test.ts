@@ -1906,7 +1906,8 @@ test.concurrent(
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    // Like Node, a Script that produced nothing has neither cachedData nor cachedDataProduced.
+    // A Script that produced no cache has neither cachedData nor cachedDataProduced. Node wrote `false` until
+    // v22.15.0 and v23.8.0: https://github.com/nodejs/node/blob/v26.3.0/src/node_contextify.cc#L1131-L1147
     expect(stdout).toBe("sourceURL,sourceMapURL undefined 134217728\n");
     expect(exitCode).toBe(0);
   },

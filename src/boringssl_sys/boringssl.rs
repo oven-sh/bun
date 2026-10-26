@@ -1006,8 +1006,6 @@ unsafe extern "C" {
     pub fn SSL_is_server(ssl: *const SSL) -> c_int;
     pub fn X509_up_ref(x509: *mut X509) -> c_int;
     pub fn X509_STORE_free(store: *mut X509_STORE);
-    // X509_STORE_CTX lifecycle for issuer lookups; `new` allocates, `init`
-    // borrows the store, `free` releases.
     pub fn X509_STORE_CTX_new() -> *mut X509_STORE_CTX;
     pub fn X509_STORE_CTX_init(
         ctx: *mut X509_STORE_CTX,

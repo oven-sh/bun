@@ -12,19 +12,13 @@ use bun_boringssl::c::{
 /// walk so a cyclic store cannot loop forever.
 const MAX_STORE_ISSUERS: usize = 16;
 
-/// The peer's certificates, leaf first, each followed by its issuer. Holds
-/// one reference to every entry, so it outlives the `SSL` it came from.
-///
-/// Built the way Node's `getPeerCertificate(true)` builds its chain: the leaf,
-/// then for each certificate the first one the peer sent that issued it (so an
-/// out-of-order chain links right and an unrelated extra certificate is left
-/// out), then the issuers found in the trust store up to a self-issued one,
-/// which is the root that completed verification even though the peer never
-/// sent it.
+/// The peer's certificates, leaf first, each followed by its issuer, built as
+/// Node's `getPeerCertificate(true)` builds it: the issuers among what the
+/// peer sent, then the trust store's issuers up to a self-issued one. Owns one
+/// reference per certificate, so it outlives the `SSL`.
 pub struct PeerCertificateChain {
     certs: Vec<*mut X509>,
-    /// The last certificate issued itself. Node links such a certificate to
-    /// itself through `issuerCertificate`.
+    /// The last certificate issued itself, so it is its own `issuerCertificate`.
     self_issued_terminal: bool,
 }
 
@@ -66,9 +60,7 @@ impl PeerCertificateChain {
                 }
                 n
             };
-            // A server's `SSL_get_peer_cert_chain` leaves out the leaf, which
-            // `SSL_get_peer_certificate` returns instead. A client's chain has
-            // the leaf at index 0.
+            // A server's `SSL_get_peer_cert_chain` leaves out the leaf. A client's has it at index 0.
             let mut candidates = 0..sent_len;
             let leaf = if SSL_is_server(ssl) != 0 {
                 SSL_get_peer_certificate(ssl)

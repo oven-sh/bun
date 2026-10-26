@@ -5,8 +5,6 @@ use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_boringssl::c::X509;
 use bun_uws::PeerCertificateChain;
 
-// `X509`/`JSGlobalObject` are opaque `repr(C)` handles; `&mut`/`&` are
-// ABI-identical to non-null pointers.
 unsafe extern "C" {
     safe fn Bun__X509__toJSLegacyEncoding(cert: &mut X509, global: &JSGlobalObject) -> JSValue;
 }

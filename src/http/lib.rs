@@ -1808,9 +1808,7 @@ impl<'a> HTTPClient<'a> {
                     // target would reject the proxy's certificate.
                     let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
                     if !is_proxy_certificate && self.signals.get(signals::Field::CertErrors) {
-                        // The chain holds its own references, so the JS
-                        // thread can read it after this socket is gone.
-                        // `None` cannot happen here: the leaf above is in it.
+                        // The chain owns its certificates: the JS thread reads it after this socket may be gone.
                         if let Some(chain) = uws::PeerCertificateChain::collect(ssl) {
                             self.state.certificate_info = Some(CertificateInfo {
                                 chain,

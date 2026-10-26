@@ -1,157 +1,177 @@
-// The server and the client of "a HEADERS frame that has no connection credit waits for it". They are two
-// processes so that the client can block its thread: it then sends no ACK and no MAX_DATA while the server writes.
+// The server, the client, and a UDP relay between them, for "a HEADERS frame that has no connection credit waits for
+// it". The relay first keeps a flight of the server from the client, so that the server gets no ACK for it. Later it
+// keeps the client's MAX_DATA from the server. This is its own process because an assertion of lsquic stops a debug
+// build that does not have the fix.
 //
-//   server <key> <cert> <flight>
-//   client <port> <flight> <streams> <connection window>
+//   <key> <cert>
 //
-// <flight> says what the server sends while the client is blocked, and so where its last packet ends:
-//   "bodies"               The response headers went out before. The last packet ends inside a body, so a part of
-//                          that body is in a packet and its DATA frame has a length.
-//   "headers-and-bodies"   The last packet ends inside a header block, so the body behind it is in no packet yet.
+// Prints the bytes of bodies and trailers that the client got while the server had no MAX_DATA from it.
 import { createPrivateKey } from "node:crypto";
-import { readFileSync, readSync, writeSync } from "node:fs";
+import { createSocket } from "node:dgram";
+import { once } from "node:events";
+import { readFileSync, writeSync } from "node:fs";
 import { connect, listen, type SessionOptions } from "node:quic";
 
-const print = (line: string) => void writeSync(1, line + "\n");
-const flight = process.argv[2] === "server" ? process.argv[5] : process.argv[4];
-// "X" has an 8-bit Huffman code, so QPACK sends such a value as it is. No packet holds a whole number of these
-// header blocks or bodies, so a flight ends inside one of them.
-const responseHeaders = (i: number) =>
-  flight === "bodies"
-    ? { ":status": "200" }
-    : { ":status": "200", "x-filler": Buffer.alloc(480 + (i % 5) * 9, "X").toString() };
-const bodySize = (i: number) => (flight === "bodies" ? 380 + (i % 5) * 9 : 30);
-// The first size fits into a stream's buffer in lsquic next to nothing else. The second size does not fit into it.
-const trailerSizes = [1100, 1400];
-const [trailers, trailersForAPacket] = trailerSizes.map(size => ({ "x-filler": Buffer.alloc(size, "X").toString() }));
+const [keyPath, certPath] = process.argv.slice(2);
+// More responses than the server's first flight holds: lsquic's first congestion window is about 54,000 bytes.
+const streams = 170;
+// The client's connection window. Half of it is more than that flight, so the client's ACKs for the flight come
+// with no MAX_DATA.
+const window = 136_000;
+// No packet holds a whole number of these bodies, so the flight ends inside one of them.
+const bodySize = (i: number) => 380 + (i % 5) * 9;
+// "X" has an 8-bit Huffman code, so QPACK sends such a value as it is. The first size fits into a stream's buffer
+// in lsquic next to nothing else. The second size does not fit into it.
+const [trailers, trailersForAPacket] = [1100, 1400].map(size => ({ "x-filler": Buffer.alloc(size, "X").toString() }));
 
-if (process.argv[2] === "server") {
-  const [keyPath, certPath] = process.argv.slice(3);
-  const responses: [stream: any, i: number][] = [];
-  const wantTrailers: any[] = [];
-  let creditIsUsedUp = false;
-  const endpoint = await listen(
-    session => {
-      session.onerror = () => {};
-      session.closed.catch(() => {});
-      session.onstream = (stream: any) => void stream.closed.catch(() => {});
+const responses: [stream: any, i: number][] = [];
+const wantTrailers: any[] = [];
+let creditIsUsedUp = false;
+let serverSession: any;
+const staged = Promise.withResolvers<void>();
+const server = await listen(
+  session => {
+    serverSession = session;
+    session.onerror = () => {};
+    session.closed.catch(() => {});
+    session.onstream = (stream: any) => void stream.closed.catch(() => {});
+  },
+  {
+    sni: { "*": { keys: [createPrivateKey(readFileSync(keyPath))], certs: [readFileSync(certPath)] } },
+    // Without this, lsquic picks one of two congestion controllers by its first round-trip time. The numbers above
+    // are for this one.
+    cc: "cubic",
+    transportParams: { maxIdleTimeout: 20, initialMaxStreamsBidi: 1000 },
+    onheaders(this: any, headers: Record<string, string>) {
+      const path = headers[":path"];
+      if (path !== "/go") {
+        this.sendHeaders({ ":status": "200" });
+        responses.push([this, Number(path.slice(1))]);
+        return;
+      }
+      // The client's last request. The client has every response header, and this request's packet acknowledged
+      // them. The relay keeps the flight from the client, so the congestion window fills and stays full.
+      const { stats } = serverSession;
+      const sentBefore = stats.bytesSent;
+      const lostBefore = stats.pktLost;
+      for (const [stream, i] of responses) {
+        stream.writer.writeSync(Buffer.alloc(bodySize(i), "b"));
+        stream.writer.endSync();
+      }
+      const useUpTheCredit = () => {
+        // A machine that stalls for longer than the idle timeout loses the session.
+        if (serverSession.destroyed) return staged.resolve();
+        // The flight is over when its bytes fill the congestion window. Before that, lsquic's pacer can hold the
+        // next packet back for a moment. lsquic also probes twice for a lost packet and then takes every packet for
+        // lost. After that it holds the rest of the flight back, so the window does not fill on a machine that is
+        // this slow.
+        const flightIsOver = stats.bytesSent - sentBefore >= stats.cwnd || stats.pktLost - lostBefore > 2n;
+        if (!flightIsOver) return void setImmediate(useUpTheCredit);
+        const sent = wantTrailers.splice(0);
+        // The last response of the flight has the end of its body in lsquic's buffer.
+        const last = sent.pop();
+        // lsquic keeps up to 10 packets for a connection that may not send. These trailers fill them.
+        for (const stream of sent.splice(0, 16)) stream.sendTrailers(trailers);
+        // Now there is no packet, and these trailers need one: they wait outside of the stream's buffer, while the
+        // connection still has credit. The priority puts this stream first when the client's ACKs give packets.
+        last?.setPriority({ level: "high" });
+        last?.sendTrailers(trailersForAPacket);
+        // The trailers of the other responses go to their streams' buffers and take all the credit that is left.
+        for (const stream of sent) stream.sendTrailers(trailers);
+        creditIsUsedUp = true;
+        staged.resolve();
+      };
+      useUpTheCredit();
     },
-    {
-      sni: { "*": { keys: [createPrivateKey(readFileSync(keyPath))], certs: [readFileSync(certPath)] } },
-      // Without this, lsquic picks one of two congestion controllers by its first round-trip time, and their first
-      // windows differ by a factor of three. The numbers of the test are for this one.
-      cc: "bbr",
-      transportParams: { maxIdleTimeout: 20, initialMaxStreamsBidi: 1000 },
-      onheaders(this: any, headers: Record<string, string>) {
-        const path = headers[":path"];
-        // The client sends this after every other request, and waits for the answer.
-        if (path === "/sync") return void this.sendHeaders({ ":status": "204" }, { terminal: true });
-        if (path !== "/go") {
-          const i = Number(path.slice(1));
-          if (flight === "bodies") this.sendHeaders(responseHeaders(i));
-          responses.push([this, i]);
-          return;
-        }
-        // The client's last request. Its packet acknowledged everything that the server sent, and the client reads
-        // nothing from now on. The flight is larger than the congestion window, so the window fills and stays full.
-        const session = this.session;
-        const { stats } = session;
-        const sentBefore = stats.bytesSent;
-        const lostBefore = stats.pktLost;
-        for (const [stream, i] of responses) {
-          if (flight !== "bodies") stream.sendHeaders(responseHeaders(i));
-          stream.writer.writeSync(Buffer.alloc(bodySize(i), "b"));
-          stream.writer.endSync();
-        }
-        const useUpTheCredit = () => {
-          // A machine that stalls for longer than the idle timeout loses the session, and its numbers stay as they are.
-          if (session.destroyed) return print("the session ended before the flight did");
-          // The flight is over when its bytes fill the congestion window. Before that, lsquic's pacer can hold the
-          // next packet back for a moment. lsquic also probes twice for a lost packet and then takes every packet for
-          // lost. After that it holds the rest of the flight back, so the window does not fill on a machine that is
-          // this slow.
-          const flightIsOver = stats.bytesSent - sentBefore >= stats.cwnd || stats.pktLost - lostBefore > 2n;
-          if (!flightIsOver) return void setImmediate(useUpTheCredit);
-          const sent = wantTrailers.splice(0);
-          // The last response of the flight has the end of its message in lsquic's buffer.
-          const last = sent.pop();
-          // lsquic keeps up to 10 packets for a connection that may not send. These trailers fill them.
-          for (const stream of sent.splice(0, 16)) stream.sendTrailers(trailers);
-          // Now there is no packet, and these trailers need one: they wait outside of the stream's buffer, while the
-          // connection still has credit. The priority puts this stream first when the client's ACK gives packets.
-          last?.setPriority({ level: "high" });
-          last?.sendTrailers(trailersForAPacket);
-          // The trailers of the other responses go to their streams' buffers and take all the credit that is left.
-          for (const stream of sent) stream.sendTrailers(trailers);
-          creditIsUsedUp = true;
-          print("ready");
-        };
-        useUpTheCredit();
-      },
-      onwanttrailers(this: any) {
-        if (creditIsUsedUp) this.sendTrailers(trailers);
-        else wantTrailers.push(this);
-      },
+    onwanttrailers(this: any) {
+      if (creditIsUsedUp) this.sendTrailers(trailers);
+      else wantTrailers.push(this);
     },
-  );
-  print(String(endpoint.address!.port));
-} else {
-  const [port, , streams, window] = process.argv.slice(3).map(Number);
-  const session = await connect(
-    { address: "127.0.0.1", port } as any,
-    {
-      servername: "localhost",
-      verifyPeer: "manual",
-      transportParams: { maxIdleTimeout: 20, initialMaxData: window },
-      onerror() {},
-    } as SessionOptions,
-  );
-  let sessionError: string | undefined;
-  session.closed.catch(error => void (sessionError = String(error?.message ?? error)));
-  await session.opened;
-  const request = (path: string) => ({
-    ":method": "GET",
-    ":path": path,
-    ":scheme": "https",
-    ":authority": "localhost",
-  });
-  const responses = Array.from({ length: streams }, async (_, i) => {
-    const response: { bytes: number; trailers?: number; failed?: string } = { bytes: 0 };
-    try {
-      const stream: any = await session.createBidirectionalStream({
-        headers: request(`/${i}`),
-        onheaders() {},
-        ontrailers: (received: Record<string, string>) => void (response.trailers = received["x-filler"]?.length),
-      } as any);
-      for await (const batch of stream) for (const chunk of batch) response.bytes += chunk.byteLength;
-      await stream.closed;
-    } catch (error: any) {
-      response.failed = String(error?.code ?? error);
-    }
-    return response;
-  });
-  // The server has every request when it answers this one.
-  const synced = Promise.withResolvers<void>();
-  const sync: any = await session.createBidirectionalStream({
-    headers: request("/sync"),
-    onheaders: () => synced.resolve(),
-  } as any);
-  sync.closed.catch(() => {});
-  session.closed.then(synced.resolve, synced.resolve);
-  await synced.promise;
-  const go: any = await session.createBidirectionalStream({ headers: request("/go") } as any);
-  go.closed.catch(() => {});
-  // The request leaves when the node:quic callback that resumed this code returns.
-  await new Promise(resolve => setImmediate(resolve));
-  // Nothing that arrives is read, and nothing is acknowledged, until the test writes a byte.
-  if (readSync(0, new Uint8Array(1)) === 0) throw new Error("the test closed stdin");
-  const wrong = (await Promise.all(responses))
-    .map((response, i) => ({ stream: i, ...response }))
-    .filter(
-      ({ stream, failed, bytes, trailers }) =>
-        failed || bytes !== bodySize(stream) || !trailerSizes.includes(trailers!),
-    );
-  // The server never answers the last request, so there is no graceful close to wait for.
-  print(JSON.stringify({ wrong, sessionError }));
-  process.exit(0);
+  },
+);
+
+// The relay. The client talks to `front`, and `upstream` is the client as the server sees it.
+const front = createSocket("udp4");
+const upstream = createSocket("udp4");
+front.bind(0, "127.0.0.1");
+upstream.bind(0, "127.0.0.1");
+await Promise.all([once(front, "listening"), once(upstream, "listening")]);
+let clientPort = 0;
+// The server's packets wait here while the client may not see them.
+let keptFromClient: Buffer[] | undefined;
+// The client's packets wait here while the server may not see them.
+let keptFromServer: Buffer[] | undefined;
+let passedToClient = 0;
+let lostWhenKept = 0n;
+const toClient = (packet: Buffer) => {
+  passedToClient += packet.length;
+  front.send(packet, clientPort, "127.0.0.1");
+  // The client sends MAX_DATA when it has read more than half of its window. It has less than that now, so no
+  // MAX_DATA is on its way. From here on the server gets nothing from the client.
+  if (creditIsUsedUp && !keptFromClient && !keptFromServer && passedToClient >= window / 2) {
+    keptFromServer = [];
+    lostWhenKept = serverSession.stats.pktLost;
+  }
+};
+upstream.on("message", packet => {
+  if (keptFromClient) keptFromClient.push(Buffer.from(packet));
+  else toClient(packet);
+});
+front.on("message", (packet, from) => {
+  clientPort = from.port;
+  if (keptFromServer) keptFromServer.push(Buffer.from(packet));
+  else upstream.send(packet, server.address!.port, "127.0.0.1");
+});
+
+const session = await connect(`127.0.0.1:${front.address().port}`, {
+  servername: "localhost",
+  verifyPeer: "manual",
+  transportParams: { maxIdleTimeout: 20, initialMaxData: window },
+  onerror() {},
+} as SessionOptions);
+session.closed.catch(() => {});
+await session.opened;
+const request = (path: string) => ({ ":method": "GET", ":path": path, ":scheme": "https", ":authority": "localhost" });
+let bodiesAndTrailers = 0;
+let responseHeaders = 0;
+const everyResponseHeader = Promise.withResolvers<void>();
+for (let i = 0; i < streams; i++) {
+  (async () => {
+    const stream: any = await session.createBidirectionalStream({
+      headers: request(`/${i}`),
+      onheaders: () => void (++responseHeaders === streams && everyResponseHeader.resolve()),
+      ontrailers: (block: Record<string, string>) => void (bodiesAndTrailers += block["x-filler"].length),
+    } as any);
+    stream.closed.catch(() => {});
+    for await (const batch of stream) for (const chunk of batch) bodiesAndTrailers += chunk.byteLength;
+  })().catch(() => {});
 }
+session.closed.then(everyResponseHeader.resolve, everyResponseHeader.resolve);
+await everyResponseHeader.promise;
+
+// The server writes its flight and uses up the connection's credit. The relay keeps the flight, so no ACK follows.
+keptFromClient = [];
+const go: any = await session.createBidirectionalStream({ headers: request("/go") } as any);
+go.closed.catch(() => {});
+await staged.promise;
+// The client gets the flight, which is less than half of its window, so its ACKs come with no MAX_DATA. They give
+// the server packets: the flush of the last response of the flight must stop in front of the HEADERS frame of its
+// trailers.
+for (const packet of keptFromClient) toClient(packet);
+keptFromClient = undefined;
+
+// The server now sends what its congestion window and the client's connection window allow. Then it has nothing
+// left that it may send, and no ACK comes. It probes twice and takes the packets in flight for lost.
+await new Promise<void>(resolve => {
+  const serverIsQuiet = () => {
+    const done =
+      bodiesAndTrailers > window ||
+      (keptFromServer && serverSession.stats.pktLost - lostWhenKept > 2n) ||
+      serverSession.destroyed;
+    if (done) resolve();
+    else setImmediate(serverIsQuiet);
+  };
+  serverIsQuiet();
+});
+writeSync(1, bodiesAndTrailers + "\n");
+process.exit(0);

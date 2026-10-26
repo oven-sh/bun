@@ -408,41 +408,30 @@ describe("HTTP/3 header blocks that follow another header block", () => {
 // lsquic takes the connection credit for the header of an HTTP/3 frame when it writes the header. The fixture brings
 // one response to the point where that write has no credit: the end of its body is in lsquic's buffer, its trailers
 // wait behind it for a packet, and the trailers of the other responses took the rest of the connection's credit.
-// When the client's ACK gives packets again, the flush of that body must stop in front of the HEADERS frame of the
-// trailers, and the trailers must go out once MAX_DATA arrives. lsquic's assertions stop a debug build that writes
-// the frame header without credit.
+// When the client's ACKs give packets again, the flush of that body must stop in front of the HEADERS frame of the
+// trailers. A server that writes the frame header spends more than the client's connection window. lsquic's count
+// of the credit that is left then wraps, and the server sends on while the relay of the fixture keeps the client's
+// MAX_DATA from it. A debug build stops on an assertion of lsquic there.
 test("a HEADERS frame that has no connection credit waits for it", async () => {
-  const spawn = (...args: (string | number)[]) =>
-    Bun.spawn({
-      cmd: [bunExe(), "--no-warnings", join(import.meta.dir, "quic-connection-credit-fixture.ts"), ...args.map(String)],
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-  async function* lines(stream: ReadableStream<Uint8Array>) {
-    const decoder = new TextDecoder();
-    let text = "";
-    for await (const chunk of stream) {
-      const complete = (text += decoder.decode(chunk, { stream: true })).split("\n");
-      text = complete.pop()!;
-      yield* complete;
-    }
-  }
-
-  await using server = spawn("server", join(keysDir, "agent1-key.pem"), join(keysDir, "agent1-cert.pem"), "bodies");
-  const serverLines = lines(server.stdout);
-  const port = Number((await serverLines.next()).value);
-  const serverExited = server.exited.then(() => ({
-    value: `the server exited: ${server.signalCode ?? server.exitCode}`,
-  }));
-  // More responses than the server's first flight holds. The connection window is more than twice that flight, so
-  // the client's first ACK comes with no MAX_DATA.
-  await using client = spawn("client", port, "bodies", 170, 130_000);
-  expect((await Promise.race([serverLines.next(), serverExited])).value).toBe("ready");
-  client.stdin.write("x");
-  client.stdin.flush();
-  expect((await Promise.race([lines(client.stdout).next(), serverExited])).value).toBe('{"wrong":[]}');
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--no-warnings",
+      join(import.meta.dir, "quic-connection-credit-fixture.ts"),
+      join(keysDir, "agent1-key.pem"),
+      join(keysDir, "agent1-cert.pem"),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Only a run that ended early prints nothing.
+  expect(stdout === "" ? stderr : "").toBe("");
+  // The bytes of bodies and trailers that the client got while its MAX_DATA did not reach the server. Its connection
+  // window is 136,000 bytes.
+  expect(Number(stdout)).toBeWithin(1, 136_001);
+  expect(exitCode).toBe(0);
 }, 30_000);
 
 describe("verifyClient", () => {

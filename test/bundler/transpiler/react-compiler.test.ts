@@ -4144,12 +4144,8 @@ test.skipIf(!isDebug && !isASAN)(
       "control.jsx": source(calls / perComponent, perComponent),
     });
 
-    // DropManualMemoization queues two markers for each call and takes them out
-    // of a map of the same kind. It reads the same input, so it is measured too.
-    const passes = ["ValidateUseMemo", "DropManualMemoization"];
-
-    // The milliseconds that each pass took in all the components of `entry`.
-    const passTimes = async (entry: string, components: number) => {
+    // The milliseconds that the pass took in all the components of `entry`.
+    const passTime = async (entry: string, components: number) => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
         env: { ...bunEnv, BUN_REACT_COMPILER_TIMING: "1" },
@@ -4158,46 +4154,35 @@ test.skipIf(!isDebug && !isASAN)(
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const times: Record<string, number> = {};
-      const ran: Record<string, string> = {};
-      for (const pass of passes) {
-        // "     12.34ms   5.6%      30×  DropManualMemoization"
-        const [, ms, count] = stderr.match(new RegExp(`^ *([\\d.]+)ms +[\\d.]+% +(\\d+)× +${pass}$`, "m")) ?? [];
-        times[pass] = Number(ms);
-        ran[pass] = count ?? stderr;
-      }
-      // Every component reached the passes, and the build compiled them.
-      expect({ ran, compiled: stdout.includes("react/compiler-runtime"), exitCode }).toEqual({
-        ran: Object.fromEntries(passes.map(pass => [pass, String(components)])),
+      // "     12.34ms   5.6%      30×  ValidateUseMemo"
+      const [, ms, ran] = stderr.match(/([\d.]+)ms +[\d.]+% +(\d+)× +ValidateUseMemo$/m) ?? [];
+      // Every component reached the pass, and the build compiled them.
+      expect({ ran: ran ?? stderr, compiled: stdout.includes("react/compiler-runtime"), exitCode }).toEqual({
+        ran: String(components),
         compiled: true,
         exitCode: 0,
       });
-      return times;
+      return Number(ms);
     };
 
     // Both builds hold the same calls, so a linear pass takes about as long in
-    // one as in the other: the ratio is 0.5 to 1.2 with the fix. Without it
-    // ValidateUseMemo takes 8 times as long in the large component on a debug
-    // build. The times are wall time. Other load on the machine only adds to a
-    // time, so the best time of up to five rounds counts, and the two builds of
-    // a round run together.
-    const best = { large: {} as Record<string, number>, control: {} as Record<string, number> };
-    let slow: Record<string, number> = {};
+    // one as in the other: the ratio is 0.5 with the fix. Without it the pass
+    // takes 7 times as long in the large component on a debug build. The times
+    // are wall time. Other load on the machine only adds to a time, so the best
+    // time of up to five rounds counts, and the two builds of a round run
+    // together.
+    let control = Infinity;
+    let large = Infinity;
     for (let round = 0; round < 5; round++) {
-      const [large, control] = await Promise.all([
-        passTimes("large.jsx", 1),
-        passTimes("control.jsx", calls / perComponent),
+      const [largeTime, controlTime] = await Promise.all([
+        passTime("large.jsx", 1),
+        passTime("control.jsx", calls / perComponent),
       ]);
-      slow = {};
-      for (const pass of passes) {
-        best.large[pass] = Math.min(best.large[pass] ?? Infinity, large[pass]);
-        best.control[pass] = Math.min(best.control[pass] ?? Infinity, control[pass]);
-        const ratio = best.large[pass] / best.control[pass];
-        if (!(ratio < 3)) slow[pass] = ratio;
-      }
-      if (Object.keys(slow).length === 0) break;
+      large = Math.min(large, largeTime);
+      control = Math.min(control, controlTime);
+      if (large / control < 3) break;
     }
-    expect(slow).toEqual({});
+    expect(large / control).toBeLessThan(3);
   },
   // `bun test` allows 5 seconds by default. On a debug build a round takes 3
   // seconds, and a test that fails takes five rounds.

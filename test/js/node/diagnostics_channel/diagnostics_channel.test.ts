@@ -440,7 +440,9 @@ describe("Channel", () => {
   // Node holds a channel for as long as it has a subscriber or a bound store.
   // These tests keep no reference to a channel. Bun.gc() ends the keep-alive
   // that a WeakRef gives its target for the current job before it collects, so
-  // a channel that only the registry refers to is gone when it returns.
+  // a channel that only the registry refers to is gone when it returns. Each
+  // test removes what it added before it asserts, so that a failure leaves no
+  // channel held for a rerun in this process.
   describe("that nothing else refers to", () => {
     const count = 100;
     const named = (prefix: string) => Array.from({ length: count }, (_, i) => `${prefix}-${i}`);
@@ -478,15 +480,6 @@ describe("Channel", () => {
         if (channel(`${name}-store`).runStores(name, () => store.getStore()) === name) received.store++;
         tracingChannel(name).traceSync(() => {});
       }
-      expect(received).toEqual({
-        subscribe: count,
-        channel: count,
-        symbol: count,
-        again: count,
-        store: count,
-        tracing: count,
-      });
-
       for (const name of names) {
         unsubscribe(`${name}-subscribe`, on.subscribe);
         unsubscribe(`${name}-channel`, on.channel);
@@ -495,6 +488,15 @@ describe("Channel", () => {
         channel(`${name}-store`).unbindStore(store);
         tracingChannel(name).unsubscribe(on.tracing);
       }
+
+      expect(received).toEqual({
+        subscribe: count,
+        channel: count,
+        symbol: count,
+        again: count,
+        store: count,
+        tracing: count,
+      });
     });
 
     test("is held until its last subscriber and its last store are removed", () => {
@@ -522,16 +524,17 @@ describe("Channel", () => {
       held["one subscriber and a store"] = alive();
       for (const name of names) unsubscribe(name, second);
       held["a store"] = alive();
+      for (const name of names) channel(name).unbindStore(store);
+      const released = alive();
+
       expect(held).toEqual({
         "two subscribers and a store": count,
         "one subscriber and a store": count,
         "a store": count,
       });
-
-      for (const name of names) channel(name).unbindStore(store);
       // A reference that the module keeps holds every one of them, so this
       // checks the population, as "references are not leaked" does.
-      expect(alive()).toBeLessThan(count / 10);
+      expect(released).toBeLessThan(count / 10);
     });
 
     // A lookup by name is a WeakRef#deref(), and a deref() holds its target
@@ -554,13 +557,13 @@ describe("Channel", () => {
       for (const name of names) subscribe(name, second);
       const sameChannel = names.filter(name => (channel(name) as Channel & { tag?: string }).tag === name).length;
       for (const name of names) channel(name).publish(name);
+      for (const name of names) unsubscribe(name, second);
+
       expect({ unsubscribed, sameChannel, received }).toEqual({
         unsubscribed: count,
         sameChannel: count,
         received: count,
       });
-
-      for (const name of names) unsubscribe(name, second);
     });
   });
 

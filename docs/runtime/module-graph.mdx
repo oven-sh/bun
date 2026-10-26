@@ -125,4 +125,6 @@ The global object, `globalThis` properties, plugins and native addons are shared
 
 `http.globalAgent` and `https.globalAgent` are shared too. A connection belongs to the `Agent` that opened it, and an `Agent` to the script that made it, so a request a graph makes without an `agent` uses a connection that is not the graph's: `dispose()` does not close it, and it keeps the process running like any connection of the host's. Code whose connections should go with its graph passes an `Agent` it made itself.
 
+The channels of `node:diagnostics_channel` are shared too: a name is one channel for every graph and the host. A subscriber or a bound store that a graph's code adds is the channel's, so it outlives `dispose()` and is still called. Code whose subscribers should go with its graph removes them before the graph is disposed.
+
 `mock.module()` in `bun test` is one of the shared things: it applies to what a graph loads afterwards. A graph that already loaded the module keeps the instance it has.

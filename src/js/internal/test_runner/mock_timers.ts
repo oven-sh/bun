@@ -480,7 +480,9 @@ class MockTimers {
     result;
     options;
   }) {
-    const { promise, resolve, reject } = Promise.withResolvers();
+    const promise = $newPromise();
+    const resolve = () => $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+    const reject = err => $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
 
     let abortListener;
     if (options?.signal) {

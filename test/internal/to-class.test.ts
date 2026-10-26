@@ -94,6 +94,10 @@ describe("$toClass sets the name", () => {
     expect(Target.bind(null).name).toBe("bound Renamed");
   });
 
+  test.each(["Target", "Renamed"])("the own keys are in the order of a function declaration: %s", name => {
+    expect(Reflect.ownKeys(toClassForTesting(name))).toEqual(["length", "name", "prototype"]);
+  });
+
   test("one call site reads the same name from two functions each time", () => {
     const first = toClassForTesting("First");
     const second = toClassForTesting("Second");

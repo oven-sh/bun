@@ -1266,9 +1266,10 @@ describe("Object.prototype is hardened before node:events loads", () => {
     });
   });
 
-  // Three children share the list of modules. stderr is not compared: three of the modules print a
+  // Three children share the list of modules, one after the other: a child that loads this much
+  // is slow beside other children. stderr is not compared: three of the modules print a
   // deprecation warning.
-  test.concurrent.each([1, 2, 3])(
+  test.each([1, 2, 3])(
     "Object.freeze(Object.prototype), then each built-in module loads (part %d of 3)",
     async part => {
       const size = Math.ceil(builtinModules.length / 3);
@@ -1402,6 +1403,7 @@ describe("built-in constructors have the own properties of a function declaratio
     // The copy that #32160 reports: it throws when `prototype` is configurable.
     Object.defineProperties(function () {}, Object.getOwnPropertyDescriptors(constructor));
 
+    expect(Reflect.ownKeys(constructor).slice(0, 3)).toEqual(["length", "name", "prototype"]);
     const prototype = constructor.prototype;
     expect(Object.getOwnPropertyDescriptor(constructor, "prototype")).toEqual({
       value: prototype,

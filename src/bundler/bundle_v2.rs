@@ -6034,6 +6034,12 @@ pub mod bv2_impl {
                                     Index::init(u32::try_from(index).expect("int cast")),
                                     (),
                                 )?;
+                                // A plugin or an earlier import can resolve a record and leave its path as written.
+                                for record in import_records.as_mut_slice() {
+                                    if !record.path.is_disabled && record.source_index.is_valid() {
+                                        record.path = sources[record.source_index.get() as usize].path;
+                                    }
+                                }
                             } else {
                                 js_files.push(Index::init(u32::try_from(index).expect("int cast")));
 
@@ -7303,13 +7309,9 @@ pub mod bv2_impl {
                     && self.dev_server.is_none();
 
                 if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
-                    if self.dev_server.is_some() {
+                    if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
-                        // HTML chunk printing reads the loader and the asset key through it.
-                        if loader == Loader::Html {
-                            import_record.source_index = Index::init(id);
-                        }
                     } else {
                         import_record.source_index = Index::init(id);
                     }

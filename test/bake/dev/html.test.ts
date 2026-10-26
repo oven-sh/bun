@@ -639,3 +639,69 @@ devTest("stylesheet that fails in the same rebuild as its html file comes back o
     await dev.fetch("/").expect.toInclude("<h1>World</h1>");
   },
 });
+devTest("html script that an onResolve plugin resolves loads by its module id", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import path from "node:path";
+      export default {
+        name: "resolve-scripts",
+        setup(build) {
+          build.onResolve({ filter: /declined\\.ts$/ }, () => undefined);
+          build.onResolve({ filter: /answered\\.ts$/ }, args => ({
+            path: path.resolve(path.dirname(args.importer), args.path),
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["./declined.ts", "./answered.ts"],
+    }),
+    "declined.ts": `
+      console.log("declined");
+    `,
+    "answered.ts": `
+      console.log("answered");
+    `,
+  },
+  async test(dev) {
+    // previously: Failed to load bundled module './declined.ts'
+    await using c = await dev.client("/");
+    await c.expectMessage("declined", "answered");
+  },
+});
+devTest("stylesheet that an onResolve plugin resolves comes back after a failed first build", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "resolve-styles",
+        setup(build) {
+          build.onResolve({ filter: /styles\\.css$/ }, () => undefined);
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["./styles.css"],
+      body: "<h1>Hello</h1>",
+    }),
+    "styles.css": `
+      body {
+        color: red;
+      }}
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("styles.css", `body { color: red; }`);
+    // previously: the page had no stylesheet
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+  },
+});

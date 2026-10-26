@@ -6,7 +6,7 @@ use crate::configs::{Flavor, Loader};
 use crate::inferred::Inferred;
 use crate::lint::Context;
 use crate::results::FileResult;
-use crate::run::{Environment, Fatal, Linted, NotBuiltIn, Pool, Run, Sinks, Timing};
+use crate::run::{Environment, Fatal, Linted, NotBuiltIn, Pool, Run, Sinks, Timing, store_for};
 use crate::{Linter, discover, paths};
 use bun_lint::js_plugin::Host;
 use bun_threading::Guarded;
@@ -122,8 +122,11 @@ impl Session<'_> {
             ..self.options.clone()
         };
         let of_cwd = loader.for_directory(&environment.cwd).ok();
+        let is_native = of_cwd
+            .as_ref()
+            .is_some_and(|it| it.flavor == Flavor::BuiltIn);
         // What the other files export is read anew: they change too.
-        let store = bun_lint_graph::Store::new(&environment.cwd);
+        let store = store_for(&environment.cwd, is_native, options);
         let modules = bun_lint_graph::Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
             let of_the_run = (linter, environment, js_plugins);

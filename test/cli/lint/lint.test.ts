@@ -8786,6 +8786,26 @@ export default { meta: { name: "q" }, rules: { marks, marked } };\n`,
         1 problem"
       `);
     });
+
+    // import/no-cycle lints a file a second time once it has seen the others. With --stdin that pass is the piped text,
+    // not the file's.
+    test("a rule's second pass lints the piped text, not the file on disk", async () => {
+      const files = {
+        ".oxlintrc.json": `{ "plugins": ["import"], "rules": { "import/no-cycle": "error" } }`,
+        "src/a.js": `import "./b.js";\n`,
+        "src/b.js": `export const b = 1;\n`,
+      };
+      // In the piped text b.js imports a.js, which closes a cycle. On disk it does not.
+      const [piped, onDisk] = await Promise.all([
+        lint(files, ["-f", "unix", "--stdin", "--stdin-filename", "src/b.js"], {
+          stdin: `// not saved\nimport "./a.js";\n`,
+        }),
+        lint(files, ["-f", "unix", "src/b.js"]),
+      ]);
+      expect(piped.stdout).toContain("<dir>/src/b.js:2:8: Dependency cycle detected");
+      expect(piped.stdout).toContain("no-cycle");
+      expect([piped.exitCode, onDisk.stdout, onDisk.exitCode]).toEqual([1, "", 0]);
+    });
   });
 
   describe("formats", () => {

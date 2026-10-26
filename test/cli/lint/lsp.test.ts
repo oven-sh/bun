@@ -545,6 +545,43 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  test(
+    "resolves the imports of a document with its nearest tsconfig.json, as bun lint does without a config file",
+    async () => {
+      const paths = (alias: string) => `{ "compilerOptions": { "paths": { "${alias}/*": ["./src/*"] } } }`;
+      using dir = tempDir("bun-lint-lsp", {
+        "bunfig.toml": '[lint.rules]\n"import/no-unresolved" = "error"\n',
+        "tsconfig.json": paths("@root"),
+        "src/y.ts": "export default 1;\n",
+        "packages/app/tsconfig.json": paths("@app"),
+        "packages/app/src/y.ts": "export default 1;\n",
+        "packages/app/src/x.ts": "",
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const x = join(String(dir), "packages", "app", "src", "x.ts");
+      open(client, x, 'import b from "@app/y";\nexport default b;\n');
+      expect((await client.diagnostics(x)).params).toEqual({ uri: uriOf(x), version: 1, diagnostics: [] });
+
+      // The root's tsconfig.json is not the nearest one.
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(x), version: 2 },
+        contentChanges: [{ text: 'import a from "@root/y";\nimport b from "@app/y";\nexport default [a, b];\n' }],
+      });
+      const changed = await client.diagnostics(x);
+      expect(changed.params.diagnostics.map((it: any) => [it.code, it.range.start.line])).toEqual([
+        ["import/no-unresolved", 0],
+      ]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test.each([
     ["--fix", "--fix"],
     ["--stdin", "--stdin"],

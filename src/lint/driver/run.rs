@@ -1178,16 +1178,7 @@ impl Run<'_> {
             return self.out;
         }
         let is_native = (cwd_config.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
-        let store = bun_lint_graph::Store::new(&environment.cwd);
-        let store = if is_native {
-            store.with_nearest_tsconfig()
-        } else {
-            store
-        };
-        let store = match &options.tsconfig {
-            Some(path) => store.with_tsconfig(path),
-            None => store,
-        };
+        let store = store_for(&environment.cwd, is_native, options);
         let modules = bun_lint_graph::Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
             let run_state = (&linter, environment, &js_plugins);
@@ -1329,9 +1320,15 @@ impl Run<'_> {
             return self.out;
         }
         let mut phases = Phases::default();
+        // Kept for the second pass: a result without a text is read from the file, which may differ or not exist.
+        let mut stdin_text = None;
         let linted = match options.stdin {
             true => match fs::read_stdin() {
-                Ok(text) => self.lint_text(&loader, &context, text, true),
+                Ok(text) => {
+                    let linted = self.lint_text(&loader, &context, text.clone(), true);
+                    stdin_text = Some(text);
+                    linted
+                }
                 Err(error) => Err(Fatal(
                     [&b"Cannot read standard input: "[..], &fs::describe(&error)].concat(),
                 )),
@@ -1430,6 +1427,12 @@ impl Run<'_> {
                 .into_iter()
                 .map(|at| Guarded::new(Some(results.swap_remove(at))))
                 .collect();
+            // With --stdin the only result is the piped text's.
+            if let Some(text) = stdin_text
+                && let Some(result) = picked.iter_mut().find_map(|it| it.get_mut().as_mut())
+            {
+                result.text.get_or_insert(text);
+            }
             let mut failure = Guarded::new(None);
             pool.for_each(picked.len(), 1, &|index| {
                 if let Some(result) = picked[index].lock().as_mut()
@@ -2001,6 +2004,21 @@ fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
         &paths::escaped(&paths::to_native(path.to_vec())),
         b". It is likely that you have conflicting rules in your configuration.",
     ]);
+}
+
+/// The store `bun lint` resolves imports with in `cwd`: with the nearest `tsconfig.json` of each file when the
+/// configuration is Bun's own (`is_native`), and with `--tsconfig` when given.
+pub(crate) fn store_for(cwd: &[u8], is_native: bool, options: &Options) -> bun_lint_graph::Store {
+    let store = bun_lint_graph::Store::new(cwd);
+    let store = if is_native {
+        store.with_nearest_tsconfig()
+    } else {
+        store
+    };
+    match &options.tsconfig {
+        Some(path) => store.with_tsconfig(path),
+        None => store,
+    }
 }
 
 /// The outcome for a command line that can't be parsed. `message` is the error.

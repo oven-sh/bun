@@ -17,6 +17,14 @@
 #include <bit>
 
 namespace Bun {
+
+namespace NodeVM {
+// NodeVM.cpp: struct declarations in a source are lowered to plain classes before JavaScriptCore compiles it.
+WTF::String lowerStructSyntax(JSC::JSGlobalObject*, const WTF::String& source, int kind);
+bool hasLoweredStructs(WTF::StringView source);
+void installStructBase(JSC::JSGlobalObject*, JSC::JSGlobalObject* target);
+}
+
 using namespace NodeVM;
 
 static std::optional<Seconds> timeoutOf(const RunningScriptOptions& options)
@@ -120,6 +128,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer)) {
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
+    sourceString = lowerStructSyntax(globalObject, sourceString, 0);
+    RETURN_IF_EXCEPTION(scope, {});
     options.lineOffset = clampOffsetForSource(options.lineOffset, sourceString.length());
     options.columnOffset = clampOffsetForSource(options.columnOffset, sourceString.length());
 
@@ -325,6 +335,12 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
         globalObject->setContextifiedObject(contextifiedObject);
     }
 
+    // A source with lowered struct declarations calls a helper that this realm gets before the script runs.
+    if (hasLoweredStructs(script->source().view())) {
+        installStructBase(globalObject, globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
     {
@@ -376,6 +392,12 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     if (!options.fromJS(globalObject, vm, scope, optionsArg)) {
         RETURN_IF_EXCEPTION(scope, {});
         options = {};
+    }
+
+    // A source with lowered struct declarations calls a helper that this realm gets before the script runs.
+    if (hasLoweredStructs(script->source().view())) {
+        installStructBase(globalObject, globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     NakedPtr<JSC::Exception> exception;

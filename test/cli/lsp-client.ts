@@ -147,6 +147,11 @@ export class Client {
     this.send({ method, params });
   }
 
+  /** Answers a request of the server. */
+  reply(id: Message["id"], result: unknown) {
+    this.send({ id, result });
+  }
+
   /** The next message of the server that `test` accepts, among those that came already or the ones to come. */
   notification(test: (message: Message) => boolean): Promise<Message> {
     const at = this.unclaimed.findIndex(test);

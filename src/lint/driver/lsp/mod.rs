@@ -372,8 +372,9 @@ fn is_watched(name: &[u8]) -> bool {
 fn path_of(uri: &[u8]) -> Option<Vec<u8>> {
     let rest = uri.strip_prefix(b"file://")?;
     let (host, path) = rest.split_at(strings::index_of_char_usize(rest, b'/')?);
-    let path = bun_url::PercentEncoding::decode_alloc(path).ok()?;
-    Some(match (host, &path[..]) {
+    let decode = bun_url::PercentEncoding::decode_alloc;
+    let (host, path) = (decode(host).ok()?, decode(path).ok()?);
+    Some(match (&host[..], &path[..]) {
         (b"" | b"localhost", [b'/', drive, b':', ..])
             if cfg!(windows) && drive.is_ascii_alphabetic() =>
         {
@@ -1497,7 +1498,10 @@ impl<'d> Desk<'d, '_, '_> {
                 else {
                     return;
                 };
-                if !server.client().watches_files && is_watched(paths::basename(&document.path)) {
+                // A client watches the files of its folders, not those above them.
+                let is_unwatched =
+                    !server.client().watches_files || !server.is_in_a_folder(&document.path);
+                if is_unwatched && is_watched(paths::basename(&document.path)) {
                     self.look_again();
                 } else if !server.settings.lock().lints_on_type {
                     self.lint(&document);

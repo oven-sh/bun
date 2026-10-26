@@ -297,6 +297,40 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
     timeout,
   );
 
+  // An editor watches the files of its folders: a configuration file above them that is saved in the editor is read
+  // again all the same.
+  test(
+    "reads a bunfig.toml above the folder again when the client that watches its folders saves it",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", { "bunfig.toml": "[install]\nexact = true\n", "a/x.js": "" });
+      const a = join(String(dir), "a");
+      await using client = new Client(command, String(dir));
+      const started = await initialize(client, [a], {
+        capabilities: { workspace: { didChangeWatchedFiles: { dynamicRegistration: true } } },
+      });
+      expect(started.error).toBeUndefined();
+      client.notify("initialized");
+      const registered = await client.notification(it => it.method === "client/registerCapability");
+      client.reply(registered.id, null);
+      const path = join(a, "x.js");
+      const ugly = 'const  value  =  "text"\n';
+      open(client, path, ugly);
+      expect(applyEdits(ugly, (await format(client, path)).result)).toBe('const value = "text";\n');
+      const toml = join(String(dir), "bunfig.toml");
+      writeFileSync(toml, "[fmt]\nsemi = false\n");
+      open(client, toml, "[fmt]\nsemi = false\n", "toml");
+      client.notify("textDocument/didSave", { textDocument: { uri: uriOf(toml) } });
+      expect(applyEdits(ugly, (await format(client, path)).result)).toBe('const value = "text"\n');
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   // Every file that `bun fmt` reads its configuration from is one whose save makes the server read it again.
   test(
     "reads a package.yaml again when a client without a watcher saves it",

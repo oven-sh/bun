@@ -3948,6 +3948,8 @@ unsafe fn normalize_specifier_for_loader<'a>(
 /// `options.LoaderResult`.
 struct LoaderResult<'a> {
     loader: Option<Loader>,
+    /// What the path alone selects, before a type attribute, `?raw` or a blob's type chose `loader`.
+    path_loader: Option<Loader>,
     virtual_source: Option<&'a bun_ast::Source>,
     path: Fs::Path<'a>,
     is_main: bool,
@@ -3974,8 +3976,9 @@ unsafe fn get_loader_and_virtual_source<'a>(
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
     // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
-    let mut loader: Option<Loader> =
+    let path_loader: Option<Loader> =
         loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
+    let mut loader = path_loader;
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
 
     // Synthetic `[eval]`/`[stdin]` source.
@@ -4089,6 +4092,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
 
     Ok(LoaderResult {
         loader,
+        path_loader,
         virtual_source,
         path,
         is_main,
@@ -4432,6 +4436,12 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         p
     });
 
+    // `package.json` and `tsconfig.json` select `jsonc`; `with { type: "json" }` is still their own type.
+    let is_path_loader = match (synchronous_loader, lr.path_loader) {
+        (Loader::Json, Some(Loader::Jsonc)) => true,
+        (used, selected) => Some(used) == selected,
+    };
+
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
     let mut promise: *mut JSInternalPromise = ptr::null_mut();
     let mut extra = TranspileExtra {
@@ -4463,7 +4473,8 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     };
 
     match transpile_source_code_inner(jsc_vm, &args) {
-        Ok(resolved) => {
+        Ok(mut resolved) => {
+            resolved.is_path_loader = is_path_loader;
             *ret = ErrorableResolvedSource::ok(resolved);
             promise.cast::<c_void>()
         }

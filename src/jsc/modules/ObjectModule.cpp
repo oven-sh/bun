@@ -1,5 +1,7 @@
 #include "ObjectModule.h"
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 
 namespace Zig {
 
@@ -75,6 +77,47 @@ JSC::JSSourceCode* createJSValueModuleSourceCode(GlobalObject* globalObject, JSC
         return createObjectModuleSourceCodeForJSON(globalObject, value.getObject(), WTF::move(sourceURL));
 
     return createJSValueExportDefaultObjectSourceCode(globalObject, value, WTF::move(sourceURL));
+}
+
+JSC::JSSourceCode* createJSValueModuleSourceCode(GlobalObject* globalObject, JSC::JSValue value, JSC::JSValue file, WTF::String&& sourceURL)
+{
+    if (value == file)
+        return createJSValueModuleSourceCode(globalObject, value, WTF::move(sourceURL));
+    if (!file.isObject() || JSC::isJSArray(file))
+        return createJSValueExportDefaultObjectSourceCode(globalObject, value, WTF::move(sourceURL));
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSArray* names = JSC::ownPropertyKeys(globalObject, file.getObject(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* exports = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), value, names);
+
+    JSC::SyntheticSourceProvider::SyntheticSourceGenerator generator = [exports](JSC::JSGlobalObject* lexicalGlobalObject, JSC::Identifier moduleKey, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues) -> void {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::EnsureStillAliveScope stillAlive(exports);
+        JSValue value = exports->getInternalField(0);
+        auto* names = uncheckedDowncast<JSC::JSArray>(exports->getInternalField(1));
+
+        exportNames.append(vm.propertyNames->defaultKeyword);
+        exportValues.append(value);
+
+        JSC::JSObject* object = value.getObject();
+        for (unsigned i = 0, length = names->length(); i < length; i++) {
+            JSValue key = names->getIndex(lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(scope, void());
+            Identifier name = asString(key)->toIdentifier(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (name == vm.propertyNames->defaultKeyword)
+                continue;
+
+            JSValue property = object ? object->get(lexicalGlobalObject, name) : jsUndefined();
+            RETURN_IF_EXCEPTION(scope, void());
+            exportNames.append(name);
+            exportValues.append(property);
+        }
+    };
+    RELEASE_AND_RETURN(scope, createSourceCode(globalObject, exports, WTF::move(generator), WTF::move(sourceURL)));
 }
 
 JSC::JSSourceCode* createJSValueExportDefaultObjectSourceCode(GlobalObject* globalObject, JSC::JSValue value, WTF::String&& sourceURL)

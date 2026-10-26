@@ -2352,7 +2352,7 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
         moduleExportsInterop: import.meta.require("./me.mjs").who,
         onlyRequiredWho: import.meta.require("./only-required.mjs").who,
         tla: (() => { try { import.meta.require("./tla.mjs"); return "loaded" } catch (err) { return String(err.message).includes("await import") } })(),
-        jsonViaRequireIsThisImport: import.meta.require("./d.json").default === json,
+        jsonViaRequireIsThisImport: import.meta.require("./d.json") === json,
         inRequireCache: require.cache[require.resolve("./c.cjs")]?.exports === c,
       })`,
   });
@@ -2377,7 +2377,7 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
         moduleExportsInterop: who,
         onlyRequiredWho: who, // also when nothing imported it before
         tla: true, // a module with top-level await cannot be require()d
-        jsonViaRequireIsThisImport: true, // already an ES module record in this loader: require() answers from it
+        jsonViaRequireIsThisImport: true, // a data file has one value in a loader: require() returns what the import gave
         inRequireCache: true,
       });
       expect({
@@ -2405,6 +2405,42 @@ describe("Bun.ModuleGraph — require(): ES modules and CommonJS modules per gra
     } finally {
       delete (globalThis as any).__cjsEvals;
     }
+  });
+  test("a data file has one value in each graph: import and require() of it agree in either order, and nothing is the host's or another graph's", async () => {
+    const d = fixture({
+      "d.json": `{"n":1}`,
+      "late.toml": `n = 1\n`,
+      "entry.mjs": `import json from "./d.json"; export { json };
+        export const viaRequire = () => import.meta.require("./d.json");
+        export const drop = () => delete require.cache[require.resolve("./d.json")];
+        export const requireThenImport = async () => { const required = require("./late.toml"); return [required, (await import("./late.toml")).default]; };`,
+    });
+    const a = await new ModuleGraphClass().import(join(d, "entry.mjs"));
+    const b = await new ModuleGraphClass().import(join(d, "entry.mjs"));
+    a.json.written = "by A";
+    const [aRequired, aImported] = await a.requireThenImport();
+    const [bRequired, bImported] = await b.requireThenImport();
+    const hostRequire = createRequire(join(d, "entry.mjs"));
+    expect({
+      inHostCache: [join(d, "d.json") in hostRequire.cache, join(d, "late.toml") in hostRequire.cache],
+      a: [a.viaRequire() === a.json, a.viaRequire().written, aImported === aRequired],
+      b: [b.viaRequire() === b.json, b.viaRequire().written, bImported === bRequired],
+      shared: [aRequired === bRequired, hostRequire("./late.toml") === aRequired],
+    }).toEqual({
+      inHostCache: [false, false],
+      a: [true, "by A", true],
+      b: [true, undefined, true],
+      shared: [false, false],
+    });
+
+    // delete makes that graph, and only that graph, read the file again.
+    expect(a.drop()).toBe(true);
+    const reread = a.viaRequire();
+    expect({ reread, isOld: reread === a.json, b: b.viaRequire() === b.json }).toEqual({
+      reread: { n: 1 },
+      isOld: false,
+      b: true,
+    });
   });
   test("a CommonJS file as a graph's entry: the namespace wraps the graph's module; after dispose() its require() throws and its import() rejects", async () => {
     (globalThis as any).__cjsEvals = [];

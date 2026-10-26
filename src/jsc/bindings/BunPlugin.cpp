@@ -574,6 +574,15 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSValue commonJSExports = exports;
+    // An import of a data file made this module, not require(): it gets what the mock gives a first require().
+    if (loaded.commonJSModule && loaded.commonJSModule->dataFile == Bun::JSCommonJSModule::DataFile::Imported) {
+        JSValue defaultExport = Bun::esModuleDefaultExport(globalObject, exports);
+        RETURN_IF_EXCEPTION(scope, );
+        if (defaultExport)
+            commonJSExports = defaultExport;
+    }
+
     if (auto* moduleNamespaceObject = loaded.esmNamespace) {
         JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         // Via the method table so a module namespace object (`() => import("./mocked")`) lists its exports.
@@ -600,7 +609,7 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
     }
 
     if (auto* moduleObject = loaded.commonJSModule) {
-        moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), exports, 0);
+        moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), commonJSExports, 0);
         moduleObject->hasEvaluated = true;
     }
 }

@@ -409,20 +409,6 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         })
     }
 
-    /// Alias of [`get_or_put`](Self::get_or_put) kept for call-site parity;
-    /// the context is already bound by the type parameter.
-    #[inline]
-    pub fn get_or_put_context<Ctx>(
-        &mut self,
-        key: K,
-        _ctx: Ctx,
-    ) -> Result<crate::hash_map::GetOrPutResult<'_, V>, bun_alloc::AllocError>
-    where
-        V: Default,
-    {
-        self.get_or_put(key)
-    }
-
     /// std `insert` — returns the previous value if any.
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let (idx, found_existing) = self.get_or_put_slot(&key);
@@ -496,6 +482,25 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     pub fn fetch_remove(&mut self, key: &K) -> Option<crate::hash_map::KV<K, V>> {
         self.remove_entry(key)
             .map(|(k, v)| crate::hash_map::KV { key: k, value: v })
+    }
+
+    /// std `retain`. Calls `keep` exactly once per entry.
+    pub fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool) {
+        // The scan starts behind a free slot, so it meets each run at its first entry.
+        let Some(start) = self.slots.iter().position(Option::is_none) else {
+            return;
+        };
+        let mask = self.slots.len() - 1;
+        for offset in 1..self.slots.len() {
+            let idx = (start + offset) & mask;
+            // A removal can move the next entry of the run into `idx`.
+            while let Some((key, value)) = &mut self.slots[idx] {
+                if keep(key, value) {
+                    break;
+                }
+                let _ = self.remove_by_index(idx);
+            }
+        }
     }
 
     /// std `entry` API. `VacantEntry::insert` does a second probe (re-runs
@@ -790,6 +795,20 @@ mod tests {
                         assert_eq!(map.remove(&(key as u64)), slot.take());
                     }
                 }
+                98 => {
+                    let rejects = |key: u64| key.wrapping_add(value).is_multiple_of(3);
+                    let mut shown = vec![0u8; key_space];
+                    map.retain(|key, _| {
+                        shown[*key as usize] += 1;
+                        !rejects(*key)
+                    });
+                    for (key, slot) in model.iter_mut().enumerate() {
+                        assert_eq!(shown[key], u8::from(slot.is_some()), "key {key}");
+                        if rejects(key as u64) {
+                            *slot = None;
+                        }
+                    }
+                }
                 _ => {
                     if value.is_multiple_of(8) {
                         map.clear();
@@ -884,5 +903,47 @@ mod tests {
             .filter(|&&meta| meta == SLOT_FREE)
             .count();
         assert_eq!(free, 128 - LIVE as usize);
+    }
+}
+
+#[cfg(test)]
+mod retain_tests {
+    use super::*;
+
+    /// `keep` is shown each entry once, and the entries it accepts are still found by key.
+    fn check(keys: &[u64], rejected: &[u64]) {
+        // The home slot is `key & 7`, so the keys choose the runs.
+        let mut map: HashMap<u64, u32, IdentityContext<u64>> = HashMap::new();
+        for &key in keys {
+            map.insert(key, 0);
+        }
+        assert_eq!(map.capacity(), 8);
+        map.retain(|key, shown| {
+            *shown += 1;
+            !rejected.contains(key)
+        });
+        let mut left: Vec<(u64, u32)> = map.iter().map(|(key, shown)| (*key, *shown)).collect();
+        left.sort_unstable();
+        let mut expected: Vec<(u64, u32)> = (keys.iter().filter(|key| !rejected.contains(key)))
+            .map(|&key| (key, 1))
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(left, expected);
+        assert_eq!(map.len(), expected.len());
+        for (key, _) in expected {
+            assert_eq!(map.get(&key), Some(&1));
+        }
+    }
+
+    #[test]
+    fn retain_shows_each_entry_once() {
+        // 2 and 10 share home slot 2: 10 is in slot 3, behind the rejected entry.
+        check(&[2, 10, 3], &[2]);
+        check(&[2, 10, 3], &[2, 10]);
+        // The run wraps: 6 in slot 6, 14 in slot 7, 22 in slot 0.
+        check(&[6, 14, 22], &[6]);
+        check(&[6, 14, 22], &[14]);
+        check(&[6, 14, 22, 30, 7, 15], &[6, 30]);
+        check(&[2, 10, 3], &[]);
     }
 }

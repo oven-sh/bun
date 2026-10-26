@@ -254,6 +254,17 @@ function runtimeInitializers(cfg: Config): string[] {
     // prebuilt WebKit's call the __aarch64_* helpers that bring these in.
     initializers.push("init_have_lse_atomics", "__init_cpu_features");
   }
+  if (cfg.fuzzilli && gnu) {
+    // -fsanitize-coverage: the constructor that hands the guards to
+    // FuzzilliREPRL.cpp (one for the binary, bun's objects and the -coverage
+    // WebKit's share it), and the two of clang's runtime, which the flag
+    // links (flags.ts).
+    initializers.push(
+      "sancov.module_ctor_trace_pc_guard",
+      "_GLOBAL__sub_I_sanitizer_common_libcdep.cpp",
+      "_GLOBAL__sub_I_ubsan_init_standalone.cpp",
+    );
+  }
   return initializers;
 }
 
@@ -370,7 +381,14 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     cfg.webkit === "local" && cfg.linux && cfg.abi !== "android"
       ? ["libicudata.so.*", "libicui18n.so.*", "libicuuc.so.*"]
       : [];
-  const allowedLibs = [...sanitizerLibs, ...localWebKitLibs, ...(cfg.abi === "android" ? ["liblog.so"] : [])];
+  // --fuzzilli=on: clang's coverage runtime needs it.
+  const coverageLibs = cfg.fuzzilli && cfg.linux && cfg.abi === "gnu" ? ["libresolv.so.2"] : [];
+  const allowedLibs = [
+    ...sanitizerLibs,
+    ...coverageLibs,
+    ...localWebKitLibs,
+    ...(cfg.abi === "android" ? ["liblog.so"] : []),
+  ];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
 
   switch (format) {

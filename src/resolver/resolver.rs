@@ -6740,36 +6740,36 @@ impl<'a> Resolver<'a> {
         fd: FD,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         let mut sources = Vec::new();
-        let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
-            tsconfigpath,
-            fd,
-            &mut sources,
-        ) {
-            Ok(v) => v.map(bun_core::heap::into_raw),
-            Err(err) => {
-                let pretty = tsconfigpath;
-                if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                    let _ = self.log_mut().add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)),
-                    );
-                } else if err != crate::Error::ParseErrorAlreadyLogged
-                    && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
-                {
-                    let _ = self.log_mut().add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Cannot read file {}: {}",
-                            bun_core::fmt::quote(pretty),
-                            bstr::BStr::new(err.name())
-                        ),
-                    );
+        let parsed_tsconfig: Option<*mut TSConfigJSON> =
+            match self.parse_tsconfig(tsconfigpath, fd, &mut sources) {
+                Ok(v) => v.map(bun_core::heap::into_raw),
+                Err(err) => {
+                    let pretty = tsconfigpath;
+                    if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        let _ = self.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Cannot find tsconfig file {}",
+                                bun_core::fmt::quote(pretty)
+                            ),
+                        );
+                    } else if err != crate::Error::ParseErrorAlreadyLogged
+                        && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
+                    {
+                        let _ = self.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Cannot read file {}: {}",
+                                bun_core::fmt::quote(pretty),
+                                bstr::BStr::new(err.name())
+                            ),
+                        );
+                    }
+                    None
                 }
-                None
-            }
-        };
+            };
         if let Some(tsconfig_json) = parsed_tsconfig {
             let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
             parent_configs.append(tsconfig_json)?;

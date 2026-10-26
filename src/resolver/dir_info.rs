@@ -474,9 +474,8 @@ type ParkedMap = std::collections::HashMap<
 
 /// By the hash of the key, as in the index. Every access holds `RealFS::entries_mutex`, which
 /// also keeps a fill from writing the slots that are read here.
-static PARKED: bun_threading::Guarded<ParkedMap> = bun_threading::Guarded::new(
-    ParkedMap::with_hasher(core::hash::BuildHasherDefault::new()),
-);
+static PARKED: bun_threading::Guarded<ParkedMap> =
+    bun_threading::Guarded::new(ParkedMap::with_hasher(core::hash::BuildHasherDefault::new()));
 
 /// `PARKED.len()`, for `any_parked`.
 static PARKED_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);

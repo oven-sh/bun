@@ -610,9 +610,14 @@ pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
         ),
     };
     let from_client = File::stdin();
-    // Bun's own `--config=` precedes `command`; neither half scans the other tool's flags for it.
-    let config_path = bunfig_before(command);
     run_and_exit(command, None, |environment| {
+        // Bun's own `--config=` precedes `command`, and is relative to where the process started, not to a folder;
+        // neither half scans the other tool's flags for it.
+        let config_path = bunfig_before(command).map(|path| {
+            let path = bun_lint_driver::from_native_path(path);
+            bun_lint_driver::resolve_path(&environment.cwd, &path)
+        });
+        let config_path = config_path.as_deref();
         // Only the messages go to the client: `run_and_exit` has made fd 1 stderr for the rest.
         let to_client = File::borrow(&environment.to_stdout);
         bun_lint_driver::lsp::serve(

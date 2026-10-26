@@ -220,6 +220,34 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
     timeout,
   );
 
+  // Bun's own `--config=` is relative to where the server started, as it is for `bun fmt`, not to each folder.
+  test(
+    "reads the bunfig.toml that bun's --config= names from where the server started",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {
+        "editor.toml": "[fmt]\nsemi = false\n",
+        "a/bunfig.toml": "[fmt]\nsingleQuote = true\n",
+        "a/x.js": "",
+      });
+      const a = join(String(dir), "a");
+      await using client = new Client([bunExe(), "--config=editor.toml", "fmt", "--no-script", "--lsp"], String(dir));
+      expect((await initialize(client, [a])).error).toBeUndefined();
+      client.notify("initialized");
+      const ugly = 'const  value  =  "text"\n';
+      open(client, join(a, "x.js"), ugly);
+      const formatted = await format(client, join(a, "x.js"));
+      expect(formatted.error).toBeUndefined();
+      expect(applyEdits(ugly, formatted.result)).toBe('const value = "text"\n');
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test(
     "formats each document with the bunfig.toml of its workspace folder, or of a directory above it",
     async () => {

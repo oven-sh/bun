@@ -55,7 +55,7 @@ unsafe extern "C" {
 }
 
 #[derive(Clone, Copy)]
-pub struct Options {
+pub(crate) struct Options {
     pub(crate) max_colors: u16,
     /// Floyd–Steinberg error diffusion. Hides banding on gradients at the
     /// cost of grain on flat areas; off by default to match Sharp's

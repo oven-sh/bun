@@ -36,6 +36,7 @@
 #include "MessageEvent.h"
 #include "MessagePort.h"
 #include "SerializedScriptValue.h"
+#include "VectorSizeLimit.h"
 #include "Worker.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSPromise.h>
@@ -50,13 +51,14 @@ extern "C" {
 
 // Allocates the thread object holding one ref for the caller, takes the keep-alive on the parent
 // event loop, and spawns the thread. Null (with errorMessage set) if nothing was started.
-// spawnFailed is set when the OS refused the thread (ERR_WORKER_INIT_FAILED in Node).
 void* WebWorker__create(
     WorkerMessagingProxy*,
     void* parentVM,
     const BunString* name,
     const BunString* url,
     BunString* errorMessage,
+    bool* errorIsInvalidExecArgv,
+    bool* errorIsInitFailed,
     uint32_t parentContextId,
     uint32_t contextId,
     bool miniMode,
@@ -69,8 +71,7 @@ void* WebWorker__create(
     StringImpl** execArgvPtr,
     size_t execArgvLen,
     BunString* preloadModulesPtr,
-    size_t preloadModulesLen,
-    bool* spawnFailed);
+    size_t preloadModulesLen);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
@@ -124,7 +125,8 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     }
 
     Vector<BunString> preloadModules;
-    preloadModules.reserveInitialCapacity(m_options.preloadModules.size());
+    if (!Bun::tryReserveCapacityWithinLimit(preloadModules, m_options.preloadModules.size())) [[unlikely]]
+        return Exception { OutOfMemoryError };
     for (auto& str : m_options.preloadModules) {
         if (str.startsWith("file://"_s)) {
             WTF::URL urlObject = WTF::URL(str);
@@ -145,15 +147,18 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
     BunString errorMessage = BunStringEmpty;
+    bool errorIsInvalidExecArgv = false;
+    bool errorIsInitFailed = false;
     BunString name = Bun::toString(m_options.name);
     BunString url = Bun::toString(scriptURL);
-    bool spawnFailed = false;
     m_workerThread = WebWorker__create(
         this,
         WebCore::clientData(m_scriptExecutionContext->vm())->bunVM,
         &name,
         &url,
         &errorMessage,
+        &errorIsInvalidExecArgv,
+        &errorIsInitFailed,
         m_loaderContextIdentifier,
         m_workerContextIdentifier,
         m_options.mini,
@@ -166,20 +171,18 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         execArgv.data(),
         execArgv.size(),
         preloadModules.begin(),
-        preloadModules.size(),
-        &spawnFailed);
+        preloadModules.size());
     m_options.preloadModules.clear();
 
     if (!m_workerThread) {
         m_state.store(State::Closed);
         deref();
-        if (spawnFailed) {
-            auto* globalObject = defaultGlobalObject(m_scriptExecutionContext->jsGlobalObject());
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_INIT_FAILED, errorMessage.transferToWTFString()));
-            return Exception { ExistingExceptionError };
-        }
-        return Exception { TypeError, errorMessage.transferToWTFString() };
+        ExceptionCode code = TypeError;
+        if (errorIsInvalidExecArgv)
+            code = WORKER_INVALID_EXEC_ARGV;
+        else if (errorIsInitFailed)
+            code = WORKER_INIT_FAILED;
+        return Exception { code, errorMessage.transferToWTFString() };
     }
     return {};
 }
@@ -376,7 +379,9 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
     }
     Ref workerObject = *m_workerObject;
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    bool more = drainInbox(m_toParent, globalObject, context, budget, [&](Event& event) {
+    // Ports the worker transfers are the Worker object's script's, as the message is.
+    auto* ownerContext = workerObject->scriptExecutionContext();
+    bool more = drainInbox(m_toParent, globalObject, ownerContext ? *ownerContext : context, budget, [&](Event& event) {
         workerObject->dispatchEvent(event);
     });
     if (more) {

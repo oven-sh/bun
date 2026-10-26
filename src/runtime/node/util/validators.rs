@@ -226,62 +226,6 @@ pub(crate) fn validate_string(
     Ok(())
 }
 
-pub(crate) fn validate_number(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    name: &str,
-    maybe_min: Option<f64>,
-    maybe_max: Option<f64>,
-) -> JsResult<f64> {
-    if !value.is_number() {
-        return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
-    }
-
-    let num: f64 = value.as_number();
-    let mut valid = true;
-    if let Some(min) = maybe_min {
-        if num < min {
-            valid = false;
-        }
-    }
-    if let Some(max) = maybe_max {
-        if num > max {
-            valid = false;
-        }
-    }
-    if (maybe_min.is_some() || maybe_max.is_some()) && num.is_nan() {
-        valid = false;
-    }
-    if !valid {
-        if let (Some(min), Some(max)) = (maybe_min, maybe_max) {
-            return Err(throw_range_error(
-                global_this,
-                format_args!(
-                    "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                    name, min, max, num
-                ),
-            ));
-        } else if let Some(min) = maybe_min {
-            return Err(throw_range_error(
-                global_this,
-                format_args!(
-                    "The value of \"{}\" is out of range. It must be >= {}. Received {}",
-                    name, min, num
-                ),
-            ));
-        } else if let Some(max) = maybe_max {
-            return Err(throw_range_error(
-                global_this,
-                format_args!(
-                    "The value of \"{}\" is out of range. It must be <= {}. Received {}",
-                    name, max, num
-                ),
-            ));
-        }
-    }
-    Ok(num)
-}
-
 pub(crate) fn validate_boolean(
     global_this: &JSGlobalObject,
     value: JSValue,

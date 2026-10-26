@@ -305,7 +305,12 @@ describe("bun install .env loading and lifecycle scripts (#31450)", () => {
   });
 
   test.concurrent("--no-env-file together with --env-file still loads the explicit file", async () => {
-    const { seen, stderr, exitCode } = await probeLifecycleEnv(["--no-env-file", "--env-file", ".env.custom", "--verbose"]);
+    const { seen, stderr, exitCode } = await probeLifecycleEnv([
+      "--no-env-file",
+      "--env-file",
+      ".env.custom",
+      "--verbose",
+    ]);
     expect(seen).toBe("from-custom");
     expect(stderr).toContain('".env.custom"');
     expect(stderr).not.toContain('".env.production"');

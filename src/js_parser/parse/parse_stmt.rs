@@ -1015,6 +1015,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.expected(T::TClass)?;
                 }
 
+                if (p.lexer.is_contextual_keyword(b"struct")
+                    || p.lexer.is_contextual_keyword(b"shared"))
+                    && p.struct_declaration_follows()
+                {
+                    // "export default struct {}" and "export default shared struct Foo {}"
+                    return p.parse_export_default_struct(loc, default_loc);
+                }
+
                 if p.lexer.is_contextual_keyword(b"async") {
                     let async_range = p.lexer.range();
                     p.lexer.next()?;
@@ -1808,6 +1816,70 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             S::SExpr {
                 value: expr,
                 ..Default::default()
+            },
+            loc,
+        ))
+    }
+
+    /// With the current token `struct` or `shared`: whether a struct declaration whose name is optional
+    /// follows (`struct {`, `struct extends`, `struct Name`, and the same after `shared`), all on one line.
+    /// Looks ahead and leaves the lexer where it was.
+    fn struct_declaration_follows(&mut self) -> bool {
+        let is_shared = self.lexer.is_contextual_keyword(b"shared");
+        let old_lexer = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let mut follows = self.lexer.next().is_ok() && !self.lexer.has_newline_before;
+        if follows && is_shared {
+            follows = self.lexer.is_contextual_keyword(b"struct")
+                && self.lexer.next().is_ok()
+                && !self.lexer.has_newline_before;
+        }
+        if follows {
+            follows = matches!(
+                self.lexer.token,
+                T::TOpenBrace | T::TExtends | T::TIdentifier
+            );
+        }
+        self.lexer.restore(&old_lexer);
+        follows
+    }
+
+    /// `export default struct {}`, `export default struct Name {}` and the `shared struct` forms, with the
+    /// current token `struct` or `shared`. The binding is named "default" when there is no name.
+    fn parse_export_default_struct(
+        &mut self,
+        loc: bun_ast::Loc,
+        default_loc: bun_ast::Loc,
+    ) -> Result<Stmt> {
+        let p = self;
+        let mut kind = StructKind::Struct;
+        if p.lexer.is_contextual_keyword(b"shared") {
+            kind = StructKind::Shared;
+            p.lexer.next()?;
+        }
+        let keyword = p.lexer.range();
+        p.lexer.next()?;
+        let mut stmt_opts = ParseStatementOptions {
+            is_name_optional: true,
+            lexical_decl: LexicalDecl::AllowAll,
+            ..Default::default()
+        };
+        let stmt = p.parse_class_stmt_after_keyword(loc, &mut stmt_opts, keyword, kind)?;
+        let default_name = match &stmt.data {
+            js_ast::StmtData::SClass(class) => match class.class.class_name {
+                Some(name) => LocRef {
+                    loc: name.loc,
+                    ref_: name.ref_,
+                },
+                None => p.create_default_name(default_loc),
+            },
+            _ => p.create_default_name(default_loc),
+        };
+        p.has_es_module_syntax = true;
+        Ok(p.s(
+            S::ExportDefault {
+                default_name,
+                value: js_ast::StmtOrExpr::Stmt(stmt),
             },
             loc,
         ))

@@ -733,10 +733,6 @@ impl Expr {
         l_string.resolve_rope_if_needed(bump);
         r_string.resolve_rope_if_needed(bump);
 
-        if l_string.is_utf8() != r_string.is_utf8() {
-            return None;
-        }
-
         Some([l_string, r_string])
     }
 }

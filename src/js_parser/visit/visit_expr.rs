@@ -867,6 +867,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = current;
     }
 
+    /// `"lit"[num]` written to `e`, if the 8-bit `str_` has a code unit there.
+    #[inline(never)] // PERF(port:frame): see e_jsx_element.
+    fn fold_string_index(
+        p: &mut Self,
+        e: &mut Expr,
+        str_: &E::String,
+        num: usize,
+        loc: bun_ast::Loc,
+    ) -> bool {
+        let Some(char_) = u32::try_from(num)
+            .ok()
+            .and_then(|num| str_.char_at(num, p.arena))
+        else {
+            return false;
+        };
+        *e = p.new_expr(char_, loc);
+        true
+    }
+
     fn e_index(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_index().expect("infallible: variant checked");
@@ -1069,12 +1088,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     // "foo"[2] -> "o"
                     if let Some(str_) = target.data.as_e_string() {
-                        if !str_.is_utf16
-                            && let Ok(num) = u32::try_from(number.value() as u64)
-                            && let Some(char_) = str_.char_at(num, p.arena)
-                        {
-                            *e = p.new_expr(char_, expr.loc);
-                            return;
+                        if !str_.is_utf16 {
+                            let num: usize = index
+                                .data
+                                .e_number()
+                                .expect("infallible: variant checked")
+                                .to_usize();
+                            if Self::fold_string_index(p, e, &str_, num, expr.loc) {
+                                return;
+                            }
                         }
                     } else if let Some(array) = target.data.as_e_array() {
                         let int: usize = number.value() as usize;

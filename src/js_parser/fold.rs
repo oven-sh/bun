@@ -7,11 +7,8 @@ use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVar
 use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
-// ── local EString shims ────────────────────────────────────────────────────
-// E.rs currently carries two `impl EString` blocks (live + round-C draft) with
-// overlapping inherent methods, so a call like `EString::init` is
-// E0034-ambiguous from here. This thin wrapper goes through public fields
-// directly and is removed once E.rs is deduped.
+// ── local EString shim ─────────────────────────────────────────────────────
+// Equivalent to `EString::init`.
 #[inline]
 fn e_string_init(data: &[u8]) -> E::EString {
     E::EString {
@@ -550,13 +547,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 let prop: &G::Property = &obj.properties.slice()[0];
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {
+                                    // Only an 8-bit key. A UTF-16 key is a literal that is
+                                    // not ASCII: like its other folds, this one is left out.
                                     if prop.flags.len() == 0
-                                        && matches!(key.data, js_ast::ExprData::EString(_))
-                                        && key
-                                            .data
-                                            .e_string()
-                                            .expect("infallible: variant checked")
-                                            .eql_bytes(name)
+                                        && let js_ast::ExprData::EString(key_str) = key.data
+                                        && key_str.is_utf8()
+                                        && key_str.eql_bytes(name)
                                         && name != b"__proto__"
                                         && value.can_be_inlined_from_property_access()
                                     {

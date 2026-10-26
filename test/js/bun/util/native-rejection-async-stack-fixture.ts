@@ -153,6 +153,22 @@ async function failFastWorker() {
   return seen;
 }
 
+// worker() is in a cycle of then() links that the walk can only enter through a
+// reject function. The trace has worker() once. It does not go around the cycle.
+async function cycleBehindRejectFunction() {
+  const { promise: aborted, reject: abort } = Promise.withResolvers();
+  const seen = aborted.then(undefined, error => error);
+  let derived: Promise<unknown>;
+  async function worker() {
+    await null;
+    await Promise.race([aborted, derived]);
+  }
+  derived = worker().then(value => value);
+  derived.catch(() => {});
+  native().catch(abort);
+  return seen;
+}
+
 const shapes = [
   fsPromises,
   asyncFunctionReturn,
@@ -171,6 +187,7 @@ const shapes = [
   catchRejectResultLongChain,
   catchRejectResultManyTargets,
   failFastWorker,
+  cycleBehindRejectFunction,
 ];
 
 // The names of the leading `at async` frames, down to this helper.

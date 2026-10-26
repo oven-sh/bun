@@ -147,6 +147,7 @@ test.concurrent.each([
     ...Object.fromEntries(shapes.map(shape => [shape, [shape, "asyncFramesOf"]])),
     // One frame for worker(), although the chain leads back to it.
     failFastWorker: ["worker", "failFastWorker", "asyncFramesOf"],
+    cycleBehindRejectFunction: ["worker"],
   };
   expect({ result: stdout && JSON.parse(stdout), stderr }).toEqual({
     result: {

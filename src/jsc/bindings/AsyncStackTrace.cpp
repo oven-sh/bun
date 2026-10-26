@@ -18,7 +18,6 @@
 #include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/UnlinkedCodeBlock.h>
-#include <wtf/SmallSet.h>
 
 using namespace JSC;
 
@@ -104,6 +103,12 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return generator;
     };
 
+    struct Walk {
+        JSC::JSPromise* promise;
+        bool passedRejectFunction;
+    };
+    WTF::Vector<Walk, 4> fallbacks;
+
     // Walk reaction->context → generator. If context is not a generator (e.g.
     // thenable-chain from `return promise` without await inside an async
     // function), follow reaction->promise() to the next promise in the chain.
@@ -116,17 +121,22 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     //    payloadCell() and the handler in m_slot.
     //  - As a heap-allocated JSPromiseReaction list once a second handler is
     //    attached, headed at payloadCell().
-    auto walkReactions = [&](JSC::JSPromise* p, WTF::Vector<JSC::JSPromise*, 4>* fallbacks) -> JSC::JSAsyncFunctionGenerator* {
+    auto walkReactions = [&](Walk& walk, bool followRejectFunctions) -> JSC::JSAsyncFunctionGenerator* {
+        JSC::JSPromise* p = walk.promise;
         // Off its promise fast paths JSC passes its own reject functions to then(), and nothing awaits `derived`.
         auto followThen = [&](JSC::JSValue rejectHandler, JSC::JSPromise* derived) -> JSC::JSAsyncFunctionGenerator* {
-            JSC::JSValue target = fallbacks ? rejectionTargetOf(rejectHandler) : JSC::JSValue();
-            if (auto* generator = unwrapGeneratorFromContext(target))
-                return generator;
+            JSC::JSValue target = followRejectFunctions ? rejectionTargetOf(rejectHandler) : JSC::JSValue();
+            auto* generator = unwrapGeneratorFromContext(target);
             JSC::JSPromise* next = nullptr;
-            if (dynamicCastValue(target, &next) && derived)
-                fallbacks->append(derived);
-            p = next ? next : derived;
-            return nullptr;
+            if (!generator && !dynamicCastValue(target, &next)) {
+                p = derived;
+                return nullptr;
+            }
+            if (derived)
+                fallbacks.append(Walk { derived, walk.passedRejectFunction });
+            walk.passedRejectFunction = true;
+            p = next;
+            return generator;
         };
 
         for (unsigned hops = 0; p && hops < 32; hops++) {
@@ -173,21 +183,27 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    // Generators already visited. A chain that leads back to one is a cycle. 16 fit with no allocation: the default limit is 10 frames.
-    WTF::SmallSet<JSC::JSAsyncFunctionGenerator*, WTF::PtrHash<JSC::JSAsyncFunctionGenerator*>, WTF::HashTraits<JSC::JSAsyncFunctionGenerator*>, 16> seen;
-    auto unlessSeen = [&](JSC::JSAsyncFunctionGenerator* generator) {
-        return generator && seen.contains(generator) ? nullptr : generator;
-    };
+    // The generators of `results`. 16 fit with no allocation: the default limit is 10 frames.
+    WTF::Vector<JSC::JSAsyncFunctionGenerator*, 16> visited;
+    bool leftPlainChain = false;
 
     auto getAwaitingGenerator = [&](JSC::JSPromise* start) -> JSC::JSAsyncFunctionGenerator* {
-        // A walk that finds nothing continues at the fallback that was saved last.
-        WTF::Vector<JSC::JSPromise*, 4> fallbacks { start };
-        for (unsigned walks = 0; walks < 8 && !fallbacks.isEmpty(); walks++) {
-            if (auto* generator = unlessSeen(walkReactions(fallbacks.takeLast(), &fallbacks)))
+        fallbacks.shrink(0);
+        Walk walk { start, leftPlainChain };
+        bool followRejectFunctions = true;
+        for (unsigned walks = 1;; walks++) {
+            auto* generator = walkReactions(walk, followRejectFunctions);
+            // A walk that passed a reject function can close a cycle that the plain then() chain does not have, so it must not return to a generator of the trace.
+            if (generator && !(walk.passedRejectFunction && visited.contains(generator))) {
+                leftPlainChain = walk.passedRejectFunction;
                 return generator;
+            }
+            if (fallbacks.isEmpty() || !followRejectFunctions)
+                return nullptr;
+            // After 8 walks the last one ignores reject functions: they must not hide what the plain then() chain leads to.
+            followRejectFunctions = walks < 8;
+            walk = followRejectFunctions ? fallbacks.takeLast() : Walk { start, leftPlainChain };
         }
-        // The walk limit ended the search. Reject functions must not hide what the plain then() chain leads to.
-        return fallbacks.isEmpty() ? nullptr : unlessSeen(walkReactions(start, nullptr));
     };
 
     auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
@@ -227,7 +243,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
     while (gen && results.size() < maxStackSize) {
         appendFrame(gen);
-        seen.add(gen);
+        visited.append(gen);
         JSC::JSPromise* returnPromise = nullptr;
         if (!dynamicCastValue(gen->context(), &returnPromise))
             break;

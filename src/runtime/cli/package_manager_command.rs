@@ -162,9 +162,8 @@ impl PackageManagerCommand {
         }
     }
 
-    /// `bun pm migrate` with an existing text `bun.lock`: write it again at
-    /// the version a fresh lockfile gets. Every row stays as it is and no
-    /// package is resolved again.
+    /// `bun pm migrate` with an existing text `bun.lock`: write it again at the
+    /// version a fresh lockfile gets, with every row unchanged.
     fn migrate_text_lockfile_version(pm: &mut PackageManager, log_level: LogLevel) -> ! {
         let dry_run = pm.options.dry_run;
         let pm_raw: *mut PackageManager = pm;

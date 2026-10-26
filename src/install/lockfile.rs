@@ -2035,18 +2035,13 @@ impl<'a> Printer<'a> {
 // saveToDisk / rootPackage / str / initEmpty
 
 impl Lockfile {
-    /// The `lockfileVersion` a text lockfile was loaded with. A re-save keeps
-    /// it (see `TextLockfile::Stringifier::version_to_write`).
+    /// The `lockfileVersion` a text lockfile was loaded with, which a re-save keeps.
     pub fn text_lockfile_version(&self) -> bun_lock::Version {
         self.text_lockfile_version
     }
 
-    /// The `lockfileVersion` a fresh write of this lockfile gets: v2, or v3
-    /// when scoped override rules exist. `Err` names the package that holds
-    /// it at v1. A re-save stamps the version set through
-    /// `set_text_lockfile_version`, so this pair is how `bun pm migrate`
-    /// moves an existing `bun.lock` to the current version with its rows
-    /// unchanged.
+    /// The `lockfileVersion` a fresh write gets (v2, or v3 with scoped override rules).
+    /// `Err` names the package that holds it at v1.
     pub fn fresh_text_lockfile_version(
         &self,
     ) -> Result<bun_lock::Version, bun_lock::VersionBlocker<'_>> {

@@ -131,9 +131,8 @@ impl Version {
     }
 }
 
-/// The first written package that holds a lockfile at v1 (see
-/// `Stringifier::fresh_version`). `Display` says what the v2 parser
-/// rejects, with the same wording as the parser's error.
+/// The first written package that holds a lockfile at v1. `Display` uses the
+/// wording of the v2 parser's error.
 pub struct VersionBlocker<'a> {
     buf: &'a [u8],
     name: String,
@@ -141,13 +140,12 @@ pub struct VersionBlocker<'a> {
 }
 
 enum VersionBlockerKind {
-    /// An npm package resolved to a tarball URL outside the default
-    /// registry, with no supported integrity hash.
+    /// An off-registry npm tarball with no supported integrity hash.
     MissingIntegrity {
         version: Semver::Version,
         url: String,
     },
-    /// A git package whose `.bun-tag` is not a safe path component.
+    /// A git `.bun-tag` that is not a safe path component.
     UnsafeGitTag { tag: String },
 }
 
@@ -248,9 +246,8 @@ impl Stringifier {
         Self::fresh_version(lockfile).unwrap_or(Version::V1)
     }
 
-    /// The version a lockfile with no prior version is stamped: v2, or v3
-    /// when scoped override rules exist. `Err` names the first written
-    /// package that holds the lockfile at v1 (see `version_to_write`).
+    /// The version a lockfile with no prior version is stamped (v2, or v3 with
+    /// scoped override rules). `Err` names the first written package that holds it at v1.
     pub(crate) fn fresh_version(lockfile: &BinaryLockfile) -> Result<Version, VersionBlocker<'_>> {
         let has_scoped = lockfile.overrides.has_scoped();
         let buf = lockfile.buffers.string_bytes.as_slice();

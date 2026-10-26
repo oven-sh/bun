@@ -13,6 +13,7 @@ import {
   normalizeBunSnapshot,
   tempDir,
   tmpdirSync,
+  unprivilegedSpawnOptions,
 } from "harness";
 import path, { dirname } from "path";
 
@@ -498,6 +499,69 @@ it("reload() works with new dirs/files", () => {
   createTree(dir, ["test/test2/index.ts"]);
   router.reload();
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
+});
+
+// A router that is made takes its routes from the resolver's cache, and opens no file that the cache has
+// the path of. reload() opens each file, and leaves out the route of one that does not open: a router
+// that is made after that throws for the file, until it opens again.
+// Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer opens", async () => {
+  using dir = tempDir("fsr-unreadable-route", {
+    "fixture.ts": /* ts */ `
+      import fs from "fs";
+      import path from "path";
+
+      const pages = path.join(import.meta.dir, "pages");
+      const make = () => new Bun.FileSystemRouter({ dir: pages, style: "nextjs", fileExtensions: [".tsx"] });
+      const show = (step: string, router: () => Bun.FileSystemRouter) => {
+        try {
+          console.log(step + ":", Object.keys(router().routes).sort().join(" "));
+        } catch (error) {
+          console.log(step + ":", (error as Error).message.replaceAll(pages, "<pages>"));
+        }
+      };
+      const router = make();
+      const reloaded = () => {
+        router.reload();
+        return router;
+      };
+
+      show("made", () => router);
+      fs.chmodSync(path.join(pages, "a.tsx"), 0o000);
+      show("made again", make);
+      show("after reload()", reloaded);
+      show("made after reload()", make);
+      fs.chmodSync(path.join(pages, "a.tsx"), 0o644);
+      show("made once the file opens", make);
+      show("after reload() once the file opens", reloaded);
+    `,
+    "pages/index.tsx": "export default 1;\n",
+    "pages/a.tsx": "export default 1;\n",
+    "pages/sub/b.tsx": "export default 1;\n",
+  });
+  using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    ...unprivileged,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      "made: / /a /sub/b",
+      "made again: / /a /sub/b",
+      "after reload(): / /sub/b",
+      "made after reload(): EACCES opening route: <pages>/a.tsx",
+      "made once the file opens: / /a /sub/b",
+      "after reload() once the file opens: / /a /sub/b",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("the constructor and reload() don't create allocator heaps", () => {

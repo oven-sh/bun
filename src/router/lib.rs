@@ -103,18 +103,26 @@ impl Router {
 
     // This loads routes recursively, in depth-first order.
     // it does not currently handle duplicate exact route matches. that's undefined behavior, for now.
+    // `from_disk` opens every route file. Otherwise one whose `Entry` keeps its path is not opened.
     pub fn load_routes<R: ResolverLike>(
         &mut self,
         log: &mut bun_ast::Log,
         root_dir_info: &DirInfo,
         resolver: &mut R,
         base_dir: &[u8],
+        from_disk: bool,
     ) -> Result<(), CoreError> {
         if self.loaded_routes {
             return Ok(());
         }
-        self.routes =
-            RouteLoader::load_all(self.config.clone(), log, resolver, root_dir_info, base_dir);
+        self.routes = RouteLoader::load_all(
+            self.config.clone(),
+            log,
+            resolver,
+            root_dir_info,
+            base_dir,
+            from_disk,
+        );
         self.loaded_routes = true;
         Ok(())
     }
@@ -335,6 +343,8 @@ struct RouteLoader<'a> {
     fs: &'static FileSystem,
     config: RouteConfig,
     route_dirname_len: u16,
+    /// Every route file is opened, also one whose `Entry` keeps its path.
+    from_disk: bool,
 
     dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
     log: &'a mut bun_ast::Log,
@@ -456,6 +466,7 @@ impl<'a> RouteLoader<'a> {
         resolver: &mut R,
         root_dir_info: &DirInfo,
         base_dir: &[u8],
+        from_disk: bool,
     ) -> Routes {
         let mut route_dirname_len: u16 = 0;
 
@@ -475,6 +486,7 @@ impl<'a> RouteLoader<'a> {
             all_routes: Vec::new(),
             index: None,
             route_dirname_len,
+            from_disk,
         };
         let routes_dir = this.config.dir.clone();
         this.load(resolver, root_dir_info, &routes_dir, base_dir);
@@ -570,6 +582,12 @@ impl<'a> RouteLoader<'a> {
                 continue 'outer;
             }
 
+            // An entry that is to be stat'ed again is asked for its file again.
+            // SAFETY: EntryStore-owned, valid for process lifetime.
+            let stat_pending = unsafe { &*entry_ptr }
+                .need_stat
+                .load(core::sync::atomic::Ordering::Acquire);
+
             // Thread the resolver's fs `Implementation` through —
             // `Entry.kind` derefs it to lazily stat when `need_stat` is
             // true, so null would be a latent crash / silent route-drop
@@ -624,6 +642,7 @@ impl<'a> RouteLoader<'a> {
                                     dir,
                                     public_dir,
                                     self.route_dirname_len,
+                                    self.from_disk || stat_pending,
                                 )
                             };
                             if let Some(route) = route {
@@ -720,6 +739,7 @@ impl Route {
         dir_: &[u8],
         public_dir_: &[u8],
         routes_dirname_len: u16,
+        ask_file: bool,
     ) -> Option<Route> {
         // NOTE: `entry` is a raw `*mut Entry` because `base_`/`extname` may
         // borrow `(*entry).base_` and a `&mut Entry` parameter would alias them.
@@ -848,9 +868,9 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            // The file is asked once per entry: a load from the cache opens no route file.
-            let abs_path_str: &'static [u8] = if let Some(kept) =
-                bun_resolver::Resolver::entry_file_path(entry_r)
+            // Unless it is asked, a file whose entry keeps its path is not opened.
+            let abs_path_str: &'static [u8] = if !ask_file
+                && let Some(kept) = bun_resolver::Resolver::entry_file_path(entry_r)
             {
                 kept
             } else {
@@ -901,6 +921,7 @@ impl Route {
                                     bstr::BStr::new(&route_file_buf[..abs_len])
                                 ),
                             );
+                            stat_again(entry_r);
                             return None;
                         }
                     }
@@ -920,6 +941,7 @@ impl Route {
                                 bstr::BStr::new(abs_path_str)
                             ),
                         );
+                        stat_again(entry_r);
                         return None;
                     }
                 };
@@ -974,6 +996,15 @@ impl Route {
             })
         })
     }
+}
+
+/// Has the next load stat `entry` again, and with that ask for its file again.
+fn stat_again(entry: &Fs::Entry) {
+    // Every rewrite of a cached `Entry` takes its mutex.
+    let _guard = entry.mutex.lock_guard();
+    entry
+        .need_stat
+        .store(true, core::sync::atomic::Ordering::Release);
 }
 
 pub(crate) mod sorter {

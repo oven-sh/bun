@@ -13,7 +13,7 @@ export default EventEmitter;
 export { EventEmitter as "module.exports" };
 ```
 
-The bundler returns that export from `require()`, as Node.js and Bun's runtime do. Keep it the same value as the default export.
+The bundler returns that export from `require()`, as Node.js and Bun's runtime do. Keep it the same value as the default export. The export stays inside the polyfill: `export * from "events"` in user code does not re-export it, because the Node.js builtin has no export with that name.
 
 ## Not used by Bun's runtime
 

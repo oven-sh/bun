@@ -264,6 +264,7 @@ devTest("require() of an ES module returns its `module.exports` export", {
       class Point3D extends Point {}
       if (!(new Point3D(1, 2) instanceof Point)) throw new Error('instanceof');
       if (require('./point') !== Point) throw new Error('identity');
+      if (require('./star') !== Point) throw new Error('export * from a module with that export should carry it');
       if (require('./unset').x !== 1) throw new Error('an unset module.exports export falls back to the namespace');
       console.log('PASS ' + Point.distance(new Point(0, 0), new Point(3, 4)));
     `,
@@ -273,6 +274,9 @@ devTest("require() of an ES module returns its `module.exports` export", {
         static distance(a: Point, b: Point) { return Math.hypot(b.x - a.x, b.y - a.y); }
       }
       export { Point as "module.exports" };
+    `,
+    "star.ts": `
+      export * from './point';
     `,
     "unset.ts": `
       export const x = 1;
@@ -310,6 +314,29 @@ devTest("require() cycle through an ES module with a `module.exports` export", {
   async test(dev) {
     await using c = await dev.client();
     await c.expectMessage("PASS object");
+  },
+});
+devTest("export * from a builtin polyfill does not carry its `module.exports` export", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const EventEmitter = require('events');
+      if (typeof EventEmitter !== 'function') throw new Error('require("events") should be the class, got ' + typeof EventEmitter);
+      const lib = require('./lib');
+      if (typeof lib !== 'object') throw new Error('require() of the re-exporting module should be its namespace, got ' + typeof lib);
+      if (lib.foo !== 1 || lib.EventEmitter !== EventEmitter) throw new Error('the namespace should keep foo and EventEmitter');
+      console.log('PASS');
+    `,
+    "lib.ts": `
+      export * from 'events';
+      export const foo = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
   },
 });
 devTest("ESM <-> CJS (async)", {

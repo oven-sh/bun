@@ -532,6 +532,7 @@ pub(crate) fn scan_imports_and_exports(
                             exports_kind,
                             named_exports,
                             ast_flags: ast_flags_list,
+                            sources: input_files,
                         });
                     }
                     export_star_ctx.as_mut().unwrap().add_exports(
@@ -1613,6 +1614,7 @@ struct ExportStarContext<'a> {
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
     ast_flags: *mut [AstFlags],
+    sources: *mut [Source],
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1667,6 +1669,14 @@ impl<'a> ExportStarContext<'a> {
                 continue;
             }
 
+            let is_node_fallback = {
+                let path = &col_ref!(self.sources)[other_id].path;
+                path.namespace == b"node"
+                    && path
+                        .text
+                        .starts_with(crate::bun_node_fallbacks::IMPORT_PATH)
+            };
+
             // Collect (alias, name) pairs so the
             // loop body can mutably borrow `resolved_exports` / `imports_to_bind`.
             let exports_len = col_ref!(self.named_exports)[other_id].keys().len();
@@ -1682,6 +1692,10 @@ impl<'a> ExportStarContext<'a> {
                 // ES6 export star statements ignore exports named "default"
                 let alias_slice: &[u8] = &alias;
                 if alias_slice == b"default" && !reexports_default {
+                    continue;
+                }
+                // A builtin has no such export: its polyfill names its own `require()` value with it.
+                if alias_slice == b"module.exports" && !reexports_default && is_node_fallback {
                     continue;
                 }
 

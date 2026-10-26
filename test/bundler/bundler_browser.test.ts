@@ -296,6 +296,71 @@ describe("bundler", () => {
       stdout: "got 1\ntrue true\ntrue true true true\nhello",
     },
   });
+  // A Node.js builtin has no export named `module.exports`, so `export * from
+  // "events"` does not carry the one its polyfill declares. `require()` of the
+  // module that re-exports is its namespace, as in Node.js and `bun run`.
+  // `module.exports = require("events")` still is the class.
+  const exportStarFiles = {
+    "/lib.mjs": /* js */ `
+      export * from "events";
+      export const foo = 1;
+    `,
+  };
+  itBundled("browser/NodePolyfillExportStar", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const EventEmitter = require("events");
+        const lib = require("./lib.mjs");
+        const both = require("./both.mjs");
+        console.log(typeof lib, lib.foo, lib.EventEmitter === EventEmitter, Object.prototype.hasOwnProperty.call(lib, "module.exports"));
+        console.log(typeof both, both.default === EventEmitter, both.once === EventEmitter.once);
+        console.log(typeof require("./wrapper.cjs"), require("./wrapper.cjs") === EventEmitter);
+      `,
+      ...exportStarFiles,
+      "/both.mjs": /* js */ `
+        export { default } from "node:events";
+        export * from "node:events";
+      `,
+      "/wrapper.cjs": /* js */ `
+        module.exports = require("events");
+      `,
+    },
+    entryPoints: ["/entry.cjs"],
+    target: "browser",
+    run: {
+      stdout: "object 1 true false\nobject true true\nfunction true",
+    },
+  });
+  itBundled("browser/NodePolyfillExportStarFormatCjsEntry", {
+    files: exportStarFiles,
+    runtimeFiles: {
+      "/user.cjs": /* js */ `
+        const lib = require("./out.js");
+        console.log(typeof lib, lib.foo, typeof lib.EventEmitter);
+      `,
+    },
+    target: "browser",
+    format: "cjs",
+    run: {
+      file: "/user.cjs",
+      stdout: "object 1 function",
+    },
+  });
+  itBundled("browser/NodePolyfillExportStarFormatEsmEntry", {
+    files: exportStarFiles,
+    runtimeFiles: {
+      "/user.mjs": /* js */ `
+        import * as lib from "./out.js";
+        console.log("module.exports" in lib, lib.foo, typeof lib.EventEmitter);
+      `,
+    },
+    target: "browser",
+    format: "esm",
+    run: {
+      file: "/user.mjs",
+      stdout: "false 1 function",
+    },
+  });
   // TODO: use nodePolyfillList to generate the code in here.
   const NodePolyfills = itBundled("browser/NodePolyfills", {
     files: {

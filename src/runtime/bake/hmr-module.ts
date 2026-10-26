@@ -78,6 +78,22 @@ export function staticExportNames(id: Id): string[] | null {
   return [...names];
 }
 
+/** Whether `id` has an export named `module.exports`, its own or through `export *`. A builtin polyfill ("node:" id) does not forward its own. */
+function exportsModuleExports(id: Id): boolean {
+  const queue: Id[] = [id];
+  const visited = new Set<Id>();
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const unloaded = unloadedModuleRegistry[current];
+    if (!Array.isArray(unloaded)) continue;
+    if (unloaded[ESMProps.exports].includes("module.exports")) return true;
+    for (const star of unloaded[ESMProps.stars]) if (!star.startsWith("node:")) queue.push(star);
+  }
+  return false;
+}
+
 interface HotAccept {
   modules: string[];
   cb: HotAcceptFunction;
@@ -145,7 +161,7 @@ export class HMRModule {
   require(id: Id) {
     try {
       const mod = loadModuleSync(id, true, this);
-      return mod.esm ? (mod.cjs ??= toCommonJS(mod.exports)) : mod.cjs.exports;
+      return mod.esm ? (mod.cjs ??= toCommonJS(mod.exports, exportsModuleExports(id))) : mod.cjs.exports;
     } catch (e: any) {
       if (e instanceof AsyncImportError) {
         e.message = `Cannot require "${id}" because "${e.asyncId}" uses top-level await, but 'require' is a synchronous operation.`;
@@ -877,17 +893,17 @@ class AsyncImportError extends Error {
 }
 
 /** See `runtime.js`'s `__toCommonJS` (with `useModuleExports`). This omits the cache. */
-function toCommonJS(from: any) {
+function toCommonJS(from: any, useModuleExports: boolean) {
   var desc,
     moduleExports,
     entry = Object.defineProperty({}, "__esModule", { value: true });
+  if (useModuleExports) {
+    try {
+      moduleExports = from["module.exports"];
+    } catch {}
+    if (moduleExports != null) return moduleExports;
+  }
   if ((from && typeof from === "object") || typeof from === "function") {
-    if (Object.prototype.hasOwnProperty.call(from, "module.exports")) {
-      try {
-        moduleExports = from["module.exports"];
-      } catch {}
-      if (moduleExports != null) return moduleExports;
-    }
     Object.getOwnPropertyNames(from).map(
       key =>
         !Object.prototype.hasOwnProperty.call(entry, key) &&

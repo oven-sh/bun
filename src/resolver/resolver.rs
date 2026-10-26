@@ -367,6 +367,7 @@ pub struct Bufs {
     pub(crate) remap_path_trailing_slash: PathBuffer,
     pub(crate) path_in_global_disk_cache: PathBuffer,
     pub(crate) abs_to_rel: PathBuffer,
+    pub(crate) walked_file: PathBuffer,
 
     #[cfg(windows)]
     pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
@@ -1222,7 +1223,7 @@ impl<'a> Resolver<'a> {
                 self.extension_order = original_order;
                 return ResultUnion::Success(Result {
                     import_kind: kind,
-                    path_pair: res.path_pair,
+                    path_pair: self.paths_as_walked(res.path_pair, res.walked_dirs),
                     package_json: res.package_json,
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
@@ -2786,7 +2787,6 @@ impl<'a> Resolver<'a> {
                                             .is_node_module(),
                                             package_json: Some(std::ptr::from_ref(package_json)),
                                             dir_info: Some(dir_info),
-                                            walked_dirs: [Some(WalkedDir::Dir(pkg_dir_info)), None],
                                             ..Default::default()
                                         };
                                         return MatchStatus::Success;
@@ -3299,7 +3299,6 @@ impl<'a> Resolver<'a> {
                                                 .is_node_module(),
                                             package_json: Some(std::ptr::from_ref(package_json)),
                                             dir_info: Some(dir_info),
-                                            walked_dirs: [Some(WalkedDir::Dir(pkg_dir_info)), None],
                                             ..Default::default()
                                         };
                                         return MatchStatus::Success;
@@ -3801,7 +3800,7 @@ impl<'a> Resolver<'a> {
                     return MatchStatus::NotFound;
                 }
 
-                let Some((absolute_out_path, _)) =
+                let Some((absolute_out_path, via_link)) =
                     Self::found_file_path(entry_query.entry(), resolved_dir_info.abs_path, base)
                 else {
                     esm_resolution.status = Status::ModuleNotFound;
@@ -3821,7 +3820,7 @@ impl<'a> Resolver<'a> {
                     dirname_fd,
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
-                    walked_dirs: [Some(WalkedDir::Dir(resolved_dir_info)), None],
+                    walked_dirs: [via_link.then_some(WalkedDir::Dir(resolved_dir_info)), None],
                     is_node_module: true,
                     package_json: Some(
                         resolved_dir_info
@@ -3963,7 +3962,7 @@ impl<'a> Resolver<'a> {
         query: &crate::fs::EntryLookup<'static>,
         out: &mut MatchResult,
     ) -> bool {
-        let Some((abs_path, _)) = Self::found_file_path(
+        let Some((abs_path, via_link)) = Self::found_file_path(
             query.entry(),
             resolved_dir_info.abs_path,
             query.entry().base(),
@@ -3984,7 +3983,7 @@ impl<'a> Resolver<'a> {
             dirname_fd,
             file_fd: query.entry().cache().fd,
             dir_info: Some(resolved_dir_info),
-            walked_dirs: [Some(WalkedDir::Dir(resolved_dir_info)), None],
+            walked_dirs: [via_link.then_some(WalkedDir::Dir(resolved_dir_info)), None],
             is_node_module: true,
             package_json: Some(
                 resolved_dir_info
@@ -5470,11 +5469,12 @@ impl<'a> Resolver<'a> {
             if unsafe { lookup.entry().kind(rfs, self.store_fd) }
                 == Fs::file_system::EntryKind::File
             {
-                let Some((out_buf, _)) =
+                let Some((out_buf, via_link)) =
                     Self::found_file_path(lookup.entry(), dir_info.abs_path, &base[..])
                 else {
                     return MatchStatus::NotFound;
                 };
+                let walked_dir = via_link.then_some(WalkedDir::Dir(dir_info));
 
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug
@@ -5489,7 +5489,7 @@ impl<'a> Resolver<'a> {
                         },
                         package_json: Some(std::ptr::from_ref(package_json)),
                         dirname_fd,
-                        walked_dirs: [Some(WalkedDir::Dir(dir_info)), None],
+                        walked_dirs: [walked_dir, None],
                         ..Default::default()
                     };
                     return MatchStatus::Success;
@@ -5501,7 +5501,7 @@ impl<'a> Resolver<'a> {
                         secondary: None,
                     },
                     dirname_fd,
-                    walked_dirs: [Some(WalkedDir::Dir(dir_info)), None],
+                    walked_dirs: [walked_dir, None],
                     ..Default::default()
                 };
                 return MatchStatus::Success;
@@ -5642,13 +5642,56 @@ impl<'a> Resolver<'a> {
     fn walked_dir_infos(&mut self, walked: [Option<WalkedDir>; 2]) -> [Option<DirInfoRef>; 2] {
         walked.map(|walked_dir| match walked_dir? {
             WalkedDir::Dir(dir) => Some(dir),
-            WalkedDir::FileUnder(dir, file) => {
-                let file = self
-                    .fs_ref()
-                    .abs_buf_checked(&[dir.abs_path, file], bufs!(field_abs_path))?;
-                self.read_dir_info(Dirname::dirname(file)).ok().flatten()
+            of_file => {
+                let dir = self.walked_dir_path(&of_file)?;
+                self.read_dir_info(dir).ok().flatten()
             }
         })
+    }
+
+    /// The path of the directory that `walked` names. That of a file is in a scratch buffer.
+    fn walked_dir_path<'w>(&self, walked: &'w WalkedDir) -> Option<&'w [u8]> {
+        match walked {
+            WalkedDir::Dir(dir) => Some(dir.abs_path),
+            WalkedDir::FileUnder(dir, file) => self
+                .fs_ref()
+                .abs_buf_checked(&[dir.abs_path, *file], bufs!(field_abs_path))
+                .map(Dirname::dirname),
+            WalkedDir::FileAt(file) => Some(Dirname::dirname(file.slice())),
+        }
+    }
+
+    /// A result that `finalize_result` does not finalize names a file by the path walked to it,
+    /// where `pair` names a file that a link led to by where the file is.
+    fn paths_as_walked(&self, mut pair: PathPair, walked: [Option<WalkedDir>; 2]) -> PathPair {
+        let [primary, secondary] = walked;
+        if let Some(walked) = primary {
+            self.name_as_walked(&mut pair.primary, &walked);
+        }
+        if let (Some(walked), Some(path)) = (secondary, pair.secondary.as_mut()) {
+            self.name_as_walked(path, &walked);
+        }
+        pair
+    }
+
+    fn name_as_walked(&self, path: &mut Path, walked: &WalkedDir) {
+        let Some(dir) = self.walked_dir_path(walked) else {
+            return;
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(as_walked) = self
+            .fs_ref()
+            .abs_buf_checked(&[dir, bun_paths::basename(path.text)], &mut buf[..])
+        else {
+            return;
+        };
+        let text = self
+            .fs_ref()
+            .dirname_store
+            .append_slice(as_walked)
+            .expect("unreachable");
+        path.text = text;
+        path.pretty = text;
     }
 
     pub(crate) fn load_as_file_or_directory(
@@ -5661,18 +5704,16 @@ impl<'a> Resolver<'a> {
 
         // Is this a file?
         if let Some(file) = self.load_as_file(path, extension_order) {
-            let walked_dir = if file.via_link {
-                self.read_dir_info(Dirname::dirname(path)).ok().flatten()
+            // Where a link led to the file, the path walked names its package and its directory.
+            let walked = if file.via_link {
+                self.fs_ref().abs_buf_checked(
+                    &[Dirname::dirname(path), bun_paths::basename(file.path)],
+                    bufs!(walked_file),
+                )
             } else {
                 None
             };
-            // The package of a file found through a link is the one that the path walked names.
-            let package_json = match walked_dir {
-                Some(dir) => with_path_as_walked(&dir, file.path, |walked| {
-                    self.node_module_package_json(walked)
-                }),
-                None => self.node_module_package_json(file.path),
-            };
+            let package_json = self.node_module_package_json(walked.unwrap_or(file.path));
 
             debug_assert!(bun_paths::is_absolute(file.path));
 
@@ -5684,7 +5725,10 @@ impl<'a> Resolver<'a> {
                 dirname_fd: file.dirname_fd,
                 package_json,
                 file_fd: file.file_fd,
-                walked_dirs: [walked_dir.map(WalkedDir::Dir), None],
+                walked_dirs: [
+                    walked.map(|at| WalkedDir::FileAt(bun_ptr::RawSlice::new(at))),
+                    None,
+                ],
                 ..Default::default()
             };
             return MatchStatus::Success;

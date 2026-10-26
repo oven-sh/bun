@@ -87,11 +87,15 @@ impl PathPair {
 use bun_ast::SideEffects;
 
 /// The directory a path of a match was found in, by the path the resolver walked to it.
+/// A match has one where a link led to the directory: its path is by where the directory is.
 #[derive(Clone, Copy)]
 pub(crate) enum WalkedDir {
     Dir(DirInfoRef),
     /// The directory of a file, whose path is relative to the directory given.
     FileUnder(DirInfoRef, &'static [u8]),
+    /// The directory of the file at this path, which is in `Bufs::walked_file` until the match
+    /// is kept or dropped: before the resolver looks for another file.
+    FileAt(bun_ptr::RawSlice<u8>),
 }
 
 pub struct Result {

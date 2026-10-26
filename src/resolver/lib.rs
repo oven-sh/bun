@@ -1042,10 +1042,7 @@ pub mod fs {
             Ok(dir)
         }
 
-        /// Answers a read of `dir` that failed. It is cached under that one key, as not
-        /// found or as the error, which takes the place of a listing that was being read
-        /// again (`in_place`) and has no other key. A listing with more keys, which a bust
-        /// only reaches through it, stays mapped and is expired instead.
+        /// A listing with other keys stays mapped, expired: a bust reaches those keys through it.
         fn read_directory_error(
             &mut self,
             dir: &[u8],
@@ -1075,22 +1072,14 @@ pub mod fs {
             Ok(unsafe { &mut *opt })
         }
 
-        /// Leaves nothing of a directory that could not be read: no entry for its next
-        /// read to reuse, and no resolver that trusts the listing. It stays mapped under
-        /// each of its keys, so that a bust of one reaches the others.
+        /// The directory could not be read. Its next read reuses no entry of this listing.
         fn expire_listing(listing: &mut DirEntry) {
             listing.data.clear();
             listing.fd = Fd::INVALID;
             listing.generation = GENERATION_STALE;
         }
 
-        /// `dir`, the key of `slot`, did not open. Its listing is expired when it has
-        /// other keys and its own directory does not open either. It stays mapped under
-        /// `dir`, and the caller unmaps the `DirInfo` of the key hashes returned: each key
-        /// of the listing, or none when the listing was stale already and a bust or an
-        /// earlier failure took them. `None` when `dir` has no listing, is the one key of
-        /// its listing, or is a second path to a directory that still opens: the caller
-        /// then caches that key alone as not found.
+        /// `dir`, the key of `slot`, did not open. Returns the `DirInfo` keys the caller unmaps.
         pub(crate) fn expire_unopened_listing(
             &mut self,
             dir: &[u8],
@@ -1124,19 +1113,7 @@ pub mod fs {
             Some(keys)
         }
 
-        /// Picks the `entries` slot of a directory. `walked` is the directory
-        /// as the caller reached it, and `real` is its real path if the caller
-        /// knows one, else empty.
-        ///
-        /// Without `real` the listing is keyed by `walked`. With it the listing
-        /// belongs to the key of `real`, so that every path to one directory
-        /// reads one `DirEntry`: when that key has a slot, `walked` is mapped
-        /// to it here, in place of a slot `walked` got from a reader that had
-        /// no real path. A walk gives that key its listing before it asks,
-        /// with [`read_real_listing`](Self::read_real_listing). A key of `real`
-        /// that is mapped to a listing under another name, from when a link at
-        /// `real` led to that directory, is unmapped here and has none. The
-        /// caller holds `entries_mutex`.
+        /// One slot per real directory: `real` is the real path of `walked`, empty if not known.
         #[inline(always)]
         pub(crate) fn listing_slot(
             &mut self,
@@ -1160,8 +1137,7 @@ pub mod fs {
             if slot.status != bun_alloc::ItemStatus::Exists {
                 return Ok(slot);
             }
-            // A listing is named by the key it was read under. One under another name got
-            // this key while a link at `real` led to its directory, which it no longer does.
+            // A listing of another name got this key while a link at `real` led to its directory.
             let real_dir = strings::paths::without_trailing_slash_windows_path(real);
             if matches!(
                 self.entries.at_index(slot.index),
@@ -1183,9 +1159,7 @@ pub mod fs {
             self.entries.remove_hash(slot.hash);
         }
 
-        /// Stores `value` in the slot that [`listing_slot`](Self::listing_slot)
-        /// picked for `walked`, and maps `walked` to it when the slot belongs
-        /// to the key of the real directory.
+        /// `slot` is the one that [`listing_slot`](Self::listing_slot) picked for `walked`.
         pub(crate) fn put_listing(
             &mut self,
             slot: &mut bun_alloc::Result,
@@ -1202,8 +1176,7 @@ pub mod fs {
             Ok(std::ptr::from_mut::<EntriesOption>(stored))
         }
 
-        /// Maps the key of `walked` to `slot`, which holds a value, and adds
-        /// the key to the owners of the listing there.
+        /// `slot` holds a value: `alias` asserts that `put` assigned it.
         fn map_to_listing_slot(&mut self, walked: &[u8], slot: &bun_alloc::Result) {
             debug_assert!(
                 self.entries_mutex.is_held_by_current_thread(),
@@ -1219,12 +1192,7 @@ pub mod fs {
             }
         }
 
-        /// Makes the listing of `real` current for `generation`, for a walk that a
-        /// link led there. False when `real` cannot be opened and read. The walk has
-        /// `real` from what the parent of the link cached, and the link can lead
-        /// somewhere else by now. So the listing named `real` is read by that path,
-        /// as in every other read of it, and not from the directory the walk opened.
-        /// The caller holds `entries_mutex`.
+        /// Read by path, not from the fd of the walk, whose link can lead away from `real` by now.
         pub(crate) fn read_real_listing(
             &mut self,
             real: &[u8],
@@ -1351,8 +1319,7 @@ pub mod fs {
             let handle: Fd = match maybe_handle {
                 Some(h) => h,
                 None => {
-                    // A listing is read again from its own directory: `dir` can be a
-                    // second path to it, and lead somewhere else by now.
+                    // `dir` can be a second path to the listing, and lead elsewhere by now.
                     let own_dir = match in_place {
                         Some(existing) => {
                             // SAFETY: BSSMap-owned `DirEntry`; `entries_mutex` is held.

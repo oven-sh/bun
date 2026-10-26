@@ -96,8 +96,7 @@ impl HotReloadEvent {
 
         // First handle directories, because this may mutate `event.files`
         let has_failure_watches = dev.directory_watchers.watches.count() > 0;
-        // `enqueue_entry_points_dev_server` reports an entry point that no longer resolves to one
-        // graph only, so with a server graph a removed file has to resolve until its parse fails.
+        // `enqueue_entry_points_dev_server` reports a failed resolve to one graph only.
         let bust_changed_names = dev.frontend_only;
         for (changed_dir_with_slash, &names_changed) in self.dirs.iter() {
             // A failed bare import busts nothing and has no watch, so a changed name busts here.

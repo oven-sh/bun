@@ -574,9 +574,7 @@ impl FrameworkRouter {
         // SAFETY: `fs` is the non-null process-global FileSystem singleton (see above);
         // `addr_of_mut!` only computes a field address without forming a reference.
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
-        // A directory reached through a link shares the listing of its real path, so
-        // `Entry.dir` can be the real directory. `DirInfo.abs_path` is the path as walked
-        // from the type's root, which is what names a route and its file.
+        // Behind a link `Entry.dir` is the real directory; routes are named by the path walked.
         let walked_dir: &'static [u8] = dir_info.abs_path;
 
         {

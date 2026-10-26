@@ -3355,11 +3355,7 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    /// `dir`, the key of `slot` in the listing cache, did not open. True when a listing
-    /// that other paths share stays mapped under it, expired: see
-    /// `RealFS::expire_unopened_listing`. Each path to that listing loses its `DirInfo`,
-    /// as in a bust, unless the listing was stale already. The caller holds
-    /// `entries_mutex`.
+    /// True when a listing other paths share stays mapped under `dir`, which did not open.
     fn expire_unopened_listing(&mut self, dir: &[u8], slot: allocators::Result) -> bool {
         // SAFETY: `rfs_ptr` points at the process-global RealFS singleton.
         let rfs = unsafe { &mut *self.rfs_ptr() };
@@ -4344,10 +4340,7 @@ impl<'a> Resolver<'a> {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
-                        // `safe_path` becomes `DirInfo.abs_path`, which stays as walked. A
-                        // key that a link leads through maps to the listing of the real
-                        // directory, which is named by that one. Its fd is open on that
-                        // directory, where the path does not lead once the link is replaced.
+                        // `safe_path` becomes `DirInfo.abs_path`, which stays as walked.
                         if listing_is_named(entries.dir, top) {
                             slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
                             // A stale listing is read again, and its stored fd was read to the end.
@@ -4552,10 +4545,6 @@ impl<'a> Resolver<'a> {
                             //
                             //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
                             //   ...
-                            //
-                            // A listing that other paths share stays mapped under this one,
-                            // expired: a bust of any of them unmaps the `dir_cache` mark
-                            // through it.
                             if !self.expire_unopened_listing(
                                 queue_top_unsafe_path,
                                 cached_dir_entry_result,
@@ -4644,18 +4633,13 @@ impl<'a> Resolver<'a> {
             let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
                 .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
-            // The listing is kept under the real directory, so a link on the way to this
-            // one is followed before the slot is chosen.
             let mut real_dir: &'static [u8] = match parent_dir_ptr {
                 Some(parent) if !self.opts.preserve_symlinks => {
                     self.real_dir_from_parent(parent, dir_path, open_dir)
                 }
                 _ => b"",
             };
-            // The listing under the real path is read by that path, as every other reader
-            // of it does: `open_dir` is where the link leads now, and that can be another
-            // directory. A real path that does not open is one the link no longer leads
-            // to, and the directory is kept as walked.
+            // A real path that does not open is one the link no longer leads to.
             if !real_dir.is_empty()
                 && !rfs!().read_real_listing(real_dir, self.generation, self.store_fd)
             {
@@ -4666,8 +4650,7 @@ impl<'a> Resolver<'a> {
                 listing_slot_for_walk(rfs!(), dir_path, real_dir).expect("unreachable");
 
             if !real_dir.is_empty() {
-                // The real path is looked up in this listing from here on, with no miss to
-                // bust a `DirInfo` key that was left as not found while it was missing.
+                // A `NotFound` from when the real path was missing has no later miss to bust it.
                 let real_info = self.dir_cache_mut().get_or_put(real_dir)?;
                 if real_info.status == allocators::ItemStatus::NotFound {
                     self.dir_cache_mut().remove_hash(real_info.hash);
@@ -4691,8 +4674,7 @@ impl<'a> Resolver<'a> {
             }
 
             if needs_iter {
-                // `open_dir` is read into a listing that is named as walked. The one under
-                // a real path is current by now.
+                // `read_real_listing` made the listing under a real path current.
                 debug_assert!(real_dir.is_empty());
                 // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to
                 // slots in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this
@@ -4878,8 +4860,7 @@ impl<'a> Resolver<'a> {
 
                         if !bun_paths::is_absolute(absolute_original_path) {
                             let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
-                            // Not `tsconfig_path_abs`: `load_tsconfig` joins an `extends`
-                            // into that one while `load_as_file` still reads this path.
+                            // Not `tsconfig_path_abs`: `load_tsconfig` joins an `extends` into it.
                             absolute_original_path = match self
                                 .fs_ref()
                                 .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
@@ -5661,8 +5642,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// A result that `finalize_result` does not finalize names a file by the path walked to it,
-    /// where `pair` names a file that a link led to by where the file is.
+    /// A result that skips `finalize_result` names a file behind a link by the path walked.
     fn paths_as_walked(&self, mut pair: PathPair, walked: [Option<WalkedDir>; 2]) -> PathPair {
         let [primary, secondary] = walked;
         if let Some(walked) = primary {
@@ -6147,8 +6127,7 @@ impl<'a> Resolver<'a> {
         dec_ret!(None);
     }
 
-    /// What `RealFS::read_directory` answers for `dir` without reading it, found by the
-    /// same probe and the same compares.
+    /// What `RealFS::read_directory` answers for `dir` without reading it.
     #[inline]
     fn cached_listing(&self, dir: &[u8]) -> CachedListing {
         Self::assert_valid_cache_key(dir);
@@ -6177,9 +6156,7 @@ impl<'a> Resolver<'a> {
         CachedListing::Hit(bun_ptr::BackRef::new(&*slot))
     }
 
-    /// Reads `dir` for `load_as_file`. The walk that builds its `DirInfo` runs first: it
-    /// follows the links on the way, so it reads the directory into the listing of its
-    /// real path. `RealFS::read_directory` alone has only `dir` to key the listing by.
+    /// The `DirInfo` walk runs first: it follows links, so `dir` gets the listing of its real path.
     #[cold]
     #[inline(never)]
     fn read_directory_after_dir_info(
@@ -6187,9 +6164,7 @@ impl<'a> Resolver<'a> {
         dir: &[u8],
     ) -> crate::CrateResult<bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>> {
         let not_found = self.dir_info_is_not_found(dir);
-        // A listing that other paths share stays mapped under `dir` while its directory
-        // does not open, so `rfs.entries` has no mark for `cached_listing` to trust. The
-        // one in `dir_cache` is trusted the same way: a read would open the directory.
+        // A shared listing stays mapped under `dir`, so the not-found mark is in `dir_cache` alone.
         if not_found && self.generation == Fs::GENERATION_BASE {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
         }
@@ -6213,13 +6188,7 @@ impl<'a> Resolver<'a> {
             .is_ok_and(|it| it.status == allocators::ItemStatus::NotFound)
     }
 
-    /// Unmaps `dir` where the walk that could not open it left it as not found, in
-    /// `dir_cache` and in `rfs.entries`. The walk records every error that way. With the
-    /// `dir_cache` key, a walk to a path under `dir` would start below it and leave that
-    /// path as not found too, which a bust of `dir` does not undo. Without the two, the
-    /// next read of `dir` opens it and keeps the error it gets. A `dir` that the walk
-    /// left mapped to a listing other paths share has no mark in `rfs.entries`, and
-    /// keeps the one in `dir_cache`, which a bust of any of those paths unmaps.
+    /// A failed walk marks `dir` not found on any error; unmarked, its next read keeps the error.
     fn forget_not_found(&mut self, dir: &[u8]) {
         // SAFETY: `rfs_ptr()` is the process-global RealFS singleton.
         let rfs = unsafe { &mut *self.rfs_ptr() };
@@ -6292,8 +6261,7 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    /// The one writer of `Entry.abs_path`: `entry.dir` joined with `name`, the name the file
-    /// was first found by. `None` if too long.
+    /// The one writer of `Entry.abs_path`: `entry.dir` joined with the `name` of the first caller.
     pub fn entry_abs_path(entry: &Fs::file_system::Entry, name: &[u8]) -> Option<&'static [u8]> {
         entry
             .abs_path_or_try_fill(|| {
@@ -6311,9 +6279,7 @@ impl<'a> Resolver<'a> {
             .map(Interned::as_bytes)
     }
 
-    /// The path of the file `entry`, found as `name` in the directory walked as `dir`, and
-    /// whether a link led to the directory. Behind a link the file goes by the name the
-    /// directory has for it, and by the path walked if its real path is too long.
+    /// The path of the file found as `name` in `dir`, and whether it is the real one behind a link.
     fn found_file_path(
         entry: &Fs::file_system::Entry,
         dir: &[u8],
@@ -6334,8 +6300,7 @@ impl<'a> Resolver<'a> {
         ))
     }
 
-    /// Where the file of `entry` is by what the entry keeps, for a reader that ran `kind()`
-    /// on it: where a link leads, else `Entry.abs_path`. `None` until that is filled.
+    /// For a reader that ran `kind()` on `entry`: where a link leads, else its filled `abs_path`.
     pub fn entry_file_path(entry: &Fs::file_system::Entry) -> Option<&'static [u8]> {
         let own = entry.abs_path();
         if own.is_empty() {
@@ -6349,8 +6314,7 @@ impl<'a> Resolver<'a> {
         })
     }
 
-    /// Fills `Entry.abs_path` if `entry_file_path` then gives `fd_path`, which a reader got
-    /// from a descriptor of the file. Otherwise `None`, and the entry is left as it was.
+    /// Fills `Entry.abs_path` only if `entry_file_path` then gives `fd_path`.
     pub fn fill_entry_file_path(
         entry: &Fs::file_system::Entry,
         fd_path: &[u8],
@@ -6369,16 +6333,8 @@ impl<'a> Resolver<'a> {
         Self::entry_file_path(entry).filter(|kept| *kept == fd_path)
     }
 
-    /// The real path of the directory walked as `path`: where a link at `path`
-    /// leads, else the place of the directory under the real path of `parent`.
-    /// Empty when that is `path` itself, and when there is none to give: `parent`
-    /// has no entry for the directory, or the path does not fit a path buffer.
-    /// `dir_info_cached_miss` asks before it chooses the listing slot, which
-    /// belongs to the real directory. `fd` is open on the directory, or invalid.
-    /// The caller holds `entries_mutex`.
+    /// The real path of the directory walked as `path`; empty if that is `path` itself, or unknown.
     fn real_dir_from_parent(&mut self, parent: DirInfoRef, path: &[u8], fd: FD) -> &'static [u8] {
-        // The process-global RealFS, by raw pointer: `Entry::symlink` reborrows it
-        // only internally, so the `&mut self` calls below do not invalidate it.
         let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
 
         let mut base = bun_paths::basename(path);
@@ -6386,16 +6342,12 @@ impl<'a> Resolver<'a> {
             base = &base[0..base.len() - 1];
         }
 
-        // `entries_mutex` is held and is non-recursive, so go through the
-        // `_locked` accessor.
+        // The caller holds `entries_mutex`, which is non-recursive.
         let Some(parent_entries) = parent.get_entries_ref_locked(self.generation) else {
             return b"";
         };
         let mut lookup = parent_entries.get(base);
-        // A directory that opened and that the listing does not name was made after the
-        // listing was read. Below a link the name is what gives the real path, so the
-        // listing is read again. One with no names can be of a directory that cannot be
-        // listed, which a read that fails would expire.
+        // An empty listing may be of an unlistable directory, which a failed re-read would expire.
         if lookup.is_none()
             && fd.is_valid()
             && !parent.abs_real_path.is_empty()
@@ -6433,9 +6385,6 @@ impl<'a> Resolver<'a> {
             ) else {
                 return b"";
             };
-            // `entry` is not a link, and a reader on the real path of `parent` finds the
-            // same `entry`, so the joined path is not kept in it. Once the real directory
-            // has a listing, its name is that path.
             // SAFETY: `rfs_ptr` points at the process-global RealFS; `entries_mutex` held.
             let listed: &'static [u8] = match unsafe { &mut *rfs_ptr }.entries.get(joined) {
                 Some(Fs::file_system::real_fs::EntriesOption::Entries(listing)) => {
@@ -6443,6 +6392,7 @@ impl<'a> Resolver<'a> {
                 }
                 _ => b"",
             };
+            // Readers on the real path share `entry`, so the joined path is not kept in it.
             real = if listed == joined {
                 listed
             } else {
@@ -7130,7 +7080,6 @@ impl<'b> BrowserMapPath<'b> {
 }
 
 /// `path` may come by `dir.abs_real_path`; "sideEffects" and "browser" keys go by `dir.abs_path`.
-/// The walked path is joined as `entry_abs_path` joins one: `dir.abs_path` can have `//` or `/./`.
 fn with_path_as_walked<R>(dir: &DirInfo::DirInfo, path: &[u8], f: impl FnOnce(&[u8]) -> R) -> R {
     if !dir.abs_real_path.is_empty() {
         let file = bun_paths::basename(path);
@@ -7168,18 +7117,13 @@ fn primary_side_effects(
     }
 }
 
-/// Whether the cached listing named `listing_dir` was read as `dir`. The key of a
-/// directory that a link leads to is mapped to the listing of the real directory,
-/// which is named by the real path.
+/// False when `dir` is a path through a link: its key maps to the listing named by the real path.
 fn listing_is_named(listing_dir: &[u8], dir: &[u8]) -> bool {
     strings::without_trailing_slash_windows_path(listing_dir)
         == strings::without_trailing_slash_windows_path(dir)
 }
 
-/// `RealFS::listing_slot` for the walk that builds the `DirInfo` of `walked`. With no `real`
-/// path, `walked` is read into a listing of its own name. Its key can still be mapped to the
-/// listing of a directory that a link at `walked` once led to: the key is unmapped from that
-/// listing, which stays with its other keys. The caller holds `entries_mutex`.
+/// With no `real`, the key of `walked` can still map to the listing a link there once led to.
 fn listing_slot_for_walk(
     rfs: &mut Fs::file_system::RealFS,
     walked: &[u8],

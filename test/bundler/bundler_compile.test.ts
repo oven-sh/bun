@@ -152,6 +152,28 @@ describe("bundler", () => {
     },
   });
 
+  // The `import.meta.require ?? createRequire(import.meta.url)` fallback that
+  // Elysia and TypeBox ship. `--bytecode` output is cjs, where `import.meta`
+  // left as written made JSC refuse the bytecode ("Failed to generate
+  // bytecode") and the executable throw "import.meta is only valid inside
+  // modules". The `.require` read lands on the empty stand-in and the `??`
+  // falls through to `createRequire` with the inlined URL.
+  itBundled("compile/ImportMetaRequireFallbackBytecode", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { createRequire } from "node:module";
+        const req = import.meta.require ?? createRequire(import.meta.url);
+        console.log(typeof req, typeof req("node:path").join);
+      `,
+    },
+    bundleWarnings: {
+      "/entry.ts": ['"import.meta" is not available with the "cjs" output format and will be empty'],
+    },
+    run: { stdout: "function function" },
+  });
+
   // `import defer * as ns from "..."` must not break bytecode generation.
   // The bundler inlines the deferred module into the entry chunk (documented
   // out-of-scope limitation — same as esbuild), so the defer semantics are

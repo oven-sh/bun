@@ -142,10 +142,12 @@ enum EntryOutcome {
 /// Where the error that ends a worker came from.
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum FatalCause {
-    /// An uncaught error, an unhandled rejection, or a failed start.
+    /// An uncaught error or an unhandled rejection.
     Uncaught,
     /// The worker's own 'uncaughtException' handler threw it.
     HandlerThrew,
+    /// The worker did not start: `shutdown()` is what follows the report.
+    StartFailure,
 }
 
 #[repr(u8)]
@@ -895,7 +897,7 @@ impl WebWorker {
                 let failure = self.log_error(vm);
                 WebWorker__entrySettled(vm.global());
                 if let Some((message, error)) = failure {
-                    self.report_fatal(vm, message, error, FatalCause::Uncaught);
+                    self.report_fatal(vm, message, error, FatalCause::StartFailure);
                 }
                 return self.shutdown();
             }
@@ -1188,17 +1190,15 @@ impl WebWorker {
         });
         // Node's workerOnGlobalUncaughtException runs the 'exit' listeners (the stdio flush is one) before the post.
         if self.is_node_worker && vm.script_allowed() {
-            // What an 'exit' listener throws is not the error to report, nor one for the worker's handlers.
-            vm.as_mut().on_unhandled_rejection =
-                VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
-            let was_handling =
-                core::mem::replace(&mut vm.as_mut().is_handling_uncaught_exception, true);
+            // `shutdown()` is next, and there the 'exit' listeners run with this flag: the VM drops what one throws.
+            if cause == FatalCause::StartFailure {
+                vm.as_mut().is_shutting_down = true;
+            }
             call_in_fatal_report(global, || {
                 virtual_machine::ExitHandler::dispatch_on_exit(vm)
             });
-            vm.as_mut().is_handling_uncaught_exception = was_handling;
             // As in node, a stop during the listeners withdraws the error, unless a handler threw it.
-            if !vm.script_allowed() && cause == FatalCause::Uncaught {
+            if !vm.script_allowed() && cause != FatalCause::HandlerThrew {
                 return;
             }
         }

@@ -607,7 +607,7 @@ describe("a worker's fatal error is posted after its 'exit' listeners", () => {
   async function runParent(exe: string, script: string, cwd?: string) {
     await using proc = Bun.spawn({ cmd: [exe, "-e", script], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode };
+    return { stdout: stdout.trim(), stderr, exitCode };
   }
   const ran = (stdout: unknown) => ({
     stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout),
@@ -773,6 +773,24 @@ describe("a worker's fatal error is posted after its 'exit' listeners", () => {
     },
   );
 
+  // Bun's default --unhandled-rejections mode does not offer a rejection to the worker's
+  // 'uncaughtException' listeners, so this worker dies of it. What an 'exit' listener throws
+  // next must not replace the exit code that an earlier listener set.
+  test.concurrent(
+    "a throw from an 'exit' listener leaves the exit code of a worker that has an 'uncaughtException' listener",
+    async () => {
+      // Without the timer the loop ends in this turn, and Bun does not report the rejection.
+      const workerSrc = `process.on("uncaughtException", () => {});
+      process.on("exit", () => { process.exitCode = 7; });
+      process.on("exit", () => { throw new Error("thrown by the 'exit' listener"); });
+      setImmediate(() => {
+        setInterval(() => {}, 1000);
+        Promise.reject(new Error("boom"));
+      });`;
+      expect(await runParent(bunExe(), reportEvents(workerSrc))).toEqual(ran(["error: boom", "exit 7"]));
+    },
+  );
+
   // A Web Worker keeps its order: the post, then the 'exit' listeners.
   test.concurrent.each([
     ["process.exit() in an 'exit' listener", `process.on("exit", () => process.exit(7));`, ["error", "close 7"]],
@@ -837,8 +855,25 @@ describe("a worker's fatal error is posted after its 'exit' listeners", () => {
 
   // The other fatal report: a worker that fails to start after a preload ran. The 'exit'
   // listener waits until the parent has every earlier line, so its own line needs a task
-  // of its own at the parent. What it throws is not for the monitor.
-  test.concurrent("a start failure is posted after the 'exit' listeners that a preload added", async () => {
+  // of its own at the parent.
+  test.concurrent.each([
+    [
+      // What the listener throws is dropped, as at a worker's natural exit: the monitor
+      // does not run, and the exit code that the listener set stays.
+      "is posted after the 'exit' listeners that a preload added",
+      `process.exitCode = 7;
+          throw new Error("thrown by the 'exit' listener");`,
+      [
+        { error: 'BuildMessage: InvalidDataURL resolving preload "data:text/javascript"', lines: 31 },
+        { exit: 7, lines: 31 },
+      ],
+    ],
+    [
+      "is withdrawn by process.exit() in an 'exit' listener that a preload added",
+      `process.exit(9);`,
+      [{ exit: 9, lines: 31 }],
+    ],
+  ])("a start failure %s", async (_name, inListener, events) => {
     using dir = tempDir("worker-start-failure-after-preload", {
       "preload.cjs": `const parentHasAllLines = new Int32Array(require("node:worker_threads").workerData);
         for (let i = 0; i < 30; i++) console.log("P" + i);
@@ -846,7 +881,7 @@ describe("a worker's fatal error is posted after its 'exit' listeners", () => {
         process.on("exit", code => {
           Atomics.wait(parentHasAllLines, 0, 0);
           console.log("'exit' listener " + code);
-          throw new Error("thrown by the 'exit' listener");
+          ${inListener}
         });`,
       "entry.cjs": `console.log("the entry does not run");`,
     });
@@ -867,12 +902,7 @@ describe("a worker's fatal error is posted after its 'exit' listeners", () => {
       w.on("exit", code => console.log(JSON.stringify([...events, { exit: code, lines }])));`,
       String(dir),
     );
-    expect(result).toEqual(
-      ran([
-        { error: 'BuildMessage: InvalidDataURL resolving preload "data:text/javascript"', lines: 31 },
-        { exit: 1, lines: 31 },
-      ]),
-    );
+    expect(result).toEqual(ran(events));
   });
 
   // On that path the worker first delivers a postMessageToThread() message it had buffered.

@@ -1257,9 +1257,8 @@ it("names the routes of one directory the same through a link to it, above it an
   `);
 });
 
-// Bun.resolveSync finds three of the files before the routers are made. Each router has the routes of a
-// router that is made first, and the same file for each. A route whose file the resolver found by that
-// router's own path takes the file from what the resolver kept: only its name is pinned, until reload().
+// A route whose file the resolver found through the router's own `dir` takes the file from what the
+// resolver kept for it, so only the name of such a route is pinned, until reload().
 it("names the routes the same when Bun.resolveSync found some of their files before the router was made", async () => {
   // What a router gives when it is made first.
   const routed = {

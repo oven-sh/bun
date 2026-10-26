@@ -7754,11 +7754,23 @@ describe("css tests", () => {
     // bun prints a rule once for each vendor prefix that its selectors need. When bun minifies
     // that output again, every copy from the earlier build has to go, or the sheet grows on each build.
     describe("browser targets: output that is minified again stops changing", () => {
+      // The first build prints `:not(.b,.c)` three ways. The second build keeps the two prefixed
+      // rules and prints the `:is()` rule three ways again. Each later build prints the same.
+      test.each(["color:red", "background:url(data:,a)", "--c:oklch(98.5% 0 none)", "border-radius:1px/2px"])(
+        ".a:not(.b,.c){%s}",
+        declarations => {
+          const rule = (any: string) => `.a:not(${any}(.b,.c)){${declarations}}`;
+          const prefixed = rule(":-webkit-any") + rule(":-moz-any");
+          const first = prefixed + rule(":is");
+          const builds = [`.a:not(.b,.c){${declarations}}`];
+          for (let i = 0; i < 4; i++) builds.push(cssInternals.minifyTest(builds[i], "", targets));
+          expect(builds.slice(1)).toEqual([first, prefixed + first, prefixed + first, prefixed + first]);
+        },
+      );
+
+      // These selectors take a vendor prefix of their own. The rows hold that the output stops
+      // changing, not what it is.
       test.each([
-        ".a:not(.b,.c){color:red}",
-        ".a:not(.b,.c){background:url(data:,a)}",
-        ".a:not(.b,.c){color:lab(none 0 0)}",
-        ".a:not(.b,.c){border-radius:1px/2px}",
         ".a:autofill{background:url(data:,a)}",
         ".a:autofill:not(.b,.c){background:url(data:,a)}",
         ".a:fullscreen:not(.b,.c){background:url(data:,a)}",
@@ -7845,7 +7857,7 @@ describe("css tests", () => {
 
     test.concurrent("bun build of its own output stops changing", async () => {
       using dir = tempDir("css-duplicate-rules-rebuild", {
-        "in.css": ".a:not(.b,.c){background:url(data:,a)}\n.d:autofill{background:url(data:,a)}\n",
+        "in.css": ".a:not(.b,.c){background:url(data:,a)}\n",
       });
       const cwd = String(dir);
       const builds = [];
@@ -7854,11 +7866,15 @@ describe("css tests", () => {
         builds.push(result);
         await Bun.write(join(cwd, "in.css"), result.css);
       }
-      expect(builds.map(({ stderr, exitCode }) => ({ stderr, exitCode }))).toEqual(
-        Array(4).fill({ stderr: "", exitCode: 0 }),
-      );
-      expect(builds[2].css).toContain(".a:not(");
-      expect(builds[3].css).toBe(builds[2].css);
+      const prefixed =
+        ".a:not(:-webkit-any(.b,.c)){background:url(data:,a)}.a:not(:-moz-any(.b,.c)){background:url(data:,a)}";
+      const first = prefixed + ".a:not(:is(.b,.c)){background:url(data:,a)}";
+      expect(builds).toEqual([
+        { css: first, stderr: "", exitCode: 0 },
+        { css: prefixed + first, stderr: "", exitCode: 0 },
+        { css: prefixed + first, stderr: "", exitCode: 0 },
+        { css: prefixed + first, stderr: "", exitCode: 0 },
+      ]);
     });
   });
 

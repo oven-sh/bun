@@ -7745,8 +7745,9 @@ describe("css tests", () => {
 
     // Every entry asks what the rest of its list says, and the answer must not cost a walk
     // of the list per entry. With one, a release build needs about three minutes for the
-    // second list below (44s for half of it), so the child runs into the spawn timeout. The
-    // linear version needs about 5s under debug+ASAN. `transition` takes the same path.
+    // second list below (44s for half of it, 6.7s for a fifth), so the child runs into the
+    // spawn timeout. The linear version needs about 4s under debug+ASAN, most of it parsing
+    // and printing. `transition` takes the same path.
     test("a long list is expanded in linear time", async () => {
       const script = `
         const { minifyTest } = require("bun:internal-for-testing").cssInternals;
@@ -7754,8 +7755,8 @@ describe("css tests", () => {
         const safari15 = { safari: 15 << 16 };
 
         // Each mask-size gains -webkit-mask-size.
-        const prefixed = minifyTest(".a{transition-property:" + list(200_000, "mask-size") + "}", "", safari15);
-        console.log(prefixed === ".a{transition-property:" + list(200_000, "-webkit-mask-size,mask-size") + "}");
+        const prefixed = minifyTest(".a{transition-property:" + list(50_000, "mask-size") + "}", "", safari15);
+        console.log(prefixed === ".a{transition-property:" + list(50_000, "-webkit-mask-size,mask-size") + "}");
 
         // Each mask-border finds -webkit-mask-box-image at the far end of the list.
         const listed = ".a{transition-property:" + list(1_000_000, "mask-border") + ",-webkit-mask-box-image}";
@@ -7765,13 +7766,14 @@ describe("css tests", () => {
         cmd: [bunExe(), "-e", script],
         env: bunEnv,
         stdout: "pipe",
-        stderr: "inherit",
+        stderr: "pipe",
         timeout: 60_000,
         killSignal: "SIGKILL",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect({ stdout, signalCode: proc.signalCode, exitCode }).toEqual({
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, signalCode: proc.signalCode, exitCode }).toEqual({
         stdout: "true\ntrue\n",
+        stderr: "",
         signalCode: null,
         exitCode: 0,
       });

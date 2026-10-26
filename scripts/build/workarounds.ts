@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { LSQUIC_COMMIT } from "./deps/lsquic.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
@@ -115,6 +116,24 @@ export const workarounds: Workaround[] = [
       `In src/spawn_sys/posix_spawn.rs (Attr::set) and src/spawn_sys/spawn_process.rs ` +
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
+  },
+  {
+    id: "lsquic-body-behind-queued-header-block",
+    issue:
+      "https://github.com/litespeedtech/lsquic/blob/v4.11.0/CHANGELOG (4.10.2, DATA writes while headers are pending)",
+    description:
+      "lsquic_stream_write() takes body bytes while lsquic still holds part of a header block that is " +
+      "not the stream's first, and puts them into that block's HEADERS frame. node:quic keeps a body " +
+      "back after it gives lsquic a queued header block (QuicStream::may_hold_queued_block).",
+    applies: () => true,
+    expectedToBeFixed: () => {
+      // lsquic 4.10.2 answers that write with 0 while any header block of the stream is unsent.
+      const WITHOUT_THE_CHECK = "f812ceb9529e26717df78c6064a2ff648b949f3e"; // 4.9.4
+      return LSQUIC_COMMIT !== WITHOUT_THE_CHECK;
+    },
+    cleanup:
+      `If the new lsquic is 4.10.2 or later, delete may_hold_queued_block and its uses from ` +
+      `src/runtime/node/quic/stream.rs, and this entry.`,
   },
 ];
 

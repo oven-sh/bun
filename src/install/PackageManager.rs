@@ -179,7 +179,7 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>--dry-run<r>                 print what would be removed without deleting anything
   <b><green>bun pm<r> <blue>cache pack<r><d>|<r><blue>unpack<r> <d>file<r>  save / restore the cache entries this lockfile needs as one file (for CI caches)
   <b><green>bun pm<r> <blue>fetch<r>                download all dependencies into the cache without installing
-  <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything
+  <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile, or an existing bun.lock to the current lockfileVersion, without installing anything
   <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`
   <d>├<r>  <cyan>--all<r>                    trust all untrusted dependencies

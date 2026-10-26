@@ -443,6 +443,10 @@ bun pm migrate
 
 Pass `--dry-run` to run the migration without writing `bun.lock` or `package.json`.
 
+When a `bun.lock` already exists, `bun pm migrate` rewrites it at the current `lockfileVersion`. Every package entry stays as it is and nothing is resolved again. A `bun.lock` that is already at the current version is left untouched. Pass `--force` to overwrite an existing `bun.lock` from another package manager's lockfile instead.
+
+The command exits with an error and leaves `bun.lock` at its version when an entry would not pass the stricter checks of the newer version: an npm package resolved to a tarball URL outside the default registry with no integrity hash, or a git dependency with an unsafe `bun-tag`. The error names the package.
+
 ## untrusted
 
 To print current untrusted dependencies with scripts:

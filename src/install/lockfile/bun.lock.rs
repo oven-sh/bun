@@ -131,6 +131,48 @@ impl Version {
     }
 }
 
+/// The first written package that holds a lockfile at v1 (see
+/// `Stringifier::fresh_version`). `Display` says what the v2 parser
+/// rejects, with the same wording as the parser's error.
+pub struct VersionBlocker<'a> {
+    buf: &'a [u8],
+    name: String,
+    kind: VersionBlockerKind,
+}
+
+enum VersionBlockerKind {
+    /// An npm package resolved to a tarball URL outside the default
+    /// registry, with no supported integrity hash.
+    MissingIntegrity {
+        version: Semver::Version,
+        url: String,
+    },
+    /// A git package whose `.bun-tag` is not a safe path component.
+    UnsafeGitTag { tag: String },
+}
+
+impl core::fmt::Display for VersionBlocker<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let buf = self.buf;
+        let name = bstr::BStr::new(self.name.slice(buf));
+        match &self.kind {
+            VersionBlockerKind::MissingIntegrity { version, url } => write!(
+                f,
+                "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry: \"{}@{}\" resolves to {}",
+                name,
+                version.fmt(buf),
+                bstr::BStr::new(url.slice(buf)),
+            ),
+            VersionBlockerKind::UnsafeGitTag { tag } => write!(
+                f,
+                "Invalid git dependency tag: \"{}\" has \"bun-tag\": \"{}\"",
+                name,
+                bstr::BStr::new(tag.slice(buf)),
+            ),
+        }
+    }
+}
+
 /// For sorting dependencies belonging to a node_modules folder. No duplicate names, so
 /// only string compare
 fn sort_by_name(dep_ids: &mut [DependencyID], deps_buf: &[Dependency], string_buf: &[u8]) {
@@ -203,12 +245,21 @@ impl Stringifier {
             };
         }
 
+        Self::fresh_version(lockfile).unwrap_or(Version::V1)
+    }
+
+    /// The version a lockfile with no prior version is stamped: v2, or v3
+    /// when scoped override rules exist. `Err` names the first written
+    /// package that holds the lockfile at v1 (see `version_to_write`).
+    pub(crate) fn fresh_version(lockfile: &BinaryLockfile) -> Result<Version, VersionBlocker<'_>> {
+        let has_scoped = lockfile.overrides.has_scoped();
         let buf = lockfile.buffers.string_bytes.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
         let pkgs = lockfile.packages.slice();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
         let pkg_metas: &[Meta] = pkgs.items_meta();
+        let pkg_names: &[String] = pkgs.items_name();
 
         let mut iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
             lockfile.buffers.trees.as_slice(),
@@ -225,6 +276,7 @@ impl Stringifier {
                 }
                 let i = pkg_id as usize;
                 let res = &pkg_resolutions[i];
+                let name = pkg_names[i];
                 match res.tag {
                     ResolutionTag::Npm => {
                         if pkg_metas[i].integrity.tag.is_supported() {
@@ -243,9 +295,17 @@ impl Stringifier {
                         // registry could stamp v2 on a lockfile a teammate
                         // without that scope then fails to parse. Stay at v1 for
                         // those so the file keeps loading everywhere.
-                        let url = res.npm().url.slice(buf);
+                        let npm = res.npm();
+                        let url = npm.url.slice(buf);
                         if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
-                            return Version::V1;
+                            return Err(VersionBlocker {
+                                buf,
+                                name,
+                                kind: VersionBlockerKind::MissingIntegrity {
+                                    version: npm.version,
+                                    url: npm.url,
+                                },
+                            });
                         }
                     }
                     ResolutionTag::Git => {
@@ -253,17 +313,20 @@ impl Stringifier {
                         // staying at v1 keeps it loading. (A `github` tag is
                         // rejected at every version, so no lockfile version can
                         // round-trip an unsafe one — nothing to gate here.)
-                        if !crate::repository::is_safe_resolved_tag(
-                            res.repository().resolved.slice(buf),
-                        ) {
-                            return Version::V1;
+                        let tag = res.repository().resolved;
+                        if !crate::repository::is_safe_resolved_tag(tag.slice(buf)) {
+                            return Err(VersionBlocker {
+                                buf,
+                                name,
+                                kind: VersionBlockerKind::UnsafeGitTag { tag },
+                            });
                         }
                     }
                     _ => {}
                 }
             }
         }
-        if has_scoped { Version::V3 } else { Version::V2 }
+        Ok(if has_scoped { Version::V3 } else { Version::V2 })
     }
 
     pub(crate) fn save_from_binary(

@@ -680,3 +680,141 @@ it("re-saving keeps v1 for a writer-only scoped tarball even when a nested overr
   expect(await file(join(String(readerDir), "bun.lock")).text()).toBe(rewritten);
   expect(readerExit).toBe(0);
 });
+
+// `bun install` keeps the loaded version on purpose. `bun pm migrate` is the
+// explicit step that moves an existing `bun.lock` to the version a fresh write
+// gets, with every package row unchanged.
+async function runPm(cwd: string, ...args: string[]) {
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", ...args],
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+}
+
+it("bun pm migrate rewrites a v1 lockfile at version 2 with identical rows", async () => {
+  using dir = tempDir("lockfile-v1-pm-migrate", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+  });
+  const lockfilePath = join(String(dir), "bun.lock");
+
+  await using install = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await install.exited).toBe(0);
+  const fresh = await file(lockfilePath).text();
+  expect(fresh).toContain(`"lockfileVersion": 2,`);
+  const v1 = fresh.replace(`"lockfileVersion": 2,`, `"lockfileVersion": 1,`);
+  await Bun.write(lockfilePath, v1);
+
+  const [dryOut, dryErr, dryExit] = await runPm(String(dir), "migrate", "--dry-run");
+  expect(dryOut).toBe("dry run: would write bun.lock at lockfileVersion 2 (now 1)\n");
+  expect(dryErr).not.toContain("error:");
+  expect(await file(lockfilePath).text()).toBe(v1);
+  expect(dryExit).toBe(0);
+
+  const [, err, exitCode] = await runPm(String(dir), "migrate");
+  expect(err).toContain("migrated bun.lock from lockfileVersion 1 to 2");
+  expect(await file(lockfilePath).text()).toBe(fresh);
+  expect(exitCode).toBe(0);
+
+  const [againOut, , againExit] = await runPm(String(dir), "migrate");
+  expect(againOut).toBe("bun.lock is already at lockfileVersion 2\n");
+  expect(await file(lockfilePath).text()).toBe(fresh);
+  expect(againExit).toBe(0);
+});
+
+it("bun pm migrate stamps version 3 when scoped override rules exist", async () => {
+  using dir = tempDir("lockfile-v1-pm-migrate-scoped", {
+    "package.json": JSON.stringify({
+      name: "root",
+      dependencies: { dep: "file:./dep" },
+      overrides: { dep: { bar: "1.0.0" } },
+    }),
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+  });
+  const lockfilePath = join(String(dir), "bun.lock");
+
+  await using install = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await install.exited).toBe(0);
+  const fresh = await file(lockfilePath).text();
+  expect(fresh).toContain(`"lockfileVersion": 3,`);
+  await Bun.write(lockfilePath, fresh.replace(`"lockfileVersion": 3,`, `"lockfileVersion": 1,`));
+
+  const [, err, exitCode] = await runPm(String(dir), "migrate");
+  expect(err).toContain("migrated bun.lock from lockfileVersion 1 to 3");
+  expect(await file(lockfilePath).text()).toBe(fresh);
+  expect(exitCode).toBe(0);
+});
+
+it("bun pm migrate names the off-registry package with no integrity and keeps version 1", async () => {
+  await using offRegistry = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const tarball = `http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`;
+  const v1Lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "root", dependencies: { "no-deps": "1.0.0" } } },
+    packages: {
+      "no-deps": ["no-deps@1.0.0", tarball, {}, ""],
+    },
+  });
+
+  using dir = tempDir("lockfile-v1-pm-migrate-blocked", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0" } }),
+    "bun.lock": v1Lockfile,
+  });
+
+  const [out, err, exitCode] = await runPm(String(dir), "migrate");
+  expect(err).toContain("error: bun.lock stays at lockfileVersion 1: ");
+  expect(err).toContain(
+    `Missing integrity hash for npm package resolved to a tarball URL outside the configured registry: "no-deps@1.0.0" resolves to ${tarball}`,
+  );
+  expect(out).toBe("");
+  expect(await file(join(String(dir), "bun.lock")).text()).toBe(v1Lockfile);
+  expect(exitCode).toBe(1);
+});
+
+it("bun pm migrate names the git package with an unsafe bun-tag and keeps version 1", async () => {
+  // `bun pm migrate` does no git work, so the host never has to answer.
+  const gitUrl = "git+ssh://git@127.0.0.1:1/example/repo.git#main";
+  const v1Lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "root", dependencies: { dep: gitUrl } } },
+    packages: {
+      dep: [`dep@${gitUrl}`, {}, "../escape"],
+    },
+  });
+
+  using dir = tempDir("lockfile-v1-pm-migrate-git-blocked", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: gitUrl } }),
+    "bun.lock": v1Lockfile,
+  });
+
+  const [out, err, exitCode] = await runPm(String(dir), "migrate");
+  expect(err).toContain("error: bun.lock stays at lockfileVersion 1: ");
+  expect(err).toContain(`Invalid git dependency tag: "dep" has "bun-tag": "../escape"`);
+  expect(out).toBe("");
+  expect(await file(join(String(dir), "bun.lock")).text()).toBe(v1Lockfile);
+  expect(exitCode).toBe(1);
+});

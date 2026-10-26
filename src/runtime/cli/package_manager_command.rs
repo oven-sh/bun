@@ -162,6 +162,65 @@ impl PackageManagerCommand {
         }
     }
 
+    /// `bun pm migrate` with an existing text `bun.lock`: write it again at
+    /// the version a fresh lockfile gets. Every row stays as it is and no
+    /// package is resolved again.
+    fn migrate_text_lockfile_version(pm: &mut PackageManager, log_level: LogLevel) -> ! {
+        let dry_run = pm.options.dry_run;
+        let pm_raw: *mut PackageManager = pm;
+        let mut load_lockfile = pm.load_lockfile_from_cwd::<false>();
+        Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "migrate");
+        let lockfile: &Lockfile = load_lockfile.ok().lockfile;
+        let from = lockfile.text_lockfile_version();
+        let to = match lockfile.fresh_text_lockfile_version() {
+            Ok(to) => to,
+            Err(blocker) => {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: bun.lock stays at lockfileVersion {}: {}",
+                    from as u32,
+                    blocker,
+                );
+                Global::exit(1);
+            }
+        };
+        let not_silent = log_level != LogLevel::Silent;
+        if from == to {
+            if not_silent {
+                bun_core::prettyln!("bun.lock is already at lockfileVersion {}", to as u32);
+            }
+            Output::flush();
+            Global::exit(0);
+        }
+        if dry_run {
+            if not_silent {
+                bun_core::prettyln!(
+                    "<r><d>dry run:<r> would write bun.lock at lockfileVersion {} (now {})",
+                    to as u32,
+                    from as u32,
+                );
+            }
+            Output::flush();
+            Global::exit(0);
+        }
+        let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
+        // SAFETY: `load_lockfile` is `Ok` (errors exited above). `save_to_disk` reads only its
+        // scalar fields, never `ok.lockfile`, and `options` is a field of `pm` outside the
+        // lockfile, so `*lf` is the sole live view of the lockfile.
+        unsafe {
+            (*lf).set_text_lockfile_version(to);
+            (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
+        }
+        if not_silent {
+            bun_core::pretty_errorln!(
+                " <d>migrated bun.lock from lockfileVersion <r><green>{}<r><d> to <r><green>{}<r>",
+                from as u32,
+                to as u32,
+            );
+        }
+        Output::flush();
+        Global::exit(0);
+    }
+
     #[cold]
     pub(crate) fn print_hash(log: &mut bun_ast::Log, file: &File) -> crate::Result<()> {
         let bytes = match file.read_to_end() {
@@ -769,18 +828,18 @@ impl PackageManagerCommand {
             }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"migrate") {
+            let log_level = pm.options.log_level;
             if !pm.options.enable.force_save_lockfile() {
-                for name in [bun_core::zstr!("bun.lock"), bun_core::zstr!("bun.lockb")] {
-                    if bun_sys::exists_z(name) {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r>: {} already exists\nrun with --force to overwrite",
-                            bstr::BStr::new(name.as_bytes()),
-                        );
-                        Global::exit(1);
-                    }
+                if bun_sys::exists_z(bun_core::zstr!("bun.lock")) {
+                    Self::migrate_text_lockfile_version(pm, log_level);
+                }
+                if bun_sys::exists_z(bun_core::zstr!("bun.lockb")) {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: bun.lockb already exists\nrun with --force to overwrite",
+                    );
+                    Global::exit(1);
                 }
             }
-            let log_level = pm.options.log_level;
             let pm_raw: *mut PackageManager = pm;
             // SAFETY: the `Box<Lockfile>` pointee is a separate allocation, and
             // `detect_and_load_other_lockfile` never reaches `manager.lockfile`.

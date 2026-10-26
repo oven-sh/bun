@@ -88,6 +88,10 @@ pub struct LinkerContext<'a> {
     /// [`Self::load`]. Read-only — never `assume_mut`.
     pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub(crate) cycle_detector: Vec<ImportTracker>,
+    /// The export each symbol step 3 made for a name read through an
+    /// `export *` of a wrapped lifted CommonJS file stands for. Two such
+    /// reads of one export are the same export, not an ambiguity.
+    pub(crate) wrapped_lifted_reads: HashMap<Ref, ImportTracker>,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     pub(crate) cjs_runtime_ref: Ref,
@@ -161,6 +165,7 @@ impl<'a> Default for LinkerContext<'a> {
             log: core::ptr::null_mut(),
             resolver: None,
             cycle_detector: Vec::new(),
+            wrapped_lifted_reads: HashMap::default(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
@@ -4276,7 +4281,7 @@ impl<'a> LinkerContext<'a> {
 
         // If there is a potential ambiguity, all results must be the same
         for ambig in &ambiguous_results {
-            if *ambig != result {
+            if *ambig != result && !self.same_wrapped_lifted_read(ambig, &result) {
                 if result.kind == ambig.kind
                     && ambig.kind == MatchImportKind::Normal
                     && ambig.name_loc.start != 0
@@ -4300,6 +4305,24 @@ impl<'a> LinkerContext<'a> {
         }
 
         result
+    }
+
+    /// The export a match stands for, when it is a read made by step 3 of a
+    /// wrapped lifted CommonJS file's export.
+    pub(crate) fn wrapped_lifted_read_target(&self, source_index: u32, ref_: Ref) -> (u32, Ref) {
+        match self.wrapped_lifted_reads.get(&ref_) {
+            Some(target) => (target.source_index.get(), target.import_ref),
+            None => (source_index, ref_),
+        }
+    }
+
+    fn same_wrapped_lifted_read(&self, a: &MatchImport, b: &MatchImport) -> bool {
+        a.kind == MatchImportKind::Normal
+            && b.kind == MatchImportKind::Normal
+            && (self.wrapped_lifted_reads.contains_key(&a.r#ref)
+                || self.wrapped_lifted_reads.contains_key(&b.r#ref))
+            && self.wrapped_lifted_read_target(a.source_index, a.r#ref)
+                == self.wrapped_lifted_read_target(b.source_index, b.r#ref)
     }
 
     pub(crate) fn export_runtime_function(&self) -> &'static [u8] {

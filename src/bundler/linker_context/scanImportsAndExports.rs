@@ -561,6 +561,9 @@ pub(crate) fn scan_imports_and_exports(
                     ..Default::default()
                 };
             }
+            if let Some(ctx) = export_star_ctx {
+                this.wrapped_lifted_reads = ctx.wrapped_lifted_targets;
+            }
         }
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {

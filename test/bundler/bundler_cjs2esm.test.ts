@@ -1741,6 +1741,68 @@ describe("bundler", () => {
       },
     });
   }
+  // The named re-export can name a file that gets `foo` through its own
+  // `export *` of the wrapped file.
+  itBundled("cjs2esm/ExportStarOfWrappedLiftedCommonJSWithSiblingReExportOverExportStar", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from "./barrel.js";
+        import * as ns from "./barrel.js";
+        console.log(foo, Object.keys(ns).join(","));
+      `,
+      "/barrel.js": /* js */ `
+        export * from "./lib.cjs";
+        export { default } from "./lib.cjs";
+        export * from "./sibling.js";
+      `,
+      "/sibling.js": /* js */ `
+        export { foo } from "./mid.js";
+      `,
+      "/mid.js": /* js */ `
+        export * from "./lib.cjs";
+      `,
+      "/lib.cjs": /* js */ `
+        exports.foo = 1;
+        exports.bar = 2;
+      `,
+    },
+    format: "esm",
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: {
+      stdout: "1 bar,default,foo",
+    },
+  });
+  itBundled("cjs2esm/ExportStarOfWrappedLiftedCommonJSWithSiblingReExportOverExportStarEntry", {
+    files: {
+      "/entry.js": /* js */ `
+        export * from "./lib.cjs";
+        export { default } from "./lib.cjs";
+        export * from "./sibling.js";
+      `,
+      "/sibling.js": /* js */ `
+        export { foo } from "./mid.js";
+      `,
+      "/mid.js": /* js */ `
+        export * from "./lib.cjs";
+      `,
+      "/lib.cjs": /* js */ `
+        exports.foo = 1;
+        exports.bar = 2;
+      `,
+    },
+    format: "esm",
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as ns from './out.js';
+        console.log(Object.keys(ns).join(","), ns.foo);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "bar,default,foo 1",
+    },
+  });
   // The named re-export can sit behind any number of `export { foo } from` hops.
   const chainLength = 20;
   itBundled("cjs2esm/ExportStarOfWrappedLiftedCommonJSWithDeepSiblingReExport", {

@@ -183,7 +183,11 @@ impl LinkerContext<'_> {
                         } else {
                             ambig.data.import_ref
                         };
-                        if main_data.import_ref != ambig_ref {
+                        if c.wrapped_lifted_read_target(
+                            main_data.source_index.get(),
+                            main_data.import_ref,
+                        ) != c.wrapped_lifted_read_target(_id, ambig_ref)
+                        {
                             continue 'next_alias;
                         }
                         inner_count += ambig.re_exports.len() as usize;

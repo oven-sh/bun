@@ -1,8 +1,10 @@
 // Fixture for compile-rss.test.ts. A burst compiles a generated wasm module 6 times, discards each
 // result, then polls RSS until it falls below the target (argv[2], MiB) or a deadline passes. The
 // idle compiler threads exit after 10 s and release everything then, so a deadline stays well
-// below that. Prints one JSON line with, for each burst, the RSS growth right after the compiles
-// and the lowest one seen after them, both relative to the RSS before the first compile.
+// below that. argv[3] says which bursts count: "later" (two of the bursts after the first one) or
+// "first" (one burst, the first one included). Prints one JSON line with, for each burst, the RSS
+// growth right after the compiles and the lowest one seen after them, both relative to the RSS
+// before the first compile.
 
 class Bytes {
   constructor() {
@@ -93,6 +95,8 @@ function makeModule({ functionCount = 35, opsPerFunction = 1400, giantOps = 3000
 
 const targetMiB = Number(process.argv[2]);
 if (!Number.isFinite(targetMiB)) throw new Error(`expected the target in MiB as argv[2], got ${process.argv[2]}`);
+const countFirst = process.argv[3] === "first";
+if (!countFirst && process.argv[3] !== "later") throw new Error(`expected "first" or "later" as argv[3]`);
 // On Darwin mimalloc returns memory with MADV_FREE_REUSABLE, which the kernel keeps counted in RSS
 // until it reuses the pages. phys_footprint drops at once, so measure that there. memoryFootprint()
 // returns undefined when task_info fails, so fall back to RSS.
@@ -113,9 +117,9 @@ do {
   base = now;
 } while (performance.now() < baseDeadline);
 
-// A run that fails has to end inside the timeout of the test, so that the test prints what this
-// measured.
-const giveUp = performance.now() + 3500;
+// No burst starts after this: a run that fails has to end inside the timeout of the test, so that
+// the test prints what this measured.
+const lastStart = performance.now() + 3000;
 
 async function burst() {
   // A compile() call wakes every compiler thread before it returns, and a thread releases its
@@ -142,29 +146,42 @@ async function burst() {
   Bun.gc(true);
   longestGapMs = Math.max(longestGapMs, performance.now() - woken);
   // A thread releases 100 ms after its last wake-up, and once or twice more, 100 ms apart, for
-  // the large blocks that it was using a moment ago.
-  const deadline = Math.min(performance.now() + 1000, giveUp);
+  // the large blocks that it was using a moment ago. Every burst gets the whole second: after
+  // one release most of the memory is still there.
+  const collected = performance.now();
   let min = Infinity;
   do {
     await sleep(100);
     Bun.gc(true);
     min = Math.min(min, rss() - base);
-  } while (performance.now() < deadline && min / 1048576 >= targetMiB);
-  return { peakDeltaMiB: peak / 1048576, idleDeltaMiB: min / 1048576, longestGapMs };
+  } while (performance.now() < collected + 1000 && min / 1048576 >= targetMiB);
+  return {
+    peakDeltaMiB: peak / 1048576,
+    idleDeltaMiB: min / 1048576,
+    longestGapMs,
+    polledMs: performance.now() - collected,
+  };
 }
 
-// The first burst does not count. The allocator frees the large blocks of a thread at once while
-// that thread has never released, so the first burst can return its memory when no later one does.
-const first = await burst();
-// Two bursts have to return their memory. A burst that does not fails the run, unless a thread can
-// have released before the collection freed the modules: a stall of 100 ms on a busy machine is
-// enough for that, and it says nothing about the release. That burst is repeated.
-const bursts = [];
+// A burst counts when its memory came back. One that stays over the target ends the run, unless a
+// thread can have released before the collection freed the modules: a stall of 100 ms on a busy
+// machine is enough for that, and it says nothing about the release. That burst is repeated.
 let released = 0;
-while (released < 2 && performance.now() < giveUp) {
+let stop = false;
+const count = burst => {
+  if (burst.idleDeltaMiB < targetMiB) released++;
+  else if (burst.longestGapMs < 100) stop = true;
+};
+// With "later" the first burst does not count. The allocator frees the large blocks of a thread
+// at once while that thread has never released, so the first burst can return its memory when no
+// later one does.
+const first = await burst();
+if (countFirst) count(first);
+const needed = countFirst ? 1 : 2;
+const bursts = [];
+while (!stop && released < needed && performance.now() < lastStart) {
   const next = await burst();
   bursts.push(next);
-  if (next.idleDeltaMiB < targetMiB) released++;
-  else if (next.longestGapMs < 100) break;
+  count(next);
 }
 console.log(JSON.stringify({ moduleMiB: bytes.length / 1048576, first, bursts }));

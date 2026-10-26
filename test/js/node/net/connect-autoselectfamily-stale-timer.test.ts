@@ -41,7 +41,9 @@ test.concurrent(
       exitCode: 0,
       // "connecting at destroy: true" = scenario exercised; "SKIP_SYNC_FAIL"
       // = this host has no route to TEST-NET-1 (documented for darwin CI).
-      stdout: expect.stringMatching(/connecting at destroy: true|SKIP_SYNC_FAIL/),
+      stdout: expect.stringMatching(
+        /connecting at destroy: true\nattempt failed at destroy: ECANCELED\n|SKIP_SYNC_FAIL/,
+      ),
     });
     expect(stdout).toContain("OK");
   },

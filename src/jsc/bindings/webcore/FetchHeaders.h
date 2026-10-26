@@ -88,7 +88,7 @@ public:
         return m_headers.willChange().remove(name);
     }
 
-    const Vector<String, 0>& getSetCookieHeaders() const { return internalHeaders().getSetCookieHeaders(); }
+    std::span<const String> getSetCookieHeaders() const { return internalHeaders().getSetCookieHeaders(); }
 
     class Iterator {
     public:

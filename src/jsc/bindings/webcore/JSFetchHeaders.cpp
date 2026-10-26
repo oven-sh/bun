@@ -691,7 +691,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
     }
 
     {
-        auto& values = internal.getSetCookieHeaders();
+        auto values = internal.getSetCookieHeaders();
 
         size_t count = values.size();
 

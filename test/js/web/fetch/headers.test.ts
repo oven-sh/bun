@@ -1074,6 +1074,342 @@ describe("Headers", () => {
       });
     });
   });
+  // Up to 64 custom names, HTTPHeaderMap finds one with a scan. Above that it uses a hash index, and a name that is
+  // deleted leaves a hole in the list. With more holes than names the list is packed again, and the scan is back
+  // when 64 names or fewer are left.
+  describe("many custom names", () => {
+    const name = (i: number) => `x-custom-${i}`;
+    // Every second name is stored with capitals and asked for without, and the other way around.
+    const stored = (i: number) => (i % 2 ? name(i) : `X-Custom-${i}`);
+    const asked = (i: number) => (i % 2 ? `X-Custom-${i}` : name(i));
+
+    // A Map keeps its keys the way Headers keeps custom names: in the order they were added, a new value in the
+    // old place, and a name that was deleted and added again at the end.
+    function expectSame(headers: Headers, model: Map<string, string>, upTo: number) {
+      const indexes = Array.from({ length: upTo }, (_, i) => i);
+      expect({
+        count: headers.count,
+        inOrder: Object.entries(headers.toJSON()),
+        sorted: [...headers],
+        get: indexes.map(i => headers.get(asked(i))),
+        has: indexes.map(i => headers.has(asked(i))),
+      }).toEqual({
+        count: model.size,
+        inOrder: [...model],
+        sorted: [...model].sort(([a], [b]) => (a < b ? -1 : 1)),
+        get: indexes.map(i => model.get(name(i)) ?? null),
+        has: indexes.map(i => model.has(name(i))),
+      });
+    }
+
+    test.each([32, 33, 64, 65, 66, 130, 200])("%d names are found, changed and deleted like the keys of a Map", n => {
+      const headers = new Headers();
+      const model = new Map<string, string>();
+      for (let i = 0; i < n; i++) {
+        headers.append(stored(i), `v${i}`);
+        model.set(name(i), `v${i}`);
+      }
+      expectSame(headers, model, n + 1);
+
+      for (let i = 0; i < n; i++) {
+        if (i % 3 === 0) {
+          headers.set(asked(i), `s${i}`);
+          model.set(name(i), `s${i}`);
+        } else if (i % 3 === 1) {
+          headers.append(asked(i), `a${i}`);
+          model.set(name(i), `v${i}, a${i}`);
+        } else {
+          headers.delete(asked(i));
+          model.delete(name(i));
+        }
+      }
+      expectSame(headers, model, n + 1);
+
+      // From the front until nothing is left. Every fourth name comes back, at the end.
+      const every = Math.ceil(n / 6);
+      for (let i = 0; i < n; i++) {
+        headers.delete(asked(i));
+        model.delete(name(i));
+        if (i % 4 === 0) {
+          headers.set(stored(i), `again${i}`);
+          model.set(name(i), `again${i}`);
+        }
+        if (i % every === 0) expectSame(headers, model, n);
+      }
+      for (const key of [...model.keys()]) {
+        headers.delete(key);
+        model.delete(key);
+        if (model.size % every === 0) expectSame(headers, model, n);
+      }
+    });
+
+    test("random changes to two copies match a Map each", () => {
+      let seed = 0x2f6e2b1;
+      const random = (below: number) => {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        return Math.floor((seed / 2 ** 32) * below);
+      };
+      const pool = 180;
+      let pairs: [Headers, Map<string, string>][] = [
+        [new Headers(), new Map()],
+        [new Headers(), new Map()],
+      ];
+      for (let step = 0; step < 2400; step++) {
+        const [headers, model] = pairs[random(2)];
+        // For 600 steps most names of the pool are added, then for 600 steps most of them are deleted.
+        // No copy is made while the names are deleted, so that the holes add up.
+        const grow = Math.floor(step / 600) % 2 === 0;
+        const i = random(pool);
+        const action = random(grow ? 24 : 60);
+        const [append, set, get, copy] = grow ? [8, 14, 18, 19] : [4, 7, 9, 9];
+        if (action < append) {
+          headers.append(stored(i), `a${step}`);
+          model.set(name(i), model.has(name(i)) ? `${model.get(name(i))}, a${step}` : `a${step}`);
+        } else if (action < set) {
+          headers.set(asked(i), `s${step}`);
+          model.set(name(i), `s${step}`);
+        } else if (action < get) {
+          expect(headers.get(asked(i))).toBe(model.get(name(i)) ?? null);
+          expect(headers.has(stored(i))).toBe(model.has(name(i)));
+        } else if (action < copy) {
+          // The other pair goes on from a copy of this one.
+          pairs = [
+            [headers, model],
+            [new Headers(headers), new Map(model)],
+          ];
+        } else {
+          headers.delete(asked(i));
+          model.delete(name(i));
+        }
+        if (step % 600 === 599) for (const [headers, model] of pairs) expectSame(headers, model, pool);
+      }
+    });
+
+    test("a name in 16-bit characters is the same name", () => {
+      const wide = (text: string) => ("\u{1F600}" + text).slice(2);
+      const headers = new Headers();
+      for (let i = 0; i < 80; i++) headers.set(i % 2 ? wide(stored(i)) : stored(i), `v${i}`);
+      for (let i = 0; i < 80; i++) {
+        expect(headers.get(i % 3 ? wide(asked(i)) : asked(i))).toBe(`v${i}`);
+        headers.append(i % 3 ? asked(i) : wide(asked(i)), "more");
+      }
+      expect(headers.count).toBe(80);
+      expect(headers.get(name(79))).toBe("v79, more");
+      headers.delete(wide(asked(79)));
+      expect(headers.has(name(79))).toBe(false);
+      expect(() => headers.get(wide("x-custom-\u00e9"))).toThrow("Invalid header name");
+    });
+
+    test("an iterator goes on while the names pass 64 and the index comes and goes", () => {
+      const headers = new Headers();
+      for (let i = 100; i < 164; i++) headers.set(name(i), "v");
+      const iterator = headers.keys();
+      const seen = [iterator.next().value, iterator.next().value];
+      expect(headers.get(name(163))).toBe("v");
+      headers.set(name(164), "v");
+      expect(headers.has(name(164))).toBe(true);
+      seen.push(iterator.next().value);
+      for (let i = 104; i < 164; i++) headers.delete(name(i));
+      expect(headers.has(name(165))).toBe(false);
+      expect([...seen, ...iterator]).toEqual([100, 101, 102, 103, 164].map(name));
+    });
+
+    test("a copy has its own names", () => {
+      const headers = new Headers();
+      for (let i = 0; i < 90; i++) headers.set(name(i), "v");
+      for (let i = 0; i < 10; i++) headers.delete(name(i));
+      const copy = new Headers(headers);
+      const request = new Request("http://localhost/", { headers });
+      const clone = request.clone();
+
+      copy.delete(name(89));
+      copy.set(name(5), "copy");
+      headers.set(name(89), "changed");
+      headers.delete(name(20));
+      expect([copy.count, copy.get(name(89)), copy.get(name(5)), copy.get(name(20))]).toEqual([80, null, "copy", "v"]);
+      expect([headers.count, headers.get(name(89)), headers.has(name(5))]).toEqual([79, "changed", false]);
+      expect([request.headers.count, clone.headers.get(name(89)), clone.headers.get(name(20))]).toEqual([80, "v", "v"]);
+      expect(Bun.deepEquals(request.headers, clone.headers)).toBe(true);
+      expect(Bun.deepEquals(headers, copy)).toBe(false);
+      // The copy was not asked for a name before its first delete.
+      const second = new Headers(headers);
+      for (let i = 10; i < 89; i++) second.delete(name(i));
+      expect(second.toJSON()).toEqual({ [name(89)]: "changed" });
+      expect(headers.count).toBe(79);
+    });
+
+    test.each([1, 4, 5, 17])("a copy has its own %d Set-Cookie values", count => {
+      const cookies = Array.from({ length: count }, (_, i) => `c${i}=1`);
+      const headers = new Headers(cookies.map(cookie => ["Set-Cookie", cookie]));
+      const copy = new Headers(headers);
+      copy.append("set-cookie", "more=1");
+      headers.delete("set-cookie");
+      expect(headers.getSetCookie()).toEqual([]);
+      expect(copy.getSetCookie()).toEqual([...cookies, "more=1"]);
+      expect([...copy]).toEqual([...cookies, "more=1"].map(cookie => ["set-cookie", cookie]));
+      copy.set("Set-Cookie", "one=1");
+      expect(copy.get("set-cookie")).toBe("one=1");
+      expect(copy.count).toBe(1);
+    });
+
+    // Sends one request with the given header lines and gives back the raw response.
+    async function rawRequest(server: { hostname?: string; port?: number }, fields: string[]) {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let response = "";
+      const socket = await Bun.connect({
+        hostname: server.hostname!,
+        port: server.port!,
+        socket: {
+          data(socket, chunk) {
+            response += chunk.toString("latin1");
+            const end = response.indexOf("\r\n\r\n");
+            if (end === -1) return;
+            const length = Number(/^content-length: (\d+)$/im.exec(response)?.[1]);
+            if (response.length === end + 4 + length) {
+              resolve(response);
+              socket.end();
+            }
+          },
+          error: (_, error) => reject(error),
+          close: () => reject(new Error("closed before the response ended: " + JSON.stringify(response))),
+        },
+      });
+      socket.write("GET / HTTP/1.1\r\nHost: a\r\n" + fields.map(field => field + "\r\n").join("") + "\r\n");
+      return promise;
+    }
+
+    test("what was deleted is not sent, and the rest is sent as it was first spelled", async () => {
+      const headers = new Headers();
+      for (let i = 0; i < 80; i++) headers.append(stored(i), `v${i}`);
+      for (let i = 1; i < 80; i += 2) headers.delete(asked(i));
+      for (let i = 0; i < 80; i += 4) headers.set(asked(i), `s${i}`);
+      const sent = Array.from({ length: 40 }, (_, i) => `X-Custom-${i * 2}: ${i % 2 ? "v" : "s"}${i * 2}`);
+      const names = Array.from({ length: 40 }, (_, i) => name(i * 2));
+
+      let received: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          received = Object.keys(req.headers.toJSON()).filter(key => key.startsWith("x-custom-"));
+          return new Response("ok", { headers });
+        },
+      });
+      const lines = (await rawRequest(server, sent)).split("\r\n");
+      expect(lines.filter(line => /^x-custom-/i.test(line))).toEqual(sent);
+      expect(lines.filter(line => /^[^:]*:\s*$/.test(line))).toEqual([]);
+      expect(received).toEqual(names);
+
+      // fetch() counts the headers and then copies them.
+      expect(await (await fetch(server.url, { headers })).text()).toBe("ok");
+      expect(received.toSorted()).toEqual(names.toSorted());
+    });
+
+    test("a request with many custom names and a repeated one", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch: req =>
+          Response.json([
+            req.headers.count,
+            req.headers.get(asked(0)),
+            req.headers.get(asked(79)),
+            Object.keys(req.headers.toJSON()).slice(1),
+          ]),
+      });
+      const fields = Array.from({ length: 80 }, (_, i) => `${stored(i)}: v${i}`);
+      const response = await rawRequest(server, [...fields, `${asked(0)}: again`, `${asked(79)}: again`]);
+      expect(JSON.parse(response.split("\r\n\r\n")[1])).toEqual([
+        81,
+        "v0, again",
+        "v79, again",
+        Array.from({ length: 80 }, (_, i) => name(i)),
+      ]);
+    });
+
+    test("a response with many custom names and a repeated one", async () => {
+      const fields = Array.from({ length: 80 }, (_, i) => `${stored(i)}: v${i}\r\n`).join("");
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket) {
+            socket.end(
+              `HTTP/1.1 200 OK\r\nContent-Length: 2\r\n${fields}${asked(0)}: again\r\n${asked(79)}: again\r\n\r\nok`,
+            );
+          },
+        },
+      });
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
+      expect(await response.text()).toBe("ok");
+      expect([response.headers.count, response.headers.get(asked(0)), response.headers.get(asked(79))]).toEqual([
+        81,
+        "v0, again",
+        "v79, again",
+      ]);
+      expect(Object.keys(response.headers.toJSON()).slice(1)).toEqual(Array.from({ length: 80 }, (_, i) => name(i)));
+      response.headers.delete(name(0));
+      expect([response.headers.count, response.headers.has(asked(0))]).toEqual([80, false]);
+    });
+
+    // Each of these walked every stored name once or twice per call, so the time grew with the square of the
+    // number of names. The spawn timeout tells the two apart. A debug build takes longer for one call than a
+    // release build takes for a scan, which is why the sizes differ.
+    const N = isDebug ? 12_000 : 200_000;
+    const setup = `
+      const N = ${N};
+      const names = Array.from({ length: N }, (_, i) => "x-custom-" + i);
+      const pairs = names.map(name => [name, "1"]);
+      const expectCount = headers => { if (headers.count !== N) throw new Error("count " + headers.count); };
+    `;
+    test.concurrent.each([
+      ["new Headers(record)", `expectCount(new Headers(Object.fromEntries(pairs)));`],
+      ["new Headers(pairs)", `expectCount(new Headers(pairs));`],
+      ["new Request(url, { headers })", `expectCount(new Request("http://a/", { headers: pairs }).headers);`],
+      ["new Response(body, { headers })", `expectCount(new Response(null, { headers: pairs }).headers);`],
+      ["append()", `const h = new Headers(); for (const name of names) h.append(name, "1"); expectCount(h);`],
+      ["set()", `const h = new Headers(); for (const name of names) h.set(name, "1"); expectCount(h);`],
+      [
+        "get() and has()",
+        `const h = new Headers(pairs);
+         for (const name of names) if (h.get(name) !== "1" || !h.has(name) || h.has(name + "-")) throw new Error(name);`,
+      ],
+      [
+        "get() on a copy",
+        `const h = new Headers(new Headers(pairs)); for (const name of names) if (h.get(name) !== "1") throw new Error(name);`,
+      ],
+      [
+        "delete(), last name first",
+        `const h = new Headers(pairs); for (const name of names.toReversed()) h.delete(name); if (h.count) throw new Error("left");`,
+      ],
+      [
+        "delete(), first name first",
+        `const h = new Headers(pairs); for (const name of names) h.delete(name); if (h.count) throw new Error("left");`,
+      ],
+      [
+        "delete() on a copy",
+        `const h = new Headers(new Headers(pairs)); for (const name of names.toReversed()) h.delete(name); if (h.count) throw new Error("left");`,
+      ],
+    ])(
+      "%s takes time in proportion to the number of names",
+      async (_, body) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", setup + body + `console.log("done");`],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 15_000,
+          killSignal: "SIGKILL",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+          stdout: "done",
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+      60_000,
+    );
+  });
   describe("count", () => {
     // @ts-ignore
     const it = typeof new Headers()?.count !== "undefined" ? test : test.skip;

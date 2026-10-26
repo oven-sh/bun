@@ -77,6 +77,80 @@ String lowercaseHeaderName(const String& name)
     return result;
 }
 
+#if !ASSERT_ENABLED
+static_assert(sizeof(HTTPHeaderMap) == 80, "every Headers object holds one of these");
+#endif
+
+HTTPHeaderMap::UncommonHeaderStore::Index& HTTPHeaderMap::UncommonHeaderStore::index() const
+{
+    if (m_index.isEmpty()) {
+        m_index.reserveInitialCapacity(m_slots.size());
+        for (unsigned i = 0; i < m_slots.size(); ++i)
+            m_index.add(m_slots[i].key, i);
+    }
+    return m_index;
+}
+
+const String* HTTPHeaderMap::UncommonHeaderStore::findInIndex(StringView name) const
+{
+    auto& index = this->index();
+    auto it = index.find<ASCIICaseInsensitiveStringViewHashTranslator>(name);
+    return it == index.end() ? nullptr : &m_slots[it->value].value;
+}
+
+void HTTPHeaderMap::UncommonHeaderStore::indexLastSlot()
+{
+    if (!m_index.isEmpty())
+        m_index.add(m_slots.last().key, m_slots.size() - 1);
+}
+
+void HTTPHeaderMap::UncommonHeaderStore::removeHoles(unsigned names)
+{
+    if (m_slots.size() == names)
+        return;
+    decltype(m_slots) headers;
+    headers.reserveInitialCapacity(names);
+    for (auto& slot : m_slots) {
+        if (!slot.key.isNull())
+            headers.append(WTF::move(slot));
+    }
+    m_slots = WTF::move(headers);
+}
+
+bool HTTPHeaderMap::UncommonHeaderStore::removeInIndex(StringView name)
+{
+    auto& index = this->index();
+    auto it = index.find<ASCIICaseInsensitiveStringViewHashTranslator>(name);
+    if (it == index.end())
+        return false;
+    // A hole keeps the names behind it at the positions that the index has for them.
+    m_slots[it->value] = {};
+    index.remove(it);
+
+    // With more holes than names, one pass takes the holes out. The names move, so the index starts again.
+    unsigned names = index.size();
+    if (m_slots.size() - names > names) {
+        removeHoles(names);
+        index.clear();
+    }
+    return true;
+}
+
+size_t HTTPHeaderMap::UncommonHeaderStore::memoryCost() const
+{
+    size_t cost = m_slots.size() * sizeof(UncommonHeader) + m_index.capacity() * sizeof(KeyValuePair<String, unsigned>);
+    for (auto& header : *this) {
+        cost += header.key.sizeInBytes();
+        cost += header.value.sizeInBytes();
+    }
+    return cost;
+}
+
+bool HTTPHeaderMap::SetCookieHeaders::tryAppend(const String& value)
+{
+    return Bun::tryAppendWithinLimit(values(), value);
+}
+
 HTTPHeaderMap::HTTPHeaderMap()
 {
 }
@@ -93,17 +167,12 @@ String HTTPHeaderMap::get(const StringView name) const
 size_t HTTPHeaderMap::memoryCost() const
 {
     size_t cost = m_commonHeaders.size() * sizeof(CommonHeader);
-    cost += m_uncommonHeaders.size() * sizeof(UncommonHeader);
+    cost += m_uncommonHeaders.memoryCost();
     cost += m_setCookieHeaders.size() * sizeof(String);
     for (auto& header : m_commonHeaders)
         cost += header.value.sizeInBytes();
 
-    for (auto& header : m_uncommonHeaders) {
-        cost += header.key.sizeInBytes();
-        cost += header.value.sizeInBytes();
-    }
-
-    for (auto& header : m_setCookieHeaders)
+    for (auto& header : m_setCookieHeaders.span())
         cost += header.sizeInBytes();
 
     return cost;
@@ -111,10 +180,8 @@ size_t HTTPHeaderMap::memoryCost() const
 
 String HTTPHeaderMap::getUncommonHeader(const StringView name) const
 {
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
-    return index != notFound ? m_uncommonHeaders[index].value : String();
+    auto* stored = m_uncommonHeaders.find(name);
+    return stored ? *stored : String();
 }
 
 void HTTPHeaderMap::set(const String& name, const String& value)
@@ -130,38 +197,18 @@ void HTTPHeaderMap::set(const String& name, const String& value)
 
 void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
 {
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
-    if (index == notFound)
-        m_uncommonHeaders.append(UncommonHeader { name, value });
+    if (auto* stored = m_uncommonHeaders.find(name))
+        *stored = value;
     else
-        m_uncommonHeaders[index].value = value;
-}
-
-void HTTPHeaderMap::addUncommonHeader(const String& name, const String& value)
-{
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
-    if (index == notFound)
-        m_uncommonHeaders.append(UncommonHeader { name, value });
-    else
-        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+        m_uncommonHeaders.append(name, value);
 }
 
 void HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const String& value)
 {
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
-    if (index == notFound) {
-        std::span<Latin1Character> ptr;
-        auto nameCopy = WTF::String::createUninitialized(name.length(), ptr);
-        memcpy(ptr.data(), name.span8().data(), name.length());
-        m_uncommonHeaders.append(UncommonHeader { nameCopy, value });
-    } else
-        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+    if (auto* stored = m_uncommonHeaders.find(name))
+        *stored = makeString(*stored, ", "_s, value);
+    else
+        m_uncommonHeaders.append(name.toString(), value);
 }
 
 void HTTPHeaderMap::add(const String& name, const String& value)
@@ -171,13 +218,10 @@ void HTTPHeaderMap::add(const String& name, const String& value)
         add(headerName, value);
         return;
     }
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
-    if (index == notFound)
-        m_uncommonHeaders.append(UncommonHeader { name, value });
+    if (auto* stored = m_uncommonHeaders.find(name))
+        *stored = makeString(*stored, ", "_s, value);
     else
-        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+        m_uncommonHeaders.append(name, value);
 }
 
 bool HTTPHeaderMap::contains(const StringView name) const
@@ -186,9 +230,7 @@ bool HTTPHeaderMap::contains(const StringView name) const
     if (findHTTPHeaderName(name, headerName))
         return contains(headerName);
 
-    return m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    }) != notFound;
+    return !!m_uncommonHeaders.find(name);
 }
 
 bool HTTPHeaderMap::remove(const StringView name)
@@ -208,35 +250,34 @@ bool HTTPHeaderMap::removeUncommonHeader(const StringView name)
     ASSERT(!findHTTPHeaderName(name, headerName));
 #endif
 
-    return m_uncommonHeaders.removeFirstMatching([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
+    return m_uncommonHeaders.remove(name);
 }
 
 std::optional<String> HTTPHeaderMap::tryJoinSetCookieHeaders() const
 {
-    unsigned count = m_setCookieHeaders.size();
+    auto cookies = m_setCookieHeaders.span();
+    size_t count = cookies.size();
     switch (count) {
     case 0:
         return String();
     case 1:
-        return m_setCookieHeaders[0];
+        return cookies[0];
     default:
         break;
     }
 
     uint64_t length = 2 * static_cast<uint64_t>(count - 1);
-    for (const auto& header : m_setCookieHeaders)
+    for (const auto& header : cookies)
         length += header.length();
     if (Bun::exceedsStringLimit(length)) [[unlikely]]
         return std::nullopt;
 
     StringBuilder builder { OverflowPolicy::RecordOverflow };
     builder.reserveCapacity(static_cast<unsigned>(length));
-    builder.append(m_setCookieHeaders[0]);
-    for (unsigned i = 1; i < count; ++i) {
+    builder.append(cookies[0]);
+    for (size_t i = 1; i < count; ++i) {
         builder.append(", "_s);
-        builder.append(m_setCookieHeaders[i]);
+        builder.append(cookies[i]);
     }
     if (builder.hasOverflowed()) [[unlikely]]
         return std::nullopt;
@@ -260,24 +301,14 @@ HTTPHeaderMap::HeaderIndex HTTPHeaderMap::indexOf(HTTPHeaderName name) const
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;
     });
-    return (HeaderIndex) { .index = index, .isCommon = true };
-}
-
-HTTPHeaderMap::HeaderIndex HTTPHeaderMap::indexOf(const String& name) const
-{
-    auto index = m_uncommonHeaders.findIf([&](auto& header) {
-        return equalIgnoringASCIICase(header.key, name);
-    });
-    return (HeaderIndex) { .index = index, .isCommon = false };
+    return (HeaderIndex) { .index = index };
 }
 
 String HTTPHeaderMap::getIndex(HTTPHeaderMap::HeaderIndex index) const
 {
     if (index.index == notFound)
         return String();
-    if (index.isCommon)
-        return m_commonHeaders[index.index].value;
-    return m_uncommonHeaders[index.index].value;
+    return m_commonHeaders[index.index].value;
 }
 void HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
 {
@@ -301,11 +332,7 @@ bool HTTPHeaderMap::setIndex(HTTPHeaderMap::HeaderIndex index, const String& val
     if (!index.isValid())
         return false;
 
-    if (index.isCommon) {
-        m_commonHeaders[index.index].value = value;
-    } else {
-        m_uncommonHeaders[index.index].value = value;
-    }
+    m_commonHeaders[index.index].value = value;
     return true;
 }
 
@@ -334,7 +361,7 @@ bool HTTPHeaderMap::remove(HTTPHeaderName name)
 
 bool HTTPHeaderMap::tryAddSetCookie(const String& value)
 {
-    return m_setCookieHeaders.size() < Bun::maxVectorSize<String>() && m_setCookieHeaders.tryAppend(value);
+    return m_setCookieHeaders.tryAppend(value);
 }
 
 void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)

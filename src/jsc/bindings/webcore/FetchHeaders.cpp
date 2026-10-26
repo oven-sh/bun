@@ -40,6 +40,10 @@ namespace WebCore {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FetchHeaders);
 
+#if !ASSERT_ENABLED
+static_assert(sizeof(FetchHeaders) == 96, "every Headers object is one of these");
+#endif
+
 // https://fetch.spec.whatwg.org/#concept-headers-remove-privileged-no-cors-request-headers
 static void removePrivilegedNoCORSRequestHeaders(HTTPHeaderMap& headers)
 {
@@ -136,26 +140,28 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 
         return {};
     }
-    auto index = headers.indexOf(name);
-    if (index.isValid()) {
-        combinedTemp = tryMakeString(headers.getIndex(index), ", "_s, normalizedValue);
-        if (combinedTemp.isNull() || Bun::exceedsStringLimit(combinedTemp.length())) [[unlikely]]
-            return Exception { OutOfMemoryError };
-        valueToSet = &combinedTemp;
-    }
-    auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard);
-    if (canWriteResult.hasException())
-        return canWriteResult.releaseException();
-    if (!canWriteResult.releaseReturnValue())
-        return {};
-
-    if (!headers.setIndex(index, *valueToSet))
-        headers.set(name, *valueToSet);
+    ExceptionOr<void> result;
+    headers.updateUncommonHeader(name, [&](const String* stored) -> const String* {
+        if (stored) {
+            combinedTemp = tryMakeString(*stored, ", "_s, normalizedValue);
+            if (combinedTemp.isNull() || Bun::exceedsStringLimit(combinedTemp.length())) [[unlikely]] {
+                result = Exception { OutOfMemoryError };
+                return nullptr;
+            }
+            valueToSet = &combinedTemp;
+        }
+        auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard);
+        if (canWriteResult.hasException()) {
+            result = canWriteResult.releaseException();
+            return nullptr;
+        }
+        return canWriteResult.releaseReturnValue() ? valueToSet : nullptr;
+    });
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
     //     removePrivilegedNoCORSRequestHeaders(headers);
 
-    return {};
+    return result;
 }
 
 static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
@@ -220,11 +226,7 @@ ExceptionOr<void> FetchHeaders::fill(const Init& headerInit)
 ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 {
     if (this->size() == 0) {
-        HTTPHeaderMap headers;
-        headers.commonHeaders().appendVector(otherHeaders.internalHeaders().commonHeaders());
-        headers.uncommonHeaders().appendVector(otherHeaders.internalHeaders().uncommonHeaders());
-        headers.getSetCookieHeaders().appendVector(otherHeaders.internalHeaders().getSetCookieHeaders());
-        setInternalHeaders(WTF::move(headers));
+        setInternalHeaders(HTTPHeaderMap { otherHeaders.internalHeaders() });
         return {};
     }
 

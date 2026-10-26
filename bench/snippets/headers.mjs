@@ -153,4 +153,56 @@ bench("Object.fromEntries(headers)", function () {
   return Object.fromEntries(big);
 });
 
+// Names that are not in Bun's table of known header names.
+const custom = {
+  "X-Request-Id": "b7a1c9f0",
+  "X-Forwarded-For": "203.0.113.7",
+  "X-Forwarded-Proto": "https",
+  "X-Real-IP": "203.0.113.7",
+  "Traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "Baggage": "tenant=a",
+  "Sec-CH-UA-Platform": '"Linux"',
+  "Priority": "u=1, i",
+};
+const customNames = Object.keys(custom);
+const customHeaders = new Headers(custom);
+
+bench("new Headers(8 custom names)", () => new Headers(custom));
+
+bench("Header.append (8 custom names)", () => {
+  const headers = new Headers();
+  for (const name of customNames) headers.append(name, "1");
+  return headers;
+});
+
+bench("Header.set (8 custom names)", () => {
+  const headers = new Headers();
+  for (const name of customNames) headers.set(name, "1");
+  return headers;
+});
+
+bench("Header.get (custom, last of 8)", () => customHeaders.get("priority"));
+bench("Header.has (custom, not stored)", () => customHeaders.has("x-not-stored"));
+bench("new Headers(headers) (8 custom names)", () => new Headers(customHeaders));
+
+bench("Header.delete, Header.append (custom, first of 8)", () => {
+  customHeaders.delete("x-request-id");
+  customHeaders.append("x-request-id", "b7a1c9f0");
+});
+
+for (const count of [100, 1000, 10000]) {
+  const names = Array.from({ length: count }, (_, i) => `x-custom-${i}`);
+  const record = Object.fromEntries(names.map(name => [name, "1"]));
+  const headers = new Headers(record);
+  const last = names[count - 1];
+
+  bench(`new Headers(${count} custom names)`, () => new Headers(record));
+  bench(`Header.get (custom, last of ${count})`, () => headers.get(last));
+  bench(`Header.delete, Header.append (custom, first of ${count})`, () => {
+    const name = names[0];
+    headers.delete(name);
+    headers.append(name, "1");
+  });
+}
+
 await run();

@@ -27,7 +27,12 @@
 #pragma once
 
 #include "HTTPHeaderNames.h"
+#include <iterator>
+#include <memory>
+#include <span>
 #include <utility>
+#include <wtf/HashMap.h>
+#include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -52,7 +57,6 @@ public:
 
     struct HeaderIndex {
         size_t index;
-        bool isCommon;
 
         bool isValid() const { return index != notFound; }
     };
@@ -65,11 +69,145 @@ public:
     };
 
     typedef Vector<CommonHeader, 2, CrashOnOverflow, 6> CommonHeadersVector;
-    typedef Vector<UncommonHeader, 0, CrashOnOverflow, 0> UncommonHeadersVector;
+
+    // The headers whose name has no HTTPHeaderName, in the order they were added. Past indexThreshold a hash index
+    // finds a name, and remove() leaves a hole in the vector, so only this class sees the vector.
+    class UncommonHeaderStore {
+    public:
+        class const_iterator {
+        public:
+            const UncommonHeader& operator*() const { return *m_position; }
+            const UncommonHeader* operator->() const { return m_position; }
+            const_iterator& operator++()
+            {
+                ++m_position;
+                skipHoles();
+                return *this;
+            }
+            bool operator==(std::default_sentinel_t) const { return m_position == m_end; }
+
+        private:
+            friend class UncommonHeaderStore;
+            const_iterator(const UncommonHeader* position, const UncommonHeader* end)
+                : m_position(position)
+                , m_end(end)
+            {
+                skipHoles();
+            }
+            void skipHoles()
+            {
+                while (m_position != m_end && m_position->key.isNull())
+                    ++m_position;
+            }
+
+            const UncommonHeader* m_position;
+            const UncommonHeader* m_end;
+        };
+
+        UncommonHeaderStore() = default;
+        // A copy starts without the index and without the holes.
+        UncommonHeaderStore(const UncommonHeaderStore& other)
+            : m_slots(other.m_slots)
+        {
+            if (usesIndex()) [[unlikely]]
+                removeHoles(other.size());
+        }
+        UncommonHeaderStore(UncommonHeaderStore&&) = default;
+        UncommonHeaderStore& operator=(const UncommonHeaderStore& other) { return *this = UncommonHeaderStore { other }; }
+        UncommonHeaderStore& operator=(UncommonHeaderStore&&) = default;
+
+        const_iterator begin() const { return { m_slots.begin(), m_slots.end() }; }
+        std::default_sentinel_t end() const { return std::default_sentinel; }
+        bool isEmpty() const { return m_slots.isEmpty(); }
+        unsigned size() const { return m_index.isEmpty() ? m_slots.size() : m_index.size(); }
+        size_t memoryCost() const;
+
+        // The value stored for a name, or null. The pointer is good until the next append() or remove().
+        template<typename NameType> const String* find(const NameType& name) const
+        {
+            if (usesIndex()) [[unlikely]]
+                return findInIndex(name);
+            for (auto& header : m_slots) {
+                if (equalIgnoringASCIICase(header.key, name))
+                    return &header.value;
+            }
+            return nullptr;
+        }
+        template<typename NameType> String* find(const NameType& name) { return const_cast<String*>(std::as_const(*this).find(name)); }
+        // For a name that find() has just not found.
+        void append(const String& name, const String& value)
+        {
+            ASSERT(!find(name));
+            m_slots.append(UncommonHeader { name, value });
+            if (usesIndex()) [[unlikely]]
+                indexLastSlot();
+        }
+        bool remove(StringView name)
+        {
+            if (usesIndex()) [[unlikely]]
+                return removeInIndex(name);
+            return m_slots.removeFirstMatching([&](auto& header) {
+                return equalIgnoringASCIICase(header.key, name);
+            });
+        }
+
+    private:
+        typedef HashMap<String, unsigned, ASCIICaseInsensitiveHash> Index;
+
+        // With more slots than this, a hash index finds a name. Up to here a scan does: a small map has nothing to build or to hold for it.
+        static constexpr unsigned indexThreshold = 64;
+
+        bool usesIndex() const { return m_slots.size() > indexThreshold; }
+        Index& index() const;
+        // Out of line, so that the scans stay as small as they were without an index.
+        NEVER_INLINE const String* findInIndex(StringView name) const;
+        NEVER_INLINE bool removeInIndex(StringView name);
+        NEVER_INLINE void indexLastSlot();
+        // Takes the holes out, which leaves the given number of headers.
+        NEVER_INLINE void removeHoles(unsigned names);
+
+        // The headers and the holes. There is a hole only while usesIndex().
+        Vector<UncommonHeader, 0, CrashOnOverflow, 0> m_slots;
+        // Name to position in m_slots, built by the first lookup that usesIndex(). While it is empty, m_slots has no hole.
+        mutable Index m_index;
+    };
+
+    // The Set-Cookie values in the order they were added. One pointer, because few maps have any.
+    class SetCookieHeaders {
+    public:
+        SetCookieHeaders() = default;
+        SetCookieHeaders(const SetCookieHeaders& other)
+            : m_values(other.m_values ? makeUnique<Values>(*other.m_values) : nullptr)
+        {
+        }
+        SetCookieHeaders(SetCookieHeaders&&) = default;
+        SetCookieHeaders& operator=(const SetCookieHeaders& other) { return *this = SetCookieHeaders { other }; }
+        SetCookieHeaders& operator=(SetCookieHeaders&&) = default;
+
+        std::span<const String> span() const { return m_values ? m_values->span() : std::span<const String> {}; }
+        bool isEmpty() const { return !size(); }
+        unsigned size() const { return m_values ? m_values->size() : 0; }
+        void append(const String& value) { values().append(value); }
+        // Returns false if the list can't grow.
+        bool tryAppend(const String& value);
+        void clear() { m_values = nullptr; }
+
+    private:
+        typedef Vector<String, 4> Values;
+
+        Values& values()
+        {
+            if (!m_values)
+                m_values = makeUnique<Values>();
+            return *m_values;
+        }
+
+        std::unique_ptr<Values> m_values;
+    };
 
     class HTTPHeaderMapConstIterator {
     public:
-        HTTPHeaderMapConstIterator(const HTTPHeaderMap& table, CommonHeadersVector::const_iterator commonHeadersIt, UncommonHeadersVector::const_iterator uncommonHeadersIt, Vector<String, 0>::const_iterator setCookiesIter)
+        HTTPHeaderMapConstIterator(const HTTPHeaderMap& table, CommonHeadersVector::const_iterator commonHeadersIt, UncommonHeaderStore::const_iterator uncommonHeadersIt)
             : m_table(table)
             , m_commonHeadersIt(commonHeadersIt)
             , m_uncommonHeadersIt(uncommonHeadersIt)
@@ -108,10 +246,9 @@ public:
             return *this;
         }
 
-        bool operator!=(const HTTPHeaderMapConstIterator& other) const { return !(*this == other); }
-        bool operator==(const HTTPHeaderMapConstIterator& other) const
+        bool operator==(std::default_sentinel_t) const
         {
-            return m_commonHeadersIt == other.m_commonHeadersIt && m_uncommonHeadersIt == other.m_uncommonHeadersIt;
+            return m_commonHeadersIt == m_table.m_commonHeaders.end() && m_uncommonHeadersIt == std::default_sentinel;
         }
 
     private:
@@ -124,7 +261,7 @@ public:
             m_keyValue.value = it->value;
             return true;
         }
-        bool updateKeyValue(UncommonHeadersVector::const_iterator it)
+        bool updateKeyValue(UncommonHeaderStore::const_iterator it)
         {
             if (it == m_table.uncommonHeaders().end())
                 return false;
@@ -136,7 +273,7 @@ public:
 
         const HTTPHeaderMap& m_table;
         CommonHeadersVector::const_iterator m_commonHeadersIt;
-        UncommonHeadersVector::const_iterator m_uncommonHeadersIt;
+        UncommonHeaderStore::const_iterator m_uncommonHeadersIt;
         KeyValue m_keyValue;
     };
     typedef HTTPHeaderMapConstIterator const_iterator;
@@ -156,7 +293,6 @@ public:
 
     WEBCORE_EXPORT String getIndex(HeaderIndex index) const;
     WEBCORE_EXPORT bool setIndex(HeaderIndex index, const String& value);
-    HeaderIndex indexOf(const String& name) const;
     HeaderIndex indexOf(HTTPHeaderName name) const;
 
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
@@ -177,54 +313,35 @@ public:
     template<size_t length> bool contains(const char (&)[length]) = delete;
     template<size_t length> bool remove(const char (&)[length]) = delete;
 
-    const Vector<String, 0>& getSetCookieHeaders() const { return m_setCookieHeaders; }
+    std::span<const String> getSetCookieHeaders() const { return m_setCookieHeaders.span(); }
 
     const CommonHeadersVector& commonHeaders() const { return m_commonHeaders; }
-    const UncommonHeadersVector& uncommonHeaders() const { return m_uncommonHeaders; }
-    CommonHeadersVector& commonHeaders() { return m_commonHeaders; }
-    UncommonHeadersVector& uncommonHeaders() { return m_uncommonHeaders; }
-    Vector<String, 0>& getSetCookieHeaders() { return m_setCookieHeaders; }
+    const UncommonHeaderStore& uncommonHeaders() const { return m_uncommonHeaders; }
 
-    const_iterator begin() const { return const_iterator(*this, m_commonHeaders.begin(), m_uncommonHeaders.begin(), m_setCookieHeaders.begin()); }
-    const_iterator end() const { return const_iterator(*this, m_commonHeaders.end(), m_uncommonHeaders.end(), m_setCookieHeaders.end()); }
-
-    friend bool operator==(const HTTPHeaderMap& a, const HTTPHeaderMap& b)
-    {
-        if (a.m_commonHeaders.size() != b.m_commonHeaders.size() || a.m_uncommonHeaders.size() != b.m_uncommonHeaders.size() || a.m_setCookieHeaders.size() != b.m_setCookieHeaders.size())
-            return false;
-
-        for (auto& commonHeader : a.m_commonHeaders) {
-            if (b.get(commonHeader.key) != commonHeader.value)
-                return false;
-        }
-
-        for (auto& uncommonHeader : a.m_setCookieHeaders) {
-            if (b.m_setCookieHeaders.find(uncommonHeader) == notFound)
-                return false;
-        }
-
-        for (auto& uncommonHeader : a.m_uncommonHeaders) {
-            if (b.getUncommonHeader(uncommonHeader.key) != uncommonHeader.value)
-                return false;
-        }
-
-        return true;
-    }
-
-    friend bool operator!=(const HTTPHeaderMap& a, const HTTPHeaderMap& b)
-    {
-        return !(a == b);
-    }
+    const_iterator begin() const { return const_iterator(*this, m_commonHeaders.begin(), m_uncommonHeaders.begin()); }
+    std::default_sentinel_t end() const { return std::default_sentinel; }
 
     void setUncommonHeader(const String& name, const String& value);
-    void addUncommonHeader(const String& name, const String& value);
     void addUncommonHeaderCloneName(const StringView name, const String& value);
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
+    // Looks the name up once. `newValue` gets the value stored for the name, or nullptr when there is none, and
+    // returns the value to store. A null return leaves the map as it is.
+    template<typename Functor> void updateUncommonHeader(const String& name, NOESCAPE const Functor& newValue)
+    {
+        String* stored = m_uncommonHeaders.find(name);
+        const String* value = newValue(stored);
+        if (!value)
+            return;
+        if (stored)
+            *stored = *value;
+        else
+            m_uncommonHeaders.append(name, *value);
+    }
 
 private:
     CommonHeadersVector m_commonHeaders;
-    UncommonHeadersVector m_uncommonHeaders;
-    Vector<String, 0> m_setCookieHeaders;
+    UncommonHeaderStore m_uncommonHeaders;
+    SetCookieHeaders m_setCookieHeaders;
 };
 
 } // namespace WebCore

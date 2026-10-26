@@ -2608,7 +2608,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
         if (WebCore::findHTTPHeaderName(nameView, name)) {
             map.add(name, WTF::move(value));
         } else {
-            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+            map.addUncommonHeaderCloneName(nameView, value);
         }
     }
     headers->setInternalHeaders(WTF::move(map));
@@ -2632,7 +2632,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
         if (WebCore::findHTTPHeaderName(nameView, hn)) {
             map.add(hn, WTF::move(value));
         } else {
-            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+            map.addUncommonHeaderCloneName(nameView, value);
         }
     });
     headers->setInternalHeaders(WTF::move(map));

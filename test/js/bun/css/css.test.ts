@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -7956,6 +7957,188 @@ describe("css tests", () => {
     minify_test("@font-palette-values --{base-palette:99999", "@font-palette-values --{base-palette:99999}");
   });
 
+  // https://drafts.csswg.org/css-cascade-5/#revert-rule-keyword
+  describe("revert-rule", () => {
+    // The keyword gives a property the value it has without the rule that
+    // holds the keyword. In one rule with the declarations of another rule it
+    // takes those away too, so a stylesheet that holds the keyword keeps its
+    // style rules apart.
+    minify_test(".a{color:red}.a{color:revert-rule}", ".a{color:red}.a{color:revert-rule}");
+    minify_test(".a{margin:1px}.a{margin-top:revert-rule}", ".a{margin:1px}.a{margin-top:revert-rule}");
+    minify_test(".a{top:1px}.a{inset-block-start:revert-rule}", ".a{top:1px}.a{inset-block-start:revert-rule}");
+    minify_test(".a{--x:red}.a{--x:revert-rule}", ".a{--x:red}.a{--x:revert-rule}");
+    minify_test(".a{color:red}.a{all:revert-rule}", ".a{color:red}.a{all:revert-rule}");
+    minify_test(".a,.b{color:red}.a,.b{color:revert-rule}", ".a,.b{color:red}.a,.b{color:revert-rule}");
+    minify_test(".a{color:red}.a{color:Revert-Rule}", ".a{color:red}.a{color:Revert-Rule}");
+    minify_test(".a{color:red}.a{color:revert\\-rule}", ".a{color:red}.a{color:revert-rule}");
+    minify_test(".a{color:red}.a{color:revert-rule!important}", ".a{color:red}.a{color:revert-rule!important}");
+    minify_test(
+      ".a{color:red!important}.a{color:revert-rule!important}",
+      ".a{color:red!important}.a{color:revert-rule!important}",
+    );
+    cssTest(".a{color:red}.a{color:revert-rule}", ".a {\n  color: red;\n}\n\n.a {\n  color: revert-rule;\n}\n");
+    prefix_test(
+      ".a{color:lab(50% 0 0)}.a{color:revert-rule}",
+      indoc`
+        .a {
+          color: #777;
+          color: lab(50% 0 0);
+        }
+
+        .a {
+          color: revert-rule;
+        }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+    // An `!important` keyword in the earlier rule wins over a later normal
+    // declaration, and then rolls back to it.
+    minify_test(".a{color:revert-rule!important}.a{color:red}", ".a{color:revert-rule!important}.a{color:red}");
+    minify_test(
+      ".a{margin:revert-rule!important}.a{margin-top:1px}",
+      ".a{margin:revert-rule!important}.a{margin-top:1px}",
+    );
+    // A later rule does not remove the rule that the keyword rolls back to.
+    minify_test(".a{color:red}.b{top:0}.a{color:revert-rule}", ".a{color:red}.b{top:0}.a{color:revert-rule}");
+    minify_test(".a{--x:red}.b{top:0}.a{--x:revert-rule}", ".a{--x:red}.b{top:0}.a{--x:revert-rule}");
+
+    // The keyword can be a part of the value: a fallback, or a branch of `if()`.
+    minify_test(".a{color:red}.a{color:var(--x,revert-rule)}", ".a{color:red}.a{color:var(--x,revert-rule)}");
+    minify_test(
+      ".a{color:red}.a{color:var(--x,var(--y,revert-rule))}",
+      ".a{color:red}.a{color:var(--x,var(--y,revert-rule))}",
+    );
+    // https://github.com/parcel-bundler/lightningcss/issues/580#issuecomment-3815797649
+    minify_test(
+      ".test{font-size:36px;color:green}.test{color:var(--foo, revert-rule)}",
+      ".test{color:green;font-size:36px}.test{color:var(--foo,revert-rule)}",
+    );
+    // An empty `--e` leaves the keyword alone in the value.
+    minify_test(".a{color:red}.a{color:var(--e) revert-rule}", ".a{color:red}.a{color:var(--e)revert-rule}");
+    minify_test(".a{color:red}.a{color:env(x,revert-rule)}", ".a{color:red}.a{color:env(x,revert-rule)}");
+    minify_test(".a{color:red}.a{color:attr(data-c,revert-rule)}", ".a{color:red}.a{color:attr(data-c,revert-rule)}");
+    minify_test(
+      ".a{border-radius:5px}.a{border-radius:if(style(--mode:sharp):0px;else:revert-rule)}",
+      ".a{border-radius:5px}.a{border-radius:if(style(--mode:sharp):0px;else:revert-rule)}",
+    );
+    minify_test(
+      ".a{color:red}.a{color:light-dark(var(--x,revert-rule),blue)}",
+      ".a{color:red}.a{color:light-dark(var(--x,revert-rule),blue)}",
+    );
+    prefix_test(
+      ".a{color:red}.a{color:light-dark(var(--x,revert-rule),blue)}",
+      indoc`
+        .a {
+          color: red;
+        }
+
+        .a {
+          color: var(--buncss-light, var(--x, revert-rule)) var(--buncss-dark, blue);
+        }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // The keyword is known per stylesheet, so rules that do not have it stay
+    // apart too. That is the price of one flag for the stylesheet.
+    minify_test(".z{color:revert-rule}.a{color:red}.a{top:0}", ".z{color:revert-rule}.a{color:red}.a{top:0}");
+    // No merge is safe there. Block equality does not read the names in
+    // `transition-property`, where a lone `revert-rule` parses as a name.
+    minify_test(
+      ".z{color:revert-rule}.a{transition-property:fill}.b{transition-property:revert-rule}",
+      ".z{color:revert-rule}.a{transition-property:fill}.b{transition-property:revert-rule}",
+    );
+    minify_test(
+      ".z{color:revert-rule}.a{transition-property:fill}.a{transition-property:revert-rule}",
+      ".z{color:revert-rule}.a{transition-property:fill}.a{transition-property:revert-rule}",
+    );
+    minify_test(
+      ".z{color:revert-rule}.a{transition-property:fill}.b{top:0}.a{transition-property:revert-rule}",
+      ".z{color:revert-rule}.a{transition-property:fill}.b{top:0}.a{transition-property:revert-rule}",
+    );
+    // Chrome 153 computes another `top` when the repeated rule is removed.
+    minify_test(
+      ".a{top:6px}.a{inset-block-start:5px;top:revert-rule!important}.a{inset-block-start:5px;top:revert-rule!important}",
+      ".a{top:6px}.a{inset-block-start:5px;top:revert-rule!important}.a{inset-block-start:5px;top:revert-rule!important}",
+    );
+
+    // Nested rule lists keep their rules apart the same way.
+    minify_test(".p{.a{color:red}.a{color:revert-rule}}", ".p{& .a{color:red}& .a{color:revert-rule}}");
+    minify_test("@layer l{.a{color:red}.a{color:revert-rule}}", "@layer l{.a{color:red}.a{color:revert-rule}}");
+    minify_test(
+      "@supports (top:0){.a{color:red}.a{color:revert-rule}}",
+      "@supports (top:0){.a{color:red}.a{color:revert-rule}}",
+    );
+    minify_test(
+      "@media print{.a{color:red}}@media print{.a{color:revert-rule}}",
+      "@media print{.a{color:red}.a{color:revert-rule}}",
+    );
+
+    // In one rule nothing changes.
+    minify_test(".a{top:1px;top:revert-rule}", ".a{top:1px;top:revert-rule}");
+
+    // A stylesheet that does not hold the keyword merges as before.
+    minify_test(".a{top:1px}.a{top:var(--x)}", ".a{top:1px;top:var(--x)}");
+    minify_test('.a{content:"x"}.a{content:"revert-rule"}', '.a{content:"x";content:"revert-rule"}');
+    minify_test(".revert-rule{color:red}.revert-rule{top:0}", ".revert-rule{color:red;top:0}");
+    minify_test(".a{top:1px}.b{left:0}.a{top:2px}", ".b{left:0}.a{top:2px}");
+    // `revert` and `revert-layer` roll back an origin or a layer. Both rules are in it.
+    minify_test(".a{top:1px}.a{top:revert}", ".a{top:1px;top:revert}");
+    minify_test(".a{top:1px}.a{top:revert-layer}", ".a{top:1px;top:revert-layer}");
+
+    // A lone `revert-rule` in these properties parses as a name, so the
+    // stylesheet is not seen to hold the keyword and the rules merge.
+    // https://github.com/oven-sh/bun/pull/42022 makes the word reserved.
+    for (const property of [
+      "animation",
+      "animation-name",
+      "font-family",
+      "transition",
+      "transition-property",
+      "view-transition-class",
+      "view-transition-group",
+      "view-transition-name",
+    ]) {
+      const source = `.a{${property}:initial}.a{${property}:revert-rule}`;
+      test.todo(source, () => {
+        expect(minify_test_with_options(source, source)).toBe(source);
+      });
+    }
+    // `color-scheme` reads a CSS-wide keyword as an unknown scheme and prints
+    // `normal` for it, in one rule too. #42022 changes that parser.
+    test.todo(".a{color-scheme:dark}.a{color-scheme:revert-rule}", () => {
+      const source = ".a{color-scheme:dark}.a{color-scheme:revert-rule}";
+      expect(minify_test_with_options(source, source)).toBe(source);
+    });
+    // The keyword can come from outside the text of the stylesheet: the
+    // `result` of a custom function, an attribute that `attr()` reads, a name
+    // that `ident()` builds. The stylesheet is not seen to hold it.
+    for (const value of ["--f()", "attr(data-c type(*))", 'ident("revert-" "rule")']) {
+      const source = `.a{top:1px}.a{top:${value}}`;
+      test.todo(source, () => {
+        expect(minify_test_with_options(source, source)).toBe(source);
+      });
+    }
+    // A declaration behind a nested rule moves in front of it, into the block
+    // it must roll back to, and then replaces `color:green`.
+    // https://github.com/oven-sh/bun/pull/45462 keeps it behind the nested rule.
+    test.todo(".a{color:green;.b{top:0}color:revert-rule}", () => {
+      expect(minify_test_with_options(".a{color:green;.b{top:0}color:revert-rule}", "")).toContain("color:green");
+    });
+    // For a target without logical properties, the keyword goes to new rules
+    // for each writing direction, and rolls back nothing there.
+    cssTestTodo(
+      ".a{inset:0;inset-inline-start:revert-rule}",
+      indoc`
+        .a {
+          inset: 0;
+          inset-inline-start: revert-rule;
+        }
+      `,
+      { safari: Some(14 << 16) },
+    );
+  });
+
   describe("grid-template-areas", () => {
     // Not in the typed property table yet; `.` null-cell tokens (including
     // multi-dot runs) must survive the unparsed-token round-trip unchanged.
@@ -8345,5 +8528,47 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim().split("\n")).toEqual(cases.map(([, expected]) => expected));
     expect(exitCode).toBe(0);
+  });
+
+  // Both callers of the minifier, and a CSS module, through `bun build`.
+  test.concurrent.each([
+    ["a CSS entry point", ["entry.css", "--outdir=out"]],
+    ["--minify", ["entry.css", "--outdir=out", "--minify"]],
+    ["--target=bun", ["entry.css", "--outdir=out", "--target=bun"]],
+    ["a CSS module", ["entry.js", "--outdir=out"]],
+    ["an HTML entry point", ["index.html", "--outdir=out"]],
+    ["--no-bundle", ["--no-bundle", "entry.css"]],
+  ])("bun build keeps the rule that revert-rule rolls back to: %s", async (_, args) => {
+    using dir = tempDir("css-revert-rule", {
+      "entry.css": ".a{top:1px}.a{top:revert-rule}",
+      "a.module.css": ".a{top:1px}.a{top:revert-rule}",
+      "entry.js": `import styles from "./a.module.css"; console.log(styles.a);`,
+      "index.html": `<link rel="stylesheet" href="./entry.css"><p class="a">x</p>`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // `--no-bundle` prints the stylesheet. The other runs write one to `out`.
+    const sheets = args.includes("--no-bundle")
+      ? [stdout]
+      : await Promise.all(
+          [...new Glob("out/*.css").scanSync(String(dir))].map(file => Bun.file(join(String(dir), file)).text()),
+        );
+    expect({
+      rules: sheets.map(sheet =>
+        sheet
+          .replace(/\s/g, "")
+          .replaceAll(";}", "}")
+          .match(/\{[^{}]*\}/g),
+      ),
+      stderr: exitCode === 0 ? "" : stderr,
+      exitCode,
+    }).toEqual({ rules: [["{top:1px}", "{top:revert-rule}"]], stderr: "", exitCode: 0 });
   });
 });

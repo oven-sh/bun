@@ -2143,6 +2143,8 @@ pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
 pub struct StylesheetExtra {
     /// Used when css modules is enabled
     pub symbols: SymbolList,
+    /// A value holds `revert-rule`, which rolls back the style rule that holds it.
+    pub(crate) may_revert_rule: bool,
 }
 
 pub struct ParserExtra {
@@ -2650,6 +2652,7 @@ mod stylesheet_impl {
             // (default = empty; `BundlerAtRuleParser` overrides to move its list
             // out) so the accumulated layer ordering isn't silently dropped.
             let layer_names = P::take_layer_names(at_rule_parser);
+            let may_revert_rule = parser.input.may_revert_rule;
 
             Ok((
                 Self {
@@ -2667,6 +2670,7 @@ mod stylesheet_impl {
                 },
                 StylesheetExtra {
                     symbols: parser_extra.symbols,
+                    may_revert_rule,
                 },
             ))
         }
@@ -3293,6 +3297,12 @@ impl<'a> Parser<'a> {
         self.input.token_list_parse_failures += 1;
     }
 
+    /// See `StylesheetExtra::may_revert_rule`.
+    #[inline]
+    pub(crate) fn note_may_revert_rule(&mut self) {
+        self.input.may_revert_rule = true;
+    }
+
     pub(crate) fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -3833,6 +3843,8 @@ pub struct ParserInput<'a> {
     /// alternative is guaranteed to fail again, so they propagate the error
     /// instead of retrying (which is exponential in the nesting depth).
     token_list_parse_failures: u64,
+    /// See `StylesheetExtra::may_revert_rule`.
+    may_revert_rule: bool,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -3861,6 +3873,7 @@ impl<'a> ParserInput<'a> {
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,
+            may_revert_rule: false,
         }
     }
 }

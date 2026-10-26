@@ -65,31 +65,36 @@ fn fence_of(line: &[u8]) -> &[u8] {
     &line[..line.len() - rest.len()]
 }
 
-/// Splits `rest`, the lines after an opening fence, into the code and the closing fence: the last line that is at
-/// least the backticks of `opening`, behind at most `fence_indent`, the indentation of the opening fence, since a
-/// formatted example indents both with the code. oxfmt 0.72 finds it at the start of the line only, and on its second
-/// pass prints the block as code, with ` *   ```;` at the end.
+/// Splits `rest`, the lines after an opening fence, into the code and the closing fence with the text after it. The
+/// closing fence is the first line that has at least the backticks of `opening`, and is indented like the opening
+/// fence, `fence_indent`, or up to three blanks more, as in Markdown: a formatted example indents both with the code.
+/// oxfmt 0.72 takes the last line that starts with ``` at the start of its line, so on its second pass, once the fence
+/// is indented, it prints the block as code, with ` *   ```;` at the end.
 fn split_at_closing_fence<'a>(
     rest: &'a [u8],
     opening: &[u8],
     fence_indent: &[u8],
-) -> Option<(&'a [u8], &'a [u8], &'a [u8])> {
-    let mut end = rest.len();
+) -> Option<(&'a [u8], &'a [u8])> {
+    let backticks = fence_of(opening).len();
+    let mut start = 0;
     loop {
-        let start = strings::last_index_of_char(&rest[..end], b'\n').map_or(0, |at| at + 1);
+        let end =
+            strings::index_of_char_usize(&rest[start..], b'\n').map_or(rest.len(), |at| start + at);
         let line = &rest[start..end];
         let fence = strings::trim_unicode_whitespace_start(line);
-        if fence_of(fence).len() >= fence_of(opening).len()
-            && fence_indent.starts_with(&line[..line.len() - fence.len()])
-        {
+        let indent = &line[..line.len() - fence.len()];
+        let is_indented_like_the_opening = fence_indent.starts_with(indent)
+            || indent
+                .strip_prefix(fence_indent)
+                .is_some_and(|more| more.len() <= 3);
+        if fence_of(fence).len() >= backticks && is_indented_like_the_opening {
             let inner = strings::trim_unicode_whitespace_end(&rest[..start]);
-            let text = rest.get(end + 1..).unwrap_or_default();
-            return Some((inner, strings::trim_unicode_whitespace_end(fence), text));
+            return Some((inner, strings::trim_unicode_whitespace(&rest[start..])));
         }
-        if start == 0 {
+        if end == rest.len() {
             return None;
         }
-        end = start - 1;
+        start = end + 1;
     }
 }
 
@@ -206,7 +211,7 @@ impl JsdocFormatter<'_> {
         let lang_line = strings::trim_unicode_whitespace_start(first_line);
         let fence_indent = &first_line[..first_line.len() - lang_line.len()];
         if lang_line.starts_with(b"```")
-            && let Some((inner_code, closing_fence, text)) =
+            && let Some((inner_code, closing_fence)) =
                 split_at_closing_fence(rest, lang_line, fence_indent)
         {
             return self.format_example_fenced_block(
@@ -214,7 +219,6 @@ impl JsdocFormatter<'_> {
                 lang_line,
                 inner_code,
                 closing_fence,
-                text,
             );
         }
         let indent = self.code_indent();
@@ -230,15 +234,13 @@ impl JsdocFormatter<'_> {
     }
 
     /// The code of a fence is indented like the fence: what is in front of the fence comes off the code, if every
-    /// line has it. `text`, the lines after the closing fence, is indented like the code, so that a fence in it is
-    /// not taken for the closing fence the next time. oxfmt leaves it where it is.
+    /// line has it.
     fn format_example_fenced_block(
         &mut self,
         fence_indent: &[u8],
         lang_line: &[u8],
         inner_code: &[u8],
         closing_fence: &[u8],
-        text: &[u8],
     ) {
         let indent = self.code_indent();
         let effective_width = self.wrap_width.saturating_sub(self.code_indent_width());
@@ -258,14 +260,6 @@ impl JsdocFormatter<'_> {
             }
         }
         self.content_lines.push([indent, closing_fence].concat());
-        let text = without_indent(text, indent_of_every_line(text, indent));
-        for line in lines(&text) {
-            let out = self.content_lines.begin_line();
-            if !line.is_empty() {
-                out.extend_from_slice(indent);
-                out.extend_from_slice(line);
-            }
-        }
     }
 
     /// Appends ` {type}` to `tag_line`.

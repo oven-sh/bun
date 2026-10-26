@@ -549,19 +549,32 @@ export function add(a, b) {}
       example(["  ```ts", "  foo()", "```"]),
       example(["  ```ts", "  foo();", "  ```"]),
     ],
-    // oxfmt leaves the text after the closing fence where it is, and reads the whole block as code on its second
-    // pass. Indented like the code, a fence in that text is not taken for the closing fence.
+    // The text after the closing fence stays as it is. oxfmt reads the whole block as code on its second pass.
     [
       "text after a fenced example that has an indented fence in it",
       "jsdoc = true",
       example(["```js", "foo()", "```", "Notes:", "- Also:", "  ```js", "  bar()", "  ```"]),
-      example(["  ```js", "  foo();", "  ```", "  Notes:", "  - Also:", "    ```js", "    bar()", "    ```"]),
+      example(["  ```js", "  foo();", "  ```", "Notes:", "- Also:", "  ```js", "  bar()", "  ```"]),
     ],
     [
       "text after a fenced example",
       "jsdoc = true",
       example(["```js", "foo()", "```", "", "This prints 1."]),
-      example(["  ```js", "  foo();", "  ```", "", "  This prints 1."]).replace(" * \n", " *\n"),
+      example(["  ```js", "  foo();", "  ```", "", "This prints 1."]).replace(" * \n", " *\n"),
+    ],
+    // oxfmt takes the last fence for the closing fence: it reads both blocks as one, and prints its lines as they are.
+    [
+      "two fenced blocks",
+      "jsdoc = true",
+      example(["```js", "foo()", "```", "Or:", "```js", "bar()", "```"]),
+      example(["  ```js", "  foo();", "  ```", "Or:", "```js", "bar()", "```"]),
+    ],
+    // oxfmt does not find the closing fence, and prints the block as code, with ` *   ```;` at the end.
+    [
+      "a closing fence that is indented more than the opening fence",
+      "jsdoc = true",
+      example(["```ts", "foo()", "  ```"]),
+      example(["  ```ts", "  foo();", "  ```"]),
     ],
     [
       "a fence inside a fence",
@@ -574,7 +587,7 @@ export function add(a, b) {}
       "a fence inside a fence, and text with a shorter fence after the block",
       "jsdoc = true",
       example(["````md", "```js", "x", "```", "````", "Or:", "```"]),
-      example(["  ````md", "  ```js", "  x", "  ```", "  ````", "  Or:", "  ```"]),
+      example(["  ````md", "  ```js", "  x", "  ```", "  ````", "Or:", "```"]),
     ],
     // oxfmt keeps one blank line fewer on each pass.
     [

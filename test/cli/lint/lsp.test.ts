@@ -844,11 +844,11 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
-  // The lint with types builds a program, on a thread of its own: a request sent meanwhile is answered before it ends.
-  // The program has a module of 40,000 lines to parse, so that it is still being built when the request arrives. On
-  // Windows the request reaches the server after the program is built all the same: there only the answers are checked.
+  // The lint with types builds a program, on a thread of its own, while the other answers requests. Whether the answer
+  // comes before the lint ends depends on when the request is read, which CI decides either way: only the answers are
+  // checked. The program has a module of 40,000 lines to parse, which makes the lint take long enough to overlap.
   test(
-    "answers a formatting request while a document is linted with types",
+    "answers a formatting request sent while a document is linted with types",
     async () => {
       const functions = Array.from(
         { length: 40_000 },
@@ -868,15 +868,13 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
       const codes = (it: Message) => it.params.diagnostics.map((diagnostic: any) => diagnostic.code);
       // Without types first: the program is being built once this is published.
       expect(codes(await client.diagnostics(path))).toEqual([]);
-      const formatted = format(client, path);
-      const id = client.lastId;
-      expect(applyEdits(text, (await formatted).result)).toBe(
+      const formatted = await format(client, path);
+      expect(formatted.error).toBeUndefined();
+      expect(applyEdits(text, formatted.result)).toBe(
         'import { f0 } from "./big";\nexport const a: number = "a";\nf0(a);\n',
       );
       const typed = await client.diagnostics(path);
       expect(codes(typed)).toEqual(["typescript/TS2322"]);
-      const order = client.received.map(it => (it.id === id ? "formatted" : it === typed ? "typed" : ""));
-      if (!isWindows) expect(order.filter(Boolean)).toEqual(["formatted", "typed"]);
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();

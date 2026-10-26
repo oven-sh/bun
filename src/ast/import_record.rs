@@ -107,6 +107,9 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// No value uses this TypeScript import: its statement stays because tsconfig.json keeps it.
+        const KEPT_BY_TSCONFIG = 1 << 19;
     }
 }
 

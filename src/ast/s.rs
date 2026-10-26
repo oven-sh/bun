@@ -214,7 +214,10 @@ pub struct Import {
     /// proposal. Only valid with a namespace import (`star_name_loc` is set,
     /// `default_name`/`items` are empty).
     pub phase_defer: bool, // = false
+    /// TypeScript only: a `{ ... }` clause was written, so empty `items` is `import {} from`.
+    pub has_items_clause: bool, // = false
 }
+const _: () = assert!(core::mem::size_of::<Import>() == 48);
 
 impl Default for Import {
     fn default() -> Self {
@@ -226,6 +229,7 @@ impl Default for Import {
             import_record_index: u32::MAX,
             is_single_line: false,
             phase_defer: false,
+            has_items_clause: false,
         }
     }
 }

@@ -1939,6 +1939,134 @@ class Test extends Bar {
       ts.expectPrinted_("import Foo = Baz.Bar;", "");
     });
 
+    // tsconfig `verbatimModuleSyntax`, `preserveValueImports` and `importsNotUsedAsValues`
+    // fold into two behaviors: keep the statement, and keep its unused names.
+    describe("tsconfig settings that keep unused imports", () => {
+      const inputs = [
+        "import 'foo'",
+        "import * as unused from 'foo'",
+        "import { unused } from 'foo'",
+        "import { type unused } from 'foo'",
+        "import {} from 'foo'",
+        "import d, { type T } from 'foo'",
+        "export { type U } from 'foo'",
+        "import type { V } from 'foo'",
+      ];
+      const bare = 'import"foo";\n';
+      const star = 'import * as unused from "foo";\n';
+      const named = 'import { unused } from "foo";\n';
+      const emptyClause = 'import {} from "foo";\n';
+      const emptyExport = 'export {  } from "foo";\n';
+
+      // With `trimUnusedImports` unset nothing trims a name, so only a clause that
+      // binds no value shows the setting.
+      const untrimmed = {
+        neither: [bare, star, named, "", "", 'import d from "foo";\n', "", ""],
+        keepStatement: [bare, star, named, emptyClause, emptyClause, 'import d, {} from "foo";\n', emptyExport, ""],
+      };
+      // `trimUnusedImports: true` removes the unused names. tsconfig decides whether the
+      // statement stays, as a bare import.
+      const trimmed = {
+        neither: [bare, "", "", "", "", "", "", ""],
+        keepStatement: [bare, bare, bare, bare, bare, bare, emptyExport, ""],
+        keepValues: [bare, bare, bare, "", "", bare, "", ""],
+      };
+
+      it.each([
+        [{}, untrimmed.neither, trimmed.neither],
+        [{ verbatimModuleSyntax: false }, untrimmed.neither, trimmed.neither],
+        [{ importsNotUsedAsValues: "remove" }, untrimmed.neither, trimmed.neither],
+        // Not a boolean: the key counts as absent.
+        [{ verbatimModuleSyntax: "yes" }, untrimmed.neither, trimmed.neither],
+        [{ importsNotUsedAsValues: "preserve" }, untrimmed.keepStatement, trimmed.keepStatement],
+        [{ importsNotUsedAsValues: "error" }, untrimmed.keepStatement, trimmed.keepStatement],
+        [{ preserveValueImports: true }, untrimmed.neither, trimmed.keepValues],
+        [
+          { importsNotUsedAsValues: "preserve", preserveValueImports: true },
+          untrimmed.keepStatement,
+          trimmed.keepStatement,
+        ],
+        [{ verbatimModuleSyntax: true }, untrimmed.keepStatement, trimmed.keepStatement],
+        // It wins over the two settings that it replaced.
+        [
+          { verbatimModuleSyntax: true, importsNotUsedAsValues: "remove", preserveValueImports: false },
+          untrimmed.keepStatement,
+          trimmed.keepStatement,
+        ],
+        [
+          { verbatimModuleSyntax: false, importsNotUsedAsValues: "preserve" },
+          untrimmed.keepStatement,
+          trimmed.keepStatement,
+        ],
+      ])("%j", async (compilerOptions, expectedUntrimmed, expectedTrimmed) => {
+        for (const [options, expected] of [
+          [{}, expectedUntrimmed],
+          [{ trimUnusedImports: true }, expectedTrimmed],
+          [{ treeShaking: true }, expectedTrimmed],
+        ]) {
+          const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig: { compilerOptions }, ...options });
+          expect(inputs.map(input => transpiler.transformSync(input))).toEqual(expected);
+          expect(await Promise.all(inputs.map(input => transpiler.transform(input)))).toEqual(expected);
+          // `scan` and `scanImports` report a module exactly when the output asks for it.
+          const requests = expected.map(output => (output ? [{ path: "foo", kind: "import-statement" }] : []));
+          expect(inputs.map(input => transpiler.scan(input).imports)).toEqual(requests);
+          expect(inputs.map(input => transpiler.scanImports(input))).toEqual(requests);
+        }
+      });
+
+      it("does not reach a JavaScript file", () => {
+        const transpiler = new Bun.Transpiler({
+          loader: "js",
+          trimUnusedImports: true,
+          tsconfig: { compilerOptions: { verbatimModuleSyntax: true } },
+        });
+        expect(transpiler.transformSync("import { unused } from 'foo'")).toBe("");
+        expect(transpiler.transformSync("import {} from 'foo'")).toBe(bare);
+      });
+
+      // A `declare` block is dropped whole: no statement in it is an import of its module.
+      it.each([
+        {},
+        { importsNotUsedAsValues: "preserve" },
+        { preserveValueImports: true },
+        { verbatimModuleSyntax: true },
+      ])("a declare block asks for no module: %j", compilerOptions => {
+        const blocks = [
+          'declare module "m" { import { T } from "foo"; }',
+          'declare module "m" { import { type T } from "foo"; }',
+          'declare module "m" { import "foo"; }',
+          'declare module "m" { export * from "foo"; }',
+          'declare module "m" { export { a } from "foo"; }',
+          'declare global { import { T } from "foo"; }',
+          'declare namespace N { import { T } from "foo"; }',
+        ];
+        for (const options of [{}, { trimUnusedImports: true }, { treeShaking: true }]) {
+          const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig: { compilerOptions }, ...options });
+          expect(blocks.map(block => transpiler.transformSync(block))).toEqual(blocks.map(() => ""));
+          expect(blocks.map(block => transpiler.scan(block).imports)).toEqual(blocks.map(() => []));
+          expect(blocks.map(block => transpiler.scanImports(block))).toEqual(blocks.map(() => []));
+        }
+      });
+
+      // `exports.eliminate` deletes an export and the imports that only it used. An import that
+      // tsconfig keeps goes with a deleted export that used it, and not for the option alone.
+      it("an export deleted on request takes only the imports that it used", () => {
+        const source = `import { register } from "./register";\nimport { db } from "./db";\nexport const kept = 1;\nexport const gone = () => db;`;
+        const transform = exports =>
+          new Bun.Transpiler({
+            loader: "ts",
+            trimUnusedImports: true,
+            tsconfig: { compilerOptions: { verbatimModuleSyntax: true } },
+            ...(exports ? { exports } : {}),
+          }).transformSync(source);
+        const used =
+          'import"./register";\nimport { db } from "./db";\nexport const kept = 1;\nexport const gone = () => db;\n';
+        expect(transform()).toBe(used);
+        expect(transform({ eliminate: ["absent"] })).toBe(used);
+        expect(transform({ eliminate: ["gone"] })).toBe('import"./register";\nexport const kept = 1;\n');
+      });
+    });
+
     it("export import Foo = Baz.Bar", () => {
       ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
     });
@@ -4086,6 +4214,41 @@ console.log(resolve.length)
   }
 }`,
     );
+  });
+
+  it("type only imports", () => {
+    const exp = ts.expectPrinted_;
+    // The `import { type ... }` forms, as in esbuild's parseImportClause.
+    exp("import { type Foo } from 'mod'", "");
+    exp("import { type Foo as Bar } from 'mod'; Bar", "Bar");
+    exp("import { type if as yy } from 'mod'; yy", "yy");
+    exp("import { type 'xx' as yy } from 'mod'; yy", "yy");
+    exp("import { type } from 'mod'; type", 'import { type } from "mod";\ntype');
+    exp("import { type, as } from 'mod'; type; as", 'import { type, as } from "mod";\ntype;\nas');
+    // A type-only import of a binding named `as`.
+    exp("import { type as } from 'mod'", "");
+    exp("import { type as } from 'mod'; x", "x");
+    exp("import { type as as foo } from 'mod'; foo", "foo");
+    exp("import { type as as as } from 'mod'; as", "as");
+    exp("import { x, type as } from 'mod'; x", 'import { x } from "mod";\nx');
+    // A value import of a binding named `type`.
+    exp("import { type as xxx } from 'mod'; xxx", 'import { type as xxx } from "mod";\nxxx');
+    exp("import { type as as } from 'mod'; as", 'import { type as as } from "mod";\nas');
+
+    // A clause with no value binding is type-only, as it is for tsc.
+    exp("import {} from 'mod'", "");
+    exp("import { } from 'mod'; x", "x");
+    exp("import {} from 'mod'; import 'mod'", 'import"mod"');
+    exp("import d, {} from 'mod'; d", 'import d from "mod";\nd');
+    exp("import d, { type T } from 'mod'; d", 'import d from "mod";\nd');
+    exp("export {} from 'mod'", "");
+    exp("export { type Foo } from 'mod'", "");
+
+    // JavaScript has no type-only import, and its output does not change.
+    const js = new Bun.Transpiler({ loader: "js" });
+    expect(js.transformSync("import {} from 'mod'")).toBe('import"mod";\n');
+    expect(js.transformSync("import d, {} from 'mod'; d")).toBe('import d from "mod";\nd;\n');
+    expect(js.transformSync("export {} from 'mod'")).toBe('export {  } from "mod";\n');
   });
 
   it("type only exports", () => {

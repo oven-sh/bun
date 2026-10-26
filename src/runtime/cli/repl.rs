@@ -2147,6 +2147,7 @@ impl<'a> Repl<'a> {
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;
+        opts.unused_import_flags_ts = vm.transpiler.options.unused_import_flags_ts;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
         // Keep `lower_using` at its default (true) here even though JavaScriptCore

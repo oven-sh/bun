@@ -76,6 +76,7 @@ pub(crate) fn validate_path(
 // the SAME nominal type and `ParseTask::run_with_source_code` can hand
 // `&transpiler.options.allow_unresolved` straight through.
 pub use bun_js_parser::options::AllowUnresolved;
+pub use bun_js_parser::options::TSUnusedImportFlags;
 
 // Canonical defs live in `bun_resolver::options` (lower tier; resolver is the
 // runtime consumer of `.patterns`/`.abs_paths`/`.node_modules`). Re-export so
@@ -1220,6 +1221,8 @@ pub struct BundleOptions<'a> {
     pub allow_runtime: bool,
 
     pub trim_unused_imports: Option<bool>,
+    /// Of the top-level tsconfig.json, for a source that no directory holds.
+    pub unused_import_flags_ts: TSUnusedImportFlags,
     pub(crate) mark_builtins_as_external: bool,
     pub server_components: bool,
     pub hot_module_reloading: bool,
@@ -1477,6 +1480,7 @@ impl<'a> BundleOptions<'a> {
             auto_import_jsx: self.auto_import_jsx,
             allow_runtime: self.allow_runtime,
             trim_unused_imports: self.trim_unused_imports,
+            unused_import_flags_ts: self.unused_import_flags_ts,
             mark_builtins_as_external: self.mark_builtins_as_external,
             server_components: self.server_components,
             hot_module_reloading: self.hot_module_reloading,
@@ -1746,6 +1750,7 @@ impl<'a> BundleOptions<'a> {
             auto_import_jsx: true,
             allow_runtime: true,
             trim_unused_imports: None,
+            unused_import_flags_ts: TSUnusedImportFlags::empty(),
             mark_builtins_as_external: false,
             server_components: false,
             hot_module_reloading: false,

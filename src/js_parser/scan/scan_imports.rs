@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::p::P;
+use crate::parser::options::TSUnusedImportFlags;
 use crate::parser::{ImportItemForNamespaceMap, Ref};
 use bun_ast::{self as js_ast, Expr, G, LocRef, S, Stmt, Symbol};
 use bun_ast::{ImportRecord, import_record};
@@ -80,64 +81,22 @@ impl<'a> ImportScanner<'a> {
                         continue;
                     }
 
-                    // The official TypeScript compiler always removes unused imported
-                    // symbols. However, we deliberately deviate from the official
-                    // TypeScript compiler's behavior doing this in a specific scenario:
-                    // we are not bundling, symbol renaming is off, and the tsconfig.json
-                    // "importsNotUsedAsValues" setting is present and is not set to
-                    // "remove".
-                    //
-                    // This exists to support the use case of compiling partial modules for
-                    // compile-to-JavaScript languages such as Svelte. These languages try
-                    // to reference imports in ways that are impossible for esbuild to know
-                    // about when esbuild is only given a partial module to compile. Here
-                    // is an example of some Svelte code that might use esbuild to convert
-                    // TypeScript to JavaScript:
-                    //
-                    //   <script lang="ts">
-                    //     import Counter from './Counter.svelte';
-                    //     export let name: string = 'world';
-                    //   </script>
-                    //   <main>
-                    //     <h1>Hello {name}!</h1>
-                    //     <Counter />
-                    //   </main>
-                    //
-                    // Tools that use esbuild to compile TypeScript code inside a Svelte
-                    // file like this only give esbuild the contents of the <script> tag.
-                    // These tools work around this missing import problem when using the
-                    // official TypeScript compiler by hacking the TypeScript AST to
-                    // remove the "unused import" flags. This isn't possible in esbuild
-                    // because esbuild deliberately does not expose an AST manipulation
-                    // API for performance reasons.
-                    //
-                    // We deviate from the TypeScript compiler's behavior in this specific
-                    // case because doing so is useful for these compile-to-JavaScript
-                    // languages and is benign in other cases. The rationale is as follows:
-                    //
-                    //   * If "importsNotUsedAsValues" is absent or set to "remove", then
-                    //     we don't know if these imports are values or types. It's not
-                    //     safe to keep them because if they are types, the missing imports
-                    //     will cause run-time failures because there will be no matching
-                    //     exports. It's only safe keep imports if "importsNotUsedAsValues"
-                    //     is set to "preserve" or "error" because then we can assume that
-                    //     none of the imports are types (since the TypeScript compiler
-                    //     would generate an error in that case).
-                    //
-                    //   * If we're bundling, then we know we aren't being used to compile
-                    //     a partial module. The parser is seeing the entire code for the
-                    //     module so it's safe to remove unused imports. And also we don't
-                    //     want the linker to generate errors about missing imports if the
-                    //     imported file is also in the bundle.
-                    //
-                    //   * If identifier minification is enabled, then using esbuild as a
-                    //     partial-module transform library wouldn't work anyway because
-                    //     the names wouldn't match. And that means we're minifying so the
-                    //     user is expecting the output to be as small as possible. So we
-                    //     should omit unused imports.
-                    //
+                    // A file that becomes CommonJS at runtime cannot hold an import statement.
+                    let unused_import_flags =
+                        if !is_typescript_enabled || will_transform_to_common_js {
+                            TSUnusedImportFlags::empty()
+                        } else {
+                            p.options.unused_import_flags_ts
+                        };
+                    let keep_values_ts =
+                        unused_import_flags.contains(TSUnusedImportFlags::KEEP_VALUES);
                     let mut did_remove_star_loc = false;
-                    let keep_unused_imports = !p.options.features.trim_unused_imports;
+                    let keep_unused_imports = !p.options.features.trim_unused_imports
+                        || (keep_values_ts && p.options.keeps_unused_import_names_ts());
+                    // A statement that tsconfig keeps still goes with an export deleted on request.
+                    let check_deleted_exports = !unused_import_flags.is_empty()
+                        && p.options.features.replace_exports.count() > 0;
+                    let mut lost_name_to_deleted_export = false;
                     // Without trimming (JavaScript), exports deleted on request
                     // (`replace_exports`) still take the imports that only they used: a binding
                     // goes when its only uses were in them. An import that nothing used stays, for
@@ -147,9 +106,14 @@ impl<'a> ImportScanner<'a> {
                     macro_rules! removable {
                         ($ref_:expr) => {{
                             let index = $ref_.inner_index();
-                            p.symbols[index as usize].use_count_estimate == 0
+                            let removable = p.symbols[index as usize].use_count_estimate == 0
                                 && (!only_deleted_exports_uses
-                                    || p.used_by_deleted_exports.contains(&index))
+                                    || p.used_by_deleted_exports.contains(&index));
+                            if removable && check_deleted_exports {
+                                lost_name_to_deleted_export |=
+                                    p.used_by_deleted_exports.contains(&index);
+                            }
+                            removable
                         }};
                     }
                     // TypeScript always trims unused imports. This is important for
@@ -216,6 +180,7 @@ impl<'a> ImportScanner<'a> {
                         }
 
                         // Remove items if they are unused
+                        let had_items_clause = st.has_items_clause;
                         let items: &mut [js_ast::ClauseItem] = st.items.slice_mut();
                         if !items.is_empty() {
                             found_imports = true;
@@ -251,6 +216,10 @@ impl<'a> ImportScanner<'a> {
 
                             st.items.truncate(items_end);
                         }
+                        // A clause that trimming leaves empty prints as a bare import.
+                        if !keep_unused_imports && st.items.slice().is_empty() {
+                            st.has_items_clause = false;
+                        }
 
                         // -- Original Comment --
                         // Omit this statement if we're parsing TypeScript and all imports are
@@ -283,13 +252,20 @@ impl<'a> ImportScanner<'a> {
                             && st.star_name_loc.is_empty()
                             // SAFETY: arena-owned slice; see above.
                             && st.items.slice().is_empty()
-                            && st.default_name.is_none();
+                            && st.default_name.is_none()
+                            && (!check_deleted_exports || lost_name_to_deleted_export);
+                        // An empty TypeScript clause is an import too: `import {} from 'x'`.
+                        let unused_in_typescript = !keep_unused_imports
+                            && is_typescript_enabled
+                            && (found_imports || had_items_clause)
+                            && is_unused_in_typescript;
+                        // `KEEP_STMT` keeps every statement, `KEEP_VALUES` one that binds a value.
+                        let kept_by_tsconfig = unused_in_typescript
+                            && (!unused_import_flags.drops_valueless_clause()
+                                || (keep_values_ts && found_imports))
+                            && !unused_import_flags.skips(record!().path.text);
                         if unused_after_deleted_exports
-                            || (!keep_unused_imports
-                                && is_typescript_enabled
-                                && found_imports
-                                && is_unused_in_typescript
-                                && !p.options.preserve_unused_imports_ts)
+                            || (unused_in_typescript && !kept_by_tsconfig)
                             || (!is_typescript_enabled
                                 && p.options.features.trim_unused_imports
                                 && found_imports
@@ -308,6 +284,11 @@ impl<'a> ImportScanner<'a> {
                                 record!().flags.insert(import_record::Flags::IS_UNUSED);
                                 continue;
                             }
+                        }
+                        if kept_by_tsconfig {
+                            record!()
+                                .flags
+                                .insert(import_record::Flags::KEPT_BY_TSCONFIG);
                         }
                     }
 

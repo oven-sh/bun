@@ -277,6 +277,7 @@ use bun_alloc as allocators;
 // `bun.resolver.SideEffects` — same type as `Result.primary_side_effects_data`
 // (re-exported from `bun_ast`; see `result.rs`).
 use bun_ast::SideEffects;
+use bun_js_parser::options::TSUnusedImportFlags;
 
 // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
 // The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
@@ -1225,6 +1226,10 @@ impl<'a> Resolver<'a> {
                 }
                 let _ = self.flush_debug_logs(FlushMode::Success);
                 self.extension_order = original_order;
+                let mut flags = ResultFlags::default();
+                if let Ok(Some(dir_info)) = self.read_dir_info(res.path_pair.primary.name().dir) {
+                    flags.set_unused_import_flags_ts(self.unused_import_flags_ts(&dir_info));
+                }
                 return ResultUnion::Success(Result {
                     import_kind: kind,
                     path_pair: res.path_pair,
@@ -1232,6 +1237,7 @@ impl<'a> Resolver<'a> {
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
                     jsx: self.opts.jsx.clone(),
+                    flags,
                     ..Default::default()
                 });
             }
@@ -1738,6 +1744,11 @@ impl<'a> Resolver<'a> {
 
                     path.set_realpath(symlink);
                 }
+            }
+
+            if primary {
+                let flags = self.unused_import_flags_ts_of_file(&dir, path);
+                result.flags.set_unused_import_flags_ts(flags);
             }
         }
 
@@ -6425,6 +6436,14 @@ impl<'a> Resolver<'a> {
                 info.flags
                     .set_present(DirInfo::Flag::InsideNodeModules, true);
             }
+            if parent_.flags.contains(DirInfo::Flag::InsideCachedPackage) {
+                info.flags
+                    .set_present(DirInfo::Flag::InsideCachedPackage, true);
+            }
+        }
+        if package_id.is_some() {
+            info.flags
+                .set_present(DirInfo::Flag::InsideCachedPackage, true);
         }
 
         // Record if this directory has a package.json file
@@ -6664,6 +6683,12 @@ impl<'a> Resolver<'a> {
                 if let Some(value) = parent_config.preserve_imports_not_used_as_values {
                     mc.preserve_imports_not_used_as_values = Some(value);
                 }
+                if let Some(value) = parent_config.preserve_value_imports {
+                    mc.preserve_value_imports = Some(value);
+                }
+                if let Some(value) = parent_config.verbatim_module_syntax {
+                    mc.verbatim_module_syntax = Some(value);
+                }
 
                 // TypeScript replaces paths across extends (child overrides parent
                 // entirely), so when a more-specific config defines paths, replace
@@ -6740,6 +6765,64 @@ impl<'a> Resolver<'a> {
             None => dir_info
                 .enclosing_tsconfig_json
                 .map(TSConfigRef::OfDirectory),
+        }
+    }
+
+    /// Of the nearest tsconfig.json. An installed package takes none, as in esbuild's `tsConfigForDir`.
+    pub fn unused_import_flags_ts(&mut self, dir_info: &DirInfo::DirInfo) -> TSUnusedImportFlags {
+        if dir_info.is_inside_installed_package() {
+            return TSUnusedImportFlags::empty();
+        }
+        // No `Arc` clone of the override per file: this runs for every TypeScript module.
+        if self.opts.tsconfig_override.is_some() && self.opts.load_tsconfig_json {
+            if self.opts.tsconfig_override_json.is_none() {
+                let _ = self.tsconfig_override();
+            }
+            return match &self.opts.tsconfig_override_json {
+                Some(Some(tsconfig)) => tsconfig.unused_import_flags(),
+                _ => TSUnusedImportFlags::empty(),
+            };
+        }
+        dir_info
+            .enclosing_tsconfig_json
+            .map_or(TSUnusedImportFlags::empty(), |tsconfig| {
+                tsconfig.unused_import_flags()
+            })
+    }
+
+    /// Whether the registry can answer a bare specifier that a file in `dir_info` imports.
+    pub fn may_auto_install(&self, dir_info: &DirInfo::DirInfo) -> bool {
+        if !self.use_package_manager() {
+            return false;
+        }
+        let global_cache = self.opts.global_cache;
+        let mut any_node_modules_folder = false;
+        if global_cache != GlobalCache::force {
+            any_node_modules_folder = dir_info.has_node_modules();
+            let mut parent = dir_info.get_parent();
+            while let (false, Some(dir)) = (any_node_modules_folder, parent) {
+                any_node_modules_folder = dir.has_node_modules();
+                parent = dir.get_parent();
+            }
+        }
+        global_cache.can_use(any_node_modules_folder)
+    }
+
+    /// `unused_import_flags_ts` of the directory that `path` is loaded from: its real one, as at runtime.
+    fn unused_import_flags_ts_of_file(
+        &mut self,
+        dir_info: &DirInfo::DirInfo,
+        path: &Path,
+    ) -> TSUnusedImportFlags {
+        if !path.is_symlink {
+            return self.unused_import_flags_ts(dir_info);
+        }
+        if path.is_node_module() {
+            return TSUnusedImportFlags::empty();
+        }
+        match self.read_dir_info(path.name().dir) {
+            Ok(Some(real_dir_info)) => self.unused_import_flags_ts(&real_dir_info),
+            _ => TSUnusedImportFlags::empty(),
         }
     }
 

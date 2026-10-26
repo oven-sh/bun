@@ -2938,6 +2938,22 @@ declare module "bun" {
       jsxFragmentFactory?: string;
       jsxImportSource?: string;
       useDefineForClassFields?: boolean;
+      /**
+       * Keep an import that no value uses, so that the module it names still runs. Only
+       * `import type` and `export type` are removed. With `trimUnusedImports` or
+       * `treeShaking`, `Bun.Transpiler` removes the unused names and keeps the statement
+       * as `import "module"`.
+       */
+      verbatimModuleSyntax?: boolean;
+      /**
+       * Keep a value import that nothing uses.
+       * @deprecated Use `verbatimModuleSyntax`
+       */
+      preserveValueImports?: boolean;
+      /**
+       * `"preserve"` and `"error"` keep an import that no value uses as `import "module"`.
+       * @deprecated Use `verbatimModuleSyntax`
+       */
       importsNotUsedAsValues?: "remove" | "preserve" | "error";
       /** moduleSuffixes is not supported yet */
       moduleSuffixes?: any;

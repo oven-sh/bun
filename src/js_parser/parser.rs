@@ -108,6 +108,36 @@ pub mod options {
             }
         }
     }
+    bitflags::bitflags! {
+        /// What a TypeScript file does with an import that no value uses, from tsconfig.json.
+        #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+        pub struct TSUnusedImportFlags: u8 {
+            /// `importsNotUsedAsValues: "preserve" | "error"`: the statement stays, as `import 'x'`.
+            const KEEP_STMT = 1 << 0;
+            /// `preserveValueImports`: an unused value name stays. `verbatimModuleSyntax` is both.
+            const KEEP_VALUES = 1 << 1;
+            /// Auto-install answers a bare specifier from the registry, so the two flags above keep no such import.
+            const NOT_PACKAGES = 1 << 2;
+        }
+    }
+    impl TSUnusedImportFlags {
+        /// A TypeScript clause that binds no value (`import {} from 'x'`) is type-only.
+        #[inline]
+        pub const fn drops_valueless_clause(self) -> bool {
+            !self.contains(Self::KEEP_STMT)
+        }
+
+        /// `NOT_PACKAGES`, for the specifier of one import.
+        #[inline]
+        pub fn skips(self, specifier: &[u8]) -> bool {
+            self.contains(Self::NOT_PACKAGES) && bun_paths::is_package_path(specifier)
+        }
+
+        /// TypeScript emits nothing for a declaration file, so the settings do not reach one.
+        pub fn is_declaration_file(path: &[u8]) -> bool {
+            path.ends_with(b".d.ts") || path.ends_with(b".d.mts") || path.ends_with(b".d.cts")
+        }
+    }
     /// Port of `bake.Framework` (src/runtime/bake/mod.rs:129) — TYPE_ONLY
     /// parser-side mirror. The full struct lives in `bun_runtime::bake` (a
     /// higher tier we cannot depend on here); the parser only consumes the
@@ -1358,7 +1388,6 @@ pub(crate) struct ImportClause<'a> {
     /// (`S::Import.items: StoreSlice<ClauseItem>`).
     pub(crate) items: &'a mut [js_ast::ClauseItem],
     pub(crate) is_single_line: bool,
-    pub(crate) had_type_only_imports: bool,
 }
 
 pub struct PropertyOpts {

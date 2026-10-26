@@ -152,7 +152,8 @@ pub struct Options<'a> {
     /// Keeps every directive in the AST, in its original position and with its original text.
     /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
     pub keep_directives: bool,
-    pub preserve_unused_imports_ts: bool,
+    /// From the tsconfig.json that governs the file. Empty in node_modules and in a `.d.ts`.
+    pub unused_import_flags_ts: options::TSUnusedImportFlags,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
     pub features: RuntimeFeatures,
@@ -173,6 +174,7 @@ pub struct Options<'a> {
     pub jsc_builtin_syntax: bool,
     pub output_format: options::Format,
 
+    /// `bun build --no-bundle`: the output is printed, and whatever runs it links it. Off by default.
     pub transform_only: bool,
 
     /// Used for inlining the state of import.meta.main during visiting
@@ -210,7 +212,7 @@ impl<'a> Default for Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
-            preserve_unused_imports_ts: false,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
@@ -262,7 +264,7 @@ impl<'a> Options<'a> {
             keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
             keep_directives: self.keep_directives,
-            preserve_unused_imports_ts: self.preserve_unused_imports_ts,
+            unused_import_flags_ts: self.unused_import_flags_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
             suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
             features: RuntimeFeatures {
@@ -341,6 +343,10 @@ impl<'a> Options<'a> {
 
         if self.ts {
             hasher.update(b"TS");
+            if !self.unused_import_flags_ts.is_empty() {
+                hasher.update(b"ts_unused_imports=");
+                hasher.update(&[self.unused_import_flags_ts.bits()]);
+            }
         } else {
             hasher.update(b"NO_TS");
         }
@@ -354,6 +360,17 @@ impl<'a> Options<'a> {
         }
 
         self.features.hash_for_runtime_transpiler(hasher);
+    }
+
+    /// Only transform output prints a name that `KEEP_VALUES` keeps: it must be a real export there.
+    pub(crate) fn keeps_unused_import_names_ts(&self) -> bool {
+        self.ts
+            && self.transform_only
+            && self
+                .unused_import_flags_ts
+                .contains(options::TSUnusedImportFlags::KEEP_VALUES)
+            && !self.bundle
+            && !self.features.minify_identifiers
     }
 
     // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
@@ -371,7 +388,7 @@ impl<'a> Options<'a> {
             keep_names: true,
             ignore_dce_annotations: false,
             keep_directives: false,
-            preserve_unused_imports_ts: false,
+            unused_import_flags_ts: options::TSUnusedImportFlags::empty(),
             use_define_for_class_fields: true,
             suppress_warnings_about_weird_code: true,
             features: RuntimeFeatures::default(),
@@ -593,8 +610,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        //
-        if TS {
+        // With a tsconfig flag set, a statement that survives the parse survives the transform.
+        if TS && p.options.unused_import_flags_ts.is_empty() {
             for import_record in p.import_records.items_mut() {
                 // Mark everything as unused
                 // Except:
@@ -1540,6 +1557,7 @@ impl<'a> Parser<'a> {
                             items: bun_ast::StoreSlice::EMPTY,
                             is_single_line: false,
                             phase_defer: false,
+                            has_items_clause: false,
                         },
                         ns_loc,
                     );
@@ -2089,8 +2107,8 @@ impl<'a> Parser<'a> {
                 break 'outer;
             }
 
+            let mut imports_test_names = false;
             for item in p.import_records.items() {
-                // skip if they did import it
                 if item.path.text == b"bun:test"
                     || item.path.text == b"@jest/globals"
                     || item.path.text == b"vitest"
@@ -2102,8 +2120,13 @@ impl<'a> Parser<'a> {
                         }
                     }
 
-                    break 'outer;
+                    // A statement that binds no value leaves the file on the globals.
+                    imports_test_names |= !item.flags.contains(ImportRecordFlags::KEPT_BY_TSCONFIG);
                 }
+            }
+            // skip if they did import it
+            if imports_test_names {
+                break 'outer;
             }
 
             // if they didn't use any of the jest globals, don't inject it, I guess.
@@ -2248,6 +2271,7 @@ impl<'a> Parser<'a> {
                         star_name_loc: bun_ast::Loc::EMPTY,
                         is_single_line: false,
                         phase_defer: false,
+                        has_items_clause: false,
                     },
                     bun_ast::Loc::EMPTY,
                 );

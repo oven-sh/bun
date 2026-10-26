@@ -6249,6 +6249,14 @@ pub(crate) mod __gated_printer {
                         }
                         self.print(b"}");
                         item_count += 1;
+                    } else if s.has_items_clause {
+                        // "import {} from 'path'"
+                        if item_count > 0 {
+                            self.print(b",");
+                        }
+                        self.print_space();
+                        self.print(b"{}");
+                        item_count += 1;
                     }
 
                     if record
@@ -6266,11 +6274,12 @@ pub(crate) mod __gated_printer {
                     }
 
                     if item_count > 0 {
+                        // A space is needed after a name, not after `}`.
                         if !self.options.minify_whitespace
                             || record
                                 .flags
                                 .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                            || slice_of(s.items).is_empty()
+                            || (slice_of(s.items).is_empty() && !s.has_items_clause)
                         {
                             self.print(b" ");
                         }

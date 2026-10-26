@@ -201,6 +201,13 @@ impl DirInfo {
         self.flags.contains(Flags::InsideNodeModules)
     }
 
+    /// The project that installs a package did not write its files.
+    #[inline]
+    pub(crate) fn is_inside_installed_package(&self) -> bool {
+        self.flags
+            .intersects(Flags::InsideNodeModules | Flags::InsideCachedPackage)
+    }
+
     /// Read-only view of `package_json`. The field stores `NonNull` to preserve
     /// mut-provenance; callers that only read go through here.
     #[inline]
@@ -386,6 +393,8 @@ bitflags::bitflags! {
         /// This directory has a node_modules subdirectory
         const HasNodeModules    = 1 << 1;
         const InsideNodeModules = 1 << 2;
+        /// Inside a package that auto-install put in the global cache.
+        const InsideCachedPackage = 1 << 3;
     }
 }
 impl Flags {

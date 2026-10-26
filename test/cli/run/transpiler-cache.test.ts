@@ -123,6 +123,77 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("a tsconfig.json that keeps unused imports is part of the cache key", async () => {
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    const keep = JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } });
+    writeFileSync(join(temp_dir, "effect.ts"), `console.log("effect"); export const unused = 1;`);
+    writeFileSync(join(temp_dir, "a.ts"), `import { unused } from "./effect";\nconsole.log("a");` + filler);
+    // A JavaScript file has no import to keep: the setting does not change its key.
+    writeFileSync(join(temp_dir, "b.js"), `console.log("b");` + filler);
+
+    writeFileSync(join(temp_dir, "tsconfig.json"), "{}");
+    expect(await bunRun(join(temp_dir, "a.ts"), env)).toSpawn("a");
+    expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("b");
+    expect(newCacheCount()).toBe(2);
+
+    writeFileSync(join(temp_dir, "tsconfig.json"), keep);
+    expect(await bunRun(join(temp_dir, "a.ts"), env)).toSpawn("effect\na");
+    expect(await bunRun(join(temp_dir, "a.ts"), env)).toSpawn("effect\na");
+    const entries = () => readdirSync(cache_dir).map(name => [name, statSync(join(cache_dir, name)).mtimeMs]);
+    const before = entries();
+    expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("b");
+    expect(entries()).toEqual(before);
+
+    writeFileSync(join(temp_dir, "tsconfig.json"), "{}");
+    expect(await bunRun(join(temp_dir, "a.ts"), env)).toSpawn("a");
+  });
+  test("each tsconfig.json setting that keeps unused imports has its own cache key", async () => {
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    writeFileSync(join(temp_dir, "effect.ts"), `console.log("effect"); export type T = number;`);
+    writeFileSync(join(temp_dir, "a.ts"), `import { type T } from "./effect";\nconsole.log("a");` + filler);
+    // `preserveValueImports` keeps no statement that binds no value. `verbatimModuleSyntax` does.
+    writeFileSync(join(temp_dir, "tsconfig.json"), JSON.stringify({ compilerOptions: { preserveValueImports: true } }));
+    expect(await bunRun(join(temp_dir, "a.ts"), env)).toSpawn("a");
+    expect(newCacheCount()).toBe(1);
+    writeFileSync(join(temp_dir, "tsconfig.json"), JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } }));
+    expect(await bunRun(join(temp_dir, "a.ts"), env)).toSpawn("effect\na");
+  });
+  // `bun test` loads `bun:test` for an import of `vitest`, and `bun run` loads the package. Under
+  // `verbatimModuleSyntax` a type-only import is such an import, so `bun test` caches no output for it.
+  test("bun test caches no output for a kept type-only import of vitest", async () => {
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    mkdirSync(join(temp_dir, "node_modules", "vitest"), { recursive: true });
+    writeFileSync(
+      join(temp_dir, "node_modules", "vitest", "package.json"),
+      JSON.stringify({ name: "vitest", main: "index.js" }),
+    );
+    writeFileSync(join(temp_dir, "node_modules", "vitest", "index.js"), `console.log("the vitest package");`);
+    writeFileSync(join(temp_dir, "tsconfig.json"), JSON.stringify({ compilerOptions: { verbatimModuleSyntax: true } }));
+    writeFileSync(
+      join(temp_dir, "helper.ts"),
+      `import { type Mock } from "vitest";\nexport type M = Mock;\nconsole.log("helper");` + filler,
+    );
+    writeFileSync(join(temp_dir, "helper.test.ts"), `import "./helper";\ntest("runs", () => {});`);
+    for (const [command, loaded] of [
+      ["test", false],
+      ["run", true],
+    ] as const) {
+      await using proc = Bun.spawn({
+        cmd: command === "test" ? [bunExe(), "test", "./helper.test.ts"] : [bunExe(), "helper.ts"],
+        cwd: temp_dir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ command, loaded: stdout.includes("the vitest package"), helper: stdout.includes("helper") }).toEqual({
+        command,
+        loaded,
+        helper: true,
+      });
+      expect(exitCode).toBe(0);
+    }
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");

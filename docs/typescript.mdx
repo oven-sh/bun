@@ -54,6 +54,74 @@ Running `bun init` in a new directory generates this `tsconfig.json` for you.
 bun init
 ```
 
+## `verbatimModuleSyntax`
+
+With `"verbatimModuleSyntax": true`, Bun keeps every import that has no `type` modifier on the statement. The imported module runs even when your code uses none of its names.
+
+```ts index.ts icon="/icons/typescript.svg"
+import { unused } from "./register-plugin"; // runs ./register-plugin
+import { type Options } from "./options"; // runs ./options
+import type { Config } from "./config"; // removed
+```
+
+Without the option, Bun removes all three imports, because no value uses them. Node.js runs a TypeScript file as if the option is set.
+
+- `bun run`, `bun test`, and `bun build` keep the statement and remove the names that nothing uses. `import { unused } from "./register-plugin"` becomes `import "./register-plugin"`, so a type that you import without `type` still loads.
+- `bun build --no-bundle` prints the unused names too, and prints `import { type Options } from "./options"` as `import {} from "./options"`. Each name that it prints must be a real export when the output runs.
+- Bun does not apply the option to declaration files (`.d.ts`).
+- `bun run` does not apply the option to a file that uses `module.exports`. That file runs as CommonJS, which cannot hold an `import` statement.
+
+### What a kept import needs
+
+A kept import is a request for its module, at its place in the file.
+
+- The module must exist. `import { type Handler } from "aws-lambda"` fails when only `@types/aws-lambda` is installed. `import { type T } from "./types"` fails when only `types.d.ts` exists.
+- The module runs where the statement is. It can run before a later `import "./setup"`, and an import cycle through it can fail with `Cannot access 'X' before initialization`.
+- A bundle includes the module. In client code, `import { type AppType } from "./server"` puts `./server` in the browser bundle.
+- `bun test --coverage` lists the module.
+
+Write `import type` for an import that you need only for its types. This command rewrites `import { type Options }` to `import type { Options }`:
+
+```sh terminal icon="terminal"
+bun lint --rule '@typescript-eslint/no-import-type-side-effects: error' --fix
+```
+
+[`bun check`](/runtime/check) reports a type that you import with no `type` at all.
+
+### Which `tsconfig.json` applies
+
+Bun reads the option from the `tsconfig.json` or `jsconfig.json` nearest to the directory that each file is loaded from.
+
+- Bun follows `extends` when it is a relative path that ends in `.json`. It does not follow `references`.
+- With no `tsconfig.json`, the option is off.
+- A file in `node_modules`, or in a package that [auto-install](/runtime/auto-install) fetched, takes no option. A workspace package that is linked into `node_modules` is loaded from its own directory, so its `tsconfig.json` applies.
+- While auto-install is on, Bun does not keep an unused import of a package name. It would be a request to the registry.
+
+`bun check` selects the `tsconfig.json` as `tsc` does. It can report `TS1484` for a file that the runtime does not apply the option to.
+
+### Turn it off
+
+Set `"verbatimModuleSyntax": false` in the `tsconfig.json` that applies to the files. A config that extends it inherits the value.
+
+For a project with one `tsconfig.json`, `--tsconfig-override` also works. It replaces the `tsconfig.json` of every directory, with its `paths` and JSX settings, and the dev server of `Bun.serve` does not read it.
+
+```json tsconfig.run.json icon="file-json"
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "verbatimModuleSyntax": false
+  }
+}
+```
+
+```sh terminal icon="terminal"
+bun --tsconfig-override=tsconfig.run.json index.ts
+```
+
+### Older settings
+
+`"importsNotUsedAsValues": "preserve"` keeps the statement, and `"preserveValueImports": true` keeps the unused names. TypeScript 5.5 removed both settings, and `bun check` reports them as unknown options. The transpiler still reads them.
+
 ## Type checking
 
 Bun runs TypeScript files without checking their types. Use [`bun check`](/runtime/check) to type check your project.

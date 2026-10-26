@@ -320,21 +320,10 @@ impl SelectedPackages {
     }
 }
 
-/// Ends the run for a directory that doesn't open, as `bun install` does. Else the walk continues.
-fn on_walk_error(err: &bun_sys::Error) {
-    if err.syscall == bun_sys::Tag::open {
-        match err.get_errno() {
-            // A symlink loop leads nowhere, like a symlink to nothing.
-            bun_sys::E::ELOOP => return,
-            // The walker's own error for a path that is too long for it.
-            bun_sys::E::ENAMETOOLONG => {}
-            _ => {
-                Output::err_generic("{}", (err,));
-                Global::exit(1);
-            }
-        }
-    }
-    bun_core::pretty_errorln!("Error: {}", err);
+/// Ends the run for an error from the walk of a "workspaces" entry, as `bun install` does.
+fn exit_on_walk_error(err: &bun_sys::Error) -> ! {
+    Output::err_generic("{}", (err,));
+    Global::exit(1);
 }
 
 // Heap-allocated so the walker keeps its address while the `PackageFilterIterator` moves. Held as
@@ -401,7 +390,7 @@ impl<'a> PackageFilterIterator<'a> {
         let mut iter: GlobWalkerIterator =
             glob::walk::Iterator::new(unsafe { &mut *walker.0.as_ptr() });
         if let Err(err) = iter.init()? {
-            on_walk_error(&err);
+            exit_on_walk_error(&err);
         }
         Ok(ActiveWalk {
             iter,
@@ -440,7 +429,14 @@ impl<'a> PackageFilterIterator<'a> {
                     self.active = None;
                     self.pattern_idx += 1;
                 }
-                Err(err) => on_walk_error(&err),
+                // ENAMETOOLONG is the walker's own error for a member path that is too long for it.
+                Err(err)
+                    if err.syscall == bun_sys::Tag::open
+                        && err.get_errno() != bun_sys::E::ENAMETOOLONG =>
+                {
+                    exit_on_walk_error(&err)
+                }
+                Err(err) => bun_core::pretty_errorln!("Error: {}", err),
             }
         }
     }

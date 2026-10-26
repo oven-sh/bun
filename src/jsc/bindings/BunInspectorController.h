@@ -104,10 +104,6 @@ private:
     bool m_isWaitingForFrontend { false };
 };
 
-// The inspector connections of `globalObject` take the commands of their frontends while the debugger has the JS
-// thread paused, until `isDoneProcessingEvents`. BunDebugger.cpp.
-void runInspectorConnectionsWhilePaused(JSC::JSGlobalObject&, bool& isDoneProcessingEvents);
-
 // Where the console calls of `globalObject` go when it is inspectable.
 CheckedPtr<JSC::ConsoleClient> inspectorConsoleClient(JSC::JSGlobalObject&);
 

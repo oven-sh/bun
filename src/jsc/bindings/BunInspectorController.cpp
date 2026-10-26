@@ -2,6 +2,7 @@
 
 #include "BunInspectorController.h"
 
+#include "BunDebugger.h"
 #include "InspectorBunFrontendDevServerAgent.h"
 #include "InspectorHTTPServerAgent.h"
 #include "InspectorLifecycleAgent.h"

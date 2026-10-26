@@ -347,9 +347,7 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunSt
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
-// A JSString with a copy of the bytes. When the string would be too long or its
-// allocation fails, throws ERR_STRING_TOO_LONG or ERR_MEMORY_ALLOCATION_FAILED
-// and returns nullptr. UTF-8 bytes are the exception `Zig::tryToStringCopy` names.
+// A JSString with a copy of the bytes. Throws and returns nullptr where `Zig::tryToStringCopy` refuses the copy.
 JSC::JSString* toJS(JSC::JSGlobalObject*, EncodedSlice);
 // The same copy as a WTF::String: null for empty bytes, and null with that exception thrown.
 WTF::String toWTFStringCopy(JSC::JSGlobalObject*, EncodedSlice);

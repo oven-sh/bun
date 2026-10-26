@@ -277,8 +277,7 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 
 }
 
-// A JSString with a copy of `slice`. An empty value, with nothing thrown, when
-// the copy is refused: `failure` is then Dead (too long) or OutOfMemory.
+// `Bun::tryToJS` for Rust: the empty value where that returns nullptr.
 extern "C" JSC::EncodedJSValue EncodedSlice__tryToJS(const EncodedSlice* slice, JSC::JSGlobalObject* globalObject, BunStringTag* failure)
 {
     return JSValue::encode(Bun::tryToJS(JSC::getVM(globalObject), *slice, *failure));

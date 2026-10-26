@@ -309,37 +309,36 @@ impl TextDecoder {
                 };
 
                 // "BOM seen" is only written by "serialize I/O queue", which a
-                // thrown decode never reaches, so only commit it, and the partial
-                // sequence that this chunk ends with, for a chunk that gives a string.
-                let Some((decoded, leftover, leftover_len)) = maybe_decode_result else {
-                    // All-ASCII input needed no conversion. `create_latin1_string`
-                    // copies, so `input` may borrow the caller's buffer or `joined_owned`.
-                    // Experiment: using mimalloc directly is slightly slower
-                    let string = heap.create_latin1_string(input)?;
+                // thrown fatal decode never reaches, so only commit it once the
+                // decode succeeded.
+                if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
+                    // The one way `create_utf16_string_from_vec` fails, checked before the decoder changes.
+                    if decoded.len() > bun_core::String::max_length() {
+                        return Err(heap.string_too_long());
+                    }
                     if set_bom_seen {
                         self.bom_seen = true;
                     }
-                    return Ok(string);
-                };
-                // The one way `create_utf16_string_from_vec` fails. Checked before the
-                // state changes, which keeps that call the last thing this arm does.
-                if decoded.len() > bun_core::String::max_length() {
-                    return Err(heap.string_too_long());
+                    debug_assert!(self.buffered.len == 0);
+                    if !FLUSH {
+                        if leftover_len != 0 {
+                            self.buffered = Buffered {
+                                buf: leftover,
+                                len: leftover_len,
+                            };
+                        }
+                    }
+                    return heap.create_utf16_string_from_vec(decoded);
                 }
+
+                // All-ASCII input needed no conversion. `create_latin1_string`
+                // copies, so `input` may borrow the caller's buffer or `joined_owned`.
+                // Experiment: using mimalloc directly is slightly slower
+                let string = heap.create_latin1_string(input)?;
                 if set_bom_seen {
                     self.bom_seen = true;
                 }
-
-                debug_assert!(self.buffered.len == 0);
-                if !FLUSH {
-                    if leftover_len != 0 {
-                        self.buffered = Buffered {
-                            buf: leftover,
-                            len: leftover_len,
-                        };
-                    }
-                }
-                heap.create_utf16_string_from_vec(decoded)
+                Ok(string)
             }
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {

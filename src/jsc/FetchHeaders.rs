@@ -202,10 +202,14 @@ impl FetchHeaders {
         host_fn::from_js_host_call_generic(global, || {
             self.get_(&EncodedSlice::latin1(name_), &mut out, global)
         })?;
-        // Returns the EncodedSlice view (borrows C++-owned header
-        // storage); caller may `.slice()` it. Returning `&[u8]` directly
-        // would borrow the local `out`, not the underlying buffer.
-        Ok((!out.is_empty()).then_some(out))
+        if !out.is_empty() {
+            // Returns the EncodedSlice view (borrows C++-owned header
+            // storage); caller may `.slice()` it. Returning `&[u8]` directly
+            // would borrow the local `out`, not the underlying buffer.
+            return Ok(Some(out));
+        }
+
+        Ok(None)
     }
 
     pub fn fast_has(&mut self, name_: HTTPHeaderName) -> bool {

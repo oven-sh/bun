@@ -31,8 +31,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         code: u8,
     ) -> JSValue;
-    // safe: as above. C++ writes `failure` only where it returns the empty value, and
-    // then only `Tag::Dead` or `Tag::OutOfMemory`.
+    // safe: as above. C++ writes only `Tag::Dead` or `Tag::OutOfMemory` to `failure`.
     safe fn EncodedSlice__tryToJS(
         this: &EncodedSlice,
         global: &JSGlobalObject,
@@ -110,14 +109,9 @@ pub trait EncodedSliceJsc: Sized {
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode)
     -> JSValue;
-    /// Copies into a GC-managed `JSString`. Throws `ERR_STRING_TOO_LONG` when
-    /// the string would be too long and `ERR_MEMORY_ALLOCATION_FAILED` when its
-    /// allocation fails. UTF-8 bytes are the exception: under 2^30 of them,
-    /// WTF's converter ends the process when its allocation fails.
+    /// Copies into a GC-managed `JSString`. Throws when the string is too long or its allocation fails.
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// `to_js` for a short string (a name, a code) in a frame with no way to
-    /// return an error, such as the builder of an error object. Such a copy
-    /// fails only when the process is out of memory, which ends it.
+    /// `to_js` for a short name or code where no error can be returned. A failed copy ends the process.
     fn to_js_bounded(&self, global: &JSGlobalObject) -> JSValue;
     /// Transfers ownership of a globally-allocated buffer to JSC's
     /// external-string finalizer.

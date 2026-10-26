@@ -185,19 +185,14 @@ static const WTF::String toStringCopy(EncodedSlice str, StringPointer ptr)
               std::span { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
-// `tryCreateUninitialized` returns null both for a length it refuses and for a
-// failed allocation. The result is the tag of a BunString that holds no string:
-// Dead reaches JS as ERR_STRING_TOO_LONG, OutOfMemory as ERR_MEMORY_ALLOCATION_FAILED.
+// Why `tryCreateUninitialized` returned null: Dead (ERR_STRING_TOO_LONG) for the length, else OutOfMemory (ERR_MEMORY_ALLOCATION_FAILED).
 template<typename CharacterType>
 static BunStringTag uninitializedStringFailureTag(size_t length)
 {
     return WTF::StringImpl::isValidLength<CharacterType>(length) ? BunStringTag::OutOfMemory : BunStringTag::Dead;
 }
 
-// A new string with a copy of `str`, which is not empty. Null when the copy is
-// refused: `failure` is then Dead or OutOfMemory, as above. A UTF-8 `str` of
-// less than 2^30 bytes goes to WTF's converter, which ends the process when
-// its allocation fails.
+// A copy of the non-empty `str`, or null with `failure` set. UTF-8 under 2^30 bytes still aborts in WTF when its allocation fails.
 static WTF::String tryToStringCopy(EncodedSlice str, BunStringTag& failure)
 {
     ASSERT(str.len && str.ptr);

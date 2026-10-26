@@ -3794,12 +3794,10 @@ impl<'p, 's> Types<'p, 's> {
         id
     }
 
-    /// Compares `a.id` with `b.id` for `isDeeplyNestedType`, which treats a higher id as a sign of a newer instantiation,
-    /// one caused by recursion. Only the heights are compared. The instantiations of a recursion
-    /// that steps from one literal type to the next all have the same height, and comparing their hashes would count
-    /// only about half of them. The caller orders two types with the same height.
+    /// Compares the heights of `a` and `b`. A type is taller than every type it's built from, so a type that is lower
+    /// than another may be a component of it. Two types of the same height are unordered here.
     #[inline]
-    pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+    pub fn height_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         self.rank(a).height.cmp(&self.rank(b).height)
     }
 
@@ -5604,11 +5602,11 @@ mod tests {
         ] {
             assert!(types.content_order(part, whole).is_lt());
             assert!(types.content_order(whole, part).is_gt());
-            assert!(types.nesting_order(whole, part).is_gt());
-            assert!(types.nesting_order(part, whole).is_lt());
+            assert!(types.height_order(whole, part).is_gt());
+            assert!(types.height_order(part, whole).is_lt());
         }
         // Same height.
-        assert!(types.nesting_order(keyof_string, keyof_number).is_eq());
+        assert!(types.height_order(keyof_string, keyof_number).is_eq());
         assert!(types.content_order(outer, outer).is_eq());
     }
 

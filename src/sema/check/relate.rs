@@ -4358,33 +4358,141 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             if self.has_matching_recursion_identity(on_stack, identity) {
-                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
+                if last.is_none_or(|last| self.is_at_least_as_new(i, last, stacks, is_source)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
                     }
                 }
-                last = Some(on_stack);
+                last = Some(i);
             }
         }
         false
     }
 
-    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. Height doesn't order two instantiations with the
-    /// same height. Counting each as newer than the other would cut off a comparison that only swaps the same two
-    /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
-    /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
-    /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
-    /// so this is a total order: of two different types, exactly one is newer.
-    fn is_at_least_as_new(&self, t: TypeId, last: TypeId, stacks: [&[(TypeId, u32)]; 2]) -> bool {
+    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`: the entry at `to` of the stack was created no
+    /// earlier than the entry at `from`. tsgo numbers types in the order it creates them. Here the same type has one
+    /// id however it was reached, so the order is derived from how each entry was created:
+    ///
+    /// 1. An entry reached through a member of a class, an interface or a type literal that is not instantiated is
+    ///    the type of a type node in that declaration. If the declaration is in a file that is checked, and comes
+    ///    before the source element being checked, `checkSourceFile` created the type when it reached the
+    ///    declaration. Two such entries are ordered by the positions of the declarations. One such entry is older
+    ///    than an entry that was created on demand.
+    /// 2. A type is created after its components. An entry that the comparison reached from `from` through
+    ///    components only, one level at a time, is older.
+    /// 3. Otherwise both were created on demand, and the comparison created the one it reached first: the one that
+    ///    was pushed first is the older one. Push numbers grow with every level, and a level's target has a lower
+    ///    one than its source. No two entries share one, so this is a total order.
+    fn is_at_least_as_new(
+        &self,
+        to: usize,
+        from: usize,
+        stacks: [&[(TypeId, u32)]; 2],
+        is_source: bool,
+    ) -> bool {
+        let stack = stacks[usize::from(!is_source)];
+        let (t, last) = (stack[to].0, stack[from].0);
+        if t == last {
+            return true;
+        }
+        let written = |at: usize| {
+            let parent = stack[..at].last()?.0;
+            self.checked_declaration_before_current(parent)
+        };
+        match (written(to), written(from)) {
+            (Some(t), Some(last)) if t != last => return t > last,
+            (Some(_), None) => return false,
+            (None, Some(_)) => return true,
+            _ => {}
+        }
+        if self.types().height_order(t, last).is_lt() && self.is_reached_through_components(stack, from, to) {
+            return false;
+        }
         let pushed = |t: TypeId| {
             let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
             stacks.into_iter().filter_map(first).min()
         };
-        t == last
-            || (self.types().nesting_order(t, last))
-                .then_with(|| pushed(t).cmp(&pushed(last)))
-                .is_ge()
+        pushed(t) >= pushed(last)
+    }
+
+    /// The position in check order of the declaration of `parent`, if `parent` is a class, an interface or a type
+    /// literal that is not instantiated, declared in a file that reports semantic errors, before the source element
+    /// being checked. The types of its members are the types of the type nodes in that declaration, which
+    /// `checkSourceFile` resolves when it reaches the declaration.
+    fn checked_declaration_before_current(&self, parent: TypeId) -> Option<(u32, u32)> {
+        let current = self.current_source_element?;
+        let files = self.files();
+        let (file, pos) = match self.data(parent) {
+            TypeData::Ref {
+                target,
+                args: TypeArguments::Given(args),
+            } if args.is_empty() => {
+                let declarations = files.decls_of(*target).into_iter();
+                let positions = declarations.filter_map(|(file, declaration)| {
+                    let pos = declaration.name_pos_of_class_or_interface(self.hir(file))?;
+                    Some((file, pos))
+                });
+                positions.min_by_key(|&(file, pos)| (files.rank_of_file(file), pos))?
+            }
+            &TypeData::Anon {
+                origin: Origin::TypeLiteral(file, node),
+                mapper: MapperId::IDENTITY,
+            } => (file, self.hir(file)[node].pos),
+            _ => return None,
+        };
+        if !self.reports_semantic_errors(file) {
+            return None;
+        }
+        let (current_file, current_pos) = match current {
+            CurrentNode::Expr(file, e) => (file, start_of(self.hir(file), e)),
+            CurrentNode::TypeNode(file, node) => (file, self.hir(file)[node].pos),
+            CurrentNode::Node(file, node) => (file, self.hir(file).start(node)),
+        };
+        let at = (files.rank_of_file(file), pos);
+        (at < (files.rank_of_file(current_file), current_pos)).then_some(at)
+    }
+
+    /// True if each entry of `stack` after `from`, up to and including `to`, is a component of the entry before it.
+    /// The comparison then reached the entry at `to` from the entry at `from` through components only, so the
+    /// entry at `to` was created first.
+    fn is_reached_through_components(&self, stack: &[(TypeId, u32)], from: usize, to: usize) -> bool {
+        if from >= to {
+            return false;
+        }
+        let mut container = stack[from].0;
+        for &(part, _) in &stack[from + 1..=to] {
+            if !self.is_component(container, part) {
+                return false;
+            }
+            container = part;
+        }
+        true
+    }
+
+    /// True if `part` is in the interning key of `whole`: a type argument, an element, a constituent, or what a
+    /// type parameter of `whole` is mapped to.
+    fn is_component(&self, whole: TypeId, part: TypeId) -> bool {
+        match self.data(whole) {
+            TypeData::Ref {
+                args: TypeArguments::Given(parts),
+                ..
+            }
+            | TypeData::Tuple {
+                elems: TypeArguments::Given(parts),
+                ..
+            } => parts.contains(&part),
+            TypeData::Union(parts) | TypeData::Intersection(parts) => parts.contains(&part),
+            TypeData::Anon { mapper, .. }
+            | TypeData::Fns { mapper, .. }
+            | TypeData::Cond { mapper, .. } => {
+                (self.types().mapping(*mapper).iter()).any(|pair| pair.1 == part)
+            }
+            &TypeData::IndexedAccess { obj, index, .. } => part == obj || part == index,
+            &TypeData::Substitution { base, constraint } => part == base || part == constraint,
+            &TypeData::Keyof(inner) | &TypeData::StringMapping { ty: inner, .. } => part == inner,
+            _ => false,
+        }
     }
 
     /// `is_deeply_nested_type` of the last entry of the stack, at depth 3. `identities` has an `OnStack` for
@@ -4422,7 +4530,7 @@ impl<'p, 's> Checker<'p, 's> {
         let bit = identity_bit(identity);
         let mut count = 0;
         let mut last = None;
-        for (&(on_stack, _), known) in stack.iter().zip(identities.iter()) {
+        for (i, (&(on_stack, _), known)) in stack.iter().zip(identities.iter()).enumerate() {
             if known.may_match & bit == 0 {
                 continue;
             }
@@ -4434,13 +4542,13 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.current_recursion_identity(on_stack, cached_value) == identity
             };
             if matches {
-                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
+                if last.is_none_or(|last| self.is_at_least_as_new(i, last, stacks, is_source)) {
                     count += 1;
                     if count >= max_depth {
                         return true;
                     }
                 }
-                last = Some(on_stack);
+                last = Some(i);
             }
         }
         false

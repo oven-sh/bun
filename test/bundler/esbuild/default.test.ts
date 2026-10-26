@@ -3681,8 +3681,9 @@ describe.concurrent("bundler", () => {
       "/c.js": `console.log(await 0)`,
     },
     format: "esm",
+    // An `import()` starts its module after the entry's synchronous code, as in node.
     run: {
-      stdout: "0\n1",
+      stdout: "1\n0",
     },
   });
   itBundled("default/TopLevelAwaitImport", {

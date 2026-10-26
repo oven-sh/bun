@@ -873,7 +873,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     // "var init_foo = __esm(...);"
                     let value = Expr::init(
                         E::Call {
-                            target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
+                            target: Expr::init_identifier(
+                                c.esm_runtime_ref_for(part_range.source_index.get()),
+                                bun_ast::Loc::EMPTY,
+                            ),
                             args: Vec::move_from_list(esm_args),
                             ..Default::default()
                         },

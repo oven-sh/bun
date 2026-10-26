@@ -2593,7 +2593,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("await (init_async() || Promise.resolve().then(() => init_async()))");
+      expect(out).toContain("await init_async(1)");
       expect(out).toContain("init_sync()");
     },
   });
@@ -4774,6 +4774,408 @@ describe("bundler", () => {
         a after await
         entry done
         dyn a ok 1
+      `,
+    },
+  });
+  // The next cases: a module that `import()` loads never runs inside the
+  // `import()` call. It starts after the synchronous code that called it.
+  // x imports the caller back and reads what the caller set after the call.
+  itBundled("edgecase/ImportCallTargetRunsAfterCallerCode", {
+    files: {
+      "/entry.js": /* js */ `import "./a.js";`,
+      "/a.js": /* js */ `
+        export let ready = false;
+        import("./x.js");
+        ready = true;
+        await 0;
+      `,
+      "/x.js": /* js */ `
+        import { ready } from "./a.js";
+        console.log("x sees ready:", ready);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "x sees ready: true" },
+  });
+  // y, a static dependency of the target, imports the caller back.
+  itBundled("edgecase/ImportCallTargetDependencyRunsAfterCallerCode", {
+    files: {
+      "/entry.js": /* js */ `import "./a.js";`,
+      "/a.js": /* js */ `
+        export let ready = false;
+        import("./x.js");
+        ready = true;
+        await 0;
+      `,
+      "/x.js": /* js */ `
+        import "./y.js";
+        console.log("x body");
+      `,
+      "/y.js": /* js */ `
+        import { ready } from "./a.js";
+        console.log("y sees ready:", ready);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "y sees ready: true\nx body" },
+  });
+  // The `import()` is in h, a static dependency of a, so it runs while a is
+  // still at its imports. x runs after the code of h and of a.
+  itBundled("edgecase/ImportCallInStaticDependencyRunsAfterImporterCode", {
+    files: {
+      "/entry.js": /* js */ `import "./a.js";`,
+      "/a.js": /* js */ `
+        import "./h.js";
+        export let ready = false;
+        ready = true;
+        await 0;
+      `,
+      "/h.js": /* js */ `
+        import("./x.js");
+        globalThis.hDone = true;
+      `,
+      "/x.js": /* js */ `
+        import { ready } from "./a.js";
+        console.log("x sees hDone:", globalThis.hDone, "ready:", ready);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "x sees hDone: true ready: true" },
+  });
+  // a awaits the `import()` of x, and x imports a back. x does not wait for a.
+  itBundled("edgecase/AwaitedImportCallOfModuleThatImportsCallerSettles", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry end");
+      `,
+      "/a.js": /* js */ `
+        export const v = 42;
+        const p = import("./x.js");
+        globalThis.after = true;
+        const m = await p;
+        console.log("a got", m.get());
+      `,
+      "/x.js": /* js */ `
+        import { v } from "./a.js";
+        console.log("x sees after:", globalThis.after);
+        export const get = () => v + 1;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "x sees after: true\na got 43\nentry end" },
+  });
+  // app has imports after router, and page imports app back. page runs after them.
+  itBundled("edgecase/ImportCallFromDependencyRunsAfterImporterLaterImports", {
+    files: {
+      "/entry.js": /* js */ `import "./app.js";`,
+      "/app.js": /* js */ `
+        import "./router.js";
+        import "./store.js";
+      `,
+      "/router.js": /* js */ `
+        import("./page.js");
+        await 0;
+      `,
+      "/store.js": /* js */ `globalThis.store = "ready";`,
+      "/page.js": /* js */ `
+        import "./app.js";
+        console.log("page sees store:", globalThis.store);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "page sees store: ready" },
+  });
+  // x and y import each other inside a graph that `import()` loads: y still
+  // runs at once, before t and s, and after the code that made the call.
+  itBundled("edgecase/ImportCycleInsideImportCallRunsAfterCallerCode", {
+    files: {
+      "/entry.js": /* js */ `
+        globalThis.after = false;
+        const p = import("./x.js");
+        globalThis.after = true;
+        await p;
+        console.log("entry end");
+      `,
+      "/x.js": /* js */ `
+        import "./y.js";
+        import "./t.js";
+        import "./s.js";
+        console.log("x body");
+      `,
+      "/y.js": /* js */ `
+        import "./x.js";
+        globalThis.yReady = true;
+        console.log("y body sees after:", globalThis.after);
+      `,
+      "/t.js": /* js */ `
+        console.log("t start");
+        await 0;
+        console.log("t end");
+      `,
+      "/s.js": /* js */ `console.log("s sees y:", globalThis.yReady);`,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        y body sees after: true
+        t start
+        s sees y: true
+        t end
+        x body
+        entry end
+      `,
+    },
+  });
+  // The same cycle, and the call is in a module that has no top-level await.
+  itBundled("edgecase/ImportCycleInsideImportCallFromSyncModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        console.log("entry end");
+      `,
+      "/a.js": /* js */ `
+        export let ready = false;
+        import("./x.js");
+        ready = true;
+        console.log("a end");
+      `,
+      "/x.js": /* js */ `
+        import "./y.js";
+        import "./t.js";
+        console.log("x body");
+      `,
+      "/y.js": /* js */ `
+        import "./x.js";
+        import { ready } from "./a.js";
+        console.log("y sees ready:", ready);
+      `,
+      "/t.js": /* js */ `
+        console.log("t start");
+        await 0;
+        console.log("t end");
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a end
+        entry end
+        y sees ready: true
+        t start
+        t end
+        x body
+      `,
+    },
+  });
+  // h calls `import()` on w, and a imports w right after h. w runs at its
+  // place among the imports of a, and the `import()` settles with it.
+  itBundled("edgecase/ImportCallOfALaterStaticDependency", {
+    files: {
+      "/entry.js": /* js */ `import "./a.js"; console.log("entry");`,
+      "/a.js": /* js */ `
+        import "./h.js";
+        import "./w.js";
+        import "./t.js";
+        import "./s.js";
+        console.log("a body");
+      `,
+      "/h.js": /* js */ `
+        import("./w.js").then(() => console.log("dyn w resolved"));
+        globalThis.hDone = true;
+      `,
+      "/w.js": /* js */ `
+        import "./a.js";
+        globalThis.wReady = true;
+        console.log("w body, hDone:", globalThis.hDone);
+      `,
+      "/t.js": /* js */ `
+        console.log("t start");
+        await 0;
+        console.log("t end");
+      `,
+      "/s.js": /* js */ `console.log("s sees w:", globalThis.wReady);`,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        w body, hDone: true
+        t start
+        s sees w: true
+        t end
+        a body
+        entry
+        dyn w resolved
+      `,
+    },
+  });
+  // router awaits the `import()` of home, home imports store, and app imports
+  // store after router. store does not wait for router, so nothing hangs.
+  itBundled("edgecase/AwaitedImportCallSharesDependencyWithLaterImport", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./app.js");
+        console.log("entry");
+      `,
+      "/app.js": /* js */ `
+        import "./router.js";
+        import "./store.js";
+        console.log("app");
+      `,
+      "/router.js": /* js */ `
+        export const routes = { home: "/" };
+        console.log("router start");
+        const home = await import("./home.js");
+        console.log("router got", home.name);
+      `,
+      "/store.js": /* js */ `
+        import { routes } from "./router.js";
+        export const store = { routes };
+        console.log("store body");
+      `,
+      "/home.js": /* js */ `
+        import { store } from "./store.js";
+        export const name = "home";
+        console.log("home sees store:", typeof store);
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        router start
+        store body
+        home sees store: object
+        router got home
+        app
+        entry
+      `,
+    },
+  });
+  // b awaits the `import()` of x, x imports b back, and c imports x.
+  itBundled("edgecase/TwoImportCallsWithASharedDependencySettle", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("entry start");
+        await Promise.all([import("./b.js"), import("./c.js")]);
+        console.log("entry end");
+      `,
+      "/b.js": /* js */ `
+        console.log("b start");
+        await import("./x.js");
+        console.log("b end");
+      `,
+      "/c.js": /* js */ `
+        import "./x.js";
+        console.log("c body");
+      `,
+      "/x.js": /* js */ `
+        import "./b.js";
+        console.log("x body");
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        entry start
+        b start
+        x body
+        c body
+        b end
+        entry end
+      `,
+    },
+  });
+  // a calls `import()` on p while p is still at its imports. The call settles when p ends.
+  itBundled("edgecase/ImportCallOfImporterFromAsyncDependency", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./p.js";
+        console.log("entry end");
+      `,
+      "/p.js": /* js */ `
+        import "./a.js";
+        export const pv = 1;
+        console.log("p body");
+        await 0;
+        console.log("p end");
+      `,
+      "/a.js": /* js */ `
+        import("./p.js").then(ns => console.log("a got p.pv =", ns.pv));
+        console.log("a body");
+        await 0;
+        console.log("a end");
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a body
+        a end
+        p body
+        p end
+        entry end
+        a got p.pv = 1
+      `,
+    },
+  });
+  // Each `import()` has its own promise: two of three have no handler here.
+  itBundled("edgecase/EachImportCallOfAFailingModuleRejects", {
+    files: {
+      "/entry.js": /* js */ `
+        let unhandled = 0;
+        process.on("unhandledRejection", () => unhandled++);
+        process.on("exit", () => console.log("unhandled:", unhandled));
+        import("./x.js");
+        import("./x.js").catch(e => console.log("caught:", e.message));
+        import("./x.js");
+        await 0;
+      `,
+      "/x.js": /* js */ `
+        await 0;
+        throw new Error("x failed");
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    run: { stdout: "caught: x failed\nunhandled: 2" },
+  });
+  // b imports a with two statements. It still gets the one `init_a() &&` form
+  // and runs at once, before t and s.
+  itBundled("edgecase/ImportCycleMemberWithTwoImportsOfOneModule", {
+    files: {
+      "/entry.js": /* js */ `import "./a.js"; console.log("entry");`,
+      "/a.js": /* js */ `
+        import "./b.js";
+        import "./t.js";
+        import "./s.js";
+        export const av = 1;
+        console.log("a body");
+      `,
+      "/b.js": /* js */ `
+        import "./a.js";
+        import * as A from "./a.js";
+        globalThis.bReady = true;
+        console.log("b body", typeof A);
+      `,
+      "/t.js": /* js */ `
+        console.log("t start");
+        await 0;
+        console.log("t end");
+      `,
+      "/s.js": /* js */ `
+        console.log("s sees b:", globalThis.bReady);
+        import("./a.js");
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        b body object
+        t start
+        s sees b: true
+        t end
+        a body
+        entry
       `,
     },
   });

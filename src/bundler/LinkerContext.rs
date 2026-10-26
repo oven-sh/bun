@@ -92,6 +92,8 @@ pub struct LinkerContext<'a> {
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     pub(crate) cjs_runtime_ref: Ref,
     pub(crate) esm_runtime_ref: Ref,
+    /// `__esmAsync`: the `__esm` of a wrapper that is an async function.
+    pub(crate) esm_async_runtime_ref: Ref,
 
     /// We may need to refer to the CommonJS "module" symbol for exports
     pub(crate) unbound_module_ref: Ref,
@@ -163,6 +165,7 @@ impl<'a> Default for LinkerContext<'a> {
             cycle_detector: Vec::new(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
+            esm_async_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
             promise_ref: Ref::NONE,
             preload_runtime_ref: Ref::NONE,
@@ -591,6 +594,10 @@ impl<'a> LinkerContext<'a> {
 
         self.esm_runtime_ref = runtime_named_exports
             .get(b"__esm")
+            .expect("infallible: runtime export")
+            .ref_;
+        self.esm_async_runtime_ref = runtime_named_exports
+            .get(b"__esmAsync")
             .expect("infallible: runtime export")
             .ref_;
         self.cjs_runtime_ref = runtime_named_exports
@@ -3418,6 +3425,15 @@ impl<'a> LinkerContext<'a> {
 
     /// Creates the synthetic wrapper part (CommonJS or ESM) for a wrapped
     /// file and records its part index in `wrapper_part_index`.
+    /// `__esmAsync` for a file whose wrapper is an async function, else `__esm`.
+    pub(crate) fn esm_runtime_ref_for(&self, source_index: crate::IndexInt) -> Ref {
+        if self.graph.meta.items_flags()[source_index as usize].is_async_or_has_async_dependency {
+            self.esm_async_runtime_ref
+        } else {
+            self.esm_runtime_ref
+        }
+    }
+
     pub(crate) fn create_wrapper_for_file(
         &mut self,
         wrap: WrapKind,
@@ -3537,10 +3553,11 @@ impl<'a> LinkerContext<'a> {
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
 
+                let esm_runtime_ref = self.esm_runtime_ref_for(source_index);
                 let esm_parts: &[u32] = if wrapper_ref.is_valid()
                     && self.options.output_format != Format::InternalBakeDev
                 {
-                    self.top_level_symbols_to_parts_for_runtime(self.esm_runtime_ref)
+                    self.top_level_symbols_to_parts_for_runtime(esm_runtime_ref)
                 } else {
                     &[]
                 };
@@ -3581,7 +3598,7 @@ impl<'a> LinkerContext<'a> {
                         .generate_symbol_import_and_use(
                             source_index,
                             part_index,
-                            self.esm_runtime_ref,
+                            esm_runtime_ref,
                             1,
                             crate::Index::RUNTIME,
                         )
@@ -5231,7 +5248,14 @@ impl InsideWrapperPrefix {
         is_async: bool,
     ) -> Result<(), AllocError> {
         if is_async {
-            self.joined.push(Joined::Async(wrapper_ref, loc));
+            // A second `import` or `export from` of one module adds no second call.
+            let repeated = self
+                .joined
+                .iter()
+                .any(|item| matches!(item, Joined::Async(seen, _) if *seen == wrapper_ref));
+            if !repeated {
+                self.joined.push(Joined::Async(wrapper_ref, loc));
+            }
             return Ok(());
         }
         self.append_non_dependency(Stmt::alloc(

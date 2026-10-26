@@ -75,21 +75,45 @@ describe("bundler", () => {
       const bundled = api.readFile("out.js");
 
       expect(bundled).toMatchInlineSnapshot(`
-        "var __esm = (fn, res, err) => () => {
-          if (fn)
-            try {
-              res = fn(fn = 0);
-            } catch (e) {
-              err = [e];
+        "var __esmClock = 0;
+        var __esmImport;
+        var __esmQueue;
+        var __esmAsync = (fn, res, start, end, init) => init = (from, call, outer, queue, own) => {
+          if (end) {
+            if (!from) {
+              for (call = __esmImport;call; call = call.outer)
+                if (start < call.at && call.at < end)
+                  return;
             }
-          if (err)
-            throw err[0];
+            return res;
+          }
+          if (start) {
+            if (from)
+              return Promise.resolve().then(() => res);
+            return __esmImport && start < __esmImport.at ? Promise.resolve() : undefined;
+          }
+          if (from === 1) {
+            call = { at: ++__esmClock, outer: __esmImport };
+            return (queue = __esmQueue) ? new Promise((resolve) => queue.push(() => resolve(init(call)))) : Promise.resolve(call).then(init);
+          }
+          outer = __esmImport;
+          queue = __esmQueue;
+          if (from)
+            __esmImport = from;
+          start = ++__esmClock;
+          __esmQueue = own = [];
+          res = fn(fn = 0);
+          end = ++__esmClock;
+          __esmImport = outer;
+          __esmQueue = queue;
+          for (call of own)
+            call();
           return res;
         };
 
         // StoreDependencyAsync.ts
         var somePromise;
-        var init_StoreDependencyAsync = __esm(async () => {
+        var init_StoreDependencyAsync = __esmAsync(async () => {
           somePromise = await Promise.resolve("Hello World");
         });
 
@@ -97,7 +121,7 @@ describe("bundler", () => {
         function StoreDependency() {
           return "A string from StoreFunc" + somePromise;
         }
-        var init_StoreDependency = __esm(async () => {
+        var init_StoreDependency = __esmAsync(async () => {
           init_StoreDependencyAsync() && await init_StoreDependencyAsync();
         });
 
@@ -106,7 +130,7 @@ describe("bundler", () => {
           console.log("SecondElementImport called", formValue.key);
           return formValue.key;
         }
-        var init_SecondElementImport = __esm(async () => {
+        var init_SecondElementImport = __esmAsync(async () => {
           init_BaseElement() && await init_BaseElement();
         });
 
@@ -115,7 +139,7 @@ describe("bundler", () => {
           console.log("BaseElementImport called", SecondElementImport());
           return SecondElementImport();
         }
-        var init_BaseElementImport = __esm(async () => {
+        var init_BaseElementImport = __esmAsync(async () => {
           init_SecondElementImport() && await init_SecondElementImport();
         });
 
@@ -125,7 +149,7 @@ describe("bundler", () => {
           return BaseElementImport();
         }
         var depValue, formValue, listValue;
-        var init_BaseElement = __esm(async () => {
+        var init_BaseElement = __esmAsync(async () => {
           await Promise.all([
             init_StoreDependency(),
             init_BaseElementImport()
@@ -141,7 +165,7 @@ describe("bundler", () => {
 
         // AsyncEntryPoint.ts
         async function AsyncEntryPoint() {
-          await (init_BaseElement() || Promise.resolve().then(() => init_BaseElement()));
+          await init_BaseElement(1);
           console.log("Launching AsyncEntryPoint", BaseElement());
         }
 
@@ -149,7 +173,7 @@ describe("bundler", () => {
         await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=A3D4E03C198A1ACB64756E2164756E21
+        //# debugId=A46CF3A88F5A028464756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -507,7 +531,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const bundled = api.readFile("out.js");
-      expect(bundled).toMatch(/var init_lazy = __esm\(async \(\) => \{\s*init_a\(\) && await init_a\(\);/);
+      expect(bundled).toMatch(/var init_lazy = __esmAsync\(async \(\) => \{\s*init_a\(\) && await init_a\(\);/);
       expect(bundled).not.toContain("Promise.all(");
     },
   });

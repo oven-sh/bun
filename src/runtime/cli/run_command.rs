@@ -1469,7 +1469,7 @@ impl Run<'_> {
                 else {
                     return Ok(());
                 };
-                // SAFETY: `as_` returns a live `m_ctx` pointer owned by the JS
+                // SAFETY: `as_` returns a live payload pointer owned by the JS
                 // wrapper; accessed here under the API lock.
                 unsafe { &*client }.do_connect(global, redis)?;
                 Ok(())
@@ -1635,6 +1635,8 @@ impl Run<'_> {
             vm.report_exception_in_hot_reloaded_module_if_needed();
             loop {
                 while vm.is_event_loop_alive() {
+                    // After an unhandled error, only immediates keep the loop alive.
+                    vm.timers_ran_after_error |= vm.unhandled_error_counter > 0;
                     vm.tick();
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
@@ -1662,15 +1664,11 @@ impl Run<'_> {
                     if let Some(promise) = result.as_any_promise() {
                         match promise.status() {
                             PromiseStatus::Pending => {
-                                // C-ABI shims are emitted by
-                                // `generate-host-exports.ts` into
-                                // `crate::generated_host_exports` under their
-                                // link name (`Bun__on…EntryPointResult`).
                                 result.then2(
                                     vm.global(),
                                     JSValue::UNDEFINED,
-                                    crate::generated_host_exports::Bun__onResolveEntryPointResult,
-                                    crate::generated_host_exports::Bun__onRejectEntryPointResult,
+                                    crate::generated_bindgen::hw_exports::Bun__onResolveEntryPointResult,
+                                    crate::generated_bindgen::hw_exports::Bun__onRejectEntryPointResult,
                                 );
                                 vm.tick();
                                 vm.auto_tick_active();

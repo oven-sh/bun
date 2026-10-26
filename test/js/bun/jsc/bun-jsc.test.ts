@@ -513,7 +513,7 @@ it("getProtectedObjects returns only objects", async () => {
 
 it("generateHeapSnapshotForDebugging throws when the snapshot cannot be printed", async () => {
   const script = `
-    const { generateHeapSnapshotForDebugging } = require("bun:jsc");
+    import { generateHeapSnapshotForDebugging } from "bun:jsc";
     // The snapshot prints the name of a property that holds an object as a JSON string, with room
     // for 6 bytes a character. For this name that is one byte more than a string can have.
     globalThis.holder = { [Buffer.alloc(357913941, "a").toString()]: {} };

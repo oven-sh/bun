@@ -11,6 +11,7 @@ use crate::run::{
 };
 use crate::{Linter, discover, paths};
 use bun_lint::js_plugin::Host;
+use bun_lint::linter::{LintMessage, apply_fixes};
 use bun_threading::Guarded;
 
 /// How a text is linted.
@@ -47,10 +48,12 @@ pub(crate) struct Session<'s> {
     inferred: Option<&'s Inferred<'s>>,
 }
 
-/// Calls `then` with a session for `environment.cwd`.
+/// Calls `then` with a session for `environment.cwd`. `js_plugins` is the host of `environment.js_engine`, which
+/// outlives the session: the realms keep what it has told them.
 pub(crate) fn with_session<R>(
     options: &Options,
     environment: &Environment,
+    js_plugins: &Host,
     then: impl FnOnce(&Session) -> R,
 ) -> R {
     // The thread of a root is a plain one: the stack bounds of the recursion guard are set here.
@@ -59,9 +62,7 @@ pub(crate) fn with_session<R>(
     let linter = Linter::new(registry.with_native_plugins(options.native_plugin_rules.clone()));
     bun_sema_driver::use_dedicated_pool("Bun Lint");
     let pool = Pool::new(options.threads);
-    let cwd = paths::to_native(environment.cwd.clone());
-    let js_plugins = Host::with_engine(environment.js_engine, &cwd);
-    let loader = Loader::new(&linter, options, environment, &js_plugins);
+    let loader = Loader::new(&linter, options, environment, js_plugins);
     if let Some((eslint_path, oxlint_path)) = loader.ignored_eslint_config() {
         loader.advise(
             [
@@ -84,7 +85,7 @@ pub(crate) fn with_session<R>(
         environment,
         linter: &linter,
         pool: &pool,
-        js_plugins: &js_plugins,
+        js_plugins,
         loader: &loader,
         sinks: &sinks,
         formatter: &formatter,
@@ -128,6 +129,16 @@ impl Session<'_> {
         };
         self.loader.wants_types(&loaded, &linted.config)
             && (linted.config.has_enabled(|it| it.triggers_type_check()) || self.checks_types())
+    }
+
+    /// `text` with the fixes of `messages`, its problems, applied once: the first pass of `bun lint --fix`. `None`:
+    /// none applies.
+    pub(crate) fn fix_once(&self, text: &[u8], messages: &[LintMessage]) -> Option<Vec<u8>> {
+        let of_cwd = self.loader.for_directory(&self.environment.cwd).ok();
+        let is_oxlint = of_cwd.is_some_and(|it| it.flavor == Flavor::Oxlint);
+        let should_fix = |it: &LintMessage| crate::lint::should_fix(self.options, is_oxlint, it);
+        let fixed = apply_fixes(text, messages.to_vec(), &should_fix);
+        fixed.is_fixed.then_some(fixed.output)
     }
 
     /// Lints the text of the file at `path`. `files == 0`: it is not one to lint, and `results` is empty. What the

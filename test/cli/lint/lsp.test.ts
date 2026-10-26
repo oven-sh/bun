@@ -533,6 +533,57 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // A plugin's realm keeps the numbers it was given for its rules and selectors: they must stay valid once a setting
+  // has changed, which makes a new session with the same realm.
+  test.skipIf(isWindows)(
+    "keeps the plugins' diagnostics after a setting changes the session",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/hello": "error" } }),
+        "plugin.mjs": `
+        export default {
+          meta: { name: "demo" },
+          rules: {
+            hello: {
+              create(context) {
+                return {
+                  'Identifier[name="hello"]'(node) {
+                    context.report({ node, message: "hello from the plugin" });
+                  },
+                };
+              },
+            },
+          },
+        };`,
+        "a.js": "",
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.js");
+      open(client, path, "hello;\n");
+      const hello = [expect.objectContaining({ severity: 1, source: "bun", message: "hello from the plugin" })];
+      expect((await client.diagnostics(path)).params.diagnostics).toEqual(hello);
+      for (const enable of [false, true]) {
+        client.notify("workspace/didChangeConfiguration", { settings: { bun: { format: { enable } } } });
+        client.notify("textDocument/didChange", {
+          textDocument: { uri: uriOf(path), version: enable ? 3 : 2 },
+          contentChanges: [{ text: enable ? "hello;\n" : "hello; hello;\n" }],
+        });
+        const published = await client.diagnostics(path);
+        expect(published.params.version).toBe(enable ? 3 : 2);
+        expect(published.params.diagnostics).toEqual(enable ? hello : [...hello, ...hello]);
+      }
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test(
     "exits with 1 and prints no frame when standard input ends before initialize",
     async () => {
@@ -775,6 +826,49 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
       expect(codes(typed)).toEqual(["typescript/TS2322"]);
       const order = client.received.map(it => (it.id === id ? "formatted" : it === typed ? "typed" : ""));
       expect(order.filter(Boolean)).toEqual(["formatted", "typed"]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // A fix of a rule that needs types is in source.fixAll, from the lint with types that published it: the request
+  // builds no program.
+  test(
+    "fixes what the rules that need types found with source.fixAll",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "bunfig.toml":
+          '[lint.rules]\n"no-var" = "error"\n"@typescript-eslint/no-unnecessary-type-assertion" = "error"\n',
+        "a.ts": "",
+      });
+      await using client = new Client([...command, "--type-aware"], String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.ts");
+      const text = "var n: number = 1;\nvar m = n as number;\nconsole.log(m);\n";
+      open(client, path, text);
+      const codes = (it: Message) => it.params.diagnostics.map((diagnostic: any) => diagnostic.code);
+      let published = await client.diagnostics(path);
+      while (codes(published).length < 3) published = await client.diagnostics(path);
+      expect(codes(published)).toEqual(["no-var", "no-var", "@typescript-eslint/no-unnecessary-type-assertion"]);
+      const uri = uriOf(path);
+      const all = await client.request("textDocument/codeAction", {
+        textDocument: { uri },
+        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+        context: { diagnostics: [], only: ["source.fixAll"] },
+      });
+      expect(all.error).toBeUndefined();
+      expect(all.result.map((it: any) => it.kind)).toEqual(["source.fixAll.bun"]);
+      const editsOf = (action: any): TextEdit[] =>
+        action.edit.changes?.[uri] ?? action.edit.documentChanges.find((it: any) => it.textDocument.uri === uri).edits;
+      // What `bun lint --type-aware --fix` writes: `prefer-const` is on by default and fixes the `let` of `no-var`.
+      expect(applyEdits(text, editsOf(all.result[0]))).toBe("const n: number = 1;\nconst m = n;\nconsole.log(m);\n");
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();

@@ -26,7 +26,7 @@ use crate::results::FileResult;
 use crate::run::{Environment, Fatal, Linted, Script, Stream};
 use answers::{Directives, FIX_ALL, Places, QUICK_FIX, wants};
 use bun_core::strings;
-use bun_lint::js_plugin::{Engine, Vm, Work};
+use bun_lint::js_plugin::{Engine, Host, Vm, Work};
 use bun_lint::linter::LintMessage;
 use bun_lint::options::Json;
 use bun_lint::source::LineBreaks;
@@ -614,6 +614,9 @@ impl<'s> Server<'s> {
             js_engine: engine,
             ..*self.environment
         };
+        // The realms of the engine keep the numbers the host gives their plugins and selectors: one host for as long
+        // as the engine, whatever the settings do.
+        let js_plugins = Host::with_engine(engine, &paths::to_native(root.path.clone()));
         let mut worker = Worker {
             server: self,
             root,
@@ -661,18 +664,20 @@ impl<'s> Server<'s> {
                 }
             };
             let done = match options {
-                Some(Ok(options)) => session::with_session(&options, environment, |session| {
-                    let refusal = session.refusal();
-                    if let Some(refusal) = &refusal {
-                        self.show_error(Half::Lint, refusal);
-                    }
-                    match refusal {
-                        Some(_) => all(None),
-                        None => {
-                            self.with_typed_thread(root, session, generation, || all(Some(session)))
+                Some(Ok(options)) => {
+                    session::with_session(&options, environment, &js_plugins, |session| {
+                        let refusal = session.refusal();
+                        if let Some(refusal) = &refusal {
+                            self.show_error(Half::Lint, refusal);
                         }
-                    }
-                }),
+                        match refusal {
+                            Some(_) => all(None),
+                            None => self.with_typed_thread(root, session, generation, || {
+                                all(Some(session))
+                            }),
+                        }
+                    })
+                }
                 _ => all(None),
             };
             match done {
@@ -796,7 +801,18 @@ impl Worker<'_, '_> {
     /// Lints `document`. `None`: it cannot be, which the user is told. `files == 0` in the result: it is not one to
     /// lint, which the user is told if there is a reason, like ESLint being needed for it.
     fn lint(&mut self, session: &Session, document: &Document, how: How) -> Option<Linted> {
-        let linted = session.lint(&document.path, document.text.clone(), how);
+        self.lint_as(session, document, document.text.clone(), how)
+    }
+
+    /// [`Worker::lint`] with `text` in place of the document's.
+    fn lint_as(
+        &mut self,
+        session: &Session,
+        document: &Document,
+        text: Vec<u8>,
+        how: How,
+    ) -> Option<Linted> {
+        let linted = session.lint(&document.path, text, how);
         self.tell_notes(session.notes());
         self.say_if_refused();
         self.outcome(linted)
@@ -849,19 +865,37 @@ impl Worker<'_, '_> {
     }
 
     /// The text of `document` with every fix applied, found once per [`Document::serial`]. `None`: nothing is fixed.
-    fn fixed(&mut self, session: &Session, document: &Document, with_types: bool) -> Option<&[u8]> {
+    /// No program is built for it, which a request cannot wait for: the rules that need types fix what the lint with
+    /// types found, once, and the others fix what is left, as the passes of `bun lint --fix` do.
+    fn fixed(&mut self, session: &Session, document: &Document) -> Option<&[u8]> {
         let is_found = (self.known.get(&document.uri)).is_some_and(|it| it.fixed.is_some());
         if !is_found {
+            let known = self.known.get(&document.uri).filter(|it| it.had_types);
+            let first = known.and_then(|it| session.fix_once(&document.text, &it.messages));
             let how = How {
-                with_types,
+                with_types: false,
                 fixes: true,
             };
-            let fixed = self
-                .lint(session, document, how)
+            let start = first.clone().unwrap_or_else(|| document.text.clone());
+            let mut fixed = self
+                .lint_as(session, document, start, how)
                 .and_then(|mut it| it.results.pop());
+            // A fix of a rule that needs types broke the text: those fixes are left out, as `bun lint --fix` leaves
+            // out the pass that broke it.
+            let is_broken = fixed
+                .as_ref()
+                .is_some_and(|it| it.messages.iter().any(|it| it.is_fatal));
+            let first = match first {
+                Some(_) if is_broken => {
+                    fixed = (self.lint(session, document, how)).and_then(|mut it| it.results.pop());
+                    None
+                }
+                first => first,
+            };
             let text = (fixed.as_ref().filter(|it| it.is_fixed))
                 .and_then(FileResult::text_to_write)
-                .map(<[u8]>::to_vec);
+                .map(<[u8]>::to_vec)
+                .or(first);
             if let Some(known) = self.known.get_mut(&document.uri) {
                 known.fixed = Some(text);
             }
@@ -941,7 +975,8 @@ impl Worker<'_, '_> {
         linted: Option<Linted>,
     ) {
         let server = self.server;
-        let Some(mut linted) = linted else {
+        // Turned off while the lint ran: what it found is not shown.
+        let Some(mut linted) = linted.filter(|_| server.settings.lock().lints) else {
             self.known.remove(&document.uri);
             return server.publish(&document, Vec::new());
         };
@@ -985,7 +1020,6 @@ impl Worker<'_, '_> {
             return Vec::new();
         };
         let places = server.places(document, known.line_breaks);
-        let with_types = known.had_types;
         let fixable = known.messages.iter().filter(|it| it.fix.is_some()).count();
         let mut actions = match wants(only, QUICK_FIX) {
             true => places.quick_fixes(&known.messages, range, known.directives),
@@ -998,7 +1032,7 @@ impl Worker<'_, '_> {
             (FIX_ALL, fixable > 0 && wants(only, FIX_ALL)),
         ];
         if kinds.iter().any(|it| it.1)
-            && let Some(fixed) = self.fixed(session, document, with_types)
+            && let Some(fixed) = self.fixed(session, document)
         {
             let kinds = kinds.iter().filter(|it| it.1);
             actions.extend(kinds.map(|it| places.fix_all(it.0, fixed)));

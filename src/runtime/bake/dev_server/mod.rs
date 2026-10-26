@@ -183,10 +183,7 @@ pub(crate) struct GraphTraceState {
     pub(crate) server_bits: DynamicBitSet,
     /// Filled by `TraceImportGoal::FindErrors`.
     pub(crate) failures: Vec<SerializedFailure>,
-    /// Filled by `DevServer::trace_all_route_imports` for an html route: the
-    /// client files that the route binds to another file, as ("module" file,
-    /// "main" file) in the order of the first. A walk that meets the first
-    /// file continues at the second.
+    /// For an html route: ("module" file, "main" file), sorted. A walk that meets the first file continues at the second.
     pub(crate) forwards: Vec<(
         incremental_graph::ClientFileIndex,
         incremental_graph::ClientFileIndex,

@@ -684,8 +684,7 @@ impl DevServer {
             route_bundle::Data::Html(html) => Some(html.bundled_file),
         };
 
-        // `gts` is freed before the chunk is written, and the chunk names
-        // these in `config.forwards`.
+        // `gts` is freed before the chunk is written, and the chunk names these in `config.forwards`.
         let forwards = core::mem::take(&mut gts.forwards);
 
         // Insert the source map

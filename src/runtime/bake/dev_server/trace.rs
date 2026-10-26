@@ -22,10 +22,7 @@ impl DevServer {
 }
 
 impl DevServer {
-    /// Walks the files that the open pages of a route run. For an html route
-    /// they are the files that the graph now reaches with the forwards of
-    /// the route's last client bundle: a page keeps its forwards until its
-    /// next load.
+    /// Walks what the open pages of a route run: for an html route, the walk with the forwards of its last client bundle.
     pub(super) fn trace_open_page_imports(
         &mut self,
         route_bundle: &RouteBundle,
@@ -108,10 +105,7 @@ impl DevServer {
                 let graph = &mut self.client_graph;
                 let mark = graph.trace_mark(gts);
                 graph.trace_imports(html.bundled_file, gts, goal)?;
-                // The walk above has each file that the client graph reaches
-                // from this route, and so each error of the route. A page gets
-                // one file of a package whose "main" and "module" files are
-                // among them, as a build of those files does.
+                // The walk above has every file of the route. A page gets one file of a package when both are among them.
                 if goal != TraceImportGoal::FindErrors && !graph.pairs.is_empty() {
                     graph.find_forwards(gts);
                     if !gts.forwards.is_empty() {

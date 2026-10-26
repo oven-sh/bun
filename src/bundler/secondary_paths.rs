@@ -1,12 +1,4 @@
-//! An `import` of a package with a "module" and a "main" field resolves to the
-//! "module" file, the primary path. The "main" file is its secondary path. When
-//! a file of the build names the "main" file itself, most often through
-//! `require()`, `BundleV2::scan_for_secondary_paths` binds every import of the
-//! "module" file to the "main" file. The output then has one copy of the package.
-//!
-//! The dev server prints each file alone, so it does not run that pass. It
-//! keeps the secondary paths of a bundle, and decides for each route when it
-//! builds the page of that route (`DevServer::trace_all_route_imports`).
+//! The dev server's stand-in for `BundleV2::scan_for_secondary_paths`: the "main" file behind each import of a "module" file.
 
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_collections::StringHashMap;
@@ -21,8 +13,7 @@ pub struct SecondaryPaths {
 }
 
 impl SecondaryPaths {
-    /// Called for an import record of a client file that the dev server
-    /// resolved. `primary` is the path that the record is bound to.
+    /// For an import record that the dev server resolved for a client file. The record is bound to `primary`.
     #[inline]
     pub(crate) fn note(
         &mut self,
@@ -41,8 +32,7 @@ impl SecondaryPaths {
         bun_core::handle_oom(self.by_primary.put(primary.text, secondary.text));
     }
 
-    /// The secondary path of an import record with `HAS_SECONDARY_PATH` that
-    /// is bound to `primary`. Both are keys of the dev server's graph.
+    /// The secondary path of an import record with `HAS_SECONDARY_PATH` that is bound to `primary`.
     pub fn get(&self, primary: &[u8]) -> Option<&'static [u8]> {
         self.by_primary.get(primary).copied()
     }

@@ -294,8 +294,7 @@ pub(crate) struct TraceMark {
 
 /// See `IncrementalGraph::pairs`.
 pub(crate) struct Pair {
-    /// The key of the "main" file of the package. The graph has that file
-    /// only while a file names it.
+    /// The key of the "main" file. The graph has that file only while a file names it.
     main: Box<[u8]>,
     /// The number of edges of `pair_edges` into the "module" file.
     edges: u32,
@@ -316,15 +315,9 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) edges: Vec<Edge<SIDE>>,
     /// Freed edge slots for reuse by `new_edge`.
     pub(crate) edges_free_list: Vec<EdgeIndex>,
-    /// Client side: one bit per slot of `edges`. The import behind the edge
-    /// resolved with a secondary path (`ImportRecordFlags::HAS_SECONDARY_PATH`):
-    /// `dependency` imports a package with "main" and "module" by its name,
-    /// and `imported` is its "module" file.
+    /// Client side: one bit per slot of `edges`, set when an import behind the edge has `HAS_SECONDARY_PATH`.
     pub(crate) pair_edges: DynamicBitSetUnmanaged,
-    /// Client side: the "module" files that an edge of `pair_edges` imports.
-    /// A route that reaches such an edge and the "main" file binds the
-    /// "module" file to the "main" file, as a build of the files that the
-    /// route reaches does (`find_forwards`).
+    /// Client side: the "module" files that an edge of `pair_edges` imports. `find_forwards` reads it.
     pub(crate) pairs: ArrayHashMap<FileIndex<SIDE>, Pair>,
     // ── per-bundle scratch (`current_chunk_*`) ─────────────────────────
     /// Total byte length of the current JS chunk being assembled.
@@ -925,8 +918,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 self.free_edge(val.edge_index);
             }
         }
-        // A route binds a "module" file by these marks. A route of this file
-        // is affected by the bundle, so its next page gets them.
+        // A route of this file is affected by the bundle, so its next page gets these marks.
         if matches!(SIDE, Side::Client) {
             for val in quick_lookup.values() {
                 if !val.seen {
@@ -1278,12 +1270,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Packages with "main" and "module" (`bun_bundler::secondary_paths`)
-    // ────────────────────────────────────────────────────────────────────────
-
-    /// Sets the bit of `edge` in `pair_edges`: an import record of this bundle
-    /// with `HAS_SECONDARY_PATH` is behind the edge.
+    /// Sets the bit of `edge` in `pair_edges`: an import record of this bundle with `HAS_SECONDARY_PATH` is behind it.
     fn mark_pair_edge(
         &mut self,
         secondary_paths: &bun_bundler::secondary_paths::SecondaryPaths,
@@ -1334,9 +1321,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    /// Gives each pair the "main" file that this bundle resolved for its
-    /// "module" file: a package.json can name another file than it did when
-    /// the pair came.
+    /// Gives each pair the "main" file that this bundle resolved: a package.json can name another file than before.
     pub(crate) fn refresh_pairs(
         &mut self,
         secondary_paths: &bun_bundler::secondary_paths::SecondaryPaths,
@@ -1354,10 +1339,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    /// Fills `gts.forwards` from a walk of a route that forwarded no file:
-    /// `gts` has the files that the route reaches. A build of those files
-    /// binds every import of a "module" file to the "main" file when it has
-    /// the "main" file and an import that resolved with both.
+    /// Fills `gts.forwards` from a walk without forwards: "module" goes to "main" when the walk has both and a marked edge.
     pub(crate) fn find_forwards(&self, gts: &mut GraphTraceState) {
         debug_assert!(matches!(SIDE, Side::Client));
         debug_assert!(gts.forwards.is_empty());
@@ -1394,8 +1376,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         });
     }
 
-    /// What a walk of `trace_imports` has appended so far. `rewind_trace`
-    /// takes a walk back to it.
+    /// What a walk of `trace_imports` has appended so far, for `rewind_trace`.
     pub(crate) fn trace_mark(&self, gts: &GraphTraceState) -> TraceMark {
         debug_assert!(matches!(SIDE, Side::Client));
         debug_assert!(gts.client_bits.count() == 0);
@@ -1406,8 +1387,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    /// Undoes each write of `trace_imports` since `mark`. The walk was not
-    /// one for `TraceImportGoal::FindErrors`: it put nothing in `gts.failures`.
+    /// Undoes each write of `trace_imports` since `mark`. Not for a `FindErrors` walk, which also fills `gts.failures`.
     pub(crate) fn rewind_trace(&mut self, gts: &mut GraphTraceState, mark: TraceMark) {
         debug_assert!(gts.failures.is_empty());
         gts.client_bits.unmanaged.set_all(false);
@@ -1424,8 +1404,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         gts: &mut GraphTraceState,
         goal: TraceImportGoal,
     ) -> Result<(), crate::Error> {
-        // The page does not get a file that its route forwards. It gets the
-        // file that the forward names: one step, as the module loader takes.
+        // A forwarded file gives its place to the file that the forward names: one step, as in the module loader.
         let file_index = if matches!(SIDE, Side::Client)
             && let Ok(at) = gts
                 .forwards

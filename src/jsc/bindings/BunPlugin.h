@@ -8,6 +8,8 @@
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
 
 namespace Zig {
 
@@ -59,6 +61,8 @@ public:
         }
 
         void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func, String& namespaceString);
+
+        bool isEmpty() const { return fileNamespace.filters.isEmpty() && groups.isEmpty(); }
 
         void clear()
         {

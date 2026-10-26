@@ -2514,6 +2514,31 @@ describe("bundler", () => {
       stdout: "disabled",
     },
   });
+  // A scoped package's "browser" map applies to its subpath imports, the same
+  // as an unscoped package's.
+  itBundled("packagejson/BrowserMapScopedPackageSubpath", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import scoped from '@scope/pkg/x.js'
+        import scopedNoExt from '@scope/pkg/y'
+        import unscoped from 'pkg/x.js'
+        console.log(scoped, scopedNoExt, unscoped, JSON.stringify(require('@scope/pkg/node.js')))
+      `,
+      "/Users/user/project/node_modules/@scope/pkg/package.json": `{ "browser": { "./x.js": "./x-browser.js", "./y": "./y-browser.js", "./node.js": false } }`,
+      "/Users/user/project/node_modules/@scope/pkg/x.js": `module.exports = 'scoped-node'`,
+      "/Users/user/project/node_modules/@scope/pkg/x-browser.js": `module.exports = 'scoped-browser'`,
+      "/Users/user/project/node_modules/@scope/pkg/y.js": `module.exports = 'scoped-node'`,
+      "/Users/user/project/node_modules/@scope/pkg/y-browser.js": `module.exports = 'scoped-browser-no-ext'`,
+      "/Users/user/project/node_modules/@scope/pkg/node.js": `throw 'fail'`,
+      "/Users/user/project/node_modules/pkg/package.json": `{ "browser": { "./x.js": "./x-browser.js" } }`,
+      "/Users/user/project/node_modules/pkg/x.js": `module.exports = 'unscoped-node'`,
+      "/Users/user/project/node_modules/pkg/x-browser.js": `module.exports = 'unscoped-browser'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "scoped-browser scoped-browser-no-ext unscoped-browser {}",
+    },
+  });
   // When "main" points at a directory, the implicit "<dir>/index" is checked
   // against the browser map before extension resolution.
   itBundled("packagejson/BrowserMapMainFieldDirIndexNoExt", {

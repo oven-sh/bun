@@ -1,35 +1,18 @@
-//! Bindgen target for `fmt_jsc.bind.ts`. The actual formatters live in
-//! `src/bun_core/fmt.rs`; only the JS-facing wrapper that takes a
-//! `&JSGlobalObject` lives here so `bun_core/` stays JSC-free.
+//! The bodies of `fmt_jsc.bind.ts`. The formatters are in `src/bun_core/fmt.rs`, which stays JSC-free.
 
 use std::io::Write as _;
 
-use crate::{JSGlobalObject, JsResult};
+use crate::JsError;
 use bun_core::fmt;
 use bun_core::{MutableString, String};
 
-pub mod js_bindings {
+pub(crate) mod js_bindings {
     use super::*;
 
-    /// `bun.gen.fmt_jsc.Formatter` — bindgen-emitted enum from `fmt_jsc.bind.ts`.
-    /// Mirrored locally until `bun_gen` is reachable from this tier.
-    /// NOTE: bindgen sorts `t.stringEnum` values alphabetically before emitting
-    /// the C++ `enum class`, so discriminants must match `GeneratedFmtJsc.h`
-    /// (EscapePowershell first), not the `.bind.ts` declaration order.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum Formatter {
-        EscapePowershell = 0,
-        HighlightJavascript = 1,
-        HighlightJavascriptRedacted = 2,
-    }
+    use crate::generated_bindgen::fmt_jsc::Formatter;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn fmt_string(
-        global: &JSGlobalObject,
-        code: &[u8],
-        formatter_id: Formatter,
-    ) -> JsResult<String> {
+    pub(crate) fn fmt_string(code: &[u8], formatter_id: Formatter) -> Result<String, JsError> {
         let mut buffer = MutableString::init_empty();
         let writer = buffer.writer();
 
@@ -43,7 +26,7 @@ pub mod js_bindings {
                         ..Default::default()
                     },
                 );
-                write!(writer, "{}", formatter).map_err(|_| global.throw_out_of_memory())?;
+                write!(writer, "{}", formatter).map_err(|_| JsError::OutOfMemory)?;
             }
             Formatter::HighlightJavascriptRedacted => {
                 let formatter = fmt::fmt_javascript(
@@ -54,11 +37,11 @@ pub mod js_bindings {
                         redact_sensitive_information: true,
                     },
                 );
-                write!(writer, "{}", formatter).map_err(|_| global.throw_out_of_memory())?;
+                write!(writer, "{}", formatter).map_err(|_| JsError::OutOfMemory)?;
             }
             Formatter::EscapePowershell => {
                 write!(writer, "{}", fmt::escape_powershell(code))
-                    .map_err(|_| global.throw_out_of_memory())?;
+                    .map_err(|_| JsError::OutOfMemory)?;
             }
         }
 

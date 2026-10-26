@@ -195,6 +195,33 @@ describe("bundler", () => {
       `,
     },
   });
+  // With code splitting, a disabled module that only import() reaches gets its
+  // own chunk. The promise resolves to the same shape as without splitting.
+  itBundled("browser/DisabledModuleDynamicImportSplitting", {
+    files: {
+      "/entry.js": /* js */ `
+        import { load } from "pkg";
+        const builtin = await import("node:fs");
+        const file = await load();
+        for (const m of [builtin, file]) {
+          console.log(typeof m.default, Object.keys(m.default).length, Object.keys(m).join(","));
+        }
+      `,
+      "/node_modules/pkg/package.json": `{ "main": "./index.js", "browser": { "./node.js": false } }`,
+      "/node_modules/pkg/index.js": `export const load = () => import("./node.js");`,
+      "/node_modules/pkg/node.js": `throw new Error("fail");`,
+    },
+    target: "browser",
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/entry.js",
+      stdout: `
+        object 0 default
+        object 0 default
+      `,
+    },
+  });
   itBundled("browser/NodeTTY", {
     files: {
       "/entry.js": /* js */ `

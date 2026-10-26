@@ -5277,13 +5277,29 @@ pub mod bv2_impl {
                     if resolve.import_record.namespace.as_ref() == b"file" {
                         if resolve.import_record.kind == ImportKind::EntryPointBuild {
                             let target = resolve.import_record.original_target;
-                            let Ok(resolved) = this
+                            let mut resolved = match this
                                 .transpiler_for_target(target)
                                 .resolve_entry_point(&resolve.import_record.specifier)
-                            else {
-                                return;
+                            {
+                                Ok(resolved) => resolved,
+                                Err(err) => {
+                                    if let Some(dev) = this.dev_server {
+                                        let log =
+                                            this.transpiler_for_target(target).log.cast_const();
+                                        // One `Resolve` per graph that bundles the file, so one report per graph.
+                                        dev.handle_parse_task_failure(
+                                            err,
+                                            target.bake_graph(),
+                                            &resolve.import_record.specifier,
+                                            log,
+                                            std::ptr::from_mut(this),
+                                        )
+                                        .expect("oom");
+                                        this.transpiler_for_target(target).log_mut().reset();
+                                    }
+                                    return;
+                                }
                             };
-                            let mut resolved = resolved;
                             let Ok(source_index) = this.enqueue_entry_item(
                                 &mut resolved,
                                 true,

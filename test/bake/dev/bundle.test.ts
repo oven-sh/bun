@@ -1120,6 +1120,51 @@ const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGra
       },
     });
   }
+  // An onResolve filter that matches the path of the file sends it to the plugin first when the next build starts.
+  // The plugin answers nothing, and every graph that bundled the file still has to bundle its importers again.
+  for (const renamed of [true, false]) {
+    devTest(`${renamed ? "renaming" : "deleting"} a file of the server and the client that a plugin filter matches`, {
+      skip: [
+        "win32", // unlinkSync is having weird behavior
+      ],
+      framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+      pluginFile: `
+        export default [
+          {
+            name: "answers-nothing",
+            setup(build) {
+              build.onResolve({ filter: /c[.]tsx?$/ }, () => undefined);
+            },
+          },
+        ];
+      `,
+      files: {
+        "routes/index.ts": `
+          import { c } from "../c";
+          import "../Comp";
+          export default function () {
+            return new Response("c is " + c);
+          }
+        `,
+        "Comp.ts": `
+          "use client";
+          import "./c";
+          export const marker = 1;
+        `,
+        "c.ts": `export const c = "EXPORT_C";`,
+      },
+      async test(dev) {
+        await dev.fetch("/").equals("c is EXPORT_C");
+        {
+          await using batch = await dev.batchChanges({ errors: null });
+          await dev.delete("c.ts", { errors: null });
+          if (renamed) await dev.write("c.tsx", `export const c = "EXPORT_D";`, { errors: null });
+        }
+        if (renamed) await dev.fetch("/").equals("c is EXPORT_D");
+        else expect((await dev.fetch("/")).status).toBe(500);
+      },
+    });
+  }
   devTest("bundles a module with a previously failed import for the SSR graph when a second route imports it", {
     framework: { ...minimalFramework, serverComponents: separateSSRGraph },
     files: {

@@ -238,7 +238,7 @@ impl HotReloadEvent {
     fn changes_names(op: bun_watcher::Op) -> bool {
         use bun_watcher::Op;
         if bun_core::env::IS_WINDOWS {
-            // A new name in it or below it; `DELETE` and `RENAME` can be the directory itself.
+            // A new name in it, or the directory's own; `DELETE` and `RENAME` can be the directory itself.
             op.intersects(Op::CREATE | Op::MOVE_TO)
         } else if bun_core::env::IS_KQUEUE {
             // Any change of the entries is `WRITE`; `DELETE` and `RENAME` are the directory itself.

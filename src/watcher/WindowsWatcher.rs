@@ -445,6 +445,9 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     // Eviction is a swap-remove, so walk from the end to avoid skipping items.
                     item_idx = item_idx.min(this.watchlist.len());
                     let eventpath = &this.platform.buf[..eventpath_len];
+                    // The directory that holds the changed path, without a trailing separator.
+                    let event_dir =
+                        &eventpath[..strings::last_index_of_any(eventpath, b"\\/").unwrap_or(0)];
                     while item_idx > 0 && event_id < this.watch_events.len() {
                         item_idx -= 1;
                         let path = &this.watchlist.items_file_path()[item_idx];
@@ -462,8 +465,13 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                         if rel == ParentEqual::Unrelated {
                             continue;
                         }
-                        this.watch_events[event_id] =
-                            create_watch_event(&event, item_idx as WatchItemIndex);
+                        let is_path_or_its_dir = rel == ParentEqual::Equal
+                            || is_parent_or_equal(path.as_ref(), event_dir) == ParentEqual::Equal;
+                        this.watch_events[event_id] = create_watch_event(
+                            &event,
+                            item_idx as WatchItemIndex,
+                            is_path_or_its_dir,
+                        );
                         event_id += 1;
                     }
                 }
@@ -523,7 +531,12 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     Ok(())
 }
 
-fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
+/// `is_path_or_its_dir`: the watch item is the changed path or the directory that holds it.
+fn create_watch_event(
+    event: &FileEvent,
+    index: WatchItemIndex,
+    is_path_or_its_dir: bool,
+) -> WatchEvent {
     let mut op = Op::empty();
     if event.action == Action::Removed {
         op |= Op::DELETE;
@@ -534,10 +547,11 @@ fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
     if event.action == Action::Modified {
         op |= Op::WRITE;
     }
-    if event.action == Action::Added {
+    // Every watched directory above the path gets the event; a new name is an entry of the nearest one only.
+    if event.action == Action::Added && is_path_or_its_dir {
         op |= Op::CREATE;
     }
-    if event.action == Action::RenamedNew {
+    if event.action == Action::RenamedNew && is_path_or_its_dir {
         op |= Op::MOVE_TO;
     }
     WatchEvent {

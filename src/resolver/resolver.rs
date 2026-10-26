@@ -5170,8 +5170,7 @@ impl<'a> Resolver<'a> {
         };
 
         if self.browser_remap_depth < MAX_BROWSER_REMAP_DEPTH {
-            // A package-path target re-enters `load_node_modules`, which parses into the
-            // scratch the caller's `esm.subpath` points at.
+            // The nested lookup parses into the scratch the caller's `esm.subpath` points at.
             let caller_esm_subpath = *bufs!(esm_subpath);
             self.browser_remap_depth += 1;
             let resolved = self

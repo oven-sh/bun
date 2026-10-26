@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 
 test("reportError", () => {
@@ -121,4 +121,51 @@ test("native error printer handles lone surrogates in message and stack frame na
   // Printer must not have crashed: normal uncaught-error exit (1), no signal.
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
+});
+
+test.concurrent.each([
+  ["Proxy chain", "let a = {}; for (let i = 0; i < 150_000; i++) a = new Proxy(a, {}); throw a;"],
+  [
+    "chain of errors in an own property",
+    "let e = new Error('root'); for (let i = 0; i < 20_000; i++) { const next = new Error('wrap'); next.extra = e; e = next; } throw e;",
+  ],
+])("native error printer stops at the stack limit for an uncaught %s", async (_, src) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await proc.exited;
+  expect(proc.signalCode).toBeNull();
+  expect(proc.exitCode).toBe(1);
+});
+
+const throwsWhenPrinted = `Object.assign(new String("q"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } })`;
+
+test.concurrent.each([
+  {
+    name: "reportError(value)",
+    script: `reportError(${throwsWhenPrinted}); console.log("after");`,
+    expected: { stdout: "after\n", stderr: "error\n\nBun v<bun-version>", exitCode: 1 },
+  },
+  {
+    name: "unhandled rejection",
+    script: `Promise.reject(${throwsWhenPrinted});`,
+    expected: { stdout: "", stderr: "error\n\nBun v<bun-version>", exitCode: 1 },
+  },
+  {
+    name: "AggregateError member",
+    script: `console.log(Bun.inspect(new AggregateError([${throwsWhenPrinted}, new Error("second member")], "agg")).includes("second member"));`,
+    expected: { stdout: "true\n", stderr: "", exitCode: 0 },
+  },
+])("error printer doesn't leave an exception pending when the value throws: $name", async ({ script, expected }) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: normalizeBunSnapshot(stderr), exitCode }).toEqual(expected);
 });

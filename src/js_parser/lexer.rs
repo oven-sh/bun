@@ -8,6 +8,7 @@ use bun_ast::lexer_tables as tables;
 use bun_ast::{LexerLog, Loc, Log, Range, Source};
 use bun_core::Environment;
 use bun_core::fmt::hex_digit_value_u32;
+pub(crate) use bun_core::lexer::is_whitespace;
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use identifier as js_identifier;
@@ -1329,6 +1330,11 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
                 0x09 | 0x20 => {
+                    // Consumes the remaining white space at once: an indented line has many of these
+                    // characters.
+                    while matches!(contents.get(self.current), Some(b' ' | b'\t')) {
+                        self.current += 1;
+                    }
                     self.step_with(contents);
                     continue;
                 }
@@ -3079,7 +3085,14 @@ impl<'a> Lexer<'a> {
             // Integer literal;
             let mut is_first = true;
             let mut is_invalid_legacy_octal_literal = false;
-            self.number = 0.0;
+            let mut integer = bun_core::fmt::RadixInteger::default();
+            let bits_per_digit: u32 = if base == 2.0 {
+                1
+            } else if base == 8.0 {
+                3
+            } else {
+                4
+            };
             if !self.is_legacy_octal_literal {
                 self.step_with(contents);
             }
@@ -3102,14 +3115,14 @@ impl<'a> Lexer<'a> {
                     }
 
                     0x30 | 0x31 => {
-                        self.number = self.number * base as f64 + float64(self.code_point - 0x30);
+                        integer.push_digit(bits_per_digit, (self.code_point - 0x30) as u32);
                     }
 
                     0x32..=0x37 => {
                         if base == 2.0 {
                             self.syntax_error()?;
                         }
-                        self.number = self.number * base as f64 + float64(self.code_point - 0x30);
+                        integer.push_digit(bits_per_digit, (self.code_point - 0x30) as u32);
                     }
                     0x38 | 0x39 => {
                         if self.is_legacy_octal_literal {
@@ -3117,21 +3130,19 @@ impl<'a> Lexer<'a> {
                         } else if base < 10.0 {
                             self.syntax_error()?;
                         }
-                        self.number = self.number * base as f64 + float64(self.code_point - 0x30);
+                        integer.push_digit(bits_per_digit, (self.code_point - 0x30) as u32);
                     }
                     0x41..=0x46 => {
                         if base != 16.0 {
                             self.syntax_error()?;
                         }
-                        self.number =
-                            self.number * base as f64 + float64(self.code_point + 10 - 0x41);
+                        integer.push_digit(bits_per_digit, (self.code_point + 10 - 0x41) as u32);
                     }
                     0x61..=0x66 => {
                         if base != 16.0 {
                             self.syntax_error()?;
                         }
-                        self.number =
-                            self.number * base as f64 + float64(self.code_point + 10 - 0x61);
+                        integer.push_digit(bits_per_digit, (self.code_point + 10 - 0x61) as u32);
                     }
                     _ => {
                         // The first digit must exist;
@@ -3146,6 +3157,7 @@ impl<'a> Lexer<'a> {
                 self.step_with(contents);
                 is_first = false;
             }
+            self.number = integer.to_f64();
 
             let is_big_integer_literal = self.code_point == 0x6E && !has_dot_or_exponent;
 
@@ -3358,12 +3370,6 @@ pub fn is_identifier_continue(codepoint: i32) -> bool {
     js_identifier::is_identifier_part(codepoint)
 }
 
-pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
-    // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
-    matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
-        || strings::is_unicode_space_separator(codepoint as u32)
-}
-
 pub use bun_core::identifier::{is_identifier, is_identifier_utf16};
 
 pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
@@ -3423,11 +3429,6 @@ pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
     }
 
     r
-}
-
-#[inline]
-fn float64(num: i32) -> f64 {
-    num as f64
 }
 
 // PERF: force-inline — sole call site is the identifier arm of `next()`, the

@@ -101,33 +101,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
         let p = self;
-        // Parse a yield-from expression, which yields from an iterator
-        let is_star = p.lexer.token == T::TAsterisk;
-
-        if is_star {
-            if p.lexer.has_newline_before {
-                p.lexer.unexpected()?;
-                return Err(crate::Error::SyntaxError);
-            }
-            p.lexer.next()?;
-        }
-
+        let mut is_star = false;
         let mut value: Option<ExprNodeIndex> = None;
-        match p.lexer.token {
-            T::TCloseBrace
-            | T::TCloseParen
-            | T::TCloseBracket
-            | T::TColon
-            | T::TComma
-            | T::TSemicolon => {}
-            _ => {
-                if is_star || !p.lexer.has_newline_before {
-                    value = Some(p.parse_expr(Level::Yield)?);
-                }
+        // Nothing after a line break belongs to the "yield".
+        if !p.lexer.has_newline_before {
+            // Parse a yield-from expression, which yields from an iterator
+            is_star = p.lexer.token == T::TAsterisk;
+            if is_star {
+                p.lexer.next()?;
+            }
+            // After "*" the operand is parsed whatever follows.
+            if is_star || p.is_start_of_expression_or_shift_assign() {
+                value = Some(p.parse_expr(Level::Yield)?);
             }
         }
 
+        // `parseAssignmentExpressionOrHigher` returns it as it is: like the body of an arrow
+        // function it ends the assignment expression.
+        p.after_arrow_body_loc = p.lexer.loc();
         Ok(p.new_expr(E::Yield { value, is_star }, loc))
+    }
+
+    /// `isStartOfExpression`. TypeScript's scanner always produces `>` first and only rescans on request, so until then `>>=` and `>>>=`
+    /// count as binary operators, and a binary operator counts as the start of an expression with a missing left operand.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn is_start_of_expression_or_shift_assign(&mut self) -> bool {
+        self.is_start_of_expression()
+            || matches!(
+                self.lexer.token,
+                T::TGreaterThanGreaterThanEquals | T::TGreaterThanGreaterThanGreaterThanEquals
+            )
     }
 
     // By the time we call this, the identifier and type parameters have already
@@ -286,6 +290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_decorators: has_any_decorators,
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
+            inner_class_ref: js_ast::Ref::NONE,
         })
     }
 
@@ -581,7 +586,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 } else {
                     // Otherwise, do the less expensive check
-                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking();
+                    is_arrow_fn = p.try_skip_type_script_arrow_return_type_with_backtracking()?;
                 }
             }
 
@@ -1149,6 +1154,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.has_newline_before {
                         is_single_line = false;
                     }
+                    let close_brace_loc = p.lexer.loc();
                     p.lexer.expect(T::TCloseBrace)?;
 
                     return Ok(p.b(
@@ -1157,6 +1163,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 properties.into_bump_slice_mut(),
                             ),
                             is_single_line,
+                            close_brace_loc,
                         },
                         loc,
                     ));
@@ -1503,25 +1510,54 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template {
+                        // With `keep_directives`, `("use strict")` is not a directive, and the text
+                        // is kept as written because an escape makes it a different directive.
+                        let keep = p.options.keep_directives;
+                        if !str_.prefer_template
+                            && (!keep || expr.value.loc.start == stmt.loc.start)
+                        {
                             is_directive_prologue = true;
+                            let source: &'a bun_ast::Source = p.source;
+                            let as_written = keep.then(|| {
+                                let text = &source.contents()[stmt.loc.start as usize..];
+                                let mut end = 1;
+                                while text.get(end).is_some_and(|c| *c != text[0]) {
+                                    end += 1 + usize::from(text[end] == b'\\');
+                                }
+                                &text[1..end.min(text.len())]
+                            });
 
                             if str_.eql_comptime(b"use strict") {
-                                skip = true;
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
                                 }
-                            } else if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
+                                if let Some(as_written) = as_written {
+                                    stmt = Stmt::alloc(
+                                        S::Directive {
+                                            value: bun_ast::StoreStr::new(as_written),
+                                        },
+                                        stmt.loc,
+                                    );
+                                } else {
+                                    skip = true;
+                                }
+                            } else if str_.eql_comptime(b"use asm")
+                                && !p.options.repl_mode
+                                && as_written.is_none()
+                            {
                                 // In the REPL the directive stays a string
                                 // statement so it evaluates as the result,
                                 // like node ('use asm' prints 'use asm').
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
-                                let bytes = str_.string(p.arena).expect("OOM");
+                                let bytes = match as_written {
+                                    Some(as_written) => as_written,
+                                    None => str_.string(p.arena).expect("OOM"),
+                                };
                                 stmt = Stmt::alloc(
                                     S::Directive {
                                         value: bun_ast::StoreStr::new(bytes),
@@ -1701,7 +1737,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         match p
                             .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
-                            ) {
+                            )? {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 p.lexer.next()?;

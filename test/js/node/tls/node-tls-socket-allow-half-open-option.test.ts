@@ -4,6 +4,8 @@ import net, { type AddressInfo } from "node:net";
 import { Duplex, PassThrough } from "node:stream";
 import tls, { TLSSocket } from "node:tls";
 
+type Options = tls.TLSSocketOptions & { allowHalfOpen?: boolean };
+
 // A TLSSocket built over an existing socket takes that socket's allowHalfOpen;
 // the option only counts when the TLSSocket opens its own connection.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592
@@ -55,11 +57,11 @@ describe("TLSSocket allowHalfOpen", () => {
     const halfOpenDisabledDuplex = new Duplex({ allowHalfOpen: false, read() {} });
     try {
       expect({
-        halfOpenSocket: new TLSSocket(halfOpenSocket, { allowHalfOpen: false }).allowHalfOpen,
-        defaultSocket: new TLSSocket(defaultSocket, { allowHalfOpen: true }).allowHalfOpen,
-        defaultDuplex: new TLSSocket(defaultDuplex, { allowHalfOpen: false }).allowHalfOpen,
-        duplexWithoutRead: new TLSSocket(duplexWithoutRead, { allowHalfOpen: false }).allowHalfOpen,
-        halfOpenDisabledDuplex: new TLSSocket(halfOpenDisabledDuplex, { allowHalfOpen: true }).allowHalfOpen,
+        halfOpenSocket: new TLSSocket(halfOpenSocket, { allowHalfOpen: false } as Options).allowHalfOpen,
+        defaultSocket: new TLSSocket(defaultSocket, { allowHalfOpen: true } as Options).allowHalfOpen,
+        defaultDuplex: new TLSSocket(defaultDuplex, { allowHalfOpen: false } as Options).allowHalfOpen,
+        duplexWithoutRead: new TLSSocket(duplexWithoutRead, { allowHalfOpen: false } as Options).allowHalfOpen,
+        halfOpenDisabledDuplex: new TLSSocket(halfOpenDisabledDuplex, { allowHalfOpen: true } as Options).allowHalfOpen,
       }).toEqual({
         halfOpenSocket: true,
         defaultSocket: false,
@@ -78,8 +80,9 @@ describe("TLSSocket allowHalfOpen", () => {
 
   test("without a socket to wrap, the option is honored", () => {
     expect({
+      // @ts-expect-error no socket
       noArguments: new TLSSocket().allowHalfOpen,
-      option: new TLSSocket(undefined, { allowHalfOpen: true }).allowHalfOpen,
+      option: new TLSSocket(undefined as any, { allowHalfOpen: true } as Options).allowHalfOpen,
     }).toEqual({ noArguments: false, option: true });
   });
 
@@ -96,7 +99,7 @@ describe("TLSSocket allowHalfOpen", () => {
     });
     const tlsSockets: TLSSocket[] = [];
     function connectOver(socket: Duplex, allowHalfOpen: boolean): boolean {
-      const tlsSocket = tls.connect({ socket, allowHalfOpen, rejectUnauthorized: false });
+      const tlsSocket = tls.connect({ socket, allowHalfOpen, rejectUnauthorized: false } as tls.ConnectionOptions);
       tlsSocket.on("error", () => {});
       tlsSockets.push(tlsSocket);
       return tlsSocket.allowHalfOpen;
@@ -171,7 +174,7 @@ describe("TLSSocket allowHalfOpen", () => {
       const wrapClosed = Promise.withResolvers<Record<string, boolean>>();
       let wrapped: TLSSocket | undefined;
       const rawServer = net.createServer(raw => {
-        wrapped = new TLSSocket(raw, { isServer: true, allowHalfOpen: true, ...COMMON_CERT });
+        wrapped = new TLSSocket(raw, { isServer: true, allowHalfOpen: true, ...COMMON_CERT } as Options);
         wrapped.on("error", wrapClosed.reject);
         wrapped.resume();
         wrapped.once("close", () =>
@@ -251,7 +254,7 @@ describe("TLSSocket allowHalfOpen", () => {
         const afterServerEnd = Promise.withResolvers<Record<string, boolean>>();
         raw = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
         raw.on("error", afterServerEnd.reject);
-        client = tls.connect({ socket: raw, allowHalfOpen: false, rejectUnauthorized: false });
+        client = tls.connect({ socket: raw, allowHalfOpen: false, rejectUnauthorized: false } as tls.ConnectionOptions);
         client.on("error", afterServerEnd.reject);
         client.resume();
         const clientClosed = closed(client);

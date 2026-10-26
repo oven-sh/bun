@@ -1564,7 +1564,7 @@ impl<'a> Package<'a> {
 
 use bun_core::strings::{replace, replacement_size};
 
-const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
+pub(crate) const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
 
 struct ModuleBufs {
     resolved_path_buf_percent: PathBuffer,

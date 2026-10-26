@@ -4582,7 +4582,11 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                            if !matches!(
+                                err,
+                                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                                    | crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
+                            ) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
@@ -5910,7 +5914,8 @@ impl<'a> Resolver<'a> {
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                | crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -6919,6 +6924,52 @@ bun_core::comptime_string_map! {
 #[inline]
 pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
+}
+
+/// The percent-decoded path to try for a stylesheet `url()`/`@import` that is not a file as written.
+#[cold]
+pub fn percent_decoded_css_url<'a>(
+    arena: &'a bun_alloc::Arena,
+    importer: bun_ast::Loader,
+    url: &[u8],
+    kind: ast::ImportKind,
+) -> Option<&'a [u8]> {
+    // HTML `src`/`href` records have these kinds too, and `composes .. from` names a module.
+    if !importer.is_css()
+        || !matches!(
+            kind,
+            ast::ImportKind::Url | ast::ImportKind::At | ast::ImportKind::AtConditional
+        )
+    {
+        return None;
+    }
+    let path = &url[..strings::index_of_any(url, b"?#").unwrap_or(url.len())];
+    if !strings::contains_char(path, b'%')
+        || crate::package_json::INVALID_PERCENT_CHARS
+            .iter()
+            .any(|escape| strings::contains(path, escape))
+    {
+        return None;
+    }
+    // A Result can borrow its specifier, so the decoded bytes must outlive it.
+    let decoded = arena.alloc_slice_fill_copy(path.len(), 0u8);
+    let len = bun_url::PercentEncoding::decode_into(decoded, path).ok()? as usize;
+    let decoded: &[u8] = &decoded[..len];
+    let first_segment =
+        &decoded[..strings::index_of_char_usize(decoded, b'/').unwrap_or(decoded.len())];
+    // `resolve` and a browser would cut at a decoded `#` or `?`, and decode a `%` once more.
+    if strings::contains_any(decoded, b"#?%")
+        // The output is the raw file name, which cannot carry these to a browser.
+        || strings::contains_char(decoded, b'"')
+        || decoded.iter().any(u8::is_ascii_control)
+        || !strings::is_valid_utf8(decoded)
+        || strings::ends_with_char(decoded, b' ')
+        // A `:` here reads as a scheme or a drive letter.
+        || strings::contains_char(first_segment, b':')
+    {
+        return None;
+    }
+    Some(decoded)
 }
 
 /// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { $ } from "bun";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 test("new $.Shell() inherits process.env and throws on non-zero exit by default", async () => {
   // Run in a subprocess so other tests mutating $.env / $.throws don't interfere.
@@ -99,6 +99,11 @@ test.each([
   ["a newline alone is one empty line", "\n", [""]],
 ])("$.lines: %s", async (_, output, expected) => {
   expect(await Array.fromAsync($`echo -n ${output}`.lines())).toEqual(expected);
+});
+
+// Off Windows the separator is "\n" alone, so the "\r" stays in the line.
+test.skipIf(!isWindows)("$.lines: a final CRLF ends the last line on Windows", async () => {
+  expect(await Array.fromAsync($`echo -n ${"a\r\nb\r\n"}`.lines())).toEqual(["a", "b"]);
 });
 
 test("$.arrayBuffer", async () => {

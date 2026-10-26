@@ -140,6 +140,11 @@ enum Lookup {
     OnePredecessor(BlockId),
     /// As `OnePredecessor`, but it is looking in its top.
     Top(BlockId),
+    /// A block with more predecessors that all have the variable as `top` has it: it is looking in that.
+    Join {
+        block_id: BlockId,
+        top: BlockId,
+    },
     Phi {
         block_id: BlockId,
         new_id: IdentifierId,
@@ -253,14 +258,15 @@ impl SSABuilder {
         top
     }
 
-    /// Whether no block from `block_id` up to `top`, which is not asked, has anything else for the variable.
+    /// Whether no two blocks from `block_id` up to `top` have different things for the variable: a top can forget.
     fn is_the_same_up_to(&self, top: BlockId, mut block_id: BlockId, old_id: IdentifierId) -> bool {
-        let at_top = self.definitions.peek(top, old_id);
+        let mut same = self.definitions.peek(top, old_id);
         while block_id != top {
             let here = self.definitions.peek(block_id, old_id);
-            if here.is_some() && here != at_top {
+            if here.is_some() && same.is_some() && here != same {
                 return false;
             }
+            same = here.or(same);
             block_id = self.preds(block_id)[0];
         }
         true
@@ -359,13 +365,26 @@ impl SSABuilder {
         let old_id = old_place.identifier;
         let mut lookups = std::mem::take(&mut self.lookups);
         let mut block_id = block_id;
+        // The `Lookup::Join` since the lookup last began at a predecessor of a phi.
+        let mut joins = 0u32;
         loop {
             let mut found = match self.look_in(old_place, block_id, env) {
                 Ok(found) => found,
                 Err(lookup) => {
                     let below = block_id;
+                    if let Lookup::Join { top, .. } = lookup {
+                        block_id = top;
+                        joins += 1;
+                        // The 1st, 2nd, 4th.. keep what is found, so that a later lookup has not far to go.
+                        lookups.push(match joins.is_power_of_two() {
+                            true => Lookup::OnePredecessor(below),
+                            false => lookup,
+                        });
+                        continue;
+                    }
                     block_id = self.preds(below)[0];
                     if let Lookup::Phi { .. } = lookup {
+                        joins = 0;
                         lookups.push(lookup);
                         continue;
                     }
@@ -396,6 +415,13 @@ impl SSABuilder {
                     Some(Lookup::Top(block_id)) => {
                         self.definitions.remember(block_id, old_id, found);
                     }
+                    // A variable that is unknown is marked so once for all the joins that have asked.
+                    Some(Lookup::Join { block_id, .. }) if found == old_id => {
+                        self.definitions.set(block_id, old_id, found);
+                    }
+                    Some(Lookup::Join { block_id, .. }) => {
+                        self.definitions.remember(block_id, old_id, found);
+                    }
                     Some(Lookup::Phi {
                         block_id: phi_block,
                         new_id,
@@ -404,6 +430,7 @@ impl SSABuilder {
                         operands.push(found);
                         if let Some(&next) = self.preds(phi_block).get(operands.len()) {
                             block_id = next;
+                            joins = 0;
                             lookups.push(Lookup::Phi {
                                 block_id: phi_block,
                                 new_id,
@@ -435,6 +462,27 @@ impl SSABuilder {
         }
         debug_assert!(self.is_the_same_up_to(top, block_id, old_id));
         Some(top)
+    }
+
+    /// The block that has what the variable is at the end of each predecessor, or is the top of them all. `None`: a phi.
+    fn same_above(&mut self, block_id: BlockId, old_id: IdentifierId) -> Option<BlockId> {
+        let mut same: Option<(BlockId, Option<IdentifierId>)> = None;
+        for index in 0..self.preds(block_id).len() {
+            let pred = self.preds(block_id)[index];
+            let at = match self.definitions.peek(pred, old_id) {
+                Some(_) => pred,
+                None => self.top_to_look_in(pred, old_id)?,
+            };
+            let here = (at, self.definitions.peek(at, old_id));
+            match (same, here) {
+                (None, _) => same = Some(here),
+                (Some((_, Some(a))), (_, Some(b))) if a == b => {}
+                (Some((a, None)), (b, None)) if a == b => {}
+                _ => return None,
+            }
+        }
+        debug_assert!(same.is_none_or(|(at, _)| at != block_id));
+        same.map(|(at, _)| at)
     }
 
     /// What `old_place` is at the end of the block, or that it depends on its predecessors. Then it has one at least.
@@ -475,6 +523,20 @@ impl SSABuilder {
 
         if preds_len == 1 {
             return Err(Lookup::OnePredecessor(block_id));
+        }
+
+        // Not in upstream, which makes the identifier of a phi here before it knows that the block takes none.
+        if self.leaves_out_trivial_phis
+            && let Some(at) = self.same_above(block_id, old_place.identifier)
+        {
+            // `get`, for the phis in the making.
+            return match self.definitions.get(at, old_place.identifier) {
+                Some(same) => {
+                    self.definitions.set(block_id, old_place.identifier, same);
+                    Ok(same)
+                }
+                None => Err(Lookup::Join { block_id, top: at }),
+            };
         }
 
         let new_id = self.make_id(old_place.identifier, env);

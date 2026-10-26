@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
@@ -725,6 +725,164 @@ console.log("✓ Both import types work correctly");
       expect(entryCode).toContain('__jsonParse("');
       expect(entryCode).toContain('\\\"index\\\":\\\"./index.html\\\"');
       expect(entryCode).toContain('\\\"files\\\":[');
+    },
+  });
+
+  // An import record that matches the filter of an onResolve plugin gets its answer after
+  // the other records of its file. A server-side import of an HTML file has to produce the
+  // same manifest module and browser entry point then.
+  const pluginResolvedHtmlFiles = {
+    "/page.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./page.css">
+    <script src="./page.js"></script>
+  </head>
+  <body>
+    <h1>Page</h1>
+  </body>
+</html>`,
+    "/page.css": `body { margin: 0; }`,
+    "/page.js": `console.log("page script");`,
+  };
+
+  const printManifest = /* js */ `
+console.log(JSON.stringify({ index: manifest.index.split("/").pop(), loaders: manifest.files.map(f => f.loader).sort() }));
+`;
+  const expectedManifestSummary = `{"index":"page.html","loaders":["css","html","js"]}`;
+
+  function expectSingleHtmlOutput(build: { outputs: { path: string }[] }) {
+    const htmlOutputs = build.outputs.map(output => basename(output.path)).filter(file => file.endsWith(".html"));
+    expect(htmlOutputs).toEqual(["page.html"]);
+  }
+
+  itBundled("html-import/onresolve-fallthrough", {
+    outdir: "out/",
+    files: {
+      ...pluginResolvedHtmlFiles,
+      "/server.js": `
+import manifest from "./page.html";
+import { manifest as importedByOtherModule } from "./other.js";
+console.log(manifest === importedByOtherModule);
+${printManifest}`,
+      "/other.js": `export { default as manifest } from "./page.html";`,
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: {
+      stdout: `true\n${expectedManifestSummary}`,
+    },
+    onAfterApiBundle: expectSingleHtmlOutput,
+    onAfterBundle(api) {
+      const manifests = readManifests(api, "out/server.js");
+      expect(manifests).toHaveLength(1);
+
+      // The HTML file's scripts were bundled for the browser, not for the
+      // server target of the graph that imported it.
+      const script = manifests[0].files.find((file: any) => file.loader === "js");
+      const scriptCode = api.readFile("out/" + script.path);
+      expect(scriptCode).toContain("page script");
+      expect(scriptCode).not.toContain("// @bun");
+    },
+  });
+
+  // Unlike an import statement, a require() of the HTML file used to build
+  // without an error on this path and evaluate to an empty module.
+  itBundled("html-import/onresolve-fallthrough-require", {
+    outdir: "out/",
+    files: {
+      ...pluginResolvedHtmlFiles,
+      "/server.js": `
+const required = require("./page.html");
+const manifest = required.default ?? required;
+${printManifest}`,
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: {
+      stdout: expectedManifestSummary,
+    },
+    onAfterApiBundle: expectSingleHtmlOutput,
+    onAfterBundle(api) {
+      expect(readManifests(api, "out/server.js")).toHaveLength(1);
+    },
+  });
+
+  itBundled("html-import/onresolve-returns-html-path", ({ root }) => ({
+    outdir: "out/",
+    files: {
+      ...pluginResolvedHtmlFiles,
+      "/server.js": `
+import manifest from "app:page";
+${printManifest}`,
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+    plugins(builder) {
+      builder.onResolve({ filter: /^app:page$/ }, () => ({ path: join(root, "page.html") }));
+    },
+    run: {
+      stdout: expectedManifestSummary,
+    },
+    onAfterApiBundle: expectSingleHtmlOutput,
+    onAfterBundle(api) {
+      expect(readManifests(api, "out/server.js")).toHaveLength(1);
+    },
+  }));
+
+  // page.html is an entry point of its own (resolved without the plugin, whose
+  // filter only matches relative specifiers) and imported by server.js
+  // (resolved through the plugin). It must be bundled once and the import must
+  // still get a manifest for it.
+  itBundled("html-import/onresolve-fallthrough-html-is-also-an-entry-point", {
+    outdir: "out/",
+    files: {
+      ...pluginResolvedHtmlFiles,
+      "/server.js": `
+import manifest from "./page.html";
+${printManifest}`,
+    },
+    entryPoints: ["/server.js", "/page.html"],
+    target: "bun",
+    plugins(builder) {
+      builder.onResolve({ filter: /^\.\// }, () => undefined);
+    },
+    run: {
+      file: "out/server.js",
+      stdout: expectedManifestSummary,
+    },
+    onAfterApiBundle: expectSingleHtmlOutput,
+    onAfterBundle(api) {
+      expect(readManifests(api, "out/server.js")).toHaveLength(1);
+    },
+  });
+
+  itBundled("html-import/onresolve-fallthrough-keeps-type-file-attribute", {
+    outdir: "out/",
+    files: {
+      ...pluginResolvedHtmlFiles,
+      "/server.js": `
+import url from "./page.html" with { type: "file" };
+console.log(typeof url, url.endsWith(".html"));
+`,
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: {
+      stdout: "string true",
+    },
+    onAfterBundle(api) {
+      expect(readManifests(api, "out/server.js")).toHaveLength(0);
     },
   });
 });

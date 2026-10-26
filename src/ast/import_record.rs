@@ -107,6 +107,9 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// The bundler's onResolve plugins have this record and have not answered. Only their answer gives it a module.
+        const AT_ON_RESOLVE_PLUGINS = 1 << 19;
     }
 }
 

@@ -2594,11 +2594,17 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
 }
 
 fn decode_jsx_entities(mut text: &str, decoded: &mut Vec<u8>) {
+    // How far from the end of `text` the last search found a `;`. More than `text.len()`: search again. 0: none.
+    let mut semicolon_from_end = usize::MAX;
     while let Some(at) = bun_core::strings::index_of_char_usize(text.as_bytes(), b'&') {
         decoded.extend_from_slice(&text.as_bytes()[..at]);
         text = &text[at + 1..];
-        let entity = bun_core::strings::index_of_char_usize(text.as_bytes(), b';')
-            .map(|len| &text[..len])
+        if semicolon_from_end > text.len() {
+            semicolon_from_end = bun_core::strings::index_of_char_usize(text.as_bytes(), b';')
+                .map_or(0, |len| text.len() - len);
+        }
+        let entity = (semicolon_from_end != 0)
+            .then(|| &text[..text.len() - semicolon_from_end])
             .filter(|entity| !entity.is_empty());
         let c = entity.and_then(|entity| match entity.strip_prefix('#') {
             Some(number) => {

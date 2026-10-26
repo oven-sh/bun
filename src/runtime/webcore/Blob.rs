@@ -5030,7 +5030,7 @@ pub(crate) fn write(
             BunWriteOptions::from_js(global_this, options.object().to_js())?,
             Some(options),
         ),
-        // The dictionary refuses it.
+        // `from_js` throws: it is not an object.
         WriteOptionsArgument::Other(options) => (
             BunWriteOptions::from_js(global_this, options.to_js())?,
             None,

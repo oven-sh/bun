@@ -813,11 +813,11 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
     // detaches (no fallback to the input Request's signal); a present non-null
     // non-AbortSignal is a TypeError.
     signal = 'extract_signal: {
-        let mut init = match options_object {
+        let mut signal_init = match options_object {
             Some(options) => options.signal(global_this)?,
             None => SignalInit::Missing,
         };
-        if matches!(init, SignalInit::Missing) {
+        if matches!(signal_init, SignalInit::Missing) {
             if let Some(req) = request_mut!() {
                 if let Some(signal_) = req.abort_signal() {
                     break 'extract_signal Some(signal_.ref_());
@@ -826,10 +826,10 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
             }
 
             if let Some(options) = request_init_object {
-                init = options.signal(global_this)?;
+                signal_init = options.signal(global_this)?;
             }
         }
-        match init {
+        match signal_init {
             SignalInit::Missing | SignalInit::Null => None,
             SignalInit::Signal(signal) => Some(signal),
             SignalInit::Other => {
@@ -956,11 +956,11 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         let mut created_headers: Option<HeadersRef> = None;
 
         let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
-            let mut init = match options_object {
+            let mut headers_init = match options_object {
                 Some(options) => options.headers(global_this)?,
                 None => HeadersInit::Missing,
             };
-            if matches!(init, HeadersInit::Missing) {
+            if matches!(headers_init, HeadersInit::Missing) {
                 if let Some(req) = request_mut!() {
                     if let Some(head) = req.get_fetch_headers_unless_empty() {
                         break 'brk Some(head.as_ptr());
@@ -969,10 +969,10 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
                 }
 
                 if let Some(options) = request_init_object {
-                    init = options.headers(global_this)?;
+                    headers_init = options.headers(global_this)?;
                 }
             }
-            match init {
+            match headers_init {
                 HeadersInit::Missing => break 'extract_headers headers,
                 HeadersInit::Headers((headers__, _)) => {
                     if headers__.is_empty() {

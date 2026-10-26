@@ -2156,7 +2156,7 @@ impl QuicEndpoint {
         cx: &mut JsScope<'a>,
         options: Option<SessionOptions<'a>>,
     ) -> JsResult<()> {
-        // What is not an object has no option.
+        // Anything but an object is read as `{}`.
         let options = options.unwrap_or_else(|| SessionOptions::new(cx.heap.create_empty_object()));
         let global = cx.global();
         if self.closed.get() || self.closing.get() {
@@ -2228,7 +2228,7 @@ impl QuicEndpoint {
         options: Option<SessionOptions<'a>>,
         session_ticket: Option<JsLocal<'a, BufferSource>>,
     ) -> JsResult<Option<JSValue>> {
-        // What is not an object has no option.
+        // Anything but an object is read as `{}`.
         let options = options.unwrap_or_else(|| SessionOptions::new(cx.heap.create_empty_object()));
         let global = cx.global();
         if self.closed.get() || self.closing.get() {

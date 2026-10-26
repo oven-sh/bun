@@ -2904,7 +2904,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         const chunk = Buffer.concat(chunks || []);
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, batchLength);
-        // `false`, which has no bit set, if the stream cannot send.
+        // `false` if the stream cannot send, and `false & flag` is 0.
         const status = native.writeStream(this.#id, chunk, undefined, endStream, callback, true) as number;
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
@@ -2952,7 +2952,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         }
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, chunk.length);
-        // `false`, which has no bit set, if the stream cannot send.
+        // `false` if the stream cannot send, and `false & flag` is 0.
         const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, callback, true) as number;
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {

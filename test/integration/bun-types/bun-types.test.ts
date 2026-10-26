@@ -630,9 +630,9 @@ describe("@types/bun integration test", () => {
           ).map(promise => `${file}: ${promise}`),
         ),
     ).toEqual([
-      // Published as the type of its argument.
+      // bun.d.ts types the result from the argument.
       "Crypto.bind.ts: new Crypto().getRandomValues() is ArrayBuffer | ArrayBufferView<ArrayBufferLike>, not T",
-      // An `S3File` is a `Blob` to which C++ adds `bucket` and `presign`. Nothing has ever had `readable`.
+      // An `S3File` is a `Blob` to which C++ adds `bucket` and `presign`. `readable` is declared and not implemented.
       "S3Client.bind.ts: new S3Client().file() has no readable, bucket, presign",
       "S3Client.bind.ts: new S3Client().file().lastModified is not published",
       // bun.d.ts and s3.d.ts do not declare these.
@@ -652,9 +652,9 @@ describe("@types/bun integration test", () => {
       "Sink.bind.ts: new NetworkSink().close is not published",
       "Sink.bind.ts: new NetworkSink()._getFd is not published",
       "Sink.bind.ts: new NetworkSink().sinkId is not published",
-      // Published by the type of its argument.
+      // bun.d.ts types the result from the argument.
       "TOMLObject.bind.ts: stringify() is string | undefined, not T extends symbol | Function | undefined ? undefined : T extends object ? string : string | undefined",
-      // Published, and nothing has ever read it.
+      // Published, and nothing reads it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
       // `undefined` for `undefined`, a function or a symbol, as from `JSON.stringify`.
       "XMLObject.bind.ts: stringify() is string | undefined, not string",
@@ -682,6 +682,7 @@ describe("@types/bun integration test", () => {
       "resolve_message.bind.ts: new ResolveMessage().requireStack is not published",
       "resolve_message.bind.ts: new ResolveMessage().stack is not published",
       "resolve_message.bind.ts: new ResolveMessage().[Symbol.toPrimitive] is not published",
+      // `keepalive` and `duplex` are declared on Request but not implemented.
       "response.bind.ts: new Request().clone() has no keepalive, duplex",
       // `undefined` once it has closed.
       "server.bind.ts: new ServerWebSocket().remoteAddress is string | undefined, not string",

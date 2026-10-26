@@ -1130,8 +1130,8 @@ impl EventLoop {
     /// settle it (execution forbidden, or a stop was requested: a worker being
     /// terminated mid-wait), or because a termination is pending beneath this wait
     /// (a nested wait under a `node:vm` run whose deadline fired: it must unwind to
-    /// that run, not tick on over it), also if the promise settled in the tick that
-    /// raised it. Nothing is thrown for it; a caller inside a
+    /// that run, not tick on over it). A pending termination is `Err` even if the
+    /// promise settled in the tick that raised it. Nothing is thrown for it; a caller inside a
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {

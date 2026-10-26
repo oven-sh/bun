@@ -296,7 +296,7 @@ impl SocketAddress {
         SocketAddress::init_js(global, options)
     }
 
-    /// No family is IPv4.
+    /// `family` defaults to IPv4.
     pub(crate) fn init_from_addr_family(
         global: &JSGlobalObject,
         address_js: JsLocal<'_, StringLike>,

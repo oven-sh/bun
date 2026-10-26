@@ -6,8 +6,7 @@ use bun_sys::{Fd, FdExt};
 
 use crate::{JSGlobalObject, JSValue};
 
-/// Extension trait wiring `to_js` onto `bun_sys::Fd`;
-/// the `*_jsc` crate provides them as trait methods.
+/// Extension trait that adds these to `bun_sys::Fd`.
 pub trait FdJsc: Sized {
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
     fn to_number_without_making_lib_uv_owned(self) -> i64;

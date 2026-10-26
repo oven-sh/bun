@@ -190,7 +190,7 @@ pub(super) enum Payload<'a> {
     Buffer(ArrayBuffer),
     Bytes(&'a [u8]),
     Text(StringView<'a>),
-    /// What `ToString` made.
+    /// `ToString` of any other value.
     Converted(bun_core::String),
 }
 

@@ -555,7 +555,7 @@ impl JSType {
 
     /// `JSType` is a
     /// newtype-const (not a Rust `enum`), so there is no derived stringifier.
-    /// Covers every `is_typed_array_or_array_buffer()` variant + `DataView`.
+    /// Covers every typed array, `ArrayBuffer` and `DataView`.
     /// The `_ => "TypedArray"` arm is unreachable for any real
     /// `ArrayBuffer.typed_array_type` (always one of the 14).
     pub fn typed_array_name(self) -> &'static [u8] {

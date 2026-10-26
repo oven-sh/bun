@@ -385,7 +385,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`QuotaExceededError`](https://developer.mozilla.org/en-US/docs/Web/API/QuotaExceededError)
 
-🔴 Not implemented.
+🟢 Fully implemented. Instances are not native errors (`Error.isError()` returns `false`), and an instance that `new QuotaExceededError()` makes has no `stack`.
 
 ### [`ReadableByteStreamController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableByteStreamController)
 

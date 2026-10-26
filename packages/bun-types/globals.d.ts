@@ -284,7 +284,26 @@ declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
 interface Crypto {
   readonly subtle: SubtleCrypto;
 
-  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Crypto/getRandomValues) */
+  /**
+   * Fills `array` with cryptographically strong random values and returns it.
+   *
+   * `array` is an integer-typed array (`Int8Array`, `Uint8Array`, `Uint8ClampedArray`, `Int16Array`, `Uint16Array`,
+   * `Int32Array`, `Uint32Array`, `BigInt64Array` or `BigUint64Array`) of at most 65,536 bytes. To fill a longer
+   * buffer, use `randomFillSync()` from `node:crypto`, which has no limit, or call this once for each 65,536 bytes.
+   *
+   * @throws {DOMException} A `TypeMismatchError` when `array` is not an integer-typed array.
+   * @throws {QuotaExceededError} When `array` has more than 65,536 bytes. Nothing is written to it.
+   *
+   * @example
+   * ```ts
+   * import { randomFillSync } from "node:crypto";
+   *
+   * crypto.getRandomValues(new Uint8Array(65536)); // the longest array that it fills
+   * randomFillSync(new Uint8Array(1024 * 1024)); // any length
+   * ```
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Crypto/getRandomValues)
+   */
   getRandomValues<T extends ArrayBufferView | null>(array: T): T;
 
   /**
@@ -1005,6 +1024,32 @@ declare var DOMException: {
   readonly INVALID_NODE_TYPE_ERR: 24;
   readonly DATA_CLONE_ERR: 25;
 };
+
+/**
+ * The error of an operation that goes over a quota. It is a {@link DOMException} with the name
+ * `"QuotaExceededError"` and the code `22`.
+ *
+ * `crypto.getRandomValues()` throws one for an array of more than 65,536 bytes.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/QuotaExceededError)
+ */
+interface QuotaExceededError extends DOMException {
+  /** The quota that the operation went over, or `null` when the thrower gave none. */
+  readonly quota: number | null;
+  /** The amount that the operation asked for, or `null` when the thrower gave none. */
+  readonly requested: number | null;
+}
+declare var QuotaExceededError: {
+  prototype: QuotaExceededError;
+  new (message?: string, options?: QuotaExceededErrorOptions): QuotaExceededError;
+};
+
+interface QuotaExceededErrorOptions {
+  /** The quota that the operation went over. A negative number throws a `RangeError`. */
+  quota?: number;
+  /** The amount that the operation asked for. A negative number, or one less than `quota`, throws a `RangeError`. */
+  requested?: number;
+}
 
 declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;

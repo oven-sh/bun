@@ -72,6 +72,62 @@ it("random_get fills only the requested window", () => {
   expect(after.subarray(bufPtr, bufPtr + bufLen).some(b => b !== 0)).toBe(true);
 });
 
+// The 4 KiB blocks of `bytes` that have no random byte. Sixteen zero bytes in a row are a 1-in-2^128 event.
+function emptyBlocks(bytes) {
+  let empty = 0;
+  for (let offset = 0; offset < bytes.length; offset += 4096) {
+    if (bytes.subarray(offset, offset + 4096).every(byte => byte === 0)) empty++;
+  }
+  return empty;
+}
+
+// crypto.getRandomValues fills at most 65,536 bytes in one call. A guest is not held to that quota.
+it.each([65537, 131072])("random_get fills a window of %d bytes", bufLen => {
+  expect(() => crypto.getRandomValues(new Uint8Array(bufLen))).toThrow(
+    expect.objectContaining({ name: "QuotaExceededError" }),
+  );
+
+  const wasi = new WASI({});
+  wasi.setMemory(new WebAssembly.Memory({ initial: 4 }));
+  const memory = new Uint8Array(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const bufPtr = 1024;
+  const end = bufPtr + bufLen;
+
+  // The last byte of 65,537 is a call of its own. One random byte can have any value, so collect it over several calls.
+  const lastBytes = new Set();
+  for (let i = 0; i < 32; i++) {
+    expect(wasi.wasiImport.random_get(bufPtr, bufLen)).toBe(WASI_ESUCCESS);
+    lastBytes.add(memory[end - 1]);
+  }
+  expect(lastBytes.size).toBeGreaterThan(1);
+
+  expect(emptyBlocks(memory.subarray(bufPtr, bufPtr + (bufLen & ~4095)))).toBe(0);
+  expect(memory.subarray(0, bufPtr).every(byte => byte === 0)).toBe(true);
+  expect(memory.subarray(end).every(byte => byte === 0)).toBe(true);
+});
+
+it("the default randomFillSync binding fills a typed array of any length", () => {
+  const { randomFillSync } = new WASI({}).bindings;
+
+  const bytes = new Uint8Array(1024 * 1024);
+  expect(randomFillSync(bytes)).toBe(bytes);
+  expect(emptyBlocks(bytes)).toBe(0);
+
+  // 4 KiB past the quota, in elements of 4 bytes.
+  const words = new Uint32Array((65536 + 4096) / 4);
+  expect(randomFillSync(words)).toBe(words);
+  expect(emptyBlocks(new Uint8Array(words.buffer))).toBe(0);
+
+  // What getRandomValues refuses is refused at any length, with the error of getRandomValues.
+  for (const view of [new Float64Array(65536 / 8 + 1), new DataView(new ArrayBuffer(65537))]) {
+    expect(() => randomFillSync(view)).toThrow(expect.objectContaining({ name: "TypeMismatchError" }));
+    expect(new Uint8Array(view.buffer).every(byte => byte === 0)).toBe(true);
+  }
+  expect(() => randomFillSync(undefined)).toThrow(expect.objectContaining({ name: "TypeMismatchError" }));
+});
+
 it("path_open reports the host errno to the guest when the open fails", () => {
   using dir = tempDir("wasi-path-open-errno", {
     "exists.txt": "x",

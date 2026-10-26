@@ -62,24 +62,20 @@ for (const ctor of intTypedConstructors) {
     // Ignore if error here.
   }
 
-  // Diverges from upstream: Bun does not enforce getRandomValues' 65536-byte quota
-  // (no QuotaExceededError global yet, which upstream also asserts `instanceof` here).
-  // Restore verbatim once it exists: https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues
-
-  // if (kData !== undefined) {
-  //   assert.throws(
-  //     () => crypto.getRandomValues(kData),
-  //     (err) => {
-  //       assert.strictEqual(err.name, 'QuotaExceededError');
-  //       assert.strictEqual(err.code, 22);
-  //       assert(err instanceof DOMException);
-  //       assert(err instanceof QuotaExceededError);
-  //       assert.strictEqual(err.quota, null);
-  //       assert.strictEqual(err.requested, null);
-  //       return true;
-  //     },
-  //   );
-  // }
+  if (kData !== undefined) {
+    assert.throws(
+      () => crypto.getRandomValues(kData),
+      (err) => {
+        assert.strictEqual(err.name, 'QuotaExceededError');
+        assert.strictEqual(err.code, 22);
+        assert(err instanceof DOMException);
+        assert(err instanceof QuotaExceededError);
+        assert.strictEqual(err.quota, null);
+        assert.strictEqual(err.requested, null);
+        return true;
+      },
+    );
+  }
 }
 
 {

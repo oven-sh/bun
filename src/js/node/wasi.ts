@@ -542,6 +542,22 @@ var translateFileAttributes = (wasi, fd, stats) => {
 };
 var warnedAboutSleep = false;
 
+// The most bytes that one crypto.getRandomValues call fills: https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues
+const kGetRandomValuesQuota = 65536;
+
+/** A WASI guest has no such quota, so a longer typed array is filled in chunks of it. */
+function fillRandom<T extends ArrayBufferView>(view: T): T {
+  if (!$isTypedArrayView(view) || view.byteLength <= kGetRandomValuesQuota) {
+    return crypto.getRandomValues(view);
+  }
+  const array = view as unknown as Uint8Array;
+  const step = kGetRandomValuesQuota / array.BYTES_PER_ELEMENT;
+  for (let start = 0; start < array.length; start += step) {
+    crypto.getRandomValues(array.subarray(start, start + step));
+  }
+  return view;
+}
+
 var defaultConfig;
 function getDefaults() {
   if (defaultConfig) return defaultConfig;
@@ -554,7 +570,7 @@ function getDefaults() {
     kill: signal => {
       process.kill(process.pid, signal);
     },
-    randomFillSync: array => crypto.getRandomValues(array),
+    randomFillSync: fillRandom,
     isTTY: fd => require("node:tty").isatty(fd),
     fs: require("node:fs"),
     path: require("node:path"),
@@ -1642,7 +1658,7 @@ class WASI {
         // getRandomValues takes one integer-typed view and ignores any further
         // arguments, so a bare `buffer, bufPtr, bufLen` randomized all of linear
         // memory rather than the requested window.
-        crypto.getRandomValues(new Uint8Array(this.memory.buffer, bufPtr, bufLen));
+        fillRandom(new Uint8Array(this.memory.buffer, bufPtr, bufLen));
         return WASI_ESUCCESS;
       },
       sched_yield() {

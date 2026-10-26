@@ -42,7 +42,14 @@ impl Crypto {
                 .into());
         };
 
-        random_data(global, array_buffer.byte_slice_mut());
+        if !random_data(global, array_buffer.byte_slice_mut()) {
+            return Err(global
+                .throw_dom_exception(
+                    bun_jsc::DOMExceptionCode::QuotaExceededError,
+                    format_args!("The requested length exceeds 65,536 bytes"),
+                )
+                .into());
+        }
 
         Ok(array)
     }
@@ -85,8 +92,11 @@ pub(crate) fn timing_safe_equal<'a>(
     Ok(bun_boringssl::c::constant_time_eq(buf1, buf2))
 }
 
-fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
+/// Fills `slice`. A slice over the byte length that `getRandomValues` allows is left as it is, and the result is false.
+fn random_data(global: &JSGlobalObject, slice: &mut [u8]) -> bool {
     const ENTROPY_CACHE_FAST_PATH_MAX: usize = bun_jsc::RareData::EntropyCache::SIZE / 8;
+    // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues step 3.
+    const QUOTA: usize = 65536;
     match slice.len() {
         0 => {}
         // 512 bytes or less we reuse from the same cache as UUID generation.
@@ -98,10 +108,12 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
                 .entropy_slice(slice.len());
             slice[..src.len()].copy_from_slice(src);
         }
-        _ => {
+        len if len <= QUOTA => {
             bun_boringssl_sys::rand_bytes(slice);
         }
+        _ => return false,
     }
+    true
 }
 
 fn encoding_from_label<'a>(heap: &JsHeap<'a>, label: &[u8]) -> bindgen::Result<'a, Encoding> {

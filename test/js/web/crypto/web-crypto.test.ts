@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey, type webcrypto } from "node:crypto";
+import { createSecretKey, getRandomValues as nodeGetRandomValues, webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1490,6 +1490,213 @@ describe("crypto.getRandomValues argument types", () => {
       );
     });
   }
+});
+
+// One call fills at most 65,536 bytes. A longer view throws the QuotaExceededError
+// interface of WebIDL, and not a byte of the view is written.
+describe("crypto.getRandomValues quota", () => {
+  const quota = 65536;
+
+  function thrownBy(call: () => unknown) {
+    let error: any;
+    try {
+      call();
+    } catch (caught) {
+      error = caught;
+    }
+    return {
+      isQuotaExceededError: error instanceof QuotaExceededError,
+      isDOMException: error instanceof DOMException,
+      constructor: error?.constructor?.name,
+      name: error?.name,
+      code: error?.code,
+      message: error?.message,
+      quota: error?.quota,
+      requested: error?.requested,
+      stack: typeof error?.stack,
+    };
+  }
+  const quotaExceeded = {
+    isQuotaExceededError: true,
+    isDOMException: true,
+    constructor: "QuotaExceededError",
+    name: "QuotaExceededError",
+    code: 22,
+    message: "The requested length exceeds 65,536 bytes",
+    quota: null,
+    requested: null,
+    stack: "string",
+  } as const;
+  const isAllZero = (view: ArrayBufferView) =>
+    Buffer.from(view.buffer, view.byteOffset, view.byteLength).equals(Buffer.alloc(view.byteLength));
+
+  const integerViews: [string, (bytes: number) => ArrayBufferView, number][] = [
+    ["Int8Array", bytes => new Int8Array(bytes), 1],
+    ["Uint8Array", bytes => new Uint8Array(bytes), 1],
+    ["Uint8ClampedArray", bytes => new Uint8ClampedArray(bytes), 1],
+    ["Int16Array", bytes => new Int16Array(bytes / 2), 2],
+    ["Uint16Array", bytes => new Uint16Array(bytes / 2), 2],
+    ["Int32Array", bytes => new Int32Array(bytes / 4), 4],
+    ["Uint32Array", bytes => new Uint32Array(bytes / 4), 4],
+    ["BigInt64Array", bytes => new BigInt64Array(bytes / 8), 8],
+    ["BigUint64Array", bytes => new BigUint64Array(bytes / 8), 8],
+  ];
+
+  for (const [name, make, bytesPerElement] of integerViews) {
+    it(`fills a ${name} of 65536 bytes and throws for one element more`, () => {
+      const atQuota = make(quota);
+      expect(crypto.getRandomValues(atQuota)).toBe(atQuota);
+      expect(isAllZero(atQuota)).toBe(false);
+
+      const overQuota = make(quota + bytesPerElement);
+      expect(thrownBy(() => crypto.getRandomValues(overQuota))).toEqual(quotaExceeded);
+      expect(isAllZero(overQuota)).toBe(true);
+    });
+  }
+
+  it.each([
+    ["a Uint8Array of 70000 bytes", () => new Uint8Array(70000)],
+    ["a Uint8Array of 1 MiB", () => new Uint8Array(1024 * 1024)],
+    ["Buffer", () => Buffer.alloc(quota + 1)],
+    ["a Uint8Array subclass", () => new (class Bytes extends Uint8Array {})(quota + 1)],
+    ["a view of 65537 bytes on a longer buffer", () => new Uint8Array(new ArrayBuffer(quota * 2), 16, quota + 1)],
+    ["a view on a SharedArrayBuffer", () => new Uint8Array(new SharedArrayBuffer(quota + 1))],
+  ])("throws for %s", (_, make) => {
+    const view = make();
+    expect(thrownBy(() => crypto.getRandomValues(view))).toEqual(quotaExceeded);
+    expect(isAllZero(view)).toBe(true);
+  });
+
+  it("counts the bytes of the view, not of its buffer", () => {
+    const view = new Uint8Array(new ArrayBuffer(quota * 2), 16, quota);
+    expect(crypto.getRandomValues(view)).toBe(view);
+    expect(isAllZero(view)).toBe(false);
+  });
+
+  it("counts the current length of a length-tracking view", () => {
+    const buffer = new ArrayBuffer(quota, { maxByteLength: quota + 1 });
+    const view = new Uint8Array(buffer);
+    expect(crypto.getRandomValues(view)).toBe(view);
+
+    buffer.resize(quota + 1);
+    expect(thrownBy(() => crypto.getRandomValues(view))).toEqual(quotaExceeded);
+
+    buffer.resize(100);
+    expect(crypto.getRandomValues(view)).toBe(view);
+  });
+
+  it("returns a detached view, which has no bytes", () => {
+    const view = new Uint8Array(quota + 1);
+    view.buffer.transfer();
+    expect(crypto.getRandomValues(view)).toBe(view);
+  });
+
+  it.each([
+    [
+      "Crypto.prototype.getRandomValues.call(crypto, view)",
+      (view: Uint8Array<ArrayBuffer>) => Crypto.prototype.getRandomValues.call(crypto, view),
+    ],
+    ["node:crypto getRandomValues", (view: Uint8Array<ArrayBuffer>) => nodeGetRandomValues(view)],
+    ["node:crypto webcrypto.getRandomValues", (view: Uint8Array<ArrayBuffer>) => webcrypto.getRandomValues(view)],
+  ])("%s throws too", (_, call) => {
+    const view = new Uint8Array(quota + 1);
+    expect(thrownBy(() => call(view))).toEqual(quotaExceeded);
+    expect(isAllZero(view)).toBe(true);
+  });
+
+  it.each([
+    ["DataView", () => new DataView(new ArrayBuffer(quota + 1))],
+    ["Float64Array", () => new Float64Array(quota / 8 + 1)],
+    ["ArrayBuffer", () => new ArrayBuffer(quota + 1)],
+  ])("a %s over the quota is a TypeMismatchError: the type is checked first", (_, make) => {
+    expect(() => crypto.getRandomValues(make() as any)).toThrow(expect.objectContaining({ name: "TypeMismatchError" }));
+  });
+
+  it("another receiver is ERR_INVALID_THIS, whatever the length", () => {
+    expect(() => crypto.getRandomValues.call({} as Crypto, new Uint8Array(quota + 1))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_THIS" }),
+    );
+  });
+
+  it("throws the QuotaExceededError of the Worker in a Worker", async () => {
+    const url = URL.createObjectURL(
+      new Blob([
+        `let error;
+         try {
+           crypto.getRandomValues(new Uint8Array(${quota + 1}));
+         } catch (caught) {
+           error = caught;
+         }
+         postMessage({
+           isQuotaExceededError: error instanceof QuotaExceededError,
+           isDOMException: error instanceof DOMException,
+           constructor: error?.constructor?.name,
+           name: error?.name,
+           code: error?.code,
+           message: error?.message,
+           quota: error?.quota,
+           requested: error?.requested,
+           stack: typeof error?.stack,
+         });`,
+      ]),
+    );
+    const worker = new Worker(url);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
+      worker.onmessage = resolve;
+      worker.onerror = reject;
+      expect((await promise).data).toEqual(quotaExceeded);
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  // The class of the thrown error comes from the global object, not from its `QuotaExceededError`
+  // property: a program that never read it, deleted it or replaced it gets the same prototype.
+  it("does not read the QuotaExceededError property of the global to throw", async () => {
+    const script = `
+      function thrown() {
+        try {
+          crypto.getRandomValues(new Uint8Array(${quota + 1}));
+        } catch (error) {
+          return error;
+        }
+      }
+      const unread = thrown();
+      const prototype = Object.getPrototypeOf(unread);
+      const results = [
+        Object.prototype.toString.call(unread),
+        Object.getPrototypeOf(prototype) === DOMException.prototype,
+        unread.quota,
+        unread.requested,
+      ];
+      results.push(unread instanceof QuotaExceededError, prototype === QuotaExceededError.prototype);
+      delete globalThis.QuotaExceededError;
+      results.push(typeof QuotaExceededError, Object.getPrototypeOf(thrown()) === prototype);
+      globalThis.QuotaExceededError = class Replaced {};
+      results.push(Object.getPrototypeOf(thrown()) === prototype, thrown().name);
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify([
+        "[object QuotaExceededError]",
+        true,
+        null,
+        null,
+        true,
+        true,
+        "undefined",
+        true,
+        true,
+        "QuotaExceededError",
+      ]),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("exception scope discipline", () => {

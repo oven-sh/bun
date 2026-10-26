@@ -184,6 +184,16 @@ const writableStream = new WritableStream();
   a.DATA_CLONE_ERR;
 }
 {
+  const a = new QuotaExceededError("over the quota", { quota: 1, requested: 2 });
+  expectType(a.quota).is<number | null>();
+  expectType(a.requested).is<number | null>();
+  expectAssignable<DOMException>(a);
+  a.QUOTA_EXCEEDED_ERR;
+  new QuotaExceededError();
+  // @ts-expect-error - a member of the options is a number
+  new QuotaExceededError("over the quota", { quota: "1" });
+}
+{
   const a = new SubtleCrypto();
   await a.decrypt("asdf", new CryptoKey(), new Uint8Array());
 }

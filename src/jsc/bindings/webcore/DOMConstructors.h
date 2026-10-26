@@ -18,6 +18,7 @@ enum class DOMConstructorID : uint16_t {
     CustomEvent,
     DOMException,
     DOMFormData,
+    DOMQuotaExceededError,
     DOMURL,
     DecompressionStream,
     ErrorEvent,

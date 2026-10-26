@@ -58,7 +58,10 @@ export const Crypto = b.class({
   rustPath: "crate::webcore::crypto::Crypto",
   construct: "illegal",
   proto: {
-    /** What is not an integer typed array throws WebCrypto's `TypeMismatchError`, which no type here throws. */
+    /**
+     * What is not an integer typed array throws WebCrypto's `TypeMismatchError`, and one of more than
+     * 65,536 bytes its `QuotaExceededError`. No type here throws either.
+     */
     getRandomValues: { args: { array: b.any }, returns: b.any, capability: "js", throws: true },
     randomUUID: { returns: b.string },
     timingSafeEqual: equal,

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
 
@@ -4222,7 +4222,7 @@ test.skipIf(isDebug || isASAN)(
   },
 );
 
-// InferTypes puts the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
+// InferTypes put the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
 // from each other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
 // Where the fix is missing, this test takes all the memory that the machine gives it until its time is over.
 test("react-compiler ends on a component whose types are made of each other", async () => {
@@ -4277,6 +4277,234 @@ test("react-compiler ends on a component whose types are made of each other", as
   expect(stderr).toBe("");
   expect(stdout).toContain("function Component");
   expect(exitCode).toBe(0);
+});
+
+// InferTypes stored the type of a phi in the place of its type variable inside each phi that it is an operand of. A loop
+// that rotates its locals makes each an operand of the next, so each local more doubled the lists of operands: 15 locals
+// took 0.8 s and 128 MB, 19 took 27 s and 1.8 GB. Where the fix is missing, the time of this test is over first, and
+// that stops the build.
+test("react-compiler memory does not double with each local that a loop rotates", async () => {
+  const small = isDebug || isASAN;
+  const names = Array.from({ length: small ? 16 : 20 }, (_, i) => `v${i}`);
+  using dir = tempDir("react-compiler-rotation", {
+    "empty.jsx": `export default function App() { return null; }`,
+    "rotation.jsx": `
+      function cond(x) { return x.value > 5; }
+      export function Comp(props) {
+        "use memo";
+        ${names.map(name => `let ${name} = {};`).join(" ")}
+        for (let i = 0; i < props.n; i++) {
+          while (true) {
+            let z = v0;
+            ${names.map((name, i) => `${name} = ${names[i + 1] ?? "z"};`).join(" ")}
+            if (cond(v0)) break;
+          }
+        }
+        return v0;
+      }
+    `,
+  });
+
+  const build = (entry: string) =>
+    runCommandMaxRSS({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+      env: withoutAsanQuarantine(bunEnv),
+      cwd: String(dir),
+    });
+
+  const [empty, rotation] = await Promise.all([build("empty.jsx"), build("rotation.jsx")]);
+  expect(empty.stderr).toBe("");
+  expect(empty.exitCode).toBe(0);
+  expect(rotation.stderr).toBe("");
+  // A component that is left as it was takes no memory either.
+  expect(rotation.stdout).toMatch(/\b_c\(\d+\)/);
+  expect(rotation.exitCode).toBe(0);
+  expect((rotation.maxRSS - empty.maxRSS) / 1024 / 1024).toBeLessThan(small ? 300 : 100);
+});
+
+// A phi type holds type variables. Where one of them comes back to the phi, InferTypes takes it out of the phi and of
+// what the operands of the phi are bound to, and it leaves the other bindings as they are. The types that come of it
+// decide what a memo block holds. Each of these components has the memo cache it had when a phi held types.
+test("react-compiler types locals that a loop assigns from each other as it did when a phi held types", async () => {
+  const sources = {
+    SwapThenContinue: `
+      export function Comp(props) {
+        "use memo";
+        const arr = [props.x];
+        let v0 = Math.max; let v1 = props.mutate; let out = null; let i = 0;
+        while (true) {
+          { let t0 = v1; v1 = v0; v0 = t0; }
+          if (props.c) continue;
+          v0 = v0;
+          out = v1(arr);
+          i++;
+          if (i > 1) break;
+        }
+        return { arr, out };
+      }
+    `,
+    SwapInInnerLoopAndInOuter: `
+      import { useState } from "react";
+      function cond(x) { return x.value > 5; }
+      function foo(a, b) { return a; }
+      export function Comp(props) {
+        "use memo";
+        const arr = [props.x]; const obj = { y: props.y }; const fn = (x) => x + props.z;
+        let v0 = Math.max; let v1 = props.mutate; let acc = null; let out = null;
+        for (let o = 0; o < props.n; o++) {
+          for (let i0 = 0; i0 < props.n; i0++) {
+            { let t0 = v1; v1 = v0; v0 = t0; }
+            if (cond(v1)) continue;
+          }
+          v1 = v0;
+          { let t1 = v1; v1 = v0; v0 = t1; }
+          v0 = v1;
+        }
+        out = v0(arr);
+        return [arr, obj, out, acc];
+      }
+    `,
+    AssignToItselfInTwoInnerLoops: `
+      function cond(x) { return x.value > 5; }
+      export function Comp(props) {
+        "use memo";
+        const arr = [props.x]; const obj = { y: props.y };
+        let v0 = Math.max; let v1 = props.mutate; let out = null;
+        for (let o = 0; o < props.n; o++) {
+          while (cond(v0)) {
+            if (cond(v0)) continue;
+            v0 = v0;
+          }
+          for (let i1 = 0; i1 < props.n; i1++) {
+            while (cond(v0)) {
+              v0 = v0;
+              v0 = v1;
+              cond(v0);
+              cond(v0);
+              if (cond(v0)) continue;
+            }
+          }
+          v0 = v0;
+          cond(v0);
+        }
+        out = v0(arr);
+        return [arr, obj, out, v0];
+      }
+    `,
+    AssignFromOtherInFirstInnerLoop: `
+      function cond(x) { return x.value > 5; }
+      export function Comp(props) {
+        "use memo";
+        const arr = [props.x]; const obj = { y: props.y };
+        let v0 = Math.max; let v1 = props.mutate; let out = null;
+        for (let o = 0; o < props.n; o++) {
+          while (cond(v0)) {
+            if (cond(v0)) continue;
+            if (props.e) { v0 = v1; }
+            v0 = v0;
+          }
+          for (let i1 = 0; i1 < props.n; i1++) {
+            while (cond(v0)) {
+              v0 = v0;
+              cond(v0);
+              cond(v0);
+              if (cond(v0)) continue;
+            }
+          }
+          v0 = v0;
+          out = v0(arr);
+          cond(v0);
+        }
+        return [arr, obj, out, v0];
+      }
+    `,
+    SwapInDoWhileAndAfterIt: `
+      function cond(x) { return x.value > 5; }
+      export function Comp(props) {
+        "use memo";
+        const arr = [props.x]; const obj = { y: props.y };
+        let v0 = props.mutate; let v1 = Math.max; let out = null;
+        while (cond(v1)) {
+          do {
+            { let s = v0; v0 = v1; v1 = s; }
+            for (let i0 = 0; i0 < props.n; i0++) {
+              if (cond(v1)) continue;
+              v0 = v1;
+            }
+            v1 = v0;
+          } while (cond(v0));
+          { let t2 = v0; v0 = v1; v1 = t2; }
+        }
+        { let t4 = v1; v1 = v0; v0 = t4; }
+        out = v0(arr);
+        return [arr, obj, out];
+      }
+    `,
+    ArrowRotatesNumberAndObject: `
+      function cond(x) { return x !== 0; }
+      export function Comp(props) {
+        const box = {};
+        const f = () => {
+          let v0 = 0; let v1 = box;
+          for (let i = 0; i < props.n; i++) {
+            while (true) {
+              let z = v0;
+              v0 = v1; v1 = z;
+              if (cond(v0)) break;
+            }
+          }
+          return v0;
+        };
+        const r = f();
+        r.x = props.c;
+        return <Foo box={box} />;
+      }
+    `,
+    ArrowFindsInNestedLoops: `
+      export function Comp(props) {
+        const items = props.ids.map(id => ({ id }));
+        const find = () => {
+          let found = null;
+          for (let i = 0; i < props.n; i++) {
+            let j = 0;
+            while (true) {
+              found = items[j++];
+              if (found.id === props.id) break;
+            }
+          }
+          return found;
+        };
+        const hit = find();
+        hit.selected = props.sel;
+        return <List items={items} />;
+      }
+    `,
+  };
+  using dir = tempDir(
+    "react-compiler-cycles-of-types",
+    Object.fromEntries(Object.entries(sources).map(([name, source]) => [`${name}.jsx`, source])),
+  );
+
+  const result = await Bun.build({
+    entrypoints: Object.keys(sources).map(name => join(String(dir), `${name}.jsx`)),
+    target: "browser",
+    external: ["*"],
+    reactCompiler: true,
+  });
+  const memoCaches: Record<string, string[] | null> = {};
+  for (const output of result.outputs) {
+    memoCaches[basename(output.path, ".js")] = (await output.text()).match(/\b_c\(\d+\)/g);
+  }
+  expect(memoCaches).toEqual({
+    SwapThenContinue: ["_c(4)"],
+    SwapInInnerLoopAndInOuter: ["_c(18)"],
+    AssignToItselfInTwoInnerLoops: ["_c(20)"],
+    AssignFromOtherInFirstInnerLoop: ["_c(9)"],
+    SwapInDoWhileAndAfterIt: ["_c(19)"],
+    ArrowRotatesNumberAndObject: ["_c(3)"],
+    ArrowFindsInNestedLoops: ["_c(7)"],
+  });
 });
 
 // ValidateNoRefAccessInRender gives a function the type of what it returns. The port

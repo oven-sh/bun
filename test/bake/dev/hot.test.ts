@@ -1,19 +1,9 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { isLinux } from "harness";
-import {
-  closeSync,
-  existsSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-  writeSync,
-} from "node:fs";
+import { closeSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { devServerTestingDir, devTest, emptyHtmlFile } from "../bake-harness";
+import { devServerTestingDir, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "../bake-harness";
 
 // Outside the dev server's root, so that the watcher does not report its own trace file.
 const watcherTrace = join(devServerTestingDir, "hot-watcher-trace.log");
@@ -716,7 +706,7 @@ devTest("watcher batches that arrive while a bundle runs all reach the next bund
     `,
     // Keeps a bundle that loads held.ts open for as long as hold/on exists.
     "hold-plugin.ts": `
-      import { existsSync, readFileSync, writeFileSync } from "node:fs";
+      import { existsSync, readFileSync } from "node:fs";
       import { join } from "node:path";
 
       const on = join(import.meta.dir, "hold", "on");
@@ -725,7 +715,7 @@ devTest("watcher batches that arrive while a bundle runs all reach the next bund
         setup(build) {
           build.onLoad({ filter: /held\\.ts$/ }, async args => {
             if (existsSync(on)) {
-              writeFileSync(join(import.meta.dir, "hold", "entered"), "");
+              console.log("hold-plugin: the bundle of held.ts waits");
               while (existsSync(on)) await Bun.sleep(5);
             }
             return { contents: readFileSync(args.path, "utf8"), loader: "ts" };
@@ -757,9 +747,11 @@ devTest("watcher batches that arrive while a bundle runs all reach the next bund
       const src = html.match(/<script[^>]+src="([^"]+)"[^>]*data-bun-dev-server-script/)![1];
       return await (await dev.fetch(src)).text();
     };
+    // For the two signals that no event reports: a line in the watcher trace file, and the served bundle.
     const until = async (what: string, done: () => boolean | Promise<boolean>) => {
-      const deadline = Date.now() + 30_000;
+      const deadline = Date.now() + 10_000 * WAIT_MULTIPLIER;
       while (!(await done())) {
+        if (dev.output.exitCode !== null) throw new Error("The dev server exited while the test waited for " + what);
         if (Date.now() > deadline) throw new Error("Timed out waiting for " + what);
         await Bun.sleep(10);
       }
@@ -779,7 +771,7 @@ devTest("watcher batches that arrive while a bundle runs all reach the next bund
 
     writeFileSync(dev.join("hold/on"), "");
     save("held");
-    await until("the bundle of held.ts to start", () => existsSync(dev.join("hold/entered")));
+    await dev.output.waitForLine(/hold-plugin: the bundle of held\.ts waits/);
 
     const held = statSync(watcherTrace).size;
     const saved = ["a", "b", "c", "d", "e"];

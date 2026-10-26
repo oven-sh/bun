@@ -1,0 +1,20 @@
+the prototype of a socket: kRememberPeer kEnableStreaming kResumeUnlessFlowing ::bunternal:: kHasQueuedReads
+/headers at the start: kOutHeaders null, kLenientValidation undefined
+/headers at the start: getHeaders() {}, getRawHeaderNames() []
+/headers after setHeader: kOutHeaders null, kLenientValidation undefined
+/headers after setHeader: getHeaders() {"x-one":"1"}, getRawHeaderNames() ["X-One"]
+/headers after a list: kOutHeaders null, kLenientValidation false
+/headers after a list: getHeaders() {"x-one":"1","x-two":["a","b"]}, getRawHeaderNames() ["X-One","X-Two"]
+/headers after removeHeader: kOutHeaders {"x-two":["X-Two",["a","b"]]}, kLenientValidation false
+/headers after removeHeader: getHeaders() {"x-two":["a","b"]}, getRawHeaderNames() ["X-Two"]
+/headers at finish: fakeSocket null, res.socket a socket
+/headers: 200 ok a, b
+/many at the start: kOutHeaders null, kLenientValidation undefined
+/many at the start: getHeaders() {}, getRawHeaderNames() []
+/many: kOutHeaders has 0 entries, getHeaderNames() 20
+/many at finish: fakeSocket null, res.socket a socket
+/many: 200 ok null
+/length at the start: kOutHeaders null, kLenientValidation undefined
+/length at the start: getHeaders() {}, getRawHeaderNames() []
+/length at finish: fakeSocket null, res.socket a socket
+/length: 200 ok null

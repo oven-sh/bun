@@ -185,7 +185,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match self.file.classify_assignment_target(target) {
             AssignmentTarget::Identifier { identifier, name } => {
                 let binding = self.file.bound.binding(identifier);
-                let key = self.file.function_name_key(binding, name);
+                let position = self.file.hir[identifier].pos;
+                let key = self.file.function_name_key(binding, name, position);
                 self.lower_named_evaluation(value, PropertyName::Constant(key))
             }
             _ => self.lower_expression(value),

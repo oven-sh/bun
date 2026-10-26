@@ -137,8 +137,14 @@ impl FileLowering<'_, '_, '_, '_> {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_export_default(&mut self, statement: StmtId, expression: ExprId) {
-        let name = PropertyName::Constant(self.file.atom_key(known::default));
-        let value = self.lower_named_evaluation(expression, name);
+        let position = self.file.hir[statement].start;
+        let value = match self.file.default_export_name(position) {
+            Some(name) => {
+                let key = self.file.text_key(name);
+                self.lower_named_evaluation(expression, PropertyName::Constant(key))
+            }
+            None => self.lower_expression(expression),
+        };
         let symbol = self.file.bound.declared_symbol(Decl::ExportExpr(statement));
         scope::initialize_binding(self, Binding::Symbol(symbol), known::default, value);
     }

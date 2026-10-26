@@ -220,7 +220,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             true => header.name,
             false => None,
         };
+        let position = self.position();
+        self.set_position_to_last_recorded();
         self.emit_throw_runtime_error(RuntimeErrorKind::DerivedConstructorResult, class_name);
+        self.set_position(position);
         self.builder.switch_to(split.taken);
     }
 

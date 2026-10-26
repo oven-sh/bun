@@ -16,7 +16,7 @@ use crate::ir::generated::{
 };
 use crate::ir::{FunctionId, Id, ModuleId, StringId, StringTable, VariableId, VariableKey};
 use crate::load::sources::parsed_source;
-use crate::load::{EntryPointKind, PerProject, ProgramFile, ProjectId, SourceKind};
+use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind};
 use crate::modules::{
     self, ExportBinding, ExportLookup, Interop, ModuleFailureKind, ModuleKind, ModuleRef,
     compare_code_units,
@@ -80,7 +80,7 @@ pub(super) fn build_module_records(
         strings: &mut *strings,
         names: FxHashMap::default(),
         synthetic_exports: collect_synthetic_exports(input),
-        is_host_loaded: find_host_loaded_modules(input),
+        is_named_at_run_time: find_modules_named_at_run_time(input),
     };
     let modules = builder.build_modules(units);
     let module_failures = builder.build_failures();
@@ -133,29 +133,18 @@ fn collect_synthetic_exports(input: &RecordInput<'_, '_>) -> Vec<Vec<MergedSynth
     exports
 }
 
-fn find_host_loaded_modules(input: &RecordInput<'_, '_>) -> Vec<bool> {
-    let mut is_host_loaded = vec![false; input.modules.modules.len()];
+fn find_modules_named_at_run_time(input: &RecordInput<'_, '_>) -> Vec<bool> {
+    let mut is_named_at_run_time = vec![false; input.modules.modules.len()];
     for (project, linked) in input.projects.iter() {
-        for entry_point in linked.sources.entry_points() {
-            match entry_point.kind {
-                EntryPointKind::HostLoadedModule => {
-                    let file = ProgramFile {
-                        project,
-                        file: entry_point.file,
-                    };
-                    let module = ProgramModule::File(file);
-                    if let Some(&index) = input.modules.index_by_module.get(&module) {
-                        is_host_loaded[index as usize] = true;
-                    }
-                }
-                EntryPointKind::Main
-                | EntryPointKind::Additional
-                | EntryPointKind::ImportedModule
-                | EntryPointKind::Library => {}
+        let named = linked.sources.modules_named_at_run_time().iter();
+        for file in named.filter_map(|&module| linked.sources.runtime_module_file(module)) {
+            let module = ProgramModule::File(ProgramFile { project, file });
+            if let Some(&index) = input.modules.index_by_module.get(&module) {
+                is_named_at_run_time[index as usize] = true;
             }
         }
     }
-    is_host_loaded
+    is_named_at_run_time
 }
 
 struct RecordBuilder<'b, 'a, 's> {
@@ -163,7 +152,7 @@ struct RecordBuilder<'b, 'a, 's> {
     strings: &'b mut StringTable,
     names: FxHashMap<Atom, StringId>,
     synthetic_exports: Vec<Vec<MergedSyntheticExport>>,
-    is_host_loaded: Vec<bool>,
+    is_named_at_run_time: Vec<bool>,
 }
 
 impl RecordBuilder<'_, '_, '_> {
@@ -290,7 +279,8 @@ impl RecordBuilder<'_, '_, '_> {
             ModuleKind::RuntimeSource => {
                 record.runtime_module = graph.runtime_module(file.file);
                 record.synthetic_exports = self.build_synthetic_exports(index);
-                if !self.is_host_loaded[index as usize] {
+                // Native code asks for a module by its number. Only a name that the build does not know is looked up among the modules.
+                if !self.is_named_at_run_time[index as usize] {
                     record.flags |= ModuleFlags::IS_LOADED_BY_IMPORT_ONLY;
                 }
             }

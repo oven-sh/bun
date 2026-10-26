@@ -1977,7 +1977,7 @@ impl BlobExt for Blob {
                         Ok(crate::node::fs::async_::Stat::create(
                             &cx,
                             binding,
-                            crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
+                            crate::node::fs::args::Stat::owned_copy_of(path_like),
                             vm,
                             None,
                         ))
@@ -3339,6 +3339,19 @@ impl BlobExt for Blob {
             }
         }
 
+        // `name` is the path as it was written.
+        let named = |blob: Blob, written: Option<BunString>| {
+            if let Some(written) = written {
+                blob.name.set(written);
+            }
+            blob
+        };
+        let written = match path_or_fd {
+            PathOrFileDescriptor::Path(PathLike::Joined(path)) => {
+                Some(BunString::clone_utf8(&path.written))
+            }
+            _ => None,
+        };
         let path: PathOrFileDescriptor = match path_or_fd {
             PathOrFileDescriptor::Path(_) => {
                 #[cfg(windows)]
@@ -3352,7 +3365,10 @@ impl BlobExt for Blob {
                 if let Some(file) = bun_standalone_graph::Graph::get_ref()
                     .and_then(|graph| graph.find_ref(path_or_fd.path().slice()))
                 {
-                    return crate::api::standalone_graph_jsc::file_blob(file, global_this);
+                    return named(
+                        crate::api::standalone_graph_jsc::file_blob(file, global_this),
+                        written,
+                    );
                 }
 
                 core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::default()))
@@ -3381,9 +3397,12 @@ impl BlobExt for Blob {
             }
         };
 
-        Blob::init_with_store(
-            bun_core::handle_oom(Store::init_file(path, None)),
-            global_this,
+        named(
+            Blob::init_with_store(
+                bun_core::handle_oom(Store::init_file(path, None)),
+                global_this,
+            ),
+            written,
         )
     }
     fn is_all_ascii(&self) -> Option<bool> {
@@ -4082,7 +4101,9 @@ fn sys_error_with_path_like(
     pathlike: &PathOrFileDescriptor,
 ) -> bun_sys::Error {
     match pathlike {
-        PathOrFileDescriptor::Path(p) => err.with_path(p.slice()),
+        PathOrFileDescriptor::Path(p) => {
+            node::fs::error_for_caller([Some(p), None], err.with_path(p.slice()))
+        }
         PathOrFileDescriptor::Fd(_) => err.clone(),
     }
 }
@@ -6705,10 +6726,12 @@ pub(crate) trait FileOpener: Sized {
                                 Retry::No => {}
                             }
                         }
+                        let err = node::fs::error_for_caller(
+                            [Some(&path_string), None],
+                            err.with_path(path_string.slice()),
+                        );
                         self.set_errno(bun_errno::from_errno(err.errno as i32).into());
-                        self.set_system_error(jsc::SysErrorJsc::to_system_error(
-                            &err.with_path(path_string.slice()),
-                        ));
+                        self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
                         self.set_opened_fd(Fd::INVALID);
                         break;
                     }

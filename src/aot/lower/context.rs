@@ -31,7 +31,7 @@ use crate::ir::generated::FunctionRole;
 use crate::ir::types::release_spare_capacity;
 use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
 use crate::known_helpers::KnownHelpers;
-use crate::load::Sources;
+use crate::load::{self, Sources};
 use crate::modules::{CommonJsExports, DeferredData, ModuleGraph, ModuleRef};
 use crate::options::RemovableOptions;
 use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
@@ -204,7 +204,13 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             functions: FunctionTable::default(),
             atoms: FxHashMap::default(),
             atom_keys: FxHashMap::default(),
-            shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
+            shown_names: ShownNames::new(
+                inputs.options,
+                file_inputs.source,
+                hir,
+                bound,
+                inputs.sources.bundled_names(file),
+            ),
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
             has_chain_past_nesting_limit: false,
@@ -276,6 +282,12 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         }
     }
 
+    // `bun run` hands the text to the engine as it is written, without its transpiler.
+    pub(crate) fn runs_as_written(&self) -> bool {
+        self.inputs.sources.kind(self.file) == load::SourceKind::EvaluatedText
+            || hir::find_transpiled_mark(&self.hir.text).is_some()
+    }
+
     pub(crate) fn evaluated_function(&self, call: ExprId) -> Option<FunctionRef> {
         let function = self.inputs.sources.evaluated_function(self.file, call)?;
         let is_lowered = self.inputs.files[function.file.idx()].is_some();
@@ -298,13 +310,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
 
     pub(crate) fn intern_binding_name(&mut self, binding: Binding, written: Atom) -> StringId {
         match self.short_binding_name(binding) {
-            Some(name) => name,
-            None => self.intern_atom(written),
-        }
-    }
-
-    pub(crate) fn intern_function_name(&mut self, binding: Binding, written: Atom) -> StringId {
-        match self.short_function_name(binding) {
             Some(name) => name,
             None => self.intern_atom(written),
         }

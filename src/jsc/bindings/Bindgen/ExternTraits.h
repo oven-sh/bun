@@ -187,6 +187,7 @@ inline JSC::ArgList variadicArguments(JSC::CallFrame* callFrame, unsigned startI
 
 // What `$bindgen` returns for a function.
 JSC::EncodedJSValue createFunction(JSC::JSGlobalObject*, unsigned length, ASCIILiteral name, JSC::NativeFunction);
+JSC::EncodedJSValue createFunctionNamedAsBound(JSC::JSGlobalObject*, unsigned length, ASCIILiteral name, JSC::NativeFunction);
 
 // A converted argument and the argument itself.
 template<typename T>

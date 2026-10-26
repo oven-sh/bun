@@ -4,6 +4,7 @@ mod type_of;
 
 use bun_sema::atom::known;
 use bun_sema::bind::Parent;
+use bun_sema::fold::FoldedValue;
 use bun_sema::hir::{BinOp, ExprId, ExprKind, IdList, StmtId, StmtKind, UnOp};
 use bun_sema::module_format::main_module_operand;
 use smallvec::SmallVec;
@@ -11,7 +12,6 @@ use smallvec::SmallVec;
 pub(in crate::lower) use self::concatenation::PrintedOperand;
 use self::concatenation::SumOperator;
 use super::FunctionLowering;
-use super::expression::find_constant;
 use super::member::PropertyName;
 use crate::ir::ValueId;
 
@@ -163,7 +163,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             BinOp::BitAnd => self.builder.bit_and(left, right),
             BinOp::BitOr => self.builder.bit_or(left, right),
             BinOp::BitXor => self.builder.bit_xor(left, right),
-            BinOp::Instanceof => self.builder.instance_of(left, right),
+            BinOp::Instanceof => self.builder.instance_of(left, right, None),
             BinOp::In => self.builder.elem_has(right, left),
             BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => {
                 debug_assert!(
@@ -415,7 +415,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             };
             if !is_spine_operator
                 || self.file.is_statically_resolved(innermost)
-                || find_constant(self.file, innermost).is_some()
+                || self.file.decisions().constant(hir, innermost) != FoldedValue::Unknown
             {
                 break;
             }
@@ -475,7 +475,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if !matches!(&sums, Some(sums) if sums[index] == SumOperator::Joined) {
                 recorded = Some(position);
             }
-            value = self.emit_binary(node_op, value, right_value);
+            value = match node_op {
+                BinOp::Instanceof if index + 1 == spine.len() => {
+                    let written = self.file.find_written_instanceof(innermost, node_right);
+                    self.builder.instance_of(value, right_value, written)
+                }
+                _ => self.emit_binary(node_op, value, right_value),
+            };
         }
         value
     }
@@ -492,7 +498,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let recorded = match op {
             BinOp::EqEq => self
                 .find_last_record_of_equality(expression, left, right)
-                .or(recorded_in_front),
+                .or(recorded_in_front)
+                .or(self.builder.last_recorded_position()),
             _ => None,
         };
         recorded.unwrap_or_else(|| self.find_operator_position(expression))

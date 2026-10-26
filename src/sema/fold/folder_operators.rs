@@ -291,7 +291,7 @@ impl<'s> Folder<'_, 's> {
         let folded = self.folded(operand);
         let is_type_test = !self.hir.is_js && matches!(self.hir[e].kind, ExprKind::As { .. });
         if is_type_test {
-            return Folded::new(folded.value, Effects::Unknown);
+            return Folded::new(folded.value, folded.effects.min(Effects::TypeTest));
         }
         self.copy_loader_value(e, operand);
         if self.data_literals.contains(operand.idx()) {

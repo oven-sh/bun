@@ -28,6 +28,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn leave_scope(&mut self, scope: ScopeId) {
+        if self.has_shared_names(scope) {
+            self.read_innermost_scope();
+            self.begin_stretch_of_scope_reads();
+        }
         let left = self.scopes.entered.pop();
         debug_assert!(
             left.is_some_and(|left| left.scope == scope),
@@ -48,6 +52,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         assert!(scope.is_some(), "callers enter only scopes that exist");
         if self.scopes.innermost_scope().is_none() {
             self.bind_captures();
+        }
+        if self.has_shared_names(scope) {
+            self.read_innermost_scope();
+            self.begin_stretch_of_scope_reads();
+            self.scopes.scopes_with_shared_names += 1;
         }
         let mut entry = ScopeEntry {
             scope,

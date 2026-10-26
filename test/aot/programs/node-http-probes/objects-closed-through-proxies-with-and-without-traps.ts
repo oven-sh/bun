@@ -131,10 +131,15 @@ function close(level: Level, wrapper: string, object: object) {
   return wrapped;
 }
 
+// What did not come for an object closed itself is waited for only briefly where the object is closed in the same way through something else.
+let family = "";
+const neverCame = new Set<string>();
+
 function withinReason<T>(label: string, promise: Promise<T>) {
+  const key = `${family}|${label}`;
   let timer: ReturnType<typeof setTimeout>;
   const late = new Promise<void>(resolve => {
-    timer = setTimeout(() => (say(label, "did not come"), resolve()), 4000);
+    timer = setTimeout(() => (neverCame.add(key), say(label, "did not come"), resolve()), neverCame.has(key) ? 250 : 4000);
   });
   return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
@@ -290,6 +295,7 @@ for (const kind of Object.keys(kinds)) {
       if (level === "nothing" && wrapper !== "itself") continue;
       for (const usesWrapped of alsoUsedInPlaceOfTheObject.has(wrapper) ? [false, true] : [false]) {
         lines = [];
+        family = `${kind}|${level}`;
         let asked: string[] = [];
         await kinds[kind](<T extends object>(object: T) => {
           const before = lines.length;

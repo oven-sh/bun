@@ -242,6 +242,7 @@ fn with_freeze_input<R>(
         options: &options,
         manifest: archive.manifest(),
         host_loaded_modules: &[],
+        modules_named_at_run_time: &[],
         is_world: false,
     })
 }
@@ -303,6 +304,7 @@ fn freeze_runtime_project(files: &Files<'_>, host_loaded_modules: &[RuntimeModul
         options: &options,
         manifest: Archive::embedded().manifest(),
         host_loaded_modules,
+        modules_named_at_run_time: &[],
         is_world: false,
     };
     freeze_sources(&input, &run_serially).unwrap().sources

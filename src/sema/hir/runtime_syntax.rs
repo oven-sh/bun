@@ -5,6 +5,8 @@ use super::{
 };
 use crate::atom::{Atom, known};
 use crate::node::Node;
+use bun_core::strings;
+use std::ops::Range;
 
 impl<S: Storage> FileIn<S> {
     #[inline]
@@ -234,12 +236,28 @@ pub fn has_runtime_member(hir: &File, member: MemberId) -> bool {
     }
 }
 
+/// The line that starts with `// @bun`, if it is the first line or follows a hashbang. `bun run` hands such a file to the engine as it is written.
+pub fn find_transpiled_mark(text: &[u8]) -> Option<Range<usize>> {
+    let end_of_line = |start: usize| {
+        let length = strings::index_of_char_usize(&text[start..], b'\n')?;
+        Some(start + length + 1)
+    };
+    let start = match text.starts_with(b"#!") {
+        true => end_of_line(0)?,
+        false => 0,
+    };
+    text[start..]
+        .starts_with(b"// @bun")
+        .then(|| start..end_of_line(start).unwrap_or(text.len()))
+}
+
 pub fn is_moved_to_file_start(hir: &File, statement: StmtId) -> bool {
-    match hir[statement].kind {
+    let can_move = match hir[statement].kind {
         StmtKind::Class(class) => can_move_class(hir, class),
         StmtKind::ExportDefault(value) => can_move_expression(hir, value),
         _ => false,
-    }
+    };
+    can_move && find_transpiled_mark(&hir.text).is_none()
 }
 
 fn can_move_class(hir: &File, class: ClassId) -> bool {

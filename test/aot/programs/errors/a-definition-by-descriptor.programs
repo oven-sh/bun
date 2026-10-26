@@ -732,6 +732,8 @@ attempt("function name store", () => { (function named() { named = 1; })(); });
 attempt("instanceof number", () => { plain instanceof five; });
 attempt("instanceof undefined", () => { plain instanceof nothing; });
 attempt("instanceof member", () => { plain instanceof holder.inner; });
+attempt("instanceof object", () => { plain instanceof plain; });
+attempt("instanceof object member", () => { plain instanceof holder.deep; });
 attempt("instanceof bad prototype", () => { function F() {} F.prototype = 5; return plain instanceof F; });
 attempt("bigint plus number", () => { opaque(1n) + five; });
 attempt("bigint times number", () => { opaque(1n) * five; });
@@ -1107,7 +1109,7 @@ attempt("destructured parameter", () => { (({ x }: Point) => x)(noPoint as Point
 // What the program throws.
 attempt("throw in a field initializer", () => { new ThrowsInField(); });
 //// places-that-throw-with-another-text-or-column.js
-// The places that throw where the message, a column or a frame of a built-in is not that of plain Bun: see docs/compiler/compatibility.mdx#error-messages and docs/compiler/debugging.mdx#stack-traces. The class and the line are the same.
+// The places that throw where the message, a column, the name of a frame or a frame of a built-in is not that of plain Bun: see docs/compiler/compatibility.mdx#error-messages, #function-names-from-local-variables and docs/compiler/debugging.mdx#stack-traces. The class and the line are the same.
 "use strict";
 const opaque = value => [value, 0][Number(process.argv.length > 100)];
 ////= framesOf
@@ -1207,7 +1209,7 @@ attempt("in undefined", () => { "a" in nothing; });
 attempt("in member", () => { key in holder.inner; });
 attempt("in string", () => { "length" in text; });
 attempt("private in number", () => { class A { #p; static has(o) { return #p in o; } } return A.has(five); });
-attempt("instanceof object", () => { plain instanceof plain; });
+attempt("instanceof object", () => { plain instanceof opaque(plain); });
 attempt("instanceof arrow", () => { plain instanceof (() => 1); });
 attempt("instanceof hasInstance 5", () => { plain instanceof { [Symbol.hasInstance]: 5 }; });
 attempt("bigint Math", () => { Math.max(opaque(1n)); });

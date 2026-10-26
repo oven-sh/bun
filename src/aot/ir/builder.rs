@@ -152,8 +152,54 @@ pub struct FunctionBuilder {
     written_position: Option<u32>,
     // In the order of the values. Only a value that is written elsewhere than at its position has an entry.
     pub(super) written_positions: Vec<(ValueId, u32)>,
+    recorded_position: Option<u32>,
+    is_at_recorded_position: bool,
+    values_before_first_record: Vec<ValueId>,
     pub(super) ssa: SsaState,
     pub(super) finish_scratch: FinishScratch,
+}
+
+fn has_recorded_position(opcode: Opcode) -> bool {
+    matches!(
+        opcode,
+        Opcode::PropGet
+            | Opcode::PropSet
+            | Opcode::PropHas
+            | Opcode::PropDelete
+            | Opcode::ElemGet
+            | Opcode::ElemSet
+            | Opcode::ElemHas
+            | Opcode::ElemDelete
+            | Opcode::SuperGet
+            | Opcode::SuperSet
+            | Opcode::PrivateGet
+            | Opcode::PrivateSet
+            | Opcode::PrivateHas
+            | Opcode::Add
+            | Opcode::Sub
+            | Opcode::Mul
+            | Opcode::Div
+            | Opcode::Mod
+            | Opcode::Pow
+            | Opcode::BitAnd
+            | Opcode::BitOr
+            | Opcode::BitXor
+            | Opcode::LShift
+            | Opcode::RShift
+            | Opcode::URShift
+            | Opcode::Less
+            | Opcode::LessEq
+            | Opcode::Greater
+            | Opcode::GreaterEq
+            | Opcode::InstanceOf
+            | Opcode::Call
+            | Opcode::CallList
+            | Opcode::CallDirect
+            | Opcode::Construct
+            | Opcode::ConstructList
+            | Opcode::SuperConstruct
+            | Opcode::SuperConstructList
+    )
 }
 
 impl FunctionBuilder {
@@ -168,6 +214,9 @@ impl FunctionBuilder {
             position: None,
             written_position: None,
             written_positions: Vec::new(),
+            recorded_position: None,
+            is_at_recorded_position: false,
+            values_before_first_record: Vec::new(),
             ssa: scratch.ssa,
             finish_scratch: scratch.finish,
         };
@@ -328,6 +377,31 @@ impl FunctionBuilder {
     pub fn set_position(&mut self, position: Option<u32>) {
         self.position = position;
         self.written_position = None;
+        self.is_at_recorded_position = false;
+    }
+
+    // JSC's bytecode has a position of its own only for some operations. What throws elsewhere is reported at the last position in front of it,
+    // else at the first one of the function, else at `start`.
+    pub fn set_position_to_last_recorded(&mut self, start: u32) {
+        self.set_position(Some(self.recorded_position.unwrap_or(start)));
+        self.is_at_recorded_position = true;
+    }
+
+    pub fn last_recorded_position(&self) -> Option<u32> {
+        self.recorded_position
+    }
+
+    pub fn current_position(&self) -> u32 {
+        self.position.unwrap_or(0)
+    }
+
+    pub fn record_position(&mut self, position: u32) {
+        if self.recorded_position.is_none() {
+            for value in self.values_before_first_record.drain(..) {
+                self.values[value.index()].position = Some(position);
+            }
+        }
+        self.recorded_position = Some(position);
     }
 
     // Until the next position: where the source text has what is emitted. The position is where an error is reported.
@@ -362,6 +436,13 @@ impl FunctionBuilder {
         });
         if let Some(written) = self.written_position {
             self.written_positions.push((value, written));
+        }
+        if self.is_at_recorded_position {
+            if self.recorded_position.is_none() {
+                self.values_before_first_record.push(value);
+            }
+        } else if let (true, Some(position)) = (has_recorded_position(opcode), self.position) {
+            self.record_position(position);
         }
         self.blocks[self.current_block.index()].values.push(value);
         value

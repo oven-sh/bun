@@ -3,7 +3,7 @@ use super::{
     Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, mentions_worker_constructor,
     preload_of,
 };
-use crate::builtins::{BuiltinNames, RuntimeModule};
+use crate::builtins::BuiltinNames;
 use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
@@ -123,6 +123,7 @@ struct RuntimeLoadInputs<'c, 's> {
 fn asks_the_same(a: &RuntimeRoots, b: &RuntimeRoots) -> bool {
     a.paths == b.paths
         && a.host_loaded_modules == b.host_loaded_modules
+        && a.modules_named_at_run_time == b.modules_named_at_run_time
         && a.imports_cluster == b.imports_cluster
         && a.imports_uncompiled_code == b.imports_uncompiled_code
         && a.loads_by_unknown_path == b.loads_by_unknown_path
@@ -492,7 +493,7 @@ impl<'a> Build<'a> {
                     application: &application,
                     runtime: &runtime,
                 };
-                let sources = self.freeze_projects(shared, programs, &roots.host_loaded_modules)?;
+                let sources = self.freeze_projects(shared, programs, roots)?;
                 self.stop_if_errors(Stage::Load)?;
                 let projects = PerProject {
                     application: LoadedProject {
@@ -729,23 +730,24 @@ impl<'a> Build<'a> {
         &mut self,
         shared: &SharedLoadInputs<'_, '_>,
         programs: PerProject<&LoadedProgram<'_>>,
-        host_loaded_modules: &[RuntimeModule],
+        roots: &RuntimeRoots,
     ) -> Result<PerProject<Sources>, Stage> {
-        let mut freeze = |project: ProjectId, host_loaded_modules: &[RuntimeModule]| {
+        let mut freeze = |project: ProjectId, roots: Option<&RuntimeRoots>| {
             let loaded = *programs.get(project);
             let input = FreezeInput {
                 project,
                 files: loaded.files(),
                 options: self.options,
                 manifest: shared.manifest,
-                host_loaded_modules,
+                host_loaded_modules: roots.map_or(&[], |it| &it.host_loaded_modules),
+                modules_named_at_run_time: roots.map_or(&[], |it| &it.modules_named_at_run_time),
                 is_world: false,
             };
             self.freeze_project(loaded, &input)
         };
         let sources = PerProject {
-            application: freeze(ProjectId::Application, &[])?,
-            runtime: freeze(ProjectId::Runtime, host_loaded_modules)?,
+            application: freeze(ProjectId::Application, None)?,
+            runtime: freeze(ProjectId::Runtime, Some(roots))?,
         };
         let frozen = sources.as_ref();
         let frozen = frozen.map(|project, sources| (programs.get(project).files(), sources));
@@ -768,6 +770,7 @@ impl<'a> Build<'a> {
             options: self.options,
             manifest: Archive::embedded().manifest(),
             host_loaded_modules: &[],
+            modules_named_at_run_time: &[],
             is_world: true,
         };
         let frozen = freeze_sources(&input, &self.parallel_runner());
@@ -887,6 +890,7 @@ pub(super) fn max_computed_candidates(limits: &LimitValues) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builtins::RuntimeModule;
     use crate::compile::testing::{BUNDLED_LIBS, TestProject, default_settings, describe_messages};
     use crate::load::source_provider::WithoutServices;
     use bun_ast::Log;

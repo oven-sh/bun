@@ -343,7 +343,6 @@ function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
 }
 ReadableState.prototype = {};
 ObjectDefineProperties(ReadableState.prototype, {
-  constructor: { __proto__: null, value: ReadableState, writable: true, configurable: true },
   objectMode: makeBitMapDescriptor(Flag.ObjectMode),
   ended: makeBitMapDescriptor(ReadableFlag.Ended),
   endEmitted: makeBitMapDescriptor(ReadableFlag.EndEmitted),
@@ -581,7 +580,6 @@ interface WritableState {
 
 WritableState.prototype = {} as { getBuffer?(this: WritableState): (BufferedWrite | null)[] };
 ObjectDefineProperties(WritableState.prototype, {
-  constructor: { __proto__: null, value: WritableState, writable: true, configurable: true },
   // Object stream flag to indicate whether or not this stream contains buffers or objects.
   objectMode: makeBitMapDescriptor(Flag.ObjectMode),
 

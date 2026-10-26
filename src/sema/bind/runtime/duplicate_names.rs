@@ -184,7 +184,12 @@ impl DuplicateNames<'_, '_> {
             }
             Entry::Occupied(entry) => {
                 let (earlier, earlier_symbol) = *entry.get();
-                if symbol.is_none() || symbol != earlier_symbol {
+                let merges = |decl| matches!(decl, Decl::Module(_) | Decl::Enum(_));
+                let is_exported_twice = match (earlier, later) {
+                    (Decl::Var(_), Decl::Var(_)) => true,
+                    _ => name == known::default && !merges(earlier) && !merges(later),
+                };
+                if symbol.is_none() || symbol != earlier_symbol || is_exported_twice {
                     self.redeclarations
                         .push(EarlyRedeclaration { earlier, later });
                 }

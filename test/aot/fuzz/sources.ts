@@ -697,6 +697,7 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     "objects-read-where-they-are-made",
     "patterns-that-go-back-for-millions-of-turns",
     "errors-of-values-nobody-uses",
+    "operations-that-throw-for-what-they-are-given",
     "constant-lists-changed-by-every-road",
     "new-objects-kept-through-built-ins",
     "typed-instances-changed-through-built-ins",
@@ -725,6 +726,7 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     "values-of-another-kind-behind-a-test",
     "variables-that-never-took-their-class-are-constructed-called-and-extended",
     "values-that-hold-themselves-written-as-json",
+    "records-with-open-members-around-rings-written-as-json",
     "functions-capture-what-is-made-of-a-value-declared-as-another-type",
     "a-class-definition-throws-and-the-program-goes-on",
   ])

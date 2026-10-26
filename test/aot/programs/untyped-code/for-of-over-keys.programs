@@ -380,7 +380,7 @@ console.log(attempt(readChanging));
 storeChanging("created again");
 console.log(globalThis.changing, readChanging());
 //// fresh-keys-stored-under-known-name.js
-// `object[key] = value` under keys that are new strings each time and spell names the program also writes. The first store under a key makes its text a name. The stores after it go the way of a store by name: they replace, add, call setters, fail on what is read-only, and see every change above the object. The last line counts the visits to the run time. The own keys of an arguments object list `callee` right behind `length`, as ECMAScript creates them; plain Bun lists it behind the names that were stored later.
+// `object[key] = value` under keys that are new strings each time and spell names the program also writes. The first store under a key makes its text a name. The stores after it go the way of a store by name: they replace, add, call setters, fail on what is read-only, and see every change above the object. The last line counts the visits to the run time.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const visits = () => count("operationAOTPutByValGeneric") + count("operationAOTPutByValAndCache") + count("operationAOTPutByValAndCacheSloppy") + count("operationAOTPutByVal");
 

@@ -2,21 +2,16 @@ import * as b from "bun-builtins-table";
 
 type UsesByParameter = Readonly<Record<string, readonly b.UseSpec[]>>;
 
-const helpersIn = (
-  file: string,
-  returns: b.TableType,
-  usesByHelper: Readonly<Record<string, UsesByParameter>>,
-  runsOnlyOperandCode = false,
-) =>
+const helpersIn = (file: string, usesByHelper: Readonly<Record<string, UsesByParameter>>) =>
   Object.fromEntries(
     Object.entries(usesByHelper).map(([name, uses]) => [
       name,
       {
         args: Object.fromEntries(Object.keys(uses).map(parameter => [parameter, b.any])),
-        returns,
+        returns: b.any,
         capability: "js",
         throws: true,
-        runsOnlyOperandCode,
+        runsOnlyOperandCode: false,
         runsUnseenCode: false,
         uses,
         implementation: b.compiled(file, name),
@@ -54,13 +49,8 @@ const calledOrChanged = [b.everything];
 const kept = [b.retained];
 const keptWithContents = [b.retained, b.contentsStoredIn(b.nativeMemory)];
 const usedAsKey = [b.retained, b.runs("ToPrimitive")];
-const keyList = [b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"))];
 // The compiler writes a number here. Anything else would be compared with one.
-const comparedWithNumbers = keyList;
-const serialized = [b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToJSON", "ToPrimitive")];
-
-// These files reach built-ins through intrinsics and locked members, which a program cannot replace.
-const usesOnlyFixedBuiltins = true;
+const comparedWithNumbers = [b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"))];
 
 const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
   ({
@@ -212,7 +202,7 @@ export default b.declarations(
       },
     },
     definePropertiesFrom: definitionFrom,
-    ...helpersIn("prelude/decorators", b.any, {
+    ...helpersIn("prelude/decorators", {
       decorateClass: { decorators: calledOrChanged, target: calledOrChanged },
       decorateMethod: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateProperty: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
@@ -308,7 +298,7 @@ export default b.declarations(
       // Where the length is no small number the list is filled and mapped as the program wrote it, and the mapper gets that list too.
       mapper: calledForEachIndex(b.operand("value"), b.instance("Array")),
     }),
-    ...helpersIn("prelude/array-traversal", b.any, {
+    ...helpersIn("prelude/array-traversal", {
       traverseArray: {
         array: keptWithContents,
         start: comparedWithNumbers,
@@ -318,21 +308,6 @@ export default b.declarations(
         operand: [b.retained, b.returned],
       },
     }),
-    ...helpersIn(
-      "prelude/json",
-      b.string,
-      {
-        stringifyProperty: { value: serialized, key: [b.runs("ToPrimitive")] },
-        stringifyElement: { value: serialized, index: [b.runs("ToPrimitive")] },
-        stringifyProperties: {
-          object: [...serialized, b.readByKey(b.keysIn("keys"), b.nativeMemory)],
-          keys: keyList,
-          from: comparedWithNumbers,
-          isFirst: b.inspected,
-        },
-      },
-      usesOnlyFixedBuiltins,
-    ),
     getDisposeMethod: disposeMethodLookup("getDisposeMethod", [b.readByKey(b.keysNamed("@@dispose"))]),
     getAsyncDisposeMethod: disposeMethodLookup("getAsyncDisposeMethod", [
       b.readByKey(b.keysNamed("@@asyncDispose", "@@dispose")),

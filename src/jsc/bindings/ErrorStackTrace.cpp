@@ -232,7 +232,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     } else if (frame.isCompiledFrame()) {
         m_isAOTCompiled = true;
         if (auto position = frame.compiledPosition(); position && frame.hasLineAndColumnInfo()) {
-            m_sourcePositions = { OrdinalNumber::fromOneBasedInt(position->lineColumn.line), OrdinalNumber::fromOneBasedInt(position->lineColumn.column) };
+            m_sourcePositions = { OrdinalNumber::fromOneBasedInt(position->startOfExpression().line), OrdinalNumber::fromOneBasedInt(position->startOfExpression().column) };
             m_sourcePositionsState = SourcePositionsState::Calculated;
             m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode;
         }

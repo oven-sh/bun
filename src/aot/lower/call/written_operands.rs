@@ -216,7 +216,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(BuiltinId::ArrayFrom) => self.lower_array_from(call, site, tail),
             Some(BuiltinId::Object) => self.lower_empty_object(call, site),
             Some(_) => None,
-            None => self.try_lower_method_call(call, site),
+            None => self.try_lower_method_call(call, site, tail),
         }
     }
 
@@ -226,7 +226,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         site: Call,
         constructor: BuiltinId,
     ) -> ValueId {
-        self.set_position(self.file.construct_position(expression));
+        let reported = self.file.construct_position(expression);
+        self.set_position_of_text_elsewhere(reported, self.file.hir[expression].pos);
         let function = self.emit_locked_builtin(constructor);
         let name = self.file.find_callee_name(site.callee);
         self.emit_construct(function, Arguments::Values(SmallVec::new()), name)

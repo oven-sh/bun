@@ -2839,6 +2839,8 @@ export interface SignatureOptions extends SignatureColumns, EntryColumns {
   convertedFirst?: readonly string[];
   /** The JS function's `name`. Defaults to what it is exported as. */
   name?: string;
+  /** Its own `name` property says `bound join` where it prints and is traced as `join`, as a bound function does. */
+  namedAsBound?: boolean;
 }
 
 /** What `b.fn` takes. */
@@ -2866,6 +2868,7 @@ export class Signature {
   /** Indices into `args`. */
   readonly conversionOrder: readonly number[];
   readonly givenName: string | undefined;
+  readonly namedAsBound: boolean;
   readonly returns: Type;
   readonly capability: Capability;
   readonly throws: boolean;
@@ -2896,6 +2899,7 @@ export class Signature {
       "validatorExpects",
       "convertedFirst",
       "name",
+      "namedAsBound",
       "mutates",
       "passThis",
       "invalidThis",
@@ -2906,6 +2910,7 @@ export class Signature {
     ]);
     this.length = options.length;
     this.givenName = options.name;
+    this.namedAsBound = options.namedAsBound ?? false;
     this.rejects = options.rejects ?? false;
     this.requiredArguments = options.requiredArguments ?? 0;
     const { args = {}, expected = {}, validatorExpects = {}, convertedFirst = [] } = options;
@@ -3140,6 +3145,9 @@ export class FunctionDefinition {
   /** The `name` of the JS function. */
   get jsName(): string {
     return this.signatures.find(signature => signature.givenName !== undefined)?.givenName ?? this.name;
+  }
+  get namedAsBound(): boolean {
+    return this.signatures.some(signature => signature.namedAsBound);
   }
   get length(): number {
     const given = this.signatures.find(signature => signature.length !== undefined);

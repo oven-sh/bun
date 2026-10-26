@@ -53,6 +53,8 @@ const buildFlags = [
 const runner = "run-each-program-in-a-worker.ts";
 const mark = `=== ${Math.random().toString(36).slice(2)} ended`;
 const maxFindsIsolated = 8;
+// A program that prints without end would fill the disk. How much a run can write to a file, in blocks of 512 bytes.
+const maxBlocksWritten = (256 << 20) / 512;
 
 type Spent = { cpuSeconds: number; wallSeconds: number; peakMegabytes: number };
 type Ended = { stdout: string; stderr: string; end: string; stoppedBefore?: number[] };
@@ -188,7 +190,15 @@ async function run(
   while (left.length) {
     const ran = await spawn(
       stage,
-      [...command, String(inGroup), extension.slice(1), ...left.map(String)],
+      [
+        "sh",
+        "-c",
+        `ulimit -f ${maxBlocksWritten}; exec "$0" "$@"`,
+        ...command,
+        String(inGroup),
+        extension.slice(1),
+        ...left.map(String),
+      ],
       folder,
       { ...env, BATCH_MARK: mark, BATCH_MILLISECONDS: String(limit) },
       30 + (left.length * limit) / 100,
@@ -209,7 +219,11 @@ async function run(
       results.set(left[ended], {
         stdout: stdout[3 * ended],
         stderr: stderr[3 * ended].slice(-4000),
-        end: `the process ended: ${ran.signal ?? `exit code ${ran.exitCode}`}`,
+        // Behind the bound nothing is written any more, so the marks of the programs that follow are missing too.
+        end:
+          Math.max(ran.stdout.length, ran.stderr.length) >= maxBlocksWritten * 512
+            ? "output"
+            : `the process ended: ${ran.signal ?? `exit code ${ran.exitCode}`}`,
         stoppedBefore: left.slice(0, ended).filter(index => isLimit(results.get(index)!)),
       });
     left = left.slice(ended + 1);
@@ -241,8 +255,10 @@ const documentedNames = [
 ];
 
 /** `Reflect.setPrototypeOf()` of a built-in object returns false in an executable, and `Object.setPrototypeOf()` throws. */
-// `bun run` replaces the length of a string that it knows by a number, also below `delete`.
-const deletesTheLengthOfAString = /\bdelete \(?(?:"[^"\n]*"|t\d+)\)?\.length\b/;
+// `bun run` replaces the length and the characters of a string that it knows by their values, also below `delete`.
+const deletesTheLengthOfAString = /\bdelete \(?(?:"[^"\n]*"|t\d+)(?: as any)?\)?\.length\b/;
+const deletesACharacterOfAString =
+  /\bdelete \(?"[^"\n]*"(?: as any)?\)?\[\d+\]|\bconst (t\d+) = "[^"\n]*";\n.*\bdelete \(?\1(?: as any)?\)?\[\d+\]/;
 const setsThePrototypeOfABuiltIn = /\bsetPrototypeOf\([A-Z]/;
 
 // What `bun run` says when it refuses a file that the compiler builds.
@@ -331,7 +347,7 @@ const withNullAsUndefined = (output: string) =>
   removeDetailsOfErrors(output)
     .replace(/\[Object: null prototype\] /g, "")
     .replace(/\bnull\b/g, "undefined");
-const isLimit = ({ end }: Ended) => end === "time" || end === "memory";
+const isLimit = ({ end }: Ended) => end === "time" || end === "memory" || end === "output";
 const classOfError = ({ stderr }: Ended) => /\b\w*Error\b/.exec(stderr)?.[0];
 
 function keepFind(kind: string, summary: string, files: Record<string, string>) {
@@ -457,6 +473,42 @@ async function stoppedAtANameThatDoesNotExist(folder: string, { stderr }: Ended)
   return (await spawn("name", [bun, "run", "./name.js"], folder, plainEnv, 30)).stdout === "undefined\n";
 }
 
+/**
+ * Whether the executable read a variable before its declaration ran, in an expression that nothing uses. `bun run` removes such an expression.
+ * Builds the one program in `folder` again from the text that `bun run` makes of it, and compares that executable with `bun run`.
+ */
+async function stoppedAtAnUnusedReadBeforeTheDeclaration(
+  folder: string,
+  extension: string,
+  text: string,
+  compiled: Ended,
+  reference: Ended,
+) {
+  const mentions = ({ stdout, stderr }: Ended) => (stdout + stderr).split(/ReferenceError|before initialization/).length;
+  if (mentions(compiled) <= mentions(reference)) return false;
+  layOut(folder, [text], extension, 1);
+  const rewritten = await spawn("rewrite", [bun, "build", "--no-bundle", `./programs/0${extension}`], folder, {}, 30);
+  if (rewritten.exitCode !== 0) return false;
+  const otherFiles = /^\/\/ @filename: [^]*/m.exec(text)?.[0] ?? "";
+  const asJavaScript = extension.replace("t", "j");
+  layOut(folder, [rewritten.stdout + otherFiles], asJavaScript, 1);
+  await build(folder, 1, asJavaScript, 1);
+  if (!existsSync(join(folder, "batch"))) return false;
+  const ran = await run("rewritten", [join(folder, "batch")], folder, asJavaScript, 1, [0], milliseconds * 20);
+  return agree(ran.get(0)!, reference);
+}
+
+/** `[key]: value` in an object literal. Not `[key: string]: value` in a type. */
+const computedKeyOfAValue = /(?<=[{,]\s*|^\s*)\[(?![\w$]+\??: )((?:[^\[\]\n]|\[[^\[\]\n]*\])+)\](?=: )/gm;
+const withKeysConvertedBeforeValues = (text: string) =>
+  text.replace(computedKeyOfAValue, "[Reflect.ownKeys({ [$1]: 0 })[0]]");
+/** Whether `bun run` prints what the executable printed once it converts each computed key to a property key before it evaluates the value beside it. Lays the changed program out in `folder`. */
+async function agreesWithKeysConvertedBeforeValues(folder: string, extension: string, text: string, { stdout }: Ended) {
+  layOut(folder, [withKeysConvertedBeforeValues(text)], extension, 1);
+  const ran = await spawn("keys", [bun, "run", `./programs/0${extension}`], folder, plainEnv, 30);
+  return removeDetailsOfErrors(ran.stdout) === removeDetailsOfErrors(stdout);
+}
+
 /** Whether `bun run` stopped at an object literal that nothing uses, because one of its computed keys is a symbol. */
 function stoppedAtAnUnusedLiteral(text: string, { stderr }: Ended) {
   const line = /Cannot convert a symbol to a string\n\s+at .*programs[\\/]\d+\.[a-z]+:(\d+):/.exec(stderr)?.[1];
@@ -570,6 +622,7 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
                   documentedNames.some(name => texts[index].includes(name)) ||
                   setsThePrototypeOfABuiltIn.test(texts[index]) ||
                   deletesTheLengthOfAString.test(texts[index]) ||
+                  deletesACharacterOfAString.test(texts[index]) ||
                   (second.end === referenceAgain.end &&
                     withNullAsUndefined(second.stdout) === withNullAsUndefined(referenceAgain.stdout) &&
                     readsThisOfTheModule(texts[index])) ||
@@ -608,6 +661,13 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
         readsThisOfTheModule(texts[index]) &&
         (await agreesWithUndefinedAsThisOfTheModule(alone, extension, texts[index], second))
       )
+        kind = "documented difference";
+      else if (
+        withKeysConvertedBeforeValues(texts[index]) !== texts[index] &&
+        (await agreesWithKeysConvertedBeforeValues(alone, extension, texts[index], second))
+      )
+        kind = "documented difference";
+      else if (await stoppedAtAnUnusedReadBeforeTheDeclaration(alone, extension, texts[index], second, referenceAgain))
         kind = "documented difference";
       rmSync(alone, { recursive: true, force: true });
     }

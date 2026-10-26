@@ -357,10 +357,7 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
   }
   // Compiled ahead of time, the loop is a function of its own, so that what is left is small enough to go where it is called.
   // In `bun run` that is one more call for every event with several listeners, a sixth more in the interpreter.
-  if (IS_COMPILED_AHEAD_OF_TIME) {
-    emitToEach(this, handler, handler.length, args);
-    return true;
-  }
+  if (IS_COMPILED_AHEAD_OF_TIME) return emitToEach(this, handler, handler.length, args);
   // No defensive clone: stored arrays are never mutated in place (mutators
   // install a copy), so this list stays stable for the whole loop even if a
   // listener adds/removes listeners.
@@ -387,8 +384,13 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
   return true;
 };
 
-// The loop of emit() once more, for an executable that was compiled ahead of time.
-function emitToEach(emitter: $Node.EventEmitter, listeners: $Node.Listener[], length: number, args: unknown[]) {
+// The loop of emit() once more, for an executable that was compiled ahead of time. It takes the place of emit() in a stack trace, under its name.
+const emitToEach = function emit(
+  emitter: $Node.EventEmitter,
+  listeners: $Node.Listener[],
+  length: number,
+  args: unknown[],
+): boolean {
   for (let i = 0; i < length; i += 1) {
     const listener = listeners[i];
     switch (args.length) {
@@ -409,7 +411,8 @@ function emitToEach(emitter: $Node.EventEmitter, listeners: $Node.Listener[], le
         break;
     }
   }
-}
+  return true;
+};
 EventEmitterPrototype.emit = emit;
 
 const emitWithRejectionCapture = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...args: unknown[]) {
@@ -1172,7 +1175,7 @@ class EventEmitterAsyncResource extends (EventEmitter as $Node.EventEmitterConst
     // still run in the resource's async scope; the prototype emit re-checks
     // this[kCapture] on every call, so rejection capture is preserved. delete
     // is a no-op when the property is absent, so no own-property check needed.
-    delete (this as { emit? }).emit;
+    delete (this as any).emit;
   }
 
   // No explicit receiver guards: like node v26 (lib/events.js), the private

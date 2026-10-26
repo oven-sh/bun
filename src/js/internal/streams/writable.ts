@@ -230,7 +230,7 @@ function _write(stream: $Node.Writable, state: WritableState, chunk, encoding, c
   return writeOrBuffer(stream, state, chunk, encoding, cb, 1);
 }
 
-function writeBytes(stream: $Node.Writable, state: WritableState, chunk, encoding, cb: WriteCallback) {
+const writeBytes = function _write(stream: $Node.Writable, state: WritableState, chunk, encoding, cb: WriteCallback) {
   if (!encoding) {
     encoding = (state[kState] & Flag.DefaultUTF8Encoding) !== 0 ? "utf8" : state[kDefaultEncodingValue];
   } else if (encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
@@ -260,7 +260,7 @@ function writeBytes(stream: $Node.Writable, state: WritableState, chunk, encodin
 
   state.pendingcb!++;
   return writeOrBuffer(stream, state, chunk, encoding, cb, chunk.length as number);
-}
+};
 
 function writeAfterEnd(stream: $Node.Writable, state: WritableState, cb: WriteCallback) {
   const err = (state[kState] & Flag.Ending) !== 0 ? $ERR_STREAM_WRITE_AFTER_END() : $ERR_STREAM_DESTROYED("write");

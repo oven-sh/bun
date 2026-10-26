@@ -1743,11 +1743,12 @@ function endReadableNT(state: ReadableState, stream: $Node.Readable): void {
   if ((state[kState] & (Flag.Errored | Flag.CloseEmitted | Flag.EndEmitted)) === 0 && state.length === 0) {
     state[kState] |= Flag.EndEmitted;
     stream.emit("end");
-    finishEnd(state, stream);
+    return finishEnd(state, stream);
   }
 }
 
-function finishEnd(state: ReadableState, stream: $Node.Readable): void {
+// It has the name of its caller, which is what a stack trace shows for this part of that tick.
+const finishEnd = function endReadableNT(state: ReadableState, stream: $Node.Readable): void {
   const destroyEndedRequest = internals.destroyEndedRequest;
   if (destroyEndedRequest !== undefined && destroyEndedRequest(state, stream)) return;
 
@@ -1771,7 +1772,7 @@ function finishEnd(state: ReadableState, stream: $Node.Readable): void {
       stream.destroy();
     }
   }
-}
+};
 
 internals.endOnNextTick = endReadableNT;
 internals.finishEnd = finishEnd;

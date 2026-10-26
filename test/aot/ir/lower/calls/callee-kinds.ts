@@ -35,8 +35,8 @@
 // CHECK: [[one]] = Integer integer=1
 // CHECK-NEXT: [[elementRead]] = ElemGet [[indexObject]], [[one]]
 // CHECK-NEXT: [[element]] = Convert [[elementRead]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: = Call [[element]], [[indexObject]],
-// CHECK-NOT: callee
+// CHECK-NEXT: = Call [[element]], [[indexObject]], {{*}}calleeName="o[1]"
+// CHECK-NOT: calleeKey
 // CHECK-LABEL: function {{*}}name="parenthesized"
 // CHECK: [[methodRead]] = PropGet [[object]] key="m"
 // CHECK-NEXT: [[method]] = Convert [[methodRead]] declared={type=undefined|null|function flags=[IsExpected]}

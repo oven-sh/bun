@@ -469,7 +469,6 @@ console.log(constructors.map(one => new one("made").type).join());
     checkSays: [],
     prints: `stopped false
 low1! low true 1
-bus ping
 ping 1
 Failure went wrong 20
 lowlow

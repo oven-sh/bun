@@ -45,7 +45,6 @@ using namespace JSC;
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
-    macro(autoDestroyed) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \
@@ -83,7 +82,6 @@ using namespace JSC;
     macro(expires) \
     macro(exports) \
     macro(extname) \
-    macro(fakeSocket) \
     macro(fastPath) \
     macro(fatal) \
     macro(fd) \
@@ -117,7 +115,6 @@ using namespace JSC;
     macro(join) \
     macro(json) \
     macro(kResistStopPropagation) \
-    macro(keepAliveTimeoutSet) \
     macro(lazy) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
@@ -186,7 +183,6 @@ using namespace JSC;
     macro(sharedFd) \
     macro(signal) \
     macro(size) \
-    macro(socketTimeoutTimer) \
     macro(specifier) \
     macro(start) \
     macro(status) \
@@ -222,18 +218,14 @@ using namespace JSC;
 // ordinary property that nothing lists: a Proxy reads and writes it on its target, without a trap. Keep this list sorted.
 #define BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro(armedTimeout) \
-    macro(autoDestroyed) \
     macro(exchange) \
-    macro(fakeSocket) \
     macro(hasWaitingResponses) \
     macro(isOpen) \
     macro(isPrepared) \
-    macro(keepAliveTimeoutSet) \
     macro(ownReadableState) \
     macro(ownWritableState) \
     macro(pipelinedResponses) \
     macro(readableMark) \
-    macro(socketTimeoutTimer) \
     macro(writableMark)
 
 class BunBuiltinNames {

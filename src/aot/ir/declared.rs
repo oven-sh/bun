@@ -69,6 +69,12 @@ impl DeclaredType {
         DeclaredType::new(Mapped::checked(ty), None, PositionFlags::IS_FROM_COMPILER)
     }
 
+    // The front end says so of a value in code that it lays down itself or that the library has written: nothing tests it.
+    pub fn claimed(ty: TypeId) -> DeclaredType {
+        let flags = PositionFlags::IS_FROM_COMPILER | PositionFlags::IS_CLAIM;
+        DeclaredType::new(Mapped::checked(ty), None, flags)
+    }
+
     pub fn is_expected(self) -> bool {
         self.flags.contains(PositionFlags::IS_EXPECTED)
     }

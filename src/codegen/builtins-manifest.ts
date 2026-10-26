@@ -15,6 +15,7 @@ import {
   sourceFiles,
   specifierOf,
 } from "./builtins-manifest-model";
+import { findNamingIdentifiers, listBundledNames, type SourceMap } from "./bundled-names";
 import { writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { define, globalsToPrefix } from "./replacements";
 
@@ -26,14 +27,23 @@ const flagValue = (flag: string) =>
     .find(argument => argument.startsWith(flag))
     ?.slice(flag.length);
 const engineFunctions = flagValue("--engine-functions=");
-if (!/^--debug=(OFF|ON)$/.test(process.argv[2] ?? "") || !output || output.startsWith("--") || !engineFunctions) {
+const bundledNamesOfModules = flagValue("--bundled-names-of-modules=");
+const bundledHelpers = flagValue("--bundled-helpers=");
+if (
+  !/^--debug=(OFF|ON)$/.test(process.argv[2] ?? "") ||
+  !output ||
+  output.startsWith("--") ||
+  !engineFunctions ||
+  !bundledNamesOfModules ||
+  !bundledHelpers
+) {
   console.error(
-    "Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] --engine-functions=<aot_engine_functions.json> [--engine-directory=<Source/JavaScriptCore/aot>]",
+    "Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] --engine-functions=<aot_engine_functions.json> --bundled-names-of-modules=<bundled_names_of_modules.txt> --bundled-helpers=<runtime.out.js> [--engine-directory=<Source/JavaScriptCore/aot>]",
   );
   process.exit(1);
 }
 
-const lines = ["bun-builtins-manifest\t4"];
+const lines = ["bun-builtins-manifest\t5"];
 
 function canonicalJSON(name: string, text: string): string {
   try {
@@ -141,6 +151,22 @@ function splitListOfModules(text: string): { rest: string; listings: Map<string,
 const listOfModules = splitListOfModules(fs.readFileSync(locate("private.d.ts"), "utf8"));
 for (const listing of listOfModules.listings.keys()) {
   lines.push(`declarations\t${listing}`);
+}
+
+for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
+  // The positions are those of the text that was bundled.
+  if (line !== "" && locate(line.split("\t")[1]) === path.join(import.meta.dir, "../js", line.split("\t")[1])) {
+    lines.push(line);
+  }
+}
+const mapOfHelpers: SourceMap = JSON.parse(fs.readFileSync(`${bundledHelpers}.map`, "utf8"));
+const identifiersOfHelpers = findNamingIdentifiers(fs.readFileSync(bundledHelpers, "utf8"), mapOfHelpers);
+for (const [index, source] of mapOfHelpers.sources.entries()) {
+  const file = path.resolve(path.dirname(bundledHelpers), source);
+  const helper = helperModules.find(helper => path.resolve(helper.source) === file);
+  if (!helper) throw new Error(`${bundledHelpers} has the text of ${file}, which is none of the helper modules`);
+  const identifiers = identifiersOfHelpers.filter(identifier => identifier.source === index);
+  lines.push(...listBundledNames(helper.path, mapOfHelpers.sourcesContent[index], identifiers));
 }
 
 const manifest = lines.join("\n") + "\n";

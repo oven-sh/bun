@@ -237,7 +237,18 @@ fn records_are_listed_by_kind() {
         builder.new_object(LayoutId::new(3), &[], None, &[]);
         builder.check(value, TypeTable::NUMBER, Some(TypeSiteId::new(1)));
         builder.direct_eval(EvalScopeId::new(2), value, value, None, &[]);
-        builder.call(value, None, &[], None, None, expected, false, false, false);
+        builder.call(
+            value,
+            None,
+            &[],
+            None,
+            None,
+            expected,
+            None,
+            false,
+            false,
+            false,
+        );
         builder.data(DataId::new(6));
         builder.prop_get(value, PropertyKeyId::new(7), false, false);
         builder.throw_module_failure(WireModuleFailureId::new(8), false);

@@ -28,6 +28,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         catch_body: StmtId,
         finalizer: StmtId,
     ) {
+        // Where the block enters a scope that has an object of its own in `bun run`, what comes behind the block starts by reading the scope around it.
+        let scopes_before = self.count_scopes_with_shared_names();
         if finalizer.is_some() {
             self.begin_cleanup(BlockRole::CleanupHandler, None);
         }
@@ -42,12 +44,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.continue_in(handler.block());
             self.set_position(hir[catch_body].start);
             let caught = self.builder.catch_value();
+            if self.count_scopes_with_shared_names() > scopes_before {
+                self.read_innermost_scope();
+            }
             let scope = self.enter_own_scope(statement);
             if param.is_some() {
-                let position = hir[hir[param].pat].pos;
+                // JSC records nothing between the block and the pattern.
+                self.set_position_to_last_recorded();
                 let origin = PatternOrigin {
-                    mapped: position,
-                    recorded: position,
+                    mapped: hir[hir[param].pat].pos,
+                    recorded: self.builder.current_position(),
                 };
                 self.bind_pattern(hir[param].pat, caught, None, origin);
             }
@@ -59,7 +65,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.lower_statement(block);
         }
         if finalizer.is_some() {
-            self.end_cleanup_shared(&mut |lowering| lowering.lower_statement(finalizer));
+            self.end_cleanup_shared(&mut |lowering| {
+                if lowering.count_scopes_with_shared_names() > scopes_before {
+                    lowering.read_innermost_scope();
+                }
+                lowering.lower_statement(finalizer);
+            });
         }
     }
 }

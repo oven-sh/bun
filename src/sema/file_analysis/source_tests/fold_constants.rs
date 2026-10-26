@@ -86,8 +86,20 @@ const PUBLISHED_CONSTANTS: &[FoldedRow] = &[
     ("a.mjs", "v((f(), 1));", Unknown),
     ("a.mjs", "v(void f());", Unknown),
     ("a.mjs", "v(f() ? 1 : 1);", Unknown),
-    ("a.ts", "v(1 as number);", Unknown),
-    ("a.ts", "v((1 as number) + 1);", Unknown),
+    ("a.ts", "v(1 as number);", OutsideDeadZone(Number(1.0))),
+    (
+        "a.ts",
+        "v((1 as number) + 1);",
+        OutsideDeadZone(Number(2.0)),
+    ),
+    ("a.ts", "v(-(1 as any));", OutsideDeadZone(Number(-1.0))),
+    (
+        "a.ts",
+        r#"v(-("2" as unknown as number));"#,
+        OutsideDeadZone(Number(-2.0)),
+    ),
+    ("a.ts", "v(-(f() as number));", Unknown),
+    ("a.ts", "v(-((f(), 1) as number));", Unknown),
 ];
 
 const CONST_READS: &[FoldedRow] = &[

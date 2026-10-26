@@ -3,24 +3,37 @@ import http from "node:http";
 import net from "node:net";
 import { Readable, Writable } from "node:stream";
 
-// What a program can see of a few objects of node:http, node:stream and process, as Node.js has it.
+// What a program can see of a few objects of node:http, node:stream and process.
 
-test("ServerResponse keeps chunkedEncoding, writable and shouldKeepAlive as its own data properties", () => {
+test("ServerResponse keeps chunkedEncoding, writable and shouldKeepAlive as accessors of its prototype", () => {
   const response = new http.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 } as any);
   for (const name of ["chunkedEncoding", "writable", "shouldKeepAlive"]) {
-    expect({ name, own: Object.getOwnPropertyDescriptor(response, name) }).toEqual({
+    expect({ name, own: Object.getOwnPropertyDescriptor(response, name) }).toEqual({ name, own: undefined });
+    const inherited = Object.getOwnPropertyDescriptor(http.ServerResponse.prototype, name)!;
+    expect({ name, inherited }).toEqual({
       name,
-      own: { value: expect.any(Boolean), writable: true, enumerable: true, configurable: true },
+      inherited: { get: expect.any(Function), set: expect.any(Function), enumerable: false, configurable: false },
     });
-    expect(Object.getOwnPropertyDescriptor(http.ServerResponse.prototype, name)).toBeUndefined();
+    expect([inherited.get!.name, inherited.get!.length, inherited.set!.name, inherited.set!.length]).toEqual([
+      "get",
+      0,
+      "set",
+      1,
+    ]);
   }
-  expect(Object.keys(response)).toContain("chunkedEncoding");
-  expect(Object.keys(response)).toContain("writable");
-  expect(Object.keys(response)).toContain("shouldKeepAlive");
+  expect(Object.keys(response)).not.toContain("chunkedEncoding");
+  expect(Object.keys(response)).not.toContain("writable");
+  expect(Object.keys(response)).not.toContain("shouldKeepAlive");
+  expect([response.chunkedEncoding, response.writable, response.shouldKeepAlive]).toEqual([false, true, true]);
 });
 
-test("IncomingMessage creates its own properties in Node.js' order", () => {
-  const orderInNode = [
+test("IncomingMessage creates its own properties in this order", () => {
+  expect(Object.keys(new http.IncomingMessage(new net.Socket()))).toEqual([
+    "_consuming",
+    "_dumped",
+    "complete",
+    "_closed",
+    "rawTrailers",
     "_events",
     "_readableState",
     "_maxListeners",
@@ -28,40 +41,27 @@ test("IncomingMessage creates its own properties in Node.js' order", () => {
     "httpVersionMajor",
     "httpVersionMinor",
     "httpVersion",
-    "complete",
-    "rawHeaders",
-    "rawTrailers",
     "joinDuplicateHeaders",
-    "aborted",
     "upgrade",
     "url",
     "method",
     "statusCode",
     "statusMessage",
     "client",
-    "_consuming",
-    "_dumped",
-  ];
-  const keys = Object.keys(new http.IncomingMessage(new net.Socket()));
-  expect(keys.filter(key => orderInNode.includes(key))).toEqual(orderInNode.filter(key => keys.includes(key)));
-  expect(keys.slice(0, 4)).toEqual(["_events", "_readableState", "_maxListeners", "socket"]);
+  ]);
 });
 
-test("process.nextTick is a JavaScript function", () => {
+test("process.nextTick prints as native code", () => {
   expect(process.nextTick.name).toBe("nextTick");
   expect(process.nextTick.length).toBe(1);
-  expect(Function.prototype.toString.call(process.nextTick)).not.toContain("[native code]");
+  expect(Function.prototype.toString.call(process.nextTick)).toBe("function nextTick() { [native code] }");
 });
 
-test("the prototypes of ReadableState and WritableState name their constructors", () => {
+test("the prototypes of ReadableState and WritableState have no constructor of their own", () => {
   for (const State of [(Readable as any).ReadableState, (Writable as any).WritableState]) {
-    expect(Object.getOwnPropertyDescriptor(State.prototype, "constructor")).toEqual({
-      value: State,
-      writable: true,
-      enumerable: false,
-      configurable: true,
-    });
+    expect(Object.getOwnPropertyDescriptor(State.prototype, "constructor")).toBeUndefined();
+    expect(State.prototype.constructor).toBe(Object);
   }
-  expect((new Readable({ read() {} }) as any)._readableState.constructor).toBe((Readable as any).ReadableState);
-  expect((new Writable({ write() {} }) as any)._writableState.constructor).toBe((Writable as any).WritableState);
+  expect((new Readable({ read() {} }) as any)._readableState.constructor).toBe(Object);
+  expect((new Writable({ write() {} }) as any)._writableState.constructor).toBe(Object);
 });

@@ -1,7 +1,7 @@
 use super::bits::has_bit;
 use super::declaration_kinds::{DeclarationKind, declaration_kind};
 use super::namespace_exports::is_block_binding;
-use super::queries::find_symbol;
+use super::queries::{find_symbol, is_among_parameters};
 use super::{Binding, CodeUnit, CommonJsVariable, RuntimeScopes};
 use crate::atom::{Atom, known};
 use crate::bind::{BoundBuilder, Scope, ScopeId, ScopeKind, SymFlags, SymbolId};
@@ -24,6 +24,8 @@ pub(super) struct Lookup<'a, 's> {
 
 pub(super) struct Found {
     pub binding: Binding,
+    pub scope: ScopeId,
+    pub entered_from: ScopeKind,
     pub dynamic_scope: ScopeId,
 }
 
@@ -38,6 +40,8 @@ impl Lookup<'_, '_> {
             if let Some(binding) = self.find_in_scope(at, from, name) {
                 return Found {
                     binding,
+                    scope: at,
+                    entered_from: from,
                     dynamic_scope,
                 };
             }
@@ -49,8 +53,22 @@ impl Lookup<'_, '_> {
         }
         Found {
             binding: Binding::Free,
+            scope: ScopeId::NONE,
+            entered_from: from,
             dynamic_scope,
         }
+    }
+
+    // Text evaluated in the body of a function declares its variables in the environment of the body's variables.
+    pub(super) fn is_behind_eval_variables(&self, found: &Found, pos: u32) -> bool {
+        if !has_bit(&self.dynamic_scopes, found.scope.idx()) {
+            return false;
+        }
+        let ScopeKind::Fn(function) = self.bound.scopes[found.scope.idx()].kind else {
+            return false;
+        };
+        self.bound.is_outside_body_variables(found.binding)
+            && !is_among_parameters(self.hir, function, found.entered_from, pos)
     }
 
     fn find_in_scope(&self, at: ScopeId, from: ScopeKind, name: Atom) -> Option<Binding> {

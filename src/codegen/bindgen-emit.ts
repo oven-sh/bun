@@ -1610,7 +1610,7 @@ ${fn.signatures.map(signature => cppExtern(thunkSymbol(fn, signature), signature
 ${fn.exportName ? hostFunction : `namespace Bun::Bindgen::Generated::${fn.origin!.namespace} {\n${hostFunction}\n}`}
 extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${fn.origin!.stem}_${fn.name}(Zig::GlobalObject* globalObject)
 {
-    return Bun::Bindgen::createFunction(globalObject, ${fn.length}, ${asciiLiteral(fn.jsName)}, ${cppFunctionSymbol(fn)});
+    return Bun::Bindgen::${fn.namedAsBound ? "createFunctionNamedAsBound" : "createFunction"}(globalObject, ${fn.length}, ${asciiLiteral(fn.jsName)}, ${cppFunctionSymbol(fn)});
 }
 `;
 }

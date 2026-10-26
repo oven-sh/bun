@@ -773,7 +773,6 @@ typed-objects/field-deleted-wide-recreated-narrow	// CALLS+ putThroughPoint DidC
 typed-objects/generic-spread-bound-with-layout	// IR- ^    v\d+: [^=~\n]*(?<![=\w])L\d+(?![!\d])
 typed-objects/interface-declared-in-a-namespace-of-types	// IR+ ^layout L\d+ .*name="Deep" .* representation=Typed
 typed-objects/interface-declared-in-a-namespace-of-types	// IR+ ^layout L\d+ .*name="WithContent" .* representation=Typed
-typed-objects/json-stringify-dates	// CALLS+ isoText operationAOTDateToISOString
 typed-objects/json-stringify-dates	// CALLS+ writeDates operationAOTJSONAppendDate
 typed-objects/length-compared-on-each-test-exit	// IRT= 1 down TypeTest v[0-9]+ testedType=\w\S*\^
 typed-objects/length-compared-on-each-test-exit	// IRT= 1 scan : int.0,[0-9]+. = CallBuiltin .* overload=DataViewPrototypeByteLength/

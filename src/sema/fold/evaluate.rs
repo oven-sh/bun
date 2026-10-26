@@ -413,6 +413,9 @@ fn exponentiate(base: f64, exponent: f64) -> Option<f64> {
     if exponent.is_infinite() && base.abs() == 1.0 {
         return Some(f64::NAN);
     }
+    if base < 0.0 && base.is_finite() && exponent.is_finite() && exponent.fract() != 0.0 {
+        return Some(f64::NAN);
+    }
     let magnitude = base.abs();
     let is_integer_power = base.fract() == 0.0
         && exponent.fract() == 0.0

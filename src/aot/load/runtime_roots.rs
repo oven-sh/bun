@@ -15,6 +15,7 @@ use crate::load::sources::parsed_source;
 pub(crate) struct RuntimeRoots {
     pub paths: Vec<Vec<u8>>,
     pub host_loaded_modules: Vec<RuntimeModule>,
+    pub modules_named_at_run_time: Vec<RuntimeModule>,
     pub imports_cluster: bool,
     pub imports_uncompiled_code: bool,
     pub loads_by_unknown_path: bool,
@@ -53,17 +54,21 @@ pub(crate) fn collect_runtime_roots(
     named.extend(find_library_modules_that_unknown_names_may_stand_for(
         application,
     ));
+    named.shared_sort_unstable_by_key(|module| module.registry_id());
+    named.dedup();
     host_loaded.extend(named.iter().copied());
     host_loaded.extend(STARTUP_MODULES);
     let mut host_loaded_modules: Vec<RuntimeModule> = host_loaded.into_iter().collect();
     host_loaded_modules.shared_sort_unstable_by_key(|module| module.registry_id());
     let imported = application.host_modules().iter().copied();
-    let mut modules: Vec<RuntimeModule> = imported.map(to_runtime_module).chain(named).collect();
+    let mut modules: Vec<RuntimeModule> = imported.map(to_runtime_module).collect();
+    modules.extend(&named);
     let imports_cluster = modules.contains(&RuntimeModule::NodeCluster);
     modules.extend(&host_loaded_modules);
     RuntimeRoots {
         paths: order_root_paths(runtime_modules, modules, functions.into_iter().collect()),
         host_loaded_modules,
+        modules_named_at_run_time: named,
         imports_cluster,
         imports_uncompiled_code,
         loads_by_unknown_path: loads_by_unknown_path(application),
@@ -204,6 +209,7 @@ mod tests {
         let roots = collect_roots_of("process.stdout.write('a');", &runtime);
         assert!(has_module_root(&runtime, &roots, RuntimeModule::NodeTty));
         assert!(roots.host_loaded_modules.contains(&RuntimeModule::NodeTty));
+        assert!(roots.modules_named_at_run_time.is_empty());
         for (index, path) in roots.paths.iter().enumerate() {
             let name = BStr::new(path);
             assert!(runtime.file_kind(path).is_some(), "{name}");
@@ -216,6 +222,25 @@ mod tests {
         let roots = collect_roots_of("export const text = 'process.stdout';", &runtime);
         assert!(!has_module_root(&runtime, &roots, RuntimeModule::NodeTty));
         assert!(!roots.host_loaded_modules.contains(&RuntimeModule::NodeTty));
+    }
+
+    #[test]
+    fn only_a_module_whose_name_the_program_writes_is_named_at_run_time() {
+        let runtime = runtime_modules();
+        let loads = "process.stdout.write(typeof require(process.argv[2]));";
+        let roots = collect_roots_of(loads, &runtime);
+        assert!(roots.host_loaded_modules.contains(&RuntimeModule::NodeTty));
+        assert!(roots.modules_named_at_run_time.is_empty());
+
+        let names = format!("export const names = ['node:os', 'zlib', 'os'];\n{loads}");
+        let roots = collect_roots_of(&names, &runtime);
+        let mut expected = [RuntimeModule::NodeOs, RuntimeModule::NodeZlib];
+        expected.sort_unstable_by_key(|module| module.registry_id());
+        assert_eq!(roots.modules_named_at_run_time, expected);
+        for module in expected {
+            assert!(has_module_root(&runtime, &roots, module), "{module:?}");
+            assert!(roots.host_loaded_modules.contains(&module), "{module:?}");
+        }
     }
 
     #[test]

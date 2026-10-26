@@ -118,6 +118,9 @@ impl Checker<'_, '_> {
         for &e in index.of(ExprTag::ImportCall).iter().filter(reached) {
             self.check_import_call_early_errors(file, e);
         }
+        for &e in index.of(ExprTag::Regex).iter().filter(reached) {
+            self.check_regexp_flag_early_errors(file, e);
+        }
         for &e in index.of(ExprTag::Jsx).iter().filter(reached) {
             if let ExprKind::Jsx(j) = hir[e].kind {
                 self.check_jsx_attribute_early_errors(file, j);
@@ -127,8 +130,40 @@ impl Checker<'_, '_> {
 
     fn check_super_early_errors(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
-        if let Some(code) = Self::super_early_error_code(hir, hir.node(e)) {
+        let (node, parent) = (hir.node(e), hir.parent(hir.node(e)));
+        let is_constructed =
+            hir.kind(parent) == Kind::NewExpression && hir.expression(parent) == node;
+        let code = match is_constructed {
+            true => Some(1034),
+            false => Self::super_early_error_code(hir, node),
+        };
+        if let Some(code) = code {
             self.early_error_at(self.span_of_expr(file, e), code, &[]);
+        }
+    }
+
+    // `bun run` reads the flags of every regular expression, also of one that nothing uses.
+    fn check_regexp_flag_early_errors(&mut self, file: FileId, e: ExprId) {
+        let ExprKind::Regex { flags, .. } = self.hir(file)[e].kind else {
+            return;
+        };
+        let atoms = self.atoms();
+        let flags = atoms.bytes(flags);
+        let (_, _, end) = self.span_of_expr(file, e);
+        for (index, flag) in flags.iter().enumerate() {
+            let earlier = &flags[..index];
+            let is_unicode_mode = |flag: &u8| matches!(flag, b'u' | b'v');
+            let code = if !b"dgimsuvy".contains(flag) {
+                1499
+            } else if earlier.contains(flag) {
+                1500
+            } else if is_unicode_mode(flag) && earlier.iter().any(is_unicode_mode) {
+                1502
+            } else {
+                continue;
+            };
+            let start = end - (flags.len() - index) as u32;
+            self.early_error_at((file, start, start + 1), code, &[]);
         }
     }
 

@@ -120,6 +120,73 @@ test("a store to __proto__, Object.setPrototypeOf and Reflect.setPrototypeOf", a
   });
 }, 120_000);
 
+test("a store to __proto__ of a native function, beside calls that change its prototype", async () => {
+  expect(
+    await reportedPlaces({
+      "main.js": [
+        `const key = "__proto__";`,
+        `if (${rarely}) parseInt.__proto__ = {};`,
+        `if (${rarely}) Object.setPrototypeOf(parseInt, {});`,
+        `if (${rarely}) console.log(Reflect.setPrototypeOf(parseInt, {}));`,
+        `if (${rarely}) parseFloat[key] = {};`,
+        `if (${rarely}) Bun.file.__proto__ = null;`,
+        `// An own property of that name beside a change of the prototype.`,
+        `Object.defineProperty(isNaN, "__proto__", { value: 1, configurable: true });`,
+        `if (${rarely}) Object.setPrototypeOf(isNaN, {});`,
+      ].join("\n"),
+    }),
+  ).toEqual({
+    places: [
+      "warn main.js:2",
+      "warn main.js:3",
+      "warn main.js:4",
+      "warn main.js:5",
+      "warn main.js:6",
+      "warn main.js:9",
+    ],
+    exitCode: 0,
+  });
+}, 120_000);
+
+test("Object.setPrototypeOf and Reflect.setPrototypeOf of a native function", async () => {
+  expect(
+    await reportedPlaces({
+      "main.js": [
+        `const held = JSON.parse;`,
+        `if (${rarely}) Object.setPrototypeOf(parseInt, {});`,
+        `if (${rarely}) Object.setPrototypeOf(Object.keys, null);`,
+        `if (${rarely}) Object.setPrototypeOf(Math.max, {});`,
+        `if (${rarely}) Object.setPrototypeOf(Array.prototype.push, {});`,
+        `if (${rarely}) Object.setPrototypeOf(held, {});`,
+        `if (${rarely}) Object.setPrototypeOf(Bun.file, {});`,
+        `if (${rarely}) Object.setPrototypeOf(process.cwd, {});`,
+        `if (${rarely}) Object.setPrototypeOf(setTimeout, {});`,
+        `if (${rarely}) console.log(Reflect.setPrototypeOf(isFinite, {}));`,
+        `// The prototype that it has already, an own property of that name, and functions that are written in JavaScript.`,
+        `Object.setPrototypeOf(parseFloat, Function.prototype);`,
+        `console.log(Reflect.setPrototypeOf(parseFloat, Function.prototype));`,
+        `Object.defineProperty(isNaN, "__proto__", { value: 1, configurable: true });`,
+        `Object.setPrototypeOf(function () {}, {});`,
+        `Object.setPrototypeOf(require("node:util").inspect, {});`,
+        `Object.setPrototypeOf(process.nextTick, {});`,
+      ].join("\n"),
+    }),
+  ).toEqual({
+    places: [
+      "warn main.js:10",
+      "warn main.js:2",
+      "warn main.js:3",
+      "warn main.js:4",
+      "warn main.js:5",
+      "warn main.js:6",
+      "warn main.js:7",
+      "warn main.js:8",
+      "warn main.js:9",
+    ],
+    exitCode: 0,
+  });
+}, 120_000);
+
 test("one that always runs, and others that may", async () => {
   expect(
     await reportedPlaces({

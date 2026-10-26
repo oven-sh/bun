@@ -1,6 +1,7 @@
 use bun_sema::hir::{ExprId, ExprKind};
 
 use super::{Arguments, Callee};
+use crate::builtins::id::BuiltinId;
 use crate::builtins::{EvaluatedText, EvaluatedTextForm};
 use crate::ir::{BlockId, Edge, FunctionKey, ValueId};
 use crate::lower::FunctionLowering;
@@ -53,18 +54,47 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let closure = self.builder.new_closure(compiled, &[]);
         let evaluated = match text.form {
             EvaluatedTextForm::FunctionBody => closure,
-            EvaluatedTextForm::Script => super::emit_call(self, closure, None, &[]),
+            EvaluatedTextForm::Script => self.emit_call_by_builtin(closure, text.callee.id, tail),
         };
         self.builder.write_variable(result, evaluated);
         self.jump(join);
 
         self.continue_in(differs);
-        let ordinary = self.emit_ordinary(call, is_construct, other_callee, arguments, Tail::No);
+        let tail_of_call = match text.form {
+            EvaluatedTextForm::FunctionBody => Tail::No,
+            EvaluatedTextForm::Script => tail,
+        };
+        let ordinary =
+            self.emit_ordinary(call, is_construct, other_callee, arguments, tail_of_call);
         self.builder.write_variable(result, ordinary);
         self.jump(join);
 
         self.continue_in(join);
         self.builder.read_variable(result)
+    }
+
+    // A stack trace lists the built-in function between the compiled text and the function that wrote the call.
+    fn emit_call_by_builtin(
+        &mut self,
+        compiled: ValueId,
+        builtin: BuiltinId,
+        tail: Tail<'_>,
+    ) -> ValueId {
+        let (is_annotated_pure, is_never_inlined, is_reflect_construct_syntax) =
+            (false, true, false);
+        let called = self.builder.call(
+            compiled,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            Some(builtin),
+            is_annotated_pure,
+            is_never_inlined,
+            is_reflect_construct_syntax,
+        );
+        self.return_call_in_tail_position(called, tail)
     }
 
     fn emit_ordinary(

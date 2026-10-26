@@ -201,8 +201,6 @@ const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverse
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
 
-const jsonTextFunctions = functionsIn("prelude/json", "stringifyElement", "stringifyProperties", "stringifyProperty");
-
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
   "%ModuleObject%.children": moduleChildrenFunctions,
   "%ModuleObject%.parent": moduleChildrenFunctions,
@@ -224,8 +222,6 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "Bun.peek": [heldAs(b.functionIn("builtins/Peek", "peek"), "Bun.peek"), b.functionIn("builtins/Peek", "peekStatus")],
   "Bun.plugin": bundlerPluginFunctions,
   "Bun.serve": pluginFunctionsOfServer,
-  "JSON.stringify": jsonTextFunctions,
-  "Response.json": jsonTextFunctions,
   "WebAssembly.compileStreaming": streamedModuleFunctions,
   "WebAssembly.instantiateStreaming": streamedModuleFunctions,
   // The getter calls it on `console`, with `console`, and what it answers takes the getter's place.

@@ -30,9 +30,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCallOwnFunctionsWithoutParameters, (JSC::JSGl
     using namespace JSC;
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* holder = callFrame->uncheckedArgument(0).getObject();
-    JSObject* except = callFrame->uncheckedArgument(1).getObject();
-    JSValue receiver = callFrame->uncheckedArgument(2);
+    JSObject* holder = callFrame->argument(0).getObject();
+    JSObject* except = callFrame->argument(1).getObject();
+    JSValue receiver = callFrame->argument(2);
+    MarkedArgumentBuffer makersOfIterators;
+    if (!holder || !except)
+        RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), makersOfIterators)));
 
     PropertyNameArrayBuilder keys(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     holder->methodTable()->getOwnPropertyNames(holder, globalObject, keys, DontEnumPropertiesMode::Include);
@@ -53,8 +56,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCallOwnFunctionsWithoutParameters, (JSC::JSGl
             return;
         JSValue answer = call(globalObject, descriptor.value(), getCallData(descriptor.value()), receiver, ArgList());
         RETURN_IF_EXCEPTION(scope, void());
-        if (answer.isObject() && !answer.isCallable())
-            asObject(answer)->hasProperty(globalObject, vm.propertyNames->iteratorSymbol);
+        if (!answer.isObject() || answer.isCallable())
+            return;
+        bool hasIterator = asObject(answer)->hasProperty(globalObject, vm.propertyNames->iteratorSymbol);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!hasIterator)
+            return;
+        makersOfIterators.append(key.isSymbol() ? JSValue(Symbol::create(vm, static_cast<SymbolImpl&>(*key.impl()))) : JSValue(jsString(vm, key.string())));
+        makersOfIterators.append(descriptor.value());
     };
     // Reflect.ownKeys lists the symbols behind the strings.
     for (bool takesSymbols : { false, true }) {
@@ -62,6 +71,50 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCallOwnFunctionsWithoutParameters, (JSC::JSGl
             if (key.isSymbol() != takesSymbols)
                 continue;
             callUnder(key);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), makersOfIterators)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineOwnPropertiesLeftOut, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    using namespace JSC;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* target = callFrame->argument(0).getObject();
+    JSObject* source = callFrame->argument(1).getObject();
+    JSObject* replacements = callFrame->argument(2).getObject();
+    if (!target || !source || !replacements)
+        return JSValue::encode(jsUndefined());
+
+    PropertyNameArrayBuilder keys(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    source->methodTable()->getOwnPropertyNames(source, globalObject, keys, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, {});
+    // Reflect.ownKeys lists the symbols behind the strings.
+    for (bool takesSymbols : { false, true }) {
+        for (const Identifier& key : keys) {
+            if (key.isSymbol() != takesSymbols)
+                continue;
+            bool isOwned = target->hasOwnProperty(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (isOwned)
+                continue;
+            PropertyDescriptor descriptor;
+            bool isOwn = source->getOwnPropertyDescriptor(globalObject, key, descriptor);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!isOwn)
+                continue;
+            if (replacements) {
+                PropertySlot slot(replacements, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool isReplaced = replacements->getOwnPropertySlot(replacements, globalObject, key, slot);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (isReplaced) {
+                    descriptor.setValue(slot.getValue(globalObject, key));
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+            }
+            target->methodTable()->defineOwnProperty(target, globalObject, key, descriptor, false);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }

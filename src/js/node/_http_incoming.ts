@@ -558,16 +558,14 @@ const incomingMessageDestroy = function _destroy(
     // (node's _destroy null-socket check).
     this[kHandle] = undefined;
     handle.onabort = handle.ondata = undefined;
-    if (shouldEmitAborted) {
-      // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-      if (!handle.finished && this.socket) {
-        http.responseRoad.sendWhatIsHeld?.(this.socket._httpMessage as $Node.ServerResponse | null | undefined);
-        handle.abort();
-      }
-      const socket = this.socket;
-      if (socket && !socket.destroyed) {
-        socket.destroy(err);
-      }
+    // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
+    if (!handle.finished && shouldEmitAborted && this.socket) {
+      http.responseRoad.sendWhatIsHeld?.(this.socket._httpMessage as $Node.ServerResponse | null | undefined);
+      handle.abort();
+    }
+    const socket = this.socket;
+    if (socket && !socket.destroyed && shouldEmitAborted) {
+      socket.destroy(err);
     }
     if ($isCallable(cb)) {
       emitErrorNextTickIfErrorListenerNT(this, err, cb);
@@ -1108,7 +1106,7 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
 internals.resumeRequestBody = resumeRequestBody;
 
 function onBodyData(this: $Node.IncomingMessage, chunk: Buffer | undefined, isLast: boolean, aborted: number) {
-  takeBodyData(this, chunk, isLast, aborted);
+  return takeBodyData(this, chunk, isLast, aborted);
 }
 
 internals.onRequestBodyData = onBodyData;
@@ -1310,7 +1308,7 @@ function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
 function emitBodyEnd(req: $Node.IncomingMessage, state: $Node.ReadableState) {
   state[kState] |= kEndEmitted;
   req.emit("end");
-  finishEnd(state, req);
+  return finishEnd(state, req);
 }
 
 function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable): boolean {
@@ -1330,7 +1328,11 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
     ("unlikely");
     return false;
   }
-  req[kAutoDestroyed] = true;
+  try {
+    req[kAutoDestroyed] = true;
+  } catch {
+    return false;
+  }
   state[kState] |= kDestroyed;
   req[kHandle] = undefined;
   handle.onabort = handle.ondata = undefined;
@@ -1417,12 +1419,13 @@ function keepsItsMethods(req: $Node.IncomingMessage): boolean {
 }
 
 function endUnseen(req: $Node.IncomingMessage): void {
+  // The one store that a request closed in any way refuses comes first, so that a request is ended whole or not at all.
+  req[kAutoDestroyed] = true;
   req._dumped = true;
   req[kShapeMode] = false;
   req._consuming = true;
   req.complete = true;
   req[eofInProgress] = true;
-  req[kAutoDestroyed] = true;
   req[kHandle] = undefined;
   req._readableState[kState] = kFlagsClosed | kCloseEmitted;
 }

@@ -1,6 +1,8 @@
 // Two takers, each under an AsyncLocalStorage store of its own, take values from ONE shared source. After every step each says under which store it goes on. An await goes on under the
 // store it was reached under, so whoever steps by `await source.next()` keeps its own; what a loop and `yield*` do is plain Bun's to say, and the compiled program says the same.
 // A program is a source, the two takers, what tracks the store (run, enterWith, an AsyncResource, a snapshot, bind), the second taker's store, and whether the takers await first.
+import { withLoopsOf } from "./where-a-stretch-stands";
+
 export function programs() {
   const made: { name: string; file: string; text: string }[] = [];
   const sources: Record<string, string> = {
@@ -32,7 +34,9 @@ export function programs() {
   for (const [s, source] of Object.entries(sources)) for (const [a, takerA] of Object.entries(takers)) for (const [b, takerB] of Object.entries(takers)) for (const [t, tracker] of Object.entries(trackers)) for (const [w, second] of Object.entries(seconds)) for (const first of ["atOnce", "awaitsFirst"]) {
     if (first === "awaitsFirst" && a === "byThen" && b === "byThen") continue;
     const F = first === "awaitsFirst" ? "await null;" : "";
-    made.push({ name: `${s}-${a}-${b}-${t}-${w}-${first}`, file: "program.mjs", text: `import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
+    const name = `${s}-${a}-${b}-${t}-${w}-${first}`;
+    made.push({ name, file: "program.mjs", text: withLoopsOf(name, `import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
+  const extraTurns = process.argv.length > 99 ? 1 : 0;
   const storage = new AsyncLocalStorage(), lines = [];
   const store = () => String(storage.getStore());
   ${source}
@@ -41,7 +45,7 @@ export function programs() {
   lines.push(...(await Promise.all([${tracker('"one"', 'takeA("a", shared)')}, ${second === null ? 'takeB("b", shared)' : tracker(second, 'takeB("b", shared)')}])));
   lines.push("the module goes on under " + store());
   console.log(lines.join("\\n"));
-  ` });
+  `) });
   }
   return made;
 }

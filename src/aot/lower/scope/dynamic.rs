@@ -27,7 +27,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let bound = self.file.bound;
         let start = bound.dynamic_lookup_scope(NodeData::Expr(identifier))?;
         let name = self.file.identifier_name(identifier);
-        Some(self.resolve_dynamic_name(start, bound.binding(identifier), name))
+        let declaring_scope = self.find_declaring_scope(bound.binding(identifier));
+        let until = bound.dynamic_lookup_end(identifier, declaring_scope);
+        Some(self.search_scope_objects(start, until, name))
     }
 
     pub(super) fn resolve_dynamic_name(
@@ -36,12 +38,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         binding: Binding,
         name: Atom,
     ) -> DynamicBinding {
+        let until = self.find_declaring_scope(binding);
+        self.search_scope_objects(start, until, name)
+    }
+
+    fn find_declaring_scope(&self, binding: Binding) -> ScopeId {
         let bound = self.file.bound;
-        let until = match bindings::normalize_binding(self.file, binding) {
+        match bindings::normalize_binding(self.file, binding) {
             Binding::Symbol(symbol) => bound.symbol_scope(symbol),
             Binding::Arguments(unit) => bound.top_scope(self.file.hir, unit),
             Binding::Free | Binding::CommonJs(_) => ScopeId::NONE,
-        };
+        }
+    }
+
+    fn search_scope_objects(
+        &mut self,
+        start: ScopeId,
+        until: ScopeId,
+        name: Atom,
+    ) -> DynamicBinding {
+        let bound = self.file.bound;
         let key = self.file.name_key(name);
         let holder = self.builder.create_variable(None);
         let with_base = self.builder.create_variable(None);

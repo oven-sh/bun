@@ -1,6 +1,7 @@
 // bun held-across-suspensions.ts <folder> [--count=<programs>] [--seed=<number>] [--cases=<cases in a program>] writes <folder>/<n>.ts
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
+import { withLoopsOf } from "./births-and-uses/where-a-stretch-stands";
 
 interface Birth {
   name: string;
@@ -209,6 +210,8 @@ export const nameOf = ({ birth, holder, kind, suspension, disturbance, heat, pla
 const head = `declare const Bun: { gc(isFull: boolean): void };
 declare const Buffer: { from(text: string): Uint8Array };
 declare function setImmediate(run: () => void): void;
+declare const process: { argv: string[] };
+const extraTurns: number = process.argv.length > 99 ? 1 : 0;
 const trail: string[] = [];
 let meanwhile: () => void = () => {};
 function show(value: unknown, depth = 0): string {
@@ -337,7 +340,7 @@ function caseOf(combination: Combination, id: number) {
   const type = `Held${id}`;
   const V = place === "here" ? `(${birth.text})` : `born${id}(seed)`;
   const more = holder.parameters?.({ V, type });
-  const body = holder.body({ V, W: `again${id}(seed + 1)`, S: suspension.text, type, id });
+  const body = withLoopsOf(nameOf(combination), holder.body({ V, W: `again${id}(seed + 1)`, S: suspension.text, type, id }));
   const call = (seed: string) => `waits${id}(${[seed, more?.passed.replace(/\bseed\b/g, seed)].filter(Boolean).join(", ")})`;
   const run = (seed: string) => (kind.isGenerator ? (kind.isAsync ? `await driveAsync(${call(seed)})` : `drive(${call(seed)})`) : `await ${call(seed)}`);
   const started = (seed: string) => (kind.isGenerator ? (kind.isAsync ? `driveAsync(${call(seed)})` : `Promise.resolve().then(() => drive(${call(seed)}))`) : call(seed));

@@ -4,13 +4,14 @@
 // a function is called, getters, captured variables that both sides change. Whole numbers only. A line for each function: what forty calls yield.
 //
 // A program is a seed. The same seed always writes the same program.
+import { withLoopsOf } from "./births-and-uses/where-a-stretch-stands";
 import { randomFrom } from "./constant-expressions";
 
 export function program(seed: number, isTypeScript: boolean): { file: string; text: string } {
   const { next, choice, upTo } = randomFrom(seed);
   const N = isTypeScript ? ": number" : "";
   const lines = isTypeScript ? ["// @ts-nocheck"] : [];
-  lines.push(`let shared = 0; const trail${isTypeScript ? ": number[]" : ""} = [];`);
+  lines.push(`let shared = 0; const trail${isTypeScript ? ": number[]" : ""} = [], extraTurns = process.argv.length > 99 ? 1 : 0;`);
   const names: string[] = [];
   const call = (depth = 0): string => {
     if (names.length === 0 || next() < 0.15) return choice(["a", "b", "(a + b | 0)", "(a ^ b)", String(upTo(-3, 9))]);
@@ -50,7 +51,7 @@ export function program(seed: number, isTypeScript: boolean): { file: string; te
     n => `class C_${n} { v${N}; constructor(v${N}) { this.v = v; } add(k${N}) { return new C_${n}((this.v + k) | 0); } get twice() { return (this.v * 2) | 0; } static of(v${N}) { return new C_${n}(v); } } function ${n}(a${N}, b${N}) { return (C_${n}.of(a).add(b).add(${call()}).twice) | 0; }`,
   ];
   for (let i = 0; i < 70; i++) {
-    lines.push(choice(forms)("f" + i));
+    lines.push(withLoopsOf(`${seed}-f${i}`, choice(forms)("f" + i)));
     names.push("f" + i);
   }
   for (const n of names) lines.push(`{ let h = 0; const first = []; for (let i = 0; i < 40; i++) { let r; try { r = ${n}(i * 7 - 20, i % 5); } catch (e) { r = -777; } h = (h * 31 + (r | 0)) | 0; if (i < 4) first.push(r); } console.log("${n} ==> " + h + " " + first.join() + " " + shared + " " + trail.length); }`);

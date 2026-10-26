@@ -5,7 +5,7 @@ mod tests;
 use std::sync::OnceLock;
 
 use bun_ast::Loader;
-use bun_builtin_sources::{Manifest, VIRTUAL_ROOT};
+use bun_builtin_sources::{BundledName, Manifest, VIRTUAL_ROOT};
 use bun_sema::bind::SymbolId;
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{ExprId, FnId};
@@ -179,6 +179,7 @@ pub struct Sources {
     entries: Vec<SourceEntry>,
     entry_points: Vec<EntryPoint>,
     runtime_module_files: Vec<(RuntimeModule, FileId)>,
+    modules_named_at_run_time: Vec<RuntimeModule>,
     web_assembly_files: Vec<FileId>,
     pages: Vec<(FileId, Box<[u8]>)>,
     evaluated_functions: Vec<((FileId, ExprId), FunctionRef)>,
@@ -236,6 +237,11 @@ impl Sources {
         &self.runtime_module_files
     }
 
+    /// The modules of Bun's own that a load may ask for under a name which the build does not know.
+    pub fn modules_named_at_run_time(&self) -> &[RuntimeModule] {
+        &self.modules_named_at_run_time
+    }
+
     pub fn runtime_function(&self, file: FileId, export_name: &[u8]) -> Option<RuntimeFunction> {
         let entry = &self.entries[file.idx()];
         match entry.kind {
@@ -245,6 +251,13 @@ impl Sources {
                 .map(RuntimeFunction)
                 .or_else(|| find_compiler_function(&entry.public_path, export_name)),
             _ => None,
+        }
+    }
+
+    pub fn bundled_names(&self, file: FileId) -> &'static [BundledName] {
+        match self.kind(file) {
+            SourceKind::RuntimeModule(module) => self.manifest.bundled_names(module.registry_id()),
+            _ => &[],
         }
     }
 

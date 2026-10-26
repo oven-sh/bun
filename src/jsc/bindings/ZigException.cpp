@@ -137,8 +137,8 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
 #if ENABLE(AOT)
     if (stackFrame.isCompiledFrame()) [[unlikely]] {
         if (auto reported = stackFrame.compiledPosition(); reported && stackFrame.hasLineAndColumnInfo()) {
-            position.line_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.line).zeroBasedInt();
-            position.column_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.column).zeroBasedInt();
+            position.line_zero_based = OrdinalNumber::fromOneBasedInt(reported->startOfExpression().line).zeroBasedInt();
+            position.column_zero_based = OrdinalNumber::fromOneBasedInt(reported->startOfExpression().column).zeroBasedInt();
             position.byte_position = -1;
         }
         return;

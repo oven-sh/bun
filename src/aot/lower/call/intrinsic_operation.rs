@@ -131,11 +131,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn claim_operand_kind(&mut self, value: ValueId, kind: OperandKind) -> ValueId {
+    pub(in crate::lower) fn claim_operand_kind(
+        &mut self,
+        value: ValueId,
+        kind: OperandKind,
+    ) -> ValueId {
         let Some(required) = operand_kind_type(&mut self.file.fragment.types, kind) else {
             return value;
         };
-        let position = DeclaredType::from_compiler(required);
+        let position = DeclaredType::claimed(required);
         self.builder.convert(value, position, IllTypedCause::None)
     }
 }

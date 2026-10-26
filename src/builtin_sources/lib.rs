@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-const HEADER: &[u8] = b"bun-builtins-manifest\t4";
+const HEADER: &[u8] = b"bun-builtins-manifest\t5";
 
 pub const VIRTUAL_ROOT: &[u8] = b"/$bun/js/";
 
@@ -8,6 +8,15 @@ pub struct Module {
     pub id: u32,
     pub path: Option<Box<[u8]>>,
     pub specifier: Option<Box<[u8]>>,
+}
+
+/// An identifier of a module that names a function or a class, where the text that `bun run` evaluates does not have it as the module writes it.
+pub struct BundledName {
+    pub position: u32,
+    /// None: what the identifier names in the module has no name in that text.
+    pub name: Option<Box<[u8]>>,
+    /// In that text it is the function's or the class's own name, not a variable that holds an anonymous one.
+    pub is_own_name: bool,
 }
 
 #[derive(Default)]
@@ -18,6 +27,7 @@ pub struct Manifest {
     module_declarations: Vec<Box<[u8]>>,
     builtin_functions: Vec<(Box<[u8]>, u32)>,
     function_file_indexes: Vec<(u32, u32)>,
+    bundled_names: Vec<(Box<[u8]>, Vec<BundledName>)>,
 }
 
 #[derive(Debug)]
@@ -57,6 +67,22 @@ impl Manifest {
                 }),
                 b"functions" => manifest.function_files.push(field()?.into()),
                 b"declarations" => manifest.module_declarations.push(field()?.into()),
+                b"name" => {
+                    let file = field()?;
+                    let name = BundledName {
+                        position: number(field()?).ok_or_else(error)?,
+                        name: optional(field()?),
+                        is_own_name: match field()? {
+                            b"own" => true,
+                            b"variable" => false,
+                            _ => return Err(error()),
+                        },
+                    };
+                    match manifest.bundled_names.last_mut() {
+                        Some((last, names)) if **last == *file => names.push(name),
+                        _ => manifest.bundled_names.push((file.into(), vec![name])),
+                    }
+                }
                 b"function" => {
                     let id = number(field()?).ok_or_else(error)?;
                     let file = field()?;
@@ -70,6 +96,9 @@ impl Manifest {
             }
         }
         manifest.builtin_functions.sort_unstable();
+        for (_, names) in &mut manifest.bundled_names {
+            names.sort_unstable_by_key(|name| name.position);
+        }
         let files = manifest.function_files.iter().map(|file| &**file);
         let mut sorted_files: Vec<(&[u8], u32)> = files.zip(0..).collect();
         sorted_files.sort_unstable();
@@ -137,6 +166,16 @@ impl Manifest {
     #[cfg(test)]
     pub fn has_source(&self, id: u32) -> bool {
         self.module(id).is_some_and(|module| module.path.is_some())
+    }
+
+    /// In order of position.
+    pub fn bundled_names(&self, module: u32) -> &[BundledName] {
+        let path = self
+            .module(module)
+            .and_then(|module| module.path.as_deref());
+        let mut files = self.bundled_names.iter();
+        let found = files.find(|(file, _)| Some(&**file) == path);
+        found.map_or(&[], |(_, names)| names)
     }
 
     pub fn function_files(&self) -> &[Box<[u8]>] {
@@ -283,7 +322,7 @@ mod tests {
     use super::*;
     use bun_sema_standalone as _;
 
-    const MANIFEST: &[u8] = b"bun-builtins-manifest\t4\n\
+    const MANIFEST: &[u8] = b"bun-builtins-manifest\t5\n\
         define\tprocess.platform\t\"linux\"\n\
         \n\
         module\t0\tnode/fs.ts\tnode:fs\n\
@@ -295,7 +334,9 @@ mod tests {
         function\t7\tengine/ArrayPrototype.js\tmap\n\
         functions\tengine/ArrayPrototype.js\n\
         functions\tbuiltins/Fifo.ts\n\
-        declarations\tnode/fs.listed.d.ts\n";
+        declarations\tnode/fs.listed.d.ts\n\
+        name\tinternal/a.ts\t40\t-\tvariable\n\
+        name\tinternal/a.ts\t12\tread2\town\n";
 
     fn error_line(text: &[u8]) -> Option<usize> {
         Manifest::parse(text).err().map(|error| error.line)
@@ -318,6 +359,17 @@ mod tests {
         assert_eq!(&*manifest.function_files()[1], b"builtins/Fifo.ts");
         assert_eq!(manifest.module_declarations().len(), 1);
         assert_eq!(&*manifest.module_declarations()[0], b"node/fs.listed.d.ts");
+        let [first, second] = manifest.bundled_names(1) else {
+            panic!("the module has two names");
+        };
+        assert_eq!(first.position, 12);
+        assert_eq!(first.name.as_deref(), Some(&b"read2"[..]));
+        assert!(first.is_own_name);
+        assert_eq!(second.position, 40);
+        assert!(second.name.is_none());
+        assert!(!second.is_own_name);
+        assert!(manifest.bundled_names(0).is_empty());
+        assert!(manifest.bundled_names(4).is_empty());
     }
 
     #[test]

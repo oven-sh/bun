@@ -1,5 +1,5 @@
 use bun_sema::atom::{Atom, known, written_name};
-use bun_sema::bind::{Binding, FnOwner, Parent};
+use bun_sema::bind::{Binding, BindingInitializer, BindingKind, FnOwner, Parent};
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
     BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, IdList, MemberKey, StmtKind,
@@ -11,6 +11,7 @@ use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, StringId, ValueId};
 use crate::lower::member::{self, KeyConversion, PropertyName};
+use crate::lower::module;
 use crate::lower::operator::needs_parentheses;
 use crate::lower::{FileLowering, FunctionLowering};
 
@@ -240,6 +241,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprKind::Fn(function) => match self.last_expression_of_body(function) {
                     Some(expression) => expression,
                     None => return self.last_token_position(last),
+                },
+                ExprKind::Ident(_) => match self.find_printed_initializer(last) {
+                    Some(initializer) => initializer,
+                    None => return hir[last].pos,
                 },
                 ExprKind::Dot { .. } => return hir.name_pos(last),
                 ExprKind::Call(site) | ExprKind::New(site) => return hir[site].close_pos,
@@ -696,6 +701,75 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// `value instanceof a.b`, as plain Bun quotes it in "a.b is not a function. (evaluating 'value instanceof a.b')", where both operands consist of names.
+    pub(in crate::lower) fn find_written_instanceof(
+        &mut self,
+        left: ExprId,
+        right: ExprId,
+    ) -> Option<StringId> {
+        let mut text = Vec::new();
+        if !self.append_written_operand(left, &mut text) {
+            return None;
+        }
+        text.extend_from_slice(b" instanceof ");
+        let mut constructor = Vec::new();
+        if !self.append_written_operand(right, &mut constructor) {
+            return None;
+        }
+        text.extend_from_slice(&constructor);
+        Some(self.intern_bytes(&text))
+    }
+
+    /// A path of names, or a literal as Bun's transpiler prints it.
+    fn append_written_operand(&self, operand: ExprId, text: &mut Vec<u8>) -> bool {
+        let printed = self.skip_unprinted_syntax(operand);
+        let literal: &[u8] = match self.hir[printed].kind {
+            ExprKind::Null => b"null",
+            ExprKind::True => b"!0",
+            ExprKind::False => b"!1",
+            ExprKind::Ident(name) if matches!(self.bound.binding(printed), Binding::Free) => {
+                match self.queries.atom_bytes(name) {
+                    b"undefined" => b"void 0",
+                    b"Infinity" => b"1 / 0",
+                    _ => return self.append_written_path(printed, text),
+                }
+            }
+            _ => {
+                return self.names_what_is_printed(printed)
+                    && self.append_written_path(printed, text);
+            }
+        };
+        text.extend_from_slice(literal);
+        true
+    }
+
+    // Bun's transpiler may print the initializer of a local `let` or `const` in place of its only use.
+    fn names_what_is_printed(&self, path: ExprId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let inner = self.skip_type_syntax(path);
+        match hir[inner].kind {
+            ExprKind::Ident(_) => {
+                let Binding::Symbol(symbol) = bound.binding(inner) else {
+                    return true;
+                };
+                !(matches!(
+                    bound.binding_kind(symbol),
+                    BindingKind::Let | BindingKind::Const
+                ) && self.scopes.is_used_once(symbol)
+                    && bound.symbol_scope(symbol) != module::file_scope(self)
+                    && matches!(
+                        bound.binding_initializer(hir, symbol),
+                        BindingInitializer::Expression(_)
+                    ))
+            }
+            ExprKind::Dot { obj, .. } => self.names_what_is_printed(obj),
+            ExprKind::Index { obj, index, .. } => {
+                self.names_what_is_printed(obj) && self.names_what_is_printed(index)
+            }
+            _ => true,
+        }
+    }
+
     /// `a.b.c`, `this.#x`, `a?.b[key]`: a callee that consists of names, as plain Bun quotes it in "a.b.c is not a function".
     /// Answers false, with `path` in any state, for anything else and for what is too long to be worth its bytes in the executable.
     fn append_written_path(&self, expression: ExprId, path: &mut Vec<u8>) -> bool {
@@ -740,6 +814,16 @@ impl FileLowering<'_, '_, '_, '_> {
                         path.extend_from_slice(b"[\"");
                         path.extend_from_slice(self.queries.atom_bytes(key));
                         path.extend_from_slice(b"\"]");
+                    }
+                    ExprKind::Number(key) => {
+                        let key = hir.numbers[key as usize];
+                        if key.fract() != 0.0 || !(0.0..=f64::from(u32::MAX)).contains(&key) {
+                            return false;
+                        }
+                        if chain == Chain::Start {
+                            path.extend_from_slice(b"?.");
+                        }
+                        path.extend_from_slice(format!("[{}]", key as u32).as_bytes());
                     }
                     _ => return false,
                 }

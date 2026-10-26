@@ -398,6 +398,53 @@ pub(crate) fn creation_in_executable(
     Some(sys::Error::from_code(errno, syscall).with_path(path))
 }
 
+fn is_in_executable(path: &[u8]) -> bool {
+    graph_in_front_of_disk(path)
+        .is_some_and(|graph| graph.contains_file(path) || graph.find_dir(path))
+}
+
+fn lies_below_embedded_file(path: &[u8]) -> bool {
+    let Some(graph) = graph_in_front_of_disk(path) else {
+        return false;
+    };
+    let mut rest = strings::without_trailing_slash(path);
+    while let Some(parent) = bun_paths::dirname(rest).filter(|parent| parent.len() < rest.len()) {
+        if graph.contains_file(parent) {
+            return true;
+        }
+        rest = strings::without_trailing_slash(parent);
+    }
+    false
+}
+
+/// An error names each path as the caller wrote it, and nothing lies below a file.
+pub(crate) fn error_for_caller(
+    paths: [Option<&PathLike<'_>>; 2],
+    mut err: sys::Error,
+) -> sys::Error {
+    if standalone_module_graph().is_none() {
+        return err;
+    }
+    if err.get_errno() == E::ENOENT
+        && (lies_below_embedded_file(&err.path) || lies_below_embedded_file(&err.dest))
+    {
+        err.errno = E::ENOTDIR as _;
+    }
+    for path in paths.into_iter().flatten() {
+        let PathLike::Joined(path) = path else {
+            continue;
+        };
+        for shown in [&mut err.path, &mut err.dest] {
+            if let Some(below) = shown.strip_prefix(path.joined.as_slice())
+                && (below.is_empty() || bun_paths::is_sep_any(below[0]))
+            {
+                *shown = [path.written.as_slice(), below].concat().into_boxed_slice();
+            }
+        }
+    }
+    err
+}
+
 fn stats_of(result: &sys::Stat, big_int: bool) -> StatOrNotFound {
     StatOrNotFound::Stats(Box::new(Stats::init(&PosixStat::init(result), big_int)))
 }
@@ -449,7 +496,6 @@ fn access_in_graph(
 fn read_file_in_graph(
     graph: &bun_standalone_graph::Graph,
     path: &[u8],
-    path_for_error: &[u8],
     encoding: Encoding,
     string_type: ReadFileStringType,
 ) -> Option<Maybe<ret::ReadFileWithOptions>> {
@@ -478,9 +524,7 @@ fn read_file_in_graph(
         });
     }
     if graph.find_dir(path) {
-        return Some(Err(
-            sys::Error::from_code(E::EISDIR, sys::Tag::read).with_path(path_for_error)
-        ));
+        return Some(Err(sys::Error::from_code(E::EISDIR, sys::Tag::read)));
     }
     None
 }
@@ -1334,44 +1378,55 @@ mod _async_tasks {
         }
         /// Runs on the JS thread before the result reaches JS. See [`PinnedArrayBuffer::write_back`].
         fn write_back(&mut self, _bytes_read: u64) {}
+        fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
+            [None, None]
+        }
+    }
+
+    fn path_of<'a>(file: &'a PathOrFileDescriptor<'static>) -> Option<&'a PathLike<'static>> {
+        match file {
+            PathOrFileDescriptor::Path(path) => Some(path),
+            PathOrFileDescriptor::Fd(_) => None,
+        }
     }
 
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
     /// already defines.
     macro_rules! impl_fs_argument {
-    ( $( $ty:ty ),+ $(,)? ) => {
+    ( $( $ty:ty $( => |$args:ident| [$first:expr, $second:expr] )? ),+ $(,)? ) => {
         $(
         // SAFETY: `from_js_async` parses paths and data thread-isolated / pinned
         // and rooted; the remaining fields are plain data.
         unsafe impl ThreadIsolatedArg for $ty {}
         impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
+            $( fn paths(&self) -> [Option<&PathLike<'static>>; 2] { let $args = self; [$first, $second] } )?
         } )+
     };
 }
     impl_fs_argument!(
-        args::Rename<'static>,
-        args::Truncate<'static>,
-        args::Chown<'static>,
-        args::Lutimes<'static>,
-        args::Chmod<'static>,
-        args::StatFS<'static>,
-        args::Stat<'static>,
-        args::Link<'static>,
-        args::Symlink<'static>,
-        args::Readlink<'static>,
-        args::Realpath<'static>,
-        args::Unlink<'static>,
-        args::Rm<'static>,
-        args::RmDir<'static>,
-        args::Mkdir<'static>,
-        args::MkdirTemp<'static>,
-        args::Readdir<'static>,
-        args::Open<'static>,
-        args::Exists<'static>,
-        args::Access<'static>,
-        args::CopyFile<'static>,
-        args::Cp<'static>,
+        args::Rename<'static> => |args| [Some(&args.old_path), Some(&args.new_path)],
+        args::Truncate<'static> => |args| [path_of(&args.path), None],
+        args::Chown<'static> => |args| [Some(&args.path), None],
+        args::Lutimes<'static> => |args| [Some(&args.path), None],
+        args::Chmod<'static> => |args| [Some(&args.path), None],
+        args::StatFS<'static> => |args| [Some(&args.path), None],
+        args::Stat<'static> => |args| [Some(&args.path), None],
+        args::Link<'static> => |args| [Some(&args.old_path), Some(&args.new_path)],
+        args::Symlink<'static> => |args| [Some(&args.new_path), None],
+        args::Readlink<'static> => |args| [Some(&args.path), None],
+        args::Realpath<'static> => |args| [Some(&args.path), None],
+        args::Unlink<'static> => |args| [Some(&args.path), None],
+        args::Rm<'static> => |args| [Some(&args.0.path), None],
+        args::RmDir<'static> => |args| [Some(&args.path), None],
+        args::Mkdir<'static> => |args| [Some(&args.path), None],
+        args::MkdirTemp<'static> => |args| [Some(&args.prefix), None],
+        args::Readdir<'static> => |args| [Some(&args.path), None],
+        args::Open<'static> => |args| [Some(&args.path), None],
+        args::Exists<'static> => |args| [args.path.as_ref(), None],
+        args::Access<'static> => |args| [Some(&args.path), None],
+        args::CopyFile<'static> => |args| [Some(&args.src), Some(&args.dest)],
+        args::Cp<'static> => |args| [Some(&args.src), Some(&args.dest)],
     );
     impl_fs_argument!(
         args::Writev,
@@ -1430,6 +1485,9 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
         }
+        fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
+            [path_of(&self.path), None]
+        }
     }
     impl FsArgument for args::WriteFile<'static> {
         const HAVE_ABORT_SIGNAL: bool = true;
@@ -1440,6 +1498,9 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
+        }
+        fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
+            [path_of(&self.file), None]
         }
     }
     impl FsArgument for args::AppendFile<'static> {
@@ -1452,6 +1513,9 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.0.signal.as_deref()
+        }
+        fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
+            [path_of(&self.0.file), None]
         }
     }
 
@@ -3448,10 +3512,14 @@ pub(crate) mod args {
 
         /// `fs.stat(path)` of Rust-owned bytes, for a work-pool job.
         pub(crate) fn owned(path: Vec<u8>) -> ThreadIsolated<Self> {
+            Self::owned_copy_of(&PathLike::owned(path))
+        }
+
+        pub(crate) fn owned_copy_of(path: &PathLike<'_>) -> ThreadIsolated<Self> {
             // SAFETY: owned path only.
             unsafe {
                 ThreadIsolated::new(Stat {
-                    path: PathLike::owned(path),
+                    path: path.owned_copy(),
                     big_int: false,
                     throw_if_no_entry: true,
                 })
@@ -5982,6 +6050,11 @@ impl NodeFS {
         {
             return Err(error);
         }
+        // A link does not lead from one file system to another.
+        if is_in_executable(args.old_path.slice()) {
+            return Err(sys::Error::from_code(E::EXDEV, sys::Tag::link)
+                .with_path_dest(args.old_path.slice(), args.new_path.slice()));
+        }
         let mut to_buf = bun_paths::path_buffer_pool::get();
         let from = args.old_path.slice_z(&mut self.sync_error_buf);
         let to = args.new_path.slice_z(&mut to_buf);
@@ -6819,7 +6892,10 @@ impl NodeFS {
 
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
-                    without_nt_prefix::<u8>(basename.as_bytes()),
+                    match &args.path {
+                        PathLike::Joined(path) => &path.written,
+                        _ => without_nt_prefix::<u8>(basename.as_bytes()),
+                    },
                     encoding_to_node(args.encoding),
                 );
             }
@@ -7354,7 +7430,7 @@ impl NodeFS {
         };
 
         let mut entries: Vec<T> = Vec::with_capacity(list.len());
-        let input_path = args.path.slice();
+        let input_path = args.path.as_written();
         let root_path = if T::IS_DIRENT {
             BunString::clone_utf8(input_path)
         } else {
@@ -7460,13 +7536,7 @@ impl NodeFS {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z(&mut self.sync_error_buf);
                 let read_in = |graph: &bun_standalone_graph::Graph| {
-                    read_file_in_graph(
-                        graph,
-                        path.as_bytes(),
-                        p.slice(),
-                        args.encoding,
-                        string_type,
-                    )
+                    read_file_in_graph(graph, path.as_bytes(), args.encoding, string_type)
                 };
 
                 // A flag that creates the file would put on the disk what only the graph has.
@@ -8260,7 +8330,12 @@ impl NodeFS {
     }
 
     pub(crate) fn statfs(&mut self, args: &args::StatFS, _: Flavor) -> Maybe<ret::StatFS> {
-        match Syscall::statfs(args.path.slice_z(&mut self.sync_error_buf)) {
+        // What the executable holds lies on the file system that holds the executable.
+        let path = match bun_core::self_exe_path() {
+            Ok(executable) if is_in_executable(args.path.slice()) => executable,
+            _ => args.path.slice_z(&mut self.sync_error_buf),
+        };
+        match Syscall::statfs(path) {
             Ok(result) => Ok(ret::StatFS::init(&result, args.big_int)),
             Err(err) => Err(err),
         }
@@ -9605,7 +9680,7 @@ impl NodeFS {
     /// bound proves `R == ret::*` / `A == args::*` for this `F` so no identity
     /// cast is needed.
     #[inline]
-    pub(crate) fn dispatch<R, A, const F: NodeFSFunctionEnum>(
+    pub(crate) fn dispatch<R, A: FsArgument, const F: NodeFSFunctionEnum>(
         &mut self,
         args: &A,
         flavor: Flavor,
@@ -9614,6 +9689,7 @@ impl NodeFS {
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
         <Op<{ F }> as NodeFSDispatch<R, A>>::run(self, args, flavor)
+            .map_err(|err| error_for_caller(args.paths(), err))
     }
 
     #[cfg(windows)]

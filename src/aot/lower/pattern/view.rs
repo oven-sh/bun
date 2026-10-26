@@ -209,15 +209,17 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn default_function_name(&self, node: PatternNode) -> Option<(Binding, Atom)> {
+    pub(super) fn default_function_name(&self, node: PatternNode) -> Option<(Binding, Atom, u32)> {
         match node {
             PatternNode::Binding(pattern) => {
                 let name = self.written_leaf_name(node)?;
-                Some((self.bound.initialized_binding(pattern), name))
+                let binding = self.bound.initialized_binding(pattern);
+                Some((binding, name, self.hir[pattern].pos))
             }
             PatternNode::Assignment(target) => {
                 let (identifier, name) = self.identifier_target(target)?;
-                Some((self.bound.binding(identifier), name))
+                let binding = self.bound.binding(identifier);
+                Some((binding, name, self.hir[identifier].pos))
             }
         }
     }

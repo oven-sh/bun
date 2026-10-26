@@ -42,6 +42,9 @@ impl Checker<'_, '_> {
                 PatKind::Object(props) => {
                     for (index, p) in props.iter().enumerate() {
                         let prop = &hir[p];
+                        if matches!(prop.key, PropKey::Private(_)) {
+                            self.early_error_at(self.span_of_token(file, prop.key_pos), 1003, &[]);
+                        }
                         if prop.is_rest {
                             let is_last = index + 1 == props.len();
                             let has_key = prop.key != PropKey::None;

@@ -99,7 +99,7 @@ new Map(entries) -> 2
 new Error() -> Error: 
 new Error(text) -> Error: text
 new Error(text, options) -> 1
-new Symbol() throws TypeError: function is not a constructor
+new Symbol() throws TypeError: function is not a constructor (evaluating 'new f')
   stack new0:120 < attempt:35
 Map get on a Set throws TypeError: Map operation called on non-Map object
   stack attempt:35

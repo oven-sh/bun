@@ -365,6 +365,53 @@ describe.concurrent("modules that do not run", () => {
     1_800_000,
   );
 
+  // The first import() of a module walks the CommonJS files below it that ran with an earlier graph once, and runs none of them.
+  test.skipIf(!perf)(
+    "a file that has run costs a later import() over it next to nothing",
+    async () => {
+      const best: number[] = [];
+      const numbers = [100, 2100];
+      const roots = 20;
+      for (const n of numbers) {
+        for (const calls of [0, roots]) {
+          await slot(async () => {
+            const files = filesOf(rows.C, n);
+            for (let root = 0; root < roots; root++)
+              files[`root${root}.mjs`] = `import * as a from "./m${n - 1}.mjs";\nexport const c = a.c + ${root};\n`;
+            files["main.mjs"] =
+              `import * as a from "./m${n - 1}.mjs";\nlet sum = a.c;\nconst calls = process.argv.length > 99 ? ${roots} : ${calls};\n` +
+              Array.from(
+                { length: roots },
+                (_, root) => `if (calls > ${root}) sum += (await import("./root${root}.mjs")).c;\n`,
+              ).join("") +
+              `console.log("end");\n`;
+            using directory = tempDir("aot-static-modules-ran", files);
+            using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+            const { executable } = await build(String(directory), "main.mjs");
+            let least = Infinity;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const counted = await run(
+                [perf as string, "stat", "-x,", "-e", "instructions:u", executable],
+                String(elsewhere),
+                bunEnv,
+              );
+              expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({ stdout: "end\n", exitCode: 0 });
+              least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+            }
+            best.push(least);
+          });
+        }
+      }
+      const [fewWithout, fewWith, manyWithout, manyWith] = best;
+      const perFile = (manyWith - manyWithout - (fewWith - fewWithout)) / ((numbers[1] - numbers[0]) * roots);
+      console.log(
+        `static-modules-slope: ${perFile.toFixed(1)} instructions a file that has run, for each import() over it`,
+      );
+      expect(perFile).toBeLessThanOrEqual(400);
+    },
+    1_800_000,
+  );
+
   // Bare requires nest one compiled frame a level.
   test("a chain of 20,000 requires at the top ends, and the native stack holds", async () => {
     await slot(async () => {

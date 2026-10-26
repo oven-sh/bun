@@ -1,5 +1,7 @@
 use std::iter::successors;
 
+use bun_builtin_sources::BundledName;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, ScopeId, ScopeKind, SymbolId};
 use bun_sema::hir::File;
 use rustc_hash::FxHashMap;
@@ -14,6 +16,8 @@ pub(super) struct ShownNames {
     /// In order. A direct eval finds what they declare by what is written.
     scopes_around_evals: Vec<ScopeId>,
     interned: FxHashMap<SymbolId, StringId>,
+    /// Of a module of Bun's own. In order of position.
+    bundled: &'static [BundledName],
 }
 
 impl ShownNames {
@@ -22,13 +26,17 @@ impl ShownNames {
         source: SourceKind,
         hir: &File<'_>,
         bound: &Bound<'_>,
+        bundled: &'static [BundledName],
     ) -> ShownNames {
         let is_with = |kind| matches!(kind, ScopeKind::With(_));
         if !options.minifies_identifiers
             || source != SourceKind::Program
             || bound.scopes.iter().any(|scope| is_with(scope.kind))
         {
-            return ShownNames::default();
+            return ShownNames {
+                bundled,
+                ..ShownNames::default()
+            };
         }
         let parent_of = |&scope: &ScopeId| bound.runtime_parent_scope(hir, scope).some();
         let evals = bound.runtime.eval_scopes().iter();
@@ -41,6 +49,7 @@ impl ShownNames {
             shortens_bindings: true,
             scopes_around_evals,
             interned: FxHashMap::default(),
+            bundled,
         }
     }
 }
@@ -90,8 +99,52 @@ impl FileLowering<'_, '_, '_, '_> {
         symbol.is_some()
     }
 
-    /// Of a function or a class that has its name from the binding. No two bindings of the program give one name: a table with such names for keys holds. None: the name is what is written.
-    pub(crate) fn short_function_name(&mut self, binding: Binding) -> Option<StringId> {
+    fn find_bundled_name(&self, position: u32) -> Option<&'static BundledName> {
+        let names = self.shown_names.bundled;
+        let found = names.binary_search_by_key(&position, |name| name.position);
+        Some(&names[found.ok()?])
+    }
+
+    /// Of a function or a class that has its name from the identifier at `position`. None: the name is what is written.
+    pub(crate) fn shown_function_name(
+        &mut self,
+        binding: Binding,
+        position: u32,
+    ) -> Option<StringId> {
+        match self.find_bundled_name(position) {
+            Some(BundledName { name, .. }) => Some(self.intern_bytes(name.as_deref()?)),
+            None => self.short_function_name(binding),
+        }
+    }
+
+    /// Of an anonymous function or class behind the `export default` at `position`. None: it has no name.
+    pub(crate) fn default_export_name(&mut self, position: u32) -> Option<StringId> {
+        match self.find_bundled_name(position) {
+            Some(BundledName { name, .. }) => Some(self.intern_bytes(name.as_deref()?)),
+            None => Some(self.intern_atom(known::default)),
+        }
+    }
+
+    /// The function whose own name is written at `position` is an anonymous one in a variable in the text that `bun run` evaluates.
+    pub(crate) fn is_anonymous_in_bundle(&self, position: u32) -> bool {
+        let name = self.find_bundled_name(position);
+        name.is_some_and(|name| !name.is_own_name)
+    }
+
+    pub(crate) fn intern_function_name(
+        &mut self,
+        binding: Binding,
+        written: Atom,
+        position: u32,
+    ) -> StringId {
+        match self.shown_function_name(binding, position) {
+            Some(name) => name,
+            None => self.intern_atom(written),
+        }
+    }
+
+    /// No two bindings of the program give one name: a table with such names for keys holds.
+    fn short_function_name(&mut self, binding: Binding) -> Option<StringId> {
         let symbol = self.find_shortened_symbol(binding)?;
         if let Some(&name) = self.shown_names.interned.get(&symbol) {
             return Some(name);

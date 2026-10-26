@@ -11,7 +11,14 @@ impl Checker<'_, '_> {
             }
             let code = match hir.text(node) {
                 known::r#await if is_runtime_module => 1262,
-                known::r#yield if hir.yield_context(node) => 1359,
+                known::r#await if is_parameter_of_async_arrow_function(hir, node) => 1359,
+                known::r#yield if hir.yield_context(node) => {
+                    match self.operator_as_name_error_class(file, node, Flags::GENERATOR) {
+                        DiagnosticClass::EarlyError => 1359,
+                        _ => continue,
+                    }
+                }
+                known::r#yield if is_in_arrow_parameters_in_generator(hir, node) => 1359,
                 _ => continue,
             };
             let name = self.declaration_name_at(file, hir.start(node));
@@ -32,6 +39,26 @@ impl Checker<'_, '_> {
             }
         }
     }
+}
+
+/// `async await => 1`
+fn is_parameter_of_async_arrow_function(hir: &File<'_>, name: Node) -> bool {
+    let parameter = hir.parent(name);
+    let function = hir.parent(parameter);
+    hir.kind(function) == Kind::ArrowFunction
+        && hir.flags(function).contains(Flags::ASYNC)
+        && hir.is_parameter_without_parentheses(function, parameter)
+}
+
+/// `function* f() { (a = yield) => 1; }`: the language reads the operator there, which no parameter may hold.
+fn is_in_arrow_parameters_in_generator(hir: &File<'_>, node: Node) -> bool {
+    let (mut below, mut above) = (node, hir.parent(node));
+    while above.is_some() && !hir.kind(above).is_function_like() {
+        (below, above) = (above, hir.parent(above));
+    }
+    hir.kind(above) == Kind::ArrowFunction
+        && matches!(hir.data(below), NodeData::Param(_))
+        && (hir.yield_context(above) || is_in_arrow_parameters_in_generator(hir, above))
 }
 
 fn is_class_or_import_name(hir: &File<'_>, name: Node) -> bool {

@@ -47,10 +47,12 @@ enum ControlEntry {
         statement: StmtId,
         kind: BreakTargetKind,
         block: BlockId,
+        scope_count: usize,
     },
     ContinueTarget {
         statement: StmtId,
         block: BlockId,
+        scope_count: usize,
     },
     Handler {
         handler: Handler,
@@ -87,6 +89,22 @@ impl ControlState {
                 BreakTargetKind::Loop | BreakTargetKind::Switch => Some(*statement),
                 BreakTargetKind::Label => None,
             },
+            _ => None,
+        })
+    }
+
+    fn find_scope_count_of_target(&self, exit: Exit) -> Option<usize> {
+        self.entries.iter().rev().find_map(|entry| match entry {
+            ControlEntry::BreakTarget {
+                statement,
+                scope_count,
+                ..
+            } if exit == Exit::Break(*statement) => Some(*scope_count),
+            ControlEntry::ContinueTarget {
+                statement,
+                scope_count,
+                ..
+            } if exit == Exit::Continue(*statement) => Some(*scope_count),
             _ => None,
         })
     }
@@ -233,12 +251,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             statement,
             kind,
             block,
+            scope_count: self.entered_scope_count(),
         });
     }
 
     pub(crate) fn push_continue_target(&mut self, statement: StmtId, block: BlockId) {
-        let entry = ControlEntry::ContinueTarget { statement, block };
-        self.control.entries.push(entry);
+        self.control.entries.push(ControlEntry::ContinueTarget {
+            statement,
+            block,
+            scope_count: self.entered_scope_count(),
+        });
     }
 
     pub(crate) fn pop_jump_target(&mut self) {
@@ -285,6 +307,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.builder.is_unreachable() {
             return;
         }
+        // A jump out of a scope that has an object of its own in `bun run` reads the scope that it jumps into.
+        if let Some(scope_count) = self.control.find_scope_count_of_target(exit)
+            && self.has_shared_names_inside(scope_count)
+        {
+            self.read_scopes(scope_count);
+        }
         match (self.resolve_exit_block(exit), returned) {
             (Some(block), Some(value)) => self.jump_with(block, &[value]),
             (Some(block), None) => self.jump(block),
@@ -300,9 +328,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 ControlEntry::BreakTarget {
                     statement, block, ..
                 } if exit == Exit::Break(*statement) => return Some(*block),
-                ControlEntry::ContinueTarget { statement, block }
-                    if exit == Exit::Continue(*statement) =>
-                {
+                ControlEntry::ContinueTarget {
+                    statement, block, ..
+                } if exit == Exit::Continue(*statement) => {
                     return Some(*block);
                 }
                 ControlEntry::Cleanup(cleanup) => {

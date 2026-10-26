@@ -54,7 +54,7 @@ const known: Record<string, number> = {
   "image/AOTRegExpRequests.cpp addArgumentsGivenToClosures": 3,
   "image/AOTRegExpRequests.cpp isCall": 3,
   "image/AOTRegExpRequests.cpp isRuledOut": 5,
-  "image/AOTStringUses.cpp hasStringsForMessagesOnly": 11,
+  "image/AOTStringUses.cpp hasStringsForMessagesOnly": 6,
   "image/AOTStringUses.cpp keyOrComparisonOpcodes": 13,
   "ir/AOTEffectSummaries.cpp describeByRole": 9,
   "ir/AOTEffectsDeclared.h opcodesThrowingOnlyForLackOfMemory": 23,

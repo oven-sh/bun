@@ -22,7 +22,10 @@ pub(in crate::lower) fn lower_template_literal(
         strings.extend(lowering.emit_cooked_string(parts.next()));
         let value = lowering.lower_expression(substitution);
         let recorded = lowering.find_last_record(substitution);
-        lowering.set_position(recorded.unwrap_or(hir[substitution].pos));
+        match recorded {
+            Some(recorded) => lowering.set_position(recorded),
+            None => lowering.set_position_to_last_recorded(),
+        }
         strings.push(lowering.builder.to_string(value));
     }
     strings.extend(lowering.emit_cooked_string(parts.next()));

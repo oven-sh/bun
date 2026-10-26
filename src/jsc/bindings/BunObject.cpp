@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "JavaScriptCore/HeapProfiler.h"
+#include <JavaScriptCore/AOTMembersLeftOut.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ArgList.h"
@@ -362,6 +363,18 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
     args.append(createShellInterpreterFunction);
     args.append(createParsedShellScript);
     JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
+#if ENABLE(AOT)
+    // An executable of a program that never names `Bun.$` has no code for the function. It reads `process.env` when it runs, so that read is made here.
+    if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
+        if (JSValue standIn = JSC::AOT::takeStandInForMemberLeftOut(globalObject, "$"_s)) {
+            JSValue process = globalObject->get(globalObject, Identifier::fromString(vm, "process"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            process.get(globalObject, Identifier::fromString(vm, "env"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            return standIn;
+        }
+    }
+#endif
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!shell.isObject()) [[unlikely]] {

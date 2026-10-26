@@ -3,7 +3,6 @@ pub const FILES: &[(&str, &str)] = &[
     ("array-sort.ts", include_str!("array-sort.ts")),
     ("array-traversal.ts", include_str!("array-traversal.ts")),
     ("decorators.ts", include_str!("decorators.ts")),
-    ("json.ts", include_str!("json.ts")),
     ("written-lists.ts", include_str!("written-lists.ts")),
 ];
 

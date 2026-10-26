@@ -143,10 +143,24 @@ export default b.declarations(
   // What a program has stored on an object of the table is in hands that nobody follows already: the row says that such code runs, and that it gets the receiver.
   b.static(cpp("BunCompiledModules.cpp", "jsFunctionCallOwnFunctionsWithoutParameters"), {
     args: { holder: b.object, except: b.object, receiver: b.object },
-    returns: b.undefined,
+    returns: b.instance("Array").fresh.dense,
     capability: "js",
     throws: true,
-    uses: { holder: b.inspected, except: b.inspected, receiver: [b.everything] },
+    uses: { holder: [b.contentsStoredIn(b.resultSlot("element"))], except: b.inspected, receiver: [b.everything] },
+    implementation: b.hostCall,
+  }),
+  b.static(cpp("BunCompiledModules.cpp", "jsFunctionDefineOwnPropertiesLeftOut"), {
+    ...operandCodeOnly,
+    args: { target: b.object, source: b.object, replacements: b.union(b.object, b.undefined) },
+    returns: b.undefined,
+    runsUnseenCode: false,
+    uses: {
+      target: [b.definedFrom("source"), b.definedFrom("replacements"), ...b.ownPropertyTraps],
+      source: b.inspected,
+      replacements: b.inspected,
+    },
+    reads: ["ObjectFields", "ShapeWords", "OrderWords", "NamedProperties", "Elements", "ArrayStorage"],
+    writes: ["MemberGuards"],
     implementation: b.hostCall,
   }),
   b.static(cpp("JSEventTarget.cpp", "jsEventTargetGetEventListenersCount"), {

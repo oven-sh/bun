@@ -1,8 +1,9 @@
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{
-    BindingKind, Bound, CodeUnit, Decl, EvalScope, PrivateMembers, ScopeId, ScopeKind, SymbolId,
+    Binding, BindingKind, Bound, CodeUnit, Decl, EvalScope, PrivateMembers, ScopeId, ScopeKind,
+    SymbolId, is_among_parameters,
 };
-use bun_sema::hir::{self, ClassId, MemberId};
+use bun_sema::hir::{self, ClassId, ExprId, MemberId};
 use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
@@ -19,11 +20,14 @@ use crate::lower::{FileLowering, FunctionLowering, commonjs, layouts, module};
 use crate::modules::{ImportBinding, Shape, SyntheticExportId};
 
 type ScopeDepths = SmallVec<[(ScopeId, u32); 8]>;
+type FunctionScopes = SmallVec<[ScopeId; 1]>;
 pub(super) type EvalOperands = SmallVec<[ValueId; 4]>;
 
 struct EvalRecord<'l, 'f, 'a, 'c, 'p, 's> {
     lowering: &'l mut FunctionLowering<'f, 'a, 'c, 'p, 's>,
     context: EvalContext,
+    is_sloppy: bool,
+    entered_from_parameters: FunctionScopes,
     bindings: Vec<EvalBinding>,
     operands: EvalOperands,
     environments: SmallVec<[(ScopeId, u32); 4]>,
@@ -59,6 +63,26 @@ fn compute_scope_depths(hir: &hir::File<'_>, bound: &Bound<'_>, innermost: Scope
         scope = bound.runtime_parent_scope(hir, scope);
     }
     depths
+}
+
+fn find_functions_entered_from_parameters(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    depths: &ScopeDepths,
+    call: ExprId,
+) -> FunctionScopes {
+    let mut entered = FunctionScopes::new();
+    let mut from = ScopeKind::Block;
+    for &(scope, _) in depths {
+        let kind = bound.scopes[scope.idx()].kind;
+        if let ScopeKind::Fn(function) = kind
+            && is_among_parameters(hir, function, from, hir[call].pos)
+        {
+            entered.push(scope);
+        }
+        from = kind;
+    }
+    entered
 }
 
 fn class_slot(scope: ScopeId, slot: ClassSlot) -> BindingRef {
@@ -102,14 +126,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(super) fn collect_eval_bindings(
         &mut self,
+        call: ExprId,
         eval_scope: EvalScope,
         context: EvalContext,
     ) -> (Vec<EvalBinding>, EvalOperands) {
         let bound = self.file.bound;
         let depths = compute_scope_depths(self.file.hir, bound, eval_scope.scope);
+        let entered_from_parameters =
+            find_functions_entered_from_parameters(self.file.hir, bound, &depths, call);
         let mut record = EvalRecord {
             lowering: self,
             context,
+            is_sloppy: eval_scope.is_sloppy,
+            entered_from_parameters,
             bindings: Vec::new(),
             operands: SmallVec::new(),
             environments: SmallVec::new(),
@@ -134,16 +163,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 }
 
 impl EvalRecord<'_, '_, '_, '_, '_, '_> {
+    // A sloppy function keeps its parameters and `arguments` in an environment of their own. It lies inside the environment that takes the variables of a text evaluated among the parameters: a `var` of that text that meets one of them is a SyntaxError. It lies outside the environment that takes the variables of a text evaluated in the body: a `var` of that text makes a new variable.
+    fn compute_parameter_depth(&self, parameter: Binding, scope: ScopeId, depth: u32) -> u32 {
+        if self.entered_from_parameters.contains(&scope) {
+            return depth - u32::from(self.is_sloppy);
+        }
+        let file = &*self.lowering.file;
+        let variables = BindingRef::Slot(scope, ScopeSlot::EvalVariables);
+        let is_outside_variables = file.scopes.placement(variables).is_some()
+            && file.bound.is_outside_body_variables(parameter);
+        depth + u32::from(is_outside_variables)
+    }
+
     fn add_symbol(&mut self, symbol: SymbolId, depth: u32) {
-        let file = &mut *self.lowering.file;
-        let bound = file.bound;
-        let name = file.intern_atom(file.find_spelled_name(symbol));
+        let bound = self.lowering.file.bound;
         let declared_as = bound.binding_kind(symbol);
-        let is_lexical = matches!(
-            declared_as,
-            BindingKind::Let | BindingKind::Const | BindingKind::Class
-        );
-        let depth = depth - u32::from(is_lexical);
+        let depth = match declared_as {
+            BindingKind::Let | BindingKind::Const | BindingKind::Class => depth - 1,
+            BindingKind::Parameter => {
+                let scope = bound.symbol_scope(symbol);
+                self.compute_parameter_depth(Binding::Symbol(symbol), scope, depth)
+            }
+            _ => depth,
+        };
+        let file = &mut *self.lowering.file;
+        let name = file.intern_atom(file.find_spelled_name(symbol));
         let binding = create_binding(compute_binding_kind(declared_as), Some(name), depth);
         match file.scopes.form(symbol) {
             BindingForm::Stored => self.add_stored(binding, BindingRef::Symbol(symbol)),
@@ -238,7 +282,9 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
 
     fn add_owner_bindings(&mut self, scope: ScopeId, depth: u32) {
         let flags = self.context.flags;
-        self.add_arguments_binding(self.context.owner, depth);
+        let owner = self.context.owner;
+        let arguments_depth = self.compute_parameter_depth(Binding::Arguments(owner), scope, depth);
+        self.add_arguments_binding(owner, arguments_depth);
         let new_target = BindingRef::Slot(scope, ScopeSlot::NewTarget);
         if self.lowering.file.has_location(new_target) {
             let binding = create_binding(EvalBindingKind::NewTarget, None, depth);

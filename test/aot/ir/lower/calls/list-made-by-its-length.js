@@ -49,8 +49,11 @@
 // CHECK-LABEL: function {{*}}name="mapped"
 // CHECK: b0([[mappedLength]]: {{*}}):
 // CHECK-NOT: ArrayPrototypeMap
+// CHECK: [[checkMapped]] = Builtin builtin=CompilerHelpersCheckedArrayLength
+// CHECK-NEXT: [[checkedMapped]] = Call [[checkMapped]], -, [[mappedLength]]
 // CHECK: [[makeMapped]] = Builtin builtin=CompilerHelpersMappedFilledArray
-// CHECK-NEXT: = Call [[makeMapped]], -, [[mappedLength]], {{*}}, {{*}}
+// CHECK-NEXT: [[mappedList]] = Call [[makeMapped]], -, [[checkedMapped]], {{*}}, {{*}}
+// CHECK-NEXT: ReturnCall [[mappedList]]
 // CHECK-LABEL: function {{*}}name="mapperThatTakesTheList"
 // CHECK-NOT: CompilerHelpersMappedFilledArray
 // CHECK: = Builtin builtin=CompilerHelpersFilledArray

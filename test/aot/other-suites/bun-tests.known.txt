@@ -758,7 +758,6 @@ DIFFERS test/js/node/util/test-aborted.test.ts > aborted does not hand its inter
 DIFFERS test/js/node/util/test-util-types.test.js > #11780: a file by a path that is computed or made at run time
 DIFFERS test/js/node/v8/capture-stack-trace.test.js > CallFrame isTopLevel returns false for Function constructor: a compiled frame gives no function object
 DIFFERS test/js/node/v8/capture-stack-trace.test.js > CallFrame.p.getScriptNameOrSourceURL inside eval: a compiled frame gives no function object
-DIFFERS test/js/node/visible-shape-follows-node.test.ts > process.nextTick is a JavaScript function: the text of a function
 DIFFERS test/js/node/visible-surface.test.ts > the visible surface of the modules of Node.js: a file by a path that is computed or made at run time
 DIFFERS test/js/node/vm/vm.test.ts > can extend generated globals & WebCore globals: the lock of the built-ins
 DIFFERS test/js/node/vm/vm.test.ts > the file: a file by a path that is computed or made at run time

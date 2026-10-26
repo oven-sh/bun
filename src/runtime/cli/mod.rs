@@ -1061,6 +1061,10 @@ pub(crate) mod command {
                 // and ctx-setup code lives behind this cold call.
                 return boot_standalone(graph, log);
             }
+            // Only `bun build --compile` removes the command line, so this file had a program.
+            if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
+                bun_standalone_graph::Graph::exit_without_program();
+            }
         }
 
         // Fast path: `bun -v` / `bun --version` / `bun --revision`, the

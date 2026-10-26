@@ -4321,7 +4321,64 @@ fn what_loading_gives(loader: Loader) -> Loaded {
     }
 }
 
+/// What reading `path` answers where no file can be read there.
+fn unreadable_file_error(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
+    log: &mut bun_ast::Log,
+    path: &[u8],
+) -> Option<JSValue> {
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    if path.len() >= buffer.len() {
+        return None;
+    }
+    let error = bun_sys::access(
+        bun_paths::resolve_path::z(path, &mut buffer),
+        bun_sys::posix::R_OK,
+    )
+    .err()?;
+    let _ = log.add_error_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!(
+            "{} reading \"{}\"",
+            bstr::BStr::new(error.name()),
+            bstr::BStr::new(path),
+        ),
+    );
+    Some(bun_jsc::virtual_machine::process_fetch_log(
+        global,
+        specifier,
+        referrer,
+        log,
+        bun_jsc::CrateError::ModuleNotFound,
+    ))
+}
+
 fn loader_refusal_error<const DATA_ONLY: bool>(
+    global: &JSGlobalObject,
+    specifier: &bun_core::String,
+    referrer: &bun_core::String,
+    is_commonjs_require: bool,
+    loader: Loader,
+    lr: &LoaderResult<'_>,
+    log: &mut bun_ast::Log,
+) -> Option<JSValue> {
+    let refusal =
+        refusal_of_what_loading_gives::<DATA_ONLY>(global, specifier, is_commonjs_require, loader)?;
+    let is_read_from_disk = loader.is_java_script_like()
+        && lr.virtual_source.is_none()
+        && !lr.path.text.starts_with(b"data:");
+    if is_read_from_disk
+        && let Some(error) = unreadable_file_error(global, specifier, referrer, log, lr.path.text)
+    {
+        return Some(error);
+    }
+    Some(refusal)
+}
+
+fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     is_commonjs_require: bool,
@@ -4521,8 +4578,15 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     }
 
     if let Some(loader) = lr.loader
-        && let Some(error) =
-            loader_refusal_error::<DATA_ONLY>(global, specifier, is_commonjs_require, loader)
+        && let Some(error) = loader_refusal_error::<DATA_ONLY>(
+            global,
+            specifier,
+            referrer,
+            is_commonjs_require,
+            loader,
+            &lr,
+            &mut log,
+        )
     {
         *ret = ErrorableResolvedSource::err(error);
         return ptr::null_mut();
@@ -4689,8 +4753,11 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         && let Some(error) = loader_refusal_error::<DATA_ONLY>(
             global,
             specifier,
+            referrer,
             is_commonjs_require,
             synchronous_loader,
+            &lr,
+            &mut log,
         )
     {
         *ret = ErrorableResolvedSource::err(error);

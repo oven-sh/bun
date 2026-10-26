@@ -26,8 +26,9 @@ impl FileLowering<'_, '_, '_, '_> {
         &mut self,
         binding: Binding,
         written: Atom,
+        position: u32,
     ) -> PropertyKeyId {
-        match self.short_function_name(binding) {
+        match self.shown_function_name(binding, position) {
             Some(name) => self.text_key(name),
             None => self.name_key(written),
         }
@@ -138,7 +139,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     return PropertyName::Constant(found);
                 }
                 let value = self.lower_expression(computed);
-                self.set_position(self.file.hir[computed].pos);
+                self.set_position_to_last_recorded();
                 PropertyName::Computed(self.builder.to_property_key(value))
             }
             PropKey::Private(_) | PropKey::None => {

@@ -43,7 +43,10 @@ impl<'s> Folder<'_, 's> {
         let folded = self.folded(e);
         match (folded.value, folded.effects) {
             (Value::Known(_), Effects::None) => true,
-            (Value::Known(_), Effects::Unknown | Effects::DeadZoneCheck | Effects::MemberRead)
+            (
+                Value::Known(_),
+                Effects::Unknown | Effects::TypeTest | Effects::DeadZoneCheck | Effects::MemberRead,
+            )
             | (Value::Unknown, _) => false,
         }
     }

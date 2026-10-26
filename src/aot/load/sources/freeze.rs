@@ -27,6 +27,7 @@ pub(crate) struct FreezeInput<'a, 's> {
     pub options: &'a Options<'a>,
     pub manifest: &'static Manifest,
     pub host_loaded_modules: &'a [RuntimeModule],
+    pub modules_named_at_run_time: &'a [RuntimeModule],
     pub is_world: bool,
 }
 
@@ -80,6 +81,7 @@ pub(crate) fn freeze_sources(
         entry_points: collect_entry_points(input, &all.entries),
         entries: all.entries,
         runtime_module_files: all.runtime_module_files,
+        modules_named_at_run_time: input.modules_named_at_run_time.to_vec(),
         web_assembly_files: all.web_assembly_files,
         pages: all.pages,
         evaluated_functions: all.evaluated_functions,

@@ -1,4 +1,4 @@
-// A string that the program itself holds is asked again and again whether it is one of the program's literal strings: wherever it reaches a place whose type is a union of literals.
+// A string that the program itself holds is asked again and again whether it is one of the program's literal strings, and which: wherever code goes by the member of a union of literals, here a `switch`.
 // (Here the strings are the names of properties, so that the compiler does not know which string reaches which place.) The answer is in the header of the string in the image. It used to come from a cache of 256 entries by address, in which two strings that are used in turn can evict each other for ever.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -19,7 +19,11 @@ const declarations = Array.from({ length: groups }, (_, group) => {
   return `
     type Name${group} = ${names.join(" | ")};
     const holder${group}: { name: Name${group}; stores: number } = { name: ${names[0]}, stores: 0 };
-    function store${group}(value: string): void { holder${group}.name = value as Name${group}; holder${group}.stores++; }
+    function store${group}(value: string): void {
+      const name = value as Name${group};
+      switch (name) { ${names.map((name, index) => `case ${name}: holder${group}.stores += ${index + 1}; break;`).join(" ")} }
+      holder${group}.name = name;
+    }
     const given${group}: string[] = Object.keys({ ${names.map(name => name + ": 0").join(", ")} });`;
 });
 
@@ -58,7 +62,7 @@ async function measure() {
     const path = join(cwd, "counts-" + kind);
     const ran = await spawned([executable, kind], cwd, { ...bunEnv, BUN_JSC_aotCountsPath: path });
     expect(ran).toEqual({
-      stdout: "y".repeat(rounds) + " " + 2 * rounds * namesInGroup + "\n",
+      stdout: "y".repeat(rounds) + " " + rounds * namesInGroup * (namesInGroup + 1) + "\n",
       stderr: "",
       exitCode: 0,
       signal: null,

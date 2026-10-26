@@ -55,8 +55,9 @@ export function filledArray(length: unknown, value: unknown): unknown[] {
   return made.fill(value);
 }
 
-// Array(length).fill(value).map(mapper), where the mapper does not take the list
-$visibility = "Private";
+// Array(length).fill(value).map(mapper), where the mapper does not take the list and checkedArrayLength has passed the length.
+// A stack trace that the mapper takes lists map.
+$overriddenName = "map";
 export function mappedFilledArray(length: unknown, value: unknown, mapper: unknown): unknown[] {
   if (typeof length === "number" && typeof mapper === "function") {
     const count = length | 0;

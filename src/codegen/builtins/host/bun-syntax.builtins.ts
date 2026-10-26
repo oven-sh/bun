@@ -121,8 +121,6 @@ export default b.declarations(
   operation("tryPutDoubleIndex", "TryPutDoubleIndex"),
   operation("tryPutIndex", "TryPutIndex"),
 
-  b.intrinsic("jsonStringify", "Call", builtin("JSON.stringify")),
-
   b.intrinsic("assert", "Call", erased),
   b.intrinsic("bundleError", "Call", { intrinsic: "BundleError" }),
   directive("constructor", "Constructor"),

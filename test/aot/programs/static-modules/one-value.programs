@@ -922,6 +922,15 @@ const attempt = () => {
   }
 };
 console.log(attempt(), attempt(), attempt(), globalThis.n);
+//// rulings/a-computed-key-on-require-shows-the-ways-to-everybody/child.cjs
+exports.itself = module;
+//// rulings/a-computed-key-on-require-shows-the-ways-to-everybody/main.cjs
+// No file spells `children`, `parent`, `require.main` or `process.mainModule`, and one reads `require` under a key that comes from outside. That read may be of `require.main`,
+// so it counts as naming it, and all four answer as under `bun run`, under computed keys too.
+const keys = (process.env.NO_SUCH_VARIABLE ?? "children parent main mainModule").split(" ");
+require("./child.cjs");
+console.log(typeof module[keys[0]], typeof require("./child.cjs").itself[keys[1]], typeof require[keys[2]], typeof process[keys[3]]);
+console.log(require[keys[2]] === module, module[keys[0]][0] === require("./child.cjs").itself, require("./child.cjs").itself[keys[1]] === module, process[keys[3]] === module);
 //// rulings/a-failure-that-is-outlived-then-a-require-at-the-top/bad.cjs
 exports.a = 1;
 throw new Error("x");
@@ -1151,10 +1160,12 @@ console.log(child.seen());
 exports.itself = module;
 //// rulings/ways-under-a-computed-key-are-shown-to-nobody-where-no-file-names-one/main.cjs
 // No file names `children`, `parent`, `require.main` or `process.mainModule`. The keys come from outside, so no analysis can tell what is read, and all four answer undefined in an executable,
-// whatever else the program does. The expected output is written down: `bun run` prints object object object object.
+// whatever else the program does. `require` comes back from native code first: a computed key on `require` itself counts as naming `require.main`.
+// The expected output is written down: `bun run` prints object object object object.
 const keys = (process.env.NO_SUCH_VARIABLE ?? "children parent main mainModule").split(" ");
+const lost = value => new CustomEvent("lost", { detail: value }).detail;
 require("./child.cjs");
-console.log(typeof module[keys[0]], typeof require("./child.cjs").itself[keys[1]], typeof require[keys[2]], typeof process[keys[3]]);
+console.log(typeof module[keys[0]], typeof require("./child.cjs").itself[keys[1]], typeof lost(require)[keys[2]], typeof process[keys[3]]);
 //// the-body-as-code/a-barrel-that-is-imported-dynamically-and-required/a.mjs
 (globalThis.ran ??= []).push("a");
 export const a = "a".toUpperCase();

@@ -1,6 +1,6 @@
 use crate::check::Checker;
 use crate::check::aot::DiagnosticClass;
-use crate::hir::{has_body_node, rare};
+use crate::hir::{Flags, has_body_node, rare};
 use crate::node::{Kind, Node, NodeData};
 use crate::program::FileId;
 
@@ -36,6 +36,26 @@ impl Checker<'_, '_> {
             DiagnosticClass::TypeScriptGrammar
         } else {
             DiagnosticClass::EarlyError
+        }
+    }
+
+    /// For `await` (`ASYNC`) or `yield` (`GENERATOR`) as a name where the code around it has the operator. A function
+    /// expression reads its own name as its own modifiers say.
+    pub(in crate::check) fn operator_as_name_error_class(
+        &self,
+        file: FileId,
+        name: Node,
+        modifier: Flags,
+    ) -> DiagnosticClass {
+        let hir = self.hir(file);
+        let function = hir.parent(name);
+        let is_own_name = hir.kind(function) == Kind::FunctionExpression
+            && hir.name(function) == name
+            && !hir.flags(function).contains(modifier);
+        if is_own_name {
+            DiagnosticClass::TypeScriptGrammar
+        } else {
+            self.early_error_class(file, name)
         }
     }
 

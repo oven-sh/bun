@@ -32,7 +32,8 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(in crate::lower) fn intern_class_name(&mut self, class: ClassId) -> StringId {
         let binding = self.class_binding(class);
-        self.intern_function_name(binding, self.hir[class].name)
+        let node = self.hir[class];
+        self.intern_function_name(binding, node.name, node.name_pos)
     }
 
     fn hidden_key(&mut self, owner: LayoutId, text: &[u8]) -> PropertyKeyId {

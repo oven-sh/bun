@@ -773,6 +773,14 @@ A `|` followed by `engine` in a list splits it. What comes before it is on the w
 
 The schema has about 380 operations. The ones that the front end may send are close to the language: `PropGet`, `Call`, `Add`, `Await`, `NewClass`. The rest are forms that the engine's passes lower to.
 
+The schema also describes the rows of the image's side tables, which the compiler writes and the run time reads.
+
+```txt aot/ir/schema/image-tables.def
+packed CallSiteDetails { kind: CallSiteKind frame: UInt32 ; calledBuiltin: Builtin if namesBuiltin(kind) }
+```
+
+The generator turns that into a struct with `append()` and `read()`. Fields fill a variable-length number from the lowest bit up, `;` starts the next number, and `if` says when it's there. No shift or mask is written twice, so the writer and the reader can't disagree about a bit.
+
 ### Four forms
 
 ```txt aot/ir/AOTSchema.def

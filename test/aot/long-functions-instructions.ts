@@ -30,13 +30,22 @@ export async function expectLinearInstructionCount(
   expect((withMany - withNone) / (withFew - withNone)).toBeLessThan(mostGrowth);
 }
 
-// The most memory that a build has resident wavers by some 20 MB, so the program has to add many times that.
+// What is measured: the memory that a build needs for the items, which is the least that a build of the program has resident at
+// its peak, less the least that a build of nothing has. One build's peak wavers by some 20 MB with how the allocator and the
+// threads of the process happen to meet, on both sides, so each side is built three times and its least peak counts. For the build
+// of nothing that asks more than one build did. A peak that only some builds of one program reach is not what this holds.
+// The program has to add many times what a peak wavers by.
 // A step that keeps something for each pair of items passes a bound on the bytes for each item as the size grows.
 export async function expectPeakBytesForEachItem(
   size: number,
   writeProgramOfSize: (size: number) => Program,
   mostBytesForEachItem: number,
 ) {
-  const [withNone, withAll] = await Promise.all([emptyProgram, writeProgramOfSize(size)].map(costOfBuild));
-  expect((withAll.peakBytes - withNone.peakBytes) / size).toBeLessThan(mostBytesForEachItem);
+  const leastPeakBytesOf = async (program: Program) => {
+    let least = Infinity;
+    for (let build = 0; build < 3; build++) least = Math.min(least, (await costOfBuild(program)).peakBytes);
+    return least;
+  };
+  const [withNone, withAll] = await Promise.all([emptyProgram, writeProgramOfSize(size)].map(leastPeakBytesOf));
+  expect((withAll - withNone) / size).toBeLessThan(mostBytesForEachItem);
 }

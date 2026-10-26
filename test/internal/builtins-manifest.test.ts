@@ -12,6 +12,7 @@ import {
   specifierOf,
   typesOnlySchemas,
 } from "../../src/codegen/builtins-manifest-model";
+import { listBundledNamesOfModule } from "../../src/codegen/bundled-names";
 import { run } from "../aot/harness/run";
 
 const root = join(import.meta.dir, "..", "..");
@@ -45,13 +46,27 @@ const engineFunctions: EngineFunctions = {
 };
 
 function createFixture(engine: EngineFunctions = engineFunctions) {
-  const dir = tempDir("builtins-manifest", { "aot_engine_functions.json": JSON.stringify(engine) });
+  const dir = tempDir("builtins-manifest", {
+    "aot_engine_functions.json": JSON.stringify(engine),
+    "bundled_names_of_modules.txt": `name\tnode/fs.ts\t12\tread2\town\nname\t${textsForTheCompiler[0]}\t3\tcall2\tvariable\n`,
+    "runtime.out.js": "var a=()=>1;",
+    "runtime.out.js.map": JSON.stringify({
+      version: 3,
+      sources: [join(root, "src", "runtime.js")],
+      sourcesContent: ["export var __name = () => 1;"],
+      mappings: "IAAW",
+    }),
+  });
   const file = (name: string) => join(String(dir), name);
   return {
     file,
     manifest: file("builtins.manifest"),
     archive: file("builtin_sources.bin"),
     engineFlag: `--engine-functions=${file("aot_engine_functions.json")}`,
+    nameFlags: [
+      `--bundled-names-of-modules=${file("bundled_names_of_modules.txt")}`,
+      `--bundled-helpers=${file("runtime.out.js")}`,
+    ],
     [Symbol.dispose]: () => dir[Symbol.dispose](),
   };
 }
@@ -73,10 +88,10 @@ describe("builtins-manifest.ts", () => {
 
   beforeAll(async () => {
     fixture = createFixture();
-    const { manifest, archive, engineFlag } = fixture;
+    const { manifest, archive, engineFlag, nameFlags } = fixture;
     const runs = await Promise.all([
-      bun("run", script, "--debug=OFF", manifest, archive, engineFlag),
-      bun("run", script, "--debug=ON", fixture.file("debug.manifest"), engineFlag),
+      bun("run", script, "--debug=OFF", manifest, archive, engineFlag, ...nameFlags),
+      bun("run", script, "--debug=ON", fixture.file("debug.manifest"), engineFlag, ...nameFlags),
     ]);
     runs.forEach(expectSuccess);
     const lines = readFileSync(manifest, "utf8").trimEnd().split("\n");
@@ -85,14 +100,22 @@ describe("builtins-manifest.ts", () => {
 
   afterAll(() => fixture[Symbol.dispose]());
 
-  test("the manifest has format 4 and its five record kinds", () => {
-    expect(records[0]).toEqual(["bun-builtins-manifest", "4"]);
+  test("the manifest has format 5 and its six record kinds", () => {
+    expect(records[0]).toEqual(["bun-builtins-manifest", "5"]);
     expect([...new Set(records.slice(1).map(([kind]) => kind))]).toEqual([
       "define",
       "module",
       "functions",
       "function",
       "declarations",
+      "name",
+    ]);
+  });
+
+  test("the names are those of the bundled texts, but for a module that the compiler reads in a second text", () => {
+    expect(records.filter(([kind]) => kind === "name")).toEqual([
+      ["name", "node/fs.ts", "12", "read2", "own"],
+      ["name", "runtime.js", "11", "a", "variable"],
     ]);
   });
 
@@ -166,9 +189,9 @@ describe("builtins-manifest.ts", () => {
   test(
     "a second run writes neither file again",
     async () => {
-      const { manifest, archive, engineFlag } = fixture;
+      const { manifest, archive, engineFlag, nameFlags } = fixture;
       for (const file of [manifest, archive]) utimesSync(file, 1, 1);
-      expectSuccess(await bun("run", script, "--debug=OFF", manifest, archive, engineFlag));
+      expectSuccess(await bun("run", script, "--debug=OFF", manifest, archive, engineFlag, ...nameFlags));
       expect([manifest, archive].map(file => statSync(file).mtimeMs)).toEqual([1000, 1000]);
     },
     generatorTimeout,
@@ -199,14 +222,49 @@ describe("builtins-manifest.ts", () => {
       `fails with ${name}`,
       async () => {
         using broken = createFixture(engine);
-        const { manifest, archive } = broken;
-        const result = await bun("run", script, "--debug=OFF", manifest, archive, ...flags.map(flag => broken[flag]));
+        const { manifest, archive, nameFlags } = broken;
+        const given = [...flags.map(flag => broken[flag]), ...nameFlags];
+        const result = await bun("run", script, "--debug=OFF", manifest, archive, ...given);
         expect(result.stderr).toContain(message);
         expect(result.exitCode).toBe(1);
       },
       generatorTimeout,
     );
   }
+});
+
+describe("bundled-names.ts", () => {
+  test("lists the identifiers that name a function otherwise in the bundle than in the file", async () => {
+    const written = [
+      `const stream = require("node:stream");`,
+      `{`,
+      `  function inBlock() {}`,
+      `  stream.first = inBlock;`,
+      `}`,
+      `stream.second = function setTimeout() {};`,
+      `function kept() {}`,
+      `export default () => [kept, setTimeout];`,
+      ``,
+    ].join("\n");
+    const given = "var $;" + written.replace(`require("node:stream")`, "lookUp(12)").replace("export default", "$ =");
+    using dir = tempDir("bundled-names", { "module.ts": given + "done($);\n" });
+    const built = await Bun.build({
+      entrypoints: [join(String(dir), "module.ts")],
+      target: "bun",
+      minify: { syntax: true, keepNames: true },
+      sourcemap: "external",
+    });
+    const [output, map] = await Promise.all(
+      ["entry-point", "sourcemap"].map(kind => built.outputs.find(it => it.kind === kind)!.text()),
+    );
+    const lines = listBundledNamesOfModule("node/sample.ts", written, output, JSON.parse(map));
+    const at = (text: string) => String(written.indexOf(text));
+    expect(lines.map(line => line.split("\t"))).toEqual([
+      ["name", "node/sample.ts", at("inBlock() {}"), "inBlock2", "variable"],
+      ["name", "node/sample.ts", at("setTimeout() {}"), "setTimeout2", "own"],
+      ["name", "node/sample.ts", at("export default"), "$", "variable"],
+    ]);
+  });
 });
 
 describe("builtins-manifest-model.ts", () => {

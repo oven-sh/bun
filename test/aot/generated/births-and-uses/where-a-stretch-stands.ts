@@ -110,8 +110,8 @@ export function inEveryPlace(stretches: Stretch[], isTyped: boolean | undefined,
       const name = `${stretch.name}-${placeName}`;
       const placed: Placed = { ...stretch, ...loopsOf(name) };
       const text = () => {
-        const inPlace = place.text(placed);
-        return `${head}${inPlace.includes("extraTurns") ? turnsNobodyKnows : ""}${stretch.beside ?? ""}\n${inPlace}\nexport {};\n`;
+        const written = withLoopsOf(name, `${stretch.beside ?? ""}\n${place.text(placed)}`);
+        return `${head}${written.includes("extraTurns") ? turnsNobodyKnows : ""}${written}\nexport {};\n`;
       };
       made.push({
         name,

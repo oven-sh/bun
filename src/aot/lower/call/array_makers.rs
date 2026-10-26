@@ -89,10 +89,6 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn emit_maker(&mut self, call: ExprId, maker: BuiltinId, operands: &[ValueId]) -> ValueId {
-        self.emit_maker_at(call, maker, operands, Tail::No)
-    }
-
     // A maker that stands for one call of the program is in tail position where that call is.
     fn emit_maker_at(
         &mut self,
@@ -115,20 +111,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.return_call_in_tail_position(made, Tail::Yes { casts: Some(&cast) })
     }
 
-    // `Array(-1)` throws before what stands behind it is evaluated.
-    fn lower_length(
-        &mut self,
-        construction: ExprId,
-        length: ExprId,
-        evaluated_behind: &[ExprId],
-    ) -> ValueId {
+    // `Array(-1)` throws where it is written, before what stands behind it is evaluated.
+    fn lower_checked_length(&mut self, construction: ExprId, length: ExprId) -> ValueId {
         let length = self.lower_operand_of_question(construction, length);
-        if evaluated_behind
-            .iter()
-            .all(|&expression| self.file.is_evaluated_without_effect(expression))
-        {
-            return length;
-        }
         self.set_position(self.file.construct_position(construction));
         let check = BuiltinId::CompilerHelpersCheckedArrayLength;
         self.emit_locked_call(check, None, &[length])
@@ -192,15 +177,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let length = file.find_array_of_length(array)?;
         let value = file.find_only_argument(site)?;
 
-        let length = self.lower_length(array, length, &[value]);
+        // The maker throws what `Array(n)` throws. Nothing else in it can be seen.
+        let length = match file.is_evaluated_without_effect(value) {
+            true => self.lower_operand_of_question(array, length),
+            false => self.lower_checked_length(array, length),
+        };
         let value = self.lower_operand_of_question(call, value);
-        let operands = [length, value];
-        let made = self.emit_maker(call, BuiltinId::CompilerHelpersFilledArray, &operands);
-        Some(made)
+        self.set_position(self.file.construct_position(array));
+        let maker = BuiltinId::CompilerHelpersFilledArray;
+        let made = self.emit_locked_call(maker, None, &[length, value]);
+        self.set_position(self.file.hir[call].pos);
+        Some(self.claim_call_result(call, made))
     }
 
     // Array(n).fill(value).map(mapper)
-    fn lower_mapped_filled_array(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
+    fn lower_mapped_filled_array(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        tail: Tail<'_>,
+    ) -> Option<ValueId> {
         let file = &*self.file;
         let filled = file.find_receiver(site, b"map", BuiltinId::ArrayPrototypeMap)?;
         let ExprKind::Call(fill) = file.hir[filled].kind else {
@@ -215,16 +211,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         }
 
-        let length = self.lower_length(array, length, &[value, mapper]);
+        let length = self.lower_checked_length(array, length);
         let value = self.lower_operand_of_question(filled, value);
         let mapper = self.lower_operand_of_question(call, mapper);
         let operands = [length, value, mapper];
-        let made = self.emit_maker(call, BuiltinId::CompilerHelpersMappedFilledArray, &operands);
-        Some(made)
+        let maker = BuiltinId::CompilerHelpersMappedFilledArray;
+        Some(self.emit_maker_at(call, maker, &operands, tail))
     }
 
-    pub(super) fn try_lower_method_call(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
+    pub(super) fn try_lower_method_call(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        tail: Tail<'_>,
+    ) -> Option<ValueId> {
         self.lower_filled_array(call, site)
-            .or_else(|| self.lower_mapped_filled_array(call, site))
+            .or_else(|| self.lower_mapped_filled_array(call, site, tail))
     }
 }

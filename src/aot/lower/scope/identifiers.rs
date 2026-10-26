@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, StoreKind, SymbolId};
-use bun_sema::hir::{ExprId, ExprKind, NodeData, PatId, PatKind};
+use bun_sema::bind::{Binding, Parent, StoreKind, SymbolId};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, NodeData, PatId, PatKind, UnOp};
 
 use super::{BindingForm, BindingRef, DeadZone, IdentifierTarget, bindings};
 use crate::builtins::Resolved;
@@ -17,7 +17,16 @@ pub(super) enum BindingRead {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_identifier(&mut self, identifier: ExprId) -> ValueId {
-        self.read_identifier(identifier, BindingRead::Value)
+        let position = self.position();
+        let recorded = self.file.position_behind_name(identifier);
+        self.builder.record_position(recorded);
+        if recorded == position {
+            return self.read_identifier(identifier, BindingRead::Value);
+        }
+        self.set_position(recorded);
+        let value = self.read_identifier(identifier, BindingRead::Value);
+        self.set_position(position);
+        value
     }
 
     pub(crate) fn lower_identifier_for_typeof(&mut self, identifier: ExprId) -> ValueId {
@@ -255,6 +264,53 @@ impl FileLowering<'_, '_, '_, '_> {
             return false;
         };
         matches!(stores[index].kind, StoreKind::Assign)
+    }
+
+    // JSC records the read of a declared name behind the name. Bun's transpiler prints the `)` of a call and the `]` of an array right behind their last token, and its source map knows both.
+    fn position_behind_name(&self, identifier: ExprId) -> u32 {
+        let hir = self.hir;
+        let own = hir[identifier].pos;
+        if !matches!(self.bound.binding(identifier), Binding::Symbol(_)) {
+            return own;
+        }
+        let mut child = identifier;
+        while let Parent::Expr(parent) = self.bound.parent_of_expr(child) {
+            let is_last_token = match hir[parent].kind {
+                ExprKind::Call(site) | ExprKind::New(site) => {
+                    let site = hir[site];
+                    let is_last = hir.ids(site.args).last() == Some(child);
+                    return if is_last && site.close_pos != u32::MAX {
+                        site.close_pos
+                    } else {
+                        own
+                    };
+                }
+                ExprKind::Array(elements) => {
+                    let is_last = hir.ids(elements).last() == Some(child);
+                    return if is_last { hir[parent].end - 1 } else { own };
+                }
+                ExprKind::Binary { op, right, .. } => {
+                    op != BinOp::Comma
+                        && right == child
+                        && !matches!(
+                            hir[child].kind,
+                            ExprKind::Binary { .. } | ExprKind::Cond { .. }
+                        )
+                }
+                ExprKind::Unary { op, .. } => !matches!(op, UnOp::PostInc | UnOp::PostDec),
+                ExprKind::Spread(_)
+                | ExprKind::As { .. }
+                | ExprKind::Satisfies { .. }
+                | ExprKind::AsConst(_)
+                | ExprKind::NonNull(_) => true,
+                _ => false,
+            };
+            if !is_last_token {
+                break;
+            }
+            child = parent;
+        }
+        own
     }
 
     fn find_locked_global(&self, identifier: ExprId) -> Option<BuiltinId> {

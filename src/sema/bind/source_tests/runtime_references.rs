@@ -164,6 +164,36 @@ fn file_export_keeps_export_symbol() {
 }
 
 #[test]
+fn var_beside_its_export_declares_the_exported_binding() {
+    for text in [
+        "export var v = 1; var v = 2; v;",
+        "var v = 1; export var v = 2; v;",
+        "export var v = 1; for (var v = 2; ; ) {} v;",
+        "export var v = 1; for (var v of []) {} v;",
+        "export var v = 1; { var v = 2; } v;",
+        "export var v = 1; var [v] = [2]; v;",
+        "export var [v] = [1]; var { v } = { v: 2 }; v;",
+    ] {
+        analyzed("a.mjs", text, |s| {
+            let Symbol(exported) = s.binding("v", 0) else {
+                panic!("{text}: {:?}", s.binding("v", 0));
+            };
+            assert_eq!(s.bound.symbol(exported).parent, s.bound.file_symbol);
+            for nth in 0..2 {
+                let name = s.pat("v", nth);
+                assert_eq!(
+                    s.bound.initialized_binding(name),
+                    Symbol(exported),
+                    "{text}"
+                );
+                assert_eq!(s.bound.declared_symbol(Decl::Var(name)), exported, "{text}");
+            }
+            assert!(!s.bound.is_stable_binding(exported), "{text}");
+        });
+    }
+}
+
+#[test]
 fn reopened_namespace_has_block_binding_per_block() {
     let text = "namespace N { export namespace v { export const a = 1; } v; } \
                 namespace N { export namespace v { export const b = 2; } v; }";

@@ -49,7 +49,6 @@ fn files_are_listed_once() {
         "array-sort.ts",
         "array-traversal.ts",
         "decorators.ts",
-        "json.ts",
         "written-lists.ts",
     ];
     assert_eq!(names, expected);

@@ -862,7 +862,7 @@ restore();
 console.log(lines.join("\n"));
 console.log(isMainThread);
 //// console-methods-are-replaced-through-a-value-and-under-names-nobody-follows.js
-// Every assignment in compiled code to a member of console works, and a later call runs what was stored. Here the compiler knows neither what the stores go to nor under which names.
+// The console comes back out of a reviver of JSON.parse and the names out of Object.keys, so the compiler knows neither what the stores go to nor under which names, and no other store names a member of console. An executable throws a TypeError that names the first member, where `bun run` stores.
 const print = console.log.bind(console);
 const calls = [];
 const replacementFor = name => (...values) => { calls.push(name + "(" + values.join() + ")"); };
@@ -873,7 +873,7 @@ install(con, Object.keys(con));
 console.log(1); console.countReset(2); console.groupEnd(3); console.timeLog(4); console.table(5); console.warn(6); console.assert(7); console.dirxml(8);
 print(calls.join(" "));
 //// console-methods-are-replaced-through-a-value-nobody-follows.js
-// Every assignment in compiled code to a member of console works, and a later call runs what was stored. Here the console has passed through a reviver of JSON.parse, so the compiler no longer knows what the stores go to; no other store names these members.
+// The console comes back out of a reviver of JSON.parse, so the compiler does not know what the stores go to, and no other store names these members. An executable throws a TypeError that names the first of them, where `bun run` stores.
 const print = console.log.bind(console);
 const calls = [];
 const replacementFor = name => (...values) => { calls.push(name + "(" + values.join() + ")"); };

@@ -146,9 +146,18 @@ fn emit_references(builder: &mut FunctionBuilder, names: &[Reference]) {
             Reference::Type(id) => builder.type_test(value, id),
             Reference::TypeSite(id) => builder.check(value, TypeTable::NUMBER, Some(id)),
             Reference::EvalScope(id) => builder.direct_eval(id, value, value, None, &[]),
-            Reference::ExpectedResult(id) => {
-                builder.call(value, None, &[], None, None, Some(id), false, false, false)
-            }
+            Reference::ExpectedResult(id) => builder.call(
+                value,
+                None,
+                &[],
+                None,
+                None,
+                Some(id),
+                None,
+                false,
+                false,
+                false,
+            ),
             Reference::Data(id) => builder.data(id),
             Reference::Module(id, ModuleReferenceKind::Target) => {
                 builder.module_namespace(id, ImportPhase::Evaluation)

@@ -1,22 +1,19 @@
-// Where a build removes text that `bun run` keeps, a function that can be suspended lists the locals that the text names at a suspension that is never reached. Text that `bun run` removes too
-// names nothing, and neither does any text of a function that is never suspended.
+// Where a build removes text that `bun run` keeps, a function that can be suspended reads the locals that the text names in its place. Text that `bun run` removes too names nothing, and
+// neither does any text of a function that is never suspended.
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="returnsAtOnce"
-// CHECK-NOT: Branch
+// CHECK-NOT: ReadScope
 // CHECK-LABEL: function {{*}}name="steps"
+// CHECK: [[madeInSteps]] = Call
+// CHECK: [[localOfSteps]] = Convert [[madeInSteps]]
 // CHECK: = Yield {{*}} @
-// CHECK: [[nothing]] = Undefined
-// CHECK-NEXT: = Yield [[nothing]], {{*}}
+// CHECK: ReadScope [[localOfSteps]]
 // CHECK-LABEL: function {{*}}name="waits"
 // CHECK: [[made]] = Call
 // CHECK: [[local]] = Convert [[made]]
 // CHECK: = Await {{*}} @
-// CHECK: [[never]] = Boolean
-// CHECK-NEXT: [[test]] = ToBoolean [[never]]
-// CHECK-NEXT: Branch [[test]]
-// CHECK: [[awaited]] = Undefined
-// CHECK-NEXT: = Await [[awaited]], [[local]]
-// CHECK-NOT: Await
+// CHECK: ReadScope [[local]]
+// CHECK-NOT: ReadScope
 
 declare function make(): { n: number };
 declare function pause(): Promise<void>;

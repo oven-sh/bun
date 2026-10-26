@@ -1299,12 +1299,21 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
         let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
             bun_paths::resolve_path::platform::Auto,
         >(
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            bun_core::working_directory_in_executable()
+                .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir()),
             &mut buf[..buf_len - 1],
             &[path],
         ) else {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
         };
+        let graph = bun_standalone_graph::Graph::get_ref()
+            .filter(|_| bun_standalone_graph::is_bun_standalone_file_path(joined));
+        let embedded = graph.and_then(|graph| graph.find_ref(joined));
+        if graph.is_some_and(|graph| graph.find_dir(joined)) {
+            use bun_jsc::SysErrorJsc as _;
+            let err = sys::Error::from_code(bun_sys::E::EISDIR, sys::Tag::open).with_path(joined);
+            return Err(global_this.throw_value(err.to_js(global_this)));
+        }
 
         let path_len = joined.len();
         buf[path_len] = 0;
@@ -1337,10 +1346,23 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             .transpose()?;
         let offset = non_negative(options.offset, "offset")?;
 
+        // An embedded file is read-only: the caller gets bytes of its own, as from a private mapping.
+        if let Some(file) = embedded {
+            let rest = file.utf8_contents().get(offset..).unwrap_or_default();
+            let view = &rest[..map_size.map_or(rest.len(), |size| size.min(rest.len()))];
+            if view.is_empty() {
+                use bun_jsc::SysErrorJsc as _;
+                let err = sys::Error::from_code(bun_sys::E::EINVAL, sys::Tag::mmap);
+                return Err(global_this.throw_value(err.to_js(global_this)));
+            }
+            return jsc::ArrayBuffer::create_uint8_array(global_this, view);
+        }
+
         let (map, delta) = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
             Ok(result) => result,
             Err(err) => {
                 use bun_jsc::SysErrorJsc as _;
+                let err = node::fs::error_for_caller([None, None], err);
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
         };

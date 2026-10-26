@@ -57,7 +57,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             PatKind::Ident(name) => {
                 let binding = bound.initialized_binding(decl.pat);
-                let key = self.file.function_name_key(binding, name);
+                let key = self
+                    .file
+                    .function_name_key(binding, name, hir[decl.pat].pos);
                 let is_returned = matches!(self.returned_declaration, Some((returned, _)) if returned == declaration);
                 let is_tail = is_returned && control::allows_tail_call(self);
                 let is_annotated = decl.ty.is_some() && self.file.is_checked();

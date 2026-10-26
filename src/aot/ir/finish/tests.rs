@@ -91,12 +91,24 @@ fn call_round_trip() {
             Some(key),
             Some(name),
             Some(expected_result),
+            None,
             true,
             false,
             false,
         );
         builder.set_position(None);
-        builder.call(callee, None, &[], None, None, None, false, true, false);
+        builder.call(
+            callee,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            false,
+            true,
+            false,
+        );
         builder.return_value(None);
     });
     let values: Vec<ValueView<'_>> = entry_of(&body).values().collect();

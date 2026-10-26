@@ -91,6 +91,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         self.set_position(position);
+        self.read_scopes_of_expression(expression);
         match self.file.decisions().decision(expression) {
             Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {}
             Decision::GlobalPath(_) => {
@@ -159,6 +160,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.builder.undefined();
         }
         self.set_position(position);
+        self.read_scopes_of_expression(expression);
         let value = self.lower_by_decision(expression, evaluation);
         let value = self.finish_expression(expression, value);
         self.leave_nesting();
@@ -359,11 +361,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let inner = self.file.skip_type_syntax(expression);
         let (constant, has_dead_zone) = match self.file.decisions().constant(self.file.hir, inner) {
             FoldedValue::Constant(constant) => (constant, false),
-            // Such an expression throws for a variable in its dead zone or has this value, and does nothing else: behind its operations the value is known.
+            // Such an expression throws for a variable in its dead zone or has this value, and does nothing else but test its casts: behind its operations the value is known.
             FoldedValue::ConstantOutsideDeadZone(constant) => (constant, true),
             FoldedValue::Unknown => return lower(self, expression),
         };
         if !self.file.passes_every_assertion(expression, constant) {
+            return lower(self, expression);
+        }
+        // A text with a character outside Latin-1 is joined when the program runs: a piece of it that lies in a part without such a character is held in 8 bits.
+        if let Constant::String(text) = constant
+            && self
+                .file
+                .queries
+                .atom_bytes(text)
+                .iter()
+                .any(|&byte| byte > 0xc3)
+        {
             return lower(self, expression);
         }
         if self.file.decisions().reads_member(inner) {

@@ -95,7 +95,8 @@ impl Walker<'_, '_> {
         }
         self.record_binding_use(context, binding, bound.is_store_target(identifier));
         if let Some(from) = bound.dynamic_lookup_scope(NodeData::Expr(identifier)) {
-            self.record_scope_chain(function, from, self.declaring_scope(binding));
+            let until = bound.dynamic_lookup_end(identifier, self.declaring_scope(binding));
+            self.record_scope_chain(function, from, until);
         }
     }
 

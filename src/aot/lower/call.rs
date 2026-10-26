@@ -195,6 +195,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 callee.key,
                 callee.name,
                 options.expected_result,
+                None,
                 IS_ANNOTATED_PURE,
                 options.is_never_inlined,
                 options.is_reflect_construct_syntax,
@@ -249,6 +250,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 && matches!(&arguments, Arguments::Values(values) if values.len() >= 2),
         };
         self.set_position(self.file.last_mapped_position(site.callee));
+        if options.is_reflect_construct_syntax {
+            self.builder
+                .set_written_position(self.file.first_position(call));
+        }
         match tail {
             Tail::No => {
                 let value = self.emit_call_at(callee, arguments, options);
@@ -275,6 +280,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         self.convert_argument_values(expression, &mut arguments);
         self.set_position(self.file.construct_position(expression));
+        let site = call_site(self.file, expression);
+        if !self.file.is_printed_as_call(site.callee) && !self.file.makes_array_in_caller(site) {
+            self.builder
+                .set_written_position(self.file.hir[expression].pos);
+        }
         let value = self.emit_construct(callee.function, arguments, callee.name);
         self.set_position(self.file.hir[expression].pos);
         self.claim_call_result(expression, value)
@@ -365,7 +375,7 @@ impl FileLowering<'_, '_, '_, '_> {
     // A native error constructor and `Function` do the same with and without `new`, and Bun's transpiler prints the call. So a stack trace shows the position of a call, and in tail position the caller leaves the stack.
     fn is_printed_as_call(&self, callee: ExprId) -> bool {
         let inner = self.skip_type_syntax(callee);
-        if !self.is_free_name(inner) {
+        if !self.is_free_name(inner) || self.runs_as_written() {
             return false;
         }
         matches!(

@@ -270,7 +270,7 @@ mod tests {
         let session = Session::new();
         let (arena, atoms) = (session.arena(), Interner::new_in(&session));
         let manifest = Manifest::parse(
-            b"bun-builtins-manifest\t4\n\
+            b"bun-builtins-manifest\t5\n\
               define\tprocess.platform\t\"linux\"\n\
               define\tIS_BUN_DEVELOPMENT\ttrue\n\
               define\tNOTHING\tnull\n\
@@ -309,7 +309,7 @@ mod tests {
         let session = Session::new();
         let (arena, atoms) = (session.arena(), Interner::new_in(&session));
         let manifest = Manifest::parse(
-            b"bun-builtins-manifest\t4\n\
+            b"bun-builtins-manifest\t5\n\
               define\tBROKEN\t__intrinsic__x\n\
               define\tVALID\tfalse\n",
         )

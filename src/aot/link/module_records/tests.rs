@@ -10,6 +10,7 @@ use crate::link::testing::{
     Numbered, Projects, SHARED_NAME_IMPORTERS, application_file, find_file, forward, link_sources,
     link_sources_without_bun_modules, link_units, number_units, with_lowered_units,
 };
+use crate::load::EntryPointKind;
 use crate::modules::ModuleFailure;
 use crate::modules::testing::with_graph;
 
@@ -822,7 +823,7 @@ fn statement_failure_never_reaches_the_wire() {
 }
 
 #[test]
-fn bun_module_only_imported_is_flagged() {
+fn bun_module_that_no_load_names_at_run_time_is_flagged() {
     let is_import_only = |program: &Program, module: RuntimeModule| {
         let record = runtime_record(program, module);
         assert_eq!(record.kind, ModuleKind::RuntimeSource, "{module:?}");
@@ -832,13 +833,23 @@ fn bun_module_only_imported_is_flagged() {
     let imported = link_program(&[("main.js", main)]);
     assert!(is_import_only(&imported, RuntimeModule::NodePath));
     for &module in STARTUP_MODULES {
-        assert!(!is_import_only(&imported, module), "{module:?}");
+        assert!(is_import_only(&imported, module), "{module:?}");
     }
     let implied = link_program(&[("main.js", "process.stdout.write('a');\n")]);
-    assert!(!is_import_only(&implied, RuntimeModule::NodeTty));
-    let main = "import tty from 'node:tty';\nprocess.stdout.write(String(tty.isatty(1)));\n";
-    let both = link_program(&[("main.js", main)]);
-    assert!(!is_import_only(&both, RuntimeModule::NodeTty));
+    assert!(is_import_only(&implied, RuntimeModule::NodeTty));
+
+    let loads = "process.stdout.write(typeof require(process.argv[2]));\n";
+    let unnamed = link_program(&[("main.js", loads)]);
+    assert!(is_import_only(&unnamed, RuntimeModule::NodeTty));
+    let main = format!("import 'node:path';\nexport const names = ['tty', 'node:os'];\n{loads}");
+    let named = link_program(&[("main.js", main.as_str())]);
+    assert!(!is_import_only(&named, RuntimeModule::NodeTty));
+    assert!(!is_import_only(&named, RuntimeModule::NodeOs));
+    assert!(is_import_only(&named, RuntimeModule::NodePath));
+    let main = "for (const name of ['node:tty', 'node:os']) process.getBuiltinModule(name);\n";
+    let listed = link_program(&[("main.js", main)]);
+    assert!(!is_import_only(&listed, RuntimeModule::NodeTty));
+    assert!(!is_import_only(&listed, RuntimeModule::NodeOs));
 }
 
 #[test]

@@ -3438,6 +3438,25 @@ impl StandaloneModuleGraph {
         Self::from_payload(base, len, None)
     }
 
+    /// For an executable that can run nothing but its embedded program, and found none.
+    #[cold]
+    #[inline(never)]
+    pub fn exit_without_program() -> ! {
+        match bun_core::self_exe_path() {
+            Ok(exe) => bun_core::err_generic!(
+                "{} is damaged. Its embedded program can't be read.",
+                bun_core::fmt::quote(exe.as_bytes())
+            ),
+            Err(_) => bun_core::err_generic!(
+                "This executable is damaged. Its embedded program can't be read."
+            ),
+        }
+        bun_core::note!(
+            "The download or copy was probably interrupted. Download or install it again."
+        );
+        bun_core::Global::exit(1);
+    }
+
     /// `payload_file`: the file `base` was mapped from; `None` when it is a loaded section of this executable.
     pub(crate) fn from_payload(
         base: *mut u8,

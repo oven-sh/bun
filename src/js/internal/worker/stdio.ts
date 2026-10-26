@@ -12,7 +12,7 @@
 const kFlushSync = Symbol("kFlushSync");
 
 interface PortReadable extends $Node.Readable {
-  endFromOwner?(receiveMessageOnPort: (port: unknown) => unknown): void;
+  endFromOwner?(): void;
 }
 
 interface PortWritable extends $Node.Writable {
@@ -21,7 +21,11 @@ interface PortWritable extends $Node.Writable {
 
 // Readable fed by a MessagePort (worker.stdout/stderr on the parent, process.stdin
 // in the worker). The peer posts arrays of Buffers; null signals EOF.
-function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
+function makePortReadable(
+  port: MessagePort,
+  incrementsPortRef: boolean,
+  receiveMessageOnPort?: (port: unknown) => unknown,
+) {
   let ended = false;
   let startedReading = false;
   function onMessage(event: { data: Uint8Array[] | null }) {
@@ -67,10 +71,10 @@ function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
   });
   // Lets the parent end worker.stdout/stderr when the worker exits. What the worker
   // wrote and the port still holds comes first (node's kOnExit drains its port).
-  stream.endFromOwner = function (receiveMessageOnPort) {
+  stream.endFromOwner = function () {
     try {
       let entry: unknown;
-      while (ended === false && (entry = receiveMessageOnPort(port)) !== undefined) {
+      while (ended === false && (entry = receiveMessageOnPort?.(port)) !== undefined) {
         onMessage({ data: (entry as { message: Uint8Array[] | null }).message });
       }
     } finally {

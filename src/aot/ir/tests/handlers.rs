@@ -9,7 +9,18 @@ use crate::ir::testing::{build_function, create_catch_handler, enter_block};
 use crate::ir::types::TypeTable;
 
 pub(super) fn emit_call(builder: &mut FunctionBuilder, callee: ValueId) -> ValueId {
-    builder.call(callee, None, &[], None, None, None, false, false, false)
+    builder.call(
+        callee,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+        false,
+        false,
+        false,
+    )
 }
 
 fn enter_landing_block(builder: &mut FunctionBuilder, handler: Handler) {

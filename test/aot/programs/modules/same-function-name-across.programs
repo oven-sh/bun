@@ -963,7 +963,8 @@ export * from "./source.mjs";
 //// two-export-stars-lead-to-one-binding/source.mjs
 export const x = "one binding";
 //// typescript-re-export-from-external-package/main.ts
-// A file re-exports names of an external package, whose names are known only at run time. A name that the package does not export may be a type, so a TypeScript file links without it; plain Bun, which reads no types, throws a SyntaxError. A name that is ambiguous in the package is a SyntaxError in TypeScript too, and a JavaScript file gets both errors.
+// A file re-exports names of an external package, whose names are known only at run time. A specifier that names only a type is erased from a TypeScript file, so the file links; plain Bun, which reads no types, asks the package for it and throws a SyntaxError.
+// A name that the declarations call a value is asked for like any other: one that the package does not export, or that is ambiguous in it, is a SyntaxError in TypeScript and in JavaScript alike.
 async function load(label: string, importFile: () => Promise<{ present: number }>): Promise<void> {
   try {
     console.log(label + ": present = " + (await importFile()).present);

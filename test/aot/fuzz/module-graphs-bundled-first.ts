@@ -48,12 +48,6 @@ let programs = 0;
 let skipped = 0;
 let findings = 0;
 let slowest = 0;
-let classesMovedUp = 0;
-// The build moves a class without side effects to the top of its file, as Bun's transpiler does. Plain Bun leaves a file marked `// @bun` as it is,
-// so a module that reads such a class early gets a ReferenceError there and the class in the executable.
-const isClassMovedUp = (plain: string, compiled: string) =>
-  plain.endsWith(" throws ReferenceError") &&
-  compiled.startsWith(plain.slice(0, -"throws ReferenceError".length) + "function{");
 const kinds = new Map<string, number>();
 mkdirSync(join(out, "findings"), { recursive: true });
 
@@ -153,23 +147,14 @@ async function one(mine: number) {
     else if (compiled.stdout !== plain.stdout || compiled.ended !== plain.ended) {
       const a = plain.stdout.split("\n");
       const b = compiled.stdout.split("\n");
-      const movedUp = a
-        .filter((line, index) => isClassMovedUp(line, b[index] ?? ""))
-        .map(line => line.slice(0, -" throws ReferenceError".length));
-      // A member of such a class is read early too.
-      const isOfClassMovedUp = (line: string) =>
-        line.endsWith(" throws ReferenceError") &&
-        movedUp.some(label => line.startsWith(label + ".") || line.startsWith(label + " "));
-      const at = a.findIndex((line, index) => line !== b[index] && !isOfClassMovedUp(line));
-      if (at < 0 && a.length === b.length && compiled.ended === plain.ended) classesMovedUp++;
-      else
-        keep(
-          folder,
-          sources,
-          mine,
-          "prints something else",
-          `${notes}plain ${plain.ended}, compiled ${compiled.ended}; line ${at + 1}\nplain:    ${a[at]}\ncompiled: ${b[at]}\n--- stderr of the executable\n${compiled.stderr.slice(-2000)}`,
-        );
+      const at = a.findIndex((line, index) => line !== b[index]);
+      keep(
+        folder,
+        sources,
+        mine,
+        "prints something else",
+        `${notes}plain ${plain.ended}, compiled ${compiled.ended}; line ${at + 1}\nplain:    ${a[at]}\ncompiled: ${b[at]}\n--- stderr of the executable\n${compiled.stderr.slice(-2000)}`,
+      );
     }
   }
   rmSync(folder, { recursive: true, force: true });
@@ -182,5 +167,5 @@ await Promise.all(
   }),
 );
 console.log(
-  `programs ${programs} skipped ${skipped} findings ${findings} classes moved up ${classesMovedUp} slowest build ${slowest.toFixed(1)} s next seed ${seed}`,
+  `programs ${programs} skipped ${skipped} findings ${findings} slowest build ${slowest.toFixed(1)} s next seed ${seed}`,
 );

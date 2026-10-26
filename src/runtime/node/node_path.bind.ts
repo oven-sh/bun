@@ -23,6 +23,7 @@ export const ParsedPath = b.dictionary({ root: result, dir: result, base: result
 const ofPath = (name: string, returns: b.Type) =>
   b.fn({
     name,
+    namedAsBound: true,
     length: 1,
     args: { path: text },
     validatorExpects: { path: "string" },
@@ -35,6 +36,7 @@ const ofPath = (name: string, returns: b.Type) =>
 const basename = () =>
   b.fn({
     name: "basename",
+    namedAsBound: true,
     length: 1,
     args: { path: text, ext: text.optional },
     validatorExpects: { path: "string", ext: "string" },
@@ -49,6 +51,7 @@ const basename = () =>
 const isAbsolute = () =>
   b.fn({
     name: "isAbsolute",
+    namedAsBound: true,
     length: 1,
     args: { path: text },
     validatorExpects: { path: "string" },
@@ -59,6 +62,7 @@ const isAbsolute = () =>
 const join = () =>
   b.fn({
     name: "join",
+    namedAsBound: true,
     length: 1,
     args: { paths: b.rest(text) },
     validatorExpects: { paths: "string" },
@@ -71,6 +75,7 @@ const join = () =>
 const relative = (returns: b.Type) =>
   b.fn({
     name: "relative",
+    namedAsBound: true,
     length: 1,
     args: { from: text, to: text },
     validatorExpects: { from: "string", to: "string" },
@@ -84,6 +89,7 @@ const relative = (returns: b.Type) =>
 const resolve = (returns: b.Type) =>
   b.fn({
     name: "resolve",
+    namedAsBound: true,
     length: 1,
     args: { paths: b.rest(b.any.stringObjectAsString) },
     returns,
@@ -96,6 +102,7 @@ const resolve = (returns: b.Type) =>
 const format = () =>
   b.fn({
     name: "format",
+    namedAsBound: true,
     length: 1,
     args: { pathObject: b.any },
     returns: result,
@@ -118,6 +125,7 @@ export const relativePosix = relative(result);
 export const resolvePosix = resolve(result);
 export const toNamespacedPathPosix = b.fn({
   name: "toNamespacedPath",
+  namedAsBound: true,
   length: 1,
   args: { path: b.any },
   returns: b.any,
@@ -139,6 +147,7 @@ export const resolveWin32 = resolve(resultOrError);
 /** A `String` object counts as a string, and an empty one is answered as it is. */
 export const toNamespacedPathWin32 = b.fn({
   name: "toNamespacedPath",
+  namedAsBound: true,
   length: 1,
   args: { path: b.any },
   returns: b.any,

@@ -738,7 +738,8 @@ impl CodeHost for LoadHost<'_> {
                 && !script_kind.is_javascript(),
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
-            keeps_function_directives: source_kind == SourceKind::EvaluatedText,
+            keeps_function_directives: source_kind == SourceKind::EvaluatedText
+                || hir::find_transpiled_mark(text).is_some(),
         };
         let mut hir = parse_for_compile(arena, &compile_options, text, atoms);
         let is_language_assumed = matches!(served_by, ServedBy::Disk)

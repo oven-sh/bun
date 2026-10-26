@@ -608,7 +608,7 @@ mod tests {
         let path = b"/$bun/js/node/fs.ts";
         let id = RuntimeModule::NodeFs.registry_id();
         let path_with_specifier = |specifier: &str| {
-            let text = format!("bun-builtins-manifest\t4\nmodule\t{id}\tnode/fs.ts\t{specifier}\n");
+            let text = format!("bun-builtins-manifest\t5\nmodule\t{id}\tnode/fs.ts\t{specifier}\n");
             let manifest = Manifest::parse(text.as_bytes()).unwrap();
             let input = PathInput {
                 kind: runtime_kind(),

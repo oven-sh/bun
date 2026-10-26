@@ -17,7 +17,7 @@ pub use runtime::{
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
     ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateMembers, PrivateName,
     PrivateNameId, RuntimeBindOptions, RuntimeBindings, RuntimeBindingsIn, RuntimeTablesIn,
-    StoreKind, SymbolStore, has_mapped_arguments, has_simple_parameter_list,
+    StoreKind, SymbolStore, has_mapped_arguments, has_simple_parameter_list, is_among_parameters,
 };
 pub use static_referent::{
     LinkedBinding, LoadedValue, NamespaceReferent, ReferentCertainty, ReferentContext,

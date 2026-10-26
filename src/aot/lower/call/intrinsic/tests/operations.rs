@@ -1,7 +1,7 @@
 use super::{lower_runtime_module, terminator_operands};
 use crate::builtins::id::{BuiltinId, CheckedJSType};
 use crate::ir::generated::{EntryParameter, FunctionFlags, TerminatorKind};
-use crate::ir::{EntryPosition, Id, Opcode, TypeId, TypeTable, ValueId};
+use crate::ir::{EntryPosition, Id, Opcode, PositionFlags, TypeId, TypeTable, ValueId};
 
 #[test]
 fn object_and_callable_tests_are_type_tests() {
@@ -160,6 +160,11 @@ fn put_by_val_direct_defines_element() {
     let probe = module.function("probe");
     let object = probe.only_demanded_conversion();
     assert_eq!(object.operands(), [probe.parameter(0)], "{probe}");
+    let &[_, _, _, flags, _] = object.value.fields else {
+        panic!("{probe}");
+    };
+    let claim = PositionFlags::IS_FROM_COMPILER | PositionFlags::IS_CLAIM;
+    assert!(PositionFlags(flags).contains(claim), "{probe}");
     let expected = [object.id(), probe.parameter(1), probe.parameter(2)];
     let define = probe.only(Opcode::ElemDefine);
     assert_eq!(define.operands(), expected, "{probe}");

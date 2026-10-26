@@ -215,6 +215,7 @@ fn plan_elements(
     bound: &Bound<'_>,
     class: ClassId,
     lists: &InitializerLists,
+    declares_parameter_properties: bool,
     plan: &mut ClassPlan,
 ) {
     if has_instance_brand(hir, bound, class) {
@@ -224,7 +225,7 @@ fn plan_elements(
         plan.instance_elements
             .push(ClassElement::RunInitializers { initializers });
     }
-    if plan.field_semantics == FieldSemantics::Define {
+    if declares_parameter_properties {
         let parameters = plan.parameter_properties.iter().copied();
         plan.instance_elements
             .extend(parameters.map(ClassElement::ParameterPropertyField));
@@ -292,13 +293,14 @@ pub(super) fn plan_class(
     class: ClassId,
 ) -> ClassPlan {
     let transform = compute_class_transform(hir, bound, class);
-    let assigns_fields = hir.has_typescript_semantics()
+    let is_asked_to_assign = hir.has_typescript_semantics()
         && settings.use_define_for_class_fields == Some(false)
-        && transform != ClassTransform::Standard
-        && !runtime_members(hir, class).any(|member| {
-            has_computed_field_key(hir, member) && !hir[member].flags.contains(Flags::STATIC)
-        });
-    let field_semantics = if assigns_fields {
+        && transform != ClassTransform::Standard;
+    // A field under a computed key stays a field, and with it every other field of the class. A parameter property is no field.
+    let has_computed_instance_key = runtime_members(hir, class).any(|member| {
+        has_computed_field_key(hir, member) && !hir[member].flags.contains(Flags::STATIC)
+    });
+    let field_semantics = if is_asked_to_assign && !has_computed_instance_key {
         FieldSemantics::Assign
     } else {
         FieldSemantics::Define
@@ -330,16 +332,17 @@ pub(super) fn plan_class(
         plan.parameter_properties = hir[constructor].params.iter().filter(is_property).collect();
     }
     let no_lists = InitializerLists::default();
+    let declares = !is_asked_to_assign;
     match transform {
-        ClassTransform::None => plan_elements(hir, bound, class, &no_lists, &mut plan),
+        ClassTransform::None => plan_elements(hir, bound, class, &no_lists, declares, &mut plan),
         ClassTransform::Legacy => {
-            plan_elements(hir, bound, class, &no_lists, &mut plan);
+            plan_elements(hir, bound, class, &no_lists, declares, &mut plan);
             decorators::move_decorated_fields(hir, &mut plan);
         }
         ClassTransform::Standard => {
             debug_assert_eq!(field_semantics, FieldSemantics::Define);
             let lists = decorators::plan_decorations(hir, class, &mut plan);
-            plan_elements(hir, bound, class, &lists, &mut plan);
+            plan_elements(hir, bound, class, &lists, declares, &mut plan);
         }
     }
     plan_initializer_call(hir, bound, &mut plan);

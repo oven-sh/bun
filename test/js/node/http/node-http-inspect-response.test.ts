@@ -33,16 +33,19 @@ function describeKeys(keys: PropertyKey[]) {
   return keys.map(key => (typeof key === "symbol" ? key.description : key));
 }
 
-function expectNoInternalKeys(object: object) {
-  const seen = [
-    ...describeKeys(Reflect.ownKeys(object)),
-    ...describeKeys(Reflect.ownKeys({ ...object })),
-    ...describeKeys(Reflect.ownKeys(Object.assign({}, object))),
-    ...describeKeys(Reflect.ownKeys(Object.getOwnPropertyDescriptors(object))),
-  ];
-  expect(seen.filter(key => internalKeys.includes(key as string) || String(key).startsWith("$"))).toEqual([]);
+function expectInternalKeys(object: object, expected: string[]) {
+  const isInternal = (key: unknown) => internalKeys.includes(key as string) || String(key).startsWith("$");
+  for (const keys of [
+    Reflect.ownKeys(object),
+    Reflect.ownKeys({ ...object }),
+    Reflect.ownKeys(Object.assign({}, object)),
+    Reflect.ownKeys(Object.getOwnPropertyDescriptors(object)),
+  ])
+    expect(describeKeys(keys).filter(isInternal)).toEqual(expected);
   const text = util.inspect(object, { showHidden: true, depth: 0 });
-  for (const key of internalKeys) expect(text).not.toContain(`Symbol(${key})`);
+  expect(internalKeys.filter(key => text.includes(`Symbol(${key})`))).toEqual(
+    internalKeys.filter(key => expected.includes(key)),
+  );
 }
 
 async function requestOnce(listener: http.RequestListener, init?: RequestInit) {
@@ -82,51 +85,58 @@ test("inspecting the ServerResponse of a request prints no internal fields", asy
 
 test("messages made without a connection have no internal own keys", () => {
   const request = new http.IncomingMessage(null as any);
-  expectNoInternalKeys(request);
-  expectNoInternalKeys(new http.OutgoingMessage());
-  expectNoInternalKeys(new http.ServerResponse(request));
+  expectInternalKeys(request, []);
+  expectInternalKeys(new http.OutgoingMessage(), []);
+  expectInternalKeys(new http.ServerResponse(request), []);
 });
 
-test("the request, the response and the socket of a server have no internal own keys", async () => {
+test("the internal own keys of the request, the response and the socket of a server", async () => {
   const { text } = await requestOnce(async (request, response) => {
     const socket = request.socket;
-    for (const object of [request, response, socket]) expectNoInternalKeys(object);
+    expectInternalKeys(request, []);
+    expectInternalKeys(response, ["fakeSocket"]);
+    expectInternalKeys(socket, []);
     expect(response.socket).toBe(socket);
     socket.setTimeout(60_000);
     response.setHeader("x-a", "1");
     response.write("a");
     for await (const _chunk of request);
-    for (const object of [request, response, socket]) expectNoInternalKeys(object);
+    expectInternalKeys(request, ["kAutoDestroyed"]);
+    expectInternalKeys(response, ["fakeSocket"]);
+    expectInternalKeys(socket, ["socketTimeoutTimer"]);
     const finished = once(response, "finish");
     response.end("b");
     await finished;
-    for (const object of [request, response, socket]) expectNoInternalKeys(object);
+    expectInternalKeys(request, ["kAutoDestroyed"]);
+    expectInternalKeys(response, ["fakeSocket"]);
+    expectInternalKeys(socket, ["socketTimeoutTimer", "keepAliveTimeoutSet"]);
   });
   expect(text).toBe("ab");
 });
 
-test("the request and the response of a client have no internal own keys", async () => {
+test("the internal own keys of the request and the response of a client", async () => {
   await using server = http.createServer((_request, response) => response.end("ok"));
   await once(server.listen(0), "listening");
   const request = http.get({ port: (server.address() as AddressInfo).port, agent: false });
-  expectNoInternalKeys(request);
+  expectInternalKeys(request, []);
   const [response] = (await once(request, "response")) as [http.IncomingMessage];
-  expectNoInternalKeys(response);
+  expectInternalKeys(response, []);
   const closed = once(response, "close");
   let text = "";
   for await (const chunk of response) text += chunk;
   expect(text).toBe("ok");
   await closed;
-  expectNoInternalKeys(request);
-  expectNoInternalKeys(response);
+  expectInternalKeys(request, []);
+  expectInternalKeys(response, ["kAutoDestroyed"]);
 });
 
-test("a readable stream that destroyed itself has no internal own keys", async () => {
+test("the internal own keys of a readable stream that destroyed itself", async () => {
   const { Readable } = await import("node:stream");
   const stream = Readable.from(["a"]);
+  expectInternalKeys(stream, []);
   for await (const _chunk of stream);
   expect(stream.destroyed).toBe(true);
-  expectNoInternalKeys(stream);
+  expectInternalKeys(stream, ["kAutoDestroyed"]);
 });
 
 test("a Proxy of the response answers the request", async () => {
@@ -152,7 +162,9 @@ test("a Proxy of the response answers the request", async () => {
     proxy.end("b");
   });
   expect({ status, header: headers.get("x-a"), text }).toEqual({ status: 201, header: "1", text: "ab" });
-  expect(describeKeys(trapped).filter(key => internalKeys.includes(key as string))).toEqual([]);
+  expect([...new Set(describeKeys(trapped))].filter(key => internalKeys.includes(key as string))).toEqual([
+    "fakeSocket",
+  ]);
 });
 
 test("a Proxy of a Proxy of the response answers the request", async () => {

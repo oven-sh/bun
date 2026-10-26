@@ -5,8 +5,9 @@ import { RawHttpConnection, get, post } from "./raw-http-client";
 
 // The node:http server has a fast path for dispatching a request, a compact form for response headers and a finish that
 // takes a single process.nextTick(). This pins how many requests of ordinary applications take each of them, so that a
-// change which quietly pushes a framework onto the slow path fails here. The fixture tells them apart by internal names
-// (the dispatchUsualRequest frame, the kOutHeaders symbol, the finishExchange tick): renaming one means updating it.
+// change which quietly pushes a framework onto the slow path fails here. The functions of the fast path have the names
+// of those they stand in for, so the fixture tells them apart by the place of the onNodeHTTPRequest frame, the kOutHeaders
+// symbol and the number of arguments of the emitResponseFinished tick: changing one means updating it.
 
 const fixture = path.join(import.meta.dir, "node-http-fast-path-coverage-fixture.ts");
 const timeout = (isASAN || isDebug) && !isCI ? 90_000 : undefined;
@@ -39,6 +40,10 @@ async function measure(stack: string) {
   const port = Number(stdout.slice(0, stdout.indexOf("\n")));
   stdout = stdout.slice(stdout.indexOf("\n") + 1);
 
+  {
+    using connection = await RawHttpConnection.connect(port);
+    await connection.request(get("/text", "Connection: close\r\n"));
+  }
   for (const request of requests) {
     using connection = await RawHttpConnection.connect(port);
     for (let i = 0; i < 10; i++) await connection.request(request);

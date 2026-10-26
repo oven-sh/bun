@@ -108,6 +108,11 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         self.builder.set_written_position(written);
     }
 
+    pub(crate) fn set_position_to_last_recorded(&mut self) {
+        let start = self.builder.function().position;
+        self.builder.set_position_to_last_recorded(start);
+    }
+
     pub(crate) fn position(&self) -> u32 {
         self.position
     }

@@ -1025,14 +1025,14 @@ Pass `--asset` multiple times to embed several directories (for example `--asset
 
 With `--aot`, modules keep their places relative to one another, and so do the files you embed. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`, the same as under `bun run`, and `--asset node_modules/@img` is at `node_modules/@img`. A file or folder from outside of the working directory keeps only its own name: `--asset ../shared` is at `shared`, at the top of the embedded files.
 
-`process.chdir()` works on an embedded directory. After it, `process.cwd()`, `path.resolve()` and the relative paths that you pass to `node:fs`, `Bun.file()` and `Bun.Glob` start there.
+`process.chdir()` works on an embedded directory. After it, `process.cwd()`, `path.resolve()` and the relative paths that you pass to `node:fs`, `Bun.file()`, `Bun.mmap()` and `Bun.Glob` start there.
 
 ```ts index.ts icon="/icons/typescript.svg"
 process.chdir(import.meta.dir);
 const html = fs.readFileSync("public/index.html", "utf8");
 ```
 
-The operating system has no such directory. A child process starts in the directory that the executable was started from, unless you pass `cwd`, and there is nothing above `import.meta.dir`: `process.chdir("..")` throws `ENOENT` there.
+The operating system has no such directory. A child process or a `Bun.$` command starts in the directory that the executable was started from, unless you pass `cwd`, and reads files from disk only. There is nothing above `import.meta.dir`: `process.chdir("..")` throws `ENOENT` there.
 
 Embedded files are read-only. Writing, creating, renaming or deleting anything under `import.meta.dir` fails with `EROFS`, as on a read-only file system.
 

@@ -178,6 +178,7 @@ define_tables! {
         lists {
             evaluated_idents: S::List<u64>,
             eval_visible_symbols: S::List<u64>,
+            idents_behind_eval_variables: S::List<u64>,
             store_targets: S::List<u64>,
         }
     }

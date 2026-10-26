@@ -722,6 +722,55 @@ fn legacy_octal_forms() {
 }
 
 #[test]
+fn octal_escapes_that_bun_run_reports() {
+    let reported = [
+        (r#"x = "\4";"#, 2),
+        (r#"x = '\1';"#, 2),
+        (r#"x = "a\04";"#, 3),
+        (r#"x = "\00";"#, 3),
+        (r#"x = "\08";"#, 2),
+        (r#"x = "\49a";"#, 2),
+        (r#"x = "\049a";"#, 3),
+        (r#"x = "\478";"#, 3),
+        (r#"x = { "\4": 1 };"#, 2),
+        (r#"function f() { "\4"; }"#, 2),
+    ];
+    for (text, len) in reported {
+        parsed("a.js", text, |_, hir| {
+            let errors = of_class(hir, EarlyError);
+            let [error] = errors[..] else {
+                panic!("{text}: {errors:?}");
+            };
+            let start = text.find('\\').unwrap() as u32;
+            assert_eq!(
+                (error.code, error.start, error.end),
+                (1487, start, start + len),
+                "{text}"
+            );
+            assert_ne!(hir.rare_syntax & rare::LEGACY_OCTAL, 0, "{text}");
+        });
+    }
+    let accepted = [
+        r#"x = "\4a";"#,
+        r#"x = "\4'";"#,
+        r#"x = '\4"';"#,
+        r#"x = "\04a";"#,
+        r#"x = "\033[0m";"#,
+        r#"x = "\377";"#,
+        r#"x = "\3778";"#,
+        r#"x = "\477";"#,
+        r#"x = "\4\"";"#,
+        r#"x = "\0";"#,
+        r#"x = "\8" + "\9" + "\89";"#,
+    ];
+    for text in accepted {
+        parsed("a.js", text, |_, hir| {
+            assert!(hir.diagnostics.is_empty(), "{text}: {:?}", hir.diagnostics);
+        });
+    }
+}
+
+#[test]
 fn html_like_comments() {
     parsed("a.js", HTML_CLOSE_COMMENT, |w, hir| {
         assert_eq!(hir.body.len(), 1);

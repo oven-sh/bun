@@ -88,6 +88,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !flags.intersects(can_be_suspended) || !self.builder.is_open() {
             return;
         }
+        self.read_scopes_of_names_under(removed);
         let hir = self.file.hir;
         let mut named: SmallVec<[ValueId; 4]> = SmallVec::new();
         let mut pending: SmallVec<[Node; 16]> = SmallVec::from_slice(&[removed]);
@@ -113,20 +114,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if named.is_empty() {
             return;
         }
-        // A suspension that is never reached lists them, so they are live behind every suspension in front of it.
-        let never = self.builder.boolean(false);
-        let split = self.split_on_truthiness(never);
-        let after = self.create_block();
-        self.builder.switch_to(split.taken);
-        let nothing = self.builder.undefined();
-        match flags.contains(FunctionFlags::IS_ASYNC) {
-            true => _ = self.builder.await_value(nothing, &named, false),
-            false => _ = self.builder.yield_value(nothing, &named),
-        }
-        self.jump(after);
-        self.builder.switch_to(split.not_taken);
-        self.jump(after);
-        self.continue_in(after);
+        self.builder.read_scope(&named);
     }
 
     pub(in crate::lower) fn emit_yield(&mut self, value: ValueId) -> Resumption {

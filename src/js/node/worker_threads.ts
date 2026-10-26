@@ -969,8 +969,8 @@ class Worker extends EventEmitter {
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
       // port on first read (node's kIncrementsPortRef).
-      this.#stdout = makePortReadable(this.#stdoutPort, !stdoutAutoPipe);
-      this.#stderr = makePortReadable(this.#stderrPort, !stderrAutoPipe);
+      this.#stdout = makePortReadable(this.#stdoutPort, !stdoutAutoPipe, _receiveMessageOnPort);
+      this.#stderr = makePortReadable(this.#stderrPort, !stderrAutoPipe, _receiveMessageOnPort);
       // 'data' instead of pipe(): pipe() adds an error listener on the shared
       // process.stdout per worker, tripping MaxListenersExceededWarning.
       if (stdoutAutoPipe) this.#stdout.on("data", chunk => process.stdout.write(chunk));
@@ -1210,10 +1210,10 @@ class Worker extends EventEmitter {
       // End captured stdio readables when the worker exits, even if it was
       // terminated before its own streams finished.
       if (this.#stdout) {
-        this.#stdout.endFromOwner!(_receiveMessageOnPort);
+        this.#stdout.endFromOwner!();
       }
       if (this.#stderr) {
-        this.#stderr.endFromOwner!(_receiveMessageOnPort);
+        this.#stderr.endFromOwner!();
       }
     } finally {
       // Close the captured stdout/stderr control ports so worker.ref() can't pin the

@@ -1,9 +1,11 @@
 mod declarations;
 mod loops;
+mod substitution;
 
 use bun_sema::bind::{Binding, ScopeId, SymbolId};
+use bun_sema::fold::Decision;
 use bun_sema::hir::{
-    ExprId, ExprKind, Flags, IdList, PatKind, StmtId, StmtKind, VarDeclId, VarKind,
+    ExprId, ExprKind, Flags, IdList, PatKind, StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
 
 use super::control::BreakTargetKind;
@@ -126,6 +128,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             } => self.lower_try(statement, block, param, handler, finalizer),
             StmtKind::Throw(expression) => {
                 let value = self.lower_expression(expression);
+                let recorded = self.file.last_mapped_position(expression);
+                self.builder.record_position(recorded);
                 self.set_position(stmt.start);
                 self.emit_throw(value);
             }
@@ -245,11 +249,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 impl FileLowering<'_, '_, '_, '_> {
     // The last variable of a `let` or `const` statement, if Bun's transpiler prints its initializer in place of its only use.
     fn find_variable_used_once(&self, statement: StmtId) -> Option<(VarDeclId, SymbolId)> {
-        let (hir, bound) = (self.hir, self.bound);
-        let StmtKind::Var(declarations) = hir[statement].kind else {
+        let StmtKind::Var(declarations) = self.hir[statement].kind else {
             return None;
         };
         let declaration = declarations.iter().last()?;
+        Some((declaration, self.find_symbol_used_once(declaration)?))
+    }
+
+    fn find_symbol_used_once(&self, declaration: VarDeclId) -> Option<SymbolId> {
+        let (hir, bound) = (self.hir, self.bound);
         let decl = hir[declaration];
         let is_plain = matches!(hir[decl.pat].kind, PatKind::Ident(_))
             && matches!(
@@ -265,7 +273,7 @@ impl FileLowering<'_, '_, '_, '_> {
             && self.scopes.is_used_once(symbol)
             && !bound.is_visible_to_eval(symbol)
             && bound.symbol_scope(symbol) != module::file_scope(self);
-        is_substituted.then_some((declaration, symbol))
+        is_substituted.then_some(symbol)
     }
 
     fn reads_variable(&self, expression: ExprId, symbol: SymbolId) -> bool {
@@ -317,12 +325,38 @@ impl FileLowering<'_, '_, '_, '_> {
         (None, statements.len)
     }
 
+    // Whether Bun's transpiler prints anything for the statement.
     fn is_printed(&self, statement: StmtId) -> bool {
-        let is_type = matches!(
-            self.hir[statement].kind,
-            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty
-        );
-        !is_type && !self.decisions().is_dead_stmt(statement)
+        if self.decisions().is_dead_stmt(statement) {
+            return false;
+        }
+        match self.hir[statement].kind {
+            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty => false,
+            StmtKind::Expr(expression) => !self.is_dropped_when_unused(expression),
+            StmtKind::Block(statements) => {
+                let mut inner = self.hir.ids(statements);
+                inner.any(|inner| self.is_printed(inner))
+            }
+            StmtKind::If { test, yes, no } => {
+                !self.is_dropped_when_unused(test)
+                    || self.is_printed(yes)
+                    || (no.is_some() && self.is_printed(no))
+            }
+            _ => true,
+        }
+    }
+
+    fn is_dropped_when_unused(&self, expression: ExprId) -> bool {
+        let inner = self.skip_type_syntax(expression);
+        if let ExprKind::Unary {
+            op: UnOp::Void | UnOp::Not,
+            operand,
+        } = self.hir[inner].kind
+        {
+            return self.is_dropped_when_unused(operand);
+        }
+        matches!(self.decisions().decision(inner), Decision::Constant(_))
+            || self.is_removed_when_unused(inner)
     }
 
     fn declares_pattern(&self, statement: StmtId) -> bool {

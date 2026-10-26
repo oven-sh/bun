@@ -30,6 +30,15 @@ fn symbol_at(column: &[SymbolId], index: usize) -> SymbolId {
     column.get(index).copied().unwrap_or(SymbolId::NONE)
 }
 
+/// Whether code at `pos`, whose chain of scopes enters the scope of `function` from a scope of kind `from`, stands among the parameters.
+pub fn is_among_parameters(hir: &File<'_>, function: FnId, from: ScopeKind, pos: u32) -> bool {
+    match hir[function].body {
+        // A function whose body is an expression has one scope for its parameters and its body.
+        FnBody::Expr(body) => pos < hir[body].pos,
+        FnBody::Block(_) | FnBody::None => matches!(from, ScopeKind::Param(_)),
+    }
+}
+
 impl BoundBuilder {
     pub(super) fn find_in_table(&self, table: TableId, name: Atom) -> Option<SymbolId> {
         let entries = self.table(table);
@@ -64,6 +73,24 @@ impl<S: Storage> BoundIn<S> {
     pub fn function_flags(&self, function: FnId) -> FunctionFlags {
         let flags = self.runtime.function_flags.get(function.idx());
         flags.copied().unwrap_or_default()
+    }
+
+    /// A function with expressions among its parameters keeps the variables of its body in an environment of their own, inside the environment of its parameters and `arguments`.
+    pub fn is_outside_body_variables(&self, binding: Binding) -> bool {
+        let function = match binding {
+            Binding::Symbol(symbol) if self.binding_kind(symbol) == BindingKind::Parameter => {
+                match self.scopes[self.symbol_scope(symbol).idx()].kind {
+                    ScopeKind::Fn(function) => function,
+                    _ => return false,
+                }
+            }
+            Binding::Arguments(CodeUnit::Function(function)) => function,
+            _ => return false,
+        };
+        let flags = self.function_flags(function);
+        flags.contains(FunctionFlags::HAS_PARAMETER_EXPRESSIONS)
+            && (matches!(binding, Binding::Symbol(_))
+                || !flags.contains(FunctionFlags::HAS_ARGUMENTS_VARIABLE))
     }
 
     pub fn variable_kind(&self, hir: &File, declaration: VarDeclId) -> VarKind {
@@ -111,7 +138,20 @@ impl<S: Storage> BoundIn<S> {
 
     pub(super) fn declared_pattern_symbol(&self, pattern: PatId) -> SymbolId {
         let declared = &self.runtime.declarations.declared_symbols;
-        find_symbol(declared, Decl::Var(pattern)).unwrap_or_else(|| self.pat_symbol[pattern.idx()])
+        find_symbol(declared, Decl::Var(pattern))
+            .unwrap_or_else(|| self.file_binding(self.pat_symbol[pattern.idx()]))
+    }
+
+    /// `var v` beside `export var v` in a file declares the exported binding again.
+    fn file_binding(&self, declared: SymbolId) -> SymbolId {
+        if declared.is_none() {
+            return declared;
+        }
+        let exported = self.export_symbol_of_value_symbol_if_exported(declared);
+        match self.symbol(exported).parent == self.file_symbol {
+            true => exported,
+            false => declared,
+        }
     }
 
     pub(super) fn declared_binding_symbol(&self, decl: Decl) -> Option<SymbolId> {
@@ -301,6 +341,15 @@ impl Bound<'_> {
                 find_entry(&references.dynamic_declarator_lookups, name).copied()
             }
             _ => None,
+        }
+    }
+
+    /// The first scope that a dynamic lookup of `ident`, whose binding is declared in `declaring_scope`, does not search.
+    pub fn dynamic_lookup_end(&self, ident: ExprId, declaring_scope: ScopeId) -> ScopeId {
+        let behind_variables = &self.runtime.references.idents_behind_eval_variables;
+        match has_bit(behind_variables, ident.idx()) {
+            true => self.scopes[declaring_scope.idx()].parent,
+            false => declaring_scope,
         }
     }
 

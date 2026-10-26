@@ -5,6 +5,7 @@ const StreamPrototype = Stream.prototype;
 const plainStream: $Node.Stream = new Stream();
 const DuplexPrototype = Stream.Duplex.prototype;
 const duplexResume = DuplexPrototype.resume;
+const duplexRemoveListener = DuplexPrototype.removeListener;
 const { flagsOf, getDefaultHighWaterMark, internals: streamInternals } = require("internal/streams/state");
 const { queueTick1, queueTick2, ticksAreUnhooked, ring } = require("internal/process/next_tick_queue");
 const kFlowing = 1 << 24;
@@ -41,6 +42,7 @@ const {
   isStoppedModuleGraphRunning,
 } = require("internal/shared");
 const shared = require("internal/shared");
+const reportError = globalThis.reportError;
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary, loadChild } = require("internal/cluster/isPrimary");
@@ -1097,7 +1099,7 @@ Server.prototype[kRealListen] = function (
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    const dispatchInFull = function (
+    const dispatchInFull = function onNodeHTTPRequest(
       bunServer: $Node.NativeHTTPServer,
       url: string,
       method: string,
@@ -1541,6 +1543,8 @@ Server.prototype[kRealListen] = function (
           usesOwnClasses &&
           !isAncientHTTP &&
           !isSocketNew &&
+          !socket._httpMessage &&
+          socket._readableState === socket.$ownReadableState &&
           isPipelinedDispatch !== true &&
           (dispatchBits & DISPATCH_USUAL_MASK) === DISPATCH_HAS_HOST &&
           !server.joinDuplicateHeaders &&
@@ -1550,7 +1554,7 @@ Server.prototype[kRealListen] = function (
           !traceEvents.isCategoryGroupEnabled(kHttpTraceCat) &&
           (socket.$isPrepared || prepareSocket(socket))
         ) {
-          return dispatchUsualRequest(server, url, method, handle, socket, hasBody);
+          return onNodeHTTPRequest(server, url, method, handle, socket, hasBody);
         }
         return dispatchInFull(
           bunServer,
@@ -1601,7 +1605,8 @@ function prepareSocket(socket: $Node.HttpServerSocket): boolean {
   return true;
 }
 
-function dispatchUsualRequest(
+// A function that stands in for one of the full road has that one's name, which is what a stack trace shows.
+function onNodeHTTPRequest(
   server: $Node.HttpServer,
   url: string,
   method: string,
@@ -1666,27 +1671,30 @@ function dispatchUsualRequest(
 
   if (!hasBody) req.complete = true;
 
-  if ((exchange.flags & EXCHANGE_ENDED_CLEAN) !== 0 && detachesItself(res)) {
-    exchange.detachedFrom = res[kDetachedFrom] = socket;
-    if (socket._httpMessage === res) {
-      socket[kCloseCallback] = undefined;
-      socket._httpMessage = null;
-      socket[kRequest] = undefined;
+  if ((exchange.flags & EXCHANGE_ENDED_CLEAN) !== 0 && detachesItself(res) && removesListenersUnseen(socket)) {
+    exchange.awaitsClose = false;
+    try {
+      res[kCloseCallback] = undefined;
+      exchange.detachedFrom = res[kDetachedFrom] = socket;
+      if (socket._httpMessage === res) {
+        socket[kCloseCallback] = undefined;
+        socket._httpMessage = null;
+        socket[kRequest] = undefined;
+      }
+      res[fakeSocketSymbol] = null;
+      res[kSocket] = null;
+      return undefined;
+    } catch {
+      // One of the two takes no stores. The same stores again, from the functions of the full road.
     }
-    res[fakeSocketSymbol] = null;
-    res[kSocket] = null;
-    exchange.awaitsClose = false;
-    res[kCloseCallback] = undefined;
-    return undefined;
+  } else if (exchange.awaitsClose && !((res.finished || res.destroyed || !socket.$isOpen) && handle.finished)) {
+    return (exchange.dispatchPromise = $newPromise());
   }
-  if (!exchange.awaitsClose || ((res.finished || res.destroyed || !socket.$isOpen) && handle.finished)) {
-    exchange.awaitsClose = false;
-    res[kCloseCallback] = undefined;
-    exchange.detachedFrom = res[kDetachedFrom] = socket;
-    res.detachSocket(socket);
-    return undefined;
-  }
-  return (exchange.dispatchPromise = $newPromise());
+  exchange.awaitsClose = false;
+  res[kCloseCallback] = undefined;
+  exchange.detachedFrom = res[kDetachedFrom] = socket;
+  res.detachSocket(socket);
+  return undefined;
 }
 
 // Pushes the per-server parser/handler options down to the native listener.
@@ -2858,6 +2866,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     }
   };
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
+  if (!IS_COMPILED_AHEAD_OF_TIME) Reflect.deleteProperty(NodeHTTPServerSocket.prototype, kResumeUnlessFlowing);
   serverSocketResume = NodeHTTPServerSocket.prototype.resume;
   serverSocketSetTimeout = NodeHTTPServerSocket.prototype.setTimeout;
   netSocketResume = NetSocket.prototype.resume;
@@ -2972,7 +2981,10 @@ function _writeHead(
       const keys = Object.keys(obj);
       const length = keys.length;
       const setsHeadersItself =
-        !response._header && response.setHeader === responseSetHeader && outgoingSetHeaderIsOurs();
+        IS_COMPILED_AHEAD_OF_TIME &&
+        !response._header &&
+        response.setHeader === responseSetHeader &&
+        outgoingSetHeaderIsOurs();
       // Retain for(;;) loop for performance reasons
       // Refs: https://github.com/nodejs/node/pull/30958
       for (let i = 0; i < length; i++) {
@@ -3017,6 +3029,7 @@ const {
   addListener: eventEmitterOn,
   emit: eventEmitterEmit,
   emitWithRejectionCapture,
+  removeListener: eventEmitterRemoveListener,
 } = shared.originals.eventEmitter!;
 
 function ServerResponse(
@@ -3387,11 +3400,15 @@ function stopServerResponsePerf(this: $Node.ServerResponse) {
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish(this: $Node.ServerResponse) {
   const exchange = this.$exchange;
+  const req = this.req;
   if ((exchange.flags & EXCHANGE_FINISHES_HERE) !== 0) {
-    finishConnection(exchange, this, this.req, exchange.connection!, false);
+    if (exchange.requestKind === REQUEST_OTHER && !isResumeScheduled(req._readableState)) {
+      exchange.flags &= ~EXCHANGE_FINISHES_HERE;
+      req._dump();
+    }
+    finishConnection(exchange, this, req, exchange.connection!, false);
     return;
   }
-  const req = this.req;
   // Node's resOnFinish: dump a body that nobody consumed or resumed.
   if (req && !req._consuming && !isResumeScheduled(req._readableState)) {
     req._dump();
@@ -3399,35 +3416,30 @@ function emitResponseFinish(this: $Node.ServerResponse) {
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
-  finishResponseOnSocket(this, req, (exchange.detachedFrom ?? req?.socket ?? this.socket) as any);
+  const socket: $Node.HttpServerSocket | null | undefined = (exchange.detachedFrom ??
+    req?.socket ??
+    this.socket) as any;
+  // Node's clearIncoming: a request that ended before its response did. Any other one is cleared at its EOF.
+  const parser = socket?.parser;
+  if (parser != null && parser.incoming === req && req.readableEnded) parser.incoming = null;
+  const server = socket?.server;
+  onResponseFinishHandleSocket(server, socket, this);
+  // The dispatcher detached a synchronously-finished response itself;
+  // advancing the pipeline again here would skip a queued response.
+  if (exchange.detachedFrom !== null) return;
+  if (socket != null) {
+    this.detachSocket(socket);
+    if (socket.$pipelinedResponses !== undefined) {
+      ("unlikely");
+      advanceResponsePipeline(server, socket);
+    }
+  }
 }
 
 function isResumeScheduled(state: $Node.ReadableState | null | undefined) {
   if (state == null) return false;
   const flags = flagsOf(state);
   return typeof flags === "number" ? (flags & kResumeScheduled) !== 0 : state.resumeScheduled;
-}
-
-function finishResponseOnSocket(
-  res: $Node.ServerResponse,
-  req: $Node.IncomingMessage,
-  socket: $Node.HttpServerSocket | null | undefined,
-) {
-  // Node's clearIncoming: a request that ended before its response did. Any other one is cleared at its EOF.
-  const parser = socket?.parser;
-  if (parser != null && parser.incoming === req && req.readableEnded) parser.incoming = null;
-  const server = socket?.server;
-  onResponseFinishHandleSocket(server, socket, res);
-  // The dispatcher detached a synchronously-finished response itself;
-  // advancing the pipeline again here would skip a queued response.
-  if (res.$exchange.detachedFrom !== null) return;
-  if (socket != null) {
-    res.detachSocket(socket);
-    if (socket.$pipelinedResponses !== undefined) {
-      ("unlikely");
-      advanceResponsePipeline(server, socket);
-    }
-  }
 }
 
 // Runs when a response has finished, like the transport-related half of
@@ -3449,7 +3461,7 @@ function onResponseFinishHandleSocket(
     }
     return;
   }
-  if (!socket || !server || socket.destroyed || typeof socket.setTimeout !== "function") {
+  if (!socket || socket.destroyed || typeof socket.setTimeout !== "function") {
     return;
   }
   // Another response is already in flight on this connection (pipelining):
@@ -3463,9 +3475,9 @@ function onResponseFinishHandleSocket(
   if (socket.$pipelinedResponses?.length) {
     return;
   }
-  const rawKeepAliveTimeout = server.keepAliveTimeout;
+  const rawKeepAliveTimeout = server!.keepAliveTimeout;
   const keepAliveTimeout = Number.isFinite(rawKeepAliveTimeout) && rawKeepAliveTimeout! >= 0 ? rawKeepAliveTimeout! : 0;
-  const rawKeepAliveBuffer = server.keepAliveTimeoutBuffer;
+  const rawKeepAliveBuffer = server!.keepAliveTimeoutBuffer;
   const keepAliveTimeoutBuffer =
     Number.isFinite(rawKeepAliveBuffer) && rawKeepAliveBuffer! >= 0 ? rawKeepAliveBuffer! : 1000;
   if (keepAliveTimeout) {
@@ -3973,10 +3985,18 @@ function outgoingSetHeaderIsOurs(): boolean {
 const responseSetHeader = function setHeader(this: $Node.ServerResponse, name: string, value: $Node.HttpHeaderValue) {
   const exchange = this.$exchange;
   if (exchange.headerState !== NodeHTTPHeaderState.none) throw $ERR_HTTP_HEADERS_SENT("set");
-  if (!outgoingSetHeaderIsOurs()) {
+  if (!IS_COMPILED_AHEAD_OF_TIME || !outgoingSetHeaderIsOurs()) {
     return OutgoingMessagePrototype.setHeader.$call(this, name, value);
   }
   if (this._header !== null && this._header) throw $ERR_HTTP_HEADERS_SENT("set");
+  if (exchange.shape.count === 0) {
+    // The first header of a message stores on the message. One that is frozen refuses that, where any other message stores it.
+    try {
+      this[kLenientValidation] = this[kLenientValidation];
+    } catch {
+      this._isLenientHeaderValidation();
+    }
+  }
   storeHeader(exchange, name, value);
   return this;
 };
@@ -4325,35 +4345,60 @@ function finishExchangeInSteps(exchange: Exchange, flags: number): void {
     exchange.endCallback = null;
     exchange.flags &= ~EXCHANGE_HAS_END_CALLBACK;
   }
-  emitResponseFinished(exchange.response, callback);
+  return emitResponseFinished(exchange.response, callback);
 }
 
-function forgetBytesBuffered(exchange: Exchange): void {
+// The ticks of the full road one after the other, for a response that takes no stores. What one of them throws does not keep the next from running.
+function finishExchangeTickByTick(exchange: Exchange, flags: number): void {
+  const res = exchange.response;
+  if (exchange.bytesBuffered !== 0 && !exchange.isFlushScheduled) {
+    try {
+      flushWriteAccountingNT(res);
+    } catch (error) {
+      reportError(error);
+    }
+  }
+  try {
+    markResponseEndedNT(res);
+  } catch (error) {
+    reportError(error);
+  }
+  return finishExchangeInSteps(exchange, flags);
+}
+
+const forgetBytesBuffered = function flushWriteAccountingNT(exchange: Exchange): void {
   if (exchange.bytesBuffered === 0) return;
   const res = exchange.response;
   res[kAccountingFlushScheduled] = false;
   exchange.bytesBuffered = res[kBytesBuffered] = 0;
-}
+};
 
-function finishExchange(exchange: Exchange): void {
+const finishExchange = function emitResponseFinished(exchange: Exchange): void {
   const flags = exchange.flags;
   if ((flags & (EXCHANGE_SKIPS_A_TICK | EXCHANGE_ENDED_CLEAN)) !== EXCHANGE_ENDED_CLEAN) {
     ("unlikely");
     if ((flags & EXCHANGE_SKIPS_A_TICK) !== 0) {
       exchange.flags = flags & ~EXCHANGE_SKIPS_A_TICK;
-      forgetBytesBuffered(exchange);
-      return;
+      return forgetBytesBuffered(exchange);
     }
     exchange.flags = flags & ~EXCHANGE_TICK_QUEUED;
     const res = exchange.response;
     if ((flags & EXCHANGE_HOLDS_CHUNK) !== 0) sendHeldChunk(res, exchange);
-    flushWriteAccountingNT(res);
-    return;
+    return flushWriteAccountingNT(res);
   }
   exchange.flags = flags & ~EXCHANGE_TICK_QUEUED;
-  forgetBytesBuffered(exchange);
   const res = exchange.response;
-  res._ended = true;
+  let takesStores = true;
+  try {
+    forgetBytesBuffered(exchange);
+    res._ended = true;
+  } catch {
+    takesStores = false;
+  }
+  if (!takesStores) {
+    ("unlikely");
+    return finishExchangeTickByTick(exchange, flags);
+  }
   const req = res.req;
   const socket = exchange.connection;
   const requestState = exchange.requestState;
@@ -4368,18 +4413,17 @@ function finishExchange(exchange: Exchange): void {
     !ticksAreUnhooked() ||
     !emitsUnseen(res) ||
     !detachesItself(res) ||
+    !removesListenersUnseen(socket) ||
     req.socket !== socket ||
     !isAtRest(socket)
   ) {
     ("unlikely");
-    finishExchangeInSteps(exchange, flags);
-    return;
+    return finishExchangeInSteps(exchange, flags);
   }
   const server = socket.server;
   if (server == null) {
     ("unlikely");
-    finishExchangeInSteps(exchange, flags);
-    return;
+    return finishExchangeInSteps(exchange, flags);
   }
   const keepAliveTimeout = server.keepAliveTimeout;
   const keepAliveTimeoutBuffer = server.keepAliveTimeoutBuffer;
@@ -4391,20 +4435,17 @@ function finishExchange(exchange: Exchange): void {
     !(keepAliveTimeout + keepAliveTimeoutBuffer < Infinity)
   ) {
     ("unlikely");
-    finishExchangeInSteps(exchange, flags);
-    return;
+    return finishExchangeInSteps(exchange, flags);
   }
   const idleTimeout = keepAliveTimeout + keepAliveTimeoutBuffer;
   if (socket.$armedTimeout !== idleTimeout && socket.setTimeout !== serverSocketSetTimeout) {
     ("unlikely");
-    finishExchangeInSteps(exchange, flags);
-    return;
+    return finishExchangeInSteps(exchange, flags);
   }
   const isSilent = (flags & EXCHANGE_HAS_END_CALLBACK) === 0 && isUnheard(res, exchange);
   if (!isSilent && !finishesFirst(res)) {
     ("unlikely");
-    finishExchangeInSteps(exchange, flags);
-    return;
+    return finishExchangeInSteps(exchange, flags);
   }
   const isConsumed = req._consuming;
   const isAlone = ring.read === ring.write || (isSilent && isConsumed && takeRequestCloseTick(req));
@@ -4419,19 +4460,26 @@ function finishExchange(exchange: Exchange): void {
   exchange.requestKind = kind;
   if (!isAlone) {
     ("unlikely");
-    finishExchangeAmongOthers(exchange, res, req, socket, flags, isSilent);
-    return;
+    return finishExchangeAmongOthers(exchange, res, req, socket, flags, isSilent);
   }
   if (isSilent && (kind === REQUEST_UNSEEN || kind === REQUEST_CONSUMED)) {
-    finishConnection(exchange, res, req, socket, true);
+    try {
+      if (kind === REQUEST_UNSEEN) endUnseen(req);
+      finishConnection(exchange, res, req, socket, true);
+    } catch {
+      takesStores = false;
+    }
+    if (!takesStores) {
+      ("unlikely");
+      return finishExchangeInSteps(exchange, flags);
+    }
     res.destroyed = true;
     res._closed = true;
     settleDispatchAtClose(res);
-    if (kind === REQUEST_UNSEEN) endUnseen(req);
     return;
   }
-  finishHeardExchange(exchange, res, req, flags);
-}
+  return finishHeardExchange(exchange, res, req, flags);
+};
 
 function finishesFirst(res: $Node.ServerResponse): boolean {
   const events = res._events as any;
@@ -4442,7 +4490,7 @@ function finishesFirst(res: $Node.ServerResponse): boolean {
   );
 }
 
-function finishConnection(
+const finishConnection = function onResponseFinishHandleSocket(
   exchange: Exchange,
   res: $Node.ServerResponse,
   req: $Node.IncomingMessage,
@@ -4491,7 +4539,7 @@ function finishConnection(
     res[fakeSocketSymbol] = null;
     res[kSocket] = null;
   }
-}
+};
 
 function queueRestOfExchange(
   exchange: Exchange,
@@ -4505,7 +4553,7 @@ function queueRestOfExchange(
   if ((flags & EXCHANGE_REQUEST_WAITS) !== 0) queueDump(req, exchange.requestState!);
 }
 
-function finishExchangeAmongOthers(
+const finishExchangeAmongOthers = function emitResponseFinished(
   exchange: Exchange,
   res: $Node.ServerResponse,
   req: $Node.IncomingMessage,
@@ -4534,9 +4582,9 @@ function finishExchangeAmongOthers(
       res.emit("error", err);
     }
   }
-}
+};
 
-function finishHeardExchange(
+const finishHeardExchange = function emitResponseFinished(
   exchange: Exchange,
   res: $Node.ServerResponse,
   req: $Node.IncomingMessage,
@@ -4588,7 +4636,7 @@ function finishHeardExchange(
       continueDump(req, state);
     }
   }
-}
+};
 
 function emitsUnseen(res: $Node.ServerResponse): boolean {
   return res.emit === responseEmit && StreamPrototype.emit === eventEmitterEmit;
@@ -4607,6 +4655,17 @@ function detachesItself(res: $Node.ServerResponse): boolean {
   return res.detachSocket === responseDetachSocket;
 }
 
+function callsPendingCallbacksUnseen(res: $Node.ServerResponse): boolean {
+  return res._callPendingCallbacks === responseCallPendingCallbacks;
+}
+
+function removesListenersUnseen(socket: $Node.HttpServerSocket): boolean {
+  return (
+    IS_COMPILED_AHEAD_OF_TIME ||
+    (socket.removeListener === duplexRemoveListener && StreamPrototype.removeListener === eventEmitterRemoveListener)
+  );
+}
+
 function isAtRest(socket: $Node.HttpServerSocket): boolean {
   return (
     socket.$isOpen &&
@@ -4614,6 +4673,7 @@ function isAtRest(socket: $Node.HttpServerSocket): boolean {
     !socket.$hasWaitingResponses &&
     !socket[kStreamingEnabled] &&
     !socket[kHandedOff] &&
+    socket._readableState === socket.$ownReadableState &&
     (flagsOf(socket.$ownReadableState) & kSocketFlowMask) === kSocketFlows
   );
 }
@@ -4817,9 +4877,15 @@ ServerResponse.prototype.end = function (
   this._header = " ";
   this.finished = true;
 
-  if (!draining && (flags & EXCHANGE_HAS_PENDING_CALLBACKS) === 0 && ticksAreUnhooked()) {
+  if (
+    !draining &&
+    (flags & EXCHANGE_HAS_PENDING_CALLBACKS) === 0 &&
+    ticksAreUnhooked() &&
+    callsPendingCallbacksUnseen(this)
+  ) {
     if (!isUnheard(this, exchange) || !emitsUnseen(this)) {
       this.emit("prefinish");
+      if (!callsPendingCallbacksUnseen(this)) this._callPendingCallbacks();
       flags = exchange.flags;
     }
     flags |= EXCHANGE_ENDED_CLEAN;
@@ -4960,7 +5026,8 @@ ServerResponse.prototype.write = function (
     // Native code refuses some status messages, and this call is the one to throw. writeHead() has looked at its own.
     (this.statusMessage === undefined || (flags & EXCHANGE_HAS_SNAPSHOT) !== 0) &&
     chunk.length * 3 < this[kHighWaterMark] &&
-    ticksAreUnhooked()
+    ticksAreUnhooked() &&
+    callsPendingCallbacksUnseen(this)
   ) {
     const socket = exchange.connection;
     if (socket !== null && socket.$isOpen) {
@@ -5078,7 +5145,9 @@ function scheduleWriteAccountingFlush(res: $Node.ServerResponse) {
   queueTick1(flushWriteAccountingNT, res);
 }
 
-ServerResponse.prototype._callPendingCallbacks = function (this: $Node.ServerResponse) {
+const responseCallPendingCallbacks = (ServerResponse.prototype._callPendingCallbacks = function (
+  this: $Node.ServerResponse,
+) {
   if ((this.$exchange.flags & EXCHANGE_HAS_PENDING_CALLBACKS) === 0) return;
   const callbacks = this[kPendingCallbacks]!;
   const originalLength = callbacks.length;
@@ -5093,24 +5162,22 @@ ServerResponse.prototype._callPendingCallbacks = function (this: $Node.ServerRes
   } else {
     callbacks.splice(0, originalLength);
   }
-};
+});
 
 ServerResponse.prototype._finish = function (this: $Node.ServerResponse) {
   this.emit("prefinish");
 };
 
-const responseDetachSocket = function detachSocket(
+const responseDetachSocket = (ServerResponse.prototype.detachSocket = function (
   this: $Node.ServerResponse,
   socket: $Node.HttpSocket | null | undefined,
 ) {
   // socket can be null when the stream destroyer detached the request's
   // socket (req.socket = null) before the response finished.
   if (socket && socket._httpMessage === this) {
-    if (socket[kCloseCallback]) {
-      socket[kCloseCallback] = undefined;
-    } else {
-      socket.removeListener("close", onServerResponseClose);
-    }
+    const hasCloseCallback = !!socket[kCloseCallback];
+    if (hasCloseCallback) socket[kCloseCallback] = undefined;
+    if (!IS_COMPILED_AHEAD_OF_TIME || !hasCloseCallback) socket.removeListener("close", onServerResponseClose);
     socket._httpMessage = null;
     // Drop the request reference so a kept-alive idle connection does not
     // pin the last request in memory (Node.js frees the parser's incoming
@@ -5121,16 +5188,12 @@ const responseDetachSocket = function detachSocket(
   }
 
   this.socket = null;
-};
-Object.defineProperty(responseDetachSocket, "name", { value: "" });
-ServerResponse.prototype.detachSocket = responseDetachSocket;
+});
 
-const OriginalImplicitHeadFn = function _implicitHeader(this: $Node.ServerResponse) {
+const OriginalImplicitHeadFn = (ServerResponse.prototype._implicitHeader = function (this: $Node.ServerResponse) {
   if (this.headersSent) return;
   this.writeHead(this.statusCode);
-};
-Object.defineProperty(OriginalImplicitHeadFn, "name", { value: "" });
-ServerResponse.prototype._implicitHeader = OriginalImplicitHeadFn;
+});
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get(this: $Node.ServerResponse) {
@@ -5219,7 +5282,7 @@ ServerResponse.prototype._send = function (
   }
 };
 
-const OriginalWriteHeadFn = function writeHead(
+const OriginalWriteHeadFn = (ServerResponse.prototype.writeHead = function (
   this: $Node.ServerResponse,
   statusCode: number,
   statusMessage?: string | $Node.HttpHeadersInit | null,
@@ -5260,9 +5323,7 @@ const OriginalWriteHeadFn = function writeHead(
   }
 
   return this;
-};
-Object.defineProperty(OriginalWriteHeadFn, "name", { value: "" });
-ServerResponse.prototype.writeHead = OriginalWriteHeadFn;
+});
 
 ServerResponse.prototype.assignSocket = function (this: $Node.ServerResponse, socket: $Node.HttpSocket) {
   if (socket._httpMessage) {
@@ -5312,7 +5373,7 @@ ServerResponse.prototype.destroy = function (this: $Node.ServerResponse, err?: E
   return this;
 };
 
-const responseEmit = function emit(this: $Node.ServerResponse, event: $Node.EventName) {
+const responseEmit = (ServerResponse.prototype.emit = function (this: $Node.ServerResponse, event: $Node.EventName) {
   if (event === "close") {
     if (this.$exchange.pendingFinish !== undefined) {
       ("unlikely");
@@ -5327,9 +5388,7 @@ const responseEmit = function emit(this: $Node.ServerResponse, event: $Node.Even
     settleDispatchAtClose(this);
   }
   return plainStream.emit.$apply(this, arguments);
-};
-Object.defineProperty(responseEmit, "name", { value: "" });
-ServerResponse.prototype.emit = responseEmit;
+});
 
 function emitResponseFinishedThenClose(res: $Node.ServerResponse, callback: $Node.HttpWriteCallback | null) {
   emitResponseFinished(res, callback);

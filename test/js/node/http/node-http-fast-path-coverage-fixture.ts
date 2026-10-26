@@ -15,16 +15,15 @@ const observations: Observation[] = [];
 const nextTick = process.nextTick;
 process.nextTick = function (callback: Function, ...args: unknown[]) {
   const latest = observations.at(-1);
-  if (latest && !latest.res.closed) latest.ticks.push(callback.name);
+  if (latest && !latest.res.closed) latest.ticks.push(`${callback.name} ${args.length}`);
   return nextTick.call(process, callback, ...args);
 } as typeof process.nextTick;
 
 function observing(listener: RequestListener): RequestListener {
   return (req, res) => {
-    const frames = new Error().stack!.split("\n").map(line => /at (\S+)/.exec(line)?.[1] ?? "");
     observations.push({
       route: `${req.method} ${req.url}`,
-      dispatcher: frames.find(frame => frame.startsWith("dispatch")) ?? "unknown",
+      dispatcher: new Error().stack!.split("\n").find(line => line.includes("at onNodeHTTPRequest ")) ?? "unknown",
       res,
       ticks: [],
     });
@@ -118,12 +117,14 @@ process.stdin.on("data", () => {});
 process.stdin.on("end", () => {
   server.close(() => {
     const coverage: Record<string, Record<string, number>> = {};
+    // The first request asks for the connection to be closed, which the fast path does not take.
+    const slowDispatcher = observations.shift()!.dispatcher;
     for (const { route, dispatcher, res, ticks } of observations) {
       const counts = (coverage[route] ??= { requests: 0, fastDispatch: 0, compactHeaders: 0, singleTickFinish: 0 });
       counts.requests++;
-      if (dispatcher === "dispatchUsualRequest") counts.fastDispatch++;
+      if (dispatcher !== "unknown" && dispatcher !== slowDispatcher) counts.fastDispatch++;
       if (outgoingHeaders(res) === null) counts.compactHeaders++;
-      if (ticks.at(-1) === "finishExchange") counts.singleTickFinish++;
+      if (ticks.at(-1) === "emitResponseFinished 1") counts.singleTickFinish++;
     }
     console.log(JSON.stringify(coverage));
   });

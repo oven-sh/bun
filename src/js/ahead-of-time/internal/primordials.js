@@ -21,6 +21,8 @@ const callOwnFunctionsWithoutParameters = $newCppFunction(
   3,
 );
 
+const defineOwnPropertiesLeftOut = $newCppFunction("BunCompiledModules.cpp", "jsFunctionDefineOwnPropertiesLeftOut", 3);
+
 const sealClass = constructor => {
   const prototype = constructor.prototype;
   ObjectSetPrototypeOf(prototype, null);
@@ -42,6 +44,20 @@ const createSafeIterator = (factory, next_) => {
   }
   sealClass(SafeIterator);
   return SafeIterator;
+};
+
+// `makers`: a key and a function that makes an iterator, and so on. What it answers holds under each key a function that makes a safe iterator, but for the four keys that are written out below.
+const wrapMakersOfIterators = (makers, next) => {
+  const wrapped = {};
+  for (let i = 0; i < makers.length; i += 2) {
+    const key = makers[i];
+    if (key === "entries" || key === "keys" || key === "values" || key === SymbolIterator) continue;
+    const SafeIterator = createSafeIterator(makers[i + 1], next);
+    wrapped[key] = function () {
+      return new SafeIterator(this);
+    };
+  }
+  return wrapped;
 };
 
 const ArrayPrototypeSymbolIterator = Array.prototype[SymbolIterator];
@@ -70,7 +86,7 @@ class SafeMap extends Map {
   }
 }
 const SafeMapPrototype = SafeMap.prototype;
-callOwnFunctionsWithoutParameters(MapPrototype, SafeMapPrototype, new Map());
+const makersOfIteratorsOfMap = callOwnFunctionsWithoutParameters(MapPrototype, SafeMapPrototype, new Map());
 ReflectDefineProperty(SafeMapPrototype, "clear", {
   value: MapPrototype.clear,
   writable: true,
@@ -153,6 +169,12 @@ ReflectDefineProperty(SafeMap, "groupBy", {
   configurable: true,
 });
 ReflectDefineProperty(SafeMap, SymbolSpecies, ReflectGetOwnPropertyDescriptor(Map, SymbolSpecies));
+defineOwnPropertiesLeftOut(
+  SafeMapPrototype,
+  MapPrototype,
+  wrapMakersOfIterators(makersOfIteratorsOfMap, MapIteratorPrototypeNext),
+);
+defineOwnPropertiesLeftOut(SafeMap, Map, undefined);
 sealClass(SafeMap);
 
 const SetPrototype = Set.prototype;
@@ -171,7 +193,7 @@ class SafeSet extends Set {
   }
 }
 const SafeSetPrototype = SafeSet.prototype;
-callOwnFunctionsWithoutParameters(SetPrototype, SafeSetPrototype, new Set());
+const makersOfIteratorsOfSet = callOwnFunctionsWithoutParameters(SetPrototype, SafeSetPrototype, new Set());
 ReflectDefineProperty(SafeSetPrototype, "add", {
   value: SetPrototype.add,
   writable: true,
@@ -272,6 +294,12 @@ ReflectDefineProperty(SafeSetPrototype, SymbolToStringTag, {
   configurable: true,
 });
 ReflectDefineProperty(SafeSet, SymbolSpecies, ReflectGetOwnPropertyDescriptor(Set, SymbolSpecies));
+defineOwnPropertiesLeftOut(
+  SafeSetPrototype,
+  SetPrototype,
+  wrapMakersOfIterators(makersOfIteratorsOfSet, SetIteratorPrototypeNext),
+);
+defineOwnPropertiesLeftOut(SafeSet, Set, undefined);
 sealClass(SafeSet);
 
 const WeakMapPrototype = WeakMap.prototype;
@@ -324,6 +352,8 @@ ReflectDefineProperty(SafeWeakMapPrototype, SymbolToStringTag, {
   enumerable: false,
   configurable: true,
 });
+defineOwnPropertiesLeftOut(SafeWeakMapPrototype, WeakMapPrototype, undefined);
+defineOwnPropertiesLeftOut(SafeWeakMap, WeakMap, undefined);
 sealClass(SafeWeakMap);
 
 const PromisePrototypeThen = $Promise.prototype.$then;

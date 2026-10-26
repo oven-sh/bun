@@ -1,15 +1,10 @@
 use bun_core::strings;
+use bun_sema::hir::find_transpiled_mark;
 use std::borrow::Cow;
 
-const PRAGMA: &[u8] = b"// @bun";
 const COMMONJS_WORD: &[u8] = b"@bun-cjs";
 const WRAPPER_START: &[u8] = b"(function(exports, require, module, __filename, __dirname) {";
 const WRAPPER_END: &[u8] = b"})";
-
-fn end_of_line(text: &[u8], start: usize) -> Option<usize> {
-    let length = strings::index_of_char_usize(&text[start..], b'\n')?;
-    Some(start + length + 1)
-}
 
 // Behind the function stand blank lines and comments, such as the one that names a source map.
 fn find_wrapper_end(text: &[u8], body_start: usize) -> Option<usize> {
@@ -30,16 +25,9 @@ fn find_wrapper_end(text: &[u8], body_start: usize) -> Option<usize> {
 }
 
 fn find_wrapper(text: &[u8]) -> Option<(usize, usize)> {
-    let pragma_start = match text.starts_with(b"#!") {
-        true => end_of_line(text, 0)?,
-        false => 0,
-    };
-    let start = end_of_line(text, pragma_start)?;
-    let pragma = &text[pragma_start..start];
-    if !pragma.starts_with(PRAGMA)
-        || !strings::contains(pragma, COMMONJS_WORD)
-        || !text[start..].starts_with(WRAPPER_START)
-    {
+    let mark = find_transpiled_mark(text)?;
+    let start = mark.end;
+    if !strings::contains(&text[mark], COMMONJS_WORD) || !text[start..].starts_with(WRAPPER_START) {
         return None;
     }
     Some((start, find_wrapper_end(text, start + WRAPPER_START.len())?))

@@ -919,6 +919,113 @@ fn eval_dynamic_lookups() {
 }
 
 #[test]
+fn eval_variables_between_body_and_parameters() {
+    // (text, name, which mention, whether the lookup searches the variables of the function)
+    let cases = [
+        (
+            r#"function f(a, b = 2) { eval(""); return a; }"#,
+            "a",
+            0,
+            true,
+        ),
+        (
+            r#"function f(a, b = 2) { eval(""); return b; }"#,
+            "b",
+            0,
+            true,
+        ),
+        (
+            r#"function f(a, b = 2) { eval(""); return arguments; }"#,
+            "arguments",
+            0,
+            true,
+        ),
+        (
+            r#"function f(a, b = 2) { eval(""); return () => a; }"#,
+            "a",
+            0,
+            true,
+        ),
+        (
+            r#"function f({ [k]: a }) { eval(""); return a; }"#,
+            "a",
+            0,
+            true,
+        ),
+        (r#"var f = (a, b = 2) => [eval(""), a];"#, "a", 0, true),
+        (r#"function f(a, b = a) { eval(""); }"#, "a", 0, false),
+        (r#"function f(a, b = () => a) { eval(""); }"#, "a", 0, false),
+        (r#"var f = (a, b = a) => eval("");"#, "a", 0, false),
+        (
+            r#"function f(a, b = 2) { var a; eval(""); return a; }"#,
+            "a",
+            0,
+            false,
+        ),
+        (
+            r#"function f(a, b = 2) { var arguments; eval(""); return arguments; }"#,
+            "arguments",
+            0,
+            false,
+        ),
+        (
+            r#"function f(a, b = 2) { let c; eval(""); return c; }"#,
+            "c",
+            0,
+            false,
+        ),
+        (r#"function f(a, b) { eval(""); return a; }"#, "a", 0, false),
+        (
+            r#"function f(a, ...b) { eval(""); return a; }"#,
+            "a",
+            0,
+            false,
+        ),
+        (
+            r#"function f(a, { b }) { eval(""); return a; }"#,
+            "a",
+            0,
+            false,
+        ),
+        (r#"function f(a, b = 2) { return a; }"#, "a", 0, false),
+        (
+            r#"function f(a, b = 2) { (() => eval(""))(); return a; }"#,
+            "a",
+            0,
+            false,
+        ),
+        (
+            r#""use strict"; function f(a, b = 2) { eval(""); return a; }"#,
+            "a",
+            0,
+            false,
+        ),
+    ];
+    for (text, name, nth, expected) in cases {
+        analyzed("a.cjs", text, |s| {
+            let ident = s.ident(name, nth);
+            let function_scope = s.bound.symbol_scope(parameter(s, "a", 0));
+            let lookup = s.bound.dynamic_lookup_scope(NodeData::Expr(ident));
+            assert_eq!(lookup, expected.then_some(function_scope), "{text}");
+            let end = s.bound.dynamic_lookup_end(ident, function_scope);
+            assert_eq!(end != function_scope, expected, "{text}");
+        });
+    }
+    let text = r#"function f(a, b = 2) { eval(""); with (b) { return a; } }"#;
+    analyzed("a.cjs", text, |s| {
+        let with = first_stmt(s, |kind| matches!(kind, StmtKind::With { .. }));
+        let ident = s.ident("a", 0);
+        let function_scope = s.bound.symbol_scope(parameter(s, "a", 0));
+        let lookup = s.bound.dynamic_lookup_scope(NodeData::Expr(ident));
+        assert_eq!(lookup, Some(s.bound.own_scope(with)));
+        assert_ne!(
+            s.bound.dynamic_lookup_end(ident, function_scope),
+            function_scope
+        );
+    });
+}
+
+#[test]
 fn stores() {
     for &(statement, kind) in STORES {
         let text = format!("let x; {statement}");

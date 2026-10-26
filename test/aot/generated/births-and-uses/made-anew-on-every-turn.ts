@@ -2,6 +2,8 @@
 // Every loop that makes it, against every loop, method, declared function or callback of a built-in that reads it,
 // and every way by which what the reading turn has made comes to its use: at once, chosen by a test that always holds, out of a list, through a function.
 // One small program for each. In it they stand in a function that runs once and often, in the module's own code, in two functions, in a method, around an await and around a yield.
+import { withLoopsOf } from "./where-a-stretch-stands";
+
 type Thing = { type: string; make: (value: string) => string; fresh: string; freshType: string; use: (fresh: string) => string; beside?: string };
 
 /** `calls` behind a thing make what is new on the turn that reads, of type `freshType`. `rest` behind that reads it. */
@@ -290,11 +292,13 @@ export function programs(typed = false) {
           const read = `const seen: unknown[] = []; ${other}${reader(held => thing.use(fresh(held)), fresh, thing.use)}`;
           const body = `${other}return ${thing.use(way("thing" + thing.fresh, "kept.length"))};`;
           const beside = [thing.beside, besideReaders[readerName]?.(body)].filter(Boolean).map(text => "\n" + text).join("");
-          const text = () => `type Made = ${thing.type};
+          const name = `${thingName}-${loopName}-${readerName}${wayName === "atOnce" ? "" : "-" + wayName}`;
+          const text = () => withLoopsOf(name, `type Made = ${thing.type};
 type Fresh = ${thing.freshType};
 class Box { value: number; constructor(value: number) { this.value = value; } }
 class Reader { read: () => number; constructor(read: () => number) { this.read = read; } }
 const kept: unknown[] = [];
+const extraTurns: number = process.argv.length > 99 ? 1 : 0;
 function same<T>(value: T): T { return value; }
 function list(n: number): number[] { const all: number[] = []; for (let at = 0; at < n; at++) all.push(at + 4); return all; }
 function* counting(n: number): Generator<number> { for (let at = 0; at < n; at++) yield at + 7; }
@@ -316,9 +320,9 @@ console.log("await", await waits(3));
 { const said = new Set<string>(); for (let turn = 0; turn < 200; turn++) said.add(reads(makes(3 + (turn % 2)))); console.log("often apart", [...said].join(" | ")); }
 console.log("kept", kept.length);
 export {};
-`;
+`);
           made.push({
-            name: `${thingName}-${loopName}-${readerName}${wayName === "atOnce" ? "" : "-" + wayName}`,
+            name,
             file: typed ? "program.ts" : "program.mjs",
             get text() {
               return typed ? text() : new Bun.Transpiler({ loader: "ts" }).transformSync(text());

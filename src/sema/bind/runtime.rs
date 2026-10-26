@@ -23,6 +23,7 @@ mod tests;
 mod type_only_code;
 
 use self::declaration_kinds::{Declaration, FunctionPosition, statement_position};
+pub use self::queries::is_among_parameters;
 pub use self::storage::RuntimeTablesIn;
 use super::decorator_metadata::MetadataReference;
 use super::{BoundBuilder, Decl, ScopeId, SymbolId};
@@ -155,6 +156,7 @@ bitflags::bitflags! {
         const HAS_PARAMETER_EXPRESSIONS = 1 << 0;
         const USES_ARGUMENTS = 1 << 1;
         const HAS_DIRECT_EVAL = 1 << 2;
+        const HAS_ARGUMENTS_VARIABLE = 1 << 3;
     }
 }
 

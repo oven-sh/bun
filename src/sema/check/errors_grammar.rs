@@ -337,7 +337,10 @@ impl Checker<'_, '_> {
                 (1262, self.early_error_class(file, node))
             }
         } else if hir.await_context(node) == Ok(true) {
-            (1359, self.early_error_class(file, node))
+            (
+                1359,
+                self.operator_as_name_error_class(file, node, Flags::ASYNC),
+            )
         } else {
             return;
         };

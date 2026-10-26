@@ -87,7 +87,7 @@ function f3 name="intoField" parameters=[{type=string}, {type=L2}] results=[{typ
 # CHECK: = CallDirect {{*}} function=[[parserOfUser]]
 
 # ResolveBuiltins has taken the call out of the tail position, and the cast of the tail call is a check behind it
-function f4 name="returned" parameters=[{type=string}] results=[{type=undefined|null|L0 site=w3}] {
+function f4 name="returned" parameters=[{type=string}] results=[{type=undefined|null|L0 site=w3 flags=[IsExpected]}] {
   b0(v0: string):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0

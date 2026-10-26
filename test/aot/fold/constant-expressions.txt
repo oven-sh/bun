@@ -233,6 +233,8 @@ number	1	(0 / 0) ** 0
 number	NaN	2 ** (0 / 0)
 number	NaN	1 ** (1 / 0)
 number	NaN	(-1) ** (1 / 0)
+number	NaN	(-8) ** (1 / 3)
+number	NaN	(-1) ** 0.5
 number	1	5 & 3
 number	7	5 | 3
 number	6	5 ^ 3
@@ -323,7 +325,6 @@ unknown	-	4 ** 0.5
 unknown	-	2 ** 54
 unknown	-	3 ** 40
 unknown	-	2 ** 1024
-unknown	-	(-8) ** (1 / 3)
 unknown	-	"～" < "\u{1F600}"
 unknown	-	"é" < "z"
 unknown	-	+" 1"

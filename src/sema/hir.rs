@@ -23,7 +23,9 @@ mod tests;
 
 pub use crate::check::aot::DiagnosticClass;
 pub use expr_flags::{ExprFlags, MemberKey, TemplatePart, kind_flags};
-pub use runtime_syntax::{has_runtime_member, is_moved_to_file_start, is_proto_setter};
+pub use runtime_syntax::{
+    find_transpiled_mark, has_runtime_member, is_moved_to_file_start, is_proto_setter,
+};
 
 macro_rules! define_id {
     ($($name:ident),* $(,)?) => {$(

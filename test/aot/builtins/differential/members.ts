@@ -22,14 +22,15 @@ const preludeFolder = join(import.meta.dir, "../../../../src/aot/prelude");
 // The helpers that are written in TypeScript and compiled with a program. Here they run as they are written.
 function loadCompiledHelpers(): object {
   const helpers: Record<string, unknown> = {};
-  // Each file says by stores to this name which of its functions a stack trace shows.
-  Reflect.set(globalThis, "$visibility", "");
+  // Each file says by stores to these names which of its functions a stack trace shows, and under which name.
+  const directives = ["$visibility", "$overriddenName"];
+  for (const directive of directives) Reflect.set(globalThis, directive, "");
   try {
     for (const file of readdirSync(preludeFolder)) {
       if (file.endsWith(".ts") && !file.endsWith(".d.ts")) Object.assign(helpers, require(join(preludeFolder, file)));
     }
   } finally {
-    Reflect.deleteProperty(globalThis, "$visibility");
+    for (const directive of directives) Reflect.deleteProperty(globalThis, directive);
   }
   return helpers;
 }

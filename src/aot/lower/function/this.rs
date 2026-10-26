@@ -82,7 +82,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder
             .set_frequency(split.taken, BlockFrequency::Unlikely);
         self.builder.switch_to(split.taken);
+        let position = self.position();
+        self.set_position_to_last_recorded();
         self.emit_throw_runtime_error(RuntimeErrorKind::UninitializedThis, None);
+        self.set_position(position);
         self.builder.switch_to(split.not_taken);
         let binding = BindingRef::Slot(owner, ScopeSlot::This);
         if let Some(local) = self.scopes.find_local(binding) {

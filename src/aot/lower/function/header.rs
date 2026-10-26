@@ -1,4 +1,3 @@
-use bun_sema::atom::known;
 use bun_sema::bind::{Binding, CodeUnit, Decl, FnOwner};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{self, Flags, FnId, FnKind};
@@ -20,7 +19,7 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             _ => Binding::Free,
         };
-        self.intern_function_name(binding, func.name)
+        self.intern_function_name(binding, func.name, func.name_pos)
     }
 
     pub(in crate::lower) fn is_derived_constructor(&self, function: FnId) -> bool {
@@ -228,6 +227,9 @@ fn create_source_header(
     };
     let mut header = create_header(file, key, kind, position);
     header.flags |= compute_source_flags(hir, function);
+    if file.is_anonymous_in_bundle(func.name_pos) {
+        header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
+    }
     if file.inputs.library_functions.is_left_out(source) {
         header.flags = header
             .flags
@@ -236,7 +238,7 @@ fn create_source_header(
     header.name = match name {
         Some(name) => Some(name),
         None if func.name.is_some() => Some(file.intern_own_name(function)),
-        None if func.flags.contains(Flags::DEFAULT) => Some(file.intern_atom(known::default)),
+        None if func.flags.contains(Flags::DEFAULT) => file.default_export_name(func.start),
         None => None,
     };
     header.text = file.compute_text_range(function);

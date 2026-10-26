@@ -108,6 +108,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     // What the names of the parameters hold here. A name that closures share lies in an environment.
     pub(in crate::lower) fn get_held_values(&mut self) -> SmallVec<[ValueId; 4]> {
+        self.begin_stretch_of_scope_reads();
         let mut values: SmallVec<[ValueId; 4]> = SmallVec::new();
         for index in 0..self.coroutine.held.len() {
             let binding = self.coroutine.held[index];

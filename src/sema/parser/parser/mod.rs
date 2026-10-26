@@ -835,9 +835,11 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
                 },
                 _ => Vec::new(),
             };
-            match argument.is_empty() {
-                true => self.flag(DiagnosticKind::Grammar, code, (start, end), &[]),
-                false => self.flag(DiagnosticKind::Grammar, code, (start, end), &[&argument]),
+            let arguments = [argument.as_slice()];
+            let arguments = &arguments[..usize::from(!argument.is_empty())];
+            match self.lx.compiles() {
+                true => self.flag_early_error(code, (start, end), arguments),
+                false => self.flag(DiagnosticKind::Grammar, code, (start, end), arguments),
             }
         }
     }

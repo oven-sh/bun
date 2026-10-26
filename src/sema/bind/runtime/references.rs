@@ -12,6 +12,13 @@ use crate::hir::*;
 
 pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &RuntimeScopes) {
     let (hir, idents, options, atoms) = (input.hir, input.idents, input.options, input.atoms);
+    let arguments_variables = find_arguments_variables(hir, input.bound, scopes);
+    for &(_, binding) in &arguments_variables {
+        if let Binding::Arguments(CodeUnit::Function(function)) = binding {
+            input.bound.runtime.function_flags[function.idx()] |=
+                FunctionFlags::HAS_ARGUMENTS_VARIABLE;
+        }
+    }
     let bound: &BoundBuilder = &*input.bound;
     let type_only = TypeOnlyCode::new(hir, bound);
     let direct_evals = find_direct_evals(hir, bound, idents, scopes, &type_only);
@@ -40,7 +47,8 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     pass.resolve_idents();
     pass.collect_eval_scopes();
     pass.resolve_hoisted_vars();
-    pass.resolve_arguments_variables();
+    let initialized_bindings = &mut pass.references.initialized_bindings;
+    initialized_bindings.extend(arguments_variables);
     pass.find_redeclared_commonjs_variables();
     pass.collect_dynamic_declarators();
     pass.collect_stores();
@@ -78,6 +86,38 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     }
 }
 
+fn find_arguments_variables(
+    hir: &File<'_>,
+    bound: &BoundBuilder,
+    scopes: &RuntimeScopes,
+) -> Vec<(PatId, Binding)> {
+    let lookup = Lookup {
+        hir,
+        bound,
+        scopes,
+        dynamic_scopes: Vec::new(),
+    };
+    let name = known::arguments;
+    let mut variables = Vec::new();
+    for scope in bound.scopes.iter() {
+        let Some(local) = bound.find_in_table(scope.locals, name) else {
+            continue;
+        };
+        let binding = lookup.local_binding(scope.kind, ScopeKind::Block, name, local);
+        let Some(arguments @ Binding::Arguments(_)) = binding else {
+            continue;
+        };
+        for &decl in bound.symbols[local.idx()].decls.iter() {
+            if let Decl::Var(pat) | Decl::Require(pat) = decl
+                && declaration_kind(hir, bound, decl) == DeclarationKind::Var
+            {
+                variables.push((pat, arguments));
+            }
+        }
+    }
+    variables
+}
+
 pub(super) struct ReferencePass<'a, 's> {
     pub(super) lookup: Lookup<'a, 's>,
     pub(super) idents: &'a [(ExprId, ScopeId)],
@@ -111,10 +151,20 @@ impl ReferencePass<'_, '_> {
             if let Binding::Arguments(unit) = found.binding {
                 self.uses_arguments.push(unit);
             }
-            if found.dynamic_scope.is_some() {
+            let mut dynamic_scope = found.dynamic_scope;
+            if self.lookup.is_behind_eval_variables(&found, hir[ident].pos) {
+                insert_bit(
+                    &mut self.references.idents_behind_eval_variables,
+                    ident.idx(),
+                );
+                if dynamic_scope.is_none() {
+                    dynamic_scope = found.scope;
+                }
+            }
+            if dynamic_scope.is_some() {
                 self.references
                     .dynamic_ident_lookups
-                    .push((ident, found.dynamic_scope));
+                    .push((ident, dynamic_scope));
             }
         }
         self.references.sort();
@@ -162,29 +212,6 @@ impl ReferencePass<'_, '_> {
         symbol.map_or(SymbolId::NONE, |s| {
             bound.export_symbol_of_value_symbol_if_exported(s)
         })
-    }
-
-    fn resolve_arguments_variables(&mut self) {
-        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
-        let name = known::arguments;
-        for scope in bound.scopes.iter() {
-            let Some(local) = bound.find_in_table(scope.locals, name) else {
-                continue;
-            };
-            let binding = self
-                .lookup
-                .local_binding(scope.kind, ScopeKind::Block, name, local);
-            let Some(arguments @ Binding::Arguments(_)) = binding else {
-                continue;
-            };
-            for &decl in bound.symbols[local.idx()].decls.iter() {
-                if let Decl::Var(pat) | Decl::Require(pat) = decl
-                    && declaration_kind(hir, bound, decl) == DeclarationKind::Var
-                {
-                    self.references.initialized_bindings.push((pat, arguments));
-                }
-            }
-        }
     }
 
     fn find_redeclared_commonjs_variables(&mut self) {

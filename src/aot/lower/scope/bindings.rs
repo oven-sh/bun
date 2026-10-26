@@ -230,6 +230,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     BindingStore::Initialize => self.scopes.end_dead_zone(binding),
                     BindingStore::Assign => {}
                 }
+                self.read_scope_stored_into(symbol);
             }
             BindingForm::MappedArgument { unit, index } => {
                 self.set_mapped_argument(unit, index, value);

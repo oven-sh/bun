@@ -140,7 +140,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         };
         let binding = self.file.bound.initialized_binding(decl.pat);
-        let key = self.file.function_name_key(binding, name);
+        let key = self.file.function_name_key(binding, name, pattern.pos);
         let name = PropertyName::Constant(key);
         let value = self.lower_named_evaluation(initializer, name);
         self.set_position(pattern.pos);

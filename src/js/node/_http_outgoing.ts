@@ -1399,6 +1399,10 @@ function storeUnexpectedHeader(
 }
 
 function storeShapedHeader(exchange: Exchange, name: string, value: $Node.HttpHeaderValue): void {
+  if (!IS_COMPILED_AHEAD_OF_TIME) {
+    storeSpilledHeader(exchange, name, value);
+    return;
+  }
   const shape = exchange.shape;
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (shape.nextName === name && shape.next !== shape) {
@@ -1566,8 +1570,19 @@ const outgoingSetHeader = function setHeader(this: $Node.OutgoingMessage, name: 
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
   const exchange = this.$exchange;
-  if (exchange !== undefined) storeShapedHeader(exchange, name, value);
-  else storeInDictionary(this, name, value);
+  if (IS_COMPILED_AHEAD_OF_TIME) {
+    if (exchange !== undefined) storeShapedHeader(exchange, name, value);
+    else storeInDictionary(this, name, value);
+    return this;
+  }
+  if (exchange !== undefined) spillHeaders(exchange);
+  const field = validatedLowercaseHeaderName(name);
+  validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
+
+  let headers = this[kOutHeaders];
+  if (headers === null) this[kOutHeaders] = headers = { __proto__: null } as $Node.OutgoingHttpHeaders;
+
+  headers[field] = [name, value];
   return this;
 };
 OutgoingMessage.prototype.setHeader = outgoingSetHeader;

@@ -292,7 +292,7 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
       "resolve",
       "toNamespacedPath",
     ] as const) {
-      expect([name, p[name].name, p[name].length]).toEqual([name, name, 1]);
+      expect([name, p[name].name, p[name].length]).toEqual([name, `bound ${name}`, 1]);
     }
   });
 });

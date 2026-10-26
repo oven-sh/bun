@@ -22,6 +22,8 @@ use std::cell::{Cell, OnceCell};
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Effects {
     Unknown,
+    /// A cast asks whether its operand has the type.
+    TypeTest,
     DeadZoneCheck,
     /// The host may add a member to a built-in object when the member is first read.
     MemberRead,
@@ -202,9 +204,10 @@ impl<'s> Folder<'_, 's> {
             (Value::Known(value), Effects::None) => {
                 FoldedValue::Constant(self.evaluator.to_constant(value))
             }
-            (Value::Known(value), Effects::DeadZoneCheck | Effects::MemberRead) => {
-                FoldedValue::ConstantOutsideDeadZone(self.evaluator.to_constant(value))
-            }
+            (
+                Value::Known(value),
+                Effects::TypeTest | Effects::DeadZoneCheck | Effects::MemberRead,
+            ) => FoldedValue::ConstantOutsideDeadZone(self.evaluator.to_constant(value)),
             (Value::Known(_), Effects::Unknown) | (Value::Unknown, _) => FoldedValue::Unknown,
         }
     }
@@ -288,6 +291,7 @@ impl<'s> Folder<'_, 's> {
             dead_stmts,
             dead_exprs_in_bun_run,
             dead_stmts_in_bun_run,
+            folded_by_build_alone: NodeBits::freeze(&self.folded_by_build_alone, arena),
             dead_functions: NodeBits::freeze(&dead.functions, arena),
             short_circuited_links: NodeBits::freeze(&self.short_circuited_links, arena),
             truthy_without_effects: NodeBits::freeze(&self.collect_truthy_without_effects(), arena),

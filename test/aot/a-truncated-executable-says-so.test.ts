@@ -1,8 +1,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
-import { copyFileSync, readFileSync, realpathSync, truncateSync } from "node:fs";
+import { copyFileSync, readFileSync, realpathSync, truncateSync, writeFileSync } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
+import { canTrim } from "../bundler/compile-trim-features";
 import { test } from "./supported";
 
 // The check needs MADV_POPULATE_READ (Linux 5.14).
@@ -84,13 +85,22 @@ console.log("intact-" + add(big.length, 0));
     copyFileSync(join(cwd, "main"), cut);
     // At exit, LeakSanitizer would scan mapped pages that are past the end of the file.
     const ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
-    const says = {
+    const sentence = (what: string) => ({
       stdout: "",
       stderr:
-        `error: "${realpathSync(cut)}" is truncated. Part of its embedded program is missing.\n` +
+        `error: "${realpathSync(cut)}" ${what}\n` +
         "note: The download or copy was probably interrupted. Download or install it again.\n",
       exitCode: 1,
       signalCode: null,
+    });
+    const says = sentence("is truncated. Part of its embedded program is missing.");
+    const saysDamaged = sentence("is damaged. Its embedded program can't be read.");
+    /** `result`: of a file in which no program is found. */
+    const expectNoProgram = (label: object, result: Awaited<ReturnType<typeof run>>) => {
+      // An executable without Bun's command line can run nothing but its program.
+      if (canTrim) expect({ ...label, ...result }).toEqual({ ...label, ...saysDamaged });
+      expect({ ...label, signalCode: result.signalCode }).toEqual({ ...label, signalCode: null });
+      expect(result.stdout).not.toContain("intact");
     };
     for (const length of lengths) {
       truncateSync(cut, length);
@@ -105,13 +115,21 @@ console.log("intact-" + add(big.length, 0));
           signalCode: null,
         });
       } else if (length > lastPage) {
-        // The rest of the page reads as zeros, so there's no trailer, and the file is taken for one without a program.
-        expect({ payloadBytesLeft, signalCode: result.signalCode }).toEqual({ payloadBytesLeft, signalCode: null });
-        expect(result.stdout).not.toContain("intact");
+        // The rest of the page reads as zeros, so there's no trailer.
+        expectNoProgram({ payloadBytesLeft }, result);
       } else {
         expect({ payloadBytesLeft, ...result }).toEqual({ payloadBytesLeft, ...says });
       }
     }
+
+    // A length at whose end there is no trailer.
+    const whole = readFileSync(join(cwd, "main"));
+    for (const payloadLength of [0, 7, end - start - 8 - 16, 2 ** 40]) {
+      whole.writeBigUInt64LE(BigInt(payloadLength), start);
+      writeFileSync(cut, whole);
+      expectNoProgram({ payloadLength }, await run([cut], cwd, { ...bunEnv, BUN_BE_BUN: undefined, ASAN_OPTIONS }));
+    }
+    truncateSync(cut, start);
 
     // Within a limit on address space that is too small for the whole executable to start.
     if (!isASAN && !isDebug) {

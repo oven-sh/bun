@@ -29,9 +29,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.evaluate_class(class, None, Some((binding, name)));
             return;
         }
-        let default_key = self.file.name_key(known::default);
-        let default_name = PropertyName::Constant(default_key).into();
-        self.evaluate_class(class, Some(default_name), Some((binding, known::default)));
+        let start = self.file.hir[class].start;
+        let default_name = self.file.default_export_name(start).map(|name| {
+            let key = self.file.text_key(name);
+            PropertyName::Constant(key).into()
+        });
+        self.evaluate_class(class, default_name, Some((binding, known::default)));
     }
 
     fn evaluate_class(
@@ -71,7 +74,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         let has_own_name = node.name.is_some();
         let binding = self.file.class_binding(class);
-        let own_key = has_own_name.then(|| self.file.function_name_key(binding, node.name));
+        let own_key = has_own_name.then(|| {
+            self.file
+                .function_name_key(binding, node.name, node.name_pos)
+        });
         let own_name = own_key.map(|key| GivenName::from(PropertyName::Constant(key)));
         let name = own_name.or(name);
         let head = self.emit_class_head(class, &plan, name, heritage);

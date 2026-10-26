@@ -10,7 +10,7 @@
 
 import type { Dependency } from "../source.ts";
 
-const HDRHISTOGRAM_COMMIT = "18c7a324383dded1451d15621cd018b0048057d0";
+const HDRHISTOGRAM_COMMIT = "30e9ce6ef5dcdc60f9270e1ca03c0966eaaf71d0";
 
 export const hdrhistogram: Dependency = {
   name: "hdrhistogram",

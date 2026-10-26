@@ -748,8 +748,8 @@ describe.skipIf(!canTrim)("--trim", () => {
         expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
         expect(await run([join(folder, "catches")], folder)).toEqual({
           stdout:
-            'ERR_FEATURE_REMOVED: Bun.color was removed by --trim because your code never uses it. To keep it, add "color" to compile.trim.allow in Bun.build().\n' +
-            "ERR_FEATURE_REMOVED: encodeURI was removed by --trim because your code never uses it. To keep it, use it somewhere in your code.\n",
+            'ERR_FEATURE_REMOVED: Bun.color was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "color" to compile.trim.allow in Bun.build().\n' +
+            "ERR_FEATURE_REMOVED: encodeURI was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, use it by name somewhere in your code.\n",
           stderr: "",
           exitCode: 0,
         });

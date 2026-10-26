@@ -507,7 +507,7 @@ export function testPrograms(part: number, parts: number) {
               }
               const sentence = `--trim removed ${textOf(feature)} from this executable`;
               const importFailed = modulesLoadedFor([feature]).find(specifier => failed.stderr.includes(`Cannot load '${specifier}': it isn't in this executable.`) && failed.stderr.includes("ERR_MODULE_NOT_FOUND"));
-              const isCaughtByTheProgram = failed.stdout.includes("ERR_FEATURE_REMOVED") || failed.stdout.includes(`${textOf(feature)} was removed by --trim because your code never uses it.`);
+              const isCaughtByTheProgram = failed.stdout.includes("ERR_FEATURE_REMOVED") || failed.stdout.includes(`${textOf(feature)} was removed by --trim because your code never uses it by name.`);
               const isSaid = saysFeatureWasRemoved(failed.stderr, feature);
               if (importFailed === undefined && !isCaughtByTheProgram && !isSaid) expect(failed.stderr).toContain(says.get(feature) ?? sentence);
               // Where one of Bun's own modules catches the error and prints it, as Node's inspector.open() does, the program goes on.

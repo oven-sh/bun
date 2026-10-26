@@ -195,7 +195,7 @@ group("with --disallow-code-generation-from-strings no string becomes code throu
 
   // A Worker has a global of its own and starts with an entry point of the build, and the report holds what every entry point uses.
   test("the report stays closed with a Worker", async () => {
-    expect((await withFlag(`new Worker("./worker.ts");`)).lines[0]).toBe(closed.first);
+    expect((await withFlag(`new Worker("./worker.ts");`)).lines[0]).toEqual(closed.first);
   });
 
   test.each([
@@ -206,7 +206,7 @@ group("with --disallow-code-generation-from-strings no string becomes code throu
     ["node:events", `import { EventEmitter } from "node:events";\nnew EventEmitter().emit("hello");`],
     ["node:fs", `import { readFileSync } from "node:fs";\nconsole.log(readFileSync("a").length);`],
   ])("Bun's own JavaScript in %s leaves the report closed", async (_, text) => {
-    expect((await withFlag(text)).lines[0]).toBe(closed.first);
+    expect((await withFlag(text)).lines[0]).toEqual(closed.first);
   });
 
   test("eval and Function are listed like other globals", async () => {

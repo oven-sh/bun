@@ -33,7 +33,9 @@ const env = { ...bunEnv, NO_COLOR: "1" };
 
 function findCompleteness(report: string): Completeness | undefined {
   if (/^aot: trim: blocked by /m.test(report)) return "Incomplete";
-  return /^aot: trim: the compiler can see every API this program uses$/m.test(report) ? "Complete" : undefined;
+  const isNotBlocked =
+    /^aot: trim: the compiler (?:can see every API this program uses$|can't tell which API this program uses at )/m;
+  return isNotBlocked.test(report) ? "Complete" : undefined;
 }
 
 (canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(

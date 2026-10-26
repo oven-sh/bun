@@ -127,7 +127,7 @@ pub(crate) mod create_command;
 pub(crate) mod exec_command;
 #[path = "fuzzilli_command.rs"]
 pub(crate) mod fuzzilli_command;
-#[cfg(unix)]
+#[cfg(all(bun_fuzzilli, unix))]
 #[path = "fuzzilli_compile_loop.rs"]
 pub(crate) mod fuzzilli_compile_loop;
 #[path = "install_command.rs"]

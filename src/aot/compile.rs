@@ -199,6 +199,8 @@ pub(crate) struct Build<'a> {
     pub(crate) left_entry_points: Vec<Vec<usize>>,
     /// No failure: none of the programs that were loaded together can be compiled out of that load.
     pub(crate) has_left_all_entry_points: bool,
+    /// The program is the placeholder of `Preload`.
+    pub(crate) is_preloading: bool,
     pub(crate) is_one_program: bool,
     pub(crate) started_workers: StartedWorkers,
     pub(crate) brings_bun_types: bool,
@@ -1114,6 +1116,7 @@ impl<'a> Build<'a> {
             programs: None,
             left_entry_points: Vec::new(),
             has_left_all_entry_points: false,
+            is_preloading: false,
             is_one_program: false,
             started_workers: StartedWorkers::default(),
             brings_bun_types: false,

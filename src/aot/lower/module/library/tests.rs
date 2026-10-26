@@ -31,6 +31,7 @@ use crate::load::host_platform;
 use crate::lower::{Fragment, LoweredFile, LoweringOptions};
 
 const ARRAY_PROTOTYPE: &str = "ArrayPrototype";
+const CONSOLE_OBJECT: &str = "builtins/ConsoleObject";
 const OBJECT_MODELS: &str = "models/Objects";
 
 fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) -> R) -> R {
@@ -111,12 +112,20 @@ fn find_runtime_function(file: &str, export_name: &str) -> RuntimeFunction {
 }
 
 fn lower_library_file(listed_function: RuntimeFunction, text: &str) -> LoweredFile {
+    lower_library_file_for("export {};", listed_function, text)
+}
+
+fn lower_library_file_for(
+    program: &str,
+    listed_function: RuntimeFunction,
+    text: &str,
+) -> LoweredFile {
     let manifest = Archive::embedded().manifest();
     let archive_name = manifest.function_file(listed_function.0);
     let archive_name = archive_name.expect("the manifest lists the file of the function");
     let path = [VIRTUAL_ROOT, archive_name].concat();
     let path = str::from_utf8(&path).expect("archive names are ASCII");
-    let files = [("main.js", "export {};"), (path, text)];
+    let files = [("main.js", program), (path, text)];
     let options = LoweringOptions {
         platform: host_platform(),
         embeds_function_text: false,
@@ -519,20 +528,27 @@ fn directives_name_and_hide_builtins() {
 }
 
 #[test]
-fn an_empty_overridden_name_leaves_a_builtin_without_a_name() {
+fn only_directives_name_host_builtins() {
     let text = r#"
-        $overriddenName = "";
-        export function at() {}
-        export function every() {}
+        $overriddenName = "[Symbol.asyncIterator]";
+        export function asyncIterator() {}
+        export function write() {}
     "#;
-    let fragment = lower_array_prototype(text).fragment;
-    let header = array_header(&fragment, "at");
-    assert_eq!(header.name, None);
-    assert!(!header.flags.contains(FunctionFlags::HAS_EXPLICIT_NAME));
+    let console_function = |name| find_runtime_function(CONSOLE_OBJECT, name);
+    let program = "console.write(String(console[Symbol.asyncIterator]));";
+    let fragment = lower_library_file_for(program, console_function("write"), text).fragment;
+    let header = |name| {
+        let entry = find_entry(&fragment, console_function(name));
+        header_of(&fragment, entry.expect("the function is listed"))
+    };
+    assert_eq!(header("write").name, None);
+    let has_explicit_name = FunctionFlags::HAS_EXPLICIT_NAME;
+    assert!(!header("write").flags.contains(has_explicit_name));
     assert_eq!(
-        name_of(&fragment, array_header(&fragment, "every")),
-        "every"
+        name_of(&fragment, header("asyncIterator")),
+        "[Symbol.asyncIterator]"
     );
+    assert!(header("asyncIterator").flags.contains(has_explicit_name));
 }
 
 #[test]

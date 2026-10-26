@@ -12,7 +12,7 @@ const wholeHostHolders = (use: Use) => wholeHolders(use).filter(line => /^(Bun|p
 group("built-ins that a program names", () => {
   test("a program that names nothing special is closed", async () => {
     const use = await of(`console.log("hello");`);
-    expect(use.lines[0]).toBe(closed.first);
+    expect(use.lines[0]).toEqual(closed.first);
     expect(use.lines.includes("global console")).toBe(true);
     expect(use.lines.includes("global HTMLRewriter")).toBe(false);
     expect(use.exitCode).toBe(0);
@@ -58,7 +58,7 @@ group("built-ins that a program names", () => {
     const use = await runtimeUse({
       "main.ts": `import { file } from "bun";\ndeclare const Bun: any, process: any, console: any;\nconst { write } = Bun;\nconsole.log(Bun.nanoseconds, file, write, process.env.HOME, process["argv"]);`,
     });
-    expect(use.lines[0]).toBe(closed.first);
+    expect(use.lines[0]).toEqual(closed.first);
     for (const line of ["Bun nanoseconds", "Bun file", "Bun write", "process env", "process argv"]) expect(use.lines).toContain(line);
     expect(use.lines.includes("Bun build")).toBe(false);
     expect(use.lines.includes("process binding")).toBe(false);
@@ -85,7 +85,7 @@ group("built-ins that a program names", () => {
 
   test("console is followed through an array: the report is closed, and only the member that is called counts", async () => {
     const use = await of(`const logger = [console]; logger[0].log(1);`);
-    expect(use.lines[0]).toBe(closed.first);
+    expect(use.lines[0]).toEqual(closed.first);
     expect(use.lines.filter(line => line.startsWith("console "))).toEqual(["console log"]);
   });
 
@@ -93,7 +93,7 @@ group("built-ins that a program names", () => {
     const isBinding = (line: string) => /^native \S*JSSQLStatement\.cpp:createJSSQLStatementConstructor$/.test(line);
     const without = await of(`console.log(1);`);
     const use = await runtimeUse({ "main.ts": `import { Database } from "bun:sqlite";\ndeclare const console: any;\nconsole.log(new Database(":memory:").query("select 1").get());` });
-    expect(use.lines[0]).toBe(closed.first);
+    expect(use.lines[0]).toEqual(closed.first);
     expect(use.lines).toContain("module bun:sqlite");
     expect(use.lines.some(isBinding)).toBe(true);
     expect(without.lines.includes("module bun:sqlite")).toBe(false);
@@ -103,7 +103,7 @@ group("built-ins that a program names", () => {
   test("what a built-in module names counts where the program reaches it", async () => {
     const without = await of(`console.log(1);`);
     const use = await runtimeUse({ "main.ts": `import { createServer } from "node:http";\ncreateServer(() => {}).listen(0);` });
-    expect(use.lines[0]).toBe(closed.first);
+    expect(use.lines[0]).toEqual(closed.first);
     expect(use.lines).toContain("module node:http");
     expect(use.lines).toContain("Bun serve");
     expect(without.lines.includes("Bun serve")).toBe(false);

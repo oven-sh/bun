@@ -225,16 +225,18 @@ fn adjust_header(
             header.results = vec![DeclaredType::from_compiler(TypeTable::OBJECT)];
         }
     }
-    let is_empty = |name: Atom| file.queries.atom_bytes(name).is_empty();
-    if !pending.is_getter && pending.overridden_name.is_some_and(is_empty) {
-        header.name = None;
-        header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
-    } else if let Some(name) = file.intern_directive_name(function, pending) {
+    let directive_name = file.intern_directive_name(function, pending);
+    if let Some(name) = directive_name {
         header.name = Some(name);
         header.flags |= FunctionFlags::HAS_EXPLICIT_NAME;
     }
     match table::runtime_function(id).map(|data| data.role) {
         Some(RuntimeFunctionRole::Model) => header.role = FunctionRole::Model,
+        // Only a directive names a built-in of the host.
+        Some(RuntimeFunctionRole::HostBuiltin) if directive_name.is_none() => {
+            header.name = None;
+            header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
+        }
         Some(
             RuntimeFunctionRole::EngineBuiltin
             | RuntimeFunctionRole::HostBuiltin

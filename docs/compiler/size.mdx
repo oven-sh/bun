@@ -97,13 +97,13 @@ aot: trim: removed bun:sqlite and node:sqlite (sqlite): unused
 
 The report is a few hundred lines long. The examples on this page only show the lines that matter.
 
-The first line matters most. Here the compiler can see every API, so Bun removes every feature that isn't used. Otherwise the report starts with one or more [`blocked by`](#what-blocks---trim) lines.
+The first line matters most. Here the compiler can see every API, so Bun removes every feature that isn't used. Otherwise the report starts with one or more [`blocked by`](#what-blocks---trim) lines, or with a line for each place where [the name of an API is only known at run time](#intl-temporal-and-webassembly).
 
 Each `uses` line is an API. The list is long because it includes what Bun's own built-in modules use. An API that your program only tests for, as in `typeof WebSocket`, isn't a use and has no line.
 
 `locales:` has the locales that your code passes to `Intl`: `none`, a list, or `all` with the reason, the built-in that takes the locale, and the location. See [Locales](#locales).
 
-A `kept` line is a feature that `--trim` keeps, with the reason after the colon. The word in parentheses is the feature's name in [`compile.trim.allow`](#keep-a-feature). A small feature without a name there has no parentheses. A `removed` line is a feature that `--trim` removes.
+A `kept` line is a feature that `--trim` keeps, with the reason after the colon. The word in parentheses is the feature's name in [`compile.trim.allow`](#keep-a-feature). A small feature without a name there has no parentheses. A `removed` line is a feature that `--trim` removes. It ends with `unused`, or with the place in your code that [could still reach the feature](#intl-temporal-and-webassembly).
 
 | After the colon                               | `--trim` keeps the feature because                                                                     |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -208,6 +208,22 @@ These three are large: `Intl` and its data are 11 MB on Linux. So they follow th
 
 A `new Function(text)` whose text comes from somewhere else, and a call like `value[name]()`, name nothing. They used to keep all three in every program that has zod in it.
 
+The compiler can't tell what a call like `value[name]()` reaches, and the report says so. It has the place of each such call, what the call could reach that `--trim` removes, and how to keep it.
+
+```ts format.ts icon="/icons/typescript.svg"
+console.log((1234.5 as any)[process.argv[2]!]("de-DE"));
+```
+
+```bash terminal icon="terminal"
+bun check --aot --explain=trim ./format.ts 2>&1 | grep -E "can't tell|could reach"
+```
+
+```txt
+aot: trim: the compiler can't tell which API this program uses at format.ts:1:14, because the name is only known at run time
+aot: trim: removed Intl.NumberFormat, Intl.DurationFormat and toLocaleString on numbers and BigInts (intl): no code names it, but a name from run time could reach it (Number.prototype.toLocaleString) at format.ts:1:14. To keep it, add "intl" to compile.trim.allow
+aot: trim: removed units in Intl.NumberFormat, Intl.DurationFormat and toLocaleString (intl): no code names it, but a name from run time could reach it (Number.prototype.toLocaleString) at format.ts:1:14. To keep it, add "intl" to compile.trim.allow
+```
+
 The names are still there: `typeof Intl.Collator` is `"function"`. Calling a part that was removed throws the error in [Using a removed feature](#using-a-removed-feature). If your program runs templates or scripts that it reads at run time and they format dates or numbers, add `"intl"` to [`compile.trim.allow`](#keep-a-feature).
 
 ## Make it smaller
@@ -279,7 +295,7 @@ bun check --aot --explain=trim ./lookup.ts
 ```
 
 ```txt
-aot: trim: the compiler can see every API this program uses
+aot: trim: the compiler can't tell which API this program uses at lookup.ts:2:15, because the name is only known at run time
 aot: trim: uses property constructor
 aot: trim: uses property match
 aot: trim: kept eval, new Function and the JavaScript interpreter (interpreter): used (Function)
@@ -410,15 +426,15 @@ Built with `bun compile --trim`, this program prints:
 ```txt
 function
 ERR_FEATURE_REMOVED
-Bun.color was removed by --trim because your code never uses it. To keep it, add "color" to compile.trim.allow in Bun.build().
+Bun.color was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "color" to compile.trim.allow in Bun.build().
 ```
 
-To keep an API, use it somewhere in your code or add it to [`compile.trim.allow`](#keep-a-feature). A small feature has no name there, and its error only mentions the first way.
+To keep an API, use it by name somewhere in your code or add it to [`compile.trim.allow`](#keep-a-feature). A small feature has no name there, and its error only mentions the first way.
 
-Your own code gets there in one way: through a name that it only has at run time. The members of `Bun`, and methods such as `toLocaleString` and `localeCompare` that need [`Intl`](#intl-temporal-and-webassembly), are kept when something names them. In `(1234.5)[name]("de-DE")`, nothing does if `name` comes from `process.argv`, a config file or `Object.getOwnPropertyNames(Number.prototype)`. Without `--trim` the call returns `"1.234,5"`. With `--trim` it throws `toLocaleString was removed by --trim because your code never uses it`. There are two ways out. Name the method in code that runs, for example by checking the name first with `["toLocaleString", "toFixed"].includes(name)` or `name === "toLocaleString"`. Or add `"intl"` to `compile.trim.allow`.
+Your own code gets there in one way: through a name that it only has at run time. The members of `Bun`, and methods such as `toLocaleString` and `localeCompare` that need [`Intl`](#intl-temporal-and-webassembly), are kept when something names them. In `(1234.5)[name]("de-DE")`, nothing does if `name` comes from `process.argv`, a config file or `Object.getOwnPropertyNames(Number.prototype)`. Without `--trim` the call returns `"1.234,5"`. With `--trim` it throws `toLocaleString was removed by --trim because your code never uses it by name`. [`--explain=trim`](#intl-temporal-and-webassembly) lists the place of each such call. It has no line for `Bun[name]`. There are two ways out. Name the method in code that runs, for example by checking the name first with `["toLocaleString", "toFixed"].includes(name)` or `name === "toLocaleString"`. Or add `"intl"` to `compile.trim.allow`.
 
 ```txt
-Bun.escapeHTML was removed by --trim because your code never uses it. To keep it, use it somewhere in your code.
+Bun.escapeHTML was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, use it by name somewhere in your code.
 ```
 
 | Code in a string, or a native addon                                                        | With the feature removed                                   |
@@ -451,7 +467,7 @@ function
 #ff0000
 ```
 
-Use `allow` when something the compiler can't see uses the API: a string passed to `eval` or `new Function`, or a native addon.
+Use `allow` when something the compiler can't see uses the API: a string passed to `eval` or `new Function`, a call like `value[name]()` whose name is only known at run time, or a native addon.
 
 | `trim`                      | Bun removes                                                               |
 | --------------------------- | ------------------------------------------------------------------------- |

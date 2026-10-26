@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { resolveConfig, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { computeFlags, fuzzilliCoverageFlags } from "../../scripts/build/flags.ts";
+import { cargoBuildInvocation } from "../../scripts/build/rust.ts";
 
 const toolchain = {
   cc: "/fake/llvm/bin/clang",
@@ -28,18 +29,37 @@ const toolchain = {
   cmake: "/fake/bin/cmake",
 } as Toolchain;
 
+/** linuxSysroot is a stub, so that resolveConfig accepts the target on every host. */
+const linux: PartialConfig = {
+  os: "linux",
+  arch: "x64",
+  abi: "gnu",
+  buildType: "Release",
+  webkit: "local",
+  linuxSysroot: "/fake/linux-sysroot",
+};
+
 const listPath = join(import.meta.dir, "../../scripts/build/fuzzilli-compiler-coverage.txt");
 
 /** The coverage flags of Bun's own sources, and those that deps/webkit.ts gives JavaScriptCore's. */
 function coverageFlagsOf(partial: PartialConfig): { bun: string[]; engine: string[] } {
   using dir = tempDir("build-fuzzilli-flags", {});
-  const cfg = resolveConfig(
-    { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", webkit: "local", buildDir: String(dir), ...partial },
-    toolchain,
-  );
+  const cfg = resolveConfig({ ...linux, buildDir: String(dir), ...partial }, toolchain);
   const bun = computeFlags(cfg).cxxflags.filter(flag => flag.includes("sanitize-coverage"));
   return { bun, engine: fuzzilliCoverageFlags(cfg) };
 }
+
+function rustFlagsOf(partial: PartialConfig): string[] {
+  using dir = tempDir("build-fuzzilli-flags", {});
+  const cfg = resolveConfig({ ...linux, buildDir: String(dir), ...partial }, toolchain);
+  return cargoBuildInvocation(cfg).env.CARGO_ENCODED_RUSTFLAGS.split("\x1f");
+}
+
+test("only --fuzzilli=on compiles the Rust code behind cfg(bun_fuzzilli)", () => {
+  expect(rustFlagsOf({ fuzzilli: true })).toContain("--cfg=bun_fuzzilli");
+  expect(rustFlagsOf({})).not.toContain("--cfg=bun_fuzzilli");
+  expect(rustFlagsOf({})).toContain("--check-cfg=cfg(bun_fuzzilli)");
+});
 
 test("--fuzzilli=on reports coverage everywhere", () => {
   const flags = ["-fsanitize-coverage=trace-pc-guard"];

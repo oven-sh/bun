@@ -134,7 +134,7 @@ describe.skipIf(!canTrim)("text from outside the program that uses what was remo
         found[`${executable}: ${code}`] = (await spawned([join(folder, executable), code], folder, bunEnv)).stdout;
         const answer =
           executable === "trimmed"
-            ? `caught: ERR_FEATURE_REMOVED ${api} was removed by --trim because your code never uses it. To keep it, add "${name}" to compile.trim.allow in Bun.build().`
+            ? `caught: ERR_FEATURE_REMOVED ${api} was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "${name}" to compile.trim.allow in Bun.build().`
             : `answer: ${whole}`;
         expected[`${executable}: ${code}`] = `${typesOfNames}\n${answer}\n${typesOfNames}\n`;
       }

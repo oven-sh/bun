@@ -477,6 +477,11 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // `bun_disallow_code_generation_from_strings`: `bun_core::code_generation_from_strings()` is the
   // constant `Strict` (BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1 on the C++ side, which then
   // does not import the Rust symbol).
+  // `bun_fuzzilli`: the loop that compiles the programs Fuzzilli sends, and what only that loop uses.
+  rustflags.push("--check-cfg=cfg(bun_fuzzilli)");
+  if (cfg.fuzzilli) {
+    rustflags.push("--cfg=bun_fuzzilli");
+  }
   rustflags.push("--check-cfg=cfg(bun_disallow_code_generation_from_strings)");
   if (!cfg.codeGenerationFromStrings) {
     rustflags.push("--cfg=bun_disallow_code_generation_from_strings");

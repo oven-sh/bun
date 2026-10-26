@@ -4,9 +4,10 @@
 //   what lies beside a program is what the flag says: no tsconfig.json at all, an empty one, the one of `bun init` with Bun's typings installed
 //   a program that has to be the entry point of its build is never a module of a shared build
 //   behind the end of a run a few failures are confirmed, the rest is listed, and nothing is built again
+//   a build or a run that holds more memory than it may is ended and named, and whatever a bed started ends with the fuzzer
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
-import { bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { ProductBed, projects, type Bed, type Judged, type Program } from "./fuzz/beds";
 import { fuzz } from "./fuzz/fuzzer";
@@ -202,6 +203,69 @@ test(
     expect(rest).toEqual([]);
     expect(name).toStartWith("crash-not-tried-again-");
     expect(readFileSync(join(String(folder), "out", "findings", name, "count.txt"), "utf8")).toBe("8");
+  },
+  timeout,
+);
+
+const growsWithoutEnd = `const kept = []; for (;;) kept.push(new Array(1 << 14).fill(kept.length));`;
+
+// Runs programs as Bun does; each of its builds holds more and more.
+function everyBuildGrowsWithoutEnd(folder: string): string {
+  const path = join(folder, "stand-in");
+  writeFileSync(
+    path,
+    `#!/bin/sh\ncase "$1" in\nbuild) exec "${bunExe()}" -e '${growsWithoutEnd}';;\n*) exec "${bunExe()}" "$@";;\nesac\n`,
+  );
+  chmodSync(path, 0o755);
+  return path;
+}
+
+test.skipIf(isWindows)(
+  "a run that holds too much memory is skipped and such a build is a finding",
+  async () => {
+    using folder = tempDir("aot-fuzzer-judges", {});
+    const bed = new ProductBed(everyBuildGrowsWithoutEnd(String(folder)), { ...options, memory: 256 * 2 ** 20 });
+    const judge = async (text: string) => (await bed.judge(String(folder), [{ text, extension: "js" }], []))[0];
+    expect((await judge(growsWithoutEnd)).verdict).toEqual({ kind: "skipped", why: "plain run takes too much memory" });
+    const { verdict, compiled } = await judge(`console.log(1);\n`);
+    expect(verdict).toEqual({ kind: "build hang", detail: "took too much memory", signature: "took too much memory" });
+    expect(compiled!.build).toMatchObject({ timedOut: true, tookTooMuchMemory: true, signal: null, exitCode: null });
+  },
+  timeout,
+);
+
+test.skipIf(isWindows)(
+  "what a bed started ends when the fuzzer is killed",
+  async () => {
+    using folder = tempDir("aot-fuzzer-judges", {
+      "fuzzer.ts": `import { spawned } from ${JSON.stringify(join(import.meta.dir, "fuzz", "beds"))};
+await spawned([process.execPath, "-e", 'require("fs").writeFileSync("pid", String(process.pid)); setInterval(() => {}, 1000);'], import.meta.dir, 120);`,
+    });
+    const written = join(String(folder), "pid");
+    await using fuzzer = Bun.spawn({
+      cmd: [bunExe(), "fuzzer.ts"],
+      cwd: String(folder),
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    while (!existsSync(written) || !readFileSync(written, "utf8")) await Bun.sleep(20);
+    const pid = Number(readFileSync(written, "utf8"));
+    const isAlive = () => {
+      try {
+        return process.kill(pid, 0);
+      } catch {
+        return false;
+      }
+    };
+    try {
+      expect(isAlive()).toBe(true);
+      fuzzer.kill("SIGKILL");
+      await fuzzer.exited;
+      for (let waited = 0; isAlive() && waited < 10_000; waited += 20) await Bun.sleep(20);
+      expect(isAlive()).toBe(false);
+    } finally {
+      if (isAlive()) process.kill(pid, "SIGKILL");
+    }
   },
   timeout,
 );

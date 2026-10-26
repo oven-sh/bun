@@ -130,19 +130,11 @@ const keptByNativeCode = (readMembers: readonly string[], calledMembers: readonl
   b.membersOfObjectsOnly,
 ];
 
-// Native code copies what it reads out of the options.
-const readAndKeptIn = (cell: string, readMembers: readonly string[], calledMembers: readonly string[]) => [
+// Native code copies what it reads out of the options. Each function that it calls has a b.memberCalled of its own, which says its `this`.
+const readAndKeptIn = (cell: string, readMembers: readonly string[]) => [
   b.storedIn(b.nativeCell(cell)),
   b.reachableValuesStoredIn(b.nativeCell(cell)),
-  b.runsTransitively(
-    "OwnKeys",
-    "OwnValues",
-    "PrototypeChain",
-    "Iterate",
-    "ToPrimitive",
-    b.named(...readMembers),
-    b.calls(...calledMembers),
-  ),
+  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "Iterate", "ToPrimitive", b.named(...readMembers)),
   b.membersOfObjectsOnly,
   b.functionsConvertedUnderNamesOnly,
 ];
@@ -616,7 +608,14 @@ const serverOptionNames = [
   ...developmentServerOptionNames,
 ];
 
-const serverCallbackNames = pluginCallbackNames;
+// runSetupFunction in BundlerPlugin.ts calls it as a plain function.
+const pluginsSetUpUnder = (...path: readonly string[]) =>
+  b.memberCalled([...path, "plugins", b.everyOwnValue, "setup"], {
+    times: "PerEvent",
+    this: b.undefined,
+    args: [b.any],
+    result: "Escapes",
+  });
 // The server, the URL, the method, the dispatch bits, the response, whether there is a body, the socket, whether it is new, its duplex, whether the request is HTTP/1.0, the bytes after the head, and whether the request was pipelined.
 const nodeRequestHandlerArguments = Array.from({ length: 12 }, () => b.any);
 const routeMethodNames = ["CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE"];
@@ -667,7 +666,9 @@ const serverOptions = (server: b.PlaceLike) => {
   });
   const routed = calledWith(b.instance("BunRequest").fresh);
   return [
-    ...readAndKeptIn(serverOptionsCell, serverOptionNames, serverCallbackNames),
+    ...readAndKeptIn(serverOptionsCell, serverOptionNames),
+    pluginsSetUpUnder("app"),
+    pluginsSetUpUnder("app", "framework"),
     b.createdIn(b.instance("ServerWebSocket").fresh, webSocket),
     b.memberCalled(["fetch"], calledWith(b.instance("Request").fresh)),
     b.memberStoredIn(["fetch"], b.nativeCell(requestHandlerCell)),
@@ -736,8 +737,6 @@ const socketOptionNames = [
   "secureContext",
   ...tlsOptionNames,
 ];
-
-const socketCallbackNames = ["session", "keylog", "serverName", "alpnCallback"];
 
 const datagramSocketOptionNames = ["port", "hostname", "flags", "fd", "sharedFd", "binaryType", "socket", "connect"];
 const datagramSocketHandlerNames = ["data", "drain", "error"];
@@ -1004,15 +1003,29 @@ const socketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> =
   timeout: [socket],
   connectError: [socket, b.any],
   handshake: [socket, b.bool, b.any],
+  session: [socket, b.instance("Buffer").fresh],
+  keylog: [socket, b.instance("Buffer").fresh],
+  alpnCallback: [socket, b.union(b.string, b.undefined), b.instance("Buffer").fresh],
 };
 
+// The data of the listener for a socket that it accepted, the socket's own for one that was upgraded, undefined where there is none.
+const dataOfServer = [b.nativeCell(socketDataCell), b.undefined];
+
 const socketOptions = [
-  ...readAndKeptIn(socketOptionsCell, socketOptionNames, socketCallbackNames),
+  ...readAndKeptIn(socketOptionsCell, socketOptionNames),
   b.createdIn(newSocket, socket),
   b.createdIn(newSocket, b.nativeMemory),
   b.memberStoredIn(["data"], b.nativeCell(socketDataCell)),
   ...Object.entries(socketHandlerArguments).map(([handler, args]) =>
     b.memberCalled(["socket", handler], { times: "PerEvent", this: socket, args, result: "Escapes" }),
+  ),
+  ...dataOfServer.map(data =>
+    b.memberCalled(["socket", "serverName"], {
+      times: "PerEvent",
+      this: data,
+      args: [data, b.string, socket],
+      result: "Escapes",
+    }),
   ),
 ];
 

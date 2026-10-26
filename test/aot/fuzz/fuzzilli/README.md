@@ -6,9 +6,11 @@
 
 In a build with `--fuzzilli=on`, `bun build --compile --aot <file>` that Fuzzilli starts doesn't build `<file>` and exit. It stays alive and takes one program after another from Fuzzilli. It compiles each one through every stage up to the finished image, which stays in memory. It writes no executable and runs nothing. The code is `src/runtime/cli/fuzzilli_compile_loop.rs`.
 
-Most of what a small build does is the same for every program, so Bun does that part once. It compiles an empty program, then starts a second build that loads Bun's own code and the declaration files and stops right before it reads the entry point (`Preload` in `src/options_types/aot_options.rs`). From there it forks once for each program. The child finishes the build, and the parent tells Fuzzilli how the child ended. A crash ends only the child.
+Most of what a small build does is the same for every program, so Bun does that part once. It compiles an empty program, then starts a second build that loads the declaration files, loads and lowers Bun's own code, and stops right before it reads the entry point (`Preload` in `src/options_types/aot_options.rs`). From there it forks once for each program. The child finishes the build, and the parent tells Fuzzilli how the child ended. A crash ends only the child.
 
-A forked process has one thread, so the whole build runs on it. It doesn't inherit the memory that the JIT writes code to either, so Bun has to be started with `BUN_JSC_useJIT=0`. The profile sets it. The compiler's output doesn't depend on it.
+A forked process has one thread, so the whole build runs on it. To fold a call of a built-in, the compiler runs it in a small VM, which the child creates. Bun has to be started with `BUN_JSC_useJIT=0` so that this VM only interprets. The profile sets it. The compiler's output doesn't depend on it.
+
+Two things differ in an engine built with `--fuzzilli=on`. A forked process inherits the memory that the engine has reserved. And until the whole-program analysis has run, `--aot-verify-each-pass` and the program verifier skip Bun's own functions: they are the same in every build, and the analysis then drops the ones the program doesn't reach.
 
 | The build                                                                            | What Fuzzilli sees |
 | ------------------------------------------------------------------------------------ | ------------------ |

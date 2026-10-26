@@ -79,17 +79,22 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The checker narrows only references, but an `int32` member is claimed at every read, whatever the receiver is.
+    // The checker narrows only references, but an `int32` member is claimed at every read, whatever the receiver is. Under a key that is no constant it is claimed where an `int32` is expected.
     fn reads_int32_member(&mut self, access: ExprId) -> bool {
         let Some((_, key)) = self.hir.member_key(access) else {
             return false;
         };
-        if !self.has_constant_key(key) {
-            return false;
-        }
-        match self.queries.expression_type(access) {
+        let is_int32 = match self.queries.expression_type(access) {
             Ok(ty) => lists_int32(self, ty),
             Err(_) => false,
+        };
+        is_int32 && (self.has_constant_key(key) || self.is_expected_to_be_int32(access))
+    }
+
+    fn is_expected_to_be_int32(&mut self, expression: ExprId) -> bool {
+        match self.queries.contextual_type(expression) {
+            Ok(Some(ty)) => lists_int32(self, ty),
+            Ok(None) | Err(_) => false,
         }
     }
 
@@ -168,7 +173,12 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // What is written at a field of a class is the type of its slot, whoever inherits or instantiates the class.
-    fn find_declared_position(&mut self, access: ExprId, receiver: Receiver) -> DeclaredType {
+    fn find_declared_position(
+        &mut self,
+        access: ExprId,
+        receiver: Receiver,
+        is_receiver_converted: bool,
+    ) -> DeclaredType {
         let fields_have_slots = match receiver {
             Receiver::Class(_) | Receiver::Declared | Receiver::UnionWithObjectType => true,
             Receiver::ObjectType(_) | Receiver::WithoutSlots => false,
@@ -184,7 +194,9 @@ impl FileLowering<'_, '_, '_, '_> {
                         .or_else(|| member.types.checked.ok());
                     let mut position = self.map_position(access, declared);
                     let is_int32 = declared.is_some_and(|declared| lists_int32(self, declared));
-                    if is_int32 && receiver == Receiver::UnionWithObjectType {
+                    let has_int32_slot =
+                        is_receiver_converted && receiver != Receiver::UnionWithObjectType;
+                    if is_int32 && !has_int32_slot {
                         position = self.widen_int32(position);
                     }
                     match member.is_optional {
@@ -201,7 +213,11 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_member_position(&mut self, access: ExprId) -> DeclaredType {
+    fn find_member_position(
+        &mut self,
+        access: ExprId,
+        is_receiver_converted: bool,
+    ) -> DeclaredType {
         let Some((object, key)) = self.hir.member_key(access) else {
             debug_assert!(false, "a member is a Dot or an Index expression");
             return DeclaredType::untyped();
@@ -219,20 +235,21 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         };
         let Some((layout, field)) = slot else {
-            return self.find_declared_position(access, receiver);
+            return self.find_declared_position(access, receiver, is_receiver_converted);
         };
         if self.is_method_field(layout, field) {
             return method_position();
         }
         let position = self.field_position(layout, field);
         let is_united = self.fragment.layout_keys()[layout.index()].has_united_definitions();
-        if !is_united || !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
+        let has_int32_slot = is_receiver_converted && !is_united;
+        if has_int32_slot || !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
             return position;
         }
         self.widen_int32(position)
     }
 
-    // What is an `int32` in the object types seen so far may be a `number` in one that comes later or lies in another file, so each read claims the `int32` for itself.
+    // What is an `int32` in the object types seen so far may be a `number` in one that comes later or lies in another file, and a receiver that nothing converted may be any object. Each such read claims the `int32` for itself.
     fn widen_int32(&mut self, position: DeclaredType) -> DeclaredType {
         let ty = self.fragment.types.union(position.ty, TypeTable::NUMBER);
         let flags = position.flags.without(PositionFlags::IS_INT32_PROMISE);
@@ -309,7 +326,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return value;
         }
         let mut reference = self.file.classify_reference(expression);
-        if reference == Reference::NotAReference && self.file.reads_int32_member(expression) {
+        // Only the parts of a reference are converted to their types.
+        let is_receiver_converted = reference != Reference::NotAReference;
+        if !is_receiver_converted && self.file.reads_int32_member(expression) {
             reference = Reference::Member;
         }
         // A built-in that the table resolves says more than the type the checker has for it.
@@ -326,7 +345,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let before = match reference {
             Reference::Binding(symbol) => self.file.binding_position(symbol),
             Reference::This => find_this_position(self),
-            Reference::Member => self.file.find_member_position(expression),
+            Reference::Member => self
+                .file
+                .find_member_position(expression, is_receiver_converted),
             Reference::NotAReference => DeclaredType::untyped(),
         };
         // The compiler says which function, class or instance it is.
@@ -535,10 +556,15 @@ import type { int32 } from \"bun\";
 interface Point { x: int32; y?: int32 }
 interface Named { x: int32; name: string }
 class Pixel { x: int32 = 0; }
+class Screen { get corner(): Pixel { return new Pixel(); } }
 export function plain(point: Point) { return [point.x, point[\"x\"], point.y]; }
 export function unnamed(make: () => Point, list: Point[], at: number) { return [make().x, list[at].x, (at ? make() : list[0]).y]; }
 export function either(value: Point | Named, other: Point | Pixel | null) { return [value.x, other?.x]; }
-export function instance(pixel: Pixel, make: () => Pixel) { return [pixel.x, make().x]; }
+export function instance(pixel: Pixel) { return pixel.x; }
+export function unnamedInstance(make: () => Pixel) { return [make().x, new Screen().corner.x]; }
+export function counted(make: () => Record<string, int32>, list: int32[], name: string, at: number) { return [make().absent, make()[name], list[at]]; }
+export function byKey(pixel: Pixel, point: Point, key: \"x\" | \"y\", only: keyof Pixel): int32 { const kept: int32 = pixel[only]; return point[key] ?? kept; }
+export function byKeyAsNumber(pixel: Pixel, only: keyof Pixel) { return pixel[only] & 1; }
 ";
         let declarations = "declare module \"bun\" {
   type int32 = number & { readonly \"bun.int32\"?: true };
@@ -548,9 +574,16 @@ export function instance(pixel: Pixel, make: () => Pixel) { return [pixel.x, mak
         let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
         assert_eq!(narrowed_types_in(&files, "plain"), vec![int32.clone(); 3]);
         assert_eq!(narrowed_types_in(&files, "unnamed"), vec![int32.clone(); 3]);
-        assert_eq!(narrowed_types_in(&files, "either"), vec![int32; 2]);
-        let narrowed = narrowed_types_in(&files, "instance");
-        assert!(narrowed.is_empty(), "{narrowed:?}");
+        assert_eq!(narrowed_types_in(&files, "either"), vec![int32.clone(); 2]);
+        assert_eq!(
+            narrowed_types_in(&files, "unnamedInstance"),
+            vec![int32.clone(); 2]
+        );
+        assert_eq!(narrowed_types_in(&files, "byKey"), vec![int32; 2]);
+        for function_name in ["instance", "counted", "byKeyAsNumber"] {
+            let narrowed = narrowed_types_in(&files, function_name);
+            assert!(narrowed.is_empty(), "{function_name}: {narrowed:?}");
+        }
     }
 
     #[test]

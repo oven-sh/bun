@@ -19,6 +19,8 @@ const plainBunVaries: Record<string, string> = {
     "a call in a catch block a million deep ends or overflows with the limit of the stack in the shell that runs it",
   "calls/stack-across-vm-entries":
     "plain Bun prints one of four outputs from run to run, the stored one among them: once its optimizing compilers have taken String.prototype.replace in, the stack has no frame for it. Without them it prints the stored output every time",
+  "calls/tail-calls-into-and-out-of-code-made-at-run-time/every-way-to-call":
+    "plain Bun prints one of two outputs from run to run, the stored one among them: how much stack a chain takes there goes by the tier that runs it",
   "commonjs/wrapper-variables-in-loops":
     "plain Bun begins the five CommonJS files that the entry point imports in one of many orders from run to run; the stored output has them in the order of the import statements, which is what the executable always prints",
   "memory-of-many-objects/records-made-by-a-callback-for-each-element":

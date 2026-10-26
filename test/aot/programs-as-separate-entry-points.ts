@@ -62,6 +62,8 @@ const redsExplained = 5;
 type Options = { build?: string[]; entryPoints?: string[]; buildEnv?: object; env?: Record<string, string>; reference?: string; erased?: string; alone?: string; mainThread?: string; skipWithASAN?: string; todoOn?: Record<string, string> };
 const optionsOf = (path: string): Options => (existsSync(besideOf(path) + ".json") ? JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")) : {});
 const nameOf = (path: string) => besideOf(inPrograms(path)).replaceAll("\\", "/");
+// Bun reads its feature flags from the environment of the process. What a Worker is given in `env` doesn't set them.
+const processEnvOf = (path: string) => Object.fromEntries(Object.entries(optionsOf(path).env ?? {}).filter(([name]) => name.startsWith("BUN_FEATURE_FLAG_")));
 /** The folder that stands for ./programs above the program: ./programs itself, or where the scripts have written. */
 const rootOf = (path: string) => path.slice(0, path.length - inPrograms(path).length - 1);
 
@@ -235,7 +237,7 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
     async function runInWorkers(command: string[], programs: string[], spell: (path: string) => string, results: Map<string, Ran>, hold: typeof slot = slot): Promise<void> {
       const list = join(folder, `tasks-${lists++}.json`);
       writeFileSync(list, JSON.stringify(programs.map(path => ({ program: spell(path), cwd: dirname(path), env: optionsOf(path).env }))));
-      const ran = await hold(() => spawned(withoutCoreDump(command), dirname(programs[0]), { ...bunEnv, BUN_AOT_VERBOSE: "1", AOT_TASKS: list, AOT_MARK: mark }));
+      const ran = await hold(() => spawned(withoutCoreDump(command), dirname(programs[0]), { ...bunEnv, ...processEnvOf(programs[0]), BUN_AOT_VERBOSE: "1", AOT_TASKS: list, AOT_MARK: mark }));
       rmSync(list, { force: true });
       const parts = (text: string) => text.split(new RegExp(`\\r?\\n${mark} (-?[0-9]+)\\r?\\n`));
       const [stdout, stderr] = [parts(ran.stdout), parts(ran.stderr)];
@@ -250,11 +252,13 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
     function inBatches(programs: string[], run: (batch: string[], results: Map<string, Ran>) => Promise<void>) {
       const results = new Map<string, Ran>();
       const startOf = new Map<string, () => Promise<void>>();
-      for (let first = 0; first < programs.length; first += programsInOneProcess) {
-        const batch = programs.slice(first, first + programsInOneProcess);
-        let started: Promise<void> | undefined;
-        const start = () => (started ??= run(batch, results));
-        for (const path of batch) startOf.set(path, start);
+      for (const alike of Map.groupBy(programs, path => JSON.stringify(processEnvOf(path))).values()) {
+        for (let first = 0; first < alike.length; first += programsInOneProcess) {
+          const batch = alike.slice(first, first + programsInOneProcess);
+          let started: Promise<void> | undefined;
+          const start = () => (started ??= run(batch, results));
+          for (const path of batch) startOf.set(path, start);
+        }
       }
       return async (path: string) => (await startOf.get(path)!(), results.get(path)!);
     }

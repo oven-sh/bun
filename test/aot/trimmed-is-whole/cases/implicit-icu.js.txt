@@ -15,7 +15,7 @@ console.log((16).toLocaleString("en-US", { style: "unit", unit: "liter", unitDis
 //// number-toLocaleString-compact
 console.log((1234567).toLocaleString("en", { notation: "compact", compactDisplay: "long" }), (1234567).toLocaleString("hi", { notation: "compact" }));
 //// number-computed-name
-//@ trimmed-says toLocaleString was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().
+//@ trimmed-says toLocaleString was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "intl" to compile.trim.allow in Bun.build().
 console.log((1234567.891)[names[0]]("de-DE"));
 //// number-computed-name-that-a-list-names
 const known = ["toLocaleString", "toFixed"];
@@ -55,7 +55,7 @@ console.log(new Float64Array([1234.5, 1e6]).toLocaleString("de-DE"));
 //// object-toLocaleString
 console.log(({}).toLocaleString(), Object.prototype.toLocaleString.call(1234.5));
 //// array-computed
-//@ trimmed-says toLocaleString was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().
+//@ trimmed-says toLocaleString was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "intl" to compile.trim.allow in Bun.build().
 console.log([1234.5][names[0]]("de-DE"));
 //// localeCompare
 console.log(["ä", "a", "z", "Z", "é"].sort((a, b) => a.localeCompare(b)).join());
@@ -64,7 +64,7 @@ console.log(["ä", "a", "z"].sort((a, b) => a.localeCompare(b, "sv")).join(), ["
 //// localeCompare-numeric
 console.log(["a10", "a2"].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join());
 //// localeCompare-computed
-//@ trimmed-says localeCompare was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().
+//@ trimmed-says localeCompare was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "intl" to compile.trim.allow in Bun.build().
 console.log("ä"[names[1]]("z", "sv"));
 //// localeCompare-bound
 const compare = String.prototype.localeCompare;
@@ -130,8 +130,8 @@ console.log(format(new Date(0)));
 //// JSON-stringify-date
 console.log(JSON.stringify({ d: new Date(0) }));
 //// Reflect-apply-toLocaleString
-//@ trimmed-says toLocaleString was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().
+//@ trimmed-says toLocaleString was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "intl" to compile.trim.allow in Bun.build().
 console.log(Reflect.apply(Number.prototype[names[0]], 1234.5, ["de-DE"]));
 //// getOwnPropertyNames-number-prototype
-//@ trimmed-says toLocaleString was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().
+//@ trimmed-says toLocaleString was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "intl" to compile.trim.allow in Bun.build().
 for (const name of Object.getOwnPropertyNames(Number.prototype)) if (name.startsWith("toLocale")) console.log(Number.prototype[name].call(1234.5, "de-DE"));

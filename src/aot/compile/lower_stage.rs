@@ -6,6 +6,8 @@ use crate::ir::{FunctionId, FunctionKey, Id};
 use crate::link::{KeyContext, LinkUnit, Rehoming};
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
+#[cfg(bun_fuzzilli)]
+use crate::lower::LeftOutDeclarations;
 use crate::lower::{
     DefinedObjectTypes, FileInputs, LibraryFunctions, LoweredFile, LoweringInputs, LoweringOptions,
     lower_file,
@@ -27,6 +29,8 @@ use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, EntryPoints,
     Incomplete, RoleDecision, decide_roles, keep_verified_roles, run_on_one_thread_while,
 };
+#[cfg(bun_fuzzilli)]
+use bun_threading::Guarded;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -38,6 +42,26 @@ pub(crate) struct LoweredUnit {
     pub diagnostics: DiagnosticBuffer,
     pub counters: Counters,
     pub queries: QueryStatistics,
+}
+
+/// What a build with `Preload` makes of Bun's own code for the placeholder. A program that leaves out the same takes it.
+#[cfg(bun_fuzzilli)]
+struct LoweredRuntime {
+    key: RuntimeLoweringKey,
+    checked: CheckedProgram<Option<LoweredUnit>>,
+}
+
+#[cfg(bun_fuzzilli)]
+static LOWERED_RUNTIME: Guarded<Option<LoweredRuntime>> = Guarded::new(None);
+
+#[cfg(bun_fuzzilli)]
+#[derive(PartialEq, Eq)]
+struct RuntimeLoweringKey {
+    /// `Interner::number`: one for each build.
+    build: u64,
+    files_to_lower: Vec<FileId>,
+    left_out_functions: FxHashSet<FunctionRef>,
+    left_out_declarations: LeftOutDeclarations,
 }
 
 struct DecidedProject {
@@ -475,6 +499,15 @@ impl Build<'_> {
         };
         let (threads, runtime_threads) = (threads_of(application), threads_of(runtime));
         let has_one_thread = self.threads == NonZeroUsize::MIN;
+        #[cfg(bun_fuzzilli)]
+        let keeps_runtime = self.is_preloading || LOWERED_RUNTIME.lock().is_some();
+        #[cfg(bun_fuzzilli)]
+        let runtime_key = keeps_runtime.then(|| RuntimeLoweringKey {
+            build: loaded.atoms.number(),
+            files_to_lower: decided.runtime.files_to_lower.clone(),
+            left_out_functions: left_out.runtime.clone(),
+            left_out_declarations: bound.projects.runtime.left_out.declarations.clone(),
+        });
         self.with_inputs_for_reached_code(
             loaded,
             bound,
@@ -502,6 +535,25 @@ impl Build<'_> {
                             inputs,
                             runtime_threads,
                         );
+                        #[cfg(bun_fuzzilli)]
+                        if let Some(key) = runtime_key {
+                            if self.is_preloading {
+                                let checked = of_runtime.lower();
+                                *LOWERED_RUNTIME.lock() = Some(LoweredRuntime { key, checked });
+                                return PerProject {
+                                    application: of_application.lower(),
+                                    runtime: of_runtime.lower(),
+                                };
+                            }
+                            let kept = LOWERED_RUNTIME.lock().take();
+                            return PerProject {
+                                application: of_application.lower(),
+                                runtime: match kept.filter(|kept| kept.key == key) {
+                                    Some(kept) => kept.checked,
+                                    None => of_runtime.lower(),
+                                },
+                            };
+                        }
                         if has_one_thread {
                             return PerProject {
                                 application: of_application.lower(),

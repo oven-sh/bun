@@ -7,6 +7,7 @@
 //
 // A bed answers with what the program printed or with how the build or the run failed; compare() turns the two into a verdict.
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { totalmem } from "os";
 import { join } from "path";
 import { limitsLowered } from "../harness/limits";
 import { company, memberNames } from "./company";
@@ -26,6 +27,8 @@ export interface Run {
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
+  /** It was ended because it held more memory than it may. `timedOut` is set as well. */
+  tookTooMuchMemory?: boolean;
 }
 
 export interface Compiled {
@@ -84,6 +87,8 @@ const environment: Record<string, string> = {
   BUN_GARBAGE_COLLECTOR_LEVEL: "0",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   WTF_numberOfProcessorCores: "2",
+  // Whatever Bun we start ends when we do.
+  BUN_FEATURE_FLAG_NO_ORPHANS: "1",
 };
 
 /** For every process a bed starts from now on. As a user: without the flag that switches the compiler's verifiers on, so what they would refuse is built and run. */
@@ -108,13 +113,40 @@ async function textUpToTheLimit(stream: ReadableStream<Uint8Array>) {
   return Buffer.concat(kept).toString();
 }
 
-export async function spawned(cmd: string[], cwd: string, seconds: number, more?: Record<string, string>): Promise<Run> {
-  // No core files, and a limit on processor time and on memory behind the limit on wall time. Where core files go to a program through a pipe, Linux asks for no limit but one: at a limit of one byte it starts no such program.
-  const limited = process.platform === "win32" ? cmd : ["/bin/sh", "-c", `prlimit --pid $$ --core=1:1 2> /dev/null || ulimit -c 0; ulimit -t ${Math.ceil(seconds * 4)}; exec "$@"`, "--", ...cmd];
+/** A process that holds more than this is ended. A quarter of the machine or of its container: the few that run at once leave room for everything else on it. */
+export const memoryLimit = Math.min(totalmem(), process.constrainedMemory() || Infinity, 64 * 2 ** 30) / 4;
+
+/** In bytes; 0 where nothing tells. */
+function residentMemory(pid: number) {
+  try {
+    if (process.platform === "linux") return Number(/^VmRSS:\s*(\d+) kB/m.exec(readFileSync(`/proc/${pid}/status`, "utf8"))?.[1] ?? 0) * 1024;
+    if (process.platform === "darwin") return Number(Bun.spawnSync(["/bin/ps", "-o", "rss=", "-p", String(pid)]).stdout.toString()) * 1024;
+  } catch {}
+  return 0;
+}
+
+export async function spawned(cmd: string[], cwd: string, seconds: number, more?: Record<string, string>, memory = memoryLimit): Promise<Run> {
+  // No core files, and a limit on processor time behind the limit on wall time. Where core files go to a program through a pipe, Linux asks for no limit but one: at a limit of one byte it starts no such program.
+  // When the machine runs out of memory all the same, Linux ends this process first.
+  const killedFirst = process.platform === "linux" ? "{ echo 1000 > /proc/$$/oom_score_adj; } 2> /dev/null; " : "";
+  const limited = process.platform === "win32" ? cmd : ["/bin/sh", "-c", `${killedFirst}prlimit --pid $$ --core=1:1 2> /dev/null || ulimit -c 0; ulimit -t ${Math.ceil(seconds * 4)}; exec "$@"`, "--", ...cmd];
   await using child = Bun.spawn({ cmd: limited, cwd, env: { ...environment, ...more }, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
-  const [stdout, stderr, exitCode] = await Promise.all([textUpToTheLimit(child.stdout), textUpToTheLimit(child.stderr), child.exited]);
-  const timedOut = child.signalCode === "SIGKILL" || child.signalCode === "SIGXCPU";
-  return { stdout, stderr, exitCode: child.signalCode ? null : exitCode, signal: timedOut || child.signalCode === null ? null : String(child.signalCode), timedOut };
+  let tookTooMuchMemory = false;
+  const watch = setInterval(
+    () => {
+      if (residentMemory(child.pid) <= memory) return;
+      tookTooMuchMemory = true;
+      child.kill("SIGKILL");
+    },
+    process.platform === "linux" ? 100 : 1000,
+  );
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([textUpToTheLimit(child.stdout), textUpToTheLimit(child.stderr), child.exited]);
+    const timedOut = child.signalCode === "SIGKILL" || child.signalCode === "SIGXCPU";
+    return { stdout, stderr, exitCode: child.signalCode ? null : exitCode, signal: timedOut || child.signalCode === null ? null : String(child.signalCode), timedOut, tookTooMuchMemory };
+  } finally {
+    clearInterval(watch);
+  }
 }
 
 export interface Bed {
@@ -159,7 +191,7 @@ async function inParallel<T, R>(items: T[], width: number, work: (item: T, index
 }
 
 function unusable(bed: Bed, plain: Run): Verdict | undefined {
-  if (plain.timedOut) return { kind: "skipped", why: "plain run too slow" };
+  if (plain.timedOut) return { kind: "skipped", why: plain.tookTooMuchMemory ? "plain run takes too much memory" : "plain run too slow" };
   // Plain Bun is the same binary: its death is a finding as well.
   if (plain.signal) {
     const said = plain.stderr.split("\n").find(line => /panic|Segmentation|Illegal|Trap|ASSERT|AddressSanitizer/.test(line)) ?? "";
@@ -205,6 +237,8 @@ export class ProductBed implements Bed {
       threads: number;
       buildSeconds: number;
       runSeconds: number;
+      /** In bytes, for each build and each run, in place of `memoryLimit`. */
+      memory?: number;
       /** The executable's time, where it is not the plain run's: a collection at every few allocations takes long. */
       compiledRunSeconds?: number;
       /** For the run of the executable alone. */
@@ -376,12 +410,12 @@ export class ProductBed implements Bed {
 
   #run(folder: string, cmd: string[], flags: string[]) {
     const drawn = flags.filter(flag => flag.startsWith(inTheRun)).map(flag => flag.slice(inTheRun.length).split("="));
-    return spawned(cmd, folder, this.options.compiledRunSeconds ?? this.options.runSeconds, { ...this.options.runEnvironment, ...Object.fromEntries(drawn) });
+    return spawned(cmd, folder, this.options.compiledRunSeconds ?? this.options.runSeconds, { ...this.options.runEnvironment, ...Object.fromEntries(drawn) }, this.options.memory);
   }
 
   #build(folder: string, entry: string, flags: string[]) {
     const all = this.#merged([...this.options.baseFlags, ...flags]).filter(isOfTheBuild);
-    return spawned([this.bun, "build", "--compile", "--aot", `--aot-threads=${this.options.threads}`, ...all, entry, "--outfile", join(folder, "executable")], folder, this.options.buildSeconds);
+    return spawned([this.bun, "build", "--compile", "--aot", `--aot-threads=${this.options.threads}`, ...all, entry, "--outfile", join(folder, "executable")], folder, this.options.buildSeconds, undefined, this.options.memory);
   }
 
   async judge(folder: string, programs: Program[], flags: string[]): Promise<Judged[]> {
@@ -392,7 +426,7 @@ export class ProductBed implements Bed {
       const file = "program." + program.extension;
       this.#layBeside(folder, flags);
       this.#write(folder, file, program, flags);
-      const plain = await spawned([this.bun, "run", file], folder, this.options.runSeconds);
+      const plain = await spawned([this.bun, "run", file], folder, this.options.runSeconds, undefined, this.options.memory);
       const early = unusable(this, plain);
       if (early) return [{ plain, verdict: early }];
       rmSync(executable, { force: true });
@@ -457,7 +491,7 @@ ${table}if (isMainThread) {
     const all = programs.map((_, index) => index);
     this.#writeModules(folder, programs, flags);
     entry(all);
-    const plains = (await inParallel(all, 4, index => spawned([this.bun, "run", "main.js", String(index)], folder, this.options.runSeconds))).map(run => this.#inAnyOrder(run));
+    const plains = (await inParallel(all, 4, index => spawned([this.bun, "run", "main.js", String(index)], folder, this.options.runSeconds, undefined, this.options.memory))).map(run => this.#inAnyOrder(run));
     for (const index of all) {
       const early = unusable(this, plains[index]);
       if (early) results[index] = { plain: plains[index], verdict: early };
@@ -665,7 +699,7 @@ export function compare(bed: Bed, program: Program, plain: Run, compiled: Compil
   const { build, run } = compiled;
   const said = build.stderr + "\n" + build.stdout;
   if (!run) {
-    if (build.timedOut) return failure("build hang", "");
+    if (build.timedOut) return failure("build hang", build.tookTooMuchMemory ? "took too much memory" : "");
     // The first line may only say that the program is not valid at the end; the lines after it say what is wrong.
     const internal = said.match(/^.*internal compiler error.*$/gm);
     if (internal) return failure("internal compiler error", normalized((internal.find(line => !line.includes("VerificationFailedAtTheEnd")) ?? internal[0]).replace(/;? (in )?function .*$/, "")));
@@ -684,7 +718,7 @@ export function compare(bed: Bed, program: Program, plain: Run, compiled: Compil
   const nativeCall = /^AOT native call: .*$/m.exec(run.stderr)?.[0] ?? "";
   if (invalid && !validationMessage.test(plain.stderr + "\n" + plain.stdout)) return failure("validation failure", `${invalid[0]} ${nativeCall}`.trim().slice(0, 200), normalized(`${invalid[0]} ${nativeCall}`));
   if (run.signal) return failure("crash", `${run.signal} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: |FATAL: out of memory).*$/m.exec(run.stderr)?.[0] ?? "")}`.trim());
-  if (run.timedOut) return failure("hang", "");
+  if (run.timedOut) return failure("hang", run.tookTooMuchMemory ? "took too much memory" : "");
   if (run.stdout === plain.stdout && run.exitCode === plain.exitCode) return { kind: "same" };
   const exits = run.exitCode === plain.exitCode ? "" : ` | exit codes ${plain.exitCode} ${run.exitCode}: ${uncaught(run.exitCode ? run : plain).slice(0, 160)}`;
   const codes = `${plain.exitCode} ${run.exitCode} ${normalized(uncaught(run.exitCode ? run : plain))}`;

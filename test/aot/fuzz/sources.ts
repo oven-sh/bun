@@ -74,6 +74,7 @@
 //   methods-of-helper-objects-define-members-under-written-names a method of a helper object defines a closure on a target under a key it is handed, the calls hand it written names, and the method calls itself or its neighbours in every way (methods-of-helper-objects-define-members-under-written-names.ts)
 //   functions-that-keep-very-many-values-alive one function keeps 40 to 5,000 values alive at once, through a loop, into a catch block or over calls that collect, and sums them all (functions-that-keep-very-many-values-alive.ts)
 //   a-full-heap-is-let-go-and-built-ins-make-things objects are kept until no more fit, all or half of them are let go, and at once one built-in that makes things is called thousands of times: there is room again, so no call may fail (a-full-heap-is-let-go-and-built-ins-make-things.ts)
+//   static-fields-hold-values-outside-their-declared-types a static field of an enum, a union of number literals, or one of these or undefined, null or a string is stored numbers and other values that TypeScript lets in, in every way and place, and read in every way around each store (static-fields-hold-values-outside-their-declared-types.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
@@ -679,6 +680,7 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     "holders-with-the-same-keys-and-one-stranger",
     "names-asked-of-full-tables-and-texts-converted-again",
     "a-full-heap-is-let-go-and-built-ins-make-things",
+    "static-fields-hold-values-outside-their-declared-types",
   ])
     if (existsSync(join(import.meta.dir, name + ".ts")))
       sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);

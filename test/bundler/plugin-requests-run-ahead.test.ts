@@ -1,21 +1,16 @@
 import { expect, test } from "bun:test";
+import { readFile } from "fs/promises";
 import { tempDir } from "harness";
 import { join } from "path";
 
-// Each text takes the plugins' thread for a while after its first `await`. A request that arrives meanwhile doesn't wait
-// for all of them.
+// Each text holds the plugins' thread for a while after its first `await`. The first one to finish imports a virtual
+// module, so the bundler asks for that module while the other texts are queued. The request doesn't wait for all of them.
 test("onResolve runs ahead of what other plugins have queued", async () => {
   const textCount = 60;
   const files: Record<string, string> = {
     "entry.ts": [
-      `import late from "./late";`,
       ...Array.from({ length: textCount }, (_, index) => `import text${index} from "./text${index}.txt";`),
-      `console.log(late, ${Array.from({ length: textCount }, (_, index) => `text${index}`).join(", ")});`,
-    ].join("\n"),
-    // Large, so that the bundler asks for "virtual:late" when the texts are already queued.
-    "late.ts": [
-      ...Array.from({ length: 30_000 }, (_, index) => `const unused${index} = ${index};`),
-      `export { default } from "virtual:late";`,
+      `console.log(${Array.from({ length: textCount }, (_, index) => `text${index}`).join(", ")});`,
     ].join("\n"),
   };
   for (let index = 0; index < textCount; index++) {
@@ -32,11 +27,13 @@ test("onResolve runs ahead of what other plugins have queued", async () => {
         name: "slow texts",
         setup(build) {
           build.onLoad({ filter: /\.txt$/ }, async args => {
-            const text = await Bun.file(args.path).text();
-            const end = performance.now() + 10;
-            while (performance.now() < end) {}
-            textsDone++;
-            return { contents: `export default ${JSON.stringify(text)};`, loader: "js" };
+            const text = await readFile(args.path, "utf8");
+            Bun.sleepSync(10);
+            const isFirst = textsDone++ === 0;
+            return {
+              contents: isFirst ? `export { default } from "virtual:late";` : `export default ${JSON.stringify(text)};`,
+              loader: "js",
+            };
           });
         },
       },
@@ -57,7 +54,7 @@ test("onResolve runs ahead of what other plugins have queued", async () => {
   });
   expect(result.success).toBe(true);
   expect(textsDone).toBe(textCount);
-  expect(textsDoneAtResolve).toBeGreaterThanOrEqual(0);
+  expect(textsDoneAtResolve).toBeGreaterThanOrEqual(1);
   expect(textsDoneAtResolve).toBeLessThan(textCount);
 });
 

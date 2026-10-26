@@ -324,17 +324,46 @@ impl<'a> Build<'a> {
         project: &ApplicationLoad<'_, '_, '_, '_, 's>,
         then: Then<'_, 'a, R>,
     ) -> Result<R, Stage> {
-        let options = self.options;
-        let (host, request, positions) = (project.host, project.request, project.positions);
-        let session = shared.sessions.application;
-        let mut preloaded_runtime = None;
-        if let Some(preload) = preload_of(options) {
+        let mut kept_runtime = None;
+        if let Some(preload) = preload_of(self.options) {
             let placeholder = [preload.placeholder_entry_point.to_vec()];
-            preloaded_runtime =
-                Some(self.load_runtime_of_placeholder(shared, project, &placeholder)?);
+            let request = CompileRequest {
+                entry_points: EntryPoints::Written(&placeholder),
+                ..*project.request
+            };
+            let of_placeholder = ApplicationLoad {
+                host: project.host,
+                request: &request,
+                scope: project.scope,
+                asset_reads: project.asset_reads,
+                finish_asset_reads: project.finish_asset_reads,
+                positions: project.positions,
+            };
+            self.is_preloading = true;
+            let compiled =
+                self.load_and_compile(shared, &of_placeholder, &mut *then, &mut kept_runtime);
+            self.is_preloading = false;
+            drop(compiled?);
+            self.diagnostics = Diagnostics::new();
+            self.statistics = Statistics::default();
+            self.clock.start(Stage::Load);
             preload.is_loaded.store(true, Ordering::Relaxed);
             (preload.on_loaded)();
         }
+        self.load_and_compile(shared, project, then, &mut kept_runtime)
+    }
+
+    /// `kept_runtime`: Bun's own code as an earlier program of the build has loaded it. The placeholder of `Preload` leaves it there.
+    fn load_and_compile<'s, R>(
+        &mut self,
+        shared: &SharedLoadInputs<'_, 's>,
+        project: &ApplicationLoad<'_, '_, '_, '_, 's>,
+        then: Then<'_, 'a, R>,
+        kept_runtime: &mut Option<(RuntimeRoots, LoadedProgram<'s>)>,
+    ) -> Result<R, Stage> {
+        let options = self.options;
+        let (host, request, positions) = (project.host, project.request, project.positions);
+        let session = shared.sessions.application;
         let mut application = self.load_application(session, host, request, shared)?;
         if project.asset_reads == AssetReads::FinishedLater {
             read_assets(project.scope, host);
@@ -413,7 +442,7 @@ impl<'a> Build<'a> {
         let is_read_again = self.programs.is_some();
         application.set_is_read_again(is_read_again);
         let first_files: Vec<Option<FileId>> = programs.iter().map(|program| program.1).collect();
-        let roots: Vec<RuntimeRoots> = first_files
+        let mut roots: Vec<RuntimeRoots> = first_files
             .iter()
             .map(|&first| {
                 if first.is_some() {
@@ -430,6 +459,7 @@ impl<'a> Build<'a> {
             }
         }
         let mut result = None;
+        let mut runtime_to_keep = None;
         for (group_index, group) in groups.iter().enumerate() {
             let started = Instant::now();
             let roots = &roots[group[0]];
@@ -445,14 +475,14 @@ impl<'a> Build<'a> {
                 loads_code_by_unknown_names_alone,
                 ..
             } = inputs;
-            let preloaded = preloaded_runtime.take();
-            let mut runtime = match preloaded.filter(|(known, _)| asks_the_same(known, roots)) {
+            let kept = kept_runtime.take();
+            let mut runtime = match kept.filter(|(known, _)| asks_the_same(known, roots)) {
                 Some((_, runtime)) => runtime,
                 None => self.load_runtime(shared, session, runtime_host, &runtime_request)?,
             };
             self.count_time(StatisticId::LoadRuntimeProjectNanoseconds, started);
 
-            runtime.set_is_read_again(is_read_again);
+            runtime.set_is_read_again(is_read_again || shared.parsed_declarations.is_some());
             for &index in group {
                 if first_files[index].is_some() {
                     view(first_files[index]);
@@ -492,6 +522,12 @@ impl<'a> Build<'a> {
                 };
                 result = Some(then(self, loaded)?);
             }
+            if self.is_preloading {
+                runtime_to_keep = Some((group[0], runtime));
+            }
+        }
+        if let Some((index, runtime)) = runtime_to_keep {
+            *kept_runtime = Some((roots.swap_remove(index), runtime));
         }
         Ok(result.expect("a build has a program"))
     }
@@ -571,36 +607,6 @@ impl<'a> Build<'a> {
         let parsed = shared.parsed_declarations;
         let runtime = load_program_with_parsed_files(session, host, request, parsed);
         self.finish_load(runtime, request, shared.messages)
-    }
-
-    /// Bun's own code as a program asks for it that uses nothing of it by name.
-    fn load_runtime_of_placeholder<'s>(
-        &mut self,
-        shared: &SharedLoadInputs<'_, 's>,
-        project: &ApplicationLoad<'_, '_, '_, '_, 's>,
-        placeholder: &[Vec<u8>],
-    ) -> Result<(RuntimeRoots, LoadedProgram<'s>), Stage> {
-        let request = CompileRequest {
-            entry_points: EntryPoints::Written(placeholder),
-            code: project.request.code,
-            fold: project.request.fold,
-            atoms: project.request.atoms,
-            libs: project.request.libs,
-            project_origin: project.request.project_origin,
-            threads: project.request.threads,
-            progress: None,
-            left_out_bodies: None,
-        };
-        let session = shared.sessions.application;
-        let application = self.load_application(session, project.host, &request, shared)?;
-        let files = application.files();
-        let roots = collect_runtime_roots(files, shared.runtime_modules, self.platform);
-        drop(application);
-        let session = shared.sessions.runtime;
-        let inputs = self.create_runtime_load_inputs(shared, session, &roots);
-        let request = self.create_runtime_request(shared, &inputs, &roots);
-        let runtime = self.load_runtime(shared, session, &inputs.host, &request)?;
-        Ok((roots, runtime))
     }
 
     /// The positions of the entry points that are loaded now. The others are left for loads of their own.

@@ -7,7 +7,7 @@ import { canTrim } from "../bundler/compile-trim-features";
 import { built, slot, spawned, unsupported } from "./run-programs";
 
 const removed = (name: string) =>
-  `${name} was removed by --trim because your code never uses it. To keep it, add "intl" to compile.trim.allow in Bun.build().`;
+  `${name} was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, add "intl" to compile.trim.allow in Bun.build().`;
 
 const programs: [title: string, source: string, answer: string, trimmedSays: string | null][] = [
   [

@@ -97,10 +97,11 @@ export function textOf(feature: FeatureName): string {
 export function saysFeatureWasRemoved(stderr: string, feature: FeatureName): boolean {
   if (stderr.includes(`--trim removed ${textOf(feature)} from this executable`)) return true;
   // One of Bun's own modules may catch the error and put its message into one of its own: util.inspect into an AssertionError, inspector.open() into the line that Node prints.
-  if (stderr.includes(`rror: ${textOf(feature)} was removed by --trim because your code never uses it.`)) return true;
+  if (stderr.includes(`rror: ${textOf(feature)} was removed by --trim because your code never uses it by name.`))
+    return true;
   // A native function of one of Bun's own modules has no path that a program could write. The message names what to allow.
   const [, publicName] =
-    / was removed by --trim because your code never uses it\. To keep it, add "([\w-]+)" to compile\.trim\.allow\b/.exec(
+    / was removed by --trim because your code never uses it by name\..* To keep it, add "([\w-]+)" to compile\.trim\.allow\b/.exec(
       stderr,
     ) ?? [];
   if (model.trimFeatures.some(each => each.name === publicName && each.features.includes(feature))) return true;

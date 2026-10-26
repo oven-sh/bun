@@ -32,7 +32,8 @@ pub(super) struct CompileLoad<'a, 's> {
 }
 
 impl<'s> Files<'s> {
-    pub fn load_for_compile(
+    #[cfg(test)]
+    pub(crate) fn load_for_compile(
         session: &'s Session,
         host: &dyn CodeHost,
         options: Options,

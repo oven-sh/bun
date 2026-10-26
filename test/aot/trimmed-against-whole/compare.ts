@@ -472,7 +472,7 @@ export async function compare(program: Program, settings: Settings, folder: stri
     if (isSame(whole, await bench.run("trimmed"))) return result({ verdict: "set aside", why: "trimmed differs only sometimes", detail: firstDifference(whole, trimmed), world });
 
     const sentence = /--trim removed (.*?) from this executable, but the program needs it\.(?:[^\n]*?number: (\d+))?/s.exec(trimmed.stderr);
-    const thrown = /was removed by --trim because your code never uses it\. To keep it, add "([\w-]+)" to compile\.trim\.allow[^\n]*\n\s*code: "ERR_FEATURE_REMOVED"/.exec(trimmed.stderr);
+    const thrown = /was removed by --trim because your code never uses it by name\.[^\n]* To keep it, add "([\w-]+)" to compile\.trim\.allow[^\n]*\n\s*code: "ERR_FEATURE_REMOVED"/.exec(trimmed.stderr);
     const named = (sentence && featureWithText(sentence[1], settings.model)) ?? (thrown && onlyFeatureOf(thrown[1], settings.model));
     const features = named ? [named] : settings.findsFeature && removed ? await bench.smallestSetThatDiffers(leftOut, whole) : undefined;
     return differs(firstDifference(whole, trimmed), {

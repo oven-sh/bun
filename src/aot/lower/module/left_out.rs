@@ -13,7 +13,7 @@ enum Declaration {
 }
 
 /// One declarator of `const a = f(), b = 1` can go while the other stays, so a declarator is named by itself.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub struct LeftOutDeclarations(FxHashSet<(FileId, Declaration)>);
 
 impl LeftOutDeclarations {

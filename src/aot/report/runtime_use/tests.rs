@@ -285,7 +285,7 @@ fn program_with_every_api_visible_has_one_cause_line() {
     let fixture = ReportFixture::new(ResultRecords::default());
     let mut entries = Vec::new();
     with_positions(&fixture, |input, positions| {
-        cause_lines(input, positions, &mut entries)
+        cause_lines(input, &[], positions, &mut entries)
     });
     assert_eq!(
         lines_and_positions(&entries),
@@ -319,7 +319,7 @@ fn cause_line_has_builtin_and_position() {
     ];
     let mut entries = Vec::new();
     with_positions(&fixture, |input, positions| {
-        cause_lines(input, positions, &mut entries)
+        cause_lines(input, &[], positions, &mut entries)
     });
     assert_eq!(
         lines_and_positions(&entries),
@@ -539,7 +539,7 @@ fn feature_lines_list_kept_then_removed() {
     let fixture = ReportFixture::new(ResultRecords::default());
     let mut entries = Vec::new();
     with_positions(&fixture, |input, positions| {
-        feature_lines(input, &decision, positions, &mut entries);
+        feature_lines(input, &decision, &[], positions, &mut entries);
     });
     let expected = [
         format!("kept {}: runs at startup", feature_text(Feature::Inspector)),
@@ -587,4 +587,122 @@ fn report_lists_causes_items_locales_and_decision() {
     assert_eq!(report(None), [&start[..], &[without_decision]].concat());
     let removed = format!("removed {}: unused", feature_text(Feature::RegExp));
     assert_eq!(report(Some(&decision)), [&start[..], &[removed]].concat());
+}
+
+fn unnamed_use(feature: Feature, builtin: BuiltinId, location: SourceLocation) -> FeatureUseRecord {
+    FeatureUseRecord {
+        kind: FeatureUseKind::Unnamed,
+        ..feature_use(feature, builtin.to_wire(), location)
+    }
+}
+
+fn report_of(
+    records: &[FeatureUseRecord],
+    decision: &Decision,
+) -> Vec<(BString, Option<Position>)> {
+    let fixture = ReportFixture::new(ResultRecords {
+        features_used: records,
+        ..ResultRecords::default()
+    });
+    let mut entries = Vec::new();
+    let decision = Some(decision);
+    fixture.with_input(|input| collect(&ReportInput { decision, ..*input }, &mut entries));
+    lines_and_positions(&entries)
+}
+
+#[test]
+fn removed_feature_that_a_run_time_name_reaches_has_place_and_way_to_keep_it() {
+    let place = location(PROGRAM, LINE_2_COLUMN_14);
+    let records = [
+        unnamed_use(Feature::IntlCollation, BuiltinId::Eval, NO_LOCATION),
+        unnamed_use(Feature::IntlCollation, BuiltinId::ConsoleLog, place),
+        unnamed_use(Feature::Temporal, BuiltinId::ConsoleLog, place),
+        unnamed_use(
+            Feature::RegExp,
+            BuiltinId::ConsoleLog,
+            location(PROGRAM, LINE_1_COLUMN_5),
+        ),
+        unnamed_use(Feature::Sqlite, BuiltinId::ConsoleLog, NO_LOCATION),
+    ];
+    let decision = Decision {
+        unused: FeatureSet::from_features(&[
+            Feature::IntlCollation,
+            Feature::Temporal,
+            Feature::RegExp,
+            Feature::Sqlite,
+        ]),
+        ..Decision::empty()
+    };
+    let why = "no code names it, but a name from run time could reach it (console.log)";
+    let mut expected = vec![
+        line(
+            "the compiler can't tell which API this program uses at src/a.ts:1:5, because the name is only known at run time",
+            at(PROGRAM, LINE_1_COLUMN_5),
+        ),
+        line(
+            "the compiler can't tell which API this program uses at src/a.ts:2:14, because the name is only known at run time",
+            at(PROGRAM, LINE_2_COLUMN_14),
+        ),
+        line("locales: none", None),
+    ];
+    for feature in decision.unused.iter() {
+        let text = feature_text(feature);
+        expected.push(match feature {
+            Feature::IntlCollation => line(
+                &format!("removed {text}: {why} at src/a.ts:2:14. To keep it, add \"intl\" to compile.trim.allow"),
+                at(PROGRAM, LINE_2_COLUMN_14),
+            ),
+            Feature::Temporal => line(
+                &format!("removed {text}: {why} at src/a.ts:2:14. To keep it, add \"temporal\" to compile.trim.allow"),
+                at(PROGRAM, LINE_2_COLUMN_14),
+            ),
+            Feature::RegExp => line(
+                &format!("removed {text}: {why} at src/a.ts:1:5. To keep it, use it by name somewhere in your code"),
+                at(PROGRAM, LINE_1_COLUMN_5),
+            ),
+            _ => line(&format!("removed {text}: unused"), None),
+        });
+    }
+    assert_eq!(report_of(&records, &decision), expected);
+}
+
+#[test]
+fn run_time_name_says_nothing_about_a_feature_that_stays_or_that_the_build_asked_to_remove() {
+    let place = location(PROGRAM, LINE_2_COLUMN_14);
+    let records = [
+        unnamed_use(Feature::IntlCollation, BuiltinId::ConsoleLog, place),
+        unnamed_use(Feature::Temporal, BuiltinId::ConsoleLog, place),
+        feature_use(Feature::Sqlite, BuiltinId::ConsoleLog.to_wire(), place),
+    ];
+    let decision = Decision {
+        unused: FeatureSet::from_features(&[Feature::Temporal, Feature::Sqlite]),
+        requested: FeatureSet::from_features(&[Feature::Temporal]),
+        retained: vec![Retained {
+            feature: Feature::IntlCollation,
+            reason: RetainReason::Allowed(TrimFeature::Intl),
+        }],
+        requirements: Vec::new(),
+    };
+    let mut expected = vec![
+        line("the compiler can see every API this program uses", None),
+        line("locales: none", None),
+        line(
+            &format!(
+                "kept {}: listed in compile.trim.allow (intl)",
+                feature_text(Feature::IntlCollation)
+            ),
+            None,
+        ),
+    ];
+    for feature in decision.unused.iter() {
+        let why = match feature {
+            Feature::Temporal => "listed in compile.trim.remove",
+            _ => "unused",
+        };
+        expected.push(line(
+            &format!("removed {}: {why}", feature_text(feature)),
+            None,
+        ));
+    }
+    assert_eq!(report_of(&records, &decision), expected);
 }

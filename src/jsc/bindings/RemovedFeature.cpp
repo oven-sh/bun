@@ -65,9 +65,10 @@ static WTF::String messageOfRemovedFeature(const WTF::String& api, uint16_t feat
     auto name = trimFeatureNameOf(static_cast<JSC::RemovableFeature>(feature));
     if (isRemovedByRequest(feature))
         return WTF::makeString(removed, " isn't in this executable: it was built with compile.trim.remove in Bun.build()."_s);
+    auto reason = " was removed by --trim because your code never uses it by name. A name known only at run time, as in object[key]() or eval(text), does not count. To keep it, "_s;
     if (name.isEmpty())
-        return WTF::makeString(removed, " was removed by --trim because your code never uses it. To keep it, use it somewhere in your code."_s);
-    return WTF::makeString(removed, " was removed by --trim because your code never uses it. To keep it, add \""_s, name, "\" to compile.trim.allow in Bun.build()."_s);
+        return WTF::makeString(removed, reason, "use it by name somewhere in your code."_s);
+    return WTF::makeString(removed, reason, "add \""_s, name, "\" to compile.trim.allow in Bun.build()."_s);
 }
 
 #if ENABLE(AOT)

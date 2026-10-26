@@ -16,8 +16,8 @@ const CONTROL_READ: i32 = 100;
 const CONTROL_WRITE: i32 = 101;
 const DATA_READ: i32 = 102;
 
-const DEFAULT_CPU_SECONDS: u64 = 30;
-const DEFAULT_MEMORY_MEGABYTES: u64 = 4096;
+const DEFAULT_CPU_SECONDS: u32 = 30;
+const DEFAULT_MEMORY_MEGABYTES: u32 = 4096;
 const INTERNAL_ERROR_PREFIX: &[u8] = b"internal compiler error";
 /// Fuzzilli sends it when it starts, to see that it notices a crash.
 const CRASH_REQUEST: &[u8] = b"fuzzilli('FUZZILLI_CRASH', 0)";
@@ -40,7 +40,7 @@ struct Channel {
     control_write: File,
     data_read: File,
     entry_point: ZBox,
-    cpu_seconds: u64,
+    cpu_seconds: u32,
     memory_bytes: u64,
 }
 
@@ -56,21 +56,21 @@ pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
         data_read: File::from_fd(Fd::from_native(DATA_READ)),
         entry_point: ZBox::from_bytes(&entry_point[..]),
         cpu_seconds: read_limit(zstr!("BUN_FUZZILLI_CPU_SECONDS"), DEFAULT_CPU_SECONDS),
-        memory_bytes: read_limit(
+        memory_bytes: u64::from(read_limit(
             zstr!("BUN_FUZZILLI_MEMORY_MEGABYTES"),
             DEFAULT_MEMORY_MEGABYTES,
-        ) << 20,
+        )) << 20,
     });
-    // The memory that the JIT writes its code to is not handed on to a forked process.
+    // A build that folds a call of a built-in makes a VM in the forked process. That VM only interprets.
     if bun_core::getenv_z(zstr!("BUN_JSC_useJIT")) != Some(&b"0"[..]) {
         stop("Expected BUN_JSC_useJIT=0 in the environment");
     }
     channel.greet();
     // A new process has only the thread that forked, so that thread does all the work of a build.
     bun_sema_driver::run_regions_inline_on_this_thread();
-    grow_stack_to(u64::from(bun_sema_driver::WORKER_STACK_SIZE));
+    grow_stack_to(bun_sema_driver::WORKER_STACK_SIZE);
     // The build lists the folder before the first program is there.
-    for path in [&placeholder[..], &channel.entry_point.as_bytes()[..]] {
+    for path in [&*placeholder, channel.entry_point.as_bytes()] {
         if File::write_file(Fd::cwd(), &ZBox::from_bytes(path), b"").is_err() {
             stop("The entry point could not be written");
         }
@@ -217,13 +217,14 @@ fn add_prefix(path: &[u8], prefix: &[u8]) -> Box<[u8]> {
 }
 
 /// The threads that compile in other builds of Bun have this much.
-fn grow_stack_to(bytes: u64) {
+fn grow_stack_to(bytes: u32) {
     let mut limit = libc::rlimit {
         rlim_cur: 0,
         rlim_max: 0,
     };
     // SAFETY: the kernel writes one `rlimit`.
     unsafe { libc::getrlimit(libc::RLIMIT_STACK, &raw mut limit) };
+    let bytes = libc::rlim_t::from(bytes);
     if limit.rlim_cur < bytes {
         limit.rlim_cur = bytes.min(limit.rlim_max);
         // SAFETY: the kernel reads one `rlimit`.
@@ -231,7 +232,7 @@ fn grow_stack_to(bytes: u64) {
     }
 }
 
-fn read_limit(name: &bun_core::ZStr, default: u64) -> u64 {
+fn read_limit(name: &bun_core::ZStr, default: u32) -> u32 {
     bun_core::getenv_z(name)
         .and_then(|text| core::str::from_utf8(text).ok()?.parse().ok())
         .unwrap_or(default)
@@ -246,15 +247,16 @@ fn stop(reason: &str) -> ! {
 }
 
 /// A build that takes more processor time ends by SIGXCPU.
-fn limit_cpu_time(seconds: u64) {
+fn limit_cpu_time(seconds: u32) {
     let mut used = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
     };
     // SAFETY: the kernel writes one `timespec`.
     unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &raw mut used) };
+    let used_seconds = libc::rlim_t::try_from(used.tv_sec).unwrap_or(0);
     let limit = libc::rlimit {
-        rlim_cur: u64::try_from(used.tv_sec).unwrap_or(0) + 1 + seconds,
+        rlim_cur: used_seconds + 1 + libc::rlim_t::from(seconds),
         rlim_max: libc::RLIM_INFINITY,
     };
     // SAFETY: the kernel reads one `rlimit`.
@@ -265,8 +267,7 @@ fn resident_bytes() -> u64 {
     let Ok(text) = File::read_from(Fd::cwd(), b"/proc/self/statm") else {
         return 0;
     };
-    let pages = text
-        .split(|byte| *byte == b' ')
+    let pages = bun_core::strings::split(&text, b" ")
         .nth(1)
         .and_then(|field| core::str::from_utf8(field).ok()?.parse::<u64>().ok());
     pages.unwrap_or(0) * 4096

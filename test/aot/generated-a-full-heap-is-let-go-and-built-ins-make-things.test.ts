@@ -17,7 +17,7 @@ generated(
     mayStopOutOfMemory: true as const,
     ...(staysFull.includes(seed) && {
       failsToday:
-        "a word that a call left on the stack still names the list that was let go, the collector takes every word of the stack for a reference, and the range stays full",
+        "with 64 MB for its objects a stage behind a fill that was let go gets a RangeError where plain Bun gets none, and what still holds the objects is not established",
     }),
     // A Bun built with AddressSanitizer takes the range from another allocator, which does not hand out again at once what is freed.
     alsoUnder: isASAN ? [] : [{ BUN_JSC_markedBlockCageSizeInMB: "64" }],

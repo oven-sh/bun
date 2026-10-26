@@ -99,6 +99,9 @@
       "DotenvSingleton"
     ]
   },
+  "src/runtime/cli/fuzzilli_compile_loop.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/cli/lint_js.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [

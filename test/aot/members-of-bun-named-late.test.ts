@@ -48,11 +48,7 @@ describe.concurrent.each([6, 14])("the class that a module of Bun makes, behind 
     ["named on a constant", "", `() => {\n    const bun = Bun;\n    return new bun.SQL(${url});\n  }`],
     ["named on a constant of the module", "const bun = Bun;\n", `() => new bun.SQL(${url})`],
     ["named on a parameter", `const open = bun => new bun.SQL(${url});\n`, `() => open(Bun)`],
-    gap(notCompiled, [
-      "named on a parameter that took an unknown value first",
-      openAfterUnknownValue("bun.SQL"),
-      `() => open(Bun)`,
-    ]),
+    ["named on a parameter that took an unknown value first", openAfterUnknownValue("bun.SQL"), `() => open(Bun)`],
     ["named on globalThis.Bun", "", `() => new globalThis.Bun.SQL(${url})`],
     ["named by a string in brackets", "", `() => new Bun["SQL"](${url})`],
     ["read by Reflect.get", "", `() => new (Reflect.get(Bun, "SQL"))(${url})`],
@@ -64,11 +60,11 @@ describe.concurrent.each([6, 14])("the class that a module of Bun makes, behind 
       `const open = key => new (Reflect.get(Bun, key))(${url});\n`,
       `() => open("SQL")`,
     ],
-    gap(notCompiled, [
+    [
       "read by Reflect.get on a parameter that took an unknown value first",
       openAfterUnknownValue(`Reflect.get(bun, "SQL")`),
       `() => open(Bun)`,
-    ]),
+    ],
     gap(notCompiled, [
       "read by Reflect.get on globalThis.Bun",
       "",
@@ -85,8 +81,8 @@ describe.concurrent.each([6, 14])("the class that a module of Bun makes, behind 
       `() => new (Object.getOwnPropertyDescriptor(Bun, "SQL").value)(${url})`,
     ],
     ["named on require()", "", `() => new (import.meta.require("bun").SQL)(${url})`],
-    gap(notCompiled, ["named on a spread copy", "", `() => new ({ ...Bun }).SQL(${url})`]),
-    gap(notCompiled, ["named on a copy by Object.assign", "", `() => new (Object.assign({}, Bun).SQL)(${url})`]),
+    ["named on a spread copy", "", `() => new ({ ...Bun }).SQL(${url})`],
+    ["named on a copy by Object.assign", "", `() => new (Object.assign({}, Bun).SQL)(${url})`],
     gap(notCompiled, ["named on an object below Bun", "", `() => new (Object.create(Bun).SQL)(${url})`]),
     gap(notCompiled, [
       "named on what a promise resolves to",

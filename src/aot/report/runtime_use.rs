@@ -1,6 +1,6 @@
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
-use bun_trim::{Decision, Feature, RetainReason, Retained, UsedLocales, WitnessIndex};
+use bun_trim::{Decision, Feature, FeatureSet, RetainReason, Retained, UsedLocales, WitnessIndex};
 
 use super::format::write_parts;
 use super::positions::{PathStyle, Positions, write_shown_position};
@@ -8,19 +8,23 @@ use super::wording::{trim_blocker_code, unseen_code_sentence};
 use super::{ReportEntry, ReportInput};
 use crate::builtins::BuiltinId;
 use crate::builtins::table::{self, BuiltinKind};
-use crate::engine::{BuiltinUseRecord, Position, SourceLocation, builtin_of, position_of};
-use crate::ir::generated::{BuiltinUse, LocaleUseKind};
+use crate::engine::{
+    BuiltinUseRecord, FeatureUseRecord, Position, SourceLocation, builtin_of, feature_of,
+    position_of,
+};
+use crate::ir::generated::{BuiltinUse, FeatureUseKind, LocaleUseKind};
 
 const PREFIX: &[u8] = b"trim: ";
 
 pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
     let mut positions = Positions::new(input, PathStyle::Native);
-    cause_lines(input, &mut positions, out);
+    let reachable = find_removed_but_reachable(input, &mut positions);
+    cause_lines(input, &reachable, &mut positions, out);
     let items = item_lines(input.engine.builtins_used());
     out.extend(items.into_iter().map(|line| entry_at(line, None)));
     out.push(locale_line(input, &mut positions));
     match input.decision {
-        Some(decision) => feature_lines(input, decision, &mut positions, out),
+        Some(decision) => feature_lines(input, decision, &reachable, &mut positions, out),
         None => out.push(entry_at(
             line_from(&[b"nothing removed: --trim wasn't passed"]),
             None,
@@ -59,8 +63,63 @@ fn write_witness(
     Some(position)
 }
 
-fn cause_lines(input: &ReportInput<'_>, positions: &mut Positions<'_>, out: &mut Vec<ReportEntry>) {
-    if input.used_features.causes.is_empty() {
+type ReachableFeature<'a> = (Feature, &'a FeatureUseRecord);
+
+// A feature that no code names, that --trim removes, and that a place in the program can still reach.
+fn find_removed_but_reachable<'a>(
+    input: &ReportInput<'a>,
+    positions: &mut Positions<'_>,
+) -> Vec<ReachableFeature<'a>> {
+    let Some(decision) = input.decision else {
+        return Vec::new();
+    };
+    let mut seen = FeatureSet::EMPTY;
+    let mut found = Vec::new();
+    for record in input.engine.features_used() {
+        let Some(feature) = feature_of(record.feature) else {
+            continue;
+        };
+        let is_removed = decision.unused.contains(feature) && !decision.requested.contains(feature);
+        if record.kind == FeatureUseKind::Named || !is_removed || seen.contains(feature) {
+            continue;
+        }
+        let position = position_of(record.witness.location);
+        if position
+            .and_then(|position| positions.resolve(position))
+            .is_none()
+        {
+            continue;
+        }
+        seen.insert(feature);
+        found.push((feature, record));
+    }
+    found
+}
+
+fn run_time_name_lines(
+    reachable: &[ReachableFeature<'_>],
+    positions: &mut Positions<'_>,
+    out: &mut Vec<ReportEntry>,
+) {
+    let places = reachable.iter().map(|(_, record)| record.witness.location);
+    let mut places: Vec<Position> = places.filter_map(position_of).collect();
+    places.shared_sort_unstable();
+    places.dedup();
+    for position in places {
+        let mut line = line_from(&[b"the compiler can't tell which API this program uses at "]);
+        write_shown_position(&mut line, positions.resolve(position).as_ref());
+        line.extend_from_slice(b", because the name is only known at run time");
+        out.push(entry_at(line, Some(position)));
+    }
+}
+
+fn cause_lines(
+    input: &ReportInput<'_>,
+    reachable: &[ReachableFeature<'_>],
+    positions: &mut Positions<'_>,
+    out: &mut Vec<ReportEntry>,
+) {
+    if input.used_features.causes.is_empty() && reachable.is_empty() {
         let line = line_from(&[b"the compiler can see every API this program uses"]);
         out.push(entry_at(line, None));
         return;
@@ -76,6 +135,7 @@ fn cause_lines(input: &ReportInput<'_>, positions: &mut Positions<'_>, out: &mut
         });
         out.push(entry_at(line, position));
     }
+    run_time_name_lines(reachable, positions, out);
 }
 
 fn item_lines(records: &[BuiltinUseRecord]) -> Vec<Vec<u8>> {
@@ -168,6 +228,7 @@ fn locale_line(input: &ReportInput<'_>, positions: &mut Positions<'_>) -> Report
 fn feature_lines(
     input: &ReportInput<'_>,
     decision: &Decision,
+    reachable: &[ReachableFeature<'_>],
     positions: &mut Positions<'_>,
     out: &mut Vec<ReportEntry>,
 ) {
@@ -181,13 +242,41 @@ fn feature_lines(
     for feature in decision.unused.iter() {
         let mut line = line_from(&[b"removed "]);
         write_feature(&mut line, feature);
-        line.extend_from_slice(if decision.requested.contains(feature) {
-            b": listed in compile.trim.remove" as &[u8]
-        } else {
-            b": unused"
-        });
-        out.push(entry_at(line, None));
+        let record = reachable.iter().find(|(reached, _)| *reached == feature);
+        let position = match record {
+            Some((_, record)) => write_reachable(&mut line, feature, record, positions),
+            None if decision.requested.contains(feature) => {
+                line.extend_from_slice(b": listed in compile.trim.remove");
+                None
+            }
+            None => {
+                line.extend_from_slice(b": unused");
+                None
+            }
+        };
+        out.push(entry_at(line, position));
     }
+}
+
+fn write_reachable(
+    line: &mut Vec<u8>,
+    feature: Feature,
+    record: &FeatureUseRecord,
+    positions: &mut Positions<'_>,
+) -> Option<Position> {
+    line.extend_from_slice(b": no code names it, but a name from run time could reach it");
+    let position = write_witness(line, record.builtin, record.witness.location, positions);
+    match feature.narrowest_trim_feature() {
+        Some(name) => {
+            let name = name.name().as_bytes();
+            write_parts(
+                line,
+                &[b". To keep it, add \"", name, b"\" to compile.trim.allow"],
+            );
+        }
+        None => line.extend_from_slice(b". To keep it, use it by name somewhere in your code"),
+    }
+    position
 }
 
 fn write_reason(

@@ -531,7 +531,6 @@ export function getChannel() {
   })();
 }
 
-$overriddenName = "";
 export function rawDebug() {
   // util.format straight to fd 2, bypassing process.stderr (which may be
   // hijacked or broken). os.EOL, not "\n": Node's _rawDebug writes through

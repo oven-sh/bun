@@ -9,6 +9,7 @@ const evaluates = "eval: the program calls eval() or new Function()";
 const loadsByName = "dynamic-import: the program calls import() or require() with a dynamic path";
 const runsOtherCode = "runtime-code: the program can run code that isn't in the executable";
 const importsFromOutside = "external-import: the program imports a module that isn't in the executable";
+const seesEveryApi = "the compiler can see every API this program uses";
 
 // The text of a program starts in line 2.
 async function report(text: string, files: Record<string, string> = {}, command = ["check", "--aot", "--no-pretty"]) {
@@ -225,6 +226,39 @@ describe.concurrent(
         `const cookies = JSON.parse(process.argv[2]);\nconsole.log(cookies[process.argv[3]]("b"));`,
       );
       expect(kept(lines, "String.prototype.normalize")).toEqual(["used (String.prototype.normalize) at main.ts:3:13"]);
+    });
+
+    test("a call under a computed key has the place, what it could reach that was removed, and how to keep it", async () => {
+      const { lines } = await report(
+        `const cookies = JSON.parse(process.argv[2]);\nconsole.log(cookies[process.argv[3]]("b"));`,
+      );
+      expect(lines[0]).toBe(
+        "the compiler can't tell which API this program uses at main.ts:3:13, because the name is only known at run time",
+      );
+      expect(lines).not.toContain(seesEveryApi);
+      expect(lines).toContain(
+        "removed Intl.Collator and localeCompare (intl): no code names it, but a name from run time could reach it " +
+          '(String.prototype.localeCompare) at main.ts:3:13. To keep it, add "intl" to compile.trim.allow',
+      );
+    });
+
+    test("a call of a number's method under a computed key", async () => {
+      const { lines } = await report(`console.log((5)[process.argv[2]]());`);
+      expect(lines[0]).toBe(
+        "the compiler can't tell which API this program uses at main.ts:2:14, because the name is only known at run time",
+      );
+      expect(lines).not.toContain(seesEveryApi);
+      expect(lines).toContain(
+        "removed Intl.NumberFormat, Intl.DurationFormat and toLocaleString on numbers and BigInts (intl): " +
+          "no code names it, but a name from run time could reach it (Number.prototype.toLocaleString) at main.ts:2:14. " +
+          'To keep it, add "intl" to compile.trim.allow',
+      );
+    });
+
+    test("a program that names everything it calls", async () => {
+      const { lines } = await report(`console.log((5).toFixed(2));`);
+      expect(lines[0]).toBe(seesEveryApi);
+      expect(lines.filter(line => line.includes("name from run time"))).toEqual([]);
       expect(lines).toContain("removed Intl.Collator and localeCompare (intl): unused");
     });
 
@@ -234,6 +268,7 @@ describe.concurrent(
         `const cookies = JSON.parse(process.argv[2]);\nconsole.log(cookies[process.argv[3]]);`,
       );
       expect(kept(lines, "String.prototype.localeCompare")).toEqual([]);
+      expect(lines[0]).toBe(seesEveryApi);
       expect(lines).toContain("removed Intl.Collator and localeCompare (intl): unused");
     });
   },

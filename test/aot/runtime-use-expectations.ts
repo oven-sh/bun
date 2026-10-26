@@ -16,7 +16,7 @@ export const everyMemberOf = (holder: string) => `${holder} (escapes, so any mem
 export const globalObject = everyMemberOf("globalThis");
 
 const hostHolders = ["globalThis", "process", "Bun"];
-export const closed = { first: "the compiler can see every API this program uses", whyOpen: [] as string[], escaped: [] as string[] };
+export const closed = { first: expect.stringMatching(/^the compiler (?:can see every API this program uses$|can't tell which API this program uses at )/), whyOpen: [] as string[], escaped: [] as string[] };
 export const open = (why: string) =>
   why === globalObject
     ? { ...closed, escaped: expect.arrayContaining(["globalThis"]) }

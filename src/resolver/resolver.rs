@@ -6354,8 +6354,7 @@ impl<'a> Resolver<'a> {
         Self::entry_file_path(entry).filter(|kept| *kept == fd_path)
     }
 
-    /// The directory walked as `path`, opened by its real path, and that path: only where the
-    /// parent's entry gives the real path with no stat, and no listing is under it yet.
+    /// Opens the real path the parent's entry gives with no stat, unless a listing is under it.
     fn open_by_real_path(&mut self, parent: DirInfoRef, path: &[u8]) -> Option<(FD, Vec<u8>)> {
         let mut base = bun_paths::basename(path);
         if base.len() > 1 && base[base.len() - 1] == SEP {
@@ -6400,8 +6399,7 @@ impl<'a> Resolver<'a> {
         Some((opened.ok()?, real.to_vec()))
     }
 
-    /// The real path of the directory walked as `path`; empty if that is `path` itself, or unknown.
-    /// True if this call read it from a link at `path`: `fd`, opened there before, is open on it.
+    /// The real path of `path`, or empty, and whether this call read it from a link at `path`.
     fn real_dir_from_parent(
         &mut self,
         parent: DirInfoRef,

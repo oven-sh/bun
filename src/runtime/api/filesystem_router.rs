@@ -91,8 +91,7 @@ pub(crate) struct FileSystemRouter {
 enum Load {
     /// From the resolver's cache of the directory. A warning is an error.
     Cached,
-    /// From the disk: the bust has each directory read again, and with that each route file
-    /// opened. Warnings pass.
+    /// From the disk: the bust has each directory read and each route file opened. Warnings pass.
     FromDisk,
 }
 

@@ -208,7 +208,6 @@ impl Entry {
         Ok(p)
     }
 
-    /// Whether the file was found or opened since a bust last had the listing read again.
     /// `abs_path` outlives a bust, so a reader that opens the file once per bust asks this.
     #[inline]
     pub fn file_asked(&self) -> bool {

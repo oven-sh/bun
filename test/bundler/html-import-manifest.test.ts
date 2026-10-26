@@ -631,16 +631,36 @@ console.log("About manifest:", aboutHtml);
           plugins: [findLast(held)],
           ...options,
         });
-        const outputs = build.outputs.map(async (output): Promise<[string, string, string]> => [
-          basename(output.path),
-          output.kind,
-          await output.text(),
-        ]);
+        const outputs = build.outputs.map(
+          async (output): Promise<[string, string, string]> => [
+            basename(output.path),
+            output.kind,
+            await output.text(),
+          ],
+        );
         builds.push(await Promise.all(outputs));
       }
       expect(builds[1]).toEqual(builds[0]);
     });
   }
+
+  // An executable has the pages in the order of the imports too. The scan finds about.html first.
+  itBundled("html-import/compile-pages-in-import-order", {
+    compile: true,
+    backend: "api",
+    entryPoints: ["/server.js"],
+    files: rooted({
+      ...pagePerRoute("home", "about"),
+      "server.js": `
+        import { home } from "./routes/home.js";
+        import { about } from "./routes/about.js";
+        const stylesheet = page => page.files.find(file => file.loader === "css").input;
+        console.log(stylesheet(home), stylesheet(about));
+      `,
+    }),
+    plugins: [findLast("home.js")],
+    run: { stdout: "home.html home.html" },
+  });
 
   // One file imports both pages. Neither the directory of the project nor the
   // names of the pages decide which page is first.

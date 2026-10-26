@@ -27,14 +27,22 @@ pub(crate) struct Inferred<'e> {
     /// The programs of the first request.
     tables: OnceLock<Tables>,
     /// The programs of the files of later requests that `tables` didn't cover, one entry per request. An editor's
-    /// session lints one text at a time and requests each.
+    /// session lints one text at a time and requests each. Read up to `Asked::loaded`, which the lock orders after
+    /// the push.
     later: AppendVec<Tables>,
-    /// The native paths of later requests that were loaded, covered or not.
-    asked: Guarded<FxHashSet<Vec<u8>>>,
+    asked: Guarded<Asked>,
     /// `Inferred::searched`
     searched: OnceLock<[Vec<Vec<u8>>; 2]>,
     /// Built on the first lookup.
     by_options: Option<OnceLock<ByOptions>>,
+}
+
+#[derive(Default)]
+struct Asked {
+    /// The native paths of later requests that were loaded, covered or not.
+    paths: FxHashSet<Vec<u8>>,
+    /// How many entries of `Inferred::later` are written.
+    loaded: u32,
 }
 
 /// `InferGlobals::ByOptions`
@@ -171,7 +179,7 @@ impl<'e> Inferred<'e> {
             paths: OnceLock::new(),
             tables: OnceLock::new(),
             later: AppendVec::new(),
-            asked: Guarded::new(FxHashSet::default()),
+            asked: Guarded::new(Asked::default()),
             searched: OnceLock::new(),
             by_options: by_options.then(OnceLock::new),
         }
@@ -193,23 +201,31 @@ impl<'e> Inferred<'e> {
         }
         let first = self.paths.get();
         let mut asked = self.asked.lock();
+        let loaded = asked.loaded;
         let uncovered: Vec<Vec<u8>> = paths
             .into_iter()
             .filter(|path| !first.is_some_and(|it| it.contains(path)))
             .map(crate::paths::to_native)
-            .filter(|path| asked.insert(path.clone()) && self.list_of(path).is_none())
+            .filter(|path| asked.paths.insert(path.clone()) && self.list_in(path, loaded).is_none())
             .collect();
         if !uncovered.is_empty() {
-            self.later.push(self.load(None, &uncovered));
+            let at = self.later.push(self.load(None, &uncovered));
+            asked.loaded = at + 1;
         }
     }
 
     /// The list of the program that `path`, a native path, belongs to.
     fn list_of(&self, path: &[u8]) -> Option<&(Vec<InferredGlobal>, bool)> {
+        let loaded = self.asked.lock().loaded;
+        self.list_in(path, loaded)
+    }
+
+    /// `list_of` among `tables` and the first `loaded` entries of `later`.
+    fn list_in(&self, path: &[u8], loaded: u32) -> Option<&(Vec<InferredGlobal>, bool)> {
         let tables = self.tables.get_or_init(|| self.load_all());
         let path = from_native(path);
         let key = to_path(&path, tables.is_case_sensitive);
-        let later = (0..self.later.len()).map(|at| self.later.get(at));
+        let later = (0..loaded).map(|at| self.later.get(at));
         std::iter::once(tables)
             .chain(later)
             .find_map(|tables| tables.lists.get(*tables.list_by_file.get(&*key)?))

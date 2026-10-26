@@ -107,6 +107,9 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// `require()` of an ES module that exports `module.exports`: `__toCommonJS(exports_foo, 1)`.
+        const REQUIRE_MODULE_EXPORTS_EXPORT = 1 << 30;
     }
 }
 

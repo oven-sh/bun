@@ -529,5 +529,5 @@ export const posix = /* @__PURE__ */ (p => ((p.posix = p), p))({
   posix: null,
 });
 
-export { delimiter, sep };
+export { delimiter, posix as "module.exports", sep };
 export default posix;

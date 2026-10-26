@@ -252,6 +252,93 @@ devTest("ESM <-> CJS sync", {
     await c.expectMessage("PASS");
   },
 });
+devTest("require() of an ES module returns its `module.exports` export", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const Point = require('./point');
+      if (typeof Point !== 'function') throw new Error('require() should return the class, got ' + typeof Point);
+      if ('__esModule' in Point) throw new Error('Point.__esModule should be unset');
+      class Point3D extends Point {}
+      if (!(new Point3D(1, 2) instanceof Point)) throw new Error('instanceof');
+      if (require('./point') !== Point) throw new Error('identity');
+      if (require('./star') !== Point) throw new Error('export * from a module with that export should carry it');
+      if (require('./unset').x !== 1) throw new Error('an unset module.exports export falls back to the namespace');
+      console.log('PASS ' + Point.distance(new Point(0, 0), new Point(3, 4)));
+    `,
+    "point.ts": `
+      export default class Point {
+        constructor(public x: number, public y: number) {}
+        static distance(a: Point, b: Point) { return Math.hypot(b.x - a.x, b.y - a.y); }
+      }
+      export { Point as "module.exports" };
+    `,
+    "star.ts": `
+      export * from './point';
+    `,
+    "unset.ts": `
+      export const x = 1;
+      let unset;
+      export { unset as "module.exports" };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS 5");
+  },
+});
+devTest("require() cycle through an ES module with a `module.exports` export", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const api = require('./api');
+      const { early } = require('./plugin');
+      if (api.name !== 'api') throw new Error('the later require() should return the module.exports export, got ' + JSON.stringify(api));
+      if (early.type !== 'object' || early.esModule !== true) throw new Error('the require() inside the cycle should return the namespace copy, got ' + JSON.stringify(early));
+      console.log('PASS ' + api.early);
+    `,
+    "api.ts": `
+      import { early } from './plugin';
+      const api = { name: 'api', early: typeof early };
+      export { api as "module.exports" };
+    `,
+    "plugin.ts": `
+      const api = require('./api');
+      exports.early = { type: typeof api, esModule: api.__esModule };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS object");
+  },
+});
+devTest("export * from a builtin polyfill does not carry its `module.exports` export", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const EventEmitter = require('events');
+      if (typeof EventEmitter !== 'function') throw new Error('require("events") should be the class, got ' + typeof EventEmitter);
+      const lib = require('./lib');
+      if (typeof lib !== 'object') throw new Error('require() of the re-exporting module should be its namespace, got ' + typeof lib);
+      if (lib.foo !== 1 || lib.EventEmitter !== EventEmitter) throw new Error('the namespace should keep foo and EventEmitter');
+      console.log('PASS');
+    `,
+    "lib.ts": `
+      export * from 'events';
+      export const foo = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
 devTest("ESM <-> CJS (async)", {
   files: {
     "index.html": emptyHtmlFile({

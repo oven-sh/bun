@@ -854,9 +854,9 @@ describe("worker_threads", () => {
 });
 
 describe("worker thread limit", () => {
-  // On Linux, threads count toward RLIMIT_NPROC (the same counter a cgroup
-  // pids.max enforces). The kernel does not enforce the limit for root, so a
-  // root test runner drops to `nobody` through runuser.
+  // On Linux, RLIMIT_NPROC counts every thread of the uid, as a cgroup
+  // pids.max counts every thread of the cgroup. The kernel does not enforce it
+  // for root, so a root test runner drops to `nobody` through runuser.
   const isRoot = process.getuid?.() === 0;
   const hasPrlimit = isLinux && !!Bun.which("prlimit");
   const hasNobody =
@@ -868,29 +868,18 @@ describe("worker thread limit", () => {
   const canLimitThreads = hasPrlimit && (!isRoot || hasNobody);
 
   test.skipIf(!canLimitThreads)("new Worker throws ERR_WORKER_INIT_FAILED when the OS refuses the thread", async () => {
-    // The child lowers its own limit to the number of tasks its uid already
-    // owns, once its lazy runtime threads exist, so only the worker's thread
-    // is refused.
+    // A limit of 1 refuses every new thread, whatever else the uid runs: this
+    // process is already one task of the uid. The child sets the limit on
+    // itself once its lazy runtime threads exist, so the first thread that is
+    // refused is the worker's.
     const cmd = [
       bunExe(),
       "-e",
-      `import { readdirSync, readFileSync } from "node:fs";
-       let keep = [];
+      `let keep = [];
        for (let i = 0; i < 50; i++) keep.push(new Array(10000).fill(i));
        keep = [];
        Bun.gc(true);
-       const uid = process.getuid();
-       let tasks = 0;
-       for (const pid of readdirSync("/proc")) {
-         if (!/^\\d+$/.test(pid)) continue;
-         let status;
-         try { status = readFileSync("/proc/" + pid + "/status", "utf8"); } catch { continue; }
-         const owner = status.match(/^Uid:\\s+(\\d+)/m);
-         if (!owner || Number(owner[1]) !== uid) continue;
-         const threads = status.match(/^Threads:\\s+(\\d+)/m);
-         tasks += threads ? Number(threads[1]) : 1;
-       }
-       const limited = Bun.spawnSync([${JSON.stringify(Bun.which("prlimit"))}, "--pid", String(process.pid), "--nproc=" + tasks]);
+       const limited = Bun.spawnSync([${JSON.stringify(Bun.which("prlimit"))}, "--pid", String(process.pid), "--nproc=1"]);
        if (limited.exitCode !== 0) throw new Error("prlimit: " + limited.stderr);
        try {
          new Worker("data:text/javascript,postMessage(1)");

@@ -1,6 +1,7 @@
 import { file, spawn } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync, mkdirSync, symlinkSync } from "fs";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/46962
@@ -68,7 +69,9 @@ test.concurrent("global commands skip the empty dependency name that bun 1.4.3 w
   {
     const { stdout, stderr, exitCode } = await run(home, env, "pm", "ls", "-g");
     expect(stderr).not.toContain("Lockfile is malformed");
-    expect(stdout).toContain("other@");
+    const lines = stdout.split("\n");
+    expect(lines[0]).toEndWith(" node_modules (1 installed)");
+    expect(lines.slice(1)).toEqual(["└── other@../../../other", ""]);
     expect(exitCode).toBe(0);
   }
   {
@@ -76,7 +79,7 @@ test.concurrent("global commands skip the empty dependency name that bun 1.4.3 w
     expect(stderr).not.toContain("empty dependency name");
     expect(stderr).not.toContain("Lockfile is malformed");
     expect(stderr).toContain('skipping unnamed dependency ("." in "dependencies")');
-    expect(stdout).toContain("installed mypkg@");
+    expect(stdout).toContain("\ninstalled mypkg@../../../pkg\n");
     expect(exitCode).toBe(0);
   }
   // The write drops the row from both files.
@@ -90,12 +93,36 @@ test.concurrent("global commands skip the empty dependency name that bun 1.4.3 w
     const { stdout, stderr, exitCode } = await run(home, env, "remove", "-g", "other");
     expect(stderr).not.toContain("skipping unnamed dependency");
     expect(stderr).not.toContain("Lockfile is malformed");
-    expect(stdout).toContain("other");
+    expect(stdout).toContain("\n- other\n1 package removed");
     expect(exitCode).toBe(0);
   }
   expect((await file(join(globalDir, "package.json")).json()).dependencies).toEqual({
     mypkg: posix(join(home, "pkg")),
   });
+});
+
+test.concurrent("bun remove -g of a name that is not declared keeps the linked folder", async () => {
+  using dir = tempDir("global-empty-dep-name-remove", {
+    ...packages,
+    "linked/package.json": JSON.stringify({ name: "linked", version: "1.0.0" }),
+  });
+  const home = String(dir);
+  const otherPath = posix(join(home, "other"));
+  const globalDir = join(home, ".bun", "install", "global");
+  await Bun.write(
+    join(globalDir, "package.json"),
+    JSON.stringify({ dependencies: { "": ".", other: otherPath } }, null, 2),
+  );
+  await Bun.write(join(globalDir, "bun.lock"), lockfileWithEmptyRow(otherPath, "../../../other"));
+  // A `bun link` registration: a symlink in the global node_modules that no dependency declares.
+  mkdirSync(join(globalDir, "node_modules"), { recursive: true });
+  symlinkSync(join(home, "linked"), join(globalDir, "node_modules", "linked"), "junction");
+
+  const { stderr, exitCode } = await run(home, globalEnv(home), "remove", "-g", "linked");
+  expect(stderr).not.toContain("Lockfile is malformed");
+  expect(exitCode).toBe(0);
+  expect(existsSync(join(globalDir, "node_modules", "linked", "package.json"))).toBe(true);
+  expect((await file(join(globalDir, "package.json")).json()).dependencies).toEqual({ other: otherPath });
 });
 
 test.concurrent("bun install reads a bun.lock with the empty dependency name that bun 1.4.3 wrote", async () => {

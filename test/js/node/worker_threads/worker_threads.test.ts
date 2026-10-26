@@ -733,6 +733,105 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
+
+  // The error printer runs user code. What it throws must not replace the thrown value, nor stay pending.
+  describe.concurrent("the error printer throws on the thrown value", () => {
+    const inspectCustom = `Symbol.for("nodejs.util.inspect.custom")`;
+    // Each makes Bun.inspect(e) throw. The last two leave format2() with Ok and the exception pending.
+    const printerThrows = {
+      "inspect.custom throws": `e[${inspectCustom}] = () => { throw new Error("x"); };`,
+      "a nested getter throws": `const list = [1]; Object.defineProperty(list, 0, { get() { throw new Error("x"); } }); e.list = list;`,
+      "inspect.custom returns a String whose toString throws": `const s = new String("s"); s.toString = () => { throw new Error("x"); }; e[${inspectCustom}] = () => s;`,
+    };
+    const thrownValueOf = async (worker: Worker) => {
+      const exited = new Promise<number>(resolve => worker.once("exit", resolve));
+      // 'error' precedes 'exit'; a worker that exits without one fails here instead of timing out.
+      const [value] = await Promise.race([
+        once(worker, "error"),
+        exited.then(code => Promise.reject(new Error(`worker exited with code ${code} without emitting 'error'`))),
+      ]);
+      await exited;
+      return value;
+    };
+
+    // The clone keeps `name` and `code`. The text fallback has neither.
+    test.each(Object.entries(printerThrows))("the parent gets the Error: %s", async (_shape, hostile) => {
+      const err = await thrownValueOf(
+        new Worker(`const e = new Error("boom"); e.name = "TypeError"; e.code = "E_CODE"; ${hostile} throw e;`, {
+          eval: true,
+        }),
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect({ name: err.name, message: err.message, code: err.code, stack: err.stack }).toEqual({
+        name: "TypeError",
+        message: "boom",
+        code: "E_CODE",
+        stack: expect.any(String),
+      });
+    });
+
+    test("the parent gets the clone of a value that is not an Error", async () => {
+      const value = await thrownValueOf(
+        new Worker(`throw { a: 1, [${inspectCustom}]() { throw new Error("x"); } };`, { eval: true }),
+      );
+      expect(value).toEqual({ a: 1 });
+    });
+
+    const exitsInGetter = `const e = new TypeError("boom"); const list = [1];
+      Object.defineProperty(list, 0, { get() { process.exit(3); for (;;) {} } }); e.list = list;`;
+    // Under a listener the termination is still pending when the printer returns. At the top level it is not.
+    test.each([
+      [
+        "in inspect.custom",
+        `const e = new TypeError("boom"); e[${inspectCustom}] = () => { process.exit(3); }; throw e;`,
+      ],
+      ["in a nested getter", `${exitsInGetter} throw e;`],
+      [
+        "in a nested getter, under a listener",
+        `const target = new EventTarget();
+         target.addEventListener("x", () => { ${exitsInGetter} throw e; });
+         target.dispatchEvent(new Event("x"));`,
+      ],
+    ])("no 'error' event when the worker exits %s", async (_where, source) => {
+      const worker = new Worker(source, { eval: true });
+      const errors: unknown[] = [];
+      worker.on("error", error => errors.push(error));
+      const [code] = await once(worker, "exit");
+      expect({ errors, code }).toEqual({ errors: [], code: 3 });
+    });
+
+    // The worker's own listener runs inside the report. In a subprocess, because a regression aborts the process.
+    test.each(
+      (["node:worker_threads", "Web Worker"] as const).flatMap(kind =>
+        (["inspect.custom throws", "a nested getter throws"] as const).map(shape => [kind, shape] as const),
+      ),
+    )("the worker's own 'error' listener gets the thrown value: %s, %s", async (kind, shape) => {
+      const workerSource = `const e = new TypeError("boom"); ${printerThrows[shape]}
+        addEventListener("error", event => postMessage([event.error === e, event.error instanceof TypeError, event.error.message].join()));
+        throw e;`;
+      const parentSource =
+        kind === "Web Worker"
+          ? `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerSource)}])));
+             worker.onmessage = event => console.log("listener", event.data);
+             worker.onerror = event => console.log("parent", event.error);`
+          : `const worker = new (require("node:worker_threads").Worker)(${JSON.stringify(workerSource)}, { eval: true });
+             worker.on("message", data => console.log("listener", data));
+             worker.on("error", error => console.log("parent", error.name, error.message));`;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", parentSource],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        lines: ["listener true,true,boom", kind === "Web Worker" ? "parent null" : "parent TypeError boom"],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
 });
 
 // Debug and ASAN builds assert on `vm.hasTerminationRequest()` if startup continues to its GC after the stop.

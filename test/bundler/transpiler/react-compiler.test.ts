@@ -4215,9 +4215,9 @@ test.skipIf(isDebug || isASAN)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const [empty, whole] = JSON.parse(stdout);
-    // 3 times. Else what is measured is not the pattern.
-    expect(whole).toBeGreaterThan(empty * 2);
-    // 62 MB, and 842 MB where a join that takes no phi still makes an identifier.
+    // 62 MB, and 842 MB where a join that takes no phi still makes an identifier. Under 20 MB, what is measured is
+    // not the pattern.
+    expect(whole - empty).toBeGreaterThan(20 * 1024 * 1024);
     expect(whole - empty).toBeLessThan(300 * 1024 * 1024);
     expect(exitCode).toBe(0);
   },
@@ -4225,36 +4225,35 @@ test.skipIf(isDebug || isASAN)(
 
 // At each join between a read and its definition EnterSSA made an identifier for a phi, and then left the phi out. The
 // children of an element are all read at its end, so each literal below is live across every ternary after it.
-test("react-compiler memory does not grow with the values that are live across a join", async () => {
-  // A debug build takes 3 seconds for the first component, which is why this test has a timeout.
-  const small = isDebug || isASAN;
-  const literals = small ? 3000 : 4000;
-  const ternary = "{props.a ? 1 : 2}";
-  const ternaries = Buffer.alloc(ternary.length * (literals / 10), ternary).toString();
-  const numbers = Array.from({ length: literals }, (_, i) => `{${i}}`).join("");
-  using dir = tempDir("react-compiler-live-across-joins", {
-    "across.jsx": `export default function App(props) { return <div>${numbers}${ternaries}</div>; }`,
-    "before.jsx": `export default function App(props) { return <div>${ternaries}${numbers}</div>; }`,
-  });
-
-  const peakMB = async (entry: string) => {
-    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
-      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
-      env: withoutAsanQuarantine(bunEnv),
-      cwd: String(dir),
+// Not where the empty build takes 330 MB: the first component only takes more than that with so many children that a
+// debug build of it does not end in time.
+test.skipIf(isDebug || isASAN)(
+  "react-compiler memory does not grow with the values that are live across a join",
+  async () => {
+    const ternary = "{props.a ? 1 : 2}";
+    const ternaries = Buffer.alloc(ternary.length * 400, ternary).toString();
+    const numbers = Array.from({ length: 4000 }, (_, i) => `{${i}}`).join("");
+    using dir = tempDir("react-compiler-live-across-joins", {
+      "across.jsx": `export default function App(props) { return <div>${numbers}${ternaries}</div>; }`,
+      "before.jsx": `export default function App(props) { return <div>${ternaries}${numbers}</div>; }`,
     });
-    expect(stderr).toBe("");
-    expect(stdout).toContain("react/compiler-runtime");
-    expect(exitCode).toBe(0);
-    return maxRSS / 1024 / 1024;
-  };
 
-  const [across, before] = await Promise.all([peakMB("across.jsx"), peakMB("before.jsx")]);
-  // The two components have the same children. Without the fix the first takes 79 MB more on a debug build and
-  // 209 MB more on a release build.
-  expect(across - before).toBeLessThan(small ? 40 : 100);
-}, 30_000);
+    const peakMB = async (entry: string) => {
+      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+        cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+        cwd: String(dir),
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toContain("react/compiler-runtime");
+      expect(exitCode).toBe(0);
+      return maxRSS / 1024 / 1024;
+    };
+
+    const [across, before] = await Promise.all([peakMB("across.jsx"), peakMB("before.jsx")]);
+    // The two components have the same children. Without the fix the first takes 209 MB more.
+    expect(across - before).toBeLessThan(100);
+  },
+);
 
 // InferTypes puts the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
 // from each other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.

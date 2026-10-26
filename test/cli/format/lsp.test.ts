@@ -659,6 +659,8 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
   test.each([
     ["--init", "--init"],
     ["--write", "--write"],
+    ["--staged", "--staged or --changed"],
+    ["--cwd=.", "--cwd"],
     ["a.js", "Files"],
   ])(
     "refuses %s with --lsp, and writes nothing",

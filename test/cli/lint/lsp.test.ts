@@ -548,6 +548,8 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
   test.each([
     ["--fix", "--fix"],
     ["--stdin", "--stdin"],
+    ["--staged", "--staged or --changed"],
+    ["--cwd=.", "--cwd"],
     ["a.js", "Files"],
   ])(
     "refuses %s with --lsp",

@@ -1027,7 +1027,7 @@ impl Options {
         if !self.lsp {
             return None;
         }
-        let conflicts: [(bool, &[u8]); 16] = [
+        let conflicts: [(bool, &[u8]); 18] = [
             (self.init, b"--init"),
             (self.version, b"--version"),
             (self.doctor, b"--doctor"),
@@ -1036,6 +1036,8 @@ impl Options {
             (self.print_config.is_some(), b"--print-config"),
             (self.stdin, b"--stdin"),
             (self.stdin_filename.is_some(), b"--stdin-filename"),
+            (self.only.is_some(), b"--staged or --changed"),
+            (self.cwd.is_some(), b"--cwd"),
             (self.fix_safely, b"--fix"),
             (self.fix_dry_run, b"--fix-dry-run"),
             (self.fix_type.is_some(), b"--fix-type"),

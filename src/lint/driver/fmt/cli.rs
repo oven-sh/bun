@@ -639,7 +639,7 @@ impl Options {
         if !self.lsp {
             return None;
         }
-        let conflicts: [(bool, &[u8]); 11] = [
+        let conflicts: [(bool, &[u8]); 13] = [
             (self.init, b"--init"),
             (self.version, b"--version"),
             (self.find_config_path.is_some(), b"--find-config-path"),
@@ -650,6 +650,8 @@ impl Options {
             (self.list_different, b"--list-different"),
             (self.debug_check, b"--debug-check"),
             (self.stdin_filepath.is_some(), b"--stdin-filepath"),
+            (self.only.is_some(), b"--staged or --changed"),
+            (self.cwd.is_some(), b"--cwd"),
             (!self.patterns.is_empty(), b"Files"),
         ];
         let (_, what) = conflicts.into_iter().find(|(is_on, _)| *is_on)?;

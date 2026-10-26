@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
-import { join } from "node:path";
 
 // `Loader::from_string` accepts these names (they are real bundler loaders) but
 // `Bun.Transpiler` cannot produce source text for them.
@@ -64,29 +62,29 @@ describe("Bun.Transpiler still accepts data-format loaders", () => {
 // here is a reserved word: with such a key the printed module does not parse.
 describe("Bun.Transpiler prints a module for each loader of transform() and transformSync()", () => {
   type TransformLoader = NonNullable<Parameters<Bun.Transpiler["transform"]>[1]>;
-  const modules: Record<TransformLoader, [input: string, defaultExport: unknown]> = {
-    js: ["export default 1;", 1],
-    jsx: ["export default 1;", 1],
-    ts: ["export default 1 as number;", 1],
-    tsx: ["export default 1 as number;", 1],
-    json: ['{ "name": "bun", "tags": [1, 2] }', { name: "bun", tags: [1, 2] }],
-    jsonc: ['{ "name": "bun", /* a comment */ "tags": [1, 2], }', { name: "bun", tags: [1, 2] }],
-    json5: ["{ name: 'bun', tags: [1, 2], }", { name: "bun", tags: [1, 2] }],
-    toml: ['name = "bun"\ntags = [1, 2]', { name: "bun", tags: [1, 2] }],
-    yaml: ["name: bun\ntags:\n  - 1\n  - 2", { name: "bun", tags: [1, 2] }],
-    xml: ["<pkg><name>bun</name></pkg>", { pkg: { name: "bun" } }],
-    text: ["Hello, Bun!", "Hello, Bun!"],
-    md: ["# Hello", "<h1>Hello</h1>\n"],
+  const data = 'var name="bun",tags=[1,2];export{name,tags};export default {name,tags};';
+  const modules: Record<TransformLoader, [input: string, printed: string]> = {
+    js: ["export default 1;", "export default 1;"],
+    jsx: ["export default 1;", "export default 1;"],
+    ts: ["export default 1 as number;", "export default 1;"],
+    tsx: ["export default 1 as number;", "export default 1;"],
+    json: ['{ "name": "bun", "tags": [1, 2] }', data],
+    jsonc: ['{ "name": "bun", /* a comment */ "tags": [1, 2], }', data],
+    json5: ["{ name: 'bun', tags: [1, 2], }", data],
+    toml: ['name = "bun"\ntags = [1, 2]', data],
+    yaml: ["name: bun\ntags:\n  - 1\n  - 2", data],
+    xml: ["<pkg><name>bun</name></pkg>", 'var pkg={name:"bun"};export{pkg};export default {pkg};'],
+    text: ["Hello, Bun!", 'export default "Hello, Bun!";'],
+    md: ["# Hello", "export default `<h1>Hello</h1>\n`;"],
   };
-  const t = new Bun.Transpiler();
+  // With minified whitespace, the five loaders that parse the same data print the same text.
+  const t = new Bun.Transpiler({ minifyWhitespace: true });
 
   test.each(Object.keys(modules) as TransformLoader[])("%s", async loader => {
-    const [input, defaultExport] = modules[loader];
-    const output = t.transformSync(input, loader);
-    expect(await t.transform(input, loader)).toBe(output);
-
-    using dir = tempDir("transpiler-loader-argument", { "printed.mjs": output });
-    const printed = await import(join(String(dir), "printed.mjs"));
-    expect(printed.default).toEqual(defaultExport);
+    const [input, printed] = modules[loader];
+    expect({
+      transformSync: t.transformSync(input, loader),
+      transform: await t.transform(input, loader),
+    }).toEqual({ transformSync: printed, transform: printed });
   });
 });

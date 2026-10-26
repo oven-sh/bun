@@ -34,6 +34,8 @@ bun --watch --check index.tsx
 
 In `--watch` mode, Bun keeps track of all imported files and watches them for changes. When a file changes, Bun restarts the process with the same CLI arguments and environment variables as the initial run. If Bun crashes, `--watch` attempts to restart the process.
 
+If the entry file is missing when Bun starts or restarts, Bun prints the error and waits for the file. This happens while an editor saves the file by rename.
+
 <Note>
 
 **⚡️ Reloads are fast.** The filesystem watchers you're probably used to have several layers of libraries wrapping the native APIs or, worse, rely on polling.

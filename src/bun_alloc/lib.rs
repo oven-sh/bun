@@ -2236,6 +2236,22 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         }
     }
 
+    /// `get_or_put` without the insert: a key that nothing asked for stays absent and reads as `Unknown`.
+    pub fn lookup(&mut self, denormalized_key: &[u8]) -> Result {
+        let hash = Self::key_hash(denormalized_key);
+        let _guard = self.mutex.lock();
+        let index = self.index.get(&hash).copied().unwrap_or(UNASSIGNED);
+        Result {
+            hash,
+            index,
+            status: match index.index() {
+                i if i == NOT_FOUND.index() => ItemStatus::NotFound,
+                i if i == UNASSIGNED.index() => ItemStatus::Unknown,
+                _ => ItemStatus::Exists,
+            },
+        }
+    }
+
     pub fn get(&mut self, denormalized_key: &[u8]) -> Option<&mut ValueType> {
         let _key = Self::key_hash(denormalized_key);
         // Hold the lock across `at_index` —

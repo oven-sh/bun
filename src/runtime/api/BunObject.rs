@@ -1032,6 +1032,24 @@ pub(crate) fn bun_resolve_sync_with_strings(
     })
 }
 
+// HOST_EXPORT(Bun__importMetaResolveLoaderKey, c)
+pub(crate) fn bun_import_meta_resolve_loader_key(
+    global: &JSGlobalObject,
+    path: &BunString,
+    must_confirm: bool,
+) -> BunString {
+    use bun_resolver::LoaderKey;
+
+    let path = path.to_utf8();
+    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+    let mut buf = bun_paths::path_buffer_pool::get();
+    match resolver.loader_key_of_existing_file(path.slice(), must_confirm, &mut buf) {
+        LoaderKey::NotAFile => BunString::DEAD,
+        LoaderKey::Same => BunString::EMPTY,
+        LoaderKey::Real(real) => BunString::clone_utf8(real),
+    }
+}
+
 /// Resolves `specifier` relative to `source`. A specifier the resolver cannot resolve (the
 /// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier

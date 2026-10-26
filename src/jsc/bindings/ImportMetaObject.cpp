@@ -351,6 +351,68 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     return result;
 }
 
+// The URL that the module at `url` loads under, which is its `import.meta.url`, like `finalizeResolution` in Node.js.
+static WTF::String urlOfLoadedModule(Zig::GlobalObject* globalObject, const WTF::URL& url)
+{
+    // `fileURLToPath` rejects a host. `fileSystemPath()` drops it.
+    if (!url.protocolIsFile() || !url.host().isEmpty())
+        return url.string();
+
+    auto urlPath = url.path();
+    bool hasEscape = false;
+    // A file URL made from the path differs from `url`, so the result depends on whether the file exists.
+    bool mustConfirm = false;
+    for (unsigned i = 0; i < urlPath.length(); i++) {
+        switch (urlPath[i]) {
+        case '%':
+            if (i + 2 < urlPath.length()) {
+                auto high = urlPath[i + 1];
+                auto low = toASCIILower(urlPath[i + 2]);
+                // `fileURLToPath` rejects an encoded `/` or `\`. `fileSystemPath()` decodes it.
+                if ((high == '2' && low == 'f') || (high == '5' && low == 'c'))
+                    return url.string();
+            }
+            hasEscape = true;
+            break;
+        case '[':
+        case ']':
+        case '^':
+        case '|':
+        case '~':
+            mustConfirm = true;
+            break;
+        default:
+            break;
+        }
+    }
+
+#if OS(WINDOWS)
+    hasEscape = true;
+#endif
+    WTF::String decodedPath;
+    WTF::URL rebuilt;
+    auto path = urlPath;
+    if (hasEscape) {
+        decodedPath = url.fileSystemPath();
+        path = decodedPath;
+        rebuilt = WTF::URL::fileURLWithFileSystemPath(path);
+        mustConfirm = rebuilt.path() != urlPath;
+    }
+
+    auto pathString = Bun::toStringView(path);
+    auto key = Bun__importMetaResolveLoaderKey(globalObject, &pathString, mustConfirm);
+    if (key.isDead())
+        return url.string();
+    auto loadedPath = key.transferToWTFString();
+    if (!loadedPath.isEmpty())
+        rebuilt = WTF::URL::fileURLWithFileSystemPath(loadedPath);
+    else if (!mustConfirm)
+        return url.string();
+    else if (!hasEscape)
+        rebuilt = WTF::URL::fileURLWithFileSystemPath(path);
+    return makeString(rebuilt.string(), url.queryWithLeadingQuestionMark(), url.fragmentIdentifierWithLeadingNumberSign());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -428,7 +490,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         }
 
         WTF::URL url(fromURL, specifier);
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, urlOfLoadedModule(globalObject, url))));
     }
 
     // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`

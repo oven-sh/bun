@@ -1217,7 +1217,8 @@ fn on_unhandled_rejection(
         Ok(()) => global_object.try_take_exception(),
     };
     // Formatting ran script. A stop requested meanwhile ends the report, also when format2() swallowed the termination.
-    if thrown.is_some_and(JSValue::is_termination_exception) || !vm.script_allowed() {
+    // A node:vm timeout is a termination that stops nothing: that render threw, and the report goes on.
+    if !vm.script_allowed() {
         return;
     }
     jsc::mark_binding();

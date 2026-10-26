@@ -758,18 +758,29 @@ an object, through a worker with no 'error' listener: {"events":["online",${unse
     );
   }
 
-  // A node:vm timeout ends the clone with a termination as process.exit() does, but this worker was not stopped.
-  test("is the render for a value whose clone a node:vm timeout cuts short", async () => {
+  // A node:vm timeout ends the render or the clone with a termination, as process.exit() does, but it stops no
+  // worker. Only that watchdog can end the spin, at its deadline. The deadline has to fire inside the spin: a
+  // debug build under load needs up to 250 ms to get there, and an earlier deadline gives another row's outcome.
+  test.concurrent.each([
+    [
+      "the render of a value that does not clone",
+      `{ [Symbol.for("nodejs.util.inspect.custom")]() { for (;;) {} }, fn() {} }`,
+      { message: "Serializing an uncaught exception failed", code: "ERR_WORKER_UNSERIALIZABLE_ERROR" },
+    ],
+    ["the clone", `{ get a() { for (;;) {} } }`, { message: "{\n  a: [Getter],\n}", code: undefined }],
+  ])("still reports when a node:vm timeout cuts short %s", async (_where, thrown, expected) => {
     const worker = new Worker(
       `globalThis.target = new EventTarget();
-       target.addEventListener("x", () => { throw { get a() { for (;;) {} } }; });
+       target.addEventListener("x", () => { throw ${thrown}; });
        try { require("node:vm").runInThisContext("target.dispatchEvent(new Event('x'))", { timeout: 2000 }); } catch {}`,
       { eval: true },
     );
     const errors: any[] = [];
     worker.on("error", err => errors.push(err));
     await new Promise(resolve => worker.on("exit", resolve));
-    expect(errors.map(err => err?.message)).toEqual(["{\n  a: [Getter],\n}"]);
+    expect(errors.map(err => (err instanceof Error ? { message: err.message, code: err.code } : err))).toEqual([
+      expected,
+    ]);
   });
 
   test("falls back to string when the error cannot be serialized", async () => {

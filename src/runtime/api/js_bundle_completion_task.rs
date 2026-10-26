@@ -1221,7 +1221,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
     fn file_map(&mut self) -> Option<NonNull<Bv2FileMap>> {
         // `FileMap` and `Bv2FileMap` are the same `bun_bundler` type.
-        if self.config.files.map.is_empty() {
+        if self.config.files.is_empty() {
             None
         } else {
             Some(NonNull::from(&mut self.config.files))

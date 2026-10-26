@@ -527,7 +527,7 @@ impl<'a> LinkerContext<'a> {
     /// `(*bundle).linker`, so a `&mut BundleV2` here would alias the receiver
     /// under Stacked Borrows. This body only reaches into fields of `*bundle`
     /// that are disjoint from `linker` (`graph`, `transpiler`,
-    /// `dynamic_import_entry_points`) via `addr_of_mut!`, never materializing a
+    /// `dynamic_import_entry_points`, `file_map`) via `addr_of_mut!`, never materializing a
     /// full `&mut BundleV2`.
     ///
     /// # Safety
@@ -576,6 +576,11 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: parse_graph is valid backref just assigned above
         let sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
 
+        // A `./` key of `files` names its output by a path from the cwd of the `Bun.build()` call. After a `process.chdir()` that path is another file.
+        // SAFETY: `file_map` is a `Copy` field of `*bundle` that is disjoint from `self`.
+        let file_map = unsafe { (*bundle).file_map }
+            .filter(|files| files.is_at_cwd(bun_resolver::fs::FileSystem::get().top_level_dir()));
+
         self.graph.load(
             entry_points,
             sources,
@@ -583,6 +588,7 @@ impl<'a> LinkerContext<'a> {
             dyn_entry_points.keys(),
             // SAFETY: parse_graph backref
             unsafe { &(*self.parse_graph).entry_point_original_names },
+            file_map,
         )?;
         dyn_entry_points.clear_retaining_capacity();
 
@@ -1964,7 +1970,11 @@ impl<'a> LinkerContext<'a> {
                         // Note: `Path::assert_pretty_is_valid` lives on the
                         // resolver-side `Path<'a>`; the logger `Path` has no
                         // such debug hook yet.
-                        debug_assert!(source.path.text.as_ptr() != source.path.pretty.as_ptr());
+                        // A name in `Bun.build`'s `files` is its own display path.
+                        debug_assert!(
+                            source.path.text.as_ptr() != source.path.pretty.as_ptr()
+                                || !bun_paths::is_absolute(source.path.text)
+                        );
 
                         break 'brk source.path.pretty;
                     } else {

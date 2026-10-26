@@ -914,165 +914,595 @@ pub mod bv2_impl {
                 }
             }
 
-            /// Mirrors `JSBundler.FileMap` — virtual in-memory files for the build.
-            /// The bundler only ever reads `.slice()`, so the moved-down map
-            /// stores raw bytes.
-            /// `bun_runtime`'s `from_js` parses JS values via `BlobOrStringOrBuffer`
-            /// in async (owning-copy) mode and inserts the extracted bytes here.
+            /// The `files` of one `Bun.build()` call. Each file is stored once, as `put` spells its key.
             #[derive(Default)]
             pub struct FileMap {
-                pub map: bun_collections::StringHashMap<Box<[u8]>>,
+                map: bun_collections::StringHashMap<File>,
+                /// A `./` or `../` key, as written, to the key of its file in `map`.
+                spelled: bun_collections::StringHashMap<Box<[u8]>>,
+                /// The working directory of the `Bun.build()` call.
+                cwd: &'static [u8],
             }
+
+            #[derive(Default)]
+            struct File {
+                contents: Box<[u8]>,
+                /// An absolute key names the file as written.
+                absolute: bool,
+                /// How many keys in `spelled` name the file.
+                spellings: u32,
+                /// The display path of a file that a relative path names: its path from the cwd.
+                pretty: Option<Box<[u8]>>,
+                /// The path of a relative key as the disk resolver spells it, so that both name one module.
+                #[cfg(windows)]
+                native: Option<Box<[u8]>>,
+            }
+
+            /// Two keys name one file and have different contents.
+            pub struct KeyConflict {
+                /// A key that named the file before.
+                pub other: Box<[u8]>,
+                /// The path that both keys name.
+                pub path: Box<[u8]>,
+            }
+
             impl FileMap {
-                /// Keys are stored with forward slashes (`file_map_from_js`).
-                fn get_key_value(&self, specifier: &[u8]) -> Option<(&[u8], &[u8])> {
-                    if self.map.is_empty() {
+                pub fn new(cwd: &'static [u8]) -> Self {
+                    Self {
+                        cwd,
+                        ..Self::default()
+                    }
+                }
+
+                #[inline]
+                pub fn is_empty(&self) -> bool {
+                    self.map.is_empty()
+                }
+
+                pub fn reserve(&mut self, additional: usize) {
+                    self.map.reserve(additional);
+                }
+
+                /// Store the contents of `key`, a key of `files` as the user wrote it.
+                pub fn put(
+                    &mut self,
+                    mut key: Vec<u8>,
+                    contents: Box<[u8]>,
+                ) -> Result<(), KeyConflict> {
+                    use bun_paths::resolve_path::{
+                        dangerously_convert_path_to_posix_in_place, join_abs_string_spill,
+                        relative_platform,
+                    };
+                    dangerously_convert_path_to_posix_in_place::<u8>(&mut key);
+                    let is_absolute = bun_paths::is_absolute_loose(&key);
+                    // Set for a relative path: `./a` or `../a`. Any other key is stored as written.
+                    let mut joined: Option<Vec<u8>> = None;
+                    let mut pretty = None;
+                    #[cfg(windows)]
+                    let mut native = None;
+                    if Self::starts_with_dot_slash(&key) {
+                        let mut spill = Vec::new();
+                        let mut path = join_abs_string_spill::<bun_paths::platform::Loose>(
+                            self.cwd,
+                            &mut spill,
+                            &[&key],
+                        )
+                        .to_vec();
+                        #[cfg(windows)]
+                        {
+                            let mut as_resolver = path.clone();
+                            bun_paths::resolve_path::dangerously_convert_path_to_windows_in_place::<
+                                u8,
+                            >(&mut as_resolver);
+                            native = Some(as_resolver.into_boxed_slice());
+                        }
+                        dangerously_convert_path_to_posix_in_place::<u8>(&mut path);
+                        let mut from_cwd =
+                            relative_platform::<bun_paths::platform::Loose, false>(self.cwd, &path)
+                                .to_vec();
+                        dangerously_convert_path_to_posix_in_place::<u8>(&mut from_cwd);
+                        pretty = Some(from_cwd.into_boxed_slice());
+                        joined = Some(path);
+                    }
+                    let path: &[u8] = joined.as_deref().unwrap_or(&key);
+                    let spelled_before = joined.is_some() && self.spelled.get(&key[..]).is_some();
+
+                    let entry = bun_core::handle_oom(self.map.get_or_put(path));
+                    let file = entry.value_ptr;
+                    if !entry.found_existing {
+                        file.contents = contents;
+                    } else if *file.contents != *contents {
+                        // The same spelling again (`a\b` after `a/b`) replaces the contents. Another spelling is a conflict.
+                        let other_spellings = file.spellings - u32::from(spelled_before);
+                        let conflict = if joined.is_some() {
+                            file.absolute || other_spellings > 0
+                        } else {
+                            file.spellings > 0
+                        };
+                        if conflict {
+                            let this_key: &[u8] = if joined.is_some() { &key } else { b"" };
+                            let other = if joined.is_some() && file.absolute {
+                                path
+                            } else {
+                                (self.spelled.iter())
+                                    .find(|(text, of)| ***of == *path && ***text != *this_key)
+                                    .map_or(path, |(text, _)| &**text)
+                            };
+                            return Err(KeyConflict {
+                                other: Box::from(other),
+                                path: Box::from(path),
+                            });
+                        }
+                        file.contents = contents;
+                    }
+                    file.absolute |= is_absolute;
+                    if let Some(path) = joined {
+                        file.pretty = pretty;
+                        #[cfg(windows)]
+                        {
+                            file.native = native;
+                        }
+                        if !spelled_before {
+                            file.spellings += 1;
+                            bun_core::handle_oom(self.spelled.put(&key, path.into_boxed_slice()));
+                        }
+                    }
+                    Ok(())
+                }
+
+                /// A key like `./a` or `../a` is a path from the cwd. Any other key that is not absolute is a name.
+                fn starts_with_dot_slash(text: &[u8]) -> bool {
+                    text.starts_with(b"./") || text.starts_with(b"../")
+                }
+
+                /// Windows: `text` as `put` spells a key, with `/` and an upper-case drive letter.
+                #[cfg(windows)]
+                fn spell<'b>(text: &[u8], buf: &'b mut [u8]) -> Option<&'b [u8]> {
+                    let spelled = buf.get_mut(..text.len())?;
+                    spelled.copy_from_slice(text);
+                    bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                        spelled,
+                    );
+                    Some(spelled)
+                }
+
+                /// The file stored under `path`, with the path the map owns.
+                fn file(&self, path: &[u8]) -> Option<(&[u8], &File)> {
+                    #[cfg(windows)]
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    #[cfg(windows)]
+                    let path = Self::spell(path, &mut **buf)?;
+                    self.map
+                        .get_key_value(path)
+                        .map(|(path, file)| (path.as_ref(), file))
+                }
+
+                /// The file of the key written as `text`, for a key that is not absolute.
+                fn file_spelled(&self, text: &[u8]) -> Option<(&[u8], &File)> {
+                    #[cfg(windows)]
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    #[cfg(windows)]
+                    let text = Self::spell(text, &mut **buf)?;
+                    // A name is its own key in `map`.
+                    let path = if !Self::starts_with_dot_slash(text) {
+                        text
+                    } else {
+                        &**self.spelled.get(text)?
+                    };
+                    self.map
+                        .get_key_value(path)
+                        .map(|(path, file)| (path.as_ref(), file))
+                }
+
+                /// The file at `specifier` joined onto `dir`, if that path fits a path buffer.
+                fn file_in_dir(&self, dir: &[u8], specifier: &[u8]) -> Option<(&[u8], &File)> {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    // `Loose` keeps a Windows drive letter.
+                    let joined_len = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                        bun_paths::platform::Loose,
+                    >(dir, &mut **buf, &[specifier])?
+                    .len();
+                    #[cfg(windows)]
+                    bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                        &mut buf[..joined_len],
+                    );
+                    self.map
+                        .get_key_value(&buf[..joined_len])
+                        .map(|(path, file)| (path.as_ref(), file))
+                }
+
+                /// `path` is the path of a module, or the text of a key that a plugin resolved to.
+                pub(crate) fn get(&self, path: &[u8]) -> Option<&[u8]> {
+                    let found = if bun_paths::is_absolute_loose(path) {
+                        self.file(path)
+                    } else {
+                        self.file_spelled(path)
+                    };
+                    found.map(|(_, file)| &*file.contents)
+                }
+
+                /// `path` is the path of a module, or the text of a key.
+                pub fn contains(&self, path: &[u8]) -> bool {
+                    self.get(path).is_some()
+                }
+
+                /// `entry_point` is the text of a key. The default root is then the cwd.
+                pub fn is_written_as_key(&self, entry_point: &[u8]) -> bool {
+                    if bun_paths::is_absolute_loose(entry_point) {
+                        self.file(entry_point)
+                            .is_some_and(|(_, file)| file.absolute)
+                    } else {
+                        self.file_spelled(entry_point).is_some()
+                    }
+                }
+
+                /// The cwd of the `Bun.build()` call is still the cwd.
+                pub(crate) fn is_at_cwd(&self, cwd: &[u8]) -> bool {
+                    self.cwd == cwd
+                }
+
+                /// The path from the cwd of a file that a `./` key names. Its output takes that directory and name.
+                pub(crate) fn output_path(&self, path: &[u8]) -> Option<&[u8]> {
+                    self.file(path)?.1.pretty.as_deref()
+                }
+
+                /// The file that an entry point names.
+                fn entry_point(&self, entry_point: &[u8]) -> Option<(&[u8], &File)> {
+                    if entry_point.is_empty() {
                         return None;
                     }
-                    #[cfg(not(windows))]
-                    {
-                        self.map
-                            .get_key_value(specifier)
-                            .map(|(key, value)| (key.as_ref(), value.as_ref()))
+                    if bun_paths::is_absolute_loose(entry_point) {
+                        // The absolute path of a `./` key is for the disk resolver. The parse task reads the key at the path it finds.
+                        return (self.file(entry_point)).filter(|(_, file)| file.absolute);
                     }
-                    #[cfg(windows)]
-                    {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        if specifier.len() > buf.len() {
-                            return None;
-                        }
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        self.map
-                            .get_key_value(normalized)
-                            .map(|(key, value)| (key.as_ref(), value.as_ref()))
+                    if let Some(found) = self.file_spelled(entry_point) {
+                        return Some(found);
                     }
+                    // Kept from #25852: with no importer, the base of the join is the directory above the cwd. Only an absolute key answers.
+                    (self.file_beside(b"", entry_point)).filter(|(_, file)| file.absolute)
                 }
-                pub(crate) fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
-                    self.get_key_value(specifier).map(|(_, value)| value)
+
+                pub(crate) fn resolve_entry_point(
+                    &self,
+                    arena: &bun_alloc::Arena,
+                    entry_point: &[u8],
+                ) -> Option<bun_resolver::Result> {
+                    let (path, file) = self.entry_point(entry_point)?;
+                    Some(Self::result(arena, path, file))
                 }
-                #[inline]
-                pub fn contains(&self, specifier: &[u8]) -> bool {
-                    self.get_key_value(specifier).is_some()
+
+                /// `./a` and `../a` name the file beside `source_file` first, others the key text.
+                fn import(
+                    &self,
+                    source_file: &[u8],
+                    specifier: &[u8],
+                    bare_is_relative: bool,
+                ) -> Option<(&[u8], &File)> {
+                    if specifier.is_empty() {
+                        return None;
+                    }
+                    if bun_paths::is_absolute_loose(specifier) {
+                        return self.file(specifier);
+                    }
+                    if !bun_paths::is_package_path_not_absolute(specifier) {
+                        let beside = || self.file_beside(source_file, specifier);
+                        // `.` and `..` can be names of keys: the key text comes first for them, as for any name.
+                        return if Self::starts_with_dot_slash(specifier) {
+                            beside().or_else(|| self.file_spelled(specifier))
+                        } else {
+                            self.file_spelled(specifier).or_else(beside)
+                        };
+                    }
+                    self.file_spelled(specifier).or_else(|| {
+                        // An absolute key answers a bare specifier. A relative path answers one only where the disk resolver reads it as relative.
+                        (self.file_beside(source_file, specifier))
+                            .filter(|(_, file)| file.absolute || bare_is_relative)
+                    })
                 }
-                /// Returns a `resolver::Result` for a file in the map, or `None` if
-                /// not found. Handles direct key matches and relative specifiers
-                /// joined against `dirname(source_file)` (with Windows
-                /// drive-letter / separator normalization).
-                ///
-                /// `arena` is the build's bump arena (`BundleV2::arena()`);
-                /// the matched key is copied into it so the returned
-                /// `bun_resolver::Result`'s `Path<'static>` borrows arena memory
-                /// (lives for the entire build pass) instead of the map's key
-                /// storage.
+
+                /// `bare_is_relative`: the import is from CSS or HTML, where `a.css` can mean `./a.css`.
                 pub(crate) fn resolve(
                     &self,
                     arena: &bun_alloc::Arena,
                     source_file: &[u8],
                     specifier: &[u8],
+                    bare_is_relative: bool,
                 ) -> Option<bun_resolver::Result> {
-                    if self.map.is_empty() {
+                    let (path, file) = self.import(source_file, specifier, bare_is_relative)?;
+                    Some(Self::result(arena, path, file))
+                }
+
+                /// The file at `specifier` joined onto the directory of `source_file`.
+                fn file_beside(
+                    &self,
+                    source_file: &[u8],
+                    specifier: &[u8],
+                ) -> Option<(&[u8], &File)> {
+                    // `source_file` may itself be relative (e.g. on Windows).
+                    let mut abs_source_buf = bun_paths::path_buffer_pool::get();
+                    let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
+                        source_file
+                    } else {
+                        bun_resolver::fs::FileSystem::instance()
+                            .abs_buf_checked(&[source_file], &mut *abs_source_buf)?
+                    };
+
+                    // Windows paths from the real filesystem may use backslashes.
+                    let mut source_file_buf = bun_paths::path_buffer_pool::get();
+                    if abs_source_file.len() > source_file_buf.len() {
                         return None;
                     }
+                    let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
+                        abs_source_file,
+                        &mut **source_file_buf,
+                    );
 
+                    let source_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(
+                        normalized_source_file,
+                    );
+                    // If `dirname` returns empty but the path has a drive letter, use the drive root.
+                    let effective_source_dir: &[u8] = if source_dir.is_empty() {
+                        if normalized_source_file.len() >= 3
+                            && normalized_source_file[1] == b':'
+                            && normalized_source_file[2] == b'/'
+                        {
+                            &normalized_source_file[0..3] // "C:/"
+                        } else if !normalized_source_file.is_empty()
+                            && normalized_source_file[0] == b'/'
+                        {
+                            b"/"
+                        } else {
+                            bun_resolver::fs::FileSystem::instance().top_level_dir()
+                        }
+                    } else {
+                        source_dir
+                    };
+                    self.file_in_dir(effective_source_dir, specifier)
+                }
+
+                /// Copies into the arena of the build.
+                fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
                     // SAFETY: ARENA — `arena` is the build-pass bump arena
                     // (never freed before the `Result` is consumed); detaching the
                     // borrow lifetime matches the established `Path<'static>`
                     // convention used throughout `bun_resolver` (PORTING.md
                     // §Lifetimes: ARENA → `&'bump T`).
-                    let dupe = |key: &[u8]| -> &'static [u8] {
-                        // SAFETY: see ARENA note above — bytes live in the build-pass arena.
-                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
-                    };
-
-                    // Direct key match. Return the map-owned key, not the parameter.
-                    if let Some((key, _)) = self.get_key_value(specifier) {
-                        return Some(Self::result_for_key(dupe(key)));
-                    }
-
-                    // Also try joining a relative specifier against the importer's
-                    // directory. Relative = not posix-absolute and not Windows
-                    // drive-absolute (e.g. `C:/`).
-                    if !specifier.is_empty() && !bun_paths::is_absolute_loose(specifier) {
-                        // `source_file` may itself be relative (e.g. on Windows
-                        // when the bundler stores paths relative to cwd).
-                        let mut abs_source_buf = bun_paths::path_buffer_pool::get();
-                        let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
-                            source_file
-                        } else {
-                            bun_resolver::fs::FileSystem::instance()
-                                .abs_buf_checked(&[source_file], &mut *abs_source_buf)?
-                        };
-
-                        // Normalize `source_file` to forward slashes (Windows paths
-                        // from the real filesystem may use backslashes).
-                        let mut source_file_buf = bun_paths::path_buffer_pool::get();
-                        if abs_source_file.len() > source_file_buf.len() {
-                            return None;
-                        }
-                        let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
-                            abs_source_file,
-                            &mut **source_file_buf,
-                        );
-
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let source_dir = bun_paths::resolve_path::dirname::<
-                            bun_paths::platform::Posix,
-                        >(normalized_source_file);
-                        // If `dirname` returns empty but the path has a drive
-                        // letter, use the drive root.
-                        let effective_source_dir: &[u8] = if source_dir.is_empty() {
-                            if normalized_source_file.len() >= 3
-                                && normalized_source_file[1] == b':'
-                                && normalized_source_file[2] == b'/'
-                            {
-                                &normalized_source_file[0..3] // "C:/"
-                            } else if !normalized_source_file.is_empty()
-                                && normalized_source_file[0] == b'/'
-                            {
-                                b"/"
-                            } else {
-                                bun_resolver::fs::FileSystem::instance().top_level_dir()
-                            }
-                        } else {
-                            source_dir
-                        };
-                        // `.loose` preserves Windows drive letters; normalize
-                        // separators in-place on Windows afterwards.
-                        let joined_len = bun_paths::resolve_path::join_abs_string_buf_checked::<
-                            bun_paths::platform::Loose,
-                        >(
-                            effective_source_dir, &mut **buf, &[specifier]
-                        )?
-                        .len();
-                        if cfg!(windows) {
-                            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-                                &mut buf[0..joined_len],
-                            );
-                        }
-                        let joined = &buf[0..joined_len];
-                        if let Some((key, _)) = self.map.get_key_value(joined) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
-                        }
-                    }
-
-                    None
+                    unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(bytes)) }
                 }
 
-                /// Build a `bun_resolver::Result` for a matched key. `key` must
-                /// already satisfy `'static` — see [`resolve`], which copies the
-                /// map-owned key into the build's bump arena before calling here so
-                /// the resulting `Path<'static>` borrows arena memory rather than
-                /// forging a `'static` from a map borrow.
-                #[inline]
-                fn result_for_key(key: &'static [u8]) -> bun_resolver::Result {
+                /// `pretty` is set for a relative path only.
+                fn result(
+                    arena: &bun_alloc::Arena,
+                    path: &[u8],
+                    file: &File,
+                ) -> bun_resolver::Result {
+                    #[cfg(windows)]
+                    let path = file.native.as_deref().unwrap_or(path);
+                    let mut primary =
+                        crate::bun_fs::Path::init_with_namespace(Self::dupe(arena, path), b"file");
+                    if let Some(pretty) = &file.pretty {
+                        primary.pretty = Self::dupe(arena, pretty);
+                    }
                     bun_resolver::Result {
                         path_pair: bun_resolver::PathPair {
-                            primary: crate::bun_fs::Path::init_with_namespace(key, b"file"),
+                            primary,
                             ..Default::default()
                         },
                         module_type: crate::options::ModuleType::Unknown,
                         ..Default::default()
+                    }
+                }
+            }
+
+            #[cfg(all(test, not(windows)))]
+            mod file_map_tests {
+                use super::FileMap;
+
+                /// The map, and the index of the first key that is a conflict.
+                fn put_all(keys: &[(&str, &str)]) -> (FileMap, Option<usize>) {
+                    let mut files = FileMap::new(b"/proj/");
+                    for (index, (key, contents)) in keys.iter().enumerate() {
+                        let put =
+                            files.put(key.as_bytes().to_vec(), Box::from(contents.as_bytes()));
+                        if put.is_err() {
+                            return (files, Some(index));
+                        }
+                    }
+                    (files, None)
+                }
+
+                fn files(keys: &[(&str, &str)]) -> FileMap {
+                    let (files, conflict) = put_all(keys);
+                    assert_eq!(conflict, None);
+                    files
+                }
+
+                fn text(bytes: &[u8]) -> &str {
+                    core::str::from_utf8(bytes).unwrap()
+                }
+
+                #[test]
+                fn a_key_that_starts_with_a_dot_and_a_slash_is_a_path_from_the_cwd() {
+                    let files = files(&[
+                        ("./src/config.ts", "config"),
+                        ("./src/../src/config.ts", "config"),
+                        (".\\src\\config.ts", "config"),
+                        ("../up.ts", "up"),
+                        ("src/config.ts", "a name"),
+                        ("virtual:x.ts", "a scheme"),
+                        ("..", "two dots"),
+                        ("/abs/a.ts", "absolute"),
+                    ]);
+                    // (the key in the map, the display path, an absolute key)
+                    let stored = |path: &str| {
+                        let (path, file) = files.file(path.as_bytes())?;
+                        Some((text(path), file.pretty.as_deref().map(text), file.absolute))
+                    };
+                    let config = Some(("/proj/src/config.ts", Some("src/config.ts"), false));
+                    assert_eq!(stored("/proj/src/config.ts"), config);
+                    assert_eq!(stored("/up.ts"), Some(("/up.ts", Some("../up.ts"), false)));
+                    assert_eq!(
+                        stored("src/config.ts"),
+                        Some(("src/config.ts", None, false))
+                    );
+                    assert_eq!(stored("virtual:x.ts"), Some(("virtual:x.ts", None, false)));
+                    assert_eq!(stored(".."), Some(("..", None, false)));
+                    assert_eq!(stored("/abs/a.ts"), Some(("/abs/a.ts", None, true)));
+                    assert_eq!(files.map.len(), 6);
+
+                    // The parse task asks with the path of a module. A plugin can resolve to the text of a key.
+                    assert_eq!(files.get(b"/proj/src/config.ts").map(text), Some("config"));
+                    assert_eq!(files.get(b"./src/config.ts").map(text), Some("config"));
+                    assert_eq!(files.get(b"src/config.ts").map(text), Some("a name"));
+                    assert_eq!(files.get(b"/proj/virtual:x.ts"), None);
+                }
+
+                #[test]
+                fn two_spellings_of_one_path_with_different_contents_are_a_conflict() {
+                    // The key that the conflict names, and the contents of `/proj/a.ts` after the second `put`.
+                    let second = |first: &str, second: &str| {
+                        let mut files = files(&[(first, "first")]);
+                        let put = files.put(second.as_bytes().to_vec(), Box::from(&b"second"[..]));
+                        let other = put.err().map(|conflict| {
+                            assert_eq!(text(&conflict.path), "/proj/a.ts");
+                            text(&conflict.other).to_owned()
+                        });
+                        (other, text(files.get(b"/proj/a.ts").unwrap()).to_owned())
+                    };
+                    let conflict = |other: &str| (Some(other.to_owned()), "first".to_owned());
+                    assert_eq!(second("./a.ts", "/proj/a.ts"), conflict("./a.ts"));
+                    assert_eq!(second("/proj/a.ts", "./a.ts"), conflict("/proj/a.ts"));
+                    assert_eq!(second("./a.ts", "./x/../a.ts"), conflict("./a.ts"));
+                    // A key without `./` is a name. It is not the file `/proj/a.ts`.
+                    assert_eq!(second("./a.ts", "a.ts"), (None, "first".to_owned()));
+                    // The same spelling again replaces the contents of a file that has no other key.
+                    assert_eq!(second(".\\a.ts", "./a.ts"), (None, "second".to_owned()));
+                    assert_eq!(
+                        second("/proj/a.ts", "\\proj\\a.ts"),
+                        (None, "second".to_owned())
+                    );
+                    // Two spellings with the same contents are one file.
+                    assert_eq!(
+                        files(&[("./a.ts", "same"), ("/proj/a.ts", "same")])
+                            .map
+                            .len(),
+                        1
+                    );
+
+                    // A repeated spelling does not count as another spelling.
+                    let keys = [("./a.ts", "1"), (".\\a.ts", "2"), ("./x/../a.ts", "2")];
+                    let mut two_spellings = files(&keys);
+                    let third = two_spellings.put(b"./a.ts".to_vec(), Box::from(&b"3"[..]));
+                    assert_eq!(
+                        third.err().map(|it| text(&it.other).to_owned()),
+                        Some("./x/../a.ts".to_owned())
+                    );
+
+                    // The order of three keys does not hide a conflict.
+                    let (dot, backslash, absolute) =
+                        (("./a.ts", "1"), (".\\a.ts", "2"), ("/proj/a.ts", "1"));
+                    assert_eq!(put_all(&[dot, backslash, absolute]).1, Some(2));
+                    assert_eq!(put_all(&[dot, absolute, backslash]).1, Some(2));
+                    assert_eq!(put_all(&[absolute, dot, backslash]).1, Some(2));
+                    assert_eq!(put_all(&[absolute, backslash, dot]).1, Some(1));
+                    assert_eq!(put_all(&[backslash, absolute, dot]).1, Some(1));
+                    assert_eq!(put_all(&[backslash, dot, absolute]).1, None);
+                }
+
+                #[test]
+                fn an_import_names_the_file_beside_the_importer_or_the_key_with_that_text() {
+                    let files = files(&[
+                        ("./src/config.ts", ""),
+                        ("./util.ts", ""),
+                        ("./src/util.ts", ""),
+                        ("./src/chart.js", ""),
+                        ("./styles/theme.css", ""),
+                        ("lib/name.ts", ""),
+                        ("/abs/chart.js", ""),
+                    ]);
+                    let import = |source: &str, specifier: &str, bare_is_relative: bool| {
+                        let found =
+                            files.import(source.as_bytes(), specifier.as_bytes(), bare_is_relative);
+                        found.map(|(path, _)| text(path))
+                    };
+                    let (js, css) = (false, true);
+                    let config = Some("/proj/src/config.ts");
+                    assert_eq!(import("/proj/src/index.ts", "./config.ts", js), config);
+                    assert_eq!(
+                        import("/proj/src/deep/index.ts", "../config.ts", js),
+                        config
+                    );
+                    assert_eq!(
+                        import("/proj/src/index.ts", "/proj/src/config.ts", js),
+                        config
+                    );
+                    // The text of a key, from any directory.
+                    assert_eq!(import("/proj/lib/index.ts", "./src/config.ts", js), config);
+                    assert_eq!(
+                        import("/elsewhere/index.ts", "lib/name.ts", js),
+                        Some("lib/name.ts")
+                    );
+                    // `./`: the file beside the importer comes before the key with that text.
+                    assert_eq!(
+                        import("/proj/src/index.ts", "./util.ts", js),
+                        Some("/proj/src/util.ts")
+                    );
+                    assert_eq!(
+                        import("/elsewhere/index.ts", "./util.ts", js),
+                        Some("/proj/util.ts")
+                    );
+                    // A bare specifier in JavaScript is a package, not the relative path beside the importer.
+                    assert_eq!(import("/proj/src/index.ts", "chart.js", js), None);
+                    let theme = Some("/proj/styles/theme.css");
+                    assert_eq!(import("/proj/styles/main.css", "theme.css", css), theme);
+                    // An absolute key beside the importer answers a bare specifier.
+                    assert_eq!(
+                        import("/abs/index.ts", "chart.js", js),
+                        Some("/abs/chart.js")
+                    );
+                    assert_eq!(import("/proj/src/index.ts", "./missing.ts", js), None);
+                    assert_eq!(import("/proj/src/index.ts", "", js), None);
+                }
+
+                #[test]
+                fn an_entry_point_names_a_key_by_its_text() {
+                    let files = files(&[
+                        ("./src/entry.ts", ""),
+                        ("worker.js", ""),
+                        ("/abs/entry.ts", ""),
+                        ("/proj/in-cwd.ts", ""),
+                    ]);
+                    let entry = |entry_point: &str| {
+                        let found = files.entry_point(entry_point.as_bytes());
+                        found.map(|(path, _)| text(path))
+                    };
+                    assert_eq!(entry("./src/entry.ts"), Some("/proj/src/entry.ts"));
+                    // The absolute path of a `./` key is for the disk resolver.
+                    assert_eq!(entry("/proj/src/entry.ts"), None);
+                    assert_eq!(entry("worker.js"), Some("worker.js"));
+                    assert_eq!(entry("/abs/entry.ts"), Some("/abs/entry.ts"));
+                    assert_eq!(entry("/abs/missing.ts"), None);
+                    assert_eq!(entry(""), None);
+                    // The output of a file that a `./` key names is at its path from the cwd.
+                    let output_path = |path: &str| files.output_path(path.as_bytes()).map(text);
+                    assert_eq!(output_path("/proj/src/entry.ts"), Some("src/entry.ts"));
+                    assert_eq!(output_path("/abs/entry.ts"), None);
+                    assert_eq!(output_path("worker.js"), None);
+
+                    // The parse task and the debug assertions ask with the path of a module or the text of a key.
+                    for found in ["/proj/src/entry.ts", "./src/entry.ts", "worker.js"] {
+                        assert!(files.contains(found.as_bytes()));
+                    }
+                    for missing in ["/proj/worker.js", "src/entry.ts"] {
+                        assert!(!files.contains(missing.as_bytes()));
+                    }
+
+                    // The default root is the cwd when every entry point is the text of a key.
+                    for key in ["./src/entry.ts", "worker.js", "/abs/entry.ts"] {
+                        assert!(files.is_written_as_key(key.as_bytes()));
+                    }
+                    for other in ["/proj/src/entry.ts", "src/entry.ts", "/abs/missing.ts"] {
+                        assert!(!files.is_written_as_key(other.as_bytes()));
                     }
                 }
             }
@@ -2693,10 +3123,13 @@ pub mod bv2_impl {
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
+                let importer_loader = self.graph.input_files.items_loader()
+                    [import_record.importer_source_index as usize];
                 if let Some(_file_map_result) = file_map.resolve(
                     self.arena(),
                     &import_record.source_file,
                     &import_record.specifier,
+                    import_record.kind.is_from_css() || importer_loader == Loader::Html,
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
@@ -3159,7 +3592,12 @@ pub mod bv2_impl {
                 "resolve_entry_point rejects disabled results and FileMap results have a path",
             );
 
-            path.assert_file_path_is_absolute();
+            // A name in `files` is a key, not a path.
+            if bun_core::Environment::CI_ASSERT
+                && !(self.file_map).is_some_and(|files| files.contains(path.text))
+            {
+                path.assert_file_path_is_absolute();
+            }
             // borrowck: get-then-put instead of a single get-or-put.
             if self
                 .path_to_source_index_map(target)
@@ -3588,7 +4026,8 @@ pub mod bv2_impl {
 
                 // Check FileMap first for in-memory entry points
                 if let Some(file_map) = self.file_map {
-                    if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point)
+                    if let Some(file_map_result) =
+                        file_map.resolve_entry_point(self.arena(), entry_point)
                     {
                         let _ = self.enqueue_entry_item(
                             &mut { file_map_result },
@@ -4501,7 +4940,7 @@ pub mod bv2_impl {
 
                 // SAFETY: `LinkerContext::link` takes `bundle` as a raw `*mut BundleV2` and only
                 // touches fields disjoint from `this.linker` (`graph`, `transpiler`,
-                // `dynamic_import_entry_points`, scalar reads) via `addr_of_mut!`/place
+                // `dynamic_import_entry_points`, `file_map`, scalar reads) via `addr_of_mut!`/place
                 // projection, so the `&mut this.linker` receiver and `*bundle_ptr` never produce
                 // overlapping `&mut`.
                 let mut chunks = unsafe {
@@ -6126,7 +6565,7 @@ pub mod bv2_impl {
             // much of its state to be valid memory, even if empty.
             // SAFETY: `LinkerContext::load` takes `bundle` as a raw `*mut BundleV2` and only
             // touches fields disjoint from `self.linker` (`graph`, `transpiler`,
-            // `dynamic_import_entry_points`) via `addr_of_mut!`, so the `&mut self.linker`
+            // `dynamic_import_entry_points`, `file_map`) via `addr_of_mut!`, so the `&mut self.linker`
             // receiver and `*bundle_ptr` never produce overlapping `&mut`. Both Index newtypes
             // are `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
             unsafe {
@@ -6897,72 +7336,21 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                // Check the FileMap first for in-memory files
-                if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) =
-                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
-                    {
-                        let mut file_map_result = _file_map_result;
-                        let mut path_primary = file_map_result.path_pair.primary;
-                        let import_record_loader = import_record.loader.unwrap_or_else(|| {
-                            Fs::Path::init(path_primary.text)
-                                .loader(&transpiler.options.loaders)
-                                .unwrap_or(Loader::File)
-                        });
-                        import_record.loader = Some(import_record_loader);
-
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
-                        {
-                            import_record.source_index = Index::init(id);
-                            continue;
-                        }
-
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
-                        if resolve_entry.found_existing {
-                            // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                            import_record.path =
-                                path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
-                            continue;
-                        }
-
-                        // For virtual files, use the path text as-is (no relative path computation needed).
-                        // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
-                        // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
-                        // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
-                        // cascading borrow conflicts into every `&mut self` call below).
-                        path_primary.pretty = unsafe {
-                            bun_ptr::detach_lifetime(
-                                self.arena().alloc_slice_copy(path_primary.text),
-                            )
-                        };
-                        import_record.path = path_as_static(&path_primary);
-                        let _ = path_primary.text; // key already interned by get_or_put
-                        bun_core::scoped_log!(
-                            Bundle,
-                            "created ParseTask from FileMap: {}",
-                            bstr::BStr::new(&path_primary.text)
-                        );
-                        file_map_result.path_pair.primary = path_primary;
-                        // Arena-owned.
-                        let resolve_task_val =
-                            ParseTask::init(&file_map_result, bun_ast::Index::INVALID, self);
-                        // SAFETY: arena outlives the bundle pass.
-                        let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
-                        resolve_task.known_target = target;
-                        // Use transpiler JSX options, applying force_node_env like the disk path does
-                        resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = transpiler.options.forced_jsx_development();
-                        resolve_task.loader = Some(import_record_loader);
-                        resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        *resolve_entry.value_ptr = resolve_task;
-                        continue;
-                    }
-                }
-
+                let mut is_in_memory = false;
                 let mut had_busted_dir_cache = false;
-                let resolve_result: _resolver::Result = 'inner: loop {
+                let mut resolve_result: _resolver::Result = 'inner: loop {
+                    // An in-memory file stands in for the resolver's result from here on.
+                    if let Some(file_map) = self.file_map
+                        && let Some(result) = file_map.resolve(
+                            self.arena(),
+                            source.path.text,
+                            import_record.path.text,
+                            import_record.kind.is_from_css() || loader == Loader::Html,
+                        )
+                    {
+                        is_in_memory = true;
+                        break result;
+                    }
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
                         import_record.path.text,
@@ -7155,7 +7543,6 @@ pub mod bv2_impl {
                         }
                     }
                 };
-                let mut resolve_result = resolve_result;
                 // if there were errors, lets go ahead and collect them all
                 if last_error.is_some() {
                     continue;
@@ -7324,9 +7711,20 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                *path = self
-                    .path_with_pretty_initialized(path, target)
-                    .expect("oom");
+                if is_in_memory {
+                    // A `./` key has its display path. Any other key is its own display path.
+                    if path.pretty.as_ptr() == path.text.as_ptr() {
+                        // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
+                        // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
+                        path.pretty = unsafe {
+                            bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(path.text))
+                        };
+                    }
+                } else {
+                    *path = self
+                        .path_with_pretty_initialized(path, target)
+                        .expect("oom");
+                }
 
                 import_record.path = path_as_static(path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
@@ -7343,7 +7741,12 @@ pub mod bv2_impl {
                     target
                 };
 
-                resolve_task.jsx = resolve_result.jsx.clone();
+                // A `FileMap` result skips the resolver, so it has the default jsx options.
+                resolve_task.jsx = if is_in_memory {
+                    transpiler.options.jsx.clone()
+                } else {
+                    resolve_result.jsx.clone()
+                };
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);

@@ -3604,8 +3604,27 @@ declare module "bun" {
      * A map of file paths to their contents for in-memory bundling.
      *
      * Use this to bundle virtual files that don't exist on disk, or override
-     * the contents of files that do exist on disk. The keys are file paths (which should
-     * match how they're imported) and the values are the file contents.
+     * the contents of files that do exist on disk. The keys are file paths and
+     * the values are the file contents.
+     *
+     * Bun reads a key in one of three ways:
+     * - A key that starts with `./` or `../` names the file at that path from
+     *   the current working directory of the `Bun.build()` call.
+     * - An absolute key names the file at that path. Bun uses it as written,
+     *   so write it the way `path.resolve()` returns it.
+     * - Any other key, such as `virtual:config.ts` or `src/config.ts`, is a
+     *   name. Only an import or entrypoint with exactly that text gets it, so
+     *   `src/config.ts` does not override `./src/config.ts`.
+     *
+     * An entrypoint gets a key only when it is written exactly like the key.
+     * Bun resolves any other entrypoint on disk, and then takes the contents
+     * from `files` if the file that it finds is there.
+     *
+     * In a key, `\` is the same as `/`: `.\a.ts` and `./a.ts` are one key, and
+     * the last one wins. If two keys name one file in different ways (`./a.ts`
+     * and `./lib/../a.ts`) and have different contents, `Bun.build()` throws a
+     * `TypeError`. Bun does not resolve symlinks in a key, so the key for a
+     * file behind a symlink is its real path.
      *
      * File contents can be provided as:
      * - `string` - The source code as a string

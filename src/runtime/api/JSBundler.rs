@@ -44,7 +44,7 @@ pub(crate) mod js_bundler {
     }
 
     /// A map of file paths to their in-memory contents.
-    /// LAYERING: the data-only struct (`map: StringHashMap<Box<[u8]>>`) and
+    /// LAYERING: the struct, `put` and
     /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
     /// bundler thread can read it without depending on `bun_runtime`. Only
     /// the JS-aware `from_js` constructor lives here.
@@ -55,7 +55,7 @@ pub(crate) mod js_bundler {
     /// The bytes are copied: the bundler runs on a separate thread and must not
     /// borrow JS heap memory.
     fn file_map_from_js(global_this: &JSGlobalObject, files_value: JSValue) -> JsResult<FileMap> {
-        let mut this = FileMap::default();
+        let mut this = FileMap::new(bun_resolver::fs::FileSystem::get().top_level_dir());
         // errdefer this.deinit() — `FileMap` (Box<[u8]> values) drops on `?`.
 
         let Some(files_obj) = files_value.get_object() else {
@@ -74,7 +74,7 @@ pub(crate) mod js_bundler {
             },
         )?;
 
-        this.map.reserve(files_iter.len);
+        this.reserve(files_iter.len);
 
         while let Some((prop, property_value)) = files_iter.next()? {
             let blob_or_string = match crate::node::BlobOrStringOrBuffer::from_js(
@@ -90,17 +90,14 @@ pub(crate) mod js_bundler {
             let bytes: Box<[u8]> = blob_or_string.slice().into();
             drop(blob_or_string);
 
-            // Clone the key since we need to own it.
-            let mut key = prop.to_owned_slice();
-
-            // Normalize backslashes to forward slashes for cross-platform consistency.
-            // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
-            // (uses sep_windows constant, not sep which varies by target).
-            bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
-                key.as_mut_slice(),
-            );
-
-            this.map.put_assume_capacity(&key, bytes);
+            if let Err(conflict) = this.put(prop.to_owned_slice(), bytes) {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "files: the keys \"{}\" and \"{}\" both name \"{}\" and have different contents",
+                    bstr::BStr::new(&conflict.other),
+                    prop,
+                    bstr::BStr::new(&conflict.path),
+                )));
+            }
         }
 
         Ok(this)
@@ -1012,10 +1009,10 @@ pub(crate) mod js_bundler {
                     let entry_points = this.entry_points.keys();
 
                     // Check if all entry points are in the FileMap - if so, use cwd
-                    if !this.files.map.is_empty() {
+                    if !this.files.is_empty() {
                         let mut all_in_filemap = true;
                         for ep in entry_points {
-                            if !this.files.contains(ep) {
+                            if !this.files.is_written_as_key(ep) {
                                 all_in_filemap = false;
                                 break;
                             }

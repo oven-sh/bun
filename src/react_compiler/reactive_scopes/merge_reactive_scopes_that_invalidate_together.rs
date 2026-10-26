@@ -402,13 +402,9 @@ impl<'a> MergeTransform<'a> {
 // Helper functions
 // =============================================================================
 
-/// Not in upstream: the declarations of a merge candidate. TS updates the `Map` of the scope.
-/// The scope here holds a `HirVec`, and a search and a `retain` of it per merged scope take
-/// time quadratic in the number of scopes that merge into one. Pass 3 stores the result in the
-/// scope.
+/// Not in upstream: the declarations of a merge candidate, as the `Map` that TS keeps on the scope.
 struct CandidateDeclarations {
-    /// Each declaration with its position in the insertion order of the `Map`. RenameVariables
-    /// names the declarations in that order.
+    /// Each declaration with its position in insertion order, in which RenameVariables names them.
     entries: FxHashMap<IdentifierId, (u32, ReactiveScopeDeclaration)>,
     next_position: u32,
     /// The entries that a later range end removes, earliest last usage first.
@@ -441,8 +437,7 @@ impl CandidateDeclarations {
         env: &Environment,
     ) {
         for (key, value) in &env.scopes[scope_id.0 as usize].declarations {
-            // The key of a declaration is its identifier, so a new value for a key has the
-            // same last usage.
+            // A declaration is keyed by its identifier, so a new value has the same last usage.
             debug_assert_eq!(*key, value.identifier);
             match self.entries.entry(*key) {
                 std::collections::hash_map::Entry::Occupied(mut existing) => {
@@ -546,8 +541,7 @@ fn can_merge_scopes(
     }
 
     // Merge scopes where outputs of current are inputs of next
-    // Not in upstream: `are_equal_dependencies` compares the lengths first, so the synthetic
-    // dependencies are built only when the lengths match.
+    // Not in upstream: the synthetic dependencies can only be equal when the lengths match.
     if current_declarations.len() == next.dependencies.len() {
         // Build synthetic dependencies from current's declarations
         let current_decl_deps: Vec<ReactiveScopeDependency> = current_declarations

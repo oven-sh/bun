@@ -469,7 +469,8 @@ describe("a MIMEType accessor read on a receiver that is not a MIMEType", () => 
 
   // This never returned. Each of the four getters threw an error whose message rendered the receiver, and rendering
   // the receiver read the four getters again. A message renders a receiver only when its `constructor` is falsy.
-  test("returns when the receiver has no constructor", async () => {
+  // Serial: the runner kills the child of a test that times out only when that test runs alone.
+  test.serial("returns when the receiver has no constructor", async () => {
     const code = /*js*/ `
       const { MIMEType } = require("node:util");
       const receiver = Object.create(MIMEType.prototype, { constructor: { value: null } });

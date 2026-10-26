@@ -121,6 +121,150 @@ test(
   timeout,
 );
 
+// How ./worker.ts of the tests below ends, by its first argument: its loop
+// drains, it calls process.exit(), or its parent terminates it (the interval
+// keeps it alive until then).
+const endsItsOwnWay = `
+  const end = {
+    drains: () => {},
+    exits: () => process.exit(0),
+    terminated: () => { postMessage("filled"); setInterval(() => {}, 1000); },
+  }[process.argv[2]];`;
+// In the parent: runs ./worker.ts until it has ended.
+const runsAWorker = `
+  const run = async ends => {
+    const worker = new Worker(new URL("./worker.ts", import.meta.url).href, { argv: [ends] });
+    worker.onmessage = () => worker.terminate();
+    await new Promise((resolve, reject) => {
+      worker.addEventListener("close", resolve);
+      worker.addEventListener("error", event => reject(event.error ?? event.message));
+    });
+  };`;
+
+// Regression: the storage of a worker's VM was freed without a run of its field
+// destructors, and the teardown freed only the fields it named. A worker that
+// filled one of the others leaked it. Each row fills one from a timer, the first
+// row aside: the stack of a timer callback has no module-evaluation frame, which
+// leaksan.supp suppresses.
+describe.skipIf(!isASAN)("a worker frees what the fields of its VM own when it ends", () => {
+  const rows: [owned: string, fill: string, filled: string][] = [
+    [
+      "the macros its entry file called",
+      `import { one } from "./macro.ts" with { type: "macro" };
+       console.log("macro returned", one());
+       end();`,
+      "macro returned 1",
+    ],
+    [
+      "the macros a Bun.Transpiler called",
+      `setTimeout(() => {
+         const source = 'import { one } from "./macro.ts" with { type: "macro" }; console.log("macro returned", one());';
+         console.log(new Bun.Transpiler({ loader: "ts" }).transformSync(source).trim());
+         end();
+       }, 0);`,
+      `console.log("macro returned", 1);`,
+    ],
+    [
+      "its require.extensions handlers",
+      `setTimeout(() => {
+         require.extensions[".custom"] = (module, filename) => module._compile("module.exports = 1;", filename);
+         console.log("handler is", typeof require.extensions[".custom"]);
+         end();
+       }, 0);`,
+      "handler is function",
+    ],
+    [
+      "the strings a Bun.FileSystemRouter interned",
+      `setTimeout(() => {
+         const router = new Bun.FileSystemRouter({
+           style: "nextjs",
+           dir: import.meta.dir + "/pages",
+           origin: "https://example.com",
+           assetPrefix: "/assets/",
+         });
+         console.log("matched", router.match("/")?.name);
+         end();
+       }, 0);`,
+      "matched /",
+    ],
+  ];
+
+  test.concurrent.each(rows)(
+    "%s",
+    async (_, fill, filled) => {
+      using dir = tempDir("worker-end-frees", {
+        "macro.ts": `export function one() { return 1; }`,
+        "pages/index.ts": `export default 1;`,
+        "worker.ts": `${endsItsOwnWay}\n${fill}`,
+        "main.ts": `
+          ${runsAWorker}
+          for (const ends of ["drains", "exits", "terminated"]) await run(ends);
+          console.log("every worker ended");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.ts"],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          // The CI runner sets this for every test: the main thread tears its VM
+          // down at exit too.
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // A debug build also logs "[macro] call one" to stdout.
+      const lines = stdout.split("\n").filter(line => !line.startsWith("[macro]"));
+      expect({ stdout: lines, stderr, exitCode }).toEqual({
+        stdout: [filled, filled, filled, "every worker ended", ""],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
+});
+
+// The same regression, for what LeakSanitizer does not see: a mimalloc heap. The
+// `macro` option has the VM's transpiler parse the table with its JSON cache,
+// which makes one, and a worker's teardown left the caches of that transpiler.
+test("a worker frees the mimalloc heap of its transpiler's JSON cache when it ends", async () => {
+  using dir = tempDir("worker-end-frees-heap", {
+    "worker.ts": `
+      ${endsItsOwnWay}
+      setTimeout(() => {
+        new Bun.Transpiler({ loader: "ts", macro: { "some-package": { one: "./macro.ts" } } });
+        end();
+      }, 0);`,
+    "main.ts": `
+      import { heapStats } from "bun:jsc";
+      ${runsAWorker}
+      // The first worker also makes the heaps that stay for the process.
+      await run("drains");
+      const before = heapStats().mimalloc.heaps.current;
+      for (const ends of ["drains", "exits", "terminated"]) await run(ends);
+      console.log("heaps that three workers left:", heapStats().mimalloc.heaps.current - before);`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "heaps that three workers left: 0\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
 // (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
 // ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-
@@ -164,6 +308,9 @@ test.skipIf(!isASAN)(
       ],
       env: {
         ...bunEnv,
+        // The CI runner sets this for every test; set it here too so the
+        // main thread's own per-VM state is not reported when run directly.
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
         LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
       },

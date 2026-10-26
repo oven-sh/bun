@@ -425,12 +425,11 @@ unsafe fn init_runtime_state(
         // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
         // alongside `timer`/`entry_point` on Worker teardown. The `Box`
         // payload address is stable, so a `'static` borrow is sound for the
-        // `Transpiler<'static>` field — both die in VM teardown
-        // (`vm.transpiler` is never dropped; see `ptr::write` note below).
-        // SAFETY: `state` is the unique freshly-boxed `RuntimeState`; the
-        // inner `Box<Arena>` payload is heap-stable and outlives the
-        // `Transpiler` (reclaimed in `deinit_runtime_state` after the VM —
-        // and hence `vm.transpiler` — is done).
+        // `Transpiler<'static>` field: both die in VM teardown.
+        // SAFETY: `state` is the unique freshly-boxed `RuntimeState`. Its `Box<Arena>`
+        // payload is heap-stable and outlives every use of the `Transpiler`:
+        // `deinit_runtime_state` reclaims it, and a worker's field destructors,
+        // which drop the transpiler after that, do not read `arena`.
         let arena: &'static bun_alloc::Arena = unsafe { &*(*state).transpiler_arena };
         // Forward `opts.env_loader` so the VM
         // shares the caller's `DotEnv.Loader` (e.g. `bun test` writes
@@ -3724,20 +3723,13 @@ fn __bun_fetch_builtin_module(
     }
 
     // ── `macro:` namespace ──────────────────────────────────────────────
-    // `vm.macro_entry_points` values are
-    // `*mut MacroEntryPoint` (gated `bun_bundler::entry_points` type); the
-    // map itself is keyed by `i32` hash of the specifier.
+    // `vm.macro_entry_points` is keyed by the `i32` hash of the specifier.
     if spec.starts_with(b"macro:") {
         use bun_bundler::entry_points::MacroEntryPoint;
         let id = MacroEntryPoint::generate_id_from_specifier(spec);
-        if let Some(&entry) = jsc_vm.macro_entry_points.get(&id) {
-            let entry = entry.cast::<MacroEntryPoint>();
-            // SAFETY: `entry` is the `heap::alloc`d `MacroEntryPoint`
-            // inserted by `load_macro_entry_point`; map ownership keeps it
-            // alive for the VM lifetime.
-            let contents = unsafe { &(*entry).source.contents };
+        if let Some(entry) = jsc_vm.macro_entry_points.get(&id) {
             return Some(ResolvedSource {
-                source_code: bun_core::String::clone_utf8(contents),
+                source_code: bun_core::String::clone_utf8(&entry.source.contents),
                 source_url: specifier.clone(),
                 ..ResolvedSource::default()
             });

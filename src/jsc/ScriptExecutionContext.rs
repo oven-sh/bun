@@ -209,6 +209,11 @@ impl ScriptExecutionContext {
                 .with_mut(|groups| groups.as_deref_mut().is_none_or(|groups| groups.is_empty()))
     }
 
+    /// For a context that outlives the thread's uSockets loop: its (emptied) groups leave the loop now.
+    pub(crate) fn detach_socket_groups_from_loop(&self) {
+        drop(self.socket_groups.take());
+    }
+
     /// The groups client sockets opened by a graph context's script join.
     pub(crate) fn socket_groups(&self) -> *mut crate::rare_data::SocketGroups {
         self.socket_groups

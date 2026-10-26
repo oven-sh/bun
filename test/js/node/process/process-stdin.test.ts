@@ -737,6 +737,21 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
     ).toEqual({ stdout: 'READY\n"two"\n', stderr: "", exitCode: 0, signalCode: null });
   });
 
+  test.each([
+    ["the console iterator", "for await (const line of console) break;"],
+    [
+      "a reader of Bun.stdin.stream()",
+      "const reader = Bun.stdin.stream().getReader(); await reader.read(); reader.releaseLock();",
+    ],
+  ])("process.stdin.pause() after %s let go of stdin lets the process exit", async (_, first) => {
+    expect(await run(`${first} process.stdin.pause();`, [[null, "one\n"]], { end: false })).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test("process.stdin takes stdin back after the next reader releases it", async () => {
     const script = `
       const got = [];

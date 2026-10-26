@@ -151,9 +151,9 @@ export function getStdinStream(
       reader.releaseLock();
       reader = undefined;
       $debug("released reader");
+      // A paused source keeps nothing alive; its ref is for the next reader of Bun.stdin.stream().
+      source?.updateRef?.(!forceUnref);
     }
-    // A paused source keeps nothing alive; its ref is for the next reader of Bun.stdin.stream().
-    source?.updateRef?.(!forceUnref);
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;

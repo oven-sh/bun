@@ -1,0 +1,28 @@
+Free the worker threads of a context before the dictionaries they read.
+
+ZSTD_freeCCtxContent() calls ZSTD_clearAllDicts() and then ZSTDMT_freeCCtx().
+With nbWorkers >= 1, ZSTD_compressStream2() posts a job to a worker thread and
+returns. The first job of a frame reads the dictionary of the context through
+a pointer that it does not own (job->cdict). A job stops only in
+ZSTDMT_freeCCtx(), which joins the threads. So ZSTD_freeCCtx() of a context that
+has a dictionary and a running job frees the dictionary under that job.
+
+ZSTD_CCtx_reset() with parameters, ZSTD_CCtx_loadDictionary(), ZSTD_CCtx_refCDict()
+and ZSTD_CCtx_refPrefix() free the dictionaries too. Bun does not call them on a
+context whose jobs still run.
+
+--- a/lib/compress/zstd_compress.c
++++ b/lib/compress/zstd_compress.c
+@@ -171,10 +171,11 @@
+ {
+     assert(cctx != NULL);
+     assert(cctx->staticSize == 0);
+-    ZSTD_clearAllDicts(cctx);
+ #ifdef ZSTD_MULTITHREAD
+     ZSTDMT_freeCCtx(cctx->mtctx); cctx->mtctx = NULL;
+ #endif
++    /* Bun: after the join above. A job that still runs reads these dictionaries. */
++    ZSTD_clearAllDicts(cctx);
+     ZSTD_cwksp_free(&cctx->workspace, cctx->customMem);
+ }
+ 

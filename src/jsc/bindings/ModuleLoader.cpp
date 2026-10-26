@@ -82,7 +82,7 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
         JSValue requireResult = globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         auto* object = requireResult.getObject();
-        ASSERT_WITH_MESSAGE(object, "Expected object from requireId %s", moduleKey.string().string().utf8().data());
+        ASSERT_WITH_MESSAGE(object, "Expected object from requireId %s", moduleKey.string().string().utf8().legacyCStringPointer());
 
         JSC::EnsureStillAliveScope stillAlive(object);
 
@@ -220,6 +220,13 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     }
 
     if (wasModuleMock) {
+        if (!objectValue.isObject()) [[unlikely]] {
+            scope.throwException(globalObject, JSC::createTypeError(globalObject, "mock(module, fn) requires a function that returns an object"_s));
+            result.value.error = scope.exception();
+            (void)scope.tryClearException();
+            result.type = OnLoadResultTypeError;
+            return result;
+        }
         result.type = OnLoadResultTypeObject;
         result.value.object = objectValue;
         return result;
@@ -301,12 +308,20 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject);
             RETURN_IF_EXCEPTION(scope, result);
             if (contentsJSString) {
-                result.value.sourceText.string = Zig::toEncodedSlice(contentsJSString, globalObject);
+                auto contents = contentsJSString->view(globalObject);
                 RETURN_IF_EXCEPTION(scope, result);
-                result.value.sourceText.value = contentsValue;
+                result.value.sourceText.string = Zig::toEncodedSlice(contents.data);
+                result.value.sourceText.value = contents.owner;
             }
         } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
-            result.value.sourceText.string = EncodedSlice { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
+            // Copy the bytes. While the transpiler reads them, another thread can write to a SharedArrayBuffer and a macro can overwrite or detach any buffer.
+            if (!result.sourceTextCopy.tryAppend(view->span())) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                result.value.error = scope.exception();
+                (void)scope.tryClearException();
+                return result;
+            }
+            result.value.sourceText.string = EncodedSlice { result.sourceTextCopy.span().data(), result.sourceTextCopy.size() };
             result.value.sourceText.value = contentsValue;
         }
     }
@@ -424,15 +439,7 @@ static JSValue handleVirtualModuleResult(
             }
         }
 
-        JSC::ensureStillAliveHere(object);
-        auto function = generateObjectModuleSourceCode(
-            globalObject,
-            object);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(object);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createObjectModuleSourceCode(globalObject, object, specifier->toWTFString(BunString::ZeroCopy))));
     }
 
     case OnLoadResultTypePromise: {
@@ -908,6 +915,19 @@ JSValue fetchCommonJSModuleNonBuiltin(
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
 
+extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, specifier->toWTFString()), {}, nullptr, /* useImportMap */ true);
+    if (scope.exception()) [[unlikely]]
+        return nullptr;
+
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    EXCEPTION_ASSERT(!!promise == !scope.exception());
+    return promise;
+}
+
 // Explicit instantiations of fetchCommonJSModuleNonBuiltin
 template JSValue fetchCommonJSModuleNonBuiltin<true>(
     void* bunVM,
@@ -1057,12 +1077,7 @@ static JSValue fetchESMSourceCode(
             if (!value) {
                 RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
             }
-            auto function = generateJSValueExportDefaultObjectSourceCode(globalObject, value);
-            auto source = JSC::SourceCode(
-                JSC::SyntheticSourceProvider::create(WTF::move(function),
-                    JSC::SourceOrigin(), WTF::move(moduleKey)));
-            JSC::ensureStillAliveHere(value);
-            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
+            RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultObjectSourceCode(globalObject, value, WTF::move(moduleKey))));
         }
 
         // CommonJS modules from src/js/*
@@ -1171,14 +1186,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto function = generateJSValueModuleSourceCode(
-            globalObject,
-            value);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(value);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
     }
     // TOML and JSONC may go through here
     else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
@@ -1188,14 +1196,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto function = generateJSValueModuleSourceCode(
-            globalObject,
-            value);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(value);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
@@ -1203,14 +1204,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto function = generateJSValueExportDefaultObjectSourceCode(
-            globalObject,
-            value);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(value);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultObjectSourceCode(globalObject, value, specifier->toWTFString(BunString::ZeroCopy))));
     }
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);

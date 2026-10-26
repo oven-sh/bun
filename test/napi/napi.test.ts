@@ -10,10 +10,11 @@ import {
   isMacOS,
   isMusl,
   isWindows,
+  mergeWindowEnvs,
   nodeExeMatchingAbi,
   tempDir,
 } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 
 // The napi-app addons don't link against bun, so existing binaries stay valid
 // across bun builds. `bun install` runs a full `node-gyp rebuild` (clean + build
@@ -279,6 +280,34 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("keeps arguments moved off the stack alive", async () => {
       await checkSameOutput("test_napi_handle_scope_many_args", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
     });
+    it("exists when bun test --isolate calls a function that an earlier file created", async () => {
+      // The addon is loaded once per process, so its reference keeps the function of the first file for the second one.
+      const testFile = `
+        import { expect, test } from "bun:test";
+        const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+        test("keeps strings alive", () => {
+          let first;
+          try {
+            first = addon.get_object_from_ref();
+          } catch {
+            addon.create_wrap({ keepsStringsAlive: addon.test_napi_handle_scope_string }, true, true);
+            return;
+          }
+          expect(first.keepsStringsAlive(() => Bun.gc(true))).toBeUndefined();
+        });
+      `;
+      using dir = tempDir("napi-isolate", { "a.test.ts": testFile, "b.test.ts": testFile });
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 2 pass");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("escapable_handle_scope", () => {
@@ -456,6 +485,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  // Node wraps this length around, so this only runs on Bun.
+  it("creating an external buffer larger than 2 ** 32 bytes fails with ERR_BUFFER_TOO_LARGE", async () => {
+    const result = await runOn(bunExe(), "test_external_buffer_length_limit", [2 ** 32 + 1]);
+    expect(result.trim().split(/\r?\n/)).toEqual(
+      [
+        "napi_create_external_arraybuffer",
+        "napi_create_external_buffer",
+        "node_api_create_external_sharedarraybuffer",
+      ].map(api => `${api}: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE finalized=0 result=untouched`),
+    );
+  });
+
   // The finalizer of an external buffer belongs to the env that created it, and that env's
   // teardown frees the bytes, so the bytes must not be transferred to another thread.
   describe("external buffers are untransferable", () => {
@@ -486,6 +527,23 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         ].join("\n"),
       );
     });
+
+    // The JS thread parks without heap access during an idle collection, so its end phase runs on the collector thread.
+    it.skipIf(isWindows)(
+      "an idle collection on the collector thread runs the finalizers on the JS thread",
+      async () => {
+        const result = await runOn(bunExe(), "test_external_buffer_finalized_by_idle_collection", [], {
+          BUN_IDLE_GC_SECONDS: "1",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: undefined,
+          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+        } as any);
+        expect(result).toStartWith(
+          "experimental: finalized=true finalizedOffThread=0\ndeferred: finalized=true finalizedOffThread=0\n",
+        );
+      },
+      30_000,
+    );
 
     it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
       const result = await checkSameOutput("test_external_buffer_worker_exit", []);
@@ -606,6 +664,16 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_ungated_calls_worker_terminate", []);
       expect(result.split(/\r?\n/)).toEqual([...Array(2).fill("terminate() resolved with 1"), "resolved to undefined"]);
     }, 30_000);
+
+    // node-addon-api aborts the process if a refused call leaves an exception pending that it cannot clear.
+    it("worker.terminate() during a gated call leaves no exception pending", async () => {
+      const result = await checkSameOutput("test_gated_calls_worker_terminate", []);
+      expect(result.split(/\r?\n/)).toEqual([
+        "terminate() resolved with 1",
+        "napi_throw: 23 exception pending: 0",
+        "resolved to undefined",
+      ]);
+    });
   });
 
   describe("status code alignment with Node.js", () => {
@@ -704,6 +772,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const output = await checkSameOutput("test_napi_async_work_cancel", [], { "UV_THREADPOOL_SIZE": "2" });
       expect(output).toContain("success!");
       expect(output).not.toContain("failure!");
+    });
+    it("worker.terminate() runs no finalizer while execute() runs", async () => {
+      const output = await checkSameOutput("test_async_work_worker_terminate", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "terminate() resolved with 1",
+        "finalized during execute(): 0",
+        "resolved to undefined",
+      ]);
     });
   });
 
@@ -1220,6 +1296,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("propagates exceptions", async () => {
       await checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
+    it("passes the thrown value to napi_get_and_clear_last_exception", async () => {
+      const result = await checkSameOutput("test_napi_run_script_exception_value", ['throw new RangeError("boom")']);
+      expect(result).toContain("run status=9 pending=1");
+      expect(result).toContain("typeof status=0 type=6 is_error=1");
+      expect(result).toContain("message=boom");
+    });
     it("cannot see locals from around its invocation", async () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
       // this doesn't use await checkSameOutput because V8 and JSC use different error messages for a missing variable
@@ -1229,6 +1311,55 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(bunResult).toBe(
         `synchronously threw ReferenceError: message "shouldNotExist is not defined", code undefined`,
       );
+    });
+
+    // main.js reads its arguments with eval(), which the flag refuses, so these load the addon themselves.
+    async function runScriptWith(executable: string, flag: string) {
+      using dir = tempDir("napi-run-script-code-generation", {
+        "fixture.cjs": `
+          const { test_napi_run_script } = require(process.argv[2]);
+          let evaluated, ran;
+          try { evaluated = eval("1 + 1"); } catch (e) { evaluated = e.name; }
+          try { ran = test_napi_run_script(() => {}, "5 * (1 + 2)"); } catch (e) { ran = e.name + ": " + e.message; }
+          // A script acts before any of its code runs: its declarations, and an assignment of JSON, which is not compiled.
+          try { test_napi_run_script(() => {}, "var declared;"); } catch {}
+          try { test_napi_run_script(() => {}, 'assigned = {"a":1}'); } catch {}
+          console.log(JSON.stringify({ evaluated, ran, declared: "declared" in globalThis, assigned: "assigned" in globalThis }));
+        `,
+      });
+      await using proc = spawn({
+        cmd: [executable, flag, "fixture.cjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+    it("is not affected by --disallow-code-generation-from-strings, as in Node.js", async () => {
+      const [node, bun] = await Promise.all([
+        runScriptWith(await nodeExeMatchingAbi(), "--disallow-code-generation-from-strings"),
+        runScriptWith(bunExe(), "--disallow-code-generation-from-strings"),
+      ]);
+      expect(bun).toEqual({
+        stdout: JSON.stringify({ evaluated: "EvalError", ran: 15, declared: true, assigned: true }),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(bun).toEqual(node);
+    });
+    it("throws with --disallow-code-generation-from-strings=strict", async () => {
+      expect(await runScriptWith(bunExe(), "--disallow-code-generation-from-strings=strict")).toEqual({
+        stdout: JSON.stringify({
+          evaluated: "EvalError",
+          ran: "EvalError: Code generation from strings disallowed for this context",
+          declared: false,
+          assigned: false,
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 
@@ -1716,6 +1847,41 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("runs the outer module's init function when the module.exports getter loads another addon", async () => {
+    // process.dlopen reads module.exports a second time to pass it to the init function.
+    const script = `
+      const build = ${JSON.stringify(join(__dirname, "napi-app", "build", "Debug"))};
+      const exports = {};
+      let reads = 0;
+      const outer = {
+        get exports() {
+          if (++reads === 2) process.dlopen({ exports: {} }, build + "/reentrant_register_addon.node");
+          return exports;
+        },
+      };
+      process.dlopen(outer, build + "/constructor_order_addon.node");
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // On Windows each addon has its own stdout buffer, so line order is only guaranteed within one addon.
+    const lines = stdout.split(/\r?\n/).filter(Boolean);
+    const outer = ["call_register", "init_static", "register_cb"];
+    expect({
+      outer: lines.filter(line => outer.includes(line)),
+      inner: lines.filter(line => !outer.includes(line)),
+    }).toEqual({
+      outer,
+      inner: ["register_cb_a", "register_cb_b", "register_cb_reentrant x 64"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });
@@ -1850,6 +2016,87 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(bun).toEqual({ stdout: ["create_error_status=0", "worker exited with 1"], stderr: "", exitCode: 0 });
   });
 
+  // Bun.spawnSync waits on a loop of its own. The ref that queued work takes on the event loop used to land on
+  // whichever loop was being waited on, and the one its completion released was always the thread's: that loop ended
+  // up short of a ref per work item, and the process exited without waiting for this child.
+  // BUN_JSC_slowPathAllocsBetweenGCs collects every few slow-path allocations. maxBuffer is the last option
+  // Bun.spawnSync reads, so the collection that follows the drop runs once it is past them. Bun.gc() leaves every free
+  // list empty, so what it allocates from there on takes the slow path, whatever ran before.
+  it.skipIf(isWindows)("async work queued by a finalizer during Bun.spawnSync keeps the event loop alive", async () => {
+    const code = `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_queue_async_work_in_finalizer_experimental.node"))});
+      // In a frame of its own: an object left in a register of this one would outlive the drop.
+      (() => { globalThis.held = Array.from({ length: 8 }, () => addon.make()); })();
+      let finalizedBeforeDrop;
+      Bun.spawnSync({
+        cmd: ["true"],
+        stdout: "pipe",
+        stderr: "pipe",
+        get maxBuffer() {
+          Bun.gc(true);
+          finalizedBeforeDrop = addon.finalized();
+          globalThis.held = null;
+        },
+      });
+      const finalizedDuringCall = addon.finalized();
+      const child = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+      child.exited.then(() => console.log(JSON.stringify({ finalizedBeforeDrop, finalizedDuringCall })));
+      const timer = setInterval(() => {
+        if (addon.completed() < 8) return;
+        clearInterval(timer);
+        child.stdin.end();
+      }, 1);
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", code],
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ finalizedBeforeDrop: 0, finalizedDuringCall: 8 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The other way around: the ref a finalizer gave up was taken off the loop being waited on, so the thread's loop
+  // kept it and the process never exited.
+  it.skipIf(isWindows)(
+    "a threadsafe function unref'd by a finalizer during Bun.spawnSync lets go of the event loop",
+    async () => {
+      const code = `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_queue_async_work_in_finalizer_experimental.node"))});
+      (() => { globalThis.held = Array.from({ length: 3 }, () => addon.makeThreadsafeFunction()); })();
+      let finalizedBeforeDrop;
+      Bun.spawnSync({
+        cmd: ["true"],
+        stdout: "pipe",
+        stderr: "pipe",
+        get maxBuffer() {
+          Bun.gc(true);
+          finalizedBeforeDrop = addon.finalized();
+          globalThis.held = null;
+        },
+      });
+      console.log(JSON.stringify({ finalizedBeforeDrop, finalizedDuringCall: addon.finalized() }));
+    `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", code],
+        env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ finalizedBeforeDrop: 0, finalizedDuringCall: 3 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
     // This test ensures that napi_reference_unref can be called during GC
     // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion for regular modules.
@@ -1915,6 +2162,59 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     },
     25_000,
   );
+
+  // Off Windows these fixtures are ordinary addons, so this only checks that they load.
+  describe("an addon that imports node.exe without win_delay_load_hook", () => {
+    const fixtures = {
+      no_delay_load_hook_addon: { delayLoad: true, missing: false },
+      regular_node_exe_import_addon: { delayLoad: false, missing: false },
+      no_delay_load_hook_ctor_addon: { delayLoad: true, missing: false },
+      regular_node_exe_import_ctor_addon: { delayLoad: false, missing: false },
+      regular_node_exe_import_missing_addon: { delayLoad: false, missing: true },
+    } as const;
+    type Fixture = keyof typeof fixtures;
+    const fixtureNames = Object.keys(fixtures) as Fixture[];
+
+    // PATH is a single directory and the cwd is empty, so the DLL search path contains at most one node.exe.
+    async function load(target: Fixture, nodeOnPath: boolean) {
+      using dir = tempDir("napi-node-exe-import", {});
+      const addon = join(__dirname, `napi-app/build/Debug/${target}.node`);
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `try { console.log(require(${JSON.stringify(addon)}).hello()); } catch (e) { console.log(e.code + ": " + e.message); process.exit(1); }`,
+        ],
+        env: mergeWindowEnvs([bunEnv, { PATH: nodeOnPath ? dirname(await nodeExeMatchingAbi()) : String(dir) }]),
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+    const loaded = { stdout: "hello", stderr: "", exitCode: 0 };
+
+    it.each(fixtureNames)("%s loads with node.exe on PATH", async target => {
+      const result = await load(target, true);
+      if (isWindows && fixtures[target].missing) {
+        expect(result.stdout).toStartWith("ERR_DLOPEN_FAILED: Cannot load native addon ");
+        expect(result.stdout).toEndWith(
+          `${target}.node imports 'OpenSSL_version_num' from node.exe, which Bun does not provide`,
+        );
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(result).toEqual(loaded);
+      }
+    });
+
+    it.skipIf(!isWindows).each(fixtureNames.filter(target => fixtures[target].delayLoad))(
+      "%s loads without a node.exe on the DLL search path",
+      async target => {
+        expect(await load(target, false)).toEqual(loaded);
+      },
+    );
+  });
 });
 
 // Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by

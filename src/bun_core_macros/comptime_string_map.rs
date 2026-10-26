@@ -424,7 +424,6 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
         static #lens_name: [#len_ty; #n] = [ #(#lens),* ];
         #sorted_statics
 
-        #[allow(dead_code)]
         impl #ty_name {
             #vis const MIN_LEN: usize = #min_len;
             #vis const MAX_LEN: usize = #max_len;
@@ -620,7 +619,6 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
         static #lens_name: [#len_ty; #n] = [ #(#lens),* ];
         #sorted_statics
 
-        #[allow(dead_code)]
         impl #ty_name {
             #vis const MIN_LEN: usize = #min_len;
             #vis const MAX_LEN: usize = #max_len;

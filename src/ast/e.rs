@@ -1984,10 +1984,10 @@ impl EString {
 
     /// `a` is the text of `b`, which has other bytes: bytes that are not WTF-8 are U+FFFD.
     fn is_text_of_other_bytes(a: &[u8], b: &[u8]) -> bool {
-        let at = a.iter().zip(b).take_while(|(x, y)| x == y).count();
-        // Two ASCII bytes at the first difference are two code units.
-        let is_ascii = |text: &[u8]| text.get(at).is_none_or(u8::is_ascii);
-        !(is_ascii(a) && is_ascii(b)) && strings::order_utf16(a, b) == Ordering::Equal
+        // Two ASCII bytes at a first difference near the start are two code units: nothing is decoded.
+        let near = a.iter().zip(b).take(16).position(|(x, y)| x != y);
+        !near.is_some_and(|at| a[at].is_ascii() && b[at].is_ascii())
+            && strings::order_utf16(a, b) == Ordering::Equal
     }
 
     /// `text` is the UTF-16 code units `units`, which are not more than its bytes.
@@ -2627,7 +2627,7 @@ mod json_tape_tests {
     }
 }
 
-// Texts are 64 bytes or less: a longer one reaches simdutf, which Miri cannot call.
+// Texts are 16 bytes or less: a longer one reaches simdutf, which Miri cannot call.
 #[cfg(test)]
 mod estring_reader_tests {
     use super::*;

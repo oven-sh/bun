@@ -157,7 +157,8 @@ pub fn wtf8_len_utf16(text: &[u8]) -> u32 {
 pub fn wtf8_decoded_len_utf16(text: &[u8]) -> u32 {
     match first_non_ascii(text) {
         None => text.len() as u32,
-        Some(_) if text.len() > DECODED_BLOCK && is_valid_utf8(text) => {
+        // A text of 16 bytes or less is decoded: the two calls of simdutf cost more.
+        Some(_) if text.len() > 16 && is_valid_utf8(text) => {
             element_length_utf8_into_utf16(text) as u32
         }
         Some(ascii) => match code_unit_at_from(text, ascii as usize, ascii, u32::MAX) {
@@ -224,11 +225,12 @@ fn code_unit_at_from(text: &[u8], mut at: usize, mut seen: u32, index: u32) -> W
         let end = at + span;
         while at < end {
             let mut decoded = wtf8_decoded_units(&text[at..]);
-            let (first, second) = (decoded.next(), decoded.trail);
+            let Some(first) = decoded.next() else { break };
             // U+FFFD in the text has three bytes of its own.
-            let is_text = first != Some(0xFFFD) || text[at..].starts_with("\u{FFFD}".as_bytes());
+            let is_text = first != 0xFFFD || text[at..].starts_with("\u{FFFD}".as_bytes());
             let sequence = is_text.then(|| &text[at..at + decoded.at]);
-            for unit in [first, second].into_iter().flatten() {
+            for unit in [Some(first), decoded.trail] {
+                let Some(unit) = unit else { break };
                 if seen == index {
                     return Wtf8CodeUnitAt::Unit { unit, sequence };
                 }

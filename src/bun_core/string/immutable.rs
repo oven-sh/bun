@@ -2019,16 +2019,21 @@ pub fn order_wtf8_utf16(text: &[u8], units: &[u16]) -> Ordering {
     wtf8_decoded_units(text).cmp(units.iter().copied())
 }
 
-/// How many bytes `a` and `b` both start with. Blocks are compared first: `==` of two slices is memcmp.
+/// How many bytes `a` and `b` both start with. After the first 16, blocks are compared: `==` of two slices is memcmp.
 #[inline]
 fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
-    let blocks = a.chunks_exact(64).zip(b.chunks_exact(64));
-    let same = 64 * blocks.take_while(|(x, y)| x == y).count();
-    same + a[same..]
-        .iter()
-        .zip(&b[same..])
-        .take_while(|(x, y)| x == y)
-        .count()
+    let same_bytes = |a: &[u8], b: &[u8]| a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let mut same = same_bytes(&a[..a.len().min(16)], b);
+    if same == 16 {
+        for block in [256, 16] {
+            let blocks = a[same..]
+                .chunks_exact(block)
+                .zip(b[same..].chunks_exact(block));
+            same += block * blocks.take_while(|(x, y)| x == y).count();
+        }
+        same += same_bytes(&a[same..], &b[same..]);
+    }
+    same
 }
 
 pub fn cmp_strings_asc(_: (), a: &[u8], b: &[u8]) -> bool {
@@ -2872,8 +2877,10 @@ mod tests {
     #[test]
     fn common_prefix_len_is_where_two_texts_first_differ() {
         let text: Vec<u8> = (0..1000u32).map(|i| (i % 251) as u8).collect();
-        for len in [0, 1, 63, 64, 65, 127, 128, 129, 999, 1000] {
-            for at in [0, 1, 7, 62, 63, 64, 65, 127, 128, 500, 998, 999] {
+        for len in [0, 1, 15, 16, 17, 255, 256, 257, 271, 272, 273, 999, 1000] {
+            for at in [
+                0, 1, 7, 15, 16, 17, 31, 32, 255, 256, 257, 271, 272, 500, 998, 999,
+            ] {
                 if at < len {
                     let mut other = text[..len].to_vec();
                     other[at] ^= 1;

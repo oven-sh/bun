@@ -315,9 +315,7 @@ impl Route {
     /// Production keeps the reason to itself, see `resume_pending_responses`.
     fn set_build_error(&self, server: AnyServer, log: Log) {
         if server.config().is_development() {
-            // `Log::print` takes the process-global writer as a `*mut io::Writer` through `IntoLogWrite`.
-            let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
-            let _ = log.print(writer);
+            let _ = log.print_to_stderr_buffered();
             bun_output::flush();
         }
         self.state.set(State::Err(log));

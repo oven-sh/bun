@@ -463,6 +463,44 @@ export async function runCommandMaxRSS(options: { cmd: string[]; cwd?: string; e
   return result;
 }
 
+// Runs the `{ cmd, cwd }` passed as JSON in the last argument and prints one
+// JSON line: the command's output, exit status, and number of write(2) calls.
+const writeCountSpawner = /* js */ `
+  const syscw = () => Number(require("fs").readFileSync("/proc/self/io", "utf8").match(/^syscw: (\\d+)$/m)[1]);
+  const before = syscw();
+  const proc = Bun.spawn({ ...JSON.parse(process.argv.at(-1)), stdout: "pipe", stderr: "pipe" });
+  process.on("SIGTERM", () => proc.kill());
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  console.log(JSON.stringify({ stdout, stderr, exitCode, writes: syscw() - before }));
+`;
+
+/**
+ * Runs `cmd` in `cwd` and returns its output, exit status, and the number of
+ * write(2) calls made by it and by the processes it waited for.
+ *
+ * Linux only. The number is `syscw` in /proc/<pid>/io. The kernel adds the
+ * counters of a process to the parent that reaps it, so the parent here is a
+ * small bun process that reads its own counter before and after. It makes no
+ * write of its own in between.
+ */
+export async function runCommandWriteCount(options: { cmd: string[]; cwd?: string; env?: NodeJS.Dict<string> }) {
+  await using proc = Bun.spawn({
+    // The spawner stays out of `cwd`: a bunfig.toml there is not for it.
+    cmd: [bunExe(), "-e", writeCountSpawner, JSON.stringify({ cmd: options.cmd, cwd: options.cwd })],
+    env: options.env ?? bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  const result: { stdout: string; stderr: string; exitCode: number; writes: number } = JSON.parse(stdout);
+  // Guard the counter: output does not arrive without a write. A kernel that
+  // leaves `syscw` at 0 would make every upper bound on it vacuous.
+  expect(result.writes).toBeGreaterThanOrEqual(result.stdout || result.stderr ? 1 : 0);
+  return result;
+}
+
 /**
  * Peak RSS of a bun process that runs `fixture`, whose only stdout line is
  * the JSON `expected` (the transfer's completion result), and the peak RSS of

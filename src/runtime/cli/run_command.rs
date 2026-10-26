@@ -686,9 +686,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     }
                     // SAFETY: `ctx.log` set in `create_context_data` (single-
                     // threaded CLI startup), process-lifetime.
-                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ));
+                    let _ = unsafe { ctx.log() }.print_to_stderr();
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
                         bstr::BStr::new(err.name()),
@@ -701,9 +699,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
                 Ok(None) => {
                     // SAFETY: see `Err` arm above.
-                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ));
+                    let _ = unsafe { ctx.log() }.print_to_stderr();
                     pretty_errorln!("error loading current directory");
                     Output::flush();
                     return Err(crate::Error::CouldntReadCurrentDirectory);
@@ -1762,9 +1758,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     if let Some(log) = vm.log {
         // SAFETY: `vm.log` set in `init`; single-threaded CLI.
         let log = unsafe { &mut *log.as_ptr() };
-        let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer_buffered(),
-        ));
+        let _ = log.print_to_stderr_buffered();
     }
     Output::flush();
 }
@@ -1866,14 +1860,7 @@ impl RunCommand {
     fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &crate::Error) -> ! {
         // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
         // CLI startup) and is process-lifetime.
-        //
-        // `Log::print` is generic over `IntoLogWrite`, which is
-        // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
-        // returns the process-global writer; cast to the raw pointer the
-        // trait expects.
-        let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ));
+        let _ = unsafe { ctx.log() }.print_to_stderr();
 
         pretty_errorln!(
             "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -3224,9 +3211,7 @@ impl RunCommand {
     fn exec_as_if_node_boot_failed(ctx: &mut ContextData, basename: &[u8], err: crate::Error) -> ! {
         // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
         // CLI startup), process-lifetime.
-        let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ));
+        let _ = unsafe { ctx.log() }.print_to_stderr();
 
         Output::err(
             err,
@@ -4239,7 +4224,7 @@ impl BunXFastPath {
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = unsafe { &mut *ctx.log }.print_to_stderr();
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

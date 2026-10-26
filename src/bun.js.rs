@@ -32,7 +32,6 @@ pub(crate) fn apply_standalone_runtime_flags(
 fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
 
-    let writer = Output::error_writer_buffered();
     // `defer Output.flush()` — RAII guard flushes buffered stderr on every exit path.
     let _flush = Output::flush_guard();
 
@@ -40,7 +39,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
         // SAFETY: `vm.log` is set during `VirtualMachine::init` to the VM-owned log and
         // remains valid for the lifetime of `vm`; the `&mut VirtualMachine` borrow above
         // guarantees exclusive access to it here.
-        let _ = unsafe { p.as_mut() }.print(std::ptr::from_mut(writer));
+        let _ = unsafe { p.as_mut() }.print_to_stderr_buffered();
     }
 }
 

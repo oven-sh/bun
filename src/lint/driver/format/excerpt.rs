@@ -161,8 +161,7 @@ fn without_tabs(lines: &[&[u8]]) -> Vec<u8> {
     text
 }
 
-/// Appends formatted output to a `Vec`. `write_char` has a fast path because the padding before a `^` is written one
-/// space at a time.
+/// Appends formatted output to a `Vec`. `write_char` has a fast path because the highlighter writes single characters.
 struct Appender<'o>(&'o mut Vec<u8>);
 
 impl std::fmt::Write for Appender<'_> {

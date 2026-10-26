@@ -438,7 +438,7 @@ fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavail
         );
     }
     if !log.msgs.is_empty() {
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print_to_stderr();
     }
     log.reset();
     Output::flush();

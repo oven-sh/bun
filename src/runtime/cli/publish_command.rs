@@ -257,9 +257,7 @@ impl Context {
                 Ok(j) => j,
                 Err(bun_parsers::Error::Alloc(_)) => return Err(PackError::OutOfMemory),
                 Err(_) => {
-                    let _ = manager
-                        .log_mut()
-                        .print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = manager.log_mut().print_to_stderr();
                     Output::err_generic("failed to parse tarball package.json", ());
                     Global::crash();
                 }

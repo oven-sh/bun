@@ -264,7 +264,7 @@ fn report_bunfig_load_failure_as(
                 .to_vec()
                 .into();
         }
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print_to_stderr();
         if is_of_tool {
             Global::exit(exit_code_of_failure(cmd));
         }

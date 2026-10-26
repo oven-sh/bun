@@ -1146,9 +1146,7 @@ mod draft {
                 bstr::BStr::new(path),
             );
         }
-        let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ));
+        let _ = log.print_to_stderr();
         log.reset();
     }
 

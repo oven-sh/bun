@@ -301,9 +301,7 @@ impl PatchTask {
                 format_args!("{}", BStr::new(&apply.patchfilepath)),
             );
         }
-        let _ = apply
-            .logger
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = apply.logger.print_to_stderr();
     }
 
     fn run_from_main_thread_calc_hash(
@@ -336,9 +334,7 @@ impl PatchTask {
             None => {
                 if log_level != LogLevel::Silent {
                     if calc_hash.logger.has_errors() {
-                        let _ = calc_hash
-                            .logger
-                            .print(std::ptr::from_mut(Output::error_writer()));
+                        let _ = calc_hash.logger.print_to_stderr();
                     } else {
                         Output::err_generic(
                             "Failed to calculate hash for patch <b>{}<r>",

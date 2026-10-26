@@ -1553,7 +1553,7 @@ pub(crate) fn package_json_entry<'a>(
                 "failed to parse package.json: {}",
                 format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
             );
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print_to_stderr();
             Global::crash();
         }
         WorkspacePackageJSONCache::GetResult::Entry(entry) => {

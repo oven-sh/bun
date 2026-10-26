@@ -416,7 +416,7 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
         LoadResult::NotFound => false,
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
         broken @ LoadResult::Err(_) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print_to_stderr();
             crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors_for(
                 &broken, log_level, "",
             );

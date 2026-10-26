@@ -473,7 +473,7 @@ impl LoadResultErr {
 
 pub(crate) fn print_log_errors(log: &bun_ast::Log) {
     if log.has_errors() {
-        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
+        let _ = log.print_to_stderr();
     }
 }
 

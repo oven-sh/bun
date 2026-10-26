@@ -66,7 +66,7 @@ pub(super) fn package_json_entry_or_crash<'a>(
     ) {
         GetResult::Entry(entry) => return entry,
         GetResult::ParseErr(err) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print_to_stderr();
             ("parse", err)
         }
         GetResult::ReadErr(err) => ("read", err),
@@ -143,9 +143,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 ) -> Result<(), Error> {
     let log_level = manager.options.log_level;
     if manager.log_mut().errors > 0 {
-        let _ = manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = manager.log_mut().print_to_stderr();
         Global::crash();
     }
 

@@ -3942,11 +3942,15 @@ fn write_bytes(w: &mut impl fmt::Write, bytes: &[u8]) -> fmt::Result {
     w.write_str(unsafe { core::str::from_utf8_unchecked(bytes) })
 }
 
-#[inline]
-fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Result {
-    // Mirrors std.Io.Writer.splatByteAll.
-    for _ in 0..count {
-        w.write_char(byte as char)?;
+/// Writes `count` copies of the ASCII `byte`, up to 256 per `write_str`.
+pub fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Result {
+    assert!(byte.is_ascii());
+    let chunk = [byte; 256];
+    let mut remain = count;
+    while remain > 0 {
+        let take = remain.min(chunk.len());
+        write_bytes(w, &chunk[..take])?;
+        remain -= take;
     }
     Ok(())
 }

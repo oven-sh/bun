@@ -475,7 +475,7 @@ fn print_log(manager: &PackageManager) -> crate::Result<()> {
     let log = manager.log_mut();
     let failed = log.has_errors();
     if manager.options.log_level != LogLevel::Silent || failed {
-        log.print(core::ptr::from_mut(Output::error_writer()))?;
+        log.print_to_stderr()?;
     }
     log.reset();
     if failed {

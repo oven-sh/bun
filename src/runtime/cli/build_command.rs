@@ -163,9 +163,7 @@ impl BuildCommand {
                 sources: &mut core::iter::empty(),
             };
             if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
-                log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                    Output::error_writer(),
-                ))?;
+                log_ref.print_to_stderr()?;
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
@@ -584,9 +582,7 @@ impl BuildCommand {
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
 
                 if log_ref.has_errors() {
-                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ))?;
+                    log_ref.print_to_stderr()?;
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
@@ -634,9 +630,7 @@ impl BuildCommand {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {
-                        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                            Output::error_writer(),
-                        ))?;
+                        log_ref.print_to_stderr()?;
                     } else {
                         write!(Output::error_writer(), "error: {}", err.name())?;
                     }
@@ -1136,9 +1130,7 @@ impl BuildCommand {
             Output::flush();
         }
 
-        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ))?;
+        log_ref.print_to_stderr()?;
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,

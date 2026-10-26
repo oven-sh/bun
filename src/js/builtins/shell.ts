@@ -266,23 +266,26 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
           for (let i = 0, count = value.length; i < count; i++) {
             const chunk = value[i];
-            let bytes = new $Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+            const bytes = new $Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+            // Every decode ends at a newline, so it splits no character.
             const end = bytes.lastIndexOf(10) + 1;
             if (end === 0) {
               (pending ??= []).push(bytes);
               continue;
             }
-            const rest = end < bytes.length ? bytes.subarray(end) : undefined;
-            if (rest !== undefined) bytes = bytes.subarray(0, end);
+            let start = 0;
             if (pending !== undefined) {
-              pending.push(bytes);
-              bytes = concat(pending);
+              // The first newline ends the pending line. Only that much is copied.
+              start = bytes.indexOf(10) + 1;
+              pending.push(bytes.subarray(0, start));
+              const line = concat(pending);
+              pending = undefined;
+              yield line.toString("utf8", 0, line.length - 1);
             }
-            pending = rest === undefined ? undefined : [rest];
-
-            // Decoded up to a newline, so no character is split. The last element is the empty string after that newline.
-            const lines = bytes.toString().split("\n");
+            // The last element is the empty string after the newline at `end`.
+            const lines = bytes.toString("utf8", start, end).split("\n");
             for (let j = 0, last = lines.length - 1; j < last; j++) yield lines[j];
+            if (end < bytes.length) pending = [bytes.subarray(end)];
           }
         }
         ended = true;

@@ -31,6 +31,7 @@
 #include "NativePromiseContext.h"
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
+#include "BunInspectorController.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -107,6 +108,8 @@ JSVMClientData::~JSVMClientData()
         client->willDestroyVM();
     }
     ASSERT(m_sqliteDatabases.isEmpty());
+    // Its agents hold handles into the heap, which is finalized by now: BunInspectorController::destroy() ran first.
+    ASSERT(!m_inspectorController);
 
     m_normalWorld = nullptr;
     if (vmHandle)

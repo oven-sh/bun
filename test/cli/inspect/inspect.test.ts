@@ -961,14 +961,13 @@ describe.concurrent("bun test --isolate", () => {
   test(
     "a breakpoint by URL and the pause on debugger statements from the first file pause in the next file",
     async () => {
-      const callsHelper = {
-        imports: `import { add } from "./helper.ts";`,
-        after: `globalThis.sum = add(1, 2); debugger;`,
-      };
+      // The read makes the function object of `add`: the debugger reports to a client that
+      // attaches the scripts that have one.
+      const imports = `import { add } from "./helper.ts"; globalThis.add = add;`;
       using dir = tempDir("inspect-isolate-breakpoint", {
         "helper.ts": `export function add(a: number, b: number) {\n  const sum = a + b;\n  return sum;\n}\n`,
-        "a.test.ts": waitingTestFile("A", callsHelper),
-        "b.test.ts": waitingTestFile("B", callsHelper),
+        "a.test.ts": waitingTestFile("A", { imports, after: `globalThis.sum = add(1, 2);` }),
+        "b.test.ts": waitingTestFile("B", { imports, after: `globalThis.sum = add(1, 2);\ndebugger;` }),
       });
       await using run = new InspectedTestRun(String(dir), [...isolated, "./a.test.ts", "./b.test.ts"]);
       await run.reached("A");
@@ -983,33 +982,32 @@ describe.concurrent("bun test --isolate", () => {
       expect(lineNumber).toBeGreaterThan(-1);
       const { breakpointId } = await client.send("Debugger.setBreakpointByUrl", { url: helper.url, lineNumber });
 
-      const pauses: Record<string, object> = {};
-      for (const name of ["A", "B"]) {
-        await run.reached(name);
-        release(client);
-        const atBreakpoint = await client.next("Debugger.paused");
-        client.post("Debugger.resume");
-        const atStatement = await client.next("Debugger.paused");
-        const { result } = await client.send("Debugger.evaluateOnCallFrame", {
-          callFrameId: atStatement.callFrames[0].callFrameId,
-          expression: "globalThis.marker + globalThis.sum",
-          returnByValue: true,
-        });
-        pauses[name] = {
-          atBreakpoint: {
-            reason: atBreakpoint.reason,
-            breakpointId: atBreakpoint.data?.breakpointId,
-            functionName: atBreakpoint.callFrames[0].functionName,
-          },
-          atStatement: { reason: atStatement.reason, markerAndSum: result.value },
-        };
-        client.post("Debugger.resume");
-      }
-      const atBreakpoint = { reason: "Breakpoint", breakpointId, functionName: "add" };
-      expect(pauses).toEqual({
-        A: { atBreakpoint, atStatement: { reason: "DebuggerStatement", markerAndSum: "A3" } },
-        B: { atBreakpoint, atStatement: { reason: "DebuggerStatement", markerAndSum: "B3" } },
+      const describe = (paused: any) => ({
+        reason: paused.reason,
+        breakpointId: paused.data?.breakpointId,
+        functionName: paused.callFrames[0].functionName,
       });
+      const atBreakpoint = { reason: "Breakpoint", breakpointId, functionName: "add" };
+
+      release(client);
+      expect(describe(await client.next("Debugger.paused"))).toEqual(atBreakpoint);
+      client.post("Debugger.resume");
+
+      await run.reached("B");
+      release(client);
+      expect(describe(await client.next("Debugger.paused"))).toEqual(atBreakpoint);
+      client.post("Debugger.resume");
+      const atStatement = await client.next("Debugger.paused");
+      const { result } = await client.send("Debugger.evaluateOnCallFrame", {
+        callFrameId: atStatement.callFrames[0].callFrameId,
+        expression: "globalThis.marker + globalThis.sum",
+        returnByValue: true,
+      });
+      expect({ reason: atStatement.reason, markerAndSum: result.value }).toEqual({
+        reason: "DebuggerStatement",
+        markerAndSum: "B3",
+      });
+      client.post("Debugger.resume");
       expect(await run.finished()).toEqual(passed(2));
     },
     timeout,

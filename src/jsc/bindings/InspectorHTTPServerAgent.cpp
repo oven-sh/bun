@@ -4,8 +4,7 @@
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/text/WTFString.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include "BunInspectorController.h"
 #include <wtf/TZoneMallocInlines.h>
 #include "ZigGlobalObject.h"
 
@@ -18,10 +17,10 @@ extern "C" {
 void Bun__HTTPServerAgent__setEnabled(Inspector::InspectorHTTPServerAgent* agent);
 }
 
-InspectorHTTPServerAgent::InspectorHTTPServerAgent(JSC::JSGlobalObject& globalObject)
+InspectorHTTPServerAgent::InspectorHTTPServerAgent(Bun::BunInspectorController& controller)
     : InspectorAgentBase("HTTPServer"_s)
-    , m_backendDispatcher(HTTPServerBackendDispatcher::create(globalObject.inspectorController().backendDispatcher(), this))
-    , m_frontendDispatcher(makeUnique<HTTPServerFrontendDispatcher>(const_cast<FrontendRouter&>(globalObject.inspectorController().frontendRouter())))
+    , m_backendDispatcher(HTTPServerBackendDispatcher::create(controller.backendDispatcher(), this))
+    , m_frontendDispatcher(makeUnique<HTTPServerFrontendDispatcher>(controller.frontendRouter()))
     , m_enabled(false)
 {
 }

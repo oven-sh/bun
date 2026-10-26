@@ -11,8 +11,7 @@
 #include <JavaScriptCore/ScriptArguments.h>
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/InspectorConsoleAgent.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include "BunInspectorController.h"
 #include "ConsoleObject.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <JavaScriptCore/JSMap.h>
@@ -42,11 +41,11 @@ void Bun__LifecycleAgentReportError(Inspector::InspectorLifecycleAgent* agent, Z
 }
 }
 
-InspectorLifecycleAgent::InspectorLifecycleAgent(JSC::JSGlobalObject& globalObject)
+InspectorLifecycleAgent::InspectorLifecycleAgent(Bun::BunInspectorController& controller)
     : InspectorAgentBase("LifecycleReporter"_s)
-    , m_globalObject(globalObject)
-    , m_backendDispatcher(LifecycleReporterBackendDispatcher::create(m_globalObject.inspectorController().backendDispatcher(), this))
-    , m_frontendDispatcher(makeUnique<LifecycleReporterFrontendDispatcher>(const_cast<FrontendRouter&>(m_globalObject.inspectorController().frontendRouter())))
+    , m_controller(controller)
+    , m_backendDispatcher(LifecycleReporterBackendDispatcher::create(controller.backendDispatcher(), this))
+    , m_frontendDispatcher(makeUnique<LifecycleReporterFrontendDispatcher>(controller.frontendRouter()))
 {
 }
 
@@ -129,7 +128,8 @@ using ModuleGraph = std::tuple<Ref<JSON::ArrayOf<String>> /* esm */, Ref<JSON::A
 
 Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 {
-    auto& vm = m_globalObject.vm();
+    auto* global = defaultGlobalObject(&m_controller.globalObject());
+    auto& vm = global->vm();
     // The caller is the generated protocol dispatcher, which never does JSC
     // exception checks, so exceptions must not escape this function: report
     // them as a protocol error and clear them (keeping only termination).
@@ -139,7 +139,6 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
         return makeUnexpected(ErrorString { message });
     };
 
-    auto* global = defaultGlobalObject(&m_globalObject);
     auto* cjsMap = global->requireMap();
 
     Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
@@ -196,7 +195,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 
     String cwd;
     {
-        auto cwdValue = JSC::JSValue::decode(Bun__Process__getCwd(&m_globalObject));
+        auto cwdValue = JSC::JSValue::decode(Bun__Process__getCwd(global));
         RETURN_IF_EXCEPTION(scope, fail("Failed to get cwd"_s));
         cwd = cwdValue.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, fail("Failed to convert value to string"_s));

@@ -8,8 +8,7 @@
 #include <JavaScriptCore/ScriptArguments.h>
 #include <JavaScriptCore/ConsoleMessage.h>
 #include <JavaScriptCore/InspectorConsoleAgent.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include "BunInspectorController.h"
 #include <wtf/TZoneMallocInlines.h>
 #include "ZigGlobalObject.h"
 
@@ -19,10 +18,10 @@ extern "C" void Bun__InspectorBunFrontendDevServerAgent__setEnabled(Inspector::I
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorBunFrontendDevServerAgent);
 
-InspectorBunFrontendDevServerAgent::InspectorBunFrontendDevServerAgent(JSC::JSGlobalObject& globalObject)
+InspectorBunFrontendDevServerAgent::InspectorBunFrontendDevServerAgent(Bun::BunInspectorController& controller)
     : InspectorAgentBase("BunFrontendDevServer"_s)
-    , m_backendDispatcher(BunFrontendDevServerBackendDispatcher::create(globalObject.inspectorController().backendDispatcher(), this))
-    , m_frontendDispatcher(makeUnique<BunFrontendDevServerFrontendDispatcher>(const_cast<FrontendRouter&>(globalObject.inspectorController().frontendRouter())))
+    , m_backendDispatcher(BunFrontendDevServerBackendDispatcher::create(controller.backendDispatcher(), this))
+    , m_frontendDispatcher(makeUnique<BunFrontendDevServerFrontendDispatcher>(controller.frontendRouter()))
     , m_enabled(false)
 {
 }

@@ -9,6 +9,10 @@
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 
+namespace Bun {
+class BunInspectorController;
+}
+
 namespace Inspector {
 
 class FrontendRouter;
@@ -24,7 +28,7 @@ class InspectorTestReporterAgent final : public InspectorAgentBase, public Inspe
 public:
     OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
 
-    InspectorTestReporterAgent(JSC::JSGlobalObject&);
+    InspectorTestReporterAgent(Bun::BunInspectorController&);
     virtual ~InspectorTestReporterAgent();
 
     // InspectorAgentBase
@@ -42,7 +46,7 @@ public:
     void reportTestEnd(int testId, Protocol::TestReporter::TestStatus status, double elapsed);
 
 private:
-    JSC::JSGlobalObject& m_globalObject;
+    Bun::BunInspectorController& m_controller;
     std::unique_ptr<TestReporterFrontendDispatcher> m_frontendDispatcher;
     Ref<TestReporterBackendDispatcher> m_backendDispatcher;
     bool m_enabled { false };

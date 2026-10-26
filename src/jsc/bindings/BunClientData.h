@@ -84,6 +84,7 @@ class GlobalObject;
 class VersionSqlite3;
 
 namespace Bun {
+class BunInspectorController;
 class StrongRootBlock;
 
 // JSC measures the live size of the heap at the end of each collection, but only
@@ -304,6 +305,10 @@ public:
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+
+    // The VM's inspector backend (see BunInspectorController.h, which owns every access). Null for a VM that no
+    // inspector attached to.
+    std::unique_ptr<Bun::BunInspectorController> m_inspectorController;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
 

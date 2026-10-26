@@ -10,6 +10,10 @@
 #include <wtf/Noncopyable.h>
 #include "headers-handwritten.h"
 
+namespace Bun {
+class BunInspectorController;
+}
+
 namespace Inspector {
 
 class FrontendRouter;
@@ -24,7 +28,7 @@ class InspectorBunFrontendDevServerAgent final : public InspectorAgentBase, publ
 public:
     OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
 
-    InspectorBunFrontendDevServerAgent(JSC::JSGlobalObject&);
+    InspectorBunFrontendDevServerAgent(Bun::BunInspectorController&);
     virtual ~InspectorBunFrontendDevServerAgent() final;
 
     // InspectorAgentBase

@@ -5,8 +5,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/text/WTFString.h>
 #include <JavaScriptCore/ScriptCallStack.h>
-#include <JavaScriptCore/JSGlobalObjectDebuggable.h>
-#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include "BunInspectorController.h"
 #include "ErrorStackTrace.h"
 #include "ZigGlobalObject.h"
 
@@ -115,11 +114,11 @@ void Bun__TestReporterAgentReportTestEnd(Inspector::InspectorTestReporterAgent* 
 }
 }
 
-InspectorTestReporterAgent::InspectorTestReporterAgent(JSC::JSGlobalObject& globalObject)
+InspectorTestReporterAgent::InspectorTestReporterAgent(Bun::BunInspectorController& controller)
     : InspectorAgentBase("TestReporter"_s)
-    , m_globalObject(globalObject)
-    , m_backendDispatcher(TestReporterBackendDispatcher::create(m_globalObject.inspectorController().backendDispatcher(), this))
-    , m_frontendDispatcher(makeUnique<TestReporterFrontendDispatcher>(const_cast<FrontendRouter&>(m_globalObject.inspectorController().frontendRouter())))
+    , m_controller(controller)
+    , m_backendDispatcher(TestReporterBackendDispatcher::create(controller.backendDispatcher(), this))
+    , m_frontendDispatcher(makeUnique<TestReporterFrontendDispatcher>(controller.frontendRouter()))
 {
 }
 
@@ -168,7 +167,7 @@ void InspectorTestReporterAgent::reportTestFound(int testId, const String& name,
     JSC::SourceID sourceID = 0;
     String sourceURL;
 
-    auto* globalObject = &m_globalObject;
+    auto* globalObject = &m_controller.globalObject();
     auto& vm = JSC::getVM(globalObject);
 
     JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {

@@ -9,6 +9,10 @@
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
 #include "headers-handwritten.h"
+namespace Bun {
+class BunInspectorController;
+}
+
 namespace Inspector {
 
 class FrontendRouter;
@@ -24,7 +28,7 @@ class InspectorLifecycleAgent final : public InspectorAgentBase, public Inspecto
 public:
     OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
 
-    InspectorLifecycleAgent(JSC::JSGlobalObject&);
+    InspectorLifecycleAgent(Bun::BunInspectorController&);
     virtual ~InspectorLifecycleAgent();
 
     // InspectorAgentBase
@@ -43,7 +47,7 @@ public:
     Protocol::ErrorStringOr<void> stopPreventingExit();
 
 private:
-    JSC::JSGlobalObject& m_globalObject;
+    Bun::BunInspectorController& m_controller;
     std::unique_ptr<LifecycleReporterFrontendDispatcher> m_frontendDispatcher;
     Ref<LifecycleReporterBackendDispatcher> m_backendDispatcher;
     bool m_enabled { false };

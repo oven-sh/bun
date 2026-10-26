@@ -67,7 +67,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     , m_contextThreadUID(Thread::currentSingleton().uid())
     , m_bunContext(Bun__VirtualMachine__rootContext(m_bunVM))
 {
-    addToContextsMap();
+    takeIdentifierInContextsMap();
 }
 
 ScriptExecutionContext::ScriptExecutionContext(ScriptExecutionContext& parent)
@@ -420,19 +420,26 @@ extern "C" ScriptExecutionContextIdentifier Zig__GlobalObject__contextIdentifier
     return globalObject->scriptExecutionContext()->identifier();
 }
 
-void ScriptExecutionContext::regenerateIdentifier()
-{
-
-    m_identifier = ++lastUniqueIdentifier;
-
-    addToContextsMap();
-}
-
 void ScriptExecutionContext::addToContextsMap()
 {
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
     allScriptExecutionContextsMap().add(m_identifier, this);
+}
+
+// The global that `bun test --isolate` makes for the next file inherits the identifier of the one it replaces. The
+// replaced context gets a new identifier in the same step as this one takes the entry, so the identifier names a
+// context of the VM at every moment: a post by identifier from another thread is never refused in between.
+void ScriptExecutionContext::takeIdentifierInContextsMap()
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto& contexts = allScriptExecutionContextsMap();
+    if (auto* replaced = contexts.get(m_identifier)) {
+        ASSERT(replaced->m_vm == m_vm);
+        replaced->m_identifier = ++lastUniqueIdentifier;
+        contexts.add(replaced->m_identifier, replaced);
+    }
+    contexts.set(m_identifier, this);
 }
 
 void ScriptExecutionContext::removeFromContextsMap()

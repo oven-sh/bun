@@ -67,6 +67,7 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
+#include "BunInspectorController.h"
 #include "BunObject.h"
 #include "GeneratedBlob.h"
 #include "GeneratedBunObject.h"
@@ -739,10 +740,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
 
     // The new global must inherit the old one's ScriptExecutionContext identifier so that
     // `Bun.isMainThread` (identifier == 1) and cross-thread task dispatch keep working.
-    // Move the old context to a fresh identifier first to free the slot.
+    // The new context takes the identifier from the old one as it is made.
     const auto inheritedId = oldContext->identifier();
-    oldContext->removeFromContextsMap();
-    oldContext->regenerateIdentifier();
 
     auto* structure = Zig::GlobalObject::createStructure(vm);
     if (!structure) [[unlikely]] {
@@ -764,6 +763,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // into the dead cell via NapiHandleScope::open. Point those envs at the
     // new global and adopt the refs before unprotecting the old one.
     globalObject->adoptNapiEnvsForTestIsolation(oldGlobal);
+
+    // The inspector session of the VM moves to the new global with what its frontends enabled.
+    if (auto* inspector = Bun::BunInspectorController::get(vm)) [[unlikely]]
+        inspector->didReplaceGlobalObject(*globalObject);
 
     // The swap replaces this thread's ScriptExecutionContext. If the thread had
     // joined a worker_threads SHARE_ENV tree, carry it over (store + the

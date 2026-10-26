@@ -163,7 +163,7 @@ console.log(await response.text()); // each <a> has data-request="abc123"
 ```
 
 To give a handler a store of its own, bind the handler with
-`AsyncLocalStorage.bind()` before you pass it to `on()`.
+`AsyncResource.bind()` before you pass it to `on()`.
 
 `transform()` on a `string` or `ArrayBuffer` has to return its result
 synchronously, so it cannot wait for a handler that needs the event loop to turn

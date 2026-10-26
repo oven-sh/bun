@@ -5119,8 +5119,7 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    /// The user's external entry that covers `import_path`: the path itself, or
-    /// the package it is a path into ("foo" covers "foo/bar").
+    /// The user's external entry that covers `import_path` ("foo" covers "foo/bar").
     fn user_external<'p>(&self, import_path: &'p [u8]) -> Option<&'p [u8]> {
         let mut query = import_path;
         loop {

@@ -6504,9 +6504,7 @@ pub mod bv2_impl {
             Ok(out)
         }
 
-        /// Like esbuild, a JavaScript import of a disabled path is an empty CommonJS
-        /// module. Every other import of one (CSS, HTML, `require.resolve`) stays
-        /// external, and so does every import in the DevServer.
+        /// Only a JavaScript import of a disabled path is the empty module; the rest stay external.
         fn disabled_import_is_empty_module(&self, importer: Loader, kind: ImportKind) -> bool {
             self.dev_server.is_none()
                 && importer.is_javascript_like()
@@ -7245,8 +7243,7 @@ pub mod bv2_impl {
                 if resolve_result.path_pair.primary.is_disabled
                     && !self.disabled_import_is_empty_module(loader, import_record.kind)
                 {
-                    // The import stays external. A disabled "module" entry with a live
-                    // "main" uses "main".
+                    // Stays external. A live "main" stands in for a disabled "module" entry.
                     match resolve_result.path_pair.secondary {
                         Some(secondary) if !secondary.is_disabled => {
                             resolve_result.path_pair.primary = secondary;

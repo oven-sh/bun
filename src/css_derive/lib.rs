@@ -749,7 +749,6 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #name {
             /// CSS keyword for this variant.
             #[inline]
@@ -1015,7 +1014,6 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #impl_g #name #ty_g #where_g {
             #[inline]
             pub fn to_css(
@@ -1188,7 +1186,6 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
         impl #b_impl_g #name #ty_g #b_where_g {
             #[inline]
             pub fn parse(

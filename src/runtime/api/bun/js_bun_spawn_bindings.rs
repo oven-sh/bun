@@ -10,6 +10,7 @@ use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
@@ -264,21 +265,34 @@ fn get_argv(
 
 /// Bun.spawn() calls this.
 pub(crate) fn spawn(
-    cx: &bun_jsc::JsThread<'_>,
-    args: JSValue,
-    secondary_args_value: Option<JSValue>,
+    cx: &mut JsScope<'_>,
+    cmd_or_options: JsLocal<'_>,
+    options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync(false, cx, args, secondary_args_value, &mut None)
+    spawn_maybe_sync(
+        false,
+        &cx.js_thread(),
+        cmd_or_options.to_js(),
+        options.to_js(),
+        &mut None,
+    )
 }
 
 /// Bun.spawnSync() calls this.
 pub(crate) fn spawn_sync(
-    cx: &bun_jsc::JsThread<'_>,
-    args: JSValue,
-    secondary_args_value: Option<JSValue>,
+    cx: &mut JsScope<'_>,
+    cmd_or_options: JsLocal<'_>,
+    options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
+    let cx = &cx.js_thread();
     let mut bun_test_deadline: Option<Timespec> = None;
-    let result = spawn_maybe_sync(true, cx, args, secondary_args_value, &mut bun_test_deadline);
+    let result = spawn_maybe_sync(
+        true,
+        cx,
+        cmd_or_options.to_js(),
+        options.to_js(),
+        &mut bun_test_deadline,
+    );
     // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
     if let Some(deadline) = bun_test_deadline
         && result.is_ok()
@@ -300,11 +314,44 @@ pub(crate) fn spawn_sync(
     result
 }
 
+/// The terminal a spawn made for its child, closed unless the spawn gets far enough to `take` it: the user never
+/// received it then.
+#[derive(Default)]
+struct SpawnedTerminal(Option<terminal_body::CreateResult>);
+
+impl Drop for SpawnedTerminal {
+    fn drop(&mut self) {
+        if let Some(info) = self.0.take() {
+            info.terminal.abandon_from_spawn();
+        }
+    }
+}
+
+/// Reports the exit of a child that could not be watched, once the rest of its `Subprocess` is set up. That runs
+/// `onExit`, so not with an exception pending.
+struct ReportUnwatchedExit(bun_ptr::BackRef<SubprocessT<'static>>);
+
+impl Drop for ReportUnwatchedExit {
+    fn drop(&mut self) {
+        let process = self.0.process_mut();
+        if process.has_exited() {
+            // process has already exited, we called wait4(), but we did not call onProcessExit()
+            let status = process.status.clone();
+            process.on_exit(status, &bun_core::ffi::zeroed::<Rusage>());
+        } else {
+            // It has exited and only wait4() is left to call, or it is running: then it is tried once more to watch
+            // it, and failing that it is ended and reaped.
+            // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
+            process.wait(false);
+        }
+    }
+}
+
 fn spawn_maybe_sync(
     is_sync: bool,
     cx: &bun_jsc::JsThread<'_>,
     args_: JSValue,
-    secondary_args_value: Option<JSValue>,
+    secondary_args_value: JSValue,
     bun_test_deadline: &mut Option<Timespec>,
 ) -> JsResult<JSValue> {
     if is_sync {
@@ -330,7 +377,7 @@ fn spawn_maybe_sync(
     // outlives this call frame.
     let jsc_vm: &mut jsc::VirtualMachineRef = cx.vm().as_mut();
 
-    let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
     let mut user_specified_cwd = false;
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
@@ -369,26 +416,9 @@ fn spawn_maybe_sync(
     #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
-    let mut terminal_info: Option<terminal_body::CreateResult> = None;
+    let mut terminal_info = SpawnedTerminal::default();
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
-    let mut defer_guard = scopeguard::guard(
-        &mut terminal_info,
-        |terminal_info: &mut Option<terminal_body::CreateResult>| {
-            // If we created a new terminal but spawn failed, close it. The
-            // writer/reader/finalize deref paths release the remaining refs.
-            // Downgrade the JSRef so the wrapper is GC-eligible, and mark
-            // finalized so onReaderDone skips the JS exit callback — the user
-            // never received this terminal (spawn threw).
-            if let Some(info) = terminal_info.take() {
-                // `abandon_from_spawn` is the spawn-side error-path teardown
-                // (downgrade JSRef, mark finalized, close_internal).
-                info.terminal.abandon_from_spawn();
-            }
-        },
-    );
-    // Note: reshaped for borrowck — re-borrow through the guard.
-    let terminal_info = &mut **defer_guard;
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
     // `spawn_process` returns.
@@ -403,7 +433,7 @@ fn spawn_maybe_sync(
         let args_type = args.js_type();
         if args_type.is_array() {
             cmd_value = args;
-            args = secondary_args_value.unwrap_or_default();
+            args = secondary_args_value;
         } else if !args.is_object() {
             return Err(cx
                 .global()
@@ -782,12 +812,12 @@ fn spawn_maybe_sync(
                 if let Some(terminal_val) = args.get_truthy(cx.global(), "terminal")? {
                     // Check if it's an existing Terminal object
                     if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
-                        // `from_js` returns the live `m_ctx` pointer borrowed
+                        // `from_js` returns the live `Terminal` pointer borrowed
                         // from the JS wrapper; it stays valid for as long as
                         // `terminal_val` is reachable (kept alive below via
                         // `terminal_js_value`), so the `BackRef` invariant
                         // (pointee outlives holder) holds for this scope.
-                        // SAFETY: `terminal` is the wrapper's live `m_ctx` heap pointer
+                        // SAFETY: `terminal` is the wrapper's live heap pointer
                         // (write provenance from its original allocation).
                         let term = unsafe { bun_ptr::BackRef::from_raw_mut(terminal.as_ptr()) };
                         if term.is_closed() {
@@ -818,8 +848,8 @@ fn spawn_maybe_sync(
                         // Create a new terminal from options
                         let term_options =
                             TerminalOptions::parse_from_js(cx.global(), terminal_val)?;
-                        match Terminal::create_from_spawn(cx.global(), &term_options) {
-                            Ok(created) => *terminal_info = Some(created),
+                        match Terminal::create_from_spawn(cx, &term_options) {
+                            Ok(created) => terminal_info.0 = Some(created),
                             Err(err) => {
                                 return Err(match err {
                                     TerminalInitError::OpenPtyFailed => {
@@ -852,7 +882,7 @@ fn spawn_maybe_sync(
                             existing_terminal
                                 .map(|t| t.get_slave_fd())
                                 .unwrap_or_else(|| {
-                                    terminal_info.as_ref().unwrap().terminal.get_slave_fd()
+                                    terminal_info.0.as_ref().unwrap().terminal.get_slave_fd()
                                 });
                         stdio[0] = Stdio::Fd(slave_fd);
                         stdio[1] = Stdio::Fd(slave_fd);
@@ -915,35 +945,13 @@ fn spawn_maybe_sync(
     }
     let _ = &inherited_env_storage;
 
+    // A memfd left in `stdio` at any return is closed by `Stdio`'s Drop.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     for fd_index in 0..stdio.len() {
-        if stdio[fd_index].can_use_memfd() {
-            if stdio[fd_index].use_memfd(fd_index as u32) {
-                jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
-            }
+        if stdio[fd_index].can_use_memfd() && stdio[fd_index].use_memfd(fd_index as u32) {
+            jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
         }
     }
-    let mut should_close_memfd = bun_core::env::IS_LINUX;
-
-    let mut memfd_guard = scopeguard::guard(
-        (&mut should_close_memfd, &mut stdio),
-        |(should_close_memfd, stdio): (&mut bool, &mut [Stdio; 3])| {
-            if *should_close_memfd {
-                for fd_index in 0..stdio.len() {
-                    if matches!(stdio[fd_index], Stdio::Memfd(_)) {
-                        // Note: closing the fd first and then assigning would
-                        // Drop the old `Stdio::Memfd` and re-close the same fd
-                        // (EBADF → fd.rs debug_assert). `Stdio`'s Drop already
-                        // closes a Memfd, so just replace with `Ignore` and
-                        // let Drop perform the single close.
-                        drop(core::mem::replace(&mut stdio[fd_index], Stdio::Ignore));
-                    }
-                }
-            }
-        },
-    );
-    // Note: reshaped for borrowck — re-borrow through the guard tuple so the guard
-    // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
-    let (should_close_memfd, stdio) = &mut *memfd_guard;
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
     let mut ipc_env_buf: [u8; 32] = [0; 32];
@@ -1041,58 +1049,39 @@ fn spawn_maybe_sync(
     // and to avoid interfering with the main event loop.
     //
     // Note: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
-    // returned `&mut SpawnSyncEventLoop` keeps that borrow alive, so we cannot
-    // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
-    // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
+    // returned `&SpawnSyncEventLoop` keeps that borrow alive for the whole
+    // call. Route through a raw `*mut VirtualMachineRef` instead.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
+    let sync_loop = if is_sync {
+        // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
+        // same VM via the raw pointer for its `vm` arg.
+        let Some(sync_loop) = (unsafe {
+            (*jsc_vm_ptr)
+                .rare_data()
+                .spawn_sync_event_loop(&mut *jsc_vm_ptr)
+        }) else {
+            // `WindowsStdio` has no `Drop`; free the pipes `as_spawn_option` allocated.
+            #[cfg(windows)]
+            for e in &mut extra_fds {
+                e.deinit();
+            }
+            return Err(throw_spawn_sync_loop_init_failed(cx.global()));
+        };
+        Some(sync_loop.prepare(jsc_vm_ptr.cast()))
+    } else {
+        None
+    };
     // For is_sync, use the isolated loop's `event_loop` (created by
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
     // instead of the main loop.
-    let event_loop: *mut jsc::event_loop::EventLoop = if is_sync {
-        // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
-        // same VM via the raw pointer for its `vm` arg.
-        unsafe {
-            let Some(sync_loop) = (*jsc_vm_ptr)
-                .rare_data()
-                .spawn_sync_event_loop(&mut *jsc_vm_ptr)
-            else {
-                // `WindowsStdio` has no `Drop`; free the pipes `as_spawn_option` allocated.
-                #[cfg(windows)]
-                for e in &mut extra_fds {
-                    e.deinit();
-                }
-                return Err(throw_spawn_sync_loop_init_failed(cx.global()));
-            };
-            sync_loop.prepare(jsc_vm_ptr.cast());
-            // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
-            // (bun_event_loop is below bun_jsc); the accessor returns the
-            // concrete `jsc::EventLoop` allocation created via the runtime
-            // vtable in `SpawnSyncEventLoop::init`.
-            sync_loop
-                .event_loop_ptr()
-                .cast::<jsc::event_loop::EventLoop>()
-        }
-    } else {
-        jsc_vm.event_loop()
+    let event_loop: *mut jsc::event_loop::EventLoop = match &sync_loop {
+        // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
+        // (bun_event_loop is below bun_jsc).
+        Some(sync_loop) => sync_loop
+            .event_loop_ptr()
+            .cast::<jsc::event_loop::EventLoop>(),
+        None => jsc_vm.event_loop(),
     };
-
-    // Note: reshaped for borrowck — `defer!` is non-`move`, so the closure
-    // would capture the *place* `*jsc_vm_ptr` and conflict with later
-    // `&mut *jsc_vm_ptr` re-borrows below. Copy the raw pointer into a sibling
-    // local so the closure's captured place is disjoint.
-    let jsc_vm_ptr_cleanup = jsc_vm_ptr;
-    scopeguard::defer! {
-        if is_sync {
-            // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
-            unsafe {
-                (*jsc_vm_ptr_cleanup)
-                    .rare_data()
-                    .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
-                    .expect("cached by the is_sync prepare above")
-                    .cleanup(jsc_vm_ptr_cleanup.cast());
-            }
-        }
-    }
 
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
@@ -1146,14 +1135,14 @@ fn spawn_maybe_sync(
         // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
         // For existing terminals, the session is already set up - child just uses the fd as stdio.
         #[cfg(unix)]
-        pty_slave_fd: match terminal_info.as_ref() {
+        pty_slave_fd: match terminal_info.0.as_ref() {
             Some(ti) => ti.terminal.get_slave_fd().native(),
             None => -1,
         },
         #[cfg(windows)]
         pseudoconsole: existing_terminal
             .as_deref()
-            .or_else(|| terminal_info.as_ref().map(|info| info.terminal.get()))
+            .or_else(|| terminal_info.0.as_ref().map(|info| info.terminal.get()))
             .and_then(Terminal::get_pseudoconsole),
 
         #[cfg(windows)]
@@ -1316,7 +1305,7 @@ fn spawn_maybe_sync(
         terminal: Cell::new(
             existing_terminal
                 .map(|t| t.as_ptr())
-                .or_else(|| terminal_info.as_ref().map(|info| info.terminal.as_ptr()))
+                .or_else(|| terminal_info.0.as_ref().map(|info| info.terminal.as_ptr()))
                 .and_then(NonNull::new),
         ),
         observable_getters: Default::default(),
@@ -1417,6 +1406,12 @@ fn spawn_maybe_sync(
                 }
             }
             subprocess.finalize_streams();
+            #[cfg(unix)]
+            let _ = subprocess
+                .process_mut()
+                .kill_and_reap(&mut bun_core::ffi::zeroed::<Rusage>());
+            #[cfg(windows)]
+            let _ = subprocess.try_kill(SignalCode::SIGKILL);
             subprocess.process_mut().detach();
             if let Some(ipc_data) = subprocess.ipc_data.take() {
                 // Nothing else holds it yet (no socket wired, no task scheduled).
@@ -1430,13 +1425,7 @@ fn spawn_maybe_sync(
             subprocess.stderr_maxbuf.set(mb);
             subprocess.deref();
             subprocess.deref();
-            // Note: `Writable::init` returns
-            // `crate::Error`. Map non-thrown to OOM.
-            if cx.global().has_exception() {
-                return Err(JsError::Thrown);
-            }
-            let _ = err;
-            return Err(cx.global().throw_out_of_memory());
+            return Err(err);
         }
     }
 
@@ -1462,7 +1451,7 @@ fn spawn_maybe_sync(
     // Inline terminals keep slave_fd until on_process_exit (BSD kernels flush
     // pty output on last slave close; see Terminal::drain_and_close_slave_fd).
     // Existing terminals keep slave_fd for reuse.
-    if let Some(info) = terminal_info.take() {
+    if let Some(info) = terminal_info.0.take() {
         terminal_js_value = info.js_value;
         #[cfg(unix)]
         info.terminal.mark_inline_spawned();
@@ -1493,24 +1482,6 @@ fn spawn_maybe_sync(
             promise_for_stream != JSValue::ZERO,
         )
     });
-
-    if promise_for_stream != JSValue::ZERO && !cx.global().has_exception() {
-        if let Some(err) = promise_for_stream.to_error() {
-            let _ = cx.global().throw_value(err);
-        }
-    }
-
-    if cx.global().has_exception() {
-        let err = cx.global().take_exception(JsError::Thrown);
-        // Ensure we kill the process so we don't leave things in an unexpected state.
-        let _ = subprocess.try_kill(subprocess.kill_signal);
-
-        if cx.global().has_exception() {
-            return Err(JsError::Thrown);
-        }
-
-        return Err(cx.global().throw_value(err));
-    }
 
     // Note: Option (rather than an uninitialized value) since `IPC::Socket`
     // is a tagged union (zeroed enum is UB) and it is only read on the
@@ -1612,11 +1583,8 @@ fn spawn_maybe_sync(
     }
 
     let out = if !is_sync {
-        // `subprocess_ptr` came from `heap::alloc` above and has not yet been
-        // wrapped; ownership transfers to the C++ JS cell (released via
-        // `SubprocessClass__finalize`). Use the raw-ptr entrypoint instead of
-        // the by-value `JsClass::to_js` (which would re-box).
-        SubprocessT::to_js_from_ptr(subprocess_ptr, cx.global())
+        // The JS wrapper adopts the ref `subprocess_ptr` was allocated with.
+        SubprocessT::to_js_nonnull(subprocess_nn, cx.global())
     } else {
         JSValue::ZERO
     };
@@ -1692,26 +1660,8 @@ fn spawn_maybe_sync(
         }
     }
 
-    // Note: reshaped for borrowck — copy `subprocess_ptr` so the
-    // non-`move` `defer!` closure captures a disjoint place from the
-    // `AbortHandle::follow_owner(subprocess_ptr, …)` calls that follow.
-    let subprocess_ptr_exit = subprocess_ptr;
-    scopeguard::defer! {
-        if send_exit_notification {
-            // SAFETY: subprocess_ptr is live for the lifetime of this defer.
-            let proc = unsafe { &*subprocess_ptr_exit }.process_mut();
-            if proc.has_exited() {
-                // process has already exited, we called wait4(), but we did not call onProcessExit()
-                // SAFETY: all-zero is a valid Rusage (POD).
-                let status = proc.status.clone();
-                proc.on_exit(status, &bun_core::ffi::zeroed::<Rusage>());
-            } else {
-                // process has already exited, but we haven't called wait4() yet
-                // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                proc.wait(is_sync);
-            }
-        }
-    }
+    let report_exit =
+        send_exit_notification.then(|| ReportUnwatchedExit(bun_ptr::BackRef::from(subprocess_nn)));
 
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, both PipeReaders have taken their
@@ -1739,28 +1689,32 @@ fn spawn_maybe_sync(
         }
     }
 
-    let stdin_start_err = match subprocess.stdin.get() {
+    let mut setup_err = match subprocess.stdin.get() {
         Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start().err(),
         _ => None,
     };
-    if let Some(err) = stdin_start_err {
+    if let Some(err) = &setup_err {
         // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
         #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.on_close_io(Subprocess::StdioKind::Stdin);
-        let _ = subprocess.try_kill(subprocess.kill_signal);
-        return Err(cx.global().throw_value(err.to_js(cx.global())));
+        // No wrapper finalizes a sync Subprocess, and only this call can reap its child: it is killed once
+        // it is watched, and the error is thrown after the wait below has released everything.
+        if !is_sync {
+            // Not `kill_signal`, which the child may ignore: nobody is handed it to end it another way.
+            let _ = subprocess.try_kill(SignalCode::SIGKILL);
+            drop(report_exit);
+            return Err(cx.global().throw_value(err.to_js(cx.global())));
+        }
     }
-
-    **should_close_memfd = false;
 
     // Every `return Err` above is past; the Subprocess will be returned to
     // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so
     // finalize_streams (on later GC) skips them and the caller is the sole
     // owner via .stdio[i]. Placed here (not earlier) because the
-    // Writable::init error arm, the has_exception catch-all, and the IPC
-    // open-socket failure all throw after populating stdio_pipes; on those
-    // paths the caller never receives the Subprocess, so the OwnedFd slot
-    // must remain for the GC'd wrapper's finalize_streams to close.
+    // Writable::init error arm and the IPC open-socket failure both throw
+    // after populating stdio_pipes; on those paths the caller never receives
+    // the Subprocess, so the OwnedFd slot must remain for finalize_streams to
+    // close.
     #[cfg(not(windows))]
     if !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
@@ -1786,7 +1740,7 @@ fn spawn_maybe_sync(
         unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
     }
 
-    if !is_sync {
+    let Some(sync_loop) = &sync_loop else {
         if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
             // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
@@ -1800,9 +1754,7 @@ fn spawn_maybe_sync(
             };
         }
         return Ok(out);
-    }
-
-    debug_assert!(is_sync);
+    };
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
         // SAFETY: jsc_vm_ptr is the live thread VM.
@@ -1816,19 +1768,26 @@ fn spawn_maybe_sync(
         // watchOrReap will handle the already exited case for us.
     }
 
-    match subprocess.process_mut().watch_or_reap() {
-        sys::Result::Ok(_) => {
-            // Once everything is set up, we can add the abort listener
-            // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
-            // Therefore, we must do this at the very end.
-            if let Some(signal) = abort_signal.take() {
-                // SAFETY: see the matching block above.
-                unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
-            }
+    if let Err(err) = subprocess.process_mut().watch_or_reap() {
+        subprocess.process_mut().on_exit(
+            bun_spawn::Status::Err(err.clone()),
+            &bun_core::ffi::zeroed::<Rusage>(),
+        );
+        setup_err.get_or_insert(err);
+    }
+
+    if let Some(err) = &setup_err {
+        // Not `kill_signal`, which the child may ignore: nothing else bounds the wait.
+        if subprocess.try_kill(SignalCode::SIGKILL).is_err() {
+            // Nor can anything end it: give it up, as `Process::kill_and_reap` does.
+            let process = subprocess.process_mut();
+            process.close();
+            process.on_exit(
+                bun_spawn::Status::Err(err.clone()),
+                &bun_core::ffi::zeroed::<Rusage>(),
+            );
         }
-        sys::Result::Err(_) => {
-            subprocess.process_mut().wait(true);
-        }
+        subprocess.close_readable_pipes();
     }
 
     if !subprocess.has_exited() {
@@ -1885,17 +1844,14 @@ fn spawn_maybe_sync(
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
         let mut bun_test_fired = false;
 
-        // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
-        let sync_loop = unsafe { &mut *jsc_vm_ptr }
-            .rare_data()
-            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
-            .expect("cached by the is_sync prepare above");
-
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
             let bun_test_timeout: Timespec = if bun_test_fired {
                 Timespec::EPOCH
-            } else if let Some(runner) = crate::test_runner::jest::Jest::runner() {
+            } else if jsc_vm.is_main_thread
+                && let Some(runner) = crate::test_runner::jest::Jest::runner()
+            {
+                // The test runner and its deadlines belong to the main thread.
                 runner.get_active_timeout()
             } else {
                 Timespec::EPOCH
@@ -1990,8 +1946,8 @@ fn spawn_maybe_sync(
 
     subprocess.update_has_pending_activity();
 
-    let signal_code = SubprocessT::get_signal_code(subprocess, cx.global());
-    let exit_code = SubprocessT::get_exit_code(subprocess, cx.global());
+    let signal_code = subprocess.signal_code_to_js(cx.global());
+    let exit_code = subprocess.exit_code_to_js();
     let read_error = subprocess
         .stdout
         .with_mut(|s| s.take_read_error())
@@ -2017,6 +1973,9 @@ fn spawn_maybe_sync(
         bun_jsc::host_fn::host_fn_finalize_ref_counted(subprocess_ptr, SubprocessT::finalize)
     };
     let (stdout, stderr, resource_usage) = output?;
+    if let Some(err) = setup_err {
+        return Err(cx.global().throw_value(err.to_js(cx.global())));
+    }
     if let Some(read_error) = read_error {
         // The process ran to completion and its output was lost. `pid`, `exitCode` and `signalCode`
         // on the error say so, as they do on the result: every other error thrown here is from a

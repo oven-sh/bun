@@ -52,7 +52,6 @@ pub(crate) fn validate_path(
     // TODO: switch to getFdPath()-based implementation
     // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
     // buffer which is then boxed.
-    let _ = path_kind;
     let out =
         bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
     if out.is_empty() {
@@ -256,9 +255,6 @@ const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
 /// `bun_bundler::options` so `use bun_bundler::options::TargetExt;` makes
 /// `.bake_graph()` etc. available on the single canonical type.
 pub trait TargetExt: Copy {
-    // `fromJS` lives in `bun_bundler_jsc::options_jsc::target_from_js`
-    // (PORTING.md "*_jsc alias" rule).
-
     fn bake_graph(self) -> crate::bake_types::Graph;
     fn out_extensions(self) -> StringHashMap<&'static [u8]>;
 
@@ -555,7 +551,9 @@ pub fn get_loader_and_virtual_source<'a>(
         }
     }
 
-    let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
+    let is_main = jsc_vm
+        .main()
+        .is_some_and(|main| strings::eql_long(specifier, main, true));
 
     let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
@@ -774,20 +772,6 @@ impl ESMConditions {
             import: import_condition_map,
             require: require_condition_map,
             style: style_condition_map,
-        })
-    }
-
-    pub fn clone(&self) -> Result<ESMConditions, bun_alloc::AllocError> {
-        let default = self.default.clone()?;
-        let import = self.import.clone()?;
-        let require = self.require.clone()?;
-        let style = self.style.clone()?;
-
-        Ok(ESMConditions {
-            default,
-            import,
-            require,
-            style,
         })
     }
 
@@ -1194,6 +1178,27 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// What `BundleOptions::type_check` checks.
+pub struct TypeChecked<'a, 'i> {
+    pub cwd: &'a [u8],
+    /// `tsconfig_override`, which the resolver reads in place of every other.
+    pub tsconfig: Option<&'a [u8]>,
+    /// `custom_conditions`
+    pub conditions: &'a [Box<[u8]>],
+    /// `loaders`. A file that only has types is not in the bundle, so not among `sources`.
+    pub loaders: &'a LoaderHashTable,
+    /// The path of each JavaScript or TypeScript file that an entry point resolved to, or that a
+    /// page imports.
+    pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
+    /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
+    /// bundle, which the type checker takes instead of reading the file again.
+    pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
+}
+
+/// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns
+/// whether the build goes on.
+pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool;
+
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
@@ -1327,6 +1332,12 @@ pub struct BundleOptions<'a> {
     pub fold_chunks: bool,
     /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
     pub module_preload: bool,
+    /// `--check`, `check: true`: type checks the program when every file is parsed, before
+    /// anything is linked. `bun_runtime` provides it: the bundler does not depend on the type
+    /// checker.
+    pub type_check: Option<TypeCheck>,
+    /// `--conditions`, `conditions`: those of `conditions` that are not there by default.
+    pub custom_conditions: Vec<Box<[u8]>>,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1538,6 +1549,8 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: self.min_chunk_size,
             fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
+            type_check: self.type_check,
+            custom_conditions: self.custom_conditions.clone(),
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
@@ -1721,6 +1734,8 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: None,
             fold_chunks: true,
             module_preload: true,
+            type_check: None,
+            custom_conditions: transform.conditions.clone(),
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
@@ -1913,9 +1928,10 @@ impl<'a> BundleOptions<'a> {
 
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
+        let top_level_dir = fs.top_level_dir();
         opts.external = init_external_modules(
             &mut fs.fs,
-            fs.top_level_dir,
+            top_level_dir,
             &transform
                 .external
                 .iter()
@@ -2474,6 +2490,34 @@ impl PathTemplate {
             &self.placeholder.target,
             sanitize_parent_dirs,
         )
+    }
+
+    /// Max output path length. A `PathBuffer` also needs room for a `.map` or `.jsc` suffix and the NUL.
+    pub(crate) const MAX_OUTPUT_PATH_LEN: usize = bun_paths::MAX_PATH_BYTES - 1 - ".map".len();
+
+    /// Logs an error and returns `false` when `output_path` exceeds `MAX_OUTPUT_PATH_LEN`.
+    pub(crate) fn check_output_path(
+        &self,
+        log: &mut bun_ast::Log,
+        input: &[u8],
+        output_path: &[u8],
+    ) -> bool {
+        if output_path.len() <= Self::MAX_OUTPUT_PATH_LEN {
+            return true;
+        }
+        log.add_range_error_fmt_with_note(
+            None,
+            bun_ast::Range::NONE,
+            format_args!(
+                "Output path for {} is too long ({} bytes, the limit on this platform is {})",
+                bun_core::fmt::quote(input),
+                output_path.len(),
+                Self::MAX_OUTPUT_PATH_LEN,
+            ),
+            format_args!("naming template is {}", bun_core::fmt::quote(&self.data)),
+            bun_ast::Range::NONE,
+        );
+        false
     }
 }
 

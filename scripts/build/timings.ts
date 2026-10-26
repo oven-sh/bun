@@ -548,7 +548,7 @@ export function criticalPath(build: Build): { steps: PathStep[]; totalMs: number
     if (end > totalMs) [lastEdge, totalMs] = [edge, end];
   }
   const steps: PathStep[] = [];
-  for (let at = lastEdge, blocks = 0; at !== undefined; ) {
+  for (let at = lastEdge, blocks = 0; at !== undefined;) {
     const x = build.last.get(at);
     if (x !== undefined) steps.unshift({ execution: x, blocksNextForMs: steps.length === 0 ? duration(x) : blocks });
     const via = timing(at).via;
@@ -838,7 +838,6 @@ const ruleLane: Record<RuleName, Lane> = {
   host_tool_cc: "other",
   mkdir_stamp: "other",
   regen: "other",
-  shim_crt_decompress: "other",
 };
 
 export interface ChartBar {

@@ -718,12 +718,14 @@ async function runTests(): Promise<TestResult[]> {
   }
   !isQuiet && console.log("Bun:", execPath);
 
-  const expectations = getTestExpectations();
-  const modifiers = getTestModifiers(execPath);
-  !isQuiet && console.log("Modifiers:", modifiers);
-
   const revision = getRevision(execPath);
   !isQuiet && console.log("Revision:", revision);
+
+  const expectations = getTestExpectations();
+  const modifiers = getTestModifiers(execPath);
+  // "1.2.3+abcdef123", and not "1.2.3-canary.1+abcdef123" or "1.2.3-debug+abcdef123".
+  if (/^\d+\.\d+\.\d+(\+|$)/.test(revision)) modifiers.push("STABLE");
+  !isQuiet && console.log("Modifiers:", modifiers);
 
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
@@ -731,7 +733,7 @@ async function runTests(): Promise<TestResult[]> {
   // Start the docker-service coordinator (test/docker/coordinator.ts). It
   // owns every `docker compose` invocation for this shard — `compose up` is
   // not concurrency-safe, so exactly one process runs it — and prestarts the
-  // services this shard's tests need (mysql/postgres/redis/minio/…) in the
+  // services this shard's tests need (mysql/postgres/redis/…) in the
   // background while getVendorTests below installs vendor deps. Tests reach
   // it through the unix socket in BUN_DOCKER_COORDINATOR (inherited by every
   // spawned test process); ensure() waits for the coordinator's ready message
@@ -1985,6 +1987,9 @@ async function spawnBun(
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
+    // test/leaksan.supp names functions, so LeakSanitizer needs a symbolizer to apply it. It looks for one on PATH,
+    // which some tests replace.
+    ASAN_SYMBOLIZER_PATH: process.env.ASAN_SYMBOLIZER_PATH ?? which(["llvm-symbolizer"]),
     ...(typeof remapPort == "number"
       ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),

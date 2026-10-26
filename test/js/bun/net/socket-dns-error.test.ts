@@ -190,7 +190,7 @@ test("a resolver error delivered to both connectError() and the promise is not r
 test("consecutive Bun.connect calls to the same unresolvable hostname all get the resolver error", async () => {
   // The second attempt exercises the in-process DNS cache, which used to take
   // a different code path and report a different (also wrong) error.
-  const errors = [];
+  const errors: (string | ReturnType<typeof pick>)[] = [];
   for (let i = 0; i < 3; i++) {
     errors.push(
       await Bun.connect({
@@ -248,7 +248,7 @@ test.each(["this is not a hostname", "localhost:80", "a..b"])(
 // next unrelated wakeup (about a second), and 20 of them exceed the test
 // timeout.
 test("back-to-back Bun.connect calls whose names are rejected in-process do not wait for a loop wakeup", async () => {
-  const codes = [];
+  const codes: (string | undefined)[] = [];
   for (let i = 0; i < 20; i++) {
     codes.push(
       await Bun.connect({
@@ -257,7 +257,7 @@ test("back-to-back Bun.connect calls whose names are rejected in-process do not 
         socket: { open() {}, data() {} },
       }).then(
         () => "resolved",
-        (e: Error) => e.code,
+        (e: NodeJS.ErrnoException) => e.code,
       ),
     );
   }

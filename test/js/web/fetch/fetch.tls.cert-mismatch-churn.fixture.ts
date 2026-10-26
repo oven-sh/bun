@@ -123,7 +123,7 @@ Promise.all(stallJobs).then(() => {
 });
 
 for (let batch = 0; batch < 8 || !stallsSettled; batch++) {
-  const jobs: Promise<void>[] = [];
+  const jobs: Promise<unknown>[] = [];
 
   // Plain mismatched-cert fetches: must reject with the altname error.
   for (let i = 0; i < 4; i++) {

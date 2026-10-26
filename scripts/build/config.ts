@@ -9,7 +9,7 @@
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { locations, pins } from "./ci-images/spec.ts";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
@@ -58,6 +58,14 @@ const versionDefaults = {
   nodejsV8Version: NODEJS_V8_VERSION,
   webkitVersion: WEBKIT_VERSION,
 };
+
+/**
+ * Returns the `process.versions.webkit` string for `webkitVersion`. A tag
+ * becomes the bare sha and a preview becomes `preview-pr-<N>-<sha8>`.
+ */
+export function webkitVersionName(webkitVersion: string): string {
+  return webkitVersion.startsWith("autobuild-") ? webkitVersion.slice("autobuild-".length) : webkitVersion;
+}
 
 /**
  * The full resolved build configuration. Every field is concrete — no
@@ -115,18 +123,6 @@ export interface Config {
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
-  /**
-   * Cross-language LTO: rustc emits LLVM bitcode (`-Clinker-plugin-lto`) into
-   * the rlibs so the final lld `-flto=thin` link sees through Rust↔C++
-   * call edges. When false but `lto` is true, both halves still LTO
-   * independently (C++ via `-flto=thin`, Rust via `[profile.release] lto =
-   * "fat"`); only the cross-language inlining is lost.
-   *
-   * Normally tracks `lto`. Exists as a separate field so per-target toolchain
-   * bugs can disable just the cross-language part without giving up LTO
-   * entirely — see workarounds.ts "globalopt-crash-aarch64-musl".
-   */
-  crossLangLto: boolean;
   /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
   pgoGenerate: string | undefined;
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
@@ -144,12 +140,26 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /** Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt. */
+  hardened: boolean;
   /**
    * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
    * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
    * acquire atomic load per syscall, zero when compiled out.
    */
   socketFaultInjection: boolean;
+  /**
+   * Default true. Off builds a Bun where `--disallow-code-generation-from-strings=strict` is
+   * always on: the level is a compile-time constant in Rust and C++, so no flag, environment
+   * variable or API of the built binary lowers it. (Not named after the runtime flag:
+   * build.ts would then take that flag for its own.)
+   */
+  codeGenerationFromStrings: boolean;
+  /**
+   * Default true. Off builds a Bun with no `WebAssembly` global: the engine's `useWasm` option is
+   * false whatever `BUN_JSC_useWasm` says.
+   */
+  webAssembly: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -239,17 +249,6 @@ export interface Config {
    * invokes the system linker).
    */
   ld: string;
-  /**
-   * rustc's bundled lld (see `Toolchain.rustLld`). When set and rustc's LLVM
-   * is newer than clang's under LTO, `resolveConfig()` selects it as `cfg.ld`.
-   * Forwarded so `validateBunConfig()` can fail loudly when LTO requires it
-   * but it wasn't found (mismatched LLVM versions → "Invalid record" at link).
-   */
-  rustLld: string | undefined;
-  /** Parsed `LLVM version:` from `rustc -vV`. Captured once; feeds workarounds.ts. */
-  rustLlvmVersion: string | undefined;
-  /** rustc's bundled LLVM major is ahead of clang's: rustc's bitcode/objects need rustc's own LLVM tools (rust-lld, llvm-nm) to be read. */
-  rustLlvmNewer: boolean;
   strip: string;
   /** llvm-nm, for `DirectBuild.forbidUndefined`; undefined skips those checks. */
   nm: string | undefined;
@@ -375,7 +374,10 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  hardened?: boolean;
   socketFaultInjection?: boolean;
+  codeGenerationFromStrings?: boolean;
+  webAssembly?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -465,15 +467,6 @@ export interface Toolchain extends JsToolchain {
    * there's no Apple `ld` to drive, and ld.lld only emits ELF.
    */
   ld64Lld: string | undefined;
-  /**
-   * rustc's bundled lld (`<sysroot>/lib/rustlib/<host>/bin/gcc-ld/ld.lld` on
-   * unix, `.../bin/rust-lld.exe` on Windows). Used as `ld` for cross-language
-   * LTO when rustc's LLVM is newer than clang's — LLVM bitcode is only
-   * forward-compatible, so clang's lld can't read newer rust bitcode but
-   * rust-lld can read clang's older bitcode. undefined when rustc isn't
-   * installed or doesn't ship the rust-lld component.
-   */
-  rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV` (X.Y.Z). */
   rustLlvmVersion: string | undefined;
   /** `rustc --print sysroot` for the pinned toolchain. */
@@ -574,9 +567,9 @@ export function detectLinuxAbi(): Abi {
 export const ANDROID_API_LEVEL_DEFAULT = pins.androidNdk.apiLevel;
 
 /**
- * FreeBSD release we target. 14.x is the current production series; 14.3
- * is the oldest 14.x still on download.freebsd.org. Building against 14.3
- * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
+ * FreeBSD release we target. 14.x is the current production series; 14.4
+ * is the oldest 14.x still on download.freebsd.org. Building against 14.4
+ * produces binaries that run on 14.4+ (FreeBSD guarantees forward ABI
  * compat within a major).
  */
 export const FREEBSD_VERSION_DEFAULT = pins.freebsd.version;
@@ -861,6 +854,8 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   const revision = getGitRevision(cwd, debug && !ci ? buildDir : undefined);
   // Default from versions.ts. Override via --nodejs-version=<v> to test a bump.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
+  // Override via --webkit-version=<hash> to test a branch before bumping the pin.
+  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   return {
     bun: js.bun,
@@ -873,6 +868,7 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
     version,
     revision,
     nodejsVersion,
+    webkitVersion,
     abi,
     linux,
     darwin,
@@ -919,6 +915,7 @@ export type CodegenFields = Pick<
   | "version"
   | "revision"
   | "nodejsVersion"
+  | "webkitVersion"
   | keyof JsToolchain
 >;
 
@@ -973,6 +970,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     version,
     revision,
     nodejsVersion,
+    webkitVersion,
     bun,
     npm,
     jsRuntime,
@@ -1008,67 +1006,34 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const ltoDefault = release && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
+  // Fuzzilli: coverage does not link with ThinLTO ("undefined symbol:
+  // __sancov_gen_.1"). The copies of an inline function that ThinLTO does not
+  // keep become available_externally, their module-private guards included,
+  // and inlining one leaves a reference to guards that nothing defines.
   // Android, FreeBSD: not enabled (never built that way; untested).
   // Windows arm64: off — oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
   // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers when JSC
   // goes through LTO), so forcing it off also keeps the fetch from 404ing.
-  if ((asan && lto) || abi === "android" || freebsd || (windows && arm64)) {
+  if ((asan && lto) || fuzzilli || abi === "android" || freebsd || (windows && arm64)) {
     lto = false;
   }
 
-  // Cross-language LTO normally tracks `lto`. Gated off where the link
-  // could not read rustc's bitcode: on a native Windows host `ld` is the
-  // host LLVM's lld-link with no rust-lld swap wired up, and on a native
-  // macOS host Apple's ld runs LTO through clang's libLTO (no linker to swap),
-  // which cannot read bitcode from an LLVM newer than itself — so there only
-  // while rustc's LLVM is ahead of clang's. Both halves still LTO
-  // independently when this is false — only the Rust↔C++ inlining is lost.
-  // CI cross-compiles both from Linux, where the swap below applies.
-  // Darwin cross uses the same rust-lld swap as ELF: rustc's sysroot ships
-  // `gcc-ld/ld64.lld` (rust-lld in the Mach-O flavor, built against rustc's
-  // LLVM), which findRustLld() already resolves for darwin targets, so the
-  // newer-LLVM bitcode rustc emits under -Clinker-plugin-lto is readable at
-  // link time. Windows cross does the same with the `gcc-ld/lld-link`
-  // sibling (COFF flavor) — see the wantRustLld swap below.
+  // The link reads LLVM bitcode from both compilers with clang's LLVM (release crates are bitcode with or without `lto`),
+  // and an LLVM cannot read a newer one's. A newer clang is refused too: rustc's linker-plugin-lto documentation
+  // recommends the same LLVM in both, and no CI build mixes them. Without a rustc there is nothing to compare;
+  // emitRust() reports that.
   const clangMajor = majorOf(toolchain.clangVersion);
   const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
-  const rustLlvmNewer = clangMajor !== undefined && rustLlvmMajor !== undefined && rustLlvmMajor > clangMajor;
-  const crossLangLto = lto && !(windows && host.os === "windows") && !(darwin && !darwinCross && rustLlvmNewer);
-
-  // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
-  // rustc emit raw LLVM bitcode into libbun_runtime.a. LLVM bitcode is
-  // forward-compatible only (newer reader, older writer), so when rustc's
-  // bundled LLVM is ahead of clang's, clang's ld.lld rejects the rust .o
-  // files ("Unknown attribute kind"). rust-lld is built against rustc's
-  // LLVM, so it reads both rustc's bitcode (same version) and clang's
-  // (older, hence readable). Swap it in as `ld` for the whole build —
-  // it's a stock lld, just newer, so non-LTO objects and nested cmake
-  // deps link the same as before.
-  //
-  // Dormant whenever clang's LLVM major is level with rustc's (as at the
-  // LLVM 23 bump); it fires again when the pinned nightly moves to the next
-  // LLVM ahead of clang.
-  let ld = toolchain.ld;
-  // Shared with the darwin-cross ld64 swap below: for darwin targets
-  // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
-  // the same rust-lld), so the swap composes with the cross toolchain.
-  const wantRustLld = crossLangLto && toolchain.rustLld !== undefined && rustLlvmNewer;
-  if (wantRustLld) {
-    if (windows) {
-      // Windows cross: `ld` must stay a COFF driver. `toolchain.rustLld` is
-      // the flavor matching the *host* (gcc-ld/ld.lld on a Linux box);
-      // rustc's gcc-ld/ directory ships every flavor of the same rust-lld,
-      // so use the lld-link sibling. If rustc ever stops shipping it, fall
-      // back to the host LLVM's lld-link — validateBunConfig() then fails
-      // at configure time with the bitcode-version-skew message instead of
-      // an opaque "Invalid record" at link time.
-      const rustLldLink = join(dirname(toolchain.rustLld!), "lld-link");
-      if (existsSync(rustLldLink)) {
-        ld = rustLldLink;
-      }
-    } else {
-      ld = toolchain.rustLld!;
-    }
+  if (clangMajor !== undefined && rustLlvmMajor !== undefined && clangMajor !== rustLlvmMajor) {
+    throw new BuildError(
+      `clang is LLVM ${toolchain.clangVersion} and rustc's LLVM is ${toolchain.rustLlvmVersion}; they have to be the same major version`,
+      {
+        hint:
+          "The link reads LLVM bitcode from both compilers. " +
+          "pins.llvm.version (scripts/build/ci-images/spec.ts) and the nightly in rust-toolchain.toml move together, " +
+          "and so do BUN_TOOLCHAIN_LLVM and BUN_TOOLCHAIN_RUST.",
+      },
+    );
   }
 
   // PGO: paths resolved to absolute. generate/use are mutually exclusive.
@@ -1100,6 +1065,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
+  const hardened = partial.hardened ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1113,6 +1079,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
+  assert(
+    !hardened || (linux && x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
+    "hardened=true requires a Linux x64 glibc release build without asan, assertions or fuzzilli",
+    { hint: "Those are the -hardened WebKit prebuilts there are (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
+  );
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
 
   // ─── Cross-compilation (Android) ───
@@ -1265,11 +1236,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   }
 
   // ─── Versioning ───
-  // Defaults from versions.ts. Override via --webkit-version=<hash> etc.
-  // to test a branch before bumping the pinned default.
+  // Defaults from versions.ts. Override to test a bump before changing the
+  // pinned default.
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
-  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
@@ -1314,18 +1284,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         hint: "Install llvm for the same version as clang: apt install llvm-23 (or equivalent).",
       });
     }
-    // The Mach-O flavor of whichever lld the rest of the config picked.
-    // `toolchain.rustLld` is the flavor matching the *host* (gcc-ld/ld.lld
-    // on a Linux box); rustc's gcc-ld/ directory ships every flavor of the
-    // same rust-lld, so when the cross-language-LTO bitcode skew applies
-    // (see wantRustLld above) the Mach-O link uses the ld64.lld sibling.
-    // Falls back to clang's ld64.lld if rustc ever stops shipping it — the
-    // configure-time assert in validateBunConfig catches the resulting
-    // bitcode-version mismatch with a clear message.
-    const rustLd64Lld =
-      wantRustLld && toolchain.rustLld !== undefined ? join(dirname(toolchain.rustLld), "ld64.lld") : undefined;
     ld64StripSwap = {
-      ld: rustLd64Lld !== undefined && existsSync(rustLd64Lld) ? rustLd64Lld : toolchain.ld64Lld,
+      ld: toolchain.ld64Lld,
       strip: toolchain.llvmStrip,
     };
   }
@@ -1352,7 +1312,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: "full",
     lto,
-    crossLangLto,
     pgoGenerate,
     pgoUse,
     asan,
@@ -1366,7 +1325,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     tinycc,
     valgrind,
     fuzzilli,
+    hardened,
     socketFaultInjection,
+    codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
+    webAssembly: partial.webAssembly ?? true,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1389,10 +1351,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     clangResourceDir: toolchain.clangResourceDir,
     ar: toolchain.ar,
     ranlib: toolchain.ranlib,
-    ld: ld64StripSwap?.ld ?? ld,
-    rustLld: toolchain.rustLld,
-    rustLlvmVersion: toolchain.rustLlvmVersion,
-    rustLlvmNewer,
+    ld: ld64StripSwap?.ld ?? toolchain.ld,
     // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
     // fully; host strip rejects foreign-arch ELF); other cross targets use
     // llvm-strip.
@@ -1426,16 +1385,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : undefined,
     rustSysroot: toolchain.rustSysroot,
     rustHostTriple: toolchain.rustHostTriple,
-    // rustc-driven links (the .bin/ shim's executable, any future target
-    // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
-    // lld-link wrapper `ld` may have been swapped to above: rustc treats a
-    // linker living in its own sysroot's gcc-ld/ as the bundled rust-lld and
-    // prepends `-flavor link`, which the wrapper forwards into the COFF
-    // driver as bogus input args ("could not open 'link'"). Those links have
-    // no LLVM bitcode in them, so the host LLVM's lld-link is always
-    // sufficient — only the final clang-cl-driven bun.exe link needs the
-    // newer rust-lld (and reaches it via the link rule's /clang:-B).
-    msvcLinker: toolchain.msvcLinker ?? (windows && ld !== toolchain.ld ? toolchain.ld : undefined),
+    msvcLinker: toolchain.msvcLinker,
     rc: toolchain.rc,
     mt: toolchain.mt,
     nasm: toolchain.nasm,
@@ -1748,9 +1698,12 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.baseline) features.push("baseline");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.hardened) features.push("hardened");
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }
+  if (!cfg.codeGenerationFromStrings) features.push("code-generation-from-strings:off");
+  if (!cfg.webAssembly) features.push("webassembly:off");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

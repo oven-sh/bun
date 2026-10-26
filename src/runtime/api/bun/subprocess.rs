@@ -1014,11 +1014,6 @@ impl Subprocess<'_> {
             }
         }
 
-        // The channel's close is reported before the exit below, as in node.
-        if let Some(ipc) = self.ipc() {
-            ipc.close_after_peer_exit();
-        }
-
         let mut did_update_has_pending_activity = false;
 
         // Kept as raw `*mut` so the enter guard and the body can both call
@@ -1028,6 +1023,10 @@ impl Subprocess<'_> {
         // The exit is reported to the script that spawned the child.
         let _context = (*jsc_vm).enter_context(self.context);
         if !is_sync {
+            // The channel reports its end before this exit is reported.
+            if let Some(ipc_data) = self.ipc() {
+                ipc_data.close_after_peer_exit();
+            }
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
                     // SAFETY: event_loop points into the live VM and outlives this scope.

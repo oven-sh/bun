@@ -1196,71 +1196,48 @@ impl SendQueue {
             // SAFETY: caller contract — the queued task owns a ref on `this`.
             let sq = unsafe { &*this };
             sq.deferred_scheduled.set(false);
-            if sq.pending_close.replace(false) {
-                log!("SendQueue#closeSocketTask");
-                sq.close_socket(CloseReason::Normal, CloseFrom::User);
-            }
-            sq.run_after_close();
+            sq.run_pending();
         }
         // Release the task's ref; the SendQueue may be freed here.
         // SAFETY: `this` is live and owns the ref taken at schedule.
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
     }
 
-    /// `Taskable::release_unrun`: a scheduled deferred task that will never
-    /// run still owns a ref; drop it (skipping the JS callbacks).
-    ///
-    /// # Safety
-    /// `this` is the queued root pointer, live via the ref taken at schedule.
-    pub(crate) unsafe fn release_deferred_unrun(this: *mut SendQueue) {
-        // SAFETY: caller contract.
-        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
-    }
-
-    fn run_after_close(&self) {
-        if !self.pending_after_close.replace(false) {
-            return;
+    /// Does now what the queued task would do. A pending flag means that task is still queued, and its ref keeps `self` alive through the callbacks.
+    pub(crate) fn run_pending(&self) {
+        if self.pending_close.replace(false) {
+            log!("SendQueue#closeSocketTask");
+            self.close_socket(CloseReason::Normal, CloseFrom::User);
         }
-        log!("SendQueue#_onAfterIPCClosed");
-        if self.close_event_sent.replace(true) {
-            return;
-        }
-        let global = self.get_global_this();
-        if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
-            item.complete(&global);
-        }
-        // on_write_complete already dequeued everything fully written; the rest was never delivered.
-        for item in self.queue.with_mut(std::mem::take) {
-            item.abort_unsent(&global);
-        }
-        if let Some(owner) = self.owner.get() {
-            owner.handle_ipc_close();
-        }
-    }
-
-    /// The peer process has exited: closes what is left of the channel and reports the close now,
-    /// for the owner to report before the exit (node's order). A channel with unread input is not
-    /// closed here; the owner's deferred close follows the exit.
-    pub(crate) fn close_after_peer_exit(&self) {
-        log!("SendQueue#closeAfterPeerExit");
-        if self.socket_is_open() {
-            if self.is_connected() && self.has_unread_input() {
-                return;
+        if self.pending_after_close.replace(false) {
+            log!("SendQueue#_onAfterIPCClosed");
+            if !self.close_event_sent.replace(true) {
+                let global = self.get_global_this();
+                if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
+                    item.complete(&global);
+                }
+                // on_write_complete already dequeued everything fully written; the rest was never delivered.
+                for item in self.queue.with_mut(std::mem::take) {
+                    item.abort_unsent(&global);
+                }
+                if let Some(owner) = self.owner.get() {
+                    owner.handle_ipc_close();
+                }
             }
-            // A disconnect() still postponed (behind a handle's ack, or on its task) is overtaken.
-            self.close_after_flush.set(false);
-            self.pending_close.set(false);
-            // As is a write still in flight: nothing is left to complete it.
+        }
+    }
+
+    /// The peer process has exited. A channel that is still open with nothing left to read is closed
+    /// here, so that `run_pending` reports its end before the owner reports the exit.
+    pub(crate) fn close_after_peer_exit(&self) {
+        if self.socket_is_open() && !self.has_unread_input() {
+            // A write still in flight on Windows is cancelled: nothing is left to complete it.
             #[cfg(windows)]
             self.windows_close(true);
             #[cfg(not(windows))]
             self.close_socket(CloseReason::Normal, CloseFrom::User);
         }
-        if !self.pending_after_close.get() {
-            return;
-        }
-        let _scope = self.get_global_this().bun_vm().enter_event_loop_scope();
-        self.run_after_close();
+        self.run_pending();
     }
 
     /// Whether the kernel holds input for the channel that the loop has not read yet.
@@ -1293,6 +1270,16 @@ impl SendQueue {
             };
             peeked != 0 && queued > 0
         }
+    }
+
+    /// `Taskable::release_unrun`: a scheduled deferred task that will never
+    /// run still owns a ref; drop it (skipping the JS callbacks).
+    ///
+    /// # Safety
+    /// `this` is the queued root pointer, live via the ref taken at schedule.
+    pub(crate) unsafe fn release_deferred_unrun(this: *mut SendQueue) {
+        // SAFETY: caller contract.
+        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
     }
 
     /// `uv::open_handles` closes the channel's pipe through here at a thread

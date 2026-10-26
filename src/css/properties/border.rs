@@ -608,6 +608,10 @@ pub struct BorderHandler {
     border_image_handler: BorderImageHandler,
     border_radius_handler: BorderRadiusHandler,
     flushed_properties: BorderProperty,
+    /// The source wrote a `border` (which also resets `border-image`) since the last flush.
+    has_border_shorthand: bool,
+    /// This list wrote an unparsed `border`, which can set `border-image` (`inherit`, `revert`).
+    wrote_unparsed_border: bool,
     has_any: bool,
 }
 
@@ -1423,11 +1427,17 @@ mod border_handler_body {
 
                     // Setting the `border` property resets `border-image`
                     self.border_image_handler.reset();
+                    self.has_border_shorthand = true;
                     self.has_any = true;
                 }
                 Property::Unparsed(val) => {
                     if is_border_property(val.property_id.tag()) {
                         self.flush(dest, context);
+                        if val.property_id.tag() == PropertyIdTag::Border {
+                            // A target that rejects the value keeps the image, so keep the order.
+                            self.border_image_handler.flush(dest, context);
+                            self.wrote_unparsed_border = true;
+                        }
                         self.flush_unparsed(val, dest, context);
                     } else {
                         if self
@@ -1470,6 +1480,7 @@ mod border_handler_body {
         ) {
             self.flush(dest, context);
             self.flushed_properties = BorderProperty::empty();
+            self.wrote_unparsed_border = false;
             self.border_image_handler.finalize(dest, context);
             self.border_radius_handler.finalize(dest, context);
         }
@@ -1481,8 +1492,15 @@ mod border_handler_body {
 
             self.has_any = false;
 
+            let start = dest.len();
             self.flush_physical(dest, context);
             self.flush_logical(dest, context);
+            if self.wrote_unparsed_border
+                || !self.border_image_handler.flushed_properties.is_empty()
+            {
+                self.keep_border_image(dest, start, context);
+            }
+            self.has_border_shorthand = false;
 
             let arena = dest.bump();
             self.border_top.reset(arena);
@@ -1493,6 +1511,76 @@ mod border_handler_body {
             self.border_block_end.reset(arena);
             self.border_inline_start.reset(arena);
             self.border_inline_end.reset(arena);
+        }
+
+        /// `dest[start..]` lands behind a declaration that sets `border-image`: keep the resets of the source.
+        #[cold]
+        #[inline(never)]
+        fn keep_border_image(
+            &self,
+            dest: &mut DeclarationList,
+            start: usize,
+            context: &PropertyHandlerContext,
+        ) {
+            let arena = dest.bump();
+            if self.has_border_shorthand {
+                // Four unequal sides print no `border`: the top side can carry the reset.
+                if !dest[start..]
+                    .iter()
+                    .any(|p| matches!(p, Property::Border(_)))
+                {
+                    for property in dest[start..].iter_mut() {
+                        let Property::BorderTop(top) = property else {
+                            break;
+                        };
+                        *property = Property::Border(top.clone_as(arena));
+                    }
+                }
+                return;
+            }
+            if self.border_image_handler.reads_everywhere(&context.targets) {
+                return;
+            }
+            // The source has no `border` here: write the parts, which reset nothing.
+            let mut i = start;
+            while i < dest.len() {
+                let Property::Border(border) = &dest[i] else {
+                    i += 1;
+                    continue;
+                };
+                let next = dest.get(i + 1);
+                let parts = [
+                    (!matches!(next, Some(Property::BorderStyle(_)))).then(|| {
+                        Property::BorderStyle(BorderStyle {
+                            top: border.style.deep_clone(arena),
+                            right: border.style.deep_clone(arena),
+                            bottom: border.style.deep_clone(arena),
+                            left: border.style.deep_clone(arena),
+                        })
+                    }),
+                    (!matches!(next, Some(Property::BorderWidth(_)))).then(|| {
+                        Property::BorderWidth(BorderWidth {
+                            top: border.width.deep_clone(arena),
+                            right: border.width.deep_clone(arena),
+                            bottom: border.width.deep_clone(arena),
+                            left: border.width.deep_clone(arena),
+                        })
+                    }),
+                    (!matches!(next, Some(Property::BorderColor(_)))).then(|| {
+                        Property::BorderColor(BorderColor {
+                            top: border.color.deep_clone(arena),
+                            right: border.color.deep_clone(arena),
+                            bottom: border.color.deep_clone(arena),
+                            left: border.color.deep_clone(arena),
+                        })
+                    }),
+                ];
+                dest.remove(i);
+                for part in parts.into_iter().flatten() {
+                    dest.insert(i, part);
+                    i += 1;
+                }
+            }
         }
 
         #[inline(never)]

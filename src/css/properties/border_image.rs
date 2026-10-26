@@ -482,6 +482,11 @@ macro_rules! keeps_fallback {
     };
 }
 
+/// A prefixed function such as `-moz-linear-gradient()` is read by one engine only.
+fn reads_everywhere(image: &Image, targets: &css::targets::Targets) -> bool {
+    !image.has_vendor_prefix() && targets.browsers.is_none_or(|b| image.is_compatible(&b))
+}
+
 impl BorderImageHandler {
     pub(crate) fn handle_property(
         &mut self,
@@ -491,45 +496,31 @@ impl BorderImageHandler {
     ) -> bool {
         let arena = dest.bump();
 
-        // `flushHelper`/`propertyHelper` are macro_rules! to keep the
-        // per-field name dispatch without reflection.
-        macro_rules! flush_helper {
-            ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr) => {
-                if keeps_fallback!($self.$name, $val, $ctx.targets) {
-                    $self.flush($d, $ctx);
-                }
-            };
-        }
-
         macro_rules! property_helper {
-            ($self:expr, $field:ident, $val:expr, $d:expr, $ctx:expr) => {{
-                if $self.vendor_prefix != VendorPrefix::NONE {
-                    $self.flush($d, $ctx);
+            ($field:ident, $val:expr) => {{
+                if self.flushes_before(property, &context.targets) {
+                    self.flush(dest, context);
                 }
 
-                flush_helper!($self, $d, $ctx, $field, $val);
-
-                $self.vendor_prefix = VendorPrefix::NONE;
-                $self.$field = Some($val.deep_clone(arena));
-                $self.has_any = true;
+                self.vendor_prefix = VendorPrefix::NONE;
+                self.$field = Some($val.deep_clone(arena));
+                self.has_any = true;
             }};
         }
 
         match property {
-            Property::BorderImageSource(val) => property_helper!(self, source, val, dest, context),
-            Property::BorderImageSlice(val) => property_helper!(self, slice, val, dest, context),
-            Property::BorderImageWidth(val) => property_helper!(self, width, val, dest, context),
-            Property::BorderImageOutset(val) => property_helper!(self, outset, val, dest, context),
-            Property::BorderImageRepeat(val) => property_helper!(self, repeat, val, dest, context),
+            Property::BorderImageSource(val) => property_helper!(source, val),
+            Property::BorderImageSlice(val) => property_helper!(slice, val),
+            Property::BorderImageWidth(val) => property_helper!(width, val),
+            Property::BorderImageOutset(val) => property_helper!(outset, val),
+            Property::BorderImageRepeat(val) => property_helper!(repeat, val),
             Property::BorderImage(_val) => {
                 let val = &_val.0;
                 let vp = _val.1;
 
-                flush_helper!(self, dest, context, source, &val.source);
-                flush_helper!(self, dest, context, slice, &val.slice);
-                flush_helper!(self, dest, context, width, &val.width);
-                flush_helper!(self, dest, context, outset, &val.outset);
-                flush_helper!(self, dest, context, repeat, &val.repeat);
+                if self.flushes_before(property, &context.targets) {
+                    self.flush(dest, context);
+                }
 
                 self.source = Some(val.source.deep_clone(arena));
                 self.slice = Some(val.slice.deep_clone(arena));
@@ -589,39 +580,103 @@ impl BorderImageHandler {
         self.repeat = None;
     }
 
-    /// Matches each flush in `handle_property`, so `BorderHandler` can write its `border` first.
+    /// The buffer prints as one unprefixed `border-image` that every target reads.
+    pub(crate) fn reads_everywhere(&self, targets: &css::targets::Targets) -> bool {
+        self.vendor_prefix.contains(VendorPrefix::NONE)
+            && match (
+                &self.source,
+                &self.slice,
+                &self.width,
+                &self.outset,
+                &self.repeat,
+            ) {
+                (Some(source), Some(slice), Some(width), Some(outset), Some(repeat)) => {
+                    reads_everywhere(source, targets)
+                        && targets.browsers.is_none_or(|b| {
+                            slice.is_compatible(&b)
+                                && width.is_compatible(&b)
+                                && outset.is_compatible(&b)
+                                && repeat.is_compatible(&b)
+                        })
+                }
+                _ => false,
+            }
+    }
+
+    #[inline]
     pub(crate) fn will_flush(&self, property: &Property, targets: &css::targets::Targets) -> bool {
-        let prefixed = self.vendor_prefix != VendorPrefix::NONE;
         match property {
-            Property::BorderImageSource(val) => {
-                prefixed || keeps_fallback!(self.source, val, targets)
-            }
-            Property::BorderImageSlice(val) => {
-                prefixed || keeps_fallback!(self.slice, val, targets)
-            }
-            Property::BorderImageWidth(val) => {
-                prefixed || keeps_fallback!(self.width, val, targets)
-            }
-            Property::BorderImageOutset(val) => {
-                prefixed || keeps_fallback!(self.outset, val, targets)
-            }
-            Property::BorderImageRepeat(val) => {
-                prefixed || keeps_fallback!(self.repeat, val, targets)
-            }
-            Property::BorderImage(val) => {
-                let val = &val.0;
-                keeps_fallback!(self.source, &val.source, targets)
-                    || keeps_fallback!(self.slice, &val.slice, targets)
-                    || keeps_fallback!(self.width, &val.width, targets)
-                    || keeps_fallback!(self.outset, &val.outset, targets)
-                    || keeps_fallback!(self.repeat, &val.repeat, targets)
-            }
+            Property::BorderImageSource(_)
+            | Property::BorderImageSlice(_)
+            | Property::BorderImageWidth(_)
+            | Property::BorderImageOutset(_)
+            | Property::BorderImageRepeat(_)
+            | Property::BorderImage(_) => self.flushes_before(property, targets),
             Property::Unparsed(val) => is_border_image_property(val.property_id.tag()),
             _ => false,
         }
     }
 
-    fn flush(
+    /// Decides the flush ahead of a parsed property, for `handle_property` and for `will_flush`.
+    #[inline(never)]
+    fn flushes_before(&self, property: &Property, targets: &css::targets::Targets) -> bool {
+        let prefixed_image = self.source.as_ref().is_some_and(Image::has_vendor_prefix);
+        if let Property::BorderImage((val, vp)) = property {
+            // A prefixed property behind an unprefixed value wins in engines that read both.
+            if self.vendor_prefix.contains(VendorPrefix::NONE) && !vp.contains(VendorPrefix::NONE) {
+                return true;
+            }
+            let differs = self.source.as_ref().is_some_and(|v| !v.eql(&val.source))
+                || self.slice.as_ref().is_some_and(|v| !v.eql(&val.slice))
+                || self.width.as_ref().is_some_and(|v| !v.eql(&val.width))
+                || self.outset.as_ref().is_some_and(|v| !v.eql(&val.outset))
+                || self.repeat.as_ref().is_some_and(|v| !v.eql(&val.repeat));
+            let plain = self.vendor_prefix == VendorPrefix::NONE
+                && *vp == VendorPrefix::NONE
+                && !prefixed_image;
+            // Only an unprefixed value that every target reads replaces what is buffered.
+            return differs
+                && !(plain
+                    && reads_everywhere(&val.source, targets)
+                    && targets.browsers.is_none_or(|b| {
+                        val.slice.is_compatible(&b)
+                            && val.width.is_compatible(&b)
+                            && val.outset.is_compatible(&b)
+                            && val.repeat.is_compatible(&b)
+                    }));
+        }
+
+        // A longhand joins the buffered value only where every target that reads one reads both.
+        let hidden = self.vendor_prefix != VendorPrefix::NONE
+            || prefixed_image
+            || (!self.flushed_properties.is_empty()
+                && self.source.is_some()
+                && self.slice.is_some()
+                && self.width.is_some()
+                && self.outset.is_some()
+                && self.repeat.is_some()
+                && !self.reads_everywhere(targets));
+        match property {
+            Property::BorderImageSource(val) => {
+                hidden
+                    || self
+                        .source
+                        .as_ref()
+                        .is_some_and(|v| !v.eql(val) && !reads_everywhere(val, targets))
+            }
+            Property::BorderImageSlice(val) => hidden || keeps_fallback!(self.slice, val, targets),
+            Property::BorderImageWidth(val) => hidden || keeps_fallback!(self.width, val, targets),
+            Property::BorderImageOutset(val) => {
+                hidden || keeps_fallback!(self.outset, val, targets)
+            }
+            Property::BorderImageRepeat(val) => {
+                hidden || keeps_fallback!(self.repeat, val, targets)
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn flush(
         &mut self,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,

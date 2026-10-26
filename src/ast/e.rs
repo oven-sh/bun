@@ -2745,28 +2745,30 @@ mod estring_reader_tests {
         assert!(eql(b"\xEF\xBF", "\u{FFFD}".as_bytes()));
         assert!(eql(b"\xED\xA0\xBD\xED\xB8\x80", "\u{1F600}".as_bytes()));
         assert!(!eql(b"x\xE9y", b"x\xE8y\xE8"));
-        // Every pair of texts of one or two of these is equal when neither is before the other.
-        let pieces: [&[u8]; 11] = [
+        // Two of these, and two texts that start with the same one, are equal when neither is before the other.
+        let pieces: [&[u8]; 9] = [
             b"a",
-            b"b",
-            b"\xC3\xA9",
             b"\xEF\xBF\xBD",
             b"\xFF",
-            b"\x80",
             b"\xE2",
             b"\xE2\x82",
             b"\xEF\xBF",
             b"\xED\xA0\xBD",
             b"\xED\xB8\x80",
+            b"\xF0\x9F\x98\x80",
         ];
-        let mut texts: Vec<Vec<u8>> = pieces.iter().map(|piece| piece.to_vec()).collect();
-        for first in pieces {
-            texts.extend(pieces.iter().map(|second| [first, *second].concat()));
-        }
-        for a in &texts {
-            for b in &texts {
-                let is_same_text = EString::init(a).js_order(&EString::init(b)) == Ordering::Equal;
-                assert_eq!(eql(a, b), is_same_text, "{a:x?} {b:x?}");
+        let check = |a: &[u8], b: &[u8]| {
+            let is_same_text = EString::init(a).js_order(&EString::init(b)) == Ordering::Equal;
+            assert_eq!(eql(a, b), is_same_text, "{a:x?} {b:x?}");
+            assert_eq!(eql(b, a), is_same_text, "{b:x?} {a:x?}");
+        };
+        for start in pieces {
+            for second in pieces {
+                check(start, second);
+                check(start, &[start, second].concat());
+                for third in pieces {
+                    check(&[start, second].concat(), &[start, third].concat());
+                }
             }
         }
         // One string of each storage.

@@ -777,20 +777,19 @@ describe("error event", () => {
       expect(value).toEqual({ a: 1 });
     });
 
-    // The second row is thrown under a listener: there the termination is still pending when the printer returns.
+    const exitsInGetter = `const e = new TypeError("boom"); const list = [1];
+      Object.defineProperty(list, 0, { get() { process.exit(3); for (;;) {} } }); e.list = list;`;
+    // Under a listener the termination is still pending when the printer returns. At the top level it is not.
     test.each([
       [
         "in inspect.custom",
         `const e = new TypeError("boom"); e[${inspectCustom}] = () => { process.exit(3); }; throw e;`,
       ],
+      ["in a nested getter", `${exitsInGetter} throw e;`],
       [
-        "in a nested getter",
+        "in a nested getter, under a listener",
         `const target = new EventTarget();
-         target.addEventListener("x", () => {
-           const e = new TypeError("boom"); const list = [1];
-           Object.defineProperty(list, 0, { get() { process.exit(3); for (;;) {} } }); e.list = list;
-           throw e;
-         });
+         target.addEventListener("x", () => { ${exitsInGetter} throw e; });
          target.dispatchEvent(new Event("x"));`,
       ],
     ])("no 'error' event when the worker exits %s", async (_where, source) => {

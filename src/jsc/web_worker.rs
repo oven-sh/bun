@@ -1193,13 +1193,14 @@ fn on_unhandled_rejection(
             ..Default::default()
         },
     );
-    // What formatting threw costs only the text: the thrown value stays the error. A termination ends the report.
+    // What formatting threw costs only the text: the thrown value stays the error.
     let thrown = match format_result {
         Err(err) => Some(global_object.take_exception(err)),
         // format2() swallows JS throws from nested formatting and returns Ok, with the exception pending.
         Ok(()) => global_object.try_take_exception(),
     };
-    if thrown.is_some_and(JSValue::is_termination_exception) {
+    // Formatting ran script. A stop requested meanwhile ends the report, also when format2() swallowed the termination.
+    if thrown.is_some_and(JSValue::is_termination_exception) || !vm.script_allowed() {
         return;
     }
     jsc::mark_binding();

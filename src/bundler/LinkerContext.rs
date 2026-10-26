@@ -27,6 +27,7 @@ use bun_ast::{
 use crate::Index;
 use bun_ast::{E, G, S};
 use bun_js_parser::lexer as lex;
+use bun_js_parser::parse::parse_entry::{ModuleSyntax, parse_only_text};
 use bun_js_printer::{self as js_printer, renamer};
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
@@ -111,7 +112,7 @@ pub struct LinkerContext<'a> {
     /// string buffer containing prefix for each unique keys
     pub(crate) unique_key_prefix: Box<[u8]>,
 
-    pub source_maps: SourceMapData,
+    pub(crate) source_maps: SourceMapData,
 
     /// This will eventually be used for reference-counting LinkerContext
     /// to know whether or not we can free it safely.
@@ -496,7 +497,7 @@ impl<'a> LinkerContext<'a> {
         path: &bun_paths::fs::Path<'static>,
         arena: &Bump,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
     }
 
@@ -1470,6 +1471,22 @@ impl LinkerOptions {
             && self.output_format == Format::Esm
             && self.compile_mode.is_executable()
     }
+
+    /// Returns the module-record flags for `--banner` and `--footer`, which the printer never sees.
+    pub(crate) fn raw_text_module_syntax(&self) -> ModuleSyntax {
+        let mut syntax = ModuleSyntax::default();
+        for text in [self.banner, self.footer] {
+            if text.is_empty() {
+                continue;
+            }
+            if let Some(piece) = parse_only_text(text, true, false, |parsed| parsed.module_syntax())
+            {
+                syntax.import_meta |= piece.import_meta;
+                syntax.top_level_await |= piece.top_level_await;
+            }
+        }
+        syntax
+    }
 }
 
 impl Default for LinkerOptions {
@@ -1516,10 +1533,10 @@ pub enum LinkerOptionsMode {
 
 #[derive(Default)]
 pub struct SourceMapData {
-    pub line_offset_wait_group: WaitGroup,
+    pub(crate) line_offset_wait_group: WaitGroup,
     pub(crate) line_offset_tasks: Box<[SourceMapDataTask]>,
 
-    pub quoted_contents_wait_group: WaitGroup,
+    pub(crate) quoted_contents_wait_group: WaitGroup,
     pub(crate) quoted_contents_tasks: Box<[SourceMapDataTask]>,
 }
 
@@ -3919,7 +3936,11 @@ impl<'a> LinkerContext<'a> {
             //
             // This uses a O(n^2) array scan instead of a O(n) map because the vast
             // majority of cases have one or two elements
-            for prev_tracker in &self.cycle_detector[cycle_detector_top..] {
+            //
+            // Scan the whole stack, not just this call's entries. The entries below
+            // `cycle_detector_top` are from callers tracing this chain as an
+            // "export * from" alternative.
+            for prev_tracker in &self.cycle_detector {
                 if import_tracker_eq(&tracker, prev_tracker) {
                     result = MatchImport {
                         kind: MatchImportKind::Cycle,

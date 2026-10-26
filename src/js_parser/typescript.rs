@@ -181,7 +181,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         false
     }
 
-    fn is_start_of_expression(&mut self) -> bool {
+    pub(crate) fn is_start_of_expression(&mut self) -> bool {
         let p = self;
         if p.is_start_of_left_hand_side_expression() {
             return true;

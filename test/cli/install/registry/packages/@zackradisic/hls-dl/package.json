@@ -1,0 +1,21 @@
+{
+  "_id": "@zackradisic/hls-dl",
+  "name": "@zackradisic/hls-dl",
+  "dist-tags": {
+    "latest": "0.0.1"
+  },
+  "versions": {
+    "0.0.1": {
+      "name": "@zackradisic/hls-dl",
+      "version": "0.0.1",
+      "description": "",
+      "main": "dist/hls-dl.commonjs2.js",
+      "_id": "@zackradisic/hls-dl@0.0.1",
+      "dist": {
+        "integrity": "sha512-D42pIViQ55i7IcIfg0/jAqyBTNMslZQ2uNOKjamznB2ynIeI6/u14nkab+Xo8LlwES5HbzNF2AAetQm9lRmrXw==",
+        "shasum": "ff98e23807b4de5d6b6371bfe000da4c23c837cb",
+        "tarball": "http://localhost:4873/@zackradisic/hls-dl/-/@zackradisic/hls-dl-0.0.1.tgz"
+      }
+    }
+  }
+}

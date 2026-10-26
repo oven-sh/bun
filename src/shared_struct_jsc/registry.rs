@@ -4,18 +4,19 @@
 //! bytes from another process (IPC `advanced` mode, `node:v8.deserialize`) can never name an address, only an object that a
 //! live `SerializedScriptValue` in this process still holds. Dropping that value removes the entry.
 
+use std::collections::BTreeMap;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 
 /// Entries by nonce. One entry for each serialization of an object, so two clones of one object hold two entries.
 pub(crate) struct Registry<T> {
-    entries: Vec<(u64, T)>,
+    entries: BTreeMap<u64, T>,
 }
 
 impl<T> Registry<T> {
     pub(crate) const fn new() -> Self {
         Self {
-            entries: Vec::new(),
+            entries: BTreeMap::new(),
         }
     }
 
@@ -23,22 +24,19 @@ impl<T> Registry<T> {
     pub(crate) fn insert(&mut self, value: T) -> u64 {
         loop {
             let nonce = random_nonce();
-            if nonce != 0 && self.get(nonce).is_none() {
-                self.entries.push((nonce, value));
+            if nonce != 0 && !self.entries.contains_key(&nonce) {
+                self.entries.insert(nonce, value);
                 return nonce;
             }
         }
     }
 
     pub(crate) fn get(&self, nonce: u64) -> Option<&T> {
-        self.entries
-            .iter()
-            .find_map(|(n, value)| (*n == nonce).then_some(value))
+        self.entries.get(&nonce)
     }
 
     pub(crate) fn remove(&mut self, nonce: u64) -> Option<T> {
-        let index = self.entries.iter().position(|(n, _)| *n == nonce)?;
-        Some(self.entries.swap_remove(index).1)
+        self.entries.remove(&nonce)
     }
 
     #[cfg(test)]

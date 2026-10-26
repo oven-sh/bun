@@ -102,6 +102,59 @@ impl DevServer {
         files
     }
 
+    /// The route whose page or layout has `file` as its browser copy (see `client_page_files`).
+    fn route_of_client_page_file(
+        &self,
+        file: incremental_graph::ClientFileIndex,
+    ) -> Option<RouteIndexAndRecurseFlag> {
+        let path = &self.client_graph.bundled_files.keys()[file.get() as usize];
+        let route = *self
+            .route_lookup
+            .get(&self.server_graph.get_file_index(path)?)?;
+        let router_type = self.router.route_ptr(route.route_index()).r#type;
+        self.router
+            .type_ptr_const(router_type)
+            .client_pages
+            .then_some(route)
+    }
+
+    /// Sets in `bits` the routes whose page or layout, as a browser copy, is or imports a file of
+    /// `queue`: no trace of the client graph lists a framework route.
+    pub(super) fn mark_client_page_routes_above(
+        &self,
+        mut queue: Vec<incremental_graph::ClientFileIndex>,
+        bits: &mut [&mut DynamicBitSet],
+    ) -> Result<(), AllocError> {
+        let graph = &self.client_graph;
+        let files = graph.bundled_files.values();
+        let mut visited = DynamicBitSet::init_empty(files.len())?;
+        while let Some(file) = queue.pop() {
+            let index = file.get() as usize;
+            // The importer of an asset can be a stylesheet. A client script holds no css.
+            if visited.is_set(index) || files[index].kind == FileKind::Css {
+                continue;
+            }
+            visited.set(index);
+            if let Some(route) = self.route_of_client_page_file(file) {
+                if let Some(bundle) = self.router.route_ptr(route.route_index()).bundle {
+                    for b in bits.iter_mut() {
+                        b.set(bundle.get() as usize);
+                    }
+                }
+                if route.should_recurse_when_visiting() {
+                    mark_all_route_children(&self.router, bits, route.route_index());
+                }
+            }
+            let mut next = graph.edge_lists[index].first_dep;
+            while let Some(edge) = next {
+                let edge = graph.edges[edge.get() as usize];
+                next = edge.next_dependency;
+                queue.push(edge.dependency);
+            }
+        }
+        Ok(())
+    }
+
     /// Interface function for FrameworkRouter
     pub(crate) fn get_file_id_for_router(
         &mut self,

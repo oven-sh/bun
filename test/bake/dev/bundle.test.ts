@@ -1926,3 +1926,396 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+
+// With `clientPages`, the page and the layouts of a route are also bundled for the browser: their browser copies.
+// `#name` resolves to `name-browser.ts` only in the browser build, so a save of that file builds nothing for the
+// server.
+const browserOnlyImport = (name: string) => ({ browser: `./${name}-browser.ts`, default: `./${name}-server.ts` });
+const clientPagesRouter = {
+  root: "routes",
+  style: "nextjs-pages",
+  layouts: true,
+  serverEntryPoint: "./server.ts",
+  clientEntryPoint: "./client.ts",
+  clientPages: true,
+} as const;
+const clientPagesFiles = {
+  "package.json": JSON.stringify({
+    imports: Object.fromEntries(
+      ["page", "layout", "inner", "plain"].map(name => ["#" + name, browserOnlyImport(name)]),
+    ),
+  }),
+  "server.ts": `
+    export function render(req, meta) {
+      const styles = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join("");
+      const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+      return new Response("<!DOCTYPE html><html><head>" + styles + "</head><body>" + scripts + "</body></html>", {
+        headers: { "content-type": "text/html" },
+      });
+    }
+  `,
+  "client.ts": `
+    import { route } from "bun:bake/client";
+    route.page().then(page => console.log(page.default));
+  `,
+  "page-browser.ts": `export const v = "page v1";`,
+  "page-server.ts": `export const v = "page on the server";`,
+  "page.css": `h1 { color: red; }`,
+  "layout-browser.ts": `export const v = "layout v1";`,
+  "layout-server.ts": `export const v = "layout on the server";`,
+  "layout.css": `@import "./layout-child.css";\nbody { color: red; }`,
+  "layout-child.css": `p { color: red; background: url("./dot.svg"); }`,
+  "dot.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>`,
+  "routes/_layout.ts": `
+    import { v } from "#layout";
+    import "../layout.css";
+    export default "layout: " + v;
+  `,
+  "routes/index.ts": `
+    import { v } from "#page";
+    export default "index: " + v;
+  `,
+  "routes/other.ts": `export default "other";`,
+};
+const reloadStub =
+  'try{location.reload()}catch(_){}\naddEventListener("DOMContentLoaded",function(event){location.reload()})';
+async function renderClientPage(dev: Dev, url: string) {
+  const html = await dev.fetch(url).text();
+  return {
+    script: html.match(/<script type="module" src="([^"]+)">/)![1],
+    styles: html.match(/<link rel="stylesheet"/g)?.length ?? 0,
+  };
+}
+async function loadClientPage(dev: Dev, url: string) {
+  const page = await renderClientPage(dev, url);
+  const code = await dev.fetch(page.script).text();
+  return { ...page, versions: [...new Set(code.match(/\b(page|layout|inner|plain|cycle|gone) v\d+/g))].sort() };
+}
+const loadClientPages = async (dev: Dev, urls: string[]) =>
+  Object.fromEntries(await Array.fromAsync(urls, async url => [url, await loadClientPage(dev, url)]));
+devTest("a tab that reloads after a save below the browser copy of its page runs the new code", {
+  framework: { fileSystemRouterTypes: [clientPagesRouter] },
+  files: clientPagesFiles,
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index: page v1");
+    // No module accepts the update, so the tab reloads.
+    await c.expectReload(async () => {
+      await dev.write("page-browser.ts", `export const v = "page v2";`);
+    });
+    await c.expectMessage("index: page v2");
+  },
+});
+devTest("a tab gets a stylesheet that a save below the browser copy of its page first builds", {
+  framework: { fileSystemRouterTypes: [clientPagesRouter] },
+  files: {
+    ...clientPagesFiles,
+    // The module accepts its updates, so the tab does not reload.
+    "page-browser.ts": `
+      import.meta.hot.accept();
+      export const v = "page v1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index: page v1");
+    await c.style("h1").notFound();
+
+    await dev.write(
+      "page-browser.ts",
+      `
+        import "./page.css";
+        import.meta.hot.accept();
+        export const v = "page v2";
+      `,
+    );
+    await c.style("h1").color.expect.toBe("red");
+
+    await dev.write(
+      "page-browser.ts",
+      `
+        import.meta.hot.accept();
+        export const v = "page v3";
+      `,
+    );
+    await c.style("h1").notFound();
+  },
+});
+devTest("saving a module that only the browser copy of a page imports updates the next page load", {
+  framework: { fileSystemRouterTypes: [clientPagesRouter] },
+  files: {
+    ...clientPagesFiles,
+    "layout-browser.ts": `
+      import { a } from "barrel-lib";
+      export const v = "layout v1" + a;
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export { a } from "./a.js";
+      export { b } from "./b.js";
+      export { c } from "./c.js";
+    `,
+    "node_modules/barrel-lib/a.js": `export const a = "";`,
+    "node_modules/barrel-lib/b.js": `export const b = "";`,
+    "node_modules/barrel-lib/c.js": `export const c = "";`,
+  },
+  async test(dev) {
+    // The page is rendered, and its script is not requested yet.
+    const rendered = await renderClientPage(dev, "/");
+    const other = await loadClientPage(dev, "/other");
+    expect({ rendered, other }).toEqual({
+      rendered: { script: expect.any(String), styles: 1 },
+      other: { script: expect.any(String), styles: 1, versions: ["layout v1"] },
+    });
+
+    // That page has the old stylesheets, so its script reloads it.
+    await dev.write("page-browser.ts", `import "./page.css";\nexport const v = "page v2";`);
+    await dev.fetch(rendered.script).equals(reloadStub);
+    const second = await loadClientPages(dev, ["/", "/other"]);
+    expect(second).toEqual({
+      "/": { script: expect.any(String), styles: 2, versions: ["layout v1", "page v2"] },
+      // A route without the module keeps its script.
+      "/other": other,
+    });
+    expect(second["/"].script).not.toBe(rendered.script);
+
+    // One bundle has the module and a stylesheet that the layout imports. A script holds no css.
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write("page-browser.ts", `export const v = "page v3";`);
+      await dev.write("layout-child.css", `p { color: blue; background: url("./dot.svg"); }`);
+    }
+    const third = await loadClientPages(dev, ["/", "/other"]);
+    expect(third).toEqual({
+      "/": { script: expect.any(String), styles: 1, versions: ["layout v1", "page v3"] },
+      "/other": other,
+    });
+
+    // An image that only a stylesheet has.
+    await dev.write("dot.svg", `<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>`);
+    expect(await loadClientPages(dev, ["/", "/other"])).toEqual(third);
+
+    // A bundle builds a barrel file again when one of its modules imports it. The layout imports it too.
+    await dev.write("page-browser.ts", `import { b } from "barrel-lib";\nexport const v = "page v4" + b;`);
+    expect(await loadClientPages(dev, ["/", "/other"])).toEqual({
+      "/": { script: expect.any(String), styles: 1, versions: ["layout v1", "page v4"] },
+      "/other": other,
+    });
+
+    // A save of the page itself, with no tab: the next page load has the stylesheet that the page now imports.
+    await dev.write(
+      "routes/index.ts",
+      `
+        import { v } from "#page";
+        import "../page.css";
+        export default "index: " + v;
+      `,
+    );
+    expect(await loadClientPage(dev, "/")).toEqual({
+      script: expect.any(String),
+      styles: 2,
+      versions: ["layout v1", "page v4"],
+    });
+  },
+});
+devTest("saving a module that only the browser copy of a layout imports updates the routes below the layout", {
+  framework: {
+    fileSystemRouterTypes: [
+      clientPagesRouter,
+      // Its pages have no browser copy.
+      {
+        root: "plain-routes",
+        style: "nextjs-pages",
+        serverEntryPoint: "./plain-entry.ts",
+        clientEntryPoint: "./client.ts",
+      },
+    ],
+  },
+  files: {
+    ...clientPagesFiles,
+    "inner-browser.ts": `export const v = "inner v1";`,
+    "inner-server.ts": `export const v = "inner on the server";`,
+    "routes/blog/_layout.ts": `
+      import { v } from "#inner";
+      export default "blog layout: " + v;
+    `,
+    "routes/blog/index.ts": `export default "blog";`,
+    "routes/blog/post.ts": `
+      import plain from "../../plain-routes/plain";
+      export default "post: " + plain;
+    `,
+    // A page that another page imports.
+    "routes/blog/again.ts": `export { default } from "./post";`,
+    // A layout with no page of its own, so its route has no bundle.
+    "routes/docs/_layout.ts": `
+      import { v } from "#inner";
+      export default "docs layout: " + v;
+    `,
+    "routes/docs/guide.ts": `export default "guide";`,
+    "plain-entry.ts": `export * from "./server";`,
+    "plain-browser.ts": `export const v = "plain v1";`,
+    "plain-server.ts": `export const v = "plain on the server";`,
+    "plain-routes/plain.ts": `
+      import { v } from "#plain";
+      export default "plain: " + v;
+    `,
+  },
+  async test(dev) {
+    const urls = ["/", "/other", "/blog", "/blog/post", "/blog/again", "/docs/guide", "/plain"];
+    const loaded = await loadClientPages(dev, ["/", "/other", "/blog", "/plain"]);
+    // A save of a stylesheet, and then the first bundle of another route, change no script.
+    await dev.write("layout.css", `@import "./layout-child.css";\nbody { color: blue; }`);
+    const first = await loadClientPages(dev, urls);
+    expect(first).toEqual({
+      "/": { script: expect.any(String), styles: 1, versions: ["layout v1", "page v1"] },
+      "/other": { script: expect.any(String), styles: 1, versions: ["layout v1"] },
+      "/blog": { script: expect.any(String), styles: 1, versions: ["inner v1", "layout v1"] },
+      "/blog/post": { script: expect.any(String), styles: 1, versions: ["inner v1", "layout v1", "plain v1"] },
+      "/blog/again": { script: expect.any(String), styles: 1, versions: ["inner v1", "layout v1", "plain v1"] },
+      "/docs/guide": { script: expect.any(String), styles: 1, versions: ["inner v1", "layout v1"] },
+      "/plain": { script: expect.any(String), styles: 0, versions: [] },
+    });
+    expect(await loadClientPages(dev, ["/", "/other", "/blog", "/plain"])).toEqual(loaded);
+
+    await dev.write("inner-browser.ts", `export const v = "inner v2";`);
+    const second = await loadClientPages(dev, urls);
+    expect(second).toEqual({
+      ...first,
+      "/blog": { script: expect.any(String), styles: 1, versions: ["inner v2", "layout v1"] },
+      "/blog/post": { script: expect.any(String), styles: 1, versions: ["inner v2", "layout v1", "plain v1"] },
+      "/blog/again": { script: expect.any(String), styles: 1, versions: ["inner v2", "layout v1", "plain v1"] },
+      "/docs/guide": { script: expect.any(String), styles: 1, versions: ["inner v2", "layout v1"] },
+    });
+    expect(second["/blog"].script).not.toBe(first["/blog"].script);
+
+    // The browser copy of "/blog/post" imports a page of the other router type, and "/blog/again" imports that copy.
+    await dev.write("plain-browser.ts", `export const v = "plain v2";`);
+    const third = await loadClientPages(dev, urls);
+    expect(third).toEqual({
+      ...second,
+      "/blog/post": { script: expect.any(String), styles: 1, versions: ["inner v2", "layout v1", "plain v2"] },
+      "/blog/again": { script: expect.any(String), styles: 1, versions: ["inner v2", "layout v1", "plain v2"] },
+    });
+
+    // Two saves below the copy of the root layout. After the second one the layout imports one more stylesheet.
+    for (const [version, styles, contents] of [
+      ["layout v2", 1, `export const v = "layout v2";`],
+      ["layout v3", 2, `import "./page.css";\nexport const v = "layout v3";`],
+    ] as const) {
+      const before = await loadClientPages(dev, urls);
+      await dev.write("layout-browser.ts", contents);
+      const after = await loadClientPages(dev, urls);
+      expect(after).toEqual({
+        "/": { script: expect.any(String), styles, versions: [version, "page v1"] },
+        "/other": { script: expect.any(String), styles, versions: [version] },
+        "/blog": { script: expect.any(String), styles, versions: ["inner v2", version] },
+        "/blog/post": { script: expect.any(String), styles, versions: ["inner v2", version, "plain v2"] },
+        "/blog/again": { script: expect.any(String), styles, versions: ["inner v2", version, "plain v2"] },
+        "/docs/guide": { script: expect.any(String), styles, versions: ["inner v2", version] },
+        "/plain": first["/plain"],
+      });
+      for (const url of urls.slice(0, -1)) expect(after[url].script).not.toBe(before[url].script);
+    }
+  },
+});
+devTest("fixing a build error below the browser copy of a page updates the next page load", {
+  framework: { fileSystemRouterTypes: [clientPagesRouter] },
+  files: clientPagesFiles,
+  async test(dev) {
+    const first = await loadClientPages(dev, ["/", "/other"]);
+    // A save with a build error builds no module, so each route keeps its script.
+    await dev.write("page-browser.ts", `export const v = ;`, { errors: null });
+    expect(await loadClientPages(dev, ["/", "/other"])).toEqual(first);
+    {
+      await using _batch = await dev.batchChanges({ errors: null });
+      await dev.write("layout-browser.ts", `export const v = "layout v2";`);
+      await dev.write("page-browser.ts", `export const v = );`);
+    }
+    // A route without the failed module has the new code.
+    const other = await loadClientPage(dev, "/other");
+    expect(other).toEqual({ script: expect.any(String), styles: 1, versions: ["layout v2"] });
+    expect(other.script).not.toBe(first["/other"].script);
+
+    await dev.write("page-browser.ts", `export const v = "page v2";`);
+    const fixed = await loadClientPage(dev, "/");
+    expect(fixed).toEqual({ script: expect.any(String), styles: 1, versions: ["layout v2", "page v2"] });
+    expect(fixed.script).not.toBe(first["/"].script);
+
+    // A stylesheet with a build error is not in a script.
+    for (const [version, stylesheet, rule] of [
+      ["page v3", "layout.css", `@import "./layout-child.css";\nbody`],
+      ["page v4", "layout-child.css", `p`],
+    ]) {
+      {
+        await using _batch = await dev.batchChanges({ errors: null });
+        await dev.write("page-browser.ts", `export const v = "${version}";`);
+        await dev.write(stylesheet, `${rule} {\n color: red;\n background-color\n}\n`, { dedent: false });
+      }
+      await dev.write(stylesheet, `${rule} { color: green; }`, { dedent: false });
+      expect((await loadClientPage(dev, "/")).versions).toEqual(["layout v2", version]);
+    }
+  },
+});
+devTest("a deleted import and an import cycle below the browser copy of a page update the next page load", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  framework: { fileSystemRouterTypes: [clientPagesRouter] },
+  files: {
+    ...clientPagesFiles,
+    "page-browser.ts": `
+      import { a } from "./cycle-a";
+      import { gone } from "./gone";
+      export const v = "page v1" + a() + gone;
+    `,
+    "cycle-a.ts": `
+      import { b } from "./cycle-b";
+      export const a = () => b;
+    `,
+    "cycle-b.ts": `
+      import { a } from "./cycle-a";
+      export const b = "cycle v1";
+      export const again = a;
+    `,
+    // The import resolves to the .ts file while it exists.
+    "gone.ts": `export const gone = "gone v1";`,
+    "gone.js": `export const gone = "gone v2";`,
+  },
+  async test(dev) {
+    const other = await loadClientPage(dev, "/other");
+    let last = await loadClientPage(dev, "/");
+    const expectNewScript = async (versions: string[]) => {
+      const pages = await loadClientPages(dev, ["/", "/other"]);
+      expect(pages).toEqual({ "/": { script: expect.any(String), styles: 1, versions }, "/other": other });
+      expect(pages["/"].script).not.toBe(last.script);
+      last = pages["/"];
+    };
+    expect(last.versions).toEqual(["cycle v1", "gone v1", "layout v1", "page v1"]);
+
+    // The saved module imports its importer.
+    await dev.write(
+      "cycle-b.ts",
+      `
+        import { a } from "./cycle-a";
+        export const b = "cycle v2";
+        export const again = a;
+      `,
+    );
+    await expectNewScript(["cycle v2", "gone v1", "layout v1", "page v1"]);
+
+    // The dev server builds the importer of a deleted file again.
+    await dev.delete("gone.ts");
+    await expectNewScript(["cycle v2", "gone v2", "layout v1", "page v1"]);
+
+    // The importer of a deleted file has a build error when no other file takes the import. The route keeps its script.
+    await dev.delete("gone.js", { errors: null });
+    expect(await loadClientPages(dev, ["/", "/other"])).toEqual({ "/": last, "/other": other });
+    await dev.write("gone.js", `export const gone = "gone v3";`);
+    await expectNewScript(["cycle v2", "gone v3", "layout v1", "page v1"]);
+  },
+});

@@ -909,6 +909,34 @@ pub(super) fn finalize_bundle(
                 mark_all_route_children(&dev.router, &mut [&mut stale], request.route_index());
             }
         }
+        // Also the client files below them that a save or a delete made this bundle build.
+        if current_bundle!().had_reload_event
+            && dev
+                .router
+                .types
+                .iter()
+                .any(|router_type| router_type.client_pages)
+        {
+            let client_files = dev.client_graph.bundled_files.values();
+            let queue: Vec<incremental_graph::ClientFileIndex> = bv2
+                .graph
+                .entry_points
+                .iter()
+                .filter_map(|entry_point| {
+                    ctx.get_cached_index(bake::Side::Client, *entry_point)
+                        .unwrap::<{ bake::Side::Client }>()
+                })
+                .chain(dev.incremental_result.client_files_requeued.iter().copied())
+                .filter(|file| {
+                    let file = &client_files[file.get() as usize];
+                    file.kind != FileKind::Css && !file.failed
+                })
+                .collect();
+            if !queue.is_empty() {
+                dev.mark_client_page_routes_above(queue, &mut [&mut stale, &mut route_bits])?;
+                has_route_bits_set = true;
+            }
+        }
         let mut it = stale.iterator::<true, true>();
         while let Some(i) = it.next() {
             dev.route_bundles[i].invalidate_client_bundle(&mut dev.source_maps);

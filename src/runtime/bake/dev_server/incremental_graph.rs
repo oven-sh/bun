@@ -1661,6 +1661,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                 }
             }
+            if matches!(SIDE, Side::Client) {
+                self.dev_incremental_result()
+                    .client_files_requeued
+                    .push(ClientFileIndex::init(dep.dependency.get()));
+            }
         }
 
         // Bust the resolution cache of the dir containing this file.

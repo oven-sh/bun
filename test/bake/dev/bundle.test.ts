@@ -469,9 +469,6 @@ devTest("deleting imported file shows error then recovers", {
 
   for (const { how, lib, symlinks } of [throughNodeModulesLink, byRelativePath]) {
     devTest(`creating then importing a file of a package imported ${how}`, {
-      // The Windows watcher gives "added" no op, so a cycle that also reads the "modified" of the new file reports
-      // a write, which is no new name to the dev server. Nothing else busts the directory of a failed bare import.
-      skip: lib.startsWith(".") ? [] : ["win32"],
       symlinks,
       files: {
         "index.html": indexHtml,
@@ -494,6 +491,39 @@ devTest("deleting imported file shows error then recovers", {
           `,
         );
         expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
+      },
+    });
+  }
+
+  // The same order when a route of a framework imports the package, so the server graph bundles it.
+  for (const { how, lib, symlinks } of [throughNodeModulesLink, { ...byRelativePath, lib: "../packages/lib" }]) {
+    devTest(`creating then importing a file of a package that a route imports ${how}`, {
+      framework: minimalFramework,
+      symlinks,
+      files: {
+        "routes/index.ts": `
+          import { a } from '${lib}/a';
+          export default function () {
+            return new Response(a);
+          }
+        `,
+        "packages/lib/package.json": libPackageJson(),
+        "packages/lib/a.ts": `export const a = "EXPORT_A";`,
+      },
+      async test(dev) {
+        await dev.fetch("/").equals("EXPORT_A");
+        await dev.write("packages/lib/d.ts", `export const d = "EXPORT_D";`);
+        await dev.write(
+          "routes/index.ts",
+          `
+            import { a } from '${lib}/a';
+            import { d } from '${lib}/d';
+            export default function () {
+              return new Response(a + " " + d);
+            }
+          `,
+        );
+        await dev.fetch("/").equals("EXPORT_A EXPORT_D");
       },
     });
   }
@@ -1049,6 +1079,47 @@ const separateSSRGraph = { ...minimalFramework.serverComponents!, separateSSRGra
       expect(difference(restored, await dev.fetch("/").json())).toEqual(oncePerGraph);
     },
   });
+  // A renamed file no longer resolves when the next build starts, and every graph that bundled it has to bundle
+  // its importers again. A failed import elsewhere is a second reason the dev server reads the directory again.
+  for (const failedImport of [false, true]) {
+    devTest(`renaming a file of the server and the client${failedImport ? " while an import fails" : ""}`, {
+      skip: [
+        "win32", // unlinkSync is having weird behavior
+      ],
+      framework: { ...minimalFramework, serverComponents: separateSSRGraph },
+      files: {
+        "routes/index.ts": `
+          import { c } from "../c";
+          import "../Comp";
+          export default function () {
+            return new Response("c is " + c);
+          }
+        `,
+        "routes/broken.ts": `
+          import "./missing";
+          export default function () {
+            return new Response("broken");
+          }
+        `,
+        "Comp.ts": `
+          "use client";
+          import "./c";
+          export const marker = 1;
+        `,
+        "c.ts": `export const c = "EXPORT_C";`,
+      },
+      async test(dev) {
+        if (failedImport) expect((await dev.fetch("/broken")).status).toBe(500);
+        await dev.fetch("/").equals("c is EXPORT_C");
+        {
+          await using batch = await dev.batchChanges({ errors: null });
+          await dev.delete("c.ts", { errors: null });
+          await dev.write("c.tsx", `export const c = "EXPORT_D";`, { errors: null });
+        }
+        await dev.fetch("/").equals("c is EXPORT_D");
+      },
+    });
+  }
   devTest("bundles a module with a previously failed import for the SSR graph when a second route imports it", {
     framework: { ...minimalFramework, serverComponents: separateSSRGraph },
     files: {

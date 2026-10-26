@@ -96,11 +96,9 @@ impl HotReloadEvent {
 
         // First handle directories, because this may mutate `event.files`
         let has_failure_watches = dev.directory_watchers.watches.count() > 0;
-        // `enqueue_entry_points_dev_server` reports a failed resolve to one graph only.
-        let bust_changed_names = dev.frontend_only;
         for (changed_dir_with_slash, &names_changed) in self.dirs.iter() {
             // A failed bare import busts nothing and has no watch, so a changed name busts here.
-            if has_failure_watches || (names_changed && bust_changed_names) {
+            if has_failure_watches || names_changed {
                 let changed_dir = bun_paths::string_paths::without_trailing_slash_windows_path(
                     changed_dir_with_slash,
                 );
@@ -240,8 +238,8 @@ impl HotReloadEvent {
     fn changes_names(op: bun_watcher::Op) -> bool {
         use bun_watcher::Op;
         if bun_core::env::IS_WINDOWS {
-            // Every watched directory at or above a changed path gets the op; a new name has none.
-            false
+            // A new name in it or below it; `DELETE` and `RENAME` can be the directory itself.
+            op.intersects(Op::CREATE | Op::MOVE_TO)
         } else if bun_core::env::IS_KQUEUE {
             // Any change of the entries is `WRITE`; `DELETE` and `RENAME` are the directory itself.
             op.contains(Op::WRITE)

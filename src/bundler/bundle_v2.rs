@@ -3700,19 +3700,25 @@ pub mod bv2_impl {
                     Ok(r) => r,
                     Err(err) => {
                         let dev = self.dev_server.expect("unreachable");
-                        dev.handle_parse_task_failure(
-                            err,
-                            if flags.client() {
-                                bake::Graph::Client
-                            } else {
-                                bake::Graph::Server
-                            },
-                            abs_path,
-                            // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
-                            unsafe { (*transpiler).log }.cast_const(),
-                            std::ptr::from_mut(self),
-                        )
-                        .expect("oom");
+                        // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
+                        let log = unsafe { (*transpiler).log }.cast_const();
+                        // One report per graph that bundles the file, as its parse tasks would give.
+                        for (bundles, graph) in [
+                            (flags.client(), bake::Graph::Client),
+                            (flags.server(), bake::Graph::Server),
+                            (flags.ssr(), bake::Graph::Ssr),
+                        ] {
+                            if bundles {
+                                dev.handle_parse_task_failure(
+                                    err,
+                                    graph,
+                                    abs_path,
+                                    log,
+                                    std::ptr::from_mut(self),
+                                )
+                                .expect("oom");
+                            }
+                        }
                         // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
                         unsafe { (*(*transpiler).log).reset() };
                         continue;

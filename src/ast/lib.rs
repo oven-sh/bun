@@ -876,10 +876,10 @@ impl Location {
 
     /// What a `Location` keeps of `line` for an error at the 1-based `column`, and the `line_text_start_column` of it.
     pub fn line_excerpt(line: &[u8], column: i32) -> (&[u8], u32) {
+        use bun_core::strings;
         if line.len() <= MAX_WHOLE_LINE_LEN {
             return (line, 0);
         }
-        use bun_core::strings;
         let column = u32::try_from(column.saturating_sub(1)).unwrap_or(0);
         let at = strings::wtf8_offset_of_utf16_index(line, column);
         let kept = excerpt_range(line, at);
@@ -888,7 +888,7 @@ impl Location {
     }
 }
 
-/// A longer line isn't hand-written. A `Location` keeps an excerpt of it wherever the error is.
+/// A longer line isn't hand-written: `bun check` and `bun lint` hide it. A `Location` keeps an excerpt of it wherever the error is.
 const MAX_WHOLE_LINE_LEN: usize = 1000;
 const EXCERPT_LEN_BEFORE: usize = 40;
 const EXCERPT_LEN_AFTER: usize = 80;

@@ -4176,6 +4176,87 @@ test("react-compiler memory does not grow with the square of the size of a compo
   expect(pattern - empty).toBeLessThan(small ? 70 : 300);
 });
 
+// The HIR of a function, and the tables of the passes, were in the arena of the parser, which frees nothing until the
+// bundle ends. Each component below kept 300 KB of them after it was compiled. Now it keeps what its output takes.
+test("react-compiler frees the working memory of a function when it is compiled", async () => {
+  // A debug build takes 7 seconds, which is why this test has a timeout.
+  const small = isDebug || isASAN;
+  // Few components in a file, so that the set of the names of a file stays small.
+  const { files, perFile } = small ? { files: 30, perFile: 10 } : { files: 160, perFile: 5 };
+  const children = Array.from({ length: 20 }, (_, i) => `<li title={props.t${i}}>{props.c${i}}</li>`).join("");
+  const entries = Array.from({ length: files }, (_, f) => `f${f}.jsx`);
+  using dir = tempDir(
+    "react-compiler-working-memory",
+    Object.fromEntries(
+      entries.map((entry, f) => [
+        entry,
+        Array.from(
+          { length: perFile },
+          (_, c) => `export function C${f}_${c}(props) { return <ul>${children}</ul>; }\n`,
+        ).join(""),
+      ]),
+    ),
+  );
+
+  const peakMB = async (flags: string[]) => {
+    const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: [bunExe(), "build", ...flags, "--target=browser", "--external=*", "--outdir=out", ...entries],
+      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+      env: withoutAsanQuarantine(bunEnv),
+      cwd: String(dir),
+    });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return maxRSS / 1024 / 1024;
+  };
+
+  const without = await peakMB([]);
+  const compiled = await peakMB(["--react-compiler"]);
+  expect(await Bun.file(join(String(dir), "out", "f0.js")).text()).toContain("react/compiler-runtime");
+  // Above the build without the compiler. Without the fix: 51 MB for the small input on a debug build and 206 MB for
+  // the large one on a release build. With it: under 1 MB and 52 MB.
+  expect(compiled - without).toBeLessThan(small ? 30 : 120);
+}, 60_000);
+
+// Four strings of the output are built in a buffer of the compiler and copied to the arena of the AST: the name of an
+// outlined function, a template string with characters outside Latin-1, a numeric key, and an index above 31.
+test("react-compiler keeps the strings that it builds for the output", async () => {
+  using dir = tempDir("react-compiler-output-strings", {
+    "entry.jsx": `
+      export function Outlined(props) {
+        return <ul>{props.items.map(item => <li>{item}</li>)}</ul>;
+      }
+      export function Template(props) {
+        const label = \`\u65e5\u672c \${props.name} \u2713\`;
+        return <b>{label}</b>;
+      }
+      export function NumericKey(props) {
+        const o = { 1.5: props.a, 2: props.b };
+        return <i>{o}</i>;
+      }
+      export function Pattern(props) {
+        const [${Array.from({ length: 34 }, (_, i) => `e${i}`).join(", ")}] = props.items;
+        return <u>{e0}{e33}</u>;
+      }
+    `,
+  });
+
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    reactCompiler: true,
+  });
+  const output = await result.outputs[0].text();
+  expect({
+    compiled: output.match(/\b_c\(\d+\)/g)?.length,
+    outlined: /props\.items\.map\(_temp\)/.test(output) && /^function _temp\(item\) \{$/m.test(output),
+    template: output.includes("`\u65e5\u672c ${props.name} \u2713`"),
+    numericKey: output.includes('"1.5": props.a'),
+    pattern: /let \[e0,(?: ,){32} e33\] = props\.items;/.test(output),
+  }).toEqual({ compiled: 4, outlined: true, template: true, numericKey: true, pattern: true });
+});
+
 // Each default in a pattern is a join. EnterSSA made a phi at each join for each variable that is read after it, and
 // EliminateRedundantPhi took them out again: 1,000 defaults, half a million phis, 484 MB. Now 150 MB.
 // Not where the empty build takes 330 MB, which is more than either pattern does.

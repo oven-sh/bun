@@ -667,6 +667,90 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // Type errors come with the second lint of a document, which builds the program; the first publish is without them.
+  test(
+    "reports type errors with --type-check, as bun lint does, and none without it",
+    async () => {
+      const files = {
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "a.ts": "",
+      };
+      const text = 'export const a: number = "a";\n';
+      const codes = (it: Message) => it.params.diagnostics.map((diagnostic: any) => diagnostic.code);
+      {
+        using dir = tempDir("bun-lint-lsp", files);
+        await using client = new Client([...command, "--type-check", "--type-aware"], String(dir));
+        expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+        client.notify("initialized");
+        const path = join(String(dir), "a.ts");
+        open(client, path, text);
+        let published = await client.diagnostics(path);
+        if (published.params.diagnostics.length === 0) published = await client.diagnostics(path);
+        expect(codes(published)).toEqual(["typescript/TS2322"]);
+        expect((await client.request("shutdown")).result).toBeNull();
+        client.notify("exit");
+        const { exitCode, garbage, rest } = await client.end();
+        expect([garbage, rest]).toEqual([[], ""]);
+        expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+        expect(exitCode).toBe(0);
+      }
+      {
+        using dir = tempDir("bun-lint-lsp", files);
+        await using client = new Client(command, String(dir));
+        expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+        client.notify("initialized");
+        const path = join(String(dir), "a.ts");
+        open(client, path, text);
+        expect(codes(await client.diagnostics(path))).toEqual([]);
+        expect((await client.request("shutdown")).result).toBeNull();
+        client.notify("exit");
+        const { exitCode, garbage, rest } = await client.end();
+        expect([garbage, rest]).toEqual([[], ""]);
+        const published = client.received.filter(it => it.method === "textDocument/publishDiagnostics");
+        expect(published.map(codes)).toEqual(published.map(() => []));
+        expect(exitCode).toBe(0);
+      }
+    },
+    timeout,
+  );
+
+  // With oxlint's configuration `--type-check` needs `--type-aware`, which bun lint refuses to run without.
+  test(
+    "refuses --type-check without --type-aware once, as bun lint does, and lints nothing",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({ rules: { "no-debugger": "error" } }),
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "a.ts": "",
+      });
+      await using client = new Client([...command, "--type-check"], String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.ts");
+      open(client, path, 'debugger;\nexport const a: number = "a";\n');
+      expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(path), version: 2 },
+        contentChanges: [{ text: 'debugger;\nexport const a: number = "b";\n' }],
+      });
+      expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([
+        expect.objectContaining({
+          params: {
+            type: 1,
+            message: expect.stringContaining("bun lint: The `--type-check` option requires type-aware linting."),
+          },
+        }),
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test.each([
     ["--fix", "--fix"],
     ["--stdin", "--stdin"],

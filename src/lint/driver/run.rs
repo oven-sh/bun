@@ -1188,14 +1188,10 @@ impl Run<'_> {
             Ok(format) => format,
             Err(error) => return self.reject(&error),
         };
-        let checks_types =
-            options.type_check || cwd_config.as_ref().is_some_and(|it| it.checks_types);
-        let config_wants_types = cwd_config.as_ref().and_then(|it| it.wants_types);
-        if checks_types && options.type_aware.or(config_wants_types) != Some(true) {
-            return self.fail(
-                b"The `--type-check` option requires type-aware linting.\nUse `--type-aware --type-check` or enable `options.typeAware` in your config.",
-            );
-        }
+        let checks_types = match checks_types(options, cwd_config.as_deref()) {
+            Ok(checks_types) => checks_types,
+            Err(why) => return self.fail(why),
+        };
         if options.rules {
             let (out, registry) = (&mut self.out.stdout, linter.registry());
             let colors = options.color.unwrap_or(environment.stdout.colors);
@@ -2018,6 +2014,23 @@ pub(crate) fn store_for(cwd: &[u8], is_native: bool, options: &Options) -> bun_l
     match &options.tsconfig {
         Some(path) => store.with_tsconfig(path),
         None => store,
+    }
+}
+
+/// Why `--type-check` is refused without type-aware linting.
+pub(crate) const TYPE_CHECK_NEEDS_TYPE_AWARE: &[u8] = b"The `--type-check` option requires type-aware linting.\nUse `--type-aware --type-check` or enable `options.typeAware` in your config.";
+
+/// Whether `--type-check` or `typeCheck` of the working directory's configuration (`of_cwd`) reports the type errors
+/// of the files. `Err`: it is on without the type-aware rules it needs.
+pub(crate) fn checks_types(
+    options: &Options,
+    of_cwd: Option<&Loaded>,
+) -> Result<bool, &'static [u8]> {
+    let checks_types = options.type_check || of_cwd.is_some_and(|it| it.checks_types);
+    let config_wants_types = of_cwd.and_then(|it| it.wants_types);
+    match checks_types && options.type_aware.or(config_wants_types) != Some(true) {
+        true => Err(TYPE_CHECK_NEEDS_TYPE_AWARE),
+        false => Ok(checks_types),
     }
 }
 

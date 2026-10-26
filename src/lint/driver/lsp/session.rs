@@ -6,7 +6,9 @@ use crate::configs::{Flavor, Loader};
 use crate::inferred::Inferred;
 use crate::lint::Context;
 use crate::results::FileResult;
-use crate::run::{Environment, Fatal, Linted, NotBuiltIn, Pool, Run, Sinks, Timing, store_for};
+use crate::run::{
+    Environment, Fatal, Linted, NotBuiltIn, Pool, Run, Sinks, Timing, checks_types, store_for,
+};
 use crate::{Linter, discover, paths};
 use bun_lint::js_plugin::Host;
 use bun_threading::Guarded;
@@ -93,8 +95,16 @@ pub(crate) fn with_session<R>(
 impl Session<'_> {
     /// Why nothing can be linted in the folder.
     pub(crate) fn refusal(&self) -> Option<Vec<u8>> {
-        let _ = self.loader.for_directory(&self.environment.cwd);
-        self.loader.refused().map(<[u8]>::to_vec)
+        let of_cwd = self.loader.for_directory(&self.environment.cwd).ok();
+        let refused = self.loader.refused();
+        let refused = refused.or_else(|| checks_types(self.options, of_cwd.as_deref()).err());
+        refused.map(<[u8]>::to_vec)
+    }
+
+    /// Whether the type errors of every file are reported, as `bun lint --type-check` does.
+    fn checks_types(&self) -> bool {
+        let of_cwd = self.loader.for_directory(&self.environment.cwd).ok();
+        checks_types(self.options, of_cwd.as_deref()).unwrap_or(false)
     }
 
     /// What there is to tell the user since this was last asked.
@@ -117,7 +127,7 @@ impl Session<'_> {
             return false;
         };
         self.loader.wants_types(&loaded, &linted.config)
-            && linted.config.has_enabled(|it| it.triggers_type_check())
+            && (linted.config.has_enabled(|it| it.triggers_type_check()) || self.checks_types())
     }
 
     /// Lints the text of the file at `path`. `files == 0`: it is not one to lint, and `results` is empty. What the
@@ -165,7 +175,7 @@ impl Session<'_> {
             cwd: &environment.cwd,
             only: None,
             oxlint_config: (of_cwd.as_deref()).filter(|it| it.flavor == Flavor::Oxlint),
-            checks_types: false,
+            checks_types: self.checks_types(),
             keeps_text: false,
             reads_fixes: true,
             reads_fix_texts: true,

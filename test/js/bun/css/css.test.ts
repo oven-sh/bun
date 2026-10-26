@@ -291,6 +291,639 @@ describe("css tests", () => {
     `,
       indoc`.foo{border-spacing:-20px}`,
     );
+
+    // Two neighbouring rules are one rule only when both components are equal.
+    minify_test(
+      `.table { border-spacing: 0 } .rows { border-spacing: 0 8px }`,
+      `.table{border-spacing:0}.rows{border-spacing:0 8px}`,
+    );
+    minify_test(
+      `.a { border-spacing: 4px 8px } .b { border-spacing: 8px 4px }`,
+      `.a{border-spacing:4px 8px}.b{border-spacing:8px 4px}`,
+    );
+    minify_test(
+      `.a { border-spacing: 4px 8px } .b { border-spacing: 8px }`,
+      `.a{border-spacing:4px 8px}.b{border-spacing:8px}`,
+    );
+    minify_test(
+      `@media print { .a { border-spacing: 0 } .b { border-spacing: 0 8px } }`,
+      `@media print{.a{border-spacing:0}.b{border-spacing:0 8px}}`,
+    );
+    minify_test(`.a { border-spacing: 0 8px } .b { border-spacing: 0 8px }`, `.a,.b{border-spacing:0 8px}`);
+  });
+
+  describe("border_radius", () => {
+    cssTest(
+      `
+      .foo {
+        border-radius: 10px 100px 10px 100px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px 100px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-radius: 10px 100px 10px 100px / 120px 120px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px 100px / 120px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-top-left-radius: 10px 120px;
+        border-top-right-radius: 100px 120px;
+        border-bottom-right-radius: 100px 120px;
+        border-bottom-left-radius: 10px 120px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px 100px 100px 10px / 120px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-top-left-radius: 4px 2px;
+        border-top-right-radius: 3px 4px;
+        border-bottom-right-radius: 6px 2px;
+        border-bottom-left-radius: 3px 4px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 4px 3px 6px / 2px 4px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-top-left-radius: 1% 2%;
+        border-top-right-radius: 3% 4%;
+        border-bottom-right-radius: 5% 6%;
+        border-bottom-left-radius: 7% 8%;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 1% 3% 5% 7% / 2% 4% 6% 8%;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-radius: 10px 100px 10px 100px / 120px 120px;
+        border-start-start-radius: 10px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px 100px / 120px;
+        border-start-start-radius: 10px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-start-start-radius: 10px;
+        border-radius: 10px 100px 10px 100px / 120px 120px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px 100px / 120px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-top-left-radius: 10px 120px;
+        border-top-right-radius: 100px 120px;
+        border-start-start-radius: 10px;
+        border-bottom-right-radius: 100px 120px;
+        border-bottom-left-radius: 10px 120px;
+      }
+    `,
+      `
+      .foo {
+        border-top-left-radius: 10px 120px;
+        border-top-right-radius: 100px 120px;
+        border-start-start-radius: 10px;
+        border-bottom-right-radius: 100px 120px;
+        border-bottom-left-radius: 10px 120px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-radius: 10px;
+        border-top-left-radius: 20px;
+      }
+    `,
+      `
+      .foo {
+        border-radius: 20px 10px 10px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-radius: 10px;
+        border-top-left-radius: var(--test);
+      }
+    `,
+      `
+      .foo {
+        border-radius: 10px;
+        border-top-left-radius: var(--test);
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-radius: 10px 100px 10px 100px;
+        -moz-border-radius: 10px 100px 10px 100px;
+        border-radius: 10px 100px 10px 100px;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-radius: 10px 100px;
+        -moz-border-radius: 10px 100px;
+        border-radius: 10px 100px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-radius: 10px 100px 10px 100px;
+        -moz-border-radius: 20px;
+        border-radius: 30px;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-radius: 10px 100px;
+        -moz-border-radius: 20px;
+        border-radius: 30px;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-top-left-radius: 10px;
+        -moz-border-top-left-radius: 10px;
+        border-top-left-radius: 10px;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-top-left-radius: 10px;
+        -moz-border-top-left-radius: 10px;
+        border-top-left-radius: 10px;
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-border-radius: 30px;
+        -moz-border-radius: 30px;
+        border-radius: 30px;
+      }
+`,
+      {
+        safari: 4 << 16,
+        firefox: 3 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-top-left-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-border-top-left-radius: 30px;
+        -moz-border-top-left-radius: 30px;
+        border-top-left-radius: 30px;
+      }
+`,
+      {
+        safari: 4 << 16,
+        firefox: 3 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-radius: 30px;
+        -moz-border-radius: 30px;
+        border-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        border-radius: 30px;
+      }
+`,
+      {
+        safari: 14 << 16,
+        firefox: 46 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-top-left-radius: 30px;
+        -moz-border-top-left-radius: 30px;
+        border-top-left-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        border-top-left-radius: 30px;
+      }
+`,
+      {
+        safari: 14 << 16,
+        firefox: 46 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-radius: 30px;
+        -moz-border-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-border-radius: 30px;
+        -moz-border-radius: 30px;
+      }
+`,
+      {
+        safari: 14 << 16,
+        firefox: 46 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-top-left-radius: 30px;
+        -moz-border-top-right-radius: 30px;
+        border-bottom-right-radius: 30px;
+        border-bottom-left-radius: 30px;
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-border-top-left-radius: 30px;
+        -moz-border-top-right-radius: 30px;
+        border-bottom-right-radius: 30px;
+        border-bottom-left-radius: 30px;
+      }
+`,
+      {
+        safari: 14 << 16,
+        firefox: 46 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-radius: var(--test);
+      }
+    `,
+      indoc`
+      .foo {
+        -webkit-border-radius: var(--test);
+        -moz-border-radius: var(--test);
+        border-radius: var(--test);
+      }
+`,
+      {
+        safari: 4 << 16,
+        firefox: 3 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-start-start-radius: 5px;
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-top-left-radius: 5px;
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-top-right-radius: 5px;
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-start-start-radius: 5px;
+        border-start-end-radius: 10px;
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-top-left-radius: 5px;
+        border-top-right-radius: 10px;
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-top-left-radius: 10px;
+        border-top-right-radius: 5px;
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-end-end-radius: 10px;
+        border-end-start-radius: 5px;
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-bottom-right-radius: 10px;
+        border-bottom-left-radius: 5px;
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-bottom-right-radius: 5px;
+        border-bottom-left-radius: 10px;
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-start-start-radius: var(--radius);
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-top-left-radius: var(--radius);
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-top-right-radius: var(--radius);
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-start-start-radius: var(--start);
+        border-start-end-radius: var(--end);
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-top-left-radius: var(--start);
+        border-top-right-radius: var(--end);
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-top-right-radius: var(--start);
+        border-top-left-radius: var(--end);
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    // Two neighbouring rules are one rule only when the horizontal and the
+    // vertical radius of each corner are equal.
+    minify_test(
+      `.circle { border-radius: 50% } .oval { border-radius: 50% / 10% }`,
+      `.circle{border-radius:50%}.oval{border-radius:50%/10%}`,
+    );
+    minify_test(
+      `.a { border-radius: 10px 20px } .b { border-radius: 10px 20px / 20px 10px }`,
+      `.a{border-radius:10px 20px}.b{border-radius:10px 20px/20px 10px}`,
+    );
+    minify_test(
+      `.a { border-radius: 10px 20px / 5px 6px } .b { border-radius: 10px 20px / 5px 6px }`,
+      `.a,.b{border-radius:10px 20px/5px 6px}`,
+    );
+    minify_test(
+      `.a { border-top-left-radius: 10px } .b { border-top-left-radius: 10px 20px }`,
+      `.a{border-top-left-radius:10px}.b{border-top-left-radius:10px 20px}`,
+    );
+    minify_test(
+      `.a { border-bottom-right-radius: 10px 20px } .b { border-bottom-right-radius: 20px 10px }`,
+      `.a{border-bottom-right-radius:10px 20px}.b{border-bottom-right-radius:20px 10px}`,
+    );
+    minify_test(
+      `.a { border-start-start-radius: 10px } .b { border-start-start-radius: 10px 20px }`,
+      `.a{border-start-start-radius:10px}.b{border-start-start-radius:10px 20px}`,
+    );
+    minify_test(
+      `.a { border-top-left-radius: 20px 10px } .b { border-top-left-radius: 10px }`,
+      `.a{border-top-left-radius:20px 10px}.b{border-top-left-radius:10px}`,
+    );
+    minify_test(
+      `.a { border-radius: 50% !important } .b { border-radius: 50% / 10% !important }`,
+      `.a{border-radius:50%!important}.b{border-radius:50%/10%!important}`,
+    );
+
+    // The right-to-left rule has the two corners swapped, so it is not the left-to-right rule.
+    prefix_test(
+      `
+      .foo {
+        border-start-start-radius: 5px 10px;
+        border-start-end-radius: 10px 5px;
+      }
+    `,
+      indoc`
+      .foo:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+        border-top-left-radius: 5px 10px;
+        border-top-right-radius: 10px 5px;
+      }
+
+      .foo:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+        border-top-left-radius: 10px 5px;
+        border-top-right-radius: 5px 10px;
+      }
+`,
+      {
+        safari: 12 << 16,
+      },
+    );
+
+    // One value under several vendor prefixes keeps each prefix, in any order.
+    minify_test(
+      `.a { border-radius: 10px; -moz-border-radius: 10px }`,
+      `.a{-moz-border-radius:10px;border-radius:10px}`,
+    );
+    minify_test(
+      `.a { border-radius: 50% / 10%; -moz-border-radius: 50% / 10% }`,
+      `.a{-moz-border-radius:50%/10%;border-radius:50%/10%}`,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-radius: 10px;
+        -moz-border-radius: 10px;
+      }
+    `,
+      indoc`
+      .foo {
+        border-radius: 10px;
+      }
+`,
+      {
+        safari: 14 << 16,
+        firefox: 46 << 16,
+      },
+    );
+
+    // Two vendor prefixes with different values stay two declarations, in source order.
+    minify_test(
+      `.a { -webkit-border-top-left-radius: 10px 20px; border-top-left-radius: 20px 10px }`,
+      `.a{-webkit-border-top-left-radius:10px 20px;border-top-left-radius:20px 10px}`,
+    );
+
+    // The four corners share only the unprefixed value, so the prefixed corner stays a longhand.
+    minify_test(
+      `.a { -webkit-border-top-left-radius: 1px; border-top-left-radius: 1px; border-top-right-radius: 1px; border-bottom-right-radius: 1px; border-bottom-left-radius: 1px }`,
+      `.a{border-radius:1px;-webkit-border-top-left-radius:1px}`,
+    );
+
+    // Two rules with the same selector become one rule, and that rule keeps each prefix.
+    minify_test(
+      `.a { border-radius: 1px } .a { -moz-border-radius: 1px }`,
+      `.a{-moz-border-radius:1px;border-radius:1px}`,
+    );
+
+    // When a prefix gets a second value, each prefix that had the first value
+    // gets it too. lightningcss has the same rule.
+    minify_test(`.a { border-top-left-radius: 1px; border-top-left-radius: 2px }`, `.a{border-top-left-radius:2px}`);
+    minify_test(
+      `.a { border-top-left-radius: 1px; -webkit-border-top-left-radius: 1px; border-top-left-radius: 2px }`,
+      `.a{-webkit-border-top-left-radius:2px;border-top-left-radius:2px}`,
+    );
+    minify_test(
+      `.a { -moz-border-radius: 1px; border-radius: 1px; -moz-border-radius: 2px }`,
+      `.a{-moz-border-radius:2px;border-radius:2px}`,
+    );
+    prefix_test(
+      `
+      .a {
+        -moz-border-radius: 1px;
+        border-radius: 1px;
+        -moz-border-radius: 2px;
+      }
+    `,
+      indoc`
+      .a {
+        border-radius: 2px;
+      }
+`,
+      {
+        chrome: 80 << 16,
+        edge: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+        opera: 67 << 16,
+      },
+    );
+
+    // lightningcss prints this for three rules with one selector, because it
+    // minifies again after each merge. Bun minifies once after the last merge
+    // and prints `border-radius: 2px`.
+    cssTestTodo(
+      `
+      .a { -moz-border-radius: 1px }
+      .a { border-radius: 1px }
+      .a { -moz-border-radius: 2px }
+    `,
+      `
+      .a {
+        border-radius: 1px;
+        -moz-border-radius: 2px;
+      }
+    `,
+      {
+        chrome: 80 << 16,
+        edge: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+        opera: 67 << 16,
+      },
+    );
   });
 
   describe("border", () => {
@@ -5509,6 +6142,12 @@ describe("css tests", () => {
     // fonTfamily in @font-face
     minify_test("@font-face { font-family: 'revert'; }", '@font-face{font-family:"revert"}');
     minify_test("@font-face { font-family: 'revert-layer'; }", '@font-face{font-family:"revert-layer"}');
+
+    // Only `oblique 14deg 14deg` is the default oblique angle.
+    minify_test("@font-face { font-style: oblique 14deg 20deg }", "@font-face{font-style:oblique 14deg 20deg}");
+    minify_test("@font-face { font-style: oblique 20deg 14deg }", "@font-face{font-style:oblique 20deg 14deg}");
+    minify_test("@font-face { font-style: oblique 0deg 10deg }", "@font-face{font-style:oblique 0deg 10deg}");
+    minify_test("@font-face { font-style: oblique 14deg 14deg }", "@font-face{font-style:oblique}");
 
     prefix_test(
       `

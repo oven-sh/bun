@@ -407,10 +407,7 @@ impl LoaderExt for Loader {
 
 // ──────────────────────────────────────────────────────────────────────────
 // CYCLEBREAK: jsc::VirtualMachine / jsc::WebCore::Blob are T6 GENUINE deps.
-// `normalize_specifier` and `get_loader_and_virtual_source` reach into VM
-// internals (origin, module_loader, ObjectURLRegistry) and are only called
-// from the runtime side. They take an opaque vtable now; runtime supplies the
-// static VmLoaderVTable instance (move-in pass).
+// `get_loader_and_virtual_source` reaches them through an opaque vtable that the runtime supplies.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Opaque erased blob handle. SAFETY: erased jsc::WebCore::Blob; bundler only
@@ -419,25 +416,10 @@ pub type OpaqueBlob = *mut ();
 
 pub use crate::{VmLoaderCtx, VmLoaderCtxKind};
 
-pub(crate) fn normalize_specifier<'a>(
-    jsc_vm: &VmLoaderCtx,
-    slice_: &'a [u8],
-) -> (&'a [u8], &'a [u8], &'a [u8]) {
+pub(crate) fn normalize_specifier(slice_: &[u8]) -> (&[u8], &[u8], &[u8]) {
     let mut slice = slice_;
     if slice.is_empty() {
         return (slice, slice, b"");
-    }
-
-    let host = jsc_vm.origin_host();
-    let opath = jsc_vm.origin_path();
-    if slice.starts_with(host) {
-        slice = &slice[host.len()..];
-    }
-
-    if opath.len() > 1 {
-        if slice.starts_with(opath) {
-            slice = &slice[opath.len()..];
-        }
     }
 
     let specifier = slice;
@@ -477,7 +459,7 @@ pub fn get_loader_and_virtual_source<'a>(
     type_attribute_str: Option<&[u8]>,
 ) -> Result<LoaderResult<'a>, GetLoaderAndVirtualSourceErr> {
     let (normalized_file_path_from_specifier, specifier, query) =
-        normalize_specifier(jsc_vm, specifier_str);
+        normalize_specifier(specifier_str);
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
     // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
@@ -1227,9 +1209,6 @@ pub struct BundleOptions<'a> {
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,
     pub(crate) inject: Option<Box<[Box<[u8]>]>>,
-    // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
-    // struct self-contained.
-    pub(crate) origin: bun_url::OwnedURL,
     pub(crate) output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
@@ -1484,7 +1463,6 @@ impl<'a> BundleOptions<'a> {
             react_compiler: self.react_compiler,
             react_compiler_parse_test_pragmas: self.react_compiler_parse_test_pragmas,
             inject: self.inject.clone(),
-            origin: self.origin.clone(),
             // The owning handle stays with the parent; copying it here would
             // close the parent's fd when the worker options drop.
             output_dir_handle: None,
@@ -1753,7 +1731,6 @@ impl<'a> BundleOptions<'a> {
             react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
             react_compiler_parse_test_pragmas: false,
             inject: None,
-            origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
             root_dir: Box::default(),
             preserve_symlinks: false,
@@ -1848,12 +1825,6 @@ impl<'a> BundleOptions<'a> {
 
         opts.env.disable_default_env_files = transform.disable_default_env_files;
 
-        if let Some(origin) = &transform.origin {
-            // ownership — `URL<'_>` borrows its input; `OwnedURL` owns the href and
-            // callers borrow via `.url()`.
-            opts.origin = bun_url::OwnedURL::from_href(origin.clone());
-        }
-
         if let Some(jsx_opts) = &transform.jsx {
             opts.jsx = jsx::Pragma::from_api(jsx_opts.clone());
         }
@@ -1893,12 +1864,7 @@ impl<'a> BundleOptions<'a> {
                 opts.allow_runtime = false;
             }
             Target::Bun => {
-                opts.import_path_format =
-                    if opts.import_path_format == ImportPathFormat::AbsoluteUrl {
-                        ImportPathFormat::AbsoluteUrl
-                    } else {
-                        ImportPathFormat::AbsolutePath
-                    };
+                opts.import_path_format = ImportPathFormat::AbsolutePath;
 
                 opts.env.behavior = api::DotEnvBehavior::LoadAll;
                 if transform.extension_order.is_empty() {
@@ -1953,10 +1919,6 @@ impl<'a> BundleOptions<'a> {
             opts.minify_syntax = true;
         }
 
-        if opts.origin.url().is_absolute() {
-            opts.import_path_format = ImportPathFormat::AbsoluteUrl;
-        }
-
         if opts.write && !opts.output_dir.is_empty() {
             let handle = open_output_dir(&opts.output_dir)?;
             // The inline `bun_resolver::fs::FileSystem` does
@@ -1999,7 +1961,6 @@ impl Drop for BundleOptions<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportPathFormat {
     Relative,
-    AbsoluteUrl,
     // omit file extension
     AbsolutePath,
     PackagePath,

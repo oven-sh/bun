@@ -196,7 +196,6 @@ pub struct VirtualMachine {
     /// `Bun.serve()`. Empty for the default React framework.
     pub bake_framework: crate::strong::Optional,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
-    pub origin: bun_url::URL<'static>,
     // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
     // `bun_runtime` is a forward dep of this crate; stored type-erased and
     // cast back by the `bun_runtime` consumers.
@@ -297,7 +296,6 @@ pub struct VirtualMachine {
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
     pub has_any_macro_remappings: bool,
-    pub(crate) is_from_devserver: bool,
     pub(crate) has_enabled_macro_mode: bool,
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
@@ -3253,8 +3251,7 @@ impl VirtualMachine {
         // Note (validity): the zeroed bytes are NOT a valid
         // `VirtualMachine` — `origin_timer: Instant`, `on_unhandled_rejection:
         // fn(...)`, every `Vec`/`Box`/
-        // `HashMap`/`ArrayHashMap` field (NonNull dangling-when-empty), `URL`
-        // (`&[u8]` references), and `Option<bool>` (bool-niche → zero = Some)
+        // `HashMap`/`ArrayHashMap` field (NonNull dangling-when-empty), and `Option<bool>`
         // have no all-zero repr. We therefore never materialize
         // `&mut VirtualMachine` until all such fields have been `ptr::write`n
         // via `addr_of_mut!`; remaining fields are zero-valid
@@ -3339,8 +3336,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).default_tls_reject_unauthorized).write(None);
             addr_of_mut!((*vm).pending_ipc).write(None);
             // Non-zero-valid container fields: `Vec`/`Box`/`HashMap`/
-            // `ArrayHashMap` all carry a `NonNull` (dangling when empty), and
-            // `URL` is a struct of `&[u8]` references — all-zero bytes violate
+            // `ArrayHashMap` all carry a `NonNull` (dangling when empty): all-zero bytes violate
             // their validity invariants even when len/cap are 0. Write the
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
@@ -3358,7 +3354,6 @@ impl VirtualMachine {
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead());
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
             addr_of_mut!((*vm).entry_point).write(Default::default());
-            addr_of_mut!((*vm).origin).write(Default::default());
             addr_of_mut!((*vm).ref_strings).write(Default::default());
             addr_of_mut!((*vm).modules).write(Default::default());
             addr_of_mut!((*vm).macro_event_loop).write(EventLoop::default());
@@ -6339,8 +6334,7 @@ impl VirtualMachine {
                     let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
                 }
                 if let Some(list) = exception_list {
-                    let origin = self.is_from_devserver.then_some(&self.origin);
-                    zig_exception.add_to_error_list(list, self.top_level_dir(), origin);
+                    zig_exception.add_to_error_list(list);
                 }
                 holder.deinit(self);
             }
@@ -6450,18 +6444,12 @@ impl VirtualMachine {
         trace: &crate::ZigStackTrace,
         allow_ansi_colors: bool,
     ) -> crate::CrateResult<()> {
-        use crate::zig_stack_frame::LineColumn;
         let stack = trace.frames();
         if stack.is_empty() {
             return Ok(());
         }
         // SAFETY: per-thread VM.
         let vm = VirtualMachine::get().as_mut();
-        let origin = if vm.is_from_devserver {
-            Some(&vm.origin)
-        } else {
-            None
-        };
         let dir = vm.top_level_dir();
 
         for frame in stack {
@@ -6496,12 +6484,12 @@ impl VirtualMachine {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
                     frame.name_formatter(allow_ansi_colors),
-                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
+                    frame.source_url_formatter(dir, allow_ansi_colors)
                 )?;
             } else if !frame.position.is_invalid() {
                 pretty_write!(
                     "<r>      <d>at <r>{}\n",
-                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
+                    frame.source_url_formatter(dir, allow_ansi_colors)
                 )?;
             } else if has_name {
                 pretty_write!(
@@ -6511,7 +6499,7 @@ impl VirtualMachine {
             } else {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d>\n",
-                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
+                    frame.source_url_formatter(dir, allow_ansi_colors)
                 )?;
             }
         }
@@ -6614,7 +6602,6 @@ impl VirtualMachine {
         // Note: this guard runs the two tail blocks on the way out so every
         // early `return` is covered.
         struct Tail<'a> {
-            this: *mut VirtualMachine,
             exception: *mut ZigException,
             exception_list: Option<&'a mut ExceptionList>,
             enable_source_code_preview: &'a Cell<bool>,
@@ -6622,9 +6609,6 @@ impl VirtualMachine {
         }
         impl Drop for Tail<'_> {
             fn drop(&mut self) {
-                // SAFETY: `this`/`exception` are stack-local raw ptrs taken
-                // before the body below reborrows them; no overlap at drop.
-                let this = unsafe { &mut *self.this };
                 // SAFETY: `self.exception` is the caller's stack
                 // `ZigException`, live for the guard scope; no overlap at drop.
                 let exception = unsafe { &mut *self.exception };
@@ -6651,13 +6635,11 @@ impl VirtualMachine {
                     let _ = (self.enable_source_code_preview, self.source_code_slice);
                 }
                 if let Some(list) = self.exception_list.take() {
-                    let origin = this.is_from_devserver.then_some(&this.origin);
-                    exception.add_to_error_list(list, this.top_level_dir(), origin);
+                    exception.add_to_error_list(list);
                 }
             }
         }
         let _tail = Tail {
-            this: self,
             exception,
             exception_list,
             enable_source_code_preview: &enable_source_code_preview,
@@ -7697,7 +7679,6 @@ impl VirtualMachine {
     #[cold]
     #[inline(never)]
     pub(crate) fn print_github_annotation(exception: &ZigException) {
-        use crate::zig_stack_frame::LineColumn;
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();
@@ -7768,13 +7749,6 @@ impl VirtualMachine {
         }
 
         if top_frame.is_some() {
-            // SAFETY: per-thread VM.
-            let vm = VirtualMachine::get();
-            let origin = if vm.is_from_devserver {
-                Some(&vm.origin)
-            } else {
-                None
-            };
             for frame in frames {
                 let source_url = frame.source_url.to_utf8();
                 let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
@@ -7787,11 +7761,7 @@ impl VirtualMachine {
                     let mut name_str = String::new();
                     let _ = write!(name_str, "{}", frame.name_formatter(false));
                     let mut loc_str = String::new();
-                    let _ = write!(
-                        loc_str,
-                        "{}",
-                        frame.source_url_formatter(file, origin, LineColumn::Include, false)
-                    );
+                    let _ = write!(loc_str, "{}", frame.source_url_formatter(file, false));
                     (name_str, loc_str)
                 };
                 if !name_str.is_empty() {

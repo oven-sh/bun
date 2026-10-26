@@ -1,0 +1,10 @@
+{
+  "name": "berry-protocols",
+  "dependencies": {
+    "local-file": "file:./local-file",
+    "local-portal": "portal:./local-portal"
+  },
+  "resolutions": {
+    "a-dep": "portal:./local-a-dep"
+  }
+}

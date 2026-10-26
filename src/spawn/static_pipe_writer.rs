@@ -280,9 +280,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // for the lifetime of this writer (the process owns/outlives its stdio writers).
         unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
         if release_start_ref {
-            // SAFETY: token taken above. On POSIX this frees `self`: it is the
-            // last use here, and the writer's `close()` frames below do nothing
-            // after this callback. On Windows the in-flight write's ref outlives it.
+            // SAFETY: token taken above; last use of `self`. After a failed write the
+            // writer holds a ref of its own until its `close()` returns (`_on_error`
+            // on POSIX, the in-flight write on Windows).
             unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
         }
     }

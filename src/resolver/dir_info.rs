@@ -559,30 +559,11 @@ pub(crate) fn discard_parked_below(dir: &[u8]) {
 
 /// A file that the tsconfig.json of a cached directory extends.
 pub(crate) struct ExtendedFile {
-    pub(crate) path: Box<[u8]>,
-    pub(crate) seen: Seen,
-}
-
-/// What the configurations that extend a file read from it.
-pub(crate) enum Seen {
-    Read(Box<[u8]>),
-    Unreadable,
-    /// Two of them read different bytes, so one of them is not what the file has now.
-    Differs,
-}
-
-impl Seen {
-    pub(crate) fn of(read: Option<Box<[u8]>>) -> Self {
-        read.map_or(Seen::Unreadable, Seen::Read)
-    }
-
-    pub(crate) fn is(&self, read: Option<&[u8]>) -> bool {
-        match (self, read) {
-            (Seen::Read(seen), Some(read)) => **seen == *read,
-            (Seen::Unreadable, None) => true,
-            _ => false,
-        }
-    }
+    /// In `DirnameStore`.
+    pub(crate) path: &'static [u8],
+    /// `SourceFile::hash` of the file when the configurations that extend it read it. `None`:
+    /// two of them read different bytes, so one of them is not what the file has now.
+    pub(crate) seen: Option<Option<u64>>,
 }
 
 type ExtendedMap = std::collections::HashMap<
@@ -609,19 +590,19 @@ pub(crate) fn any_extended() -> bool {
 }
 
 /// Records what a tsconfig.json that was just loaded read from `path`, a file it extends.
-/// `dir_hash` is the key hash of the directory of `path`.
-pub(crate) fn note_extended(dir_hash: u64, path: &[u8], read: Option<&[u8]>) {
+/// `dir_hash` is the key hash of the directory of `path`, and `hash` is `SourceFile::hash`.
+pub(crate) fn note_extended(dir_hash: u64, path: &'static [u8], hash: Option<u64>) {
     let mut extended = EXTENDED.lock();
     let files = extended.entry(dir_hash).or_default();
     match files.iter_mut().find(|it| *it.path == *path) {
         Some(file) => {
-            if !file.seen.is(read) {
-                file.seen = Seen::Differs;
+            if file.seen != Some(hash) {
+                file.seen = None;
             }
         }
         None => files.push(ExtendedFile {
-            path: Box::from(path),
-            seen: Seen::of(read.map(Box::from)),
+            path,
+            seen: Some(hash),
         }),
     }
     EXTENDED_COUNT.store(extended.len(), core::sync::atomic::Ordering::Relaxed);

@@ -166,15 +166,16 @@ pub struct TSConfigJSON {
 
     /// The files that `Resolver::load_tsconfig` read for this configuration: the file of the
     /// directory, then each file that the one before it extends. A re-read of the directory
-    /// keeps the configuration while each file has these bytes.
+    /// keeps the configuration while each file hashes to the same value.
     pub(crate) sources: Vec<SourceFile>,
 }
 
 /// One file of `TSConfigJSON::sources`.
 pub(crate) struct SourceFile {
-    pub(crate) path: Box<[u8]>,
-    /// `None`: the file could not be read.
-    pub(crate) contents: Option<Box<[u8]>>,
+    /// In `DirnameStore`.
+    pub(crate) path: &'static [u8],
+    /// `bun_wyhash::hash` of the bytes. `None`: the file could not be read.
+    pub(crate) hash: Option<u64>,
 }
 
 impl Default for TSConfigJSON {

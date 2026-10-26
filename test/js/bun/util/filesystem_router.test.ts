@@ -489,6 +489,27 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
+// reload() drops the directory of the routes, and each directory below it that can have a route, from the resolver's
+// cache. A directory that cannot have one, like one whose name starts with a dot, stays cached with what it took from
+// the directories above it.
+it("reload() applies a new package.json to a directory that has no route", () => {
+  const imports = (target: string) => JSON.stringify({ name: "app", imports: { "#lib": target } });
+  using dir = tempDir("fsr-reload-config", {
+    "package.json": imports("./a.js"),
+    "a.js": "",
+    "b.js": "",
+    "index.tsx": "export default 1;",
+    ".private/probe.js": `module.exports = () => require("path").basename(require.resolve("#lib"));`,
+  });
+  const router = new FileSystemRouter({ dir: String(dir), fileExtensions: [".tsx"], style: "nextjs" });
+  const probe = require(path.join(String(dir), ".private", "probe.js"));
+  expect(probe()).toBe("a.js");
+
+  fs.writeFileSync(path.join(String(dir), "package.json"), imports("./b.js"));
+  router.reload();
+  expect(probe()).toBe("b.js");
+});
+
 it("the constructor and reload() don't create allocator heaps", () => {
   const { dir } = make(["index.tsx", "posts/[id].tsx"]);
   const heapsCreatedBy = (fn: () => void) => {

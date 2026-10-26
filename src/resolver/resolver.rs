@@ -4113,16 +4113,7 @@ impl<'a> Resolver<'a> {
         dirname_fd: FD,
         sources: &mut Vec<crate::tsconfig_json::SourceFile>,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
-        let contents = match self.read_config_file(file, dirname_fd) {
-            Ok(contents) => contents,
-            Err(err) => {
-                sources.push(crate::tsconfig_json::SourceFile {
-                    path: Box::from(file),
-                    contents: None,
-                });
-                return Err(err);
-            }
-        };
+        let contents = self.read_config_file(file, dirname_fd);
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
@@ -4132,28 +4123,25 @@ impl<'a> Resolver<'a> {
             .dirname_store
             .append_slice(file)
             .expect("unreachable");
+        sources.push(crate::tsconfig_json::SourceFile {
+            path: key_path,
+            hash: contents.as_deref().ok().map(bun_wyhash::hash),
+        });
 
-        let mut source = bun_ast::Source::init_path_string_owned(key_path, contents);
+        // `TSConfigJSON` owns `Box<[u8]>` copies of every field, so the source
+        // bytes are dead once `parse` returns and can be dropped with the
+        // local `Source`.
+        let source = bun_ast::Source::init_path_string_owned(key_path, contents?);
+        let file_dir = source.path.source_dir();
 
         // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
         // narrow `&mut` for this call only.
-        let parsed =
-            TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json);
-        // `TSConfigJSON` owns `Box<[u8]>` copies of every field, so nothing reads the source
-        // bytes once `parse` returns.
-        sources.push(crate::tsconfig_json::SourceFile {
-            path: Box::from(key_path),
-            contents: Some(
-                core::mem::take(&mut source.contents)
-                    .into_owned()
-                    .into_boxed_slice(),
-            ),
-        });
-        let file_dir = source.path.source_dir();
-        let mut result = match parsed? {
-            Some(r) => r,
-            None => return Ok(None),
-        };
+        let mut result =
+            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
+            {
+                Some(r) => r,
+                None => return Ok(None),
+            };
 
         // `baseUrl` can be longer than a path buffer. Joins against it are checked, so a long one never matches.
         if result.has_base_url() {
@@ -6727,9 +6715,9 @@ impl<'a> Resolver<'a> {
                     if let Some(it) = &loaded {
                         for extended in it.sources.iter().skip(1) {
                             DirInfo::note_extended(
-                                DirInfo::HashMap::key_hash(Dirname::dirname(&extended.path)),
-                                &extended.path,
-                                extended.contents.as_deref(),
+                                DirInfo::HashMap::key_hash(Dirname::dirname(extended.path)),
+                                extended.path,
+                                extended.hash,
                             );
                         }
                     }
@@ -6894,16 +6882,21 @@ impl<'a> Resolver<'a> {
         Ok(None)
     }
 
-    /// Whether each file that `config` was read from has the bytes it had then, and the first one
-    /// is `path`: a re-read of the directory then keeps `config`.
+    /// Whether each file that `config` was read from is as it was then, and the first one is
+    /// `path`: a re-read of the directory then keeps `config`.
     fn tsconfig_sources_unchanged(&mut self, config: *const TSConfigJSON, path: &[u8]) -> bool {
         // SAFETY: interned into a `DirInfo` slot for the life of the process.
         let sources = unsafe { &(*config).sources };
         sources.first().is_some_and(|first| *first.path == *path)
-            && sources.iter().all(|file| {
-                let read = self.read_config_file(&file.path, FD::INVALID).ok();
-                read.as_deref() == file.contents.as_deref()
-            })
+            && sources
+                .iter()
+                .all(|file| self.hash_config_file(file.path) == file.hash)
+    }
+
+    /// `SourceFile::hash` of what the file has now.
+    fn hash_config_file(&mut self, path: &[u8]) -> Option<u64> {
+        let contents = self.read_config_file(path, FD::INVALID).ok()?;
+        Some(bun_wyhash::hash(&contents))
     }
 
     /// Whether a file in the directory with this key hash, which the tsconfig.json of another
@@ -6918,12 +6911,9 @@ impl<'a> Resolver<'a> {
         };
         let mut changed = false;
         for file in &mut files {
-            let read = self
-                .read_config_file(&file.path, FD::INVALID)
-                .ok()
-                .map(Vec::into_boxed_slice);
-            changed |= !file.seen.is(read.as_deref());
-            file.seen = DirInfo::Seen::of(read);
+            let hash = self.hash_config_file(file.path);
+            changed |= file.seen != Some(hash);
+            file.seen = Some(hash);
         }
         DirInfo::put_extended(dir_hash, files);
         changed

@@ -122,3 +122,49 @@ test("tsconfig 'extends' merge still works after freeing intermediates", async (
   expect(stdout.trim()).toBe("leaf");
   expect(exitCode).toBe(0);
 });
+
+// A require that fails drops the cached directory of the path it asked for, and the next lookup reads the directory
+// again. Each parse of its tsconfig.json and package.json was kept for the life of the process, and the directories
+// below it were not read again, which left them with the old parses.
+test.skipIf(!isDebug)("a directory that is read again keeps its parses and the directories below it", async () => {
+  const drops = 20;
+  using dir = tempDir("tsconfig-reread", {
+    "package.json": JSON.stringify({ name: "app", imports: { "#lib": "./lib.ts" } }),
+    "tsconfig.json": JSON.stringify({ extends: "./tsconfig.base.json" }),
+    "tsconfig.base.json": JSON.stringify({ compilerOptions: { paths: { "@lib": ["./lib.ts"] } } }),
+    "lib.ts": "export default 1;\n",
+    "src/deep/probe.cjs": `module.exports = () => [require.resolve("@lib"), require.resolve("#lib")];`,
+    "main.cjs": `
+      const { join } = require("path");
+      const probe = require("./src/deep/probe.cjs");
+      const first = probe();
+      for (let i = 0; i < ${drops}; i++) {
+        try {
+          require(join(__dirname, "not-there.js"));
+        } catch {}
+        if (String(probe()) !== String(first)) throw new Error("resolved to another file");
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.cjs"],
+    env: { ...bunEnv, BUN_DEBUG_alloc: "1", BUN_DEBUG_Fs: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const output = stdout + stderr;
+  const count = (line: string) => output.split(line).length - 1;
+  expect({
+    // tsconfig.json and the file it extends, once. Before, once for each drop.
+    tsconfigParses: count("new(TSConfigJSON)") < drops,
+    // The project root is opened again after each drop. A directory below it is not.
+    rootOpens: count(`open(${String(dir)})`) >= drops,
+    srcOpens: count(`open(${path.join(String(dir), "src")})`),
+    deepOpens: count(`open(${path.join(String(dir), "src", "deep")})`),
+  }).toEqual({ tsconfigParses: true, rootOpens: true, srcOpens: 1, deepOpens: 1 });
+  expect(exitCode).toBe(0);
+});

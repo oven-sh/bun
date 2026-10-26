@@ -203,7 +203,7 @@ const loweredMarker = "/*bun:structs*/";
 
 // A declaration starts a statement: `struct Name`, `shared struct Name`, optionally after `export`.
 const structDeclaration = /(?:^|[\n\r;{}]|\*\/)[ \t]*(?:export[ \t]+)?(?:shared[ \t]+)?struct[ \t]+[\p{L}$_\\]/u;
-const runtimeImport = /^import[ \t]*\{[^}]*\}[ \t]*from[ \t]*["']bun:wrap["'];?[ \t]*\r?\n?/m;
+const runtimeImport = /^import[ \t]*\{([^}]*)\}[ \t]*from[ \t]*["']bun:wrap["'];?[ \t]*\r?\n?/m;
 const functionBodyName = "__bunVmFunctionBody__";
 
 let transpiler: Bun.Transpiler | undefined;
@@ -230,7 +230,17 @@ function lowerStructSyntax(source: string, kind: number): string {
     const first = (error as { errors?: { message?: string }[] })?.errors?.[0] ?? (error as { message?: string });
     throw new SyntaxError(first?.message ?? String(error));
   }
-  lowered = lowered.replace(runtimeImport, "");
+  // The printer imports the helper under a unique alias (`__structBase as __structBase_x1y2`); the lowered code calls it
+  // by its own name instead, which the realm that runs it has.
+  const aliases: string[][] = [];
+  lowered = lowered.replace(runtimeImport, (_, names: string) => {
+    for (const part of names.split(",")) {
+      const [name, alias] = part.trim().split(/\s+as\s+/);
+      if (name && alias) aliases.push([alias, name]);
+    }
+    return "";
+  });
+  for (const [alias, name] of aliases) lowered = lowered.replaceAll(alias, name);
   if (kind === 1) {
     const start = lowered.indexOf("{", lowered.indexOf(functionBodyName));
     lowered = lowered.slice(start + 1, lowered.lastIndexOf("}"));

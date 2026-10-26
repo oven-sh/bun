@@ -1853,9 +1853,14 @@ impl<'a> ExportStarContext<'a> {
         if let Some(&target) = self.wrapped_lifted_targets.get(&tracker.import_ref) {
             return target;
         }
-        // Follow `export { x } from "./y"` through ES module files. Every hop is
-        // one file, so the walk is as short as the re-export chain.
-        for _ in 0..16 {
+        // Follow `export { x } from "./y"` through ES module files. A cycle
+        // ends the walk (step 4 reports it).
+        let mut seen: Vec<ImportTracker> = Vec::new();
+        loop {
+            if seen.iter().any(|&prev| same_export(prev, tracker)) {
+                return tracker;
+            }
+            seen.push(tracker);
             let id = tracker.source_index.get() as usize;
             let Some(named_import) = col_ref!(self.named_imports)[id].get(&tracker.import_ref)
             else {
@@ -1895,7 +1900,6 @@ impl<'a> ExportStarContext<'a> {
                 _ => tracker = next,
             }
         }
-        tracker
     }
 
     /// The `export *` statement of `source_index` for `import_record_index`.

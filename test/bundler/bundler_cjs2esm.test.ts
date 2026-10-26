@@ -1741,6 +1741,64 @@ describe("bundler", () => {
       },
     });
   }
+  // The named re-export can sit behind any number of `export { foo } from` hops.
+  const chainLength = 20;
+  itBundled("cjs2esm/ExportStarOfWrappedLiftedCommonJSWithDeepSiblingReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from "./barrel.js";
+        import * as ns from "./barrel.js";
+        console.log(foo, Object.keys(ns).join(","));
+      `,
+      "/barrel.js": /* js */ `
+        export * from "./lib.cjs";
+        export { default } from "./lib.cjs";
+        export * from "./hop0.js";
+      `,
+      ...Object.fromEntries(
+        Array.from({ length: chainLength }, (_, i) => [
+          `/hop${i}.js`,
+          `export { foo } from "./${i + 1 < chainLength ? `hop${i + 1}.js` : "lib.cjs"}";`,
+        ]),
+      ),
+      "/lib.cjs": /* js */ `
+        exports.foo = 1;
+        exports.bar = 2;
+      `,
+    },
+    format: "esm",
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: {
+      stdout: "1 bar,default,foo",
+    },
+  });
+  // A cycle in the named re-exports is the existing cycle error.
+  itBundled("cjs2esm/ExportStarOfWrappedLiftedCommonJSWithSiblingReExportCycle", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo } from "./barrel.js";
+        console.log(foo);
+      `,
+      "/barrel.js": /* js */ `
+        export * from "./lib.cjs";
+        export { default } from "./lib.cjs";
+        export * from "./a.js";
+      `,
+      "/a.js": /* js */ `
+        export { foo } from "./b.js";
+      `,
+      "/b.js": /* js */ `
+        export { foo } from "./a.js";
+      `,
+      "/lib.cjs": /* js */ `
+        exports.foo = 1;
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/b.js": ['Detected cycle while resolving import "foo"'],
+    },
+  });
   // Two exports with one name behind the wrapped file's own `export *` are
   // ambiguous, whatever their positions in their files.
   itBundled("cjs2esm/ExportStarOfWrappedLiftedCommonJSAmbiguityBehindWrapper", {

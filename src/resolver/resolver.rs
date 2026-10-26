@@ -6383,6 +6383,9 @@ impl<'a> Resolver<'a> {
                 &[parent.abs_real_path, base],
                 bufs!(dir_info_uncached_filename),
             )?;
+        } else if entry.base() != base {
+            // The link is at the entry's own name; `path` in another case may not exist.
+            return None;
         }
         // SAFETY: `rfs_ptr` points at the process-global RealFS; `entries_mutex` held.
         let listing = unsafe { &mut *self.rfs_ptr() }.entries.get(real);

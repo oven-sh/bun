@@ -44,6 +44,20 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
+  it("converts a String object once when it has to create the directory", async () => {
+    using tmpbase = tempDir("bun-write-string-object", {});
+    let calls = 0;
+    const data = new String("ignored");
+    data.toString = () => {
+      calls++;
+      return "written";
+    };
+    const file = join(tmpbase, "missing", "string-object.txt");
+    await Bun.write(file, data);
+    expect(await Bun.file(file).text()).toBe("written");
+    expect(calls).toBe(1);
+  });
+
   describe("large file", () => {
     it("write large file (text)", async () => {
       using tmpbase = tempDir("large-file-text", {});

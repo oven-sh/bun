@@ -533,13 +533,16 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
 // The code frame caps a source line at 1024 bytes. The cut has to land on a
 // character boundary, or the frame writes a partial UTF-8 sequence to stderr.
 describe.concurrent("code frame clamps a long source line on a character boundary", () => {
+  const cjk = Buffer.alloc(3000, "中文字").toString();
+  const emoji = Buffer.alloc(4000, "😀").toString();
   test.each([
-    // "1 | const s = \"" is 15 bytes, so byte 1024 of the line lands inside a character in both cases.
-    ["cjk (3-byte)", Buffer.alloc(3000, "中文字").toString(), "中文字中"],
-    ["emoji (4-byte)", Buffer.alloc(4000, "😀").toString(), "😀😀😀😀"],
-  ])("%s", async (_label, filler, expectedTail) => {
+    // "1 | const s = \"" is 15 bytes, so byte 1024 of the line lands inside a character in each case.
+    ["cjk (3-byte), on the line that throws", cjk, "; ", "中文字中"],
+    ["emoji (4-byte), on the line that throws", emoji, "; ", "😀😀😀😀"],
+    ["cjk (3-byte), on the line above the one that throws", cjk, ";\n", "中文字中"],
+  ])("%s", async (_label, filler, separator, expectedTail) => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `const s = "${filler}"; throw new Error("boom");`],
+      cmd: [bunExe(), "-e", `const s = "${filler}"${separator}throw new Error("boom");`],
       env: { ...bunEnv, NO_COLOR: "1" },
       stdout: "ignore",
       stderr: "pipe",

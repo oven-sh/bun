@@ -617,8 +617,7 @@ impl BuildCommand {
             }
 
             if this_transpiler.options.output_dir.is_empty() && !ctx.bundler_options.compile {
-                // Same rule as the `'dump` block: two files (a linked source map) land next
-                // to the entry point, one file in --outfile's directory or on stdout.
+                // Like the `'dump` block: a linked source map's two files go next to the entry.
                 let dir = if this_transpiler.options.source_map == options::SourceMapOption::Linked
                     && ctx.args.entry_points.len() == 1
                 {

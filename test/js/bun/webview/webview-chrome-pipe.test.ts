@@ -198,53 +198,150 @@ test.concurrent("close() rejects a held navigate() catchably and a floating one 
 
 // Converting an argument can run user code (valueOf, toString, toJSON, an
 // options getter) that closes the view after the method's first closed-check.
-// Every method must check again before it sends: a command sent for a closed
-// view gets a reply nothing can route, so its promise would never settle.
-test.concurrent("close() during argument conversion makes the call throw instead of hang", async () => {
+// The call must then throw what any call on a closed view throws, and send
+// nothing: a command sent for a closed view gets a reply nothing can route,
+// so its promise would never settle.
+const closingHelpers = /* js */ `
+  const closing = (view, value) => ({
+    valueOf() { view.close(); return value; },
+    toString() { view.close(); return String(value); },
+  });
+  const closingGetter = (view, key, value) => ({ get [key]() { view.close(); return value; } });
+`;
+// Shape name -> the call, as scenario source. The name starts with the method.
+const closingShapes: Record<string, string> = {
+  "click(x, y, { button })": `view.click(5, 5, closingGetter(view, "button", "left"))`,
+  "click(x, y, { modifiers })": `view.click(5, 5, closingGetter(view, "modifiers", []))`,
+  "click(x, y, { modifiers: [getter] })": `view.click(5, 5, { modifiers: Object.defineProperty([], 0, { get() { view.close(); return "Shift"; } }) })`,
+  "click(x, y, { clickCount })": `view.click(5, 5, closingGetter(view, "clickCount", 2))`,
+  "click(x, y, { timeout })": `view.click(5, 5, closingGetter(view, "timeout", 100))`,
+  "click(selector, { button })": `view.click("#b", closingGetter(view, "button", "left"))`,
+  "click(selector, { timeout })": `view.click("#b", closingGetter(view, "timeout", 100))`,
+  "press(key, { modifiers })": `view.press("Enter", closingGetter(view, "modifiers", []))`,
+  "scrollTo(selector, { timeout })": `view.scrollTo("#b", closingGetter(view, "timeout", 100))`,
+  "scrollTo(selector, { block })": `view.scrollTo("#b", closingGetter(view, "block", "center"))`,
+  "screenshot({ format })": `view.screenshot(closingGetter(view, "format", "png"))`,
+  "screenshot({ quality })": `view.screenshot(closingGetter(view, "quality", 80))`,
+  "screenshot({ encoding })": `view.screenshot(closingGetter(view, "encoding", "buffer"))`,
+  "cdp(method, params)": `view.cdp("Runtime.evaluate", { toJSON() { view.close(); return {}; } })`,
+  // The rest run user code only because a number or a modifier entry is converted, not type-checked.
+  "click(x, _)": `view.click(closing(view, 5), 5)`,
+  "click(_, y)": `view.click(5, closing(view, 5))`,
+  "click(x, y, { modifiers: [entry] })": `view.click(5, 5, { modifiers: [closing(view, "Shift")] })`,
+  "press(key, { modifiers: [entry] })": `view.press("Enter", { modifiers: [closing(view, "Shift")] })`,
+  "scroll(dx, _)": `view.scroll(closing(view, 5), 5)`,
+  "scroll(_, dy)": `view.scroll(5, closing(view, 5))`,
+  "scroll(dx, _) through [Symbol.dispose]": `view.scroll({ valueOf() { view[Symbol.dispose](); return 5; } }, 5)`,
+  "resize(width, _)": `view.resize(closing(view, 50), 50)`,
+  "resize(_, height)": `view.resize(50, closing(view, 50))`,
+};
+
+test.concurrent("close() during argument conversion makes the call throw and send nothing", async () => {
   const result = await runScenario(`
-    const closing = (view, value) => ({
-      valueOf() { view.close(); return value; },
-      toString() { view.close(); return String(value); },
-    });
+    ${closingHelpers}
     const shapes = {
-      "click(x, _)": view => view.click(closing(view, 5), 5),
-      "click(_, y)": view => view.click(5, closing(view, 5)),
-      "click(x, y, options)": view => view.click(5, 5, { get button() { view.close(); return "left"; } }),
-      "click(x, y, { modifiers })": view => view.click(5, 5, { modifiers: [closing(view, "Shift")] }),
-      "click(selector, options)": view => view.click("#b", { get timeout() { view.close(); return 100; } }),
-      "press(key, options)": view => view.press("Enter", { get modifiers() { view.close(); return []; } }),
-      "scroll(dx, _)": view => view.scroll(closing(view, 5), 5),
-      "scrollTo(selector, options)": view => view.scrollTo("#b", { get block() { view.close(); return "center"; } }),
-      "resize(width, _)": view => view.resize(closing(view, 50), 50),
-      "screenshot(options)": view => view.screenshot({ get format() { view.close(); return "png"; } }),
-      "cdp(method, params)": view => view.cdp("Runtime.evaluate", { toJSON() { view.close(); return {}; } }),
+      ${Object.entries(closingShapes)
+        .map(([name, call]) => `${JSON.stringify(name)}: view => ${call},`)
+        .join("\n")}
     };
-    const results = {};
+    const attempt = call => {
+      try {
+        call();
+        return "returned";
+      } catch (e) {
+        return e.code + ": " + e.message;
+      }
+    };
+    const thrown = {};
+    const thrownOnceClosed = {};
     for (const [name, call] of Object.entries(shapes)) {
-      const view = newView();
+      using view = newView();
+      await view.navigate("http://fake/");
+      thrown[name] = attempt(() => call(view));
+      // The same method on the view that is now closed: the check at entry.
+      thrownOnceClosed[name] = attempt(() => view[name.slice(0, name.indexOf("("))]());
+    }
+    // The fake answers in order, so this reply follows everything sent above.
+    const probe = newView();
+    await probe.navigate("http://fake/probe");
+    const sentAfterClose = await probe.evaluate("__fake_commands_after_close()");
+    probe.close();
+    print({ thrown, thrownOnceClosed, sentAfterClose });
+  `);
+  const closedError = Object.fromEntries(
+    Object.keys(closingShapes).map(name => [
+      name,
+      `ERR_INVALID_STATE: Invalid state: WebView.${name.slice(0, name.indexOf("("))}: view is closed`,
+    ]),
+  );
+  expect(result).toEqual({ thrown: closedError, thrownOnceClosed: closedError, sentAfterClose: [] });
+});
+
+// The late closed-check is the last step, so it does not take the place of an
+// error the call had anyway, and it looks only at the view the call is for.
+test.concurrent("close() during argument conversion leaves the other outcomes of the call alone", async () => {
+  const result = await runScenario(`
+    ${closingHelpers}
+    const attempt = async call => {
+      using view = newView();
       await view.navigate("http://fake/");
       try {
-        call(view);
-        results[name] = "returned";
+        return "resolved: " + JSON.stringify(await call(view));
       } catch (e) {
-        results[name] = e.code + ": " + e.message;
+        return (e.code ?? e.name) + ": " + e.message;
       }
-    }
-    print(results);
+    };
+    using other = newView();
+    await other.navigate("http://fake/other");
+    print({
+      outOfRange: await attempt(view => view.screenshot(closingGetter(view, "quality", 101))),
+      badOption: await attempt(view => view.scrollTo("#b", closingGetter(view, "block", "sideways"))),
+      userThrow: await attempt(view => view.click(5, 5, { get button() { view.close(); throw new RangeError("from the getter"); } })),
+      sameSlotBusy: await attempt(view => view.click(5, 5, { get button() { view.scroll(1, 1); return "left"; } })),
+      otherViewClosed: await attempt(view => view.click(5, 5, closingGetter(other, "button", "left"))),
+    });
   `);
-  const closed = "ERR_INVALID_STATE: WebView is closed";
   expect(result).toEqual({
-    "click(x, _)": closed,
-    "click(_, y)": closed,
-    "click(x, y, options)": closed,
-    "click(x, y, { modifiers })": closed,
-    "click(selector, options)": closed,
-    "press(key, options)": closed,
-    "scroll(dx, _)": closed,
-    "scrollTo(selector, options)": closed,
-    "resize(width, _)": closed,
-    "screenshot(options)": closed,
-    "cdp(method, params)": closed,
+    outOfRange: expect.stringMatching(/^ERR_OUT_OF_RANGE: /),
+    badOption: expect.stringMatching(/^ERR_INVALID_ARG_VALUE: /),
+    userThrow: "RangeError: from the getter",
+    sameSlotBusy: "ERR_INVALID_STATE: Invalid state: a simple operation is already pending",
+    otherViewClosed: "resolved: undefined",
+  });
+});
+
+// A command sent for a closed view also took an event-loop ref that its
+// unroutable reply never released: a script that ended on such a call never
+// exited. The child leaves through process.exit() only where the call
+// returned, so that a build without the fix fails here on what it printed.
+test.concurrent("a call that closed its view during argument conversion does not keep the process alive", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      prelude +
+        /* js */ `
+        const view = newView();
+        await view.navigate("http://fake/");
+        try {
+          view.click(5, 5, { get button() { view.close(); return "left"; } });
+          print("returned");
+          process.exit(1);
+        } catch (e) {
+          print(e.code);
+        }
+        `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: '"ERR_INVALID_STATE"\n',
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
   });
 });
 

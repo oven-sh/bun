@@ -950,6 +950,59 @@ it("close() makes subsequent calls throw", async () => {
   view.close();
 });
 
+// Converting an argument can run user code that closes the view after the
+// method's first closed-check. The call must then throw what any call on a
+// closed view throws. webview-chrome-pipe.test.ts also reads the wire for the
+// Chrome backend; there is no fake host to do that with here.
+it("close() during argument conversion makes the call throw", async () => {
+  const closing = (view: Bun.WebView, value: unknown): any => ({
+    valueOf() {
+      view.close();
+      return value;
+    },
+    toString() {
+      view.close();
+      return String(value);
+    },
+  });
+  const closingGetter = (view: Bun.WebView, key: string, value: unknown): any => ({
+    get [key]() {
+      view.close();
+      return value;
+    },
+  });
+  // The name starts with the method.
+  const shapes: Record<string, (view: Bun.WebView) => unknown> = {
+    "click(x, _)": view => view.click(closing(view, 5), 5),
+    "click(x, y, { modifiers: [entry] })": view => view.click(5, 5, { modifiers: [closing(view, "Shift")] }),
+    "click(selector, { timeout })": view => view.click("#b", closingGetter(view, "timeout", 100)),
+    "press(key, { modifiers })": view => view.press("Enter", closingGetter(view, "modifiers", [])),
+    "scroll(dx, _)": view => view.scroll(closing(view, 5), 5),
+    "scrollTo(selector, { block })": view => view.scrollTo("#b", closingGetter(view, "block", "center")),
+    "resize(width, _)": view => view.resize(closing(view, 50), 50),
+    "screenshot({ format })": view => view.screenshot(closingGetter(view, "format", "png")),
+  };
+  const thrown: Record<string, string> = {};
+  for (const [name, call] of Object.entries(shapes)) {
+    await using view = new Bun.WebView({ width: 100, height: 100 });
+    await view.navigate(html("<button id=b>b</button>"));
+    try {
+      call(view);
+      thrown[name] = "returned";
+    } catch (e: any) {
+      thrown[name] = e.code + ": " + e.message;
+    }
+  }
+  expect(thrown).toEqual(
+    Object.fromEntries(
+      Object.keys(shapes).map(name => [
+        name,
+        `ERR_INVALID_STATE: Invalid state: WebView.${name.slice(0, name.indexOf("("))}: view is closed`,
+      ]),
+    ),
+  );
+});
+
 it("close() rejects pending promises", async () => {
   const view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(html("<body>hi</body>"));

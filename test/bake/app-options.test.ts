@@ -45,12 +45,12 @@ test("Bun.serve({ app }) rejects wrong-typed framework options", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toMatchInlineSnapshot(`
-    "root -> ERR_INVALID_ARG_TYPE: app.root must be a string
-    fileSystemRouterTypes[].root -> ERR_INVALID_ARG_TYPE: fileSystemRouterTypes[n].root must be a string
+    "root -> ERR_INVALID_ARG_TYPE: The "app.root" property must be of type string. Received type number (123)
+    fileSystemRouterTypes[].root -> ERR_INVALID_ARG_TYPE: The "fileSystemRouterTypes[n].root" property must be of type string. Received type number (123)
     fileSystemRouterTypes[].ignoreUnderscores -> ERR_INVALID_ARG_TYPE: The "fileSystemRouterTypes[n].ignoreUnderscores" property must be of type boolean. Received type string ('yes')
     fileSystemRouterTypes[].layouts -> ERR_INVALID_ARG_TYPE: The "fileSystemRouterTypes[n].layouts" property must be of type boolean. Received type number (1)
-    serverComponents.serverRuntimeImportSource -> ERR_INVALID_ARG_TYPE: framework.serverComponents.serverRuntimeImportSource must be a string
-    plugins[].name -> ERR_INVALID_ARG_TYPE: name must be a string
+    serverComponents.serverRuntimeImportSource -> ERR_INVALID_ARG_TYPE: The "framework.serverComponents.serverRuntimeImportSource" property must be of type string. Received type number (5)
+    plugins[].name -> ERR_INVALID_ARG_TYPE: The "plugins[n].name" property must be of type string. Received type number (42)
     plugins[].setup -> ERR_INVALID_ARG_TYPE: setup must be a function
     "
   `);

@@ -55,7 +55,7 @@ export const WebSocketTopic = b.union({ text: b.string.view, stringObject: b.str
 export const webSocketMessageText = b.conversion(b.string.loose);
 export const WebSocketCompress = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
 
-/** Each option reports `other` in its own words. */
+/** The body refuses `other` with the text it also has for a number out of range. */
 export const OptionNumber = b.union({ missing: b.null, number: b.f64, other: b.ignored });
 /** `false` is as good as missing. */
 export const Stringish = b.union({
@@ -121,7 +121,7 @@ export const ServerTLS = b.union({ missing: b.null, list: b.jsArray, config: b.o
 
 // `Bake.Options` of bake.d.ts. `src/tsconfig.json` excludes `runtime/bake`, so this file cannot import a schema from there.
 
-const text = b.string.allowStringObject.utf8.owned.nullable;
+const text = { type: b.string.allowStringObject.utf8.owned.nullable, expected: ["string"] };
 const flag = b.bool.loose.optional;
 
 export const BakeSourceMap = b.enumeration(["none", "inline", "external", "linked"]);
@@ -146,7 +146,7 @@ export const BakeBundlerOptions = b.dictionary(
 /** An element of `plugins`. */
 export const BakePlugin = b.dictionary(
   { name: text, setup: { type: b.callable.nullable, expected: "setup must be a function" } },
-  { deferred: true, reportedAs: "" },
+  { deferred: true, reportedAs: "plugins[n]" },
 );
 /**
  * Walked by `length` and index, so any object will do. No element of a string, a symbol or a BigInt is an object.

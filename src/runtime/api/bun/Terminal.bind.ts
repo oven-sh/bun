@@ -19,12 +19,12 @@ export const TerminalOptions = b.dictionary(
   {
     cols: TerminalSize.nullable,
     rows: TerminalSize.nullable,
-    name: b.string.allowStringObject.utf8.owned.nullable,
+    name: { type: b.string.allowStringObject.utf8.owned.nullable, expected: ["string"] },
     data: b.callable.otherAsNull,
     exit: b.callable.otherAsNull,
     drain: b.callable.otherAsNull,
   },
-  { deferred: true, reportedAs: "" },
+  { deferred: true, reportedAs: "options" },
 );
 
 export const Terminal = b.class({

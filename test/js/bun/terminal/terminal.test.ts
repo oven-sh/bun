@@ -114,7 +114,7 @@ describe("Bun.Terminal", () => {
       expect(() => new Bun.Terminal(Symbol() as any)).toThrow();
     });
 
-    test("throws ERR_INVALID_ARG_TYPE when name is not a string", () => {
+    test("throws ERR_INVALID_ARG_TYPE with 'property' wording when name is not a string", () => {
       let caught: any;
       try {
         new Bun.Terminal({ name: 12345 as any });
@@ -124,7 +124,7 @@ describe("Bun.Terminal", () => {
       expect({ code: caught?.code, name: caught?.name, message: caught?.message }).toEqual({
         code: "ERR_INVALID_ARG_TYPE",
         name: "TypeError",
-        message: "name must be a string",
+        message: 'The "options.name" property must be of type string. Received type number (12345)',
       });
     });
   });

@@ -1192,12 +1192,13 @@ pub mod fs {
             }
         }
 
-        /// Read by path, not from the fd of the walk, whose link can lead away from `real` by now.
+        /// Read by path, or from `opened`: the fd a walk opened before it read the link to `real`.
         pub(crate) fn read_real_listing(
             &mut self,
             real: &[u8],
             generation: Generation,
             store_fd: bool,
+            opened: Option<Fd>,
         ) -> bool {
             debug_assert!(
                 self.entries_mutex.is_held_by_current_thread(),
@@ -1217,14 +1218,19 @@ pub mod fs {
                     Some(EntriesOption::Entries(listing)) if listing.generation >= generation
                 );
             }
-            let Ok(handle) = bun_sys::open_dir_for_iteration(Fd::cwd(), real) else {
-                return false;
+            let handle = match opened {
+                Some(handle) => handle,
+                None => match bun_sys::open_dir_for_iteration(Fd::cwd(), real) {
+                    Ok(handle) => handle,
+                    Err(_) => return false,
+                },
             };
             let keeps_fd = store_fd && !self.need_to_close_files();
             let stored = self
                 .put_first_listing(&mut slot, real, generation, handle, keeps_fd)
                 .is_ok();
-            if !(stored && keeps_fd) {
+            // The walk closes the fd it opened.
+            if opened.is_none() && !(stored && keeps_fd) {
                 let _ = bun_sys::close(handle);
             }
             stored

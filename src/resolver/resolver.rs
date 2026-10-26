@@ -4633,15 +4633,22 @@ impl<'a> Resolver<'a> {
             let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
                 .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
-            let mut real_dir: &'static [u8] = match parent_dir_ptr {
+            let (mut real_dir, read_link): (&'static [u8], bool) = match parent_dir_ptr {
                 Some(parent) if !self.opts.preserve_symlinks => {
                     self.real_dir_from_parent(parent, dir_path, open_dir)
                 }
-                _ => b"",
+                _ => (b"", false),
             };
+            // Opened here, before the link to it was read, `open_dir` is the real directory.
+            let opened_real = read_link && !queue_top.fd.is_valid() && open_dir.is_valid();
             // A real path that does not open is one the link no longer leads to.
             if !real_dir.is_empty()
-                && !rfs!().read_real_listing(real_dir, self.generation, self.store_fd)
+                && !rfs!().read_real_listing(
+                    real_dir,
+                    self.generation,
+                    self.store_fd,
+                    opened_real.then_some(open_dir),
+                )
             {
                 real_dir = b"";
             }
@@ -6334,7 +6341,13 @@ impl<'a> Resolver<'a> {
     }
 
     /// The real path of the directory walked as `path`; empty if that is `path` itself, or unknown.
-    fn real_dir_from_parent(&mut self, parent: DirInfoRef, path: &[u8], fd: FD) -> &'static [u8] {
+    /// True if this call read it from a link at `path`: `fd`, opened there before, is open on it.
+    fn real_dir_from_parent(
+        &mut self,
+        parent: DirInfoRef,
+        path: &[u8],
+        fd: FD,
+    ) -> (&'static [u8], bool) {
         let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
 
         let mut base = bun_paths::basename(path);
@@ -6344,7 +6357,7 @@ impl<'a> Resolver<'a> {
 
         // The caller holds `entries_mutex`, which is non-recursive.
         let Some(parent_entries) = parent.get_entries_ref_locked(self.generation) else {
-            return b"";
+            return (b"", false);
         };
         let mut lookup = parent_entries.get(base);
         // An empty listing may be of an unlistable directory, which a failed re-read would expire.
@@ -6363,27 +6376,34 @@ impl<'a> Resolver<'a> {
                 .and_then(|reread| reread.get(base));
         }
         let Some(lookup) = lookup else {
-            return b"";
+            return (b"", false);
         };
         let entry = lookup.entry();
-        if fd.is_valid() && !entry.cache().fd.is_valid() && self.store_fd {
+        let kept_fd = entry.cache().fd.is_valid();
+        if fd.is_valid() && !kept_fd && self.store_fd {
             // Every cached-`Entry` rewrite takes the per-entry mutex.
             let _entry_guard = entry.mutex.lock_guard();
             entry.set_cache_fd(fd);
         }
+        // By a kept fd, another name or the real parent's path, the stat does not read `path`.
+        let stats_path = !kept_fd
+            && entry.base() == base
+            && listing_is_named(entry.dir, parent.abs_path)
+            && entry.need_stat.load(core::sync::atomic::Ordering::Acquire);
 
         // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
         // rewrite inside `symlink()` is serialized on `Entry.mutex`.
         let mut real = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+        let read_link = stats_path && !real.is_empty();
         if real.is_empty() {
             if parent.abs_real_path.is_empty() {
-                return b"";
+                return (b"", false);
             }
             let Some(joined) = self.fs_ref().abs_buf_checked(
                 &[parent.abs_real_path, base],
                 bufs!(dir_info_uncached_filename),
             ) else {
-                return b"";
+                return (b"", false);
             };
             // SAFETY: `rfs_ptr` points at the process-global RealFS; `entries_mutex` held.
             let listed: &'static [u8] = match unsafe { &mut *rfs_ptr }.entries.get(joined) {
@@ -6413,7 +6433,7 @@ impl<'a> Resolver<'a> {
             );
             logs.add_note(buf);
         }
-        real
+        (real, read_link)
     }
 
     fn dir_info_uncached(

@@ -24,7 +24,8 @@ export function collect(): Promise<void> {
  *  point at, and a slot a live native frame never writes can hold a cell of an earlier callback's
  *  frames for as long as the loop re-enters that frame, so "it was not finalized" does not mean
  *  something holds it. The debugging heap snapshot has every edge and every root, and no entry for
- *  such words. */
+ *  such words. A holder whose edges it lacked would read as "not kept alive": the first test of
+ *  module-graph-gc.test.ts checks the holders that keep their values in a cell of their own. */
 class Heap {
   readonly #className = new Map<number, string>();
   readonly #label = new Map<number, string>();
@@ -97,7 +98,8 @@ export function heapFromTimer(): Promise<Heap> {
   return (pendingHeap = new Promise(resolve => setTimeout(() => resolve(new Heap()), 0)));
 }
 
-const addressOf = (object: object) => BigInt(/0x[0-9a-fA-F]+/.exec(jscDescribe(object))![0]);
+/** The address of the cell of `object`, for Heap.pathTo(). */
+export const addressOf = (object: object) => BigInt(/0x[0-9a-fA-F]+/.exec(jscDescribe(object))![0]);
 
 /** Lifetimes by name: `track` an object, then ask which are gone or still kept alive.
  *  A finalized object is gone, and that is all most runs need. One that is not finalized after a

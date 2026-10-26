@@ -4484,7 +4484,7 @@ test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function 
 // the file into the function's Environment and copied the set back afterwards,
 // with two allocations for each name. A file has more names when it has more
 // components, so the time grew with the square of their number: 4000 small
-// components took 6 seconds on a release build, and take 0.2 seconds now.
+// components took 5 seconds on a release build, and take 0.3 seconds now.
 test("react-compiler compile time of a component does not grow with the number of names in the file", async () => {
   // The same components in both files, each with an arrow function that is
   // outlined as `_temp<N>`. `large.jsx` also declares `_temp2` to
@@ -4538,11 +4538,11 @@ test("react-compiler compile time of a component does not grow with the number o
     return user + system;
   };
 
-  // The ratio is 0.9 to 1.3 with the fix. Without it the ratio is 5 on a
-  // debug build and 18 on a release build, and 4 on a release build that only
-  // starts each search at `_temp`. Other load on the machine adds to a CPU
-  // time, so an optimized build, which has the time, takes the best of up to
-  // three pairs.
+  // The ratio is 1.0 to 1.4 with the fix. Without it the ratio is 5 on a
+  // debug build and 17 on a release build, and 13 on a release build of the
+  // fix whose search starts at `_temp` each time. Other load on the machine
+  // adds to a CPU time, so an optimized build, which has the time, takes the
+  // best of up to three pairs.
   await cpu("warmup.jsx", 1);
   let ratio = Infinity;
   for (let round = 0; round < rounds && ratio >= 2.5; round++) {

@@ -4178,45 +4178,49 @@ test("react-compiler memory does not grow with the square of the size of a compo
 
 // The HIR of a function, and the tables of the passes, were in the arena of the parser, which frees nothing until the
 // bundle ends. Each component below kept 300 KB of them after it was compiled. Now it keeps what its output takes.
-test("react-compiler frees the working memory of a function when it is compiled", async () => {
-  // A debug build takes 7 seconds, which is why this test has a timeout.
-  const small = isDebug || isASAN;
-  // Few components in a file, so that the set of the names of a file stays small.
-  const { files, perFile } = small ? { files: 30, perFile: 10 } : { files: 160, perFile: 5 };
-  const children = Array.from({ length: 20 }, (_, i) => `<li title={props.t${i}}>{props.c${i}}</li>`).join("");
-  const entries = Array.from({ length: files }, (_, f) => `f${f}.jsx`);
-  using dir = tempDir(
-    "react-compiler-working-memory",
-    Object.fromEntries(
-      entries.map((entry, f) => [
-        entry,
-        Array.from(
-          { length: perFile },
-          (_, c) => `export function C${f}_${c}(props) { return <ul>${children}</ul>; }\n`,
-        ).join(""),
-      ]),
-    ),
-  );
+// Not on a debug or ASAN build. With `bun bd` this input takes 40 seconds, and the builds of a smaller one peak under
+// the 340 MB of the process that measures them, so the difference reads as 0.
+test.skipIf(isDebug || isASAN)(
+  "react-compiler frees the working memory of a function when it is compiled",
+  async () => {
+    // Few components in a file, so that the set of the names of a file stays small.
+    const files = 160;
+    const perFile = 5;
+    const children = Array.from({ length: 20 }, (_, i) => `<li title={props.t${i}}>{props.c${i}}</li>`).join("");
+    const entries = Array.from({ length: files }, (_, f) => `f${f}.jsx`);
+    using dir = tempDir(
+      "react-compiler-working-memory",
+      Object.fromEntries(
+        entries.map((entry, f) => [
+          entry,
+          Array.from(
+            { length: perFile },
+            (_, c) => `export function C${f}_${c}(props) { return <ul>${children}</ul>; }\n`,
+          ).join(""),
+        ]),
+      ),
+    );
 
-  const peakMB = async (flags: string[]) => {
-    const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
-      cmd: [bunExe(), "build", ...flags, "--target=browser", "--external=*", "--outdir=out", ...entries],
-      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
-      env: withoutAsanQuarantine(bunEnv),
-      cwd: String(dir),
-    });
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    return maxRSS / 1024 / 1024;
-  };
+    const peakMB = async (flags: string[]) => {
+      const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+        cmd: [bunExe(), "build", ...flags, "--target=browser", "--external=*", "--outdir=out", ...entries],
+        cwd: String(dir),
+      });
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return maxRSS / 1024 / 1024;
+    };
 
-  const without = await peakMB([]);
-  const compiled = await peakMB(["--react-compiler"]);
-  expect(await Bun.file(join(String(dir), "out", "f0.js")).text()).toContain("react/compiler-runtime");
-  // Above the build without the compiler. Without the fix: 51 MB for the small input on a debug build and 206 MB for
-  // the large one on a release build. With it: under 1 MB and 52 MB.
-  expect(compiled - without).toBeLessThan(small ? 30 : 120);
-}, 60_000);
+    const without = await peakMB([]);
+    const compiled = await peakMB(["--react-compiler"]);
+    expect(await Bun.file(join(String(dir), "out", "f0.js")).text()).toContain("react/compiler-runtime");
+    const added = compiled - without;
+    // What the compiler adds to the peak: 206 MB without the fix, 52 MB with it.
+    // Under 10 MB, both numbers are the peak of the process that measured the builds.
+    expect(added).toBeGreaterThan(10);
+    expect(added).toBeLessThan(120);
+  },
+);
 
 // Four strings of the output are built in a buffer of the compiler and copied to the arena of the AST: the name of an
 // outlined function, a template string with characters outside Latin-1, a numeric key, and an index above 31.

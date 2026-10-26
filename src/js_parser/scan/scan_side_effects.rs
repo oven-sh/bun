@@ -163,6 +163,10 @@ impl SideEffects {
                 if ident.can_be_removed_if_unused()
                     || p.symbols[ident.ref_.inner_index() as usize].kind != symbol::Kind::Unbound
                 {
+                    // A read of a long const string with an unused value is not printed, so it is not a use.
+                    if p.has_long_const_read {
+                        p.take_long_const_read(expr);
+                    }
                     return None;
                 }
             }

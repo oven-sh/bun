@@ -672,7 +672,10 @@ impl<'a> ImportScanner<'a> {
 
                         // Is this an identifier reference and not a require() call?
                         if let Some(val) = value {
-                            if let js_ast::ExprData::EIdentifier(id) = val.data {
+                            // An alias of a long const string is a value, not a type: it stays.
+                            if let js_ast::ExprData::EIdentifier(id) = val.data
+                                && p.long_const_read(id).is_none()
+                            {
                                 // Is this import statement unused?
                                 if let js_ast::b::B::BIdentifier(b_id) = decl.binding.data {
                                     let b_id_ref = b_id.r#ref;

@@ -1884,6 +1884,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     && p.long_const_value(id_ref).is_some())
                                             {
                                                 // Skip declarations that are constants with zero usage
+                                                if p.has_long_const_read
+                                                    && let Some(alias_of) = decls[idx].value
+                                                {
+                                                    p.take_long_const_read(alias_of);
+                                                }
                                                 continue;
                                             }
                                         }

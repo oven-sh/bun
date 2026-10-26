@@ -2239,6 +2239,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.is_revisit_for_substitution = is_revisit;
     }
 
+    /// Un-counts a read of a long const string in a branch that a revisit finds dead and drops. The first visit counted it.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn forget_dropped_long_const_read(&mut self, expr: Expr) {
+        let is_dead = core::mem::replace(&mut self.is_control_flow_dead, false);
+        self.take_long_const_read(expr);
+        self.is_control_flow_dead = is_dead;
+    }
+
     /// Gives a consumer that needs a literal the string in place of a read of a long const string.
     #[inline]
     pub(crate) fn long_const_literal(&mut self, expr: Expr) -> Expr {
@@ -2255,6 +2264,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn long_const_test(&mut self, expr: &mut Expr) {
         if self.has_long_const_read && self.take_long_const_read(*expr).is_some() {
             expr.data = js_ast::ExprData::EBoolean(E::Boolean { value: true });
+        }
+    }
+
+    /// `long_const_test` for a whole condition: each operand of its `&&` and `||` is only tested too.
+    #[inline]
+    pub(crate) fn long_const_condition(&mut self, expr: &mut Expr) {
+        if self.has_long_const_read {
+            self.long_const_condition_slow(expr);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn long_const_condition_slow(&mut self, expr: &mut Expr) {
+        let js_ast::ExprData::EBinary(mut binary) = expr.data else {
+            self.long_const_test(expr);
+            return;
+        };
+        // A chain of left operands can be long, so the loop follows it and only a right operand recurses.
+        while matches!(
+            binary.op,
+            js_ast::op::Code::BinLogicalAnd | js_ast::op::Code::BinLogicalOr
+        ) {
+            if self.stack_check.is_safe_to_recurse() {
+                self.long_const_condition_slow(&mut binary.right);
+            }
+            match binary.left.data {
+                js_ast::ExprData::EBinary(left) => binary = left,
+                _ => {
+                    self.long_const_test(&mut binary.left);
+                    return;
+                }
+            }
         }
     }
 
@@ -2841,6 +2883,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | js_ast::ExprData::EUnary(_)
                         | js_ast::ExprData::EIf(_)
                 ) {
+                    // The one use that moved was counted, so this statement is live code.
+                    debug_assert!(!self.is_control_flow_dead);
                     let prev_substituting = self.is_revisit_for_substitution;
                     self.is_revisit_for_substitution = true;
                     // O(n^2) and we will need to think more carefully about

@@ -2159,9 +2159,16 @@ describe("bundler", () => {
       files: {
         "/entry.js": /* js */ `
           const KEY = process.env.SECRET_KEY;
-          const checks = [!!KEY, KEY ? "set" : "unset", KEY && "and", typeof KEY, KEY === undefined, KEY != null, KEY === "", KEY.length];
-          if (!KEY) throw new Error("no key");
-          console.log(checks.join());
+          KEY || console.log("no key");
+          function check(flag) {
+            const checks = [!!KEY, KEY ? "set" : "unset", KEY && "and", typeof KEY, KEY === undefined, KEY != null, KEY === "", KEY.length];
+            if (!KEY) throw new Error("no key");
+            KEY || checks.push("unreachable");
+            if (flag && KEY) checks.push(!(flag && KEY));
+            if (flag || KEY) checks.push(!(flag || KEY));
+            return checks.join();
+          }
+          console.log(check(true));
         `,
       },
       minifySyntax: true,
@@ -2169,7 +2176,52 @@ describe("bundler", () => {
       onAfterBundle(api) {
         expect(api.readFile("/out.js")).not.toContain("sk_k");
       },
-      run: { stdout: `true,set,and,string,false,true,false,${length}` },
+      run: { stdout: `true,set,and,string,false,true,false,${length},false,false` },
+    });
+  }
+
+  // A const string that only a dropped branch reads is not in the output:
+  // the other value of a production check, a value that is only a presence
+  // check, and the test of an `if` whose body is removed.
+  for (const length of [64, 65]) {
+    itBundled(`minify/ConstStringOfLength${length}InADroppedBranchIsRemoved`, {
+      files: {
+        "/entry.js": /* js */ `
+          const PROD_URL = "${textOf("p", length)}";
+          const STAGING_URL = "${textOf("s", length)}";
+          const SECRET = "${textOf("t", length)}";
+          const EXPECTED = "${textOf("e", length)}";
+          function apiBase(path) {
+            if (!path) throw new Error("path is required");
+            const isProd = process.env.NODE_ENV === "production";
+            return (isProd ? PROD_URL : STAGING_URL) + path;
+          }
+          function assertConfigured() {
+            const configured = PROD_URL && SECRET;
+            if (!configured) throw new Error("not configured");
+            return true;
+          }
+          function check(given) {
+            if (given !== EXPECTED) {
+              if (process.env.NODE_ENV !== "production") throw new Error("mismatch");
+            }
+            return 1;
+          }
+          console.log(apiBase("/users").length, assertConfigured(), check("x"));
+        `,
+      },
+      minifySyntax: true,
+      define: { "process.env.NODE_ENV": JSON.stringify("production") },
+      onAfterBundle(api) {
+        const code = api.readFile("/out.js");
+        expect({
+          prod: countOf(code, textOf("p", length)),
+          staging: countOf(code, textOf("s", length)),
+          secret: countOf(code, textOf("t", length)),
+          expected: countOf(code, textOf("e", length)),
+        }).toEqual({ prod: 1, staging: 0, secret: 0, expected: 0 });
+      },
+      run: { stdout: `${length + 6} true 1` },
     });
   }
 
@@ -2466,9 +2518,23 @@ const constStringRows = [
   ],
   [
     "only tests of the value",
-    (text: string) => `function f(x) { const S = "${text}"; if (!S) return 0; if (S) x(); return S && (S ? x : 2); }`,
-    `function f(x) {\n  x();\n  return x;\n}`,
-    `function f(x) {\n  x();\n  return x;\n}`,
+    (text: string) =>
+      `function f(x) { const S = "${text}"; if (!S) return 0; if (S) x(); if (x && S) x(); return S && (S ? x : 2); }`,
+    `function f(x) {\n  x();\n  if (x)\n    x();\n  return x;\n}`,
+    `function f(x) {\n  x();\n  if (x)\n    x();\n  return x;\n}`,
+  ],
+  [
+    "the value under && and || in a condition",
+    (text: string) =>
+      `function f(x, y) { const S = "${text}"; if (x || S) y(); if ((x && S) || y) x(); while (y() && S) x(); for (; y() && S; ) x(); do x(); while (y() && S); return [!(x || S), !(x && S), (y && S) ? 1 : 2]; }`,
+    `function f(x, y) {\n  y();\n  if (x && "<L>" || y)\n    x();\n  while (y())\n    x();\n  for (;y(); )\n    x();\n  do\n    x();\n  while (y());\n  return [!1, !x, y ? 1 : 2];\n}`,
+    `function f(x, y) {\n  y();\n  if (x && !0 || y)\n    x();\n  while (y())\n    x();\n  for (;y(); )\n    x();\n  do\n    x();\n  while (y());\n  return [!1, !x, y ? 1 : 2];\n}`,
+  ],
+  [
+    "a read with an unused value",
+    (text: string) => `function f(x, y) { const S = "${text}"; S || y(); S ?? y(); x ? S : y(); [S, x()]; return 1; }`,
+    `function f(x, y) {\n  x || y();\n  x();\n  return 1;\n}`,
+    `function f(x, y) {\n  x || y();\n  x();\n  return 1;\n}`,
   ],
   [
     "only loop tests of the value",
@@ -2483,6 +2549,13 @@ const constStringRows = [
       `function f(x) { const S = "${text}"; return [typeof S, S === "x", "x" !== S, S != null, S === void 0, S === x]; }`,
     `function f(x) {\n  return ["string", !1, !0, !0, !1, x === "<L>"];\n}`,
     `function f(x) {\n  const S = "<L>";\n  return ["string", !1, !0, !0, !1, S === x];\n}`,
+  ],
+  [
+    "a comparison of two const strings",
+    (text: string) =>
+      `function f() { const S = "${text}"; const T = "!${text.slice(1)}"; return [S === T, S !== T, S == S, T != T]; }`,
+    `function f() {\n  return [!1, !0, !0, !1];\n}`,
+    `function f() {\n  return [!1, !0, !0, !1];\n}`,
   ],
   [
     "only typeof and comparisons",
@@ -2503,6 +2576,27 @@ const constStringRows = [
       `async function f(c) { const S = "${text}"; if (c === 1) { let t = S; return !t; } if (c === 2) { let t = S; return t.length + 1; } if (c === 3) { let t = S; return t === "a" ? 1 : 2; } if (c) { let t = S; return c ? import(t) : null; } }`,
     `async function f(c) {\n  if (c === 1)\n    return !1;\n  if (c === 2)\n    return 65;\n  if (c === 3)\n    return 2;\n  if (c)\n    return c ? import("<L>") : null;\n}`,
     `async function f(c) {\n  if (c === 1)\n    return !1;\n  if (c === 2)\n    return 66;\n  if (c === 3)\n    return 2;\n  if (c)\n    return c ? import("<L>") : null;\n}`,
+  ],
+  [
+    "a branch that a moved value makes dead",
+    (text: string) =>
+      `function f(x, y) { const A = "${text}"; const B = "!${text.slice(1)}"; if (x) { x(); const prod = true; return prod ? A : B; } if (y) { y(); const env = "e"; return env || B; } return 1; }`,
+    `function f(x, y) {\n  if (x) {\n    x();\n    return "<L>";\n  }\n  if (y) {\n    y();\n    return "e";\n  }\n  return 1;\n}`,
+    `function f(x, y) {\n  const A = "<L>";\n  if (x) {\n    x();\n    return A;\n  }\n  if (y) {\n    y();\n    return "e";\n  }\n  return 1;\n}`,
+  ],
+  [
+    "an alias in an inner block that is removed",
+    (text: string) =>
+      `function f(x) { const A = "${text}"; const B = "!${text.slice(1)}"; if (x) { const T = A; const both = T && B; if (!both) throw x; return T.length; } return 1; }`,
+    `function f(x) {\n  if (x)\n    return 64;\n  return 1;\n}`,
+    `function f(x) {\n  if (x)\n    return 65;\n  return 1;\n}`,
+  ],
+  [
+    "the test of an if with no body",
+    (text: string) =>
+      `function f(x) { const A = "${text}"; if (x === A) { if (false) x(); } if (x !== A) ; else ; return 1; }`,
+    `function f(x) {\n  return 1;\n}`,
+    `function f(x) {\n  return 1;\n}`,
   ],
   [
     "a branch that the value decides",
@@ -2620,6 +2714,28 @@ test.each(constStringRows)("inline bound of a const string: %s", (_, source, at6
 
 test.each(constStringRowsOverTheBound)("over the inline bound of a const string: %s", (_, source, at65) => {
   expect(printConstString({ inline: true, minify: { syntax: true } }, source, 65)).toBe(at65);
+});
+
+// With dead code elimination off no branch is dropped. A test of the value
+// still prints `true` and not the name.
+test("a test of a const string over the inline bound is `true` without dead code elimination", () => {
+  const source = (text: string) =>
+    `function f(x, y) { const S = "${text}"; if (S || x) y(); if (x && S) y(); return S ? 1 : 2; }`;
+  expect(printConstString({ inline: true, deadCodeElimination: false }, source, 65)).toBe(
+    `function f(x, y) {\n  const S = "<L>";\n  if (true || x)\n    y();\n  if (x && true)\n    y();\n  return true ? 1 : 2;\n}`,
+  );
+});
+
+// `import A = S` of a const string is an alias of a value, not of a type. An
+// unused one was dropped as a type alias, with the rest of its statement.
+test("an import-equals alias of a const string over the inline bound stays", () => {
+  const source = (text: string) =>
+    `const S = "${text}";\nlet [q] = [1];\nimport A = S;\nimport B = S;\nconsole.log(A === S, [B].length, q);`;
+  const print = (minify?: object) => printConstString({ loader: "ts", inline: true, minify }, source, 65);
+  expect([print(), print({ syntax: true })]).toEqual([
+    `const S = "<L>";\nlet [q] = [1];\nconst A = S;\nconst B = S;\nconsole.log(true, [B].length, q);`,
+    `const S = "<L>";\nlet [q] = [1];\nconst A = S, B = S;\nconsole.log(!0, [B].length, q);`,
+  ]);
 });
 
 // With `inline: false` a read is never the value, so the bound changes nothing.
@@ -2766,6 +2882,18 @@ const LONG = "${textOf("L", 200)}";
 function read() { return LONG; }
 console.log(JSON.stringify([read.toString().includes("LLLL"), [early, read().length]]));`,
     [false, ["ReferenceError", 200]],
+  ],
+  [
+    // An unused `import A = LONG` is not a type alias. Dropped as one, it ran the last statement twice.
+    "import-equals.ts",
+    `const LONG = "${textOf("L", 200)}";
+let [one] = [1];
+import UNUSED = LONG;
+import TESTED = LONG;
+import READ = LONG;
+function reads() { return [READ, READ, TESTED === LONG ? READ : ""]; }
+console.log(JSON.stringify([reads.toString().includes("LLLL"), reads().map(text => text.length + one - 1)]));`,
+    [false, [200, 200, 200]],
   ],
   [
     // Each const is two copies of the one before it. Every read printed the whole string.

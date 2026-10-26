@@ -95,7 +95,7 @@ fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: boo
     }
 }
 
-/// A read of a long const string compares as that string, and a known result removes the read.
+/// A read of a long const string compares as that string, and a known result removes each such read.
 #[cold]
 #[inline(never)]
 fn long_const_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
@@ -104,9 +104,17 @@ fn long_const_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONL
     right: &ExprData,
     p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
 ) -> Equality {
+    let other = match right {
+        ExprData::EIdentifier(id) => p.long_const_read(*id).map(|other| (id.ref_, other)),
+        _ => None,
+    };
+    let right = other.as_ref().map_or(right, |(_, other)| &other.data);
     let equality = data_eql::<STRICT, TYPESCRIPT, SCAN_ONLY>(value, right, p);
     if !matches!(equality, Equality::Unknown) {
         p.forget_long_const_read(ref_);
+        if let Some((other_ref, _)) = other {
+            p.forget_long_const_read(other_ref);
+        }
     }
     equality
 }

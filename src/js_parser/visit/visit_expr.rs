@@ -167,6 +167,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // function) would be re-bound to a fresh `Unbound` and the renamer
         // would lose the link to its declaration.
         if p.is_revisit_for_substitution {
+            // The first visit counted a read in a branch that this visit finds dead and drops.
+            if p.is_control_flow_dead && p.has_long_const_read {
+                p.forget_dropped_long_const_read(*e);
+            }
             // A read that the substitution moved under a consumer of a literal is the literal there.
             if p.const_literal_required {
                 *e = p.long_const_literal(*e);
@@ -1252,7 +1256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 match e_.op {
                     Op::UnNot => {
                         p.ignore_namespace_local_test_use(&e_.value);
-                        p.long_const_test(&mut e_.value);
+                        p.long_const_condition(&mut e_.value);
                         if p.options.features.minify_syntax {
                             e_.value = SideEffects::simplify_boolean(p, e_.value);
                         }
@@ -1518,7 +1522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut e_.test);
         p.in_branch_condition = prev_in_branch;
         p.ignore_namespace_local_test_use(&e_.test);
-        p.long_const_test(&mut e_.test);
+        p.long_const_condition(&mut e_.test);
 
         e_.test = SideEffects::simplify_boolean(p, e_.test);
 

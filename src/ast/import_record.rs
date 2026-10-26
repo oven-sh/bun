@@ -109,7 +109,7 @@ bitflags::bitflags! {
         const IS_BARREL_DEFERRED = 1 << 18;
 
         /// `require()` of an ES module that exports `module.exports`: `__toCommonJS(exports_foo, 1)`.
-        const REQUIRE_MODULE_EXPORTS_EXPORT = 1 << 19;
+        const REQUIRE_MODULE_EXPORTS_EXPORT = 1 << 30;
     }
 }
 

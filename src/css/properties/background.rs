@@ -583,7 +583,6 @@ impl BackgroundProperty {
 pub struct BackgroundHandler {
     pub(crate) color: Option<CssColor>,
     pub(crate) images: Option<SmallList<Image, 1>>,
-    pub(crate) has_prefix: bool,
     pub(crate) x_positions: Option<SmallList<HorizontalPosition, 1>>,
     pub(crate) y_positions: Option<SmallList<VerticalPosition, 1>>,
     pub(crate) repeats: Option<SmallList<BackgroundRepeat, 1>>,
@@ -591,11 +590,12 @@ pub struct BackgroundHandler {
     pub(crate) attachments: Option<SmallList<BackgroundAttachment, 1>>,
     pub(crate) origins: Option<SmallList<BackgroundOrigin, 1>>,
     pub(crate) clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
-    // TODO(perf): should be `bun_alloc::ArenaVec<'bump, Property>`; threading
-    // `'bump` through BackgroundHandler would avoid the heap alloc.
-    pub(crate) decls: Vec<Property>,
     pub(crate) flushed_properties: BackgroundProperty,
     pub(crate) has_any: bool,
+    /// Ranges of the declaration list that `write_prefixed` wrote in this rule.
+    pub(crate) early: Vec<core::ops::Range<usize>>,
+    /// The properties that `write_prefixed` flushed in this rule.
+    pub(crate) early_flushed: BackgroundProperty,
 }
 
 // Struct fields cannot be indexed by string at runtime; the `flushHelper` /
@@ -616,14 +616,20 @@ macro_rules! init_small_list_helper {
     }};
 }
 
+// A value that some target does not read keeps the value before it as its fallback.
 macro_rules! flush_helper {
-    ($this:expr, $field:ident, $val:expr, $dest:expr, $context:expr) => {{
-        if let Some(existing) = &$this.$field {
-            if !crate::generic::eql(existing, $val)
-                && $context.targets.browsers.is_some()
-                && !crate::generic::is_compatible($val, &$context.targets.browsers.unwrap())
+    ($this:expr, $field:ident, $property:expr, $val:expr, $gets_prefix:expr, $dest:expr, $context:expr) => {{
+        if let Some(browsers) = &$context.targets.browsers {
+            let early = $this.early_flushed.contains($property);
+            let replaces = match &$this.$field {
+                Some(existing) => !crate::generic::eql(existing, $val),
+                None => early,
+            };
+            if replaces
+                && (!crate::generic::is_compatible($val, browsers) || (early && $gets_prefix))
             {
                 $this.flush($dest, $context);
+                $this.flushed_properties.insert($this.early_flushed);
             }
         }
     }};
@@ -644,13 +650,34 @@ impl BackgroundHandler {
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let arena = dest.bump();
+        let start = dest.len();
         match property {
             Property::BackgroundColor(val) => {
-                flush_helper!(self, color, val, dest, context);
+                flush_helper!(
+                    self,
+                    color,
+                    BackgroundProperty::COLOR,
+                    val,
+                    false,
+                    dest,
+                    context
+                );
                 self.color = Some(val.deep_clone(arena));
             }
             Property::BackgroundImage(val) => {
-                self.background_helper(val, property, dest, context);
+                flush_helper!(
+                    self,
+                    images,
+                    BackgroundProperty::IMAGE,
+                    val,
+                    gets_prefix(val, &context.targets),
+                    dest,
+                    context
+                );
+                if val.any(|image: &Image| image.has_vendor_prefix()) {
+                    self.write_prefixed(property, start, dest, context);
+                    return true;
+                }
                 self.images = Some(val.deep_clone(arena));
             }
             Property::BackgroundPosition(val) => {
@@ -718,10 +745,30 @@ impl BackgroundHandler {
                 for b in val.slice() {
                     images.append_assume_capacity(b.image.deep_clone(arena));
                 }
-                self.background_helper(&images, property, dest, context);
+                flush_helper!(
+                    self,
+                    images,
+                    BackgroundProperty::IMAGE,
+                    &images,
+                    gets_prefix(&images, &context.targets),
+                    dest,
+                    context
+                );
                 let arena = dest.bump();
                 let color = val.last().unwrap().color.deep_clone(arena);
-                flush_helper!(self, color, &color, dest, context);
+                flush_helper!(
+                    self,
+                    color,
+                    BackgroundProperty::COLOR,
+                    &color,
+                    false,
+                    dest,
+                    context
+                );
+                if images.any(|image: &Image| image.has_vendor_prefix()) {
+                    self.write_prefixed(property, start, dest, context);
+                    return true;
+                }
                 let arena = dest.bump();
                 let mut clips: SmallList<BackgroundClip, 1> = SmallList::init_capacity(val.len());
                 for b in val.slice() {
@@ -804,24 +851,51 @@ impl BackgroundHandler {
         true
     }
 
-    fn background_helper(
+    /// Writes a value with a prefixed image alone, after the pending values (CSS 2.1 section 4.2).
+    fn write_prefixed(
         &mut self,
-        val: &SmallList<Image, 1>,
         property: &Property,
+        start: usize,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        flush_helper!(self, images, val, dest, context);
-
-        // Store prefixed properties. Clear if we hit an unprefixed property and we have
-        // targets. In this case, the necessary prefixes will be generated.
-        self.has_prefix = val.any(|item: &Image| item.has_vendor_prefix());
-        if self.has_prefix {
-            let arena = dest.bump();
-            self.decls.push(property.deep_clone(arena));
-        } else if context.targets.browsers.is_some() {
-            self.decls.clear();
+        let flushed = self.flushed_properties;
+        self.flush(dest, context);
+        let arena = dest.bump();
+        match property {
+            Property::Background(val) => {
+                let mut backgrounds = val.deep_clone(arena);
+                if flushed.is_empty() {
+                    to_rgb(&mut backgrounds, arena, &context.targets);
+                }
+                push_property!(
+                    self,
+                    dest,
+                    Background,
+                    BackgroundProperty::BACKGROUND,
+                    backgrounds
+                );
+            }
+            Property::BackgroundImage(val) => {
+                let mut images = val.deep_clone(arena);
+                if !flushed.contains(BackgroundProperty::IMAGE) {
+                    to_rgb(&mut images, arena, &context.targets);
+                }
+                push_property!(
+                    self,
+                    dest,
+                    BackgroundImage,
+                    BackgroundProperty::BACKGROUND_IMAGE,
+                    images
+                );
+            }
+            _ => unreachable!("only these two properties have an image"),
         }
+        self.early.push(start..dest.len());
+
+        // `flush_helper` marks these as flushed when a later value needs them as its fallbacks.
+        self.early_flushed.insert(self.flushed_properties);
+        self.flushed_properties = flushed;
     }
 
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
@@ -1136,22 +1210,112 @@ impl BackgroundHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // If the last declaration is prefixed, pop the last value
-        // so it isn't duplicated when we flush.
-        if self.has_prefix {
-            let _ = self.decls.pop();
-            // Drop handles deinit.
-        }
-
-        let arena = dest.bump();
-        for decl in self.decls.drain(..) {
-            // `Property` is not `Clone` here, so move out via drain.
-            let _ = arena;
-            dest.push(decl);
-        }
-
         self.flush(dest, context);
+        self.drop_replaced(dest, &context.targets);
         self.flushed_properties = BackgroundProperty::empty();
+        self.early_flushed = BackgroundProperty::empty();
+    }
+
+    /// Removes what `write_prefixed` wrote and a later declaration replaces for every target.
+    fn drop_replaced(&mut self, decls: &mut DeclarationList, targets: &css::targets::Targets) {
+        let Some(first) = self.early.first() else {
+            return;
+        };
+        let browsers = targets.browsers;
+        // Every target reads the value as written: none lacks it, and none gets a prefix for it.
+        let supported = |image: &Image, color: &CssColor| match &browsers {
+            Some(browsers) => {
+                image.is_compatible(browsers)
+                    && image.get_necessary_prefixes(targets) == VendorPrefix::NONE
+                    && color.is_compatible(browsers)
+            }
+            None => true,
+        };
+
+        // Back to front: `replaced` has the longhands that later declarations set for every target.
+        let mut replaced = BackgroundProperty::empty();
+        let mut ranges = self.early.iter().rev().peekable();
+        let mut dead: Vec<usize> = Vec::new();
+        for (index, property) in decls.iter().enumerate().skip(first.start).rev() {
+            let (longhands, prefixed, read_by_all) = match property {
+                Property::Background(val) => {
+                    let prefixed = val.any(|b: &Background| b.image.has_vendor_prefix());
+                    let read =
+                        !prefixed && val.slice().iter().all(|b| supported(&b.image, &b.color));
+                    (BackgroundProperty::BACKGROUND, prefixed, read)
+                }
+                Property::BackgroundImage(val) => {
+                    let prefixed = val.any(|image: &Image| image.has_vendor_prefix());
+                    let none = CssColor::default();
+                    let read = !prefixed && val.slice().iter().all(|image| supported(image, &none));
+                    (BackgroundProperty::IMAGE, prefixed, read)
+                }
+                Property::BackgroundColor(val) => (
+                    BackgroundProperty::COLOR,
+                    false,
+                    supported(&Image::None, val),
+                ),
+                Property::BackgroundPosition(_) => {
+                    (BackgroundProperty::BACKGROUND_POSITION, false, true)
+                }
+                Property::BackgroundPositionX(_) => (BackgroundProperty::POSITION_X, false, true),
+                Property::BackgroundPositionY(_) => (BackgroundProperty::POSITION_Y, false, true),
+                Property::BackgroundRepeat(_) => (BackgroundProperty::REPEAT, false, true),
+                Property::BackgroundSize(_) => (BackgroundProperty::SIZE, false, true),
+                Property::BackgroundAttachment(_) => (BackgroundProperty::ATTACHMENT, false, true),
+                Property::BackgroundOrigin(_) => (BackgroundProperty::ORIGIN, false, true),
+                // `-webkit-background-clip` is another property for some browsers.
+                Property::BackgroundClip((_, prefix)) if *prefix == VendorPrefix::NONE => {
+                    (BackgroundProperty::CLIP, false, true)
+                }
+                _ => continue,
+            };
+            while ranges.next_if(|range| range.start > index).is_some() {}
+            let early = ranges.peek().is_some_and(|range| range.contains(&index));
+            // Without targets no prefix is generated, so a prefixed value stays.
+            if early && replaced.contains(longhands) && (browsers.is_some() || !prefixed) {
+                dead.push(index);
+            } else if read_by_all {
+                replaced.insert(longhands);
+            }
+        }
+        self.early.clear();
+
+        if dead.is_empty() {
+            return;
+        }
+        let mut index = 0;
+        decls.retain(|_| {
+            let keep = dead.last() != Some(&index);
+            if !keep {
+                dead.pop();
+            }
+            index += 1;
+            keep
+        });
+    }
+}
+
+/// An unprefixed image that gets a generated prefix for some target.
+fn gets_prefix(images: &SmallList<Image, 1>, targets: &css::targets::Targets) -> bool {
+    images.any(|image: &Image| {
+        !image.has_vendor_prefix() && image.get_necessary_prefixes(targets) != VendorPrefix::NONE
+    })
+}
+
+/// A prefixed image function is for browsers that read RGB colors only.
+fn to_rgb<T: crate::small_list::ImageFallback>(
+    list: &mut SmallList<T, 1>,
+    arena: &Bump,
+    targets: &css::targets::Targets,
+) {
+    if list.any(|item: &T| {
+        item.get_necessary_fallbacks(targets)
+            .contains(ColorFallbackKind::RGB)
+    }) {
+        for item in list.slice_mut() {
+            *item = item.get_fallback(arena, ColorFallbackKind::RGB);
+        }
     }
 }
 

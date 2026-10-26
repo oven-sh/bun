@@ -2,10 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { join } from "path";
 import {
+  type Browsers,
   cssTest,
   cssTestTodo,
   indoc,
@@ -24,6 +26,22 @@ function Some(n: number): number {
 function error_test(css: string, error: unknown) {
   // going to ignore this test for now
   test.skip(`ERROR: ${css}`, () => {});
+}
+
+// `Targets::browser_default()`: the targets of `bun build` for a browser.
+const defaultTargets: Browsers = {
+  chrome: 80 << 16,
+  edge: 80 << 16,
+  firefox: 78 << 16,
+  safari: 14 << 16,
+  opera: 67 << 16,
+};
+
+/** One rule `.a`: `declarations` in, `expected` out. No `targets`: as `bun build --target=bun`. */
+function declarations_test(declarations: string, expected: string, targets?: Browsers) {
+  const [source, output] = [`.a { ${declarations} }`, `.a { ${expected}; }`];
+  if (targets) prefix_test(source, output, targets);
+  else cssTest(source, output);
 }
 
 describe("css tests", () => {
@@ -3419,6 +3437,370 @@ describe("css tests", () => {
         chrome: 99 << 16,
       },
     );
+
+    // A browser drops a declaration that it cannot read and uses the
+    // declaration before it (CSS 2.1 section 4.2). So a `background` or
+    // `background-image` value with a vendor prefix does not replace the
+    // values before it, and does not share a declaration with other values.
+    // lightningcss replaces them.
+    describe("a value with a prefixed image", () => {
+      const moz = "-moz-linear-gradient(red, #00f)";
+      const o = "-o-linear-gradient(red, #00f)";
+      const webkit = "-webkit-linear-gradient(red, #00f)";
+      const standard = "linear-gradient(red, #00f)";
+      const legacy = "-webkit-gradient(linear, 0 0, 0 100%, from(red), to(#00f))";
+      const imageSet = `-webkit-image-set(url("a.png") 1x, url("b.png") 2x)`;
+
+      // [declarations, output with the default targets, output with no targets].
+      // No output: the declarations as they are.
+      const rows: [string, string?, string?][] = [
+        // It does not replace the value before it.
+        [`background: #2a6; background: ${moz}`],
+        [`background: #2a6; background: ${o}`],
+        [`background: #2a6; background: ${webkit}`],
+        [`background: #2a6; background: ${legacy}`],
+        [`background: ${standard}; background: ${moz}`],
+        [`background-image: url("a.png"); background-image: ${moz}`],
+        [`background-image: url("a.png"); background-image: ${imageSet}`],
+        [`background: ${webkit}; background: ${moz}`],
+
+        // It does not share a declaration with the values around it.
+        [`background: #2a6; background-image: ${moz}`],
+        [`background: #2a6 url("a.png") no-repeat; background-image: ${moz}`],
+        [`background: ${moz}; background-color: #2a6`],
+        [`background: #2a6; background: ${moz}; background-repeat: no-repeat`],
+        [`background: #2a6; background: ${moz} no-repeat; background-image: ${standard}`],
+        [
+          `background-color: #2a6; background-position: 0 0; background-repeat: repeat; background-size: auto; background-attachment: scroll; background-origin: padding-box; background-clip: border-box; background-image: ${moz}`,
+        ],
+
+        // A later value that every target reads replaces it and the values before it.
+        // Without targets the prefixed values stay.
+        [
+          `background: #2a6; background: ${moz}; background: ${webkit}; background: ${standard}`,
+          `background: ${standard}`,
+          `background: ${moz}; background: ${webkit}; background: ${standard}`,
+        ],
+        [
+          `background: #2a6; background: ${legacy}; background: ${standard}`,
+          `background: ${standard}`,
+          `background: ${legacy}; background: ${standard}`,
+        ],
+        [`background: ${moz}; background: #2a6`, `background: #2a6`],
+        [
+          `background: #2a6 url("a.png") no-repeat; background-image: ${moz}; background-image: ${standard}`,
+          `background: #2a6 url("a.png") no-repeat; background-image: ${standard}`,
+        ],
+        [
+          `background-color: #2a6; background-image: ${webkit}; background-image: ${moz}; background-image: ${o}; background-image: ${standard}; background-repeat: repeat-x`,
+          `background-color: #2a6; background-image: ${standard}; background-repeat: repeat-x`,
+        ],
+        [
+          `background: ${moz}; background-image: ${standard}; background-color: #2a6; background-position: 0 0; background-repeat: repeat; background-size: auto; background-attachment: scroll; background-origin: padding-box; background-clip: border-box`,
+          `background: #2a6 ${standard}`,
+          `background: ${moz}; background: #2a6 ${standard}`,
+        ],
+        [
+          `background-size: 10px; background-image: ${moz}; background-size: 20px`,
+          `background-image: ${moz}; background-size: 20px`,
+          `background-image: ${moz}; background-size: 20px`,
+        ],
+
+        // A value kept as tokens stays. The values that a flush wrote before it stay too.
+        [
+          `background: #2a6; background: ${moz}; background: -ms-linear-gradient(red, blue); background: ${standard}`,
+          `background: -ms-linear-gradient(red, blue); background: ${standard}`,
+          `background: ${moz}; background: -ms-linear-gradient(red, blue); background: ${standard}`,
+        ],
+        [`background: #2a6; background-image: ${moz}; background-position: var(--p)`],
+        [
+          `background: #2a6; background-size: var(--s); background: ${moz}; background: ${standard}`,
+          `background: #2a6; background-size: var(--s); background: ${standard}`,
+        ],
+
+        // A later value that some target does not read replaces nothing. The
+        // values before it are its fallbacks, so it gets no generated ones.
+        [`background-image: ${moz}; background-image: image-set("a.png" 1x, "b.png" 2x)`],
+        [
+          `background-image: url("a.png"); background-image: ${imageSet}; background-image: image-set("a.png" 1x, "b.png" 2x)`,
+          undefined,
+          `background-image: ${imageSet}; background-image: image-set("a.png" 1x, "b.png" 2x)`,
+        ],
+        [
+          `background: ${webkit}; background-color: #2a6; background: linear-gradient(lab(40% 30 10), #00f)`,
+          undefined,
+          `background: ${webkit}; background: linear-gradient(lab(40% 30 10), #00f)`,
+        ],
+        [
+          `background: #111; background: ${moz}; background: lab(50% 0 0) ${standard}`,
+          undefined,
+          `background: ${moz}; background: lab(50% 0 0) ${standard}`,
+        ],
+        [
+          `background-color: #2a6; background-image: ${moz}; background-color: lab(50% 0 0)`,
+          undefined,
+          `background-image: ${moz}; background-color: lab(50% 0 0)`,
+        ],
+
+        // Fallbacks are generated as before when the rule has no other value for
+        // the property that needs them.
+        [
+          `background: oklch(97% 0.01 250) ${webkit}`,
+          `background: #f0f6fc ${webkit}`,
+          `background: oklch(97% .01 250) ${webkit}`,
+        ],
+        [
+          `background-image: ${moz}; background: oklch(97% 0.01 250) ${webkit}`,
+          `background-image: ${moz}; background: #f0f6fc ${webkit}`,
+          `background-image: ${moz}; background: oklch(97% .01 250) ${webkit}`,
+        ],
+        [
+          `background: #2a6; background: oklch(97% 0.01 250) ${webkit}`,
+          `background: #2a6; background: oklch(97% .01 250) ${webkit}`,
+          `background: #2a6; background: oklch(97% .01 250) ${webkit}`,
+        ],
+        [
+          `background-image: ${moz}; background: lab(50% 0 0) ${standard}`,
+          `background: #777 ${standard}; background: color(display-p3 .466327 .466327 .466327) ${standard}; background: lab(50% 0 0) ${standard}`,
+        ],
+        [
+          `background: -moz-linear-gradient(lab(50% 0 0), #00f); background: -webkit-linear-gradient(lab(50% 0 0), #00f)`,
+          `background: -moz-linear-gradient(#777, #00f); background: -webkit-linear-gradient(lab(50% 0 0), #00f)`,
+        ],
+
+        // It is one declaration, as written.
+        [`background: #2a6; background: ${moz} text`],
+        [`background-image: url("a.png"), ${moz}`],
+        [`background-image: ${moz}, ${webkit}`],
+        [
+          `background-image: url("a.png"), ${moz}; background-image: url("a.png"), ${webkit}; background-image: url("a.png"), ${standard}`,
+          `background-image: url("a.png"), ${standard}`,
+        ],
+      ];
+      describe("default targets", () => {
+        for (const [declarations, expected = declarations] of rows) {
+          declarations_test(declarations, expected, defaultTargets);
+        }
+        prefix_test(
+          `.a { background: #2a6 !important; background: ${moz} !important; background: #111 }`,
+          `.a { background: #111; background: #2a6 !important; background: ${moz} !important; }`,
+          defaultTargets,
+        );
+        // Two rules that become one rule.
+        prefix_test(
+          `.a { background: #2a6 } .a { background: ${moz} }`,
+          `.a { background: #2a6; background: ${moz}; }`,
+          defaultTargets,
+        );
+        prefix_test(
+          `.a { background: #2a6; background: ${moz} } .a { background: ${webkit}; background: ${standard} }`,
+          `.a { background: ${standard}; }`,
+          defaultTargets,
+        );
+      });
+      describe("no targets", () => {
+        for (const [declarations, , expected = declarations] of rows) {
+          declarations_test(declarations, expected);
+        }
+      });
+
+      // An unprefixed value that gets a prefix for some target is not a value
+      // that every target reads as written. It replaces nothing. After a
+      // prefixed value of the author it gets no generated prefix.
+      describe("targets that need a prefix", () => {
+        declarations_test(
+          `background: ${standard}; background: ${moz}`,
+          `background: ${legacy}; background: ${webkit}; background: ${standard}; background: ${moz}`,
+          { safari: 6 << 16 },
+        );
+        declarations_test(
+          `background: ${webkit}; background: ${standard}`,
+          `background: ${webkit}; background: ${standard}`,
+          {
+            safari: 6 << 16,
+          },
+        );
+        declarations_test(
+          `background: #111; background: ${webkit}; background: image-set("a.png" 1x, "b.png" 2x)`,
+          `background: #111; background: ${webkit}; background: image-set("a.png" 1x, "b.png" 2x)`,
+          { chrome: 80 << 16 },
+        );
+      });
+
+      // Each prefixed declaration becomes the unprefixed one for a browser
+      // that reads the prefix, and nothing for a browser that does not. A
+      // rule with no prefix is minified as before, so that gives what a
+      // browser computes. The source and the output must agree for every
+      // set of prefixes that a browser reads.
+      describe("every browser computes the same from the source and the output", () => {
+        const alphabet = [
+          "background: #111",
+          "background: url(a.png) no-repeat #222",
+          "background: linear-gradient(red, blue)",
+          "background: -webkit-linear-gradient(lime, blue)",
+          "background: -moz-linear-gradient(aqua, blue) repeat-x",
+          "background: -o-linear-gradient(pink, blue)",
+          "background: -ms-linear-gradient(gold, blue)",
+          "background: -webkit-gradient(linear, 0 0, 0 100%, from(navy), to(teal))",
+          "background: url(a.png), -moz-linear-gradient(aqua, blue)",
+          "background-image: url(b.png)",
+          "background-image: linear-gradient(green, blue)",
+          "background-image: -webkit-linear-gradient(olive, blue)",
+          "background-image: -moz-linear-gradient(purple, blue)",
+          "background-image: -webkit-image-set(url(c.png) 1x)",
+          "background-color: red",
+          "background-repeat: repeat-y",
+          "background-position: var(--p)",
+        ];
+        const family = (declaration: string) =>
+          declaration.includes("-webkit-image-set(")
+            ? "image-set"
+            : declaration.includes("-webkit-gradient(")
+              ? "legacy"
+              : /-(webkit|moz|o|ms)-linear-gradient\(/.exec(declaration)?.[1];
+        const unprefixed = (declaration: string) =>
+          declaration
+            .replace(/-webkit-image-set\((url\([^)]*\))[^)]*\)/, "$1")
+            .replace(
+              /-webkit-gradient\(linear, 0 0, 0 100%, from\(([^)]*)\), to\(([^)]*)\)\)/,
+              "linear-gradient($1, $2)",
+            )
+            .replace(/-(webkit|moz|o|ms)-linear-gradient\(/, "linear-gradient(")
+            .replace("var(--p)", "7px 9px");
+        const minify = (css: string, targets?: Browsers) => String(cssInternals._test(css, "", targets));
+        const declarations = (rule: string) =>
+          rule
+            .replace(/^[^{]*\{|\}\s*$/g, "")
+            .split(";")
+            .map(declaration => declaration.trim())
+            .filter(Boolean);
+        const computed = (rule: string[], reads: string[]) =>
+          minify(
+            `.a{${rule
+              .filter(d => !family(d) || reads.includes(family(d)!))
+              .map(unprefixed)
+              .join(";")}}`,
+          );
+        const readerSets = (families: string[], targets?: Browsers) => {
+          // Of the default targets, Firefox alone reads `-moz-`, and it is
+          // the one that can lack the two WebKit functions.
+          if (targets) {
+            const rest = families.filter(f => f === "image-set" || f === "legacy");
+            const firefox = rest.reduce<string[][]>(
+              (sets, f) => sets.flatMap(set => [set, [...set, f]]),
+              [["webkit", "moz"]],
+            );
+            return [["webkit", "image-set", "legacy"], ...firefox];
+          }
+          return families.reduce<string[][]>((sets, f) => sets.flatMap(set => [set, [...set, f]]), [[]]);
+        };
+        const maxLength = isDebug ? 2 : 3;
+        function* sequences(prefix: string[] = []): Generator<string[]> {
+          if (prefix.length) yield prefix;
+          if (prefix.length < maxLength) for (const declaration of alphabet) yield* sequences([...prefix, declaration]);
+        }
+        for (const [name, targets] of [
+          ["default targets", defaultTargets],
+          ["no targets", undefined],
+        ] as const) {
+          test(`${name}: each rule of up to ${maxLength} declarations`, () => {
+            const wrong: string[] = [];
+            for (const source of sequences()) {
+              const output = declarations(minify(`.a{${source.join(";")}}`, targets));
+              const families = [...new Set([...source, ...output].map(family).filter(f => f !== undefined))];
+              for (const reads of readerSets(families, targets)) {
+                if (computed(source, reads) !== computed(output, reads)) {
+                  wrong.push(`${source.join("; ")} => ${output.join("; ")} [reads: ${reads.join(" ") || "no prefix"}]`);
+                  break;
+                }
+              }
+            }
+            expect(wrong).toEqual([]);
+          });
+        }
+      });
+    });
+
+    // #46872: the values of a rule are written in source order, so the
+    // cascade of the output is the cascade of the source.
+    describe("prefixed values keep source order", () => {
+      const chrome = { chrome: 95 << 16 };
+
+      // A value that is kept as tokens comes after the values before it.
+      for (const targets of [undefined, chrome]) {
+        cssTest(
+          ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(center, circle cover, yellow, green) }",
+          ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(center, circle cover, yellow, green); }",
+          targets,
+        );
+        cssTest(
+          ".r { background-image: -webkit-linear-gradient(red, blue); background-image: -moz-linear-gradient(red, blue); background-image: -webkit-radial-gradient(center, circle cover, yellow, green) }",
+          ".r { background-image: -webkit-linear-gradient(red, #00f); background-image: -moz-linear-gradient(red, #00f); background-image: -webkit-radial-gradient(center, circle cover, yellow, green); }",
+          targets,
+        );
+        cssTest(
+          ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(circle, yellow, green) }",
+          ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(circle, #ff0, green); }",
+          targets,
+        );
+      }
+
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-gradient(linear, left top, left bottom, from(red), to(blue)) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background-image: -webkit-linear-gradient(red, blue); background-image: -moz-linear-gradient(red, blue); background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(blue)) }",
+        ".r { background-image: -webkit-linear-gradient(red, #00f); background-image: -moz-linear-gradient(red, #00f); background-image: -webkit-gradient(linear, left top, left bottom, from(red), to(#00f)); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue) lab(50% 0 0) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: lab(50% 0 0) -moz-linear-gradient(red, #00f); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background-clip: text; -webkit-background-clip: border-box }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); -webkit-background-clip: text; background-clip: text; -webkit-background-clip: border-box; }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); }",
+        chrome,
+      );
+
+      // Without targets nothing is dropped, and nothing is written twice.
+      cssTest(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, blue) }",
+        ".r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, #00f); }",
+      );
+      // The image after the two shorthands stays a longhand: a browser that
+      // reads neither of them has no `background` in this rule.
+      cssTest(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background-image: url(a.png); background-position: var(--p) }",
+        '.r { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background-image: url("a.png"); background-position: var(--p); }',
+      );
+
+      // An unprefixed value that every target reads replaces the prefixed
+      // values before it. A value kept as tokens stays.
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: linear-gradient(red, blue) }",
+        ".r { background: linear-gradient(red, #00f); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -ms-linear-gradient(red, blue); background: linear-gradient(red, blue) }",
+        ".r { background: -ms-linear-gradient(red, blue); background: linear-gradient(red, #00f); }",
+        chrome,
+      );
+      prefix_test(
+        ".r { background-image: -webkit-linear-gradient(red, blue); background-image: -moz-linear-gradient(red, blue); background-image: -o-linear-gradient(lab(50% 0 0), blue); background-image: linear-gradient(red, blue) }",
+        ".r { background-image: linear-gradient(red, #00f); }",
+        chrome,
+      );
+    });
   });
 
   describe("flex", () => {

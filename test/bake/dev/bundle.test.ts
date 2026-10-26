@@ -395,9 +395,10 @@ devTest("importing a file that was renamed before a build read it shows an error
         errors: ['second.ts:1:23: error: Could not resolve: "./src/renamed"'],
       });
     }
-    await dev.write("src/renamed.tsx", `export const value = "tsx";`);
+    // A new file is a change in src/ for the watcher of each platform.
+    await dev.write("src/added.ts", `export {};`);
     await using c = await dev.client("/second");
-    await c.expectMessage("second: tsx");
+    await c.expectMessage("second: ts");
   },
 });
 // The dev server does not watch node_modules, so most tests below delete a file there after a build

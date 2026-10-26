@@ -9,7 +9,7 @@ await using server = http.createServer((req, res) => {
   res.end();
 });
 let socket;
-server.on("clientError", err => {
+server.on("clientError", (err: any) => {
   expect(err.code).toBe("HPE_INVALID_METHOD");
   expect(err.rawPacket.toString()).toBe("*");
 

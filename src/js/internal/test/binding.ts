@@ -6,9 +6,13 @@
 
 const agent = require("internal/trace_events");
 
-const newRawSocketFd = $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2);
-const listenRawFd = $newRustFunction("udp_socket.rs", "jsDgramListenFd", 1);
-const closeRawFd = $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1);
+interface ErrnoError {
+  errno: number;
+}
+
+const newRawSocketFd = $bindgen("udp_socket.bind.ts", "dgramNewSocketFd");
+const listenRawFd = $bindgen("udp_socket.bind.ts", "dgramListenFd");
+const closeRawFd = $bindgen("udp_socket.bind.ts", "dgramCloseFd");
 
 // Just enough of internalBinding('tcp_wrap').TCP for vendored dgram tests to
 // produce a listening stream descriptor and assert it gets rejected.
@@ -28,7 +32,9 @@ class TestTCPWrap {
       listenRawFd(this.#fd);
       return 0;
     } catch (err) {
-      return typeof err?.errno === "number" && err.errno < 0 ? err.errno : -1;
+      return typeof (err as ErrnoError | null | undefined)?.errno === "number" && (err as ErrnoError).errno < 0
+        ? (err as ErrnoError).errno
+        : -1;
     }
   }
 

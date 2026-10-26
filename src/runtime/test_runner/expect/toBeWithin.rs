@@ -1,42 +1,35 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 
 use super::{throw, Expect};
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn to_be_within(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        start: JsLocal<'_>,
+        end: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         let (this, value, not) = self.matcher_prelude(
             global,
-            frame.this(),
+            this_value.to_js(),
             "toBeWithin",
             "<green>start<r><d>, <r><green>end<r>",
         )?;
 
-        let arguments = frame.arguments();
+        let start = start.to_js();
 
-        if arguments.len() < 2 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "toBeWithin() requires 2 arguments"
-            )));
-        }
-
-        let start_value = arguments[0];
-        start_value.ensure_still_alive();
-
-        if !start_value.is_number() {
+        if !start.is_number() {
             return Err(global.throw(format_args!(
                 "toBeWithin() requires the first argument to be a number"
             )));
         }
 
-        let end_value = arguments[1];
-        end_value.ensure_still_alive();
+        let end = end.to_js();
 
-        if !end_value.is_number() {
+        if !end.is_number() {
             return Err(global.throw(format_args!(
                 "toBeWithin() requires the second argument to be a number"
             )));
@@ -45,7 +38,7 @@ impl Expect {
         let mut pass = value.is_number();
         if pass {
             let num = value.as_number();
-            pass = num >= start_value.as_number() && num < end_value.as_number();
+            pass = num >= start.as_number() && num < end.as_number();
         }
 
         if not {
@@ -61,8 +54,8 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);
-        let start_fmt = start_value.to_fmt(&mut formatter);
-        let end_fmt = end_value.to_fmt(&mut formatter2);
+        let start_fmt = start.to_fmt(&mut formatter);
+        let end_fmt = end.to_fmt(&mut formatter2);
         let received_fmt = value.to_fmt(&mut formatter3);
 
         if not {

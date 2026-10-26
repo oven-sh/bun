@@ -40,9 +40,10 @@ _read_scripts_in_package_json() {
 
     for ((; line < ${#words[@]}; line+=1)); do
         [[ "${words[${line}]}" == "--cwd" ]] && {
-            working_dir="${words[$((line + 1))]}";
+            local value="${words[$((line + 1))]}";
             # readline splits `--cwd=dir` at the `=`
-            [[ "${working_dir}" == "=" ]] && working_dir="${words[$((line + 2))]}";
+            [[ "${value}" == "=" ]] && value="${words[$((line + 2))]}";
+            [[ -n "${value}" ]] && working_dir="${value}";
         }
     done
 

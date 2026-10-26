@@ -1712,7 +1712,7 @@ it("Bun.write(path, stream) that the script of a Bun.ModuleGraph started is clos
         graph.run(() => app.write(join(import.meta.dir, "written-" + i + ".txt")));
         const open = sinks();
         graph.dispose();
-        for (let turn = 0; turn < 50 && sinks() > 0; turn++) {
+        for (let turn = 0; turn < 10 && sinks() > 0; turn++) {
           Bun.gc(true);
           await new Promise(resolve => setImmediate(resolve));
         }

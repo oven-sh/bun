@@ -2630,3 +2630,81 @@ export function integersThatNeedRounding(): [string, bigint][] {
   add("0x", "b3c8_bf81_fdf2_247");
   return cases;
 }
+
+/**
+ * Text that is mostly not UTF-8, and how the JavaScript printer reads it. `bytes` has a line for every string of 1 to
+ * `longest` of 16 bytes, one of each kind of lead and continuation byte. `text` is what `TextDecoder` reads from
+ * `bytes`, one U+FFFD for the start of a sequence that does not go on, with two differences:
+ * - The three bytes of half a surrogate pair (`ED A0..BF xx`) stay that half, as a parser writes `"\uD800"`.
+ * - A byte that can start no sequence and goes on with none (`80..BF`, `F8..FF`) is its Latin-1 character, as it is
+ *   for the lexer.
+ */
+export function textThatIsNotUtf8(longest: 3 | 4 = 4) {
+  const alphabet = [0x41, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xc2, 0xe0, 0xe1, 0xed, 0xf0, 0xf1, 0xf4, 0xff];
+  const lines: number[] = [];
+  for (let length = 1; length <= longest; length++) {
+    for (let n = 0; n < 16 ** length; n++) {
+      for (let i = 0, digits = n; i < length; i++, digits >>= 4) lines.push(alphabet[digits & 15]);
+      lines.push(0x0a);
+    }
+  }
+  const bytes = Buffer.from(lines);
+
+  // The second bytes that a lead byte goes on with, and the length of its sequence (Unicode, table 3-7).
+  const sequence = (lead: number): [from: number, to: number, length: number] =>
+    lead < 0xc2 || lead > 0xf4
+      ? [0, 0, 0]
+      : lead < 0xe0
+        ? [0x80, 0xbf, 2]
+        : lead < 0xf0
+          ? [lead === 0xe0 ? 0xa0 : 0x80, lead === 0xed ? 0x9f : 0xbf, 3]
+          : [lead === 0xf0 ? 0x90 : 0x80, lead === 0xf4 ? 0x8f : 0xbf, 4];
+  const isContinuation = (at: number) => (bytes[at] & 0xc0) === 0x80;
+  const units = new Uint16Array(bytes.length);
+  let count = 0;
+  for (let at = 0; at < bytes.length;) {
+    const lead = bytes[at];
+    const [from, to, length] = sequence(lead);
+    let size = 1;
+    let codePoint = lead;
+    if (lead === 0xed && bytes[at + 1] >= 0xa0 && isContinuation(at + 1) && isContinuation(at + 2)) {
+      size = 3;
+    } else if (length === 0) {
+      if (lead >= 0xc0 && lead < 0xf8) codePoint = 0xfffd;
+    } else {
+      if (bytes[at + 1] >= from && bytes[at + 1] <= to) {
+        size = 2;
+        while (size < length && isContinuation(at + size)) size++;
+      }
+      if (size < length) codePoint = 0xfffd;
+    }
+    if (size > 1 && codePoint !== 0xfffd) {
+      codePoint = lead & (0xff >> (size + 1));
+      for (let i = 1; i < size; i++) codePoint = (codePoint << 6) | (bytes[at + i] & 0x3f);
+    }
+    if (codePoint > 0xffff) {
+      units[count++] = 0xd7c0 + (codePoint >> 10);
+      codePoint = 0xdc00 | (codePoint & 0x3ff);
+    }
+    units[count++] = codePoint;
+    at += size;
+  }
+  const text = Buffer.from(units.buffer, 0, count * 2).toString("utf16le");
+
+  return {
+    bytes,
+    text,
+    /** The first lines of `printed` that are not those of `expected`, in hexadecimal. Empty if there are none. */
+    linesThatDiffer(printed: string, expected = text): string[] {
+      if (printed === expected) return [];
+      const hex = (line: string | undefined) =>
+        line === undefined ? "no line" : Array.from(line, it => it.codePointAt(0)!.toString(16)).join(" ");
+      const [written, got, wanted] = [bytes.toString("latin1"), printed, expected].map(it => it.split("\n"));
+      const differ: string[] = [];
+      for (let i = 0; i < Math.max(got.length, wanted.length) && differ.length < 5; i++) {
+        if (got[i] !== wanted[i]) differ.push(`${hex(written[i])} prints ${hex(got[i])}, not ${hex(wanted[i])}`);
+      }
+      return differ;
+    },
+  };
+}

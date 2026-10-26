@@ -339,6 +339,7 @@ impl PmVersionCommand {
             JSPrinter::PrintJsonOptions {
                 indent: json_result.indentation,
                 mangled_props: None,
+                ill_formed_bytes: JSPrinter::IllFormedBytes::Keep,
                 ..Default::default()
             },
         ) {

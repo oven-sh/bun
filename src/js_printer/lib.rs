@@ -1026,10 +1026,26 @@ pub fn write_pre_quoted_string<
 where
     W: Write + ?Sized,
 {
-    write_pre_quoted_string_inner::<W, ENCODING>(text_in, writer, QUOTE_CHAR, ASCII_ONLY, JSON)
+    let escapes = if JSON {
+        Escapes::Json
+    } else {
+        Escapes::JavaScript
+    };
+    write_pre_quoted_string_inner::<W, ENCODING>(text_in, writer, QUOTE_CHAR, ASCII_ONLY, escapes)
 }
 
-/// `quote_char` / `ascii_only` / `json` are runtime args (were `const`): the
+/// The escapes that [`write_pre_quoted_string_inner`] writes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Escapes {
+    /// `\x07`, `\v`, `\xHH`.
+    JavaScript,
+    /// `\u0007`, `\u000B`, `\u00HH`.
+    Json,
+    /// [`Escapes::Json`] for a file that is written back: ill-formed bytes stay as they are, and are not U+FFFD.
+    JsonKeepingBytes,
+}
+
+/// `quote_char` / `ascii_only` / `escapes` are runtime args (were `const`): the
 /// branches on them are cheap and well-predicted, and collapsing the
 /// monomorphizations keeps the hot transpile pages dense (see the facade above).
 /// `ENCODING` stays `const` — it changes the code-unit indexing structure of the
@@ -1040,11 +1056,12 @@ pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
     writer: &mut W,
     quote_char: u8,
     ascii_only: bool,
-    json: bool,
+    escapes: Escapes,
 ) -> crate::Result<()>
 where
     W: Write + ?Sized,
 {
+    let json = escapes != Escapes::JavaScript;
     debug_assert!(
         !(json && quote_char != b'"'),
         "for json, quote_char must be '\"'"
@@ -1073,46 +1090,57 @@ where
     }
 
     while i < n {
-        let width: u8 = match ENCODING {
-            Encoding::Latin1 | Encoding::Ascii => 1,
-            Encoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text[i]),
-            Encoding::Utf16 => 1,
-        };
-        let clamped_width = (width as usize).min(n.saturating_sub(i));
-        let c: i32 = match ENCODING {
+        let width: usize;
+        let c: i32;
+        match ENCODING {
             Encoding::Utf8 => {
-                let bytes: [u8; 4] = match clamped_width {
-                    1 => [text[i], 0, 0, 0],
-                    2 => [text[i], text[i + 1], 0, 0],
-                    3 => [text[i], text[i + 1], text[i + 2], 0],
-                    4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
-                    _ => unreachable!(),
-                };
-                strings::decode_wtf8_rune_t::<i32>(bytes, width, 0)
+                let step = strings::wtf8_step(&text[i..]);
+                width = step.len;
+                if !step.replaced {
+                    c = step.code_point as i32;
+                } else if matches!(text[i], 0x80..=0xBF | 0xF8..=0xFF) {
+                    // A byte that can start no sequence is Latin-1, as for the lexer and a printed identifier.
+                    c = text[i] as i32;
+                } else {
+                    if escapes == Escapes::JsonKeepingBytes {
+                        writer.write_all(&text[i..i + width])?;
+                    } else if ascii_only {
+                        writer.write_all(&bmp_escape(strings::UNICODE_REPLACEMENT))?;
+                    } else {
+                        writer.write_all("\u{FFFD}".as_bytes())?;
+                    }
+                    i += width;
+                    continue;
+                }
             }
             Encoding::Ascii => {
                 debug_assert!(text[i] <= 0x7F);
-                text[i] as i32
+                c = text[i] as i32;
+                width = 1;
             }
-            Encoding::Latin1 => text[i] as i32,
+            Encoding::Latin1 => {
+                c = text[i] as i32;
+                width = 1;
+            }
             Encoding::Utf16 => {
                 // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
                 // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
                 // eg: "\u{10334}" will convert to "𐌴" without this.
-                code_unit_at!(i)
+                c = code_unit_at!(i);
+                width = 1;
             }
-        };
+        }
 
         if can_print_without_escape(c, ascii_only) {
             match ENCODING {
                 Encoding::Ascii | Encoding::Utf8 => {
-                    let remain = &text[i + clamped_width..];
+                    let remain = &text[i + width..];
                     if let Some(j) =
                         strings::index_of_needs_escape_for_java_script_string(remain, quote_char)
                     {
                         let j = j as usize;
-                        writer.write_all(&text[i..i + clamped_width + j])?;
-                        i += clamped_width + j;
+                        writer.write_all(&text[i..i + width + j])?;
+                        i += width + j;
                     } else {
                         writer.write_all(&text[i..])?;
                         break;
@@ -1122,7 +1150,7 @@ where
                     let mut codepoint_bytes = [0u8; 4];
                     let codepoint_len = strings::encode_wtf8_rune(&mut codepoint_bytes, c as u32);
                     writer.write_all(&codepoint_bytes[..codepoint_len])?;
-                    i += clamped_width;
+                    i += width;
                 }
             }
             continue;
@@ -1188,8 +1216,8 @@ where
             }
             0x24 => {
                 if quote_char == b'`' {
-                    let next = if i + clamped_width < n {
-                        Some(code_unit_at!(i + clamped_width))
+                    let next = if i + width < n {
+                        Some(code_unit_at!(i + width))
                     } else {
                         None
                     };
@@ -1212,7 +1240,7 @@ where
                 i += 1;
             }
             _ => {
-                i += width as usize;
+                i += width;
 
                 if c <= 0xFF && !json {
                     let h = hex2_upper(c as u8);
@@ -1245,7 +1273,13 @@ pub fn quote_for_json(
     // source. The writer still grows on demand if this under-shoots.
     bytes.grow_if_needed(text.len() + (text.len() >> 3) + 8)?;
     bytes.append_char(b'"')?;
-    write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(text, bytes, b'"', ascii_only, true)?;
+    write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(
+        text,
+        bytes,
+        b'"',
+        ascii_only,
+        Escapes::Json,
+    )?;
     bytes.append_char(b'"').expect("unreachable");
     Ok(())
 }
@@ -1255,7 +1289,7 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
     writer: &mut W,
 ) -> crate::Result<()> {
     writer.write_all(b"\"")?;
-    write_pre_quoted_string_inner::<_, ENCODING>(input, writer, b'"', false, true)?;
+    write_pre_quoted_string_inner::<_, ENCODING>(input, writer, b'"', false, Escapes::Json)?;
     writer.write_all(b"\"")?;
     Ok(())
 }
@@ -1393,6 +1427,9 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+
+    /// [`IllFormedBytes::Keep`] of [`print_json`].
+    pub keep_ill_formed_bytes: bool,
 }
 
 impl<'a> Options<'a> {
@@ -1449,6 +1486,7 @@ impl<'a> Default for Options<'a> {
             has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
+            keep_ill_formed_bytes: false,
         }
     }
 }
@@ -1469,6 +1507,17 @@ pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
     pub minify_whitespace: bool,
+    pub ill_formed_bytes: IllFormedBytes,
+}
+
+/// What [`print_json`] writes for the bytes of a string that are no sequence of UTF-8.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum IllFormedBytes {
+    /// U+FFFD, as `TextDecoder` reads them: for what is shown or sent.
+    #[default]
+    Replace,
+    /// The bytes: for a file that is written back, where what was not edited stays as it was read.
+    Keep,
 }
 
 // `print_json` lives below the `Printer` impl (after `__gated_printer`) so it
@@ -2630,13 +2679,20 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_string_characters_utf8(&mut self, text: &[u8], quote: u8) {
             debug_assert!(matches!(quote, b'\'' | b'"' | b'`'));
+            let escapes = if !IS_JSON {
+                Escapes::JavaScript
+            } else if self.options.keep_ill_formed_bytes {
+                Escapes::JsonKeepingBytes
+            } else {
+                Escapes::Json
+            };
             let mut writer = self.writer.std_writer();
             let _ = write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(
                 text,
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                IS_JSON,
+                escapes,
             );
         }
 
@@ -2644,12 +2700,17 @@ pub(crate) mod __gated_printer {
             debug_assert!(matches!(quote, b'\'' | b'"' | b'`'));
             let slice: &[u8] = bytemuck::cast_slice(text);
             let mut writer = self.writer.std_writer();
+            let escapes = if IS_JSON {
+                Escapes::Json
+            } else {
+                Escapes::JavaScript
+            };
             let _ = write_pre_quoted_string_inner::<_, { Encoding::Utf16 }>(
                 slice,
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                IS_JSON,
+                escapes,
             );
         }
 
@@ -7975,6 +8036,7 @@ pub fn print_json<W: WriterTrait>(
         indent: opts.indent,
         mangled_props: opts.mangled_props,
         minify_whitespace: opts.minify_whitespace,
+        keep_ill_formed_bytes: opts.ill_formed_bytes == IllFormedBytes::Keep,
         ..Default::default()
     };
     let mut printer = PrinterType::<W>::init(

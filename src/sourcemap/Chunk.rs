@@ -524,16 +524,9 @@ impl NewBuilder<'_, VLQSourceMap> {
         let n: usize = slice.len();
         let mut c: i32;
         while i < n {
-            let len = strings::wtf8_byte_sequence_length_with_invalid(slice[i]);
-            let mut cp_bytes = [0u8; 4];
-            let take = (len as usize).min(n - i);
-            cp_bytes[..take].copy_from_slice(&slice[i..i + take]);
-            c = strings::decode_wtf8_rune_t::<i32>(
-                cp_bytes,
-                len,
-                strings::UNICODE_REPLACEMENT as i32,
-            );
-            i += len as usize;
+            let step = strings::wtf8_step(&slice[i..]);
+            c = step.code_point as i32;
+            i += step.len;
 
             match c {
                 14..=127 => {

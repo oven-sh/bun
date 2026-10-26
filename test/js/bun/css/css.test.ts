@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -7367,6 +7368,124 @@ describe("css tests", () => {
       },
     );
 
+    // mask-composite gets -webkit-mask-composite in front of it the same way. That name is
+    // a property of its own with its own keywords, not a prefixed mask-composite.
+    prefix_test(
+      `
+      .foo {
+        transition: mask-composite .2s;
+      }
+    `,
+      `
+      .foo {
+        transition: -webkit-mask-composite .2s, mask-composite .2s;
+      }
+    `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: mask-composite .2s;
+      }
+    `,
+      `
+      .foo {
+        transition: mask-composite .2s;
+      }
+    `,
+      {
+        safari: Some(16 << 16),
+      },
+    );
+
+    // A -webkit-mask-composite entry that is already listed is not inserted again, and
+    // every entry keeps its own duration.
+    prefix_test(
+      `
+      .foo {
+        transition: -webkit-mask-composite .2s, mask-composite .2s;
+      }
+    `,
+      `
+      .foo {
+        transition: -webkit-mask-composite .2s, mask-composite .2s;
+      }
+    `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    for (const declarations of [
+      "transition: -webkit-mask-composite 1s, mask-composite 2s;",
+      "transition: mask-composite 2s, -webkit-mask-composite 1s;",
+      "transition: -webkit-mask-composite 1s, mask-composite 2s, opacity 3s;",
+      "transition: -webkit-mask-composite 1s, -webkit-mask-composite 3s, mask-composite 2s;",
+      "transition-property: -webkit-mask-composite, mask-composite; transition-duration: 1s, 2s;",
+      "transition-property: mask-composite, -webkit-mask-composite; transition-duration: 1s, 2s;",
+      "-webkit-transition: -webkit-mask-composite 1s; transition: -webkit-mask-composite 1s, mask-composite 2s;",
+    ]) {
+      prefix_test(`.foo { ${declarations} }`, `.foo { ${declarations} }`, { safari: Some(15 << 16) });
+    }
+
+    // The name is matched in any letter case, like every other property name.
+    prefix_test(
+      `
+      .foo {
+        transition: -WEBKIT-MASK-COMPOSITE 1s, mask-composite 2s;
+      }
+    `,
+      `
+      .foo {
+        transition: -webkit-mask-composite 1s, mask-composite 2s;
+      }
+    `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    // Only the -webkit- spelling is that property. Another prefix is an unknown name.
+    prefix_test(
+      `
+      .foo {
+        transition: -moz-mask-composite 1s, mask-composite 1s;
+      }
+    `,
+      `
+      .foo {
+        transition: -moz-mask-composite 1s, -webkit-mask-composite 1s, mask-composite 1s;
+      }
+    `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    // The output for a mask property that has a differently named -webkit- property is a
+    // fixed point: minifying it again changes nothing.
+    test.each([
+      "mask-border",
+      "mask-border-source",
+      "mask-border-slice",
+      "mask-border-width",
+      "mask-border-outset",
+      "mask-border-repeat",
+      "mask-composite",
+      "mask-mode",
+    ])("transition over %s is the same when minified again", property => {
+      const targets = { safari: 15 << 16 };
+      for (const source of [`.foo{transition:${property} 1s}`, `.foo{transition-property:${property}}`]) {
+        const once = cssInternals.minifyTest(source, "", targets);
+        expect(once).toContain("-webkit-mask-");
+        expect(cssInternals.minifyTest(once, "", targets)).toBe(once);
+      }
+    });
+
     prefix_test(
       `
       .foo {
@@ -7909,6 +8028,90 @@ describe("css tests", () => {
     );
   });
 
+  describe("mask", () => {
+    // -webkit-mask-composite is a property of its own. Its name is found in any letter
+    // case and its keywords are parsed.
+    minify_test(".foo { -webkit-mask-composite: XOR }", ".foo{-webkit-mask-composite:xor}");
+    minify_test(".foo { -WEBKIT-MASK-COMPOSITE: xor }", ".foo{-webkit-mask-composite:xor}");
+    minify_test(
+      ".foo { -webkit-mask-composite: xor , source-over /* c */ }",
+      ".foo{-webkit-mask-composite:xor,source-over}",
+    );
+    minify_test(".foo { -webkit-mask-composite: XOR !IMPORTANT }", ".foo{-webkit-mask-composite:xor!important}");
+    minify_test(
+      ".foo { -webkit-mask-composite: clear, copy, source-over, source-in, source-out, source-atop, destination-over, destination-in, destination-out, destination-atop, xor }",
+      ".foo{-webkit-mask-composite:clear,copy,source-over,source-in,source-out,source-atop,destination-over,destination-in,destination-out,destination-atop,xor}",
+    );
+    minify_test(
+      ".foo { -webkit-mask-composite: xor; mask-composite: exclude }",
+      ".foo{-webkit-mask-composite:xor;mask-composite:exclude}",
+    );
+    minify_test(
+      "@keyframes k { from { -webkit-mask-composite: XOR } to { -webkit-mask-composite: source-over } }",
+      "@keyframes k{0%{-webkit-mask-composite:xor}to{-webkit-mask-composite:source-over}}",
+    );
+
+    // A value outside of those keywords is printed as written. Firefox takes the name as an
+    // alias of mask-composite (`exclude`), and WebKit has more keywords (`plus-lighter`).
+    for (const value of ["exclude", "plus-lighter", "xor,exclude", "xor xor", "inherit", "var(--x)"]) {
+      minify_test(`.foo{-webkit-mask-composite:${value}}`, `.foo{-webkit-mask-composite:${value}}`);
+    }
+    minify_test(
+      ".foo{-webkit-mask-composite:xor;-webkit-mask-composite:exclude}",
+      ".foo{-webkit-mask-composite:xor;-webkit-mask-composite:exclude}",
+    );
+
+    // No other prefix names that property.
+    for (const prefix of ["-moz-", "-ms-", "-o-"]) {
+      minify_test(`.foo{${prefix}mask-composite:XOR}`, `.foo{${prefix}mask-composite:XOR}`);
+    }
+    minify_test(".foo { mask-composite: EXCLUDE }", ".foo{mask-composite:exclude}");
+
+    // Two rules with the same keywords merge.
+    minify_test(
+      ".foo { -webkit-mask-composite: xor } .bar { -webkit-mask-composite: XOR }",
+      ".foo,.bar{-webkit-mask-composite:xor}",
+    );
+
+    // A rule that is split for a selector the targets do not know keeps the parsed value in
+    // each copy.
+    prefix_test(
+      `
+      .foo, .bar:focus-visible {
+        -webkit-mask-composite: XOR;
+      }
+    `,
+      `
+      .foo {
+        -webkit-mask-composite: xor;
+      }
+
+      .bar:focus-visible {
+        -webkit-mask-composite: xor;
+      }
+    `,
+      {
+        safari: Some(13 << 16),
+      },
+    );
+
+    // A rule with the same selector and an unknown property is not a duplicate of the rule.
+    minify_test(
+      ".foo{-webkit-mask-composite:xor}.bar{color:red}.foo{-webkit-unknown:1}",
+      ".foo{-webkit-mask-composite:xor}.bar{color:red}.foo{-webkit-unknown:1}",
+    );
+    minify_test(
+      ".foo{-webkit-unknown:1}.bar{color:red}.foo{-webkit-mask-composite:xor}",
+      ".foo{-webkit-unknown:1}.bar{color:red}.foo{-webkit-mask-composite:xor}",
+    );
+
+    // The condition of an @import keeps its value as written.
+    minify_test(
+      "@import 'x.css' supports(-WEBKIT-MASK-COMPOSITE: XOR);",
+      '@import "x.css" supports(-webkit-mask-composite:XOR);',
+    );
+  });
+
   describe("color-scheme", () => {
     minify_test(".foo { color-scheme: normal; }", ".foo{color-scheme:normal}");
     minify_test(".foo { color-scheme: light; }", ".foo{color-scheme:light}");
@@ -8196,6 +8399,17 @@ describe("css tests", () => {
     minify_test(
       "@container style((--a: 1) or (--b: 2)) and style(--c: 3) { a { color: red } }",
       "@container style((--a:1) or (--b:2)) and style(--c:3){a{color:red}}",
+    );
+
+    // A style() query on -webkit-mask-composite parses its keywords, and prints any other
+    // value as written.
+    minify_test(
+      "@container style(-webkit-mask-composite: XOR) { a { color: red } }",
+      "@container style(-webkit-mask-composite:xor){a{color:red}}",
+    );
+    minify_test(
+      "@container style(-webkit-mask-composite: exclude) { a { color: red } }",
+      "@container style(-webkit-mask-composite:exclude){a{color:red}}",
     );
 
     // The minified forms parse back to themselves.
@@ -8631,5 +8845,27 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim().split("\n")).toEqual(cases.map(([, expected]) => expected));
     expect(exitCode).toBe(0);
+  });
+
+  test("bun build prints a transition over mask-composite the same when it builds its own output", async () => {
+    using dir = tempDir("css-transition-mask-composite", {
+      "a.css": `
+        .a { transition: mask-composite 1s }
+        .b { transition: -webkit-mask-composite 1s, mask-composite 2s }
+      `,
+    });
+    const entry = join(String(dir), "a.css");
+    const build = async () => {
+      const result = await Bun.build({ entrypoints: [entry] });
+      return await result.outputs[0].text();
+    };
+
+    // The default targets include a Safari that needs -webkit-mask-composite.
+    const first = await build();
+    expect(first).toContain("transition: -webkit-mask-composite 1s, mask-composite 1s;");
+    expect(first).toContain("transition: -webkit-mask-composite 1s, mask-composite 2s;");
+
+    await Bun.write(entry, first);
+    expect(await build()).toBe(first);
   });
 });

@@ -672,3 +672,19 @@ test("a resolve error in CSS covers the whole url() and composes path", async ()
   );
   expect(ranges).toEqual([`url('/fonts/missing.woff2')`, `url("./missing.png")`, `'./missing.css'`]);
 });
+
+test("composes takes -webkit-mask-composite as one property in any letter case, and not as mask-composite", async () => {
+  const messages = async (declaration: string) => {
+    using dir = tempDir("css-composes-webkit-mask-composite", {
+      "a.module.css": '.a { composes: b from "./b.module.css"; -webkit-mask-composite: xor; }',
+      "b.module.css": `.b { ${declaration} }`,
+    });
+    const result = await Bun.build({ entrypoints: [join(String(dir), "a.module.css")], throw: false });
+    return result.logs.map(log => log.message);
+  };
+
+  expect(await messages("-WEBKIT-MASK-COMPOSITE: source-over;")).toEqual([
+    "The value of -webkit-mask-composite in the class a is undefined.",
+  ]);
+  expect(await messages("mask-composite: add;")).toEqual([]);
+});

@@ -1522,7 +1522,8 @@ impl PropertyId {
                 b"mask-clip" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskClip),
                 b"mask-origin" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskOrigin),
                 b"mask-size" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskSize),
-                b"mask-composite" => (VendorPrefix::NONE, |_| PropertyId::MaskComposite),
+                // `-webkit-mask-composite` takes `xor`/`source-over`, not `exclude`/`add`, so it has its own id and is not a prefixed `MaskComposite`.
+                b"mask-composite" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), |pre| if pre.contains(VendorPrefix::WEBKIT) { PropertyId::WebKitMaskComposite } else { PropertyId::MaskComposite }),
                 b"mask-type" => (VendorPrefix::NONE, |_| PropertyId::MaskType),
                 b"mask" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::Mask),
                 b"mask-border-source" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderSource),
@@ -1532,7 +1533,6 @@ impl PropertyId {
                 b"mask-border-outset" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderOutset),
                 b"mask-border-repeat" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderRepeat),
                 b"mask-border" => (VendorPrefix::NONE, |_| PropertyId::MaskBorder),
-                b"-webkit-mask-composite" => (VendorPrefix::NONE, |_| PropertyId::WebKitMaskComposite),
                 b"mask-source-type" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskSourceType),
                 b"mask-box-image" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImage),
                 b"mask-box-image-source" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageSource),

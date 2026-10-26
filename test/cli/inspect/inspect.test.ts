@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isPosix, randomPort, tempDir } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -604,10 +604,15 @@ test("error.stack doesnt lose frames", () => {
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
 });
 
-test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv isn't an array", async () => {
-  await using child = spawn({
-    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "-e", "setInterval(() => {}, 1000);"],
-    env: bunEnv,
+/**
+ * Runs `script` in a bun that has an inspector. `send` sends one protocol message and resolves to
+ * the reply, or to an error when the inspector closes the socket. `events` has the name of each
+ * event the inspector sent.
+ */
+async function inspect(script: string, env: Record<string, string | undefined> = bunEnv) {
+  const child = spawn({
+    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "-e", script],
+    env,
     stdout: "ignore",
     stderr: "pipe",
   });
@@ -624,7 +629,8 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
 
   type Reply = { result?: any; error?: { message: string } };
   const pending = new Map<number, (reply: Reply) => void>();
-  // A crash closes the socket. Resolve instead of rejecting so the failure shows up in the snapshot below.
+  const events: string[] = [];
+  // A crash closes the socket. Resolve instead of rejecting so the failure shows up in what the test compares.
   const closed = Promise.withResolvers<Reply>();
   const opened = Promise.withResolvers<Reply>();
   const webSocket = new WebSocket(url);
@@ -632,7 +638,11 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   webSocket.addEventListener("close", () => closed.resolve({ error: { message: "the inspector closed the socket" } }));
   webSocket.addEventListener("error", () => closed.resolve({ error: { message: "the inspector socket failed" } }));
   webSocket.addEventListener("message", ({ data }) => {
-    const reply: Reply & { id: number } = JSON.parse(data.toString());
+    const reply: Reply & { id?: number; method?: string } = JSON.parse(data.toString());
+    if (reply.id === undefined) {
+      events.push(reply.method!);
+      return;
+    }
     pending.get(reply.id)?.(reply);
     pending.delete(reply.id);
   });
@@ -647,6 +657,22 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   }
 
   expect(await Promise.race([opened.promise, closed.promise])).toEqual({});
+
+  return {
+    child,
+    send,
+    events,
+    async [Symbol.asyncDispose]() {
+      webSocket.close();
+      child.kill();
+      await child.exited;
+    },
+  };
+}
+
+test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv isn't an array", async () => {
+  await using session = await inspect("setInterval(() => {}, 1000);");
+  const { child, send } = session;
 
   const argv: Record<string, unknown> = {};
   for (const expression of ["undefined", "0", `"abc"`, "{}", `["a", "b"]`]) {
@@ -669,5 +695,110 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   `);
 
   expect(child.exitCode).toBe(null);
-  webSocket.close();
+});
+
+// queryHolders() of the console answers from a collection that reports each reference it follows.
+// A Map and a Set keep their entries in a table that is a cell of its own, and so does a bound
+// function with its arguments past the third: the table has to report what it holds.
+test("queryHolders() finds the Map, the Set and the bound function that hold an object", async () => {
+  await using session = await inspect(`
+    globalThis.target = {};
+    globalThis.holders = {
+      object: { target },
+      mapOfKeys: new Map([[target, 1]]),
+      mapOfValues: new Map([["key", target]]),
+      set: new Set([target]),
+      bound: function () {}.bind(null, 1, 2, 3, target),
+    };
+    globalThis.nameOf = holder => Object.keys(holders).find(name => holders[name] === holder) ?? "other";
+    delete globalThis.target;
+    setInterval(() => {}, 1000);
+  `);
+
+  const reply = await session.send("Runtime.evaluate", {
+    expression: "queryHolders(holders.object.target).map(nameOf).sort()",
+    includeCommandLineAPI: true,
+    returnByValue: true,
+  });
+  expect(reply.error ?? reply.result.result.value).toEqual(["bound", "mapOfKeys", "mapOfValues", "object", "set"]);
+});
+
+// What the Heap domain says when a snapshot fails. BUN_JSC_heapSnapshotBuilderEdgeLimitForTesting
+// stands in for a heap with more edges than a snapshot can hold, which takes gigabytes to build.
+describe("Heap: a snapshot that cannot hold its edges", () => {
+  const heapEvents = (events: string[]) => events.filter(name => name.startsWith("Heap."));
+
+  test("Heap.snapshot and Heap.startTracking reply with an error", async () => {
+    await using session = await inspect("setInterval(() => {}, 1000);", {
+      ...bunEnv,
+      BUN_JSC_heapSnapshotBuilderEdgeLimitForTesting: "1000",
+    });
+    const outcome = async (method: string) => {
+      const reply = await session.send(method);
+      return reply.error?.message ?? reply.result;
+    };
+
+    expect({
+      snapshot: await outcome("Heap.snapshot"),
+      // A start that fails leaves tracking off: the second start takes a snapshot again.
+      startTracking: await outcome("Heap.startTracking"),
+      startTrackingAgain: await outcome("Heap.startTracking"),
+      stopTracking: await outcome("Heap.stopTracking"),
+      events: heapEvents(session.events),
+    }).toEqual({
+      snapshot: "Heap snapshot is too large",
+      startTracking: "Heap snapshot is too large",
+      startTrackingAgain: "Heap snapshot is too large",
+      stopTracking: {},
+      events: [],
+    });
+  });
+
+  test("Heap.stopTracking replies with an error, sends no event and leaves tracking off", async () => {
+    // The heap is under the limit at the start, and the array puts it over.
+    await using session = await inspect("setInterval(() => {}, 1000);", {
+      ...bunEnv,
+      BUN_JSC_heapSnapshotBuilderEdgeLimitForTesting: "50000",
+    });
+    const outcome = async (method: string, params?: object) => {
+      const reply = await session.send(method, params);
+      return reply.error?.message ?? reply.result;
+    };
+
+    expect({
+      startTracking: await outcome("Heap.startTracking"),
+      grown: (
+        await outcome("Runtime.evaluate", {
+          expression: "(globalThis.elements = new Array(60000).fill({})).length",
+          returnByValue: true,
+        })
+      ).result.value,
+      stopTracking: await outcome("Heap.stopTracking"),
+      stopTrackingAgain: await outcome("Heap.stopTracking"),
+      events: heapEvents(session.events),
+    }).toEqual({
+      startTracking: {},
+      grown: 60000,
+      stopTracking: "Heap snapshot is too large",
+      stopTrackingAgain: {},
+      events: ["Heap.trackingStart"],
+    });
+  });
+
+  // ASAN's allocator can be told to refuse a large allocation. Then the edges do not fit for the
+  // reason they do not fit in a real heap: the Vector of the snapshot cannot grow.
+  test.skipIf(!isASAN)("Heap.snapshot replies with an error when the edges cannot be allocated", async () => {
+    await using session = await inspect(
+      "globalThis.objects = Array.from({ length: 70_000 }, () => ({})); setInterval(() => {}, 1000);",
+      {
+        ...bunEnv,
+        Malloc: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=2", "detect_leaks=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+    );
+    const reply = await session.send("Heap.snapshot");
+    expect(reply.error?.message ?? reply.result).toBe("Heap snapshot is too large");
+  });
 });

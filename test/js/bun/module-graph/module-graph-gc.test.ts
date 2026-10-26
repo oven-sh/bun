@@ -139,6 +139,68 @@ async function accepts(port: number): Promise<boolean> {
   }
 }
 
+// stillAlive() reads "no root reaches it" as "nothing holds it". That is only right if the walk
+// from the roots reaches an object that something does hold, whatever it is held in. The walk is
+// asked once, in a process with a small heap: stillAlive() itself collects 100 times before it
+// says that an object is held.
+test("the root walk behind Lifetimes.stillAlive() reaches what an array, a Map, a Set, a bound function, a timer or a scope holds", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { addressOf, heapFromTimer } from ${JSON.stringify(join(import.meta.dir, "module-graph-lifetimes.ts"))};
+        const holders = {
+          "array": object => [object],
+          "Map key": object => new Map([[object, 1]]),
+          "Map value": object => new Map([["key", object]]),
+          "Set": object => new Set([object]),
+          "array in a Map": object => new Map([["key", [object]]]),
+          // A bound function has fields for three arguments and a timer for one: the rest are in a cell of their own.
+          "fourth bound argument": object => function () {}.bind(null, 1, 2, 3, object),
+          "second timer argument": object => setTimeout(() => {}, 2 ** 30, 1, object),
+          // A parameter that a function declaration of the same name shadows is in a scope slot without a name.
+          "shadowed parameter": object =>
+            new Function("a", "b", "function a() {} globalThis.closure = function () { return b; }; return arguments;")(object, 1),
+        };
+        const addresses = {};
+        // In a frame that is gone when the heap is asked.
+        (() => {
+          globalThis.held = Object.entries(holders).map(([name, hold]) => {
+            const object = {};
+            addresses[name] = addressOf(object);
+            return hold(object);
+          });
+        })();
+        const heap = await heapFromTimer();
+        const paths = {};
+        for (const name in addresses) paths[name] = heap.pathTo(addresses[name]) ?? null;
+        console.log(JSON.stringify(paths));
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({
+    "array": expect.stringMatching(/-> Array -Index:0-> Object$/),
+    "Map key": expect.stringMatching(/-> Map -Internal:0-> Cell Butterfly -Index:\d+-> Object$/),
+    "Map value": expect.stringMatching(/-> Map -Internal:0-> Cell Butterfly -Index:\d+-> Object$/),
+    "Set": expect.stringMatching(/-> Set -Internal:0-> Cell Butterfly -Index:\d+-> Object$/),
+    "array in a Map": expect.stringMatching(
+      /-> Map -Internal:0-> Cell Butterfly -Index:\d+-> Array -Index:0-> Object$/,
+    ),
+    "fourth bound argument": expect.stringMatching(/-> Function -Internal:0-> Cell Butterfly -Index:3-> Object$/),
+    "second timer argument": expect.stringMatching(
+      /-> Timeout -Property:arguments-> Cell Butterfly -Index:1-> Object$/,
+    ),
+    "shadowed parameter": expect.stringMatching(/-> JSLexicalEnvironment -Internal:0-> Object$/),
+  });
+  expect(exitCode).toBe(0);
+});
+
 describe("ModuleGraph GC: an unreferenced graph is collected", () => {
   class Subclass extends ModuleGraph {}
   const kinds: [string, () => Graph][] = [

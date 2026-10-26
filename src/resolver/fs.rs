@@ -1,7 +1,6 @@
-use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
-use std::sync::OnceLock;
 
 use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
@@ -141,15 +140,50 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
 
-    abs_path: OnceLock<Interned>,
+    abs_path: OnceInterned,
     /// What `walked_path_or_try_fill` filled, newest first.
     walked_paths: AtomicPtr<WalkedPath>,
 }
 
-/// A path to a file through a link to its directory. `path[..dir_len]` is the directory walked.
+/// An `Interned` that is stored once and read with no lock, in 16 bytes where `OnceLock` takes 24.
+struct OnceInterned {
+    ptr: AtomicPtr<u8>,
+    len: AtomicU32,
+}
+
+impl OnceInterned {
+    const fn new() -> Self {
+        Self {
+            ptr: AtomicPtr::new(core::ptr::null_mut()),
+            len: AtomicU32::new(0),
+        }
+    }
+
+    #[inline]
+    fn get(&self) -> Option<Interned> {
+        let ptr = self.ptr.load(Ordering::Acquire);
+        if ptr.is_null() {
+            return None;
+        }
+        let len = self.len.load(Ordering::Relaxed) as usize;
+        // SAFETY: `set` stored `len` before it published `ptr`, and both are of one interned slice.
+        Some(unsafe { Interned::assume(core::slice::from_raw_parts(ptr, len)) })
+    }
+
+    /// The caller holds the lock that serializes `set` and saw `get()` give `None` under it.
+    unsafe fn set(&self, value: Interned) {
+        let Ok(len) = u32::try_from(value.len()) else {
+            return;
+        };
+        self.len.store(len, Ordering::Relaxed);
+        self.ptr.store(value.as_ptr().cast_mut(), Ordering::Release);
+    }
+}
+
+/// A path to a file through `dir`, a directory that leads to the file's own through a link.
 struct WalkedPath {
+    dir: Interned,
     path: Interned,
-    dir_len: usize,
     next: Option<&'static WalkedPath>,
 }
 
@@ -190,7 +224,7 @@ impl Entry {
     /// Returns `Interned::EMPTY` until a fill has been published. Lock-free.
     #[inline]
     pub fn abs_path(&self) -> Interned {
-        self.abs_path.get().copied().unwrap_or(Interned::EMPTY)
+        self.abs_path.get().unwrap_or(Interned::EMPTY)
     }
 
     /// Returns `abs_path`, calling `fill` under `mutex` to compute it the first time.
@@ -200,14 +234,16 @@ impl Entry {
         fill: impl FnOnce() -> Result<Interned, E>,
     ) -> Result<Interned, E> {
         if let Some(p) = self.abs_path.get() {
-            return Ok(*p);
+            return Ok(p);
         }
         let _guard = self.mutex.lock_guard();
         if let Some(p) = self.abs_path.get() {
-            return Ok(*p);
+            return Ok(p);
         }
         let p = fill()?;
-        Ok(*self.abs_path.get_or_init(|| p))
+        // SAFETY: `mutex` is held, and `abs_path` was still empty under it.
+        unsafe { self.abs_path.set(p) };
+        Ok(p)
     }
 
     pub fn abs_path_or_fill(&self, fill: impl FnOnce() -> Interned) -> Interned {
@@ -222,13 +258,13 @@ impl Entry {
         core::iter::successors(newest, |walked| walked.next)
     }
 
-    /// Like `abs_path_or_try_fill`, with one path per `dir` that leads to the file through a link.
+    /// Like `abs_path_or_try_fill`, one path per `dir`. `fill` gives `dir`, interned, and the path.
     pub fn walked_path_or_try_fill<E>(
         &self,
         dir: &[u8],
-        fill: impl FnOnce() -> Result<Interned, E>,
+        fill: impl FnOnce() -> Result<(Interned, Interned), E>,
     ) -> Result<Interned, E> {
-        let through_dir = |walked: &&WalkedPath| &walked.path[..walked.dir_len] == dir;
+        let through_dir = |walked: &&WalkedPath| walked.dir.as_bytes() == dir;
         if let Some(walked) = self.walked_paths().find(through_dir) {
             return Ok(walked.path);
         }
@@ -236,17 +272,15 @@ impl Entry {
         if let Some(walked) = self.walked_paths().find(through_dir) {
             return Ok(walked.path);
         }
-        let path = fill()?;
-        // Kept only if a lookup by `dir` finds it.
-        if path.starts_with(dir) {
-            let walked = Box::new(WalkedPath {
-                path,
-                dir_len: dir.len(),
-                next: self.walked_paths().next(),
-            });
-            self.walked_paths
-                .store(bun_core::heap::into_raw(walked), Ordering::Release);
-        }
+        let (walked_dir, path) = fill()?;
+        debug_assert!(walked_dir.as_bytes() == dir);
+        let walked = Box::new(WalkedPath {
+            dir: walked_dir,
+            path,
+            next: self.walked_paths().next(),
+        });
+        self.walked_paths
+            .store(bun_core::heap::into_raw(walked), Ordering::Release);
         Ok(path)
     }
 
@@ -353,7 +387,7 @@ impl<'a> EntryLookup<'a> {
     /// # Safety (encapsulated)
     /// `self.entry` is a slot in the process-lifetime `EntryStore` BSSMap
     /// singleton (see `dir_entry::EntryStore`); never freed. `cache` is
-    /// behind `Cell` and `abs_path` behind `OnceLock`, so the interior writes through
+    /// behind `Cell` and `abs_path` behind atomics, so the interior writes through
     /// `set_cache*()` / `abs_path_or_fill()` do not alias this `&Entry`. The
     /// `PhantomData<&'a Entry>` ties the borrow to the `DirEntry` it was
     /// looked up from.
@@ -448,6 +482,16 @@ pub struct DirEntry {
 
 // `owners` adds one pointer. `Fd` is 8 bytes on Windows and 4 elsewhere.
 const _: () = assert!(core::mem::size_of::<DirEntry>() == if cfg!(windows) { 72 } else { 64 });
+
+// One per name listed. `Mutex` is a pointer on Windows and holds its owner too in a debug build.
+const _: () = assert!(
+    core::mem::size_of::<Entry>()
+        == match (cfg!(windows), cfg!(debug_assertions)) {
+            (false, false) => 136,
+            (false, true) | (true, false) => 152,
+            (true, true) => 160,
+        }
+);
 
 impl DirEntry {
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
@@ -649,7 +693,7 @@ impl DirEntry {
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
                 }));
-                addr_of_mut!((*p).abs_path).write(OnceLock::new());
+                addr_of_mut!((*p).abs_path).write(OnceInterned::new());
                 addr_of_mut!((*p).walked_paths).write(AtomicPtr::new(core::ptr::null_mut()));
                 p
             }

@@ -6302,10 +6302,17 @@ impl<'a> Resolver<'a> {
                 let joined = Fs::FileSystem::get()
                     .abs_buf_checked(&[dir, name], bufs!(entry_abs_path))
                     .ok_or(())?;
-                Ok::<_, ()>(Interned::from_static(
-                    Fs::file_system::DirnameStore::instance()
-                        .append_slice(joined)
-                        .expect("unreachable"),
+                let store = Fs::file_system::DirnameStore::instance();
+                let path = store.append_slice(joined).expect("unreachable");
+                // The memo is found by `dir` as given, which the join can have written otherwise.
+                let walked_dir = if path.starts_with(dir) {
+                    &path[..dir.len()]
+                } else {
+                    store.append_slice(dir).expect("unreachable")
+                };
+                Ok::<_, ()>((
+                    Interned::from_static(walked_dir),
+                    Interned::from_static(path),
                 ))
             })
             .ok()

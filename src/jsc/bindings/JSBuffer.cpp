@@ -1659,7 +1659,18 @@ static bool computeIndexOfRange(size_t haystackLength, double byteOffsetD, doubl
 {
     size_t searchEnd = static_cast<size_t>(std::min<double>(std::max<double>(endD, 0), static_cast<double>(haystackLength)));
     if (isUTF16) searchEnd &= ~static_cast<size_t>(1);
-    ssize_t optOffset = indexOfOffset(haystackLength, static_cast<ssize_t>(byteOffsetD), static_cast<ssize_t>(needleLength), isForward);
+    // Saturate before the cast: an out-of-range double to ssize_t is UB, and
+    // indexOfOffset treats every offset past either end alike.
+    const double offsetLimit = static_cast<double>(haystackLength) + 1;
+    ssize_t byteOffset;
+    if (byteOffsetD > offsetLimit) {
+        byteOffset = static_cast<ssize_t>(haystackLength) + 1;
+    } else if (byteOffsetD < -offsetLimit) {
+        byteOffset = -static_cast<ssize_t>(haystackLength) - 1;
+    } else {
+        byteOffset = static_cast<ssize_t>(byteOffsetD);
+    }
+    ssize_t optOffset = indexOfOffset(haystackLength, byteOffset, static_cast<ssize_t>(needleLength), isForward);
 
     if (needleLength == 0) {
         // Match String#indexOf()/lastIndexOf() behavior, but clamp to searchEnd.
@@ -1814,8 +1825,9 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         // pointer and length after this call.
         byteOffsetD = byteOffsetValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
-        if (byteOffsetD > 0x7fffffffp0f) byteOffsetD = 0x7fffffffp0f;
-        if (byteOffsetD < -0x80000000p0f) byteOffsetD = -0x80000000p0f;
+        // Node's bidirectionalIndexOf (lib/buffer.js) clamps byteOffset to int32
+        // here, so on a buffer over 2 GiB it returns a match before the offset
+        // (nodejs/node#67008). Bun keeps the full offset (#46940).
     }
 
     // After any call that can trigger JS execution (toNumber, toWTFString,

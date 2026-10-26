@@ -1092,6 +1092,9 @@ describe("tsconfig unused imports", () => {
       });
       const ran = await run(String(dir), ["main.ts"]);
       expect(ran.stderr).toContain(`Cannot find ${specifier.startsWith(".") ? "module" : "package"} '${specifier}'`);
+      expect(ran.stderr).toContain(
+        `note: Only the types of this module exist. tsconfig.json keeps an import that no value uses ("verbatimModuleSyntax"). Write "import type" to drop it.`,
+      );
       expect(ran.exitCode).toBe(1);
       const build = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "main.ts"]);
       expect(build.stderr).toContain(`error: Could not resolve: "${specifier}"\n`);
@@ -1114,8 +1117,13 @@ describe("tsconfig unused imports", () => {
     test.concurrent("an import that a value uses keeps the hint of bun build", async () => {
       using dir = tempDir("ts-unused-imports-missing-used", {
         "tsconfig.json": verbatim,
+        // A node_modules directory turns auto-install off.
+        "node_modules/.keep": "",
         "main.ts": `import { handler } from "not-installed";\nconsole.log(handler);`,
       });
+      const ran = await run(String(dir), ["main.ts"]);
+      expect(ran.stderr).toContain("Cannot find package 'not-installed'");
+      expect(ran.stderr).not.toContain("note:");
       const build = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "main.ts"]);
       expect(build.stderr).toContain(`Could not resolve: "not-installed". Maybe you need to "bun install"?`);
       expect(build.stderr).not.toContain("note:");

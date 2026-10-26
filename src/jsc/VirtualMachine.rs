@@ -5673,6 +5673,18 @@ impl VirtualMachine {
                 }
                 notes.push(logged.data.clone());
             }
+            if mode.is_esm()
+                && jsc_vm.is_import_of_types_that_tsconfig_keeps(
+                    specifier_utf8.slice(),
+                    normalize_source(source_utf8.slice()),
+                )
+            {
+                notes.push(bun_ast::range_data(
+                    None,
+                    bun_ast::Range::NONE,
+                    "Only the types of this module exist. tsconfig.json keeps an import that no value uses (\"verbatimModuleSyntax\"). Write \"import type\" to drop it.",
+                ));
+            }
             msg.notes = notes.into_boxed_slice();
             return Ok(Err(crate::ResolveMessage::create(
                 global,
@@ -5687,6 +5699,50 @@ impl VirtualMachine {
 
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
+    /// A failed import that tsconfig.json keeps in a TypeScript file, of a module that has only `x.d.ts` or `@types/x`.
+    #[cold]
+    fn is_import_of_types_that_tsconfig_keeps(&mut self, specifier: &[u8], source: &[u8]) -> bool {
+        use bun_js_parser::options::TSUnusedImportFlags;
+
+        let source_dir = bun_paths::dirname(source).unwrap_or(b"");
+        if !bun_paths::is_absolute(source_dir)
+            || ![&b".ts"[..], b".tsx", b".mts", b".cts"]
+                .iter()
+                .any(|extension| source.ends_with(extension))
+        {
+            return false;
+        }
+        let resolver = &mut self.transpiler.resolver;
+        let Ok(Some(dir_info)) = resolver.read_dir_info(source_dir) else {
+            return false;
+        };
+        if resolver.unused_import_flags_ts(&dir_info) == TSUnusedImportFlags::empty() {
+            return false;
+        }
+        let mut types: Vec<u8> = Vec::new();
+        if bun_paths::is_package_path(specifier) {
+            // `@types/scope__name` holds the types of `@scope/name`.
+            let mut segments = bun_core::strings::split(specifier, b"/");
+            let first = segments.next().unwrap_or(b"");
+            types.extend_from_slice(b"@types/");
+            match (first.strip_prefix(b"@"), segments.next()) {
+                (Some(scope), Some(name)) => {
+                    types.extend_from_slice(scope);
+                    types.extend_from_slice(b"__");
+                    types.extend_from_slice(name);
+                }
+                _ => types.extend_from_slice(first),
+            }
+            types.extend_from_slice(b"/package.json");
+        } else {
+            types.extend_from_slice(specifier);
+            types.extend_from_slice(b".d.ts");
+        }
+        resolver
+            .resolve(source_dir, &types, bun_ast::ImportKind::Stmt)
+            .is_ok()
+    }
+
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
         self.regular_event_loop.deinit();

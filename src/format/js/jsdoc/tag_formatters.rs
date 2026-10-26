@@ -66,7 +66,7 @@ fn fence_of(line: &[u8]) -> &[u8] {
 }
 
 /// Splits `rest`, the lines after an opening fence, into the code and the closing fence with the text after it. The
-/// closing fence is the first line that has at least the backticks of `opening`, and is indented like the opening
+/// closing fence is the first line of nothing but at least the backticks of `opening`, indented like the opening
 /// fence, `fence_indent`, or up to three blanks more, as in Markdown: a formatted example indents both with the code.
 /// oxfmt 0.72 takes the last line that starts with ``` at the start of its line, so on its second pass, once the fence
 /// is indented, it prints the block as code, with ` *   ```;` at the end.
@@ -87,7 +87,11 @@ fn split_at_closing_fence<'a>(
             || indent
                 .strip_prefix(fence_indent)
                 .is_some_and(|more| more.len() <= 3);
-        if fence_of(fence).len() >= backticks && is_indented_like_the_opening {
+        let marker = fence_of(fence);
+        if marker.len() >= backticks
+            && strings::is_all_unicode_whitespace(&fence[marker.len()..])
+            && is_indented_like_the_opening
+        {
             let inner = strings::trim_unicode_whitespace_end(&rest[..start]);
             return Some((inner, strings::trim_unicode_whitespace(&rest[start..])));
         }

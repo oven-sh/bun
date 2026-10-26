@@ -576,6 +576,14 @@ export function add(a, b) {}
       example(["```ts", "foo()", "  ```"]),
       example(["  ```ts", "  foo();", "  ```"]),
     ],
+    // Indented by more than three blanks, the line is not a closing fence, as in Markdown: the block is code, as in
+    // oxfmt, and stays so.
+    [
+      "a closing fence that is indented by four blanks more than the opening fence",
+      "jsdoc = true",
+      example(["```ts", "foo()", "    ```"]),
+      example(["  ```ts", "foo()", "    ```;"]),
+    ],
     [
       "a fence inside a fence",
       "jsdoc = true",

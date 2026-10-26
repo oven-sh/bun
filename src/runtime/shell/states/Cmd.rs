@@ -235,13 +235,13 @@ impl Cmd {
                 this,
                 <&'static str>::from(&interp.as_cmd(this).state)
             );
-            if interp.failed()
+            if interp.stopped()
                 && !matches!(
                     interp.as_cmd(this).state,
                     CmdState::WaitingWriteErr | CmdState::Done
                 )
             {
-                // The script failed: expand nothing more and do not spawn.
+                // The script failed or was cancelled: expand nothing more and do not spawn.
                 let me = interp.as_cmd_mut(this);
                 me.exit_code = Some(1);
                 me.state = CmdState::Done;
@@ -897,6 +897,24 @@ impl Cmd {
         // `heap::alloc(ShellSubprocess)` and stays valid until `deinit`
         // reclaims the box. Single-threaded.
         let _ = unsafe { (*sub.child).try_kill(bun_core::SignalCode::SIGKILL as i32) };
+    }
+
+    /// The script was cancelled and the subprocess killed: end the capture of its output now.
+    /// A grandchild that inherited the pipe can hold it open long after the kill.
+    pub(crate) fn close_captured_output(interp: &Interpreter, this: NodeId) {
+        for kind in [StdioKind::Stdout, StdioKind::Stderr] {
+            // Looked up per reader: closing one can finish the command, which frees this node and any other.
+            let child = match interp.nodes.get().get(this.idx()) {
+                Some(Node::Cmd(Cmd {
+                    exec: Exec::Subproc(sub),
+                    ..
+                })) if !sub.child.is_null() => sub.child,
+                _ => return,
+            };
+            // SAFETY: `child` is the live `heap::alloc`'d subprocess of this Cmd. `cancel` runs
+            // from a JS host call, so no reader callback and no trampoline is on the stack.
+            unsafe { ShellSubprocess::close_reader(child, kind) };
+        }
     }
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {

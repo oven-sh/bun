@@ -623,6 +623,24 @@ impl ReadableStream {
         Ok(stream)
     }
 
+    /// A stream of what `pipe` delivers. `pipe` is the read end of a pipe, and the stream owns it:
+    /// the reader closes it at the end of the data and on cancel, and an unread stream closes
+    /// it when it is collected.
+    pub fn from_owned_pipe(cx: &bun_jsc::JsThread<'_>, pipe: syscall::File) -> JsResult<JSValue> {
+        let source = NewSource::<FileReader>::new_mut(NewSource {
+            global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
+            context: FileReader {
+                event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
+                    cx.vm().as_mut().event_loop().cast(),
+                )),
+                lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Pipe(pipe)),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        source.to_readable_stream(cx)
+    }
+
     /// A stream that delivers `bytes`, then errors with `err`.
     pub fn from_bytes_then_error(
         cx: &bun_jsc::JsThread<'_>,

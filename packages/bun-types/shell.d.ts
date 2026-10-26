@@ -120,6 +120,30 @@ declare module "bun" {
        * Read from stdout as a string, line by line
        *
        * Automatically calls {@link quiet} to disable echoing to stdout.
+       *
+       * The iterator yields each line when the command writes it. It does not
+       * wait for the command to exit. A newline at the end of the output ends
+       * the last line: it does not add an empty string.
+       *
+       * - When you leave the loop early, Bun kills the commands that still run
+       *   and starts no more of the script. The loop ends when they have stopped.
+       * - When the command exits with a non-zero code, the iterator throws a
+       *   {@link ShellError} after the last line, unless {@link nothrow} is set.
+       * - Bun does not keep the output that the iterator reads. For that
+       *   command, `stdout` of the result and of the `ShellError` is empty.
+       *   `stderr` and `exitCode` are complete.
+       * - A command has one reader. A second iterator on the same command throws.
+       * - If you call `next()` yourself, call `return()` when you stop. Until
+       *   then the command waits for you to read.
+       *
+       * On Windows, the iterator reads the output after the command exits.
+       *
+       * @example
+       * ```ts
+       * for await (const line of $`tail -f server.log`.lines()) {
+       *   if (line.includes("listening")) break; // stops `tail`
+       * }
+       * ```
        */
       lines(): AsyncIterable<string>;
 

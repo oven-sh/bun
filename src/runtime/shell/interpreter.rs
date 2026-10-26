@@ -334,6 +334,13 @@ impl InterpreterFlags {
     pub(crate) fn set_failed(&mut self, v: bool) {
         if v { self.0 |= 0b100 } else { self.0 &= !0b100 }
     }
+    /// Set by [`Interpreter::cancel`].
+    pub(crate) const fn cancelled(self) -> bool {
+        self.0 & 0b1000 != 0
+    }
+    pub(crate) fn set_cancelled(&mut self) {
+        self.0 |= 0b1000;
+    }
 }
 
 #[repr(u8)]
@@ -870,10 +877,10 @@ impl Interpreter {
         }
     }
 
-    /// A sequencing state stops early: Ctrl+C cut the member short, or the script failed.
+    /// A sequencing state stops early: Ctrl+C cut the member short, or the script failed or was cancelled.
     pub(crate) fn interrupted(&self, id: NodeId) -> bool {
         self.context_stopped()
-            || self.failed()
+            || self.stopped()
             || self.node(id).base().is_some_and(|b| b.interrupted)
     }
 
@@ -1296,6 +1303,32 @@ impl Interpreter {
         self.flags.get().failed()
     }
 
+    /// The script runs no further command: it failed, or `cancel` stopped it.
+    #[inline]
+    pub(crate) fn stopped(&self) -> bool {
+        let flags = self.flags.get();
+        flags.failed() || flags.cancelled()
+    }
+
+    /// `.lines()` was left before the end of the output. Kills the subprocesses, and the script
+    /// winds down as it does after `fail`, except that `finish` settles the promise.
+    pub(crate) fn cancel(&self, _: &mut JsScope<'_>) {
+        if self.flags.get().cancelled() {
+            return;
+        }
+        self.update_flags(InterpreterFlags::set_cancelled);
+        let node_count = self.nodes.get().len();
+        for i in 0..node_count {
+            let cmd = NodeId(i as u32);
+            if matches!(self.node(cmd).kind(), StateKind::Cmd) {
+                Cmd::kill_subprocess(self, cmd);
+            }
+        }
+        for i in 0..node_count {
+            Cmd::close_captured_output(self, NodeId(i as u32));
+        }
+    }
+
     /// Node `id` threw and holds nothing in flight: kill the subprocesses and wind the tree down.
     /// The first failure fills `rejection`, which the trampoline passes to `reject` once it holds no node.
     pub(crate) fn fail(&self, id: NodeId, rejection: &mut Option<Rejection>) -> Yield {
@@ -1389,6 +1422,73 @@ impl Interpreter {
                 Some(global_this),
             ));
         }
+        self.start_from_js(global_this)
+    }
+
+    /// JS-host entrypoint of `.lines()`: as `run_from_js` in quiet mode, except that root stdout
+    /// is a pipe and the stream of its read end is returned. Nothing of stdout is captured.
+    pub(crate) fn run_streaming_from_js(
+        &self,
+        cx: &mut JsScope<'_>,
+    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+        let cx = cx.js_thread();
+        let global_this = cx.global();
+        log!(
+            "Interpreter(0x{:x}) runStreamingFromJS",
+            std::ptr::from_ref(self) as usize
+        );
+
+        let interp_ptr: *mut Interpreter = self.as_ctx_ptr();
+        if let crate::shell::io::InKind::Fd(ref r) = self.root_io.get().stdin {
+            r.set_interp(interp_ptr);
+        }
+        let [read_end, write_end] = match stdout_stream_pipe() {
+            Ok(pipe) => pipe,
+            Err(e) => {
+                self.deref_root_shell_and_io_if_needed(true);
+                return Err(throw_shell_err(
+                    ShellErr::new_sys(&e),
+                    self.event_loop,
+                    Some(global_this),
+                ));
+            }
+        };
+        // A child inherits this description and needs it to block, so the writer asks for
+        // `O_NONBLOCK` again before each of its own writes (`nonblock`).
+        let writer = IOWriter::init(
+            write_end,
+            crate::shell::io_writer::Flags {
+                pollable: true,
+                nonblock: cfg!(unix),
+                ..Default::default()
+            },
+            self.event_loop,
+        );
+        writer.set_interp(interp_ptr);
+        self.root_io.with_mut(|io| {
+            io.stdout = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
+                writer,
+                captured: None,
+            });
+        });
+        let stream = match crate::webcore::ReadableStream::from_owned_pipe(
+            &cx,
+            bun_sys::File::from_fd(read_end),
+        ) {
+            Ok(stream) => stream,
+            Err(e) => {
+                self.deref_root_shell_and_io_if_needed(true);
+                return Err(e);
+            }
+        };
+        // A script of builtins that write nothing finishes in here, and its `resolve` runs JS.
+        let _keep = crate::jsc::EnsureStillAlive(stream);
+        self.start_from_js(global_this)?;
+        Ok(stream)
+    }
+
+    /// Roots the wrapper, then starts the root `Script` and runs it until it suspends or finishes.
+    fn start_from_js(&self, global_this: &crate::jsc::JSGlobalObject) -> crate::jsc::JsResult<()> {
         self.this_value.with_mut(|r| r.upgrade(global_this));
         let vm = global_this.bun_vm();
         self.context.set(
@@ -2211,6 +2311,24 @@ pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
     {
         bun_sys::dup(fd)
     }
+}
+
+/// The `[read, write]` pipe that carries the stdout of a streamed run. POSIX: both ends close on
+/// exec, so a child holds the write end only as its own stdout, and the read end does not block.
+fn stdout_stream_pipe() -> bun_sys::Result<Pipe> {
+    let pipe = bun_sys::pipe()?;
+    #[cfg(unix)]
+    {
+        let flagged = bun_sys::set_close_on_exec(pipe[0])
+            .and_then(|()| bun_sys::set_close_on_exec(pipe[1]))
+            .and_then(|()| bun_sys::set_nonblocking(pipe[0]));
+        if let Err(e) = flagged {
+            closefd(pipe[0]);
+            closefd(pipe[1]);
+            return Err(e);
+        }
+    }
+    Ok(pipe)
 }
 
 /// Joins `parts` into an owned, normalized path. Fails with `ENAMETOOLONG` if the result is

@@ -360,6 +360,32 @@ impl ShellSubprocess {
         }
     }
 
+    /// Ends the capture of `kind` the way the end of its data does: the pipe reader closes and
+    /// reports done to the `Cmd`. A no-op for a stream that no pipe reader captures.
+    ///
+    /// # Safety
+    /// `this` must be the live `heap::alloc`'d subprocess with no outstanding borrows, and no
+    /// reader callback may be on the stack. The close can finish the `Cmd`, which frees `this`.
+    pub(crate) unsafe fn close_reader(this: *mut Self, kind: StdioKind) {
+        // SAFETY: caller contract; the borrow ends with the clone.
+        let slot = unsafe {
+            match kind {
+                StdioKind::Stdout => &(*this).stdout,
+                StdioKind::Stderr => &(*this).stderr,
+                StdioKind::Stdin => return,
+            }
+        };
+        // The reader has to outlive its own done callback, which drops this slot's `Arc`.
+        let Readable::Pipe(keepalive) = slot else {
+            return;
+        };
+        let keepalive = Arc::clone(keepalive);
+        let p = arc_as_mut_ptr(&keepalive);
+        // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; the done callback holds only a
+        // raw `*mut PipeReader`, and this `&mut` is the reader field alone.
+        unsafe { (*p).reader.close() };
+    }
+
     // This must only be run once per Subprocess
     pub(crate) fn finalize_sync(&mut self) {
         self.close_process();

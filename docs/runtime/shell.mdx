@@ -443,6 +443,26 @@ for await (let line of $`cat list.txt | grep ${search}`.lines()) {
 }
 ```
 
+The loop gets each line when the command writes it. It does not wait for the command to exit. When you leave the loop, Bun stops the command:
+
+```js
+import { $ } from "bun";
+
+for await (const line of $`tail -f server.log`.lines()) {
+  console.log(line);
+  if (line.includes("listening")) break; // Bun stops `tail` here
+}
+```
+
+- A newline at the end of the output ends the last line. It does not add an empty line.
+- When you leave the loop early, Bun kills the commands that still run and starts no more of the script. The loop ends when they have stopped.
+- When the command exits with a non-zero code, the loop throws a `ShellError` after the last line. Call `.nothrow()` to turn that off.
+- Bun does not keep the output that `.lines()` reads. For that command, `stdout` of the result and of the `ShellError` is empty. `stderr` and `exitCode` are complete.
+- A command has one `.lines()` reader. A second iterator on the same command throws.
+- A `for await` loop releases its iterator. If you call `next()` yourself, call `return()` when you stop. Until then the command waits for you to read.
+
+On Windows, `.lines()` reads the output after the command exits.
+
 ### Reading output as a Blob
 
 To read the output of a command as a Blob, use `.blob()`:

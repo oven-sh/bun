@@ -202,6 +202,56 @@ describe.concurrent("fd leak", () => {
   );
   memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100);
 
+  // `.lines()` reads stdout through a pipe of its own. Windows does not: it reads the captured output.
+  test.if(isPosix)(
+    "fdleak_lines",
+    async () => {
+      const script = /* ts */ `
+      import { $ } from "bun";
+      import { heapStats } from "bun:jsc";
+      import { readdirSync } from "node:fs";
+
+      const fdCount = () => readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      const idle = "console.log(1); setTimeout(() => {}, 30_000)";
+      // How a loop over the lines can end, and how many runs of each.
+      const kinds = {
+        readToTheEnd: [60, async () => { for await (const _ of $\`echo hi\`.lines()); }],
+        leftWhileABuiltinWrites: [25, async () => { for await (const _ of $\`seq 1 20000\`.lines()) break; }],
+        leftWhileAChildRuns: [6, async () => { for await (const _ of $\`\${process.execPath} -e \${idle}\`.lines()) break; }],
+        commandFailed: [60, async () => { try { for await (const _ of $\`echo hi; false\`.lines()); } catch {} }],
+      };
+      const leaked = {};
+      for (const [name, [runs, run]] of Object.entries(kinds)) {
+        await run();
+        Bun.gc(true);
+        const baseline = fdCount();
+        for (let i = 0; i < runs; i++) await run();
+        Bun.gc(true);
+        leaked[name] = { fds: fdCount() - baseline, interpreters: heapStats().objectTypeCounts.ShellInterpreter ?? 0 };
+      }
+      console.log(JSON.stringify(leaked));
+    `;
+      using dir = tempDir("fdleak-lines", { "script.ts": script });
+
+      await using proc = Bun.spawn([bunExe(), "--smol", join(String(dir), "script.ts")], {
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const leaked: Record<string, { fds: number; interpreters: number }> = JSON.parse(stdout || "{}");
+      // One fd or interpreter leaked per run would be at least 6.
+      const over = Object.entries(leaked).filter(([, { fds, interpreters }]) => fds >= 5 || interpreters >= 5);
+      expect({ over: Object.fromEntries(over), kinds: Object.keys(leaked), stderr, exitCode }).toEqual({
+        over: {},
+        kinds: ["readToTheEnd", "leftWhileABuiltinWrites", "leftWhileAChildRuns", "commandFailed"],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    100_000,
+  );
+
   function memLeakTestProtect(
     name: string,
     className: string,

@@ -13,6 +13,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     return this.toString();
   }
 
+  function noop() {}
+
+  const concat = Buffer.concat;
+
   class ShellError extends Error {
     #output?: ShellOutput = undefined;
     info;
@@ -106,6 +110,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   class ShellPromise extends Promise<ShellOutput> {
     #args: $Bindgen.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
+    /** A `lines()` iterator started the command and reads its stdout as the command writes it. */
+    #streams: boolean = false;
     #throws: boolean = true;
     #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
     #reject: (error: unknown) => void;
@@ -213,12 +219,83 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
 
     async *lines() {
-      const { stdout } = (await this.#quiet(true)) as ShellOutput;
+      this.#quiet(true);
+      // The command starts one microtask after the first `next()`, as it does under `await this`.
+      await undefined;
 
-      if (process.platform === "win32") {
-        yield* stdout.toString().split(/\r?\n/);
-      } else {
-        yield* stdout.toString().split("\n");
+      // Windows: a builtin's first write hands root stdout to libuv, and a later external command
+      // then inherits bun's own stdout and not the pipe. So there the output is read at exit.
+      if (process.platform === "win32" || this.#hasRun) {
+        if (this.#streams) throw new Error("Shell is already running");
+        const { stdout } = (await this) as ShellOutput;
+        const lines = stdout.toString().split(process.platform === "win32" ? /\r?\n/ : "\n");
+        // A final newline ends the last line. It does not start an empty one.
+        const count = lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
+        for (let i = 0; i < count; i++) yield lines[i];
+        return;
+      }
+
+      this.#hasRun = true;
+      this.#streams = true;
+      let interp: $Bindgen.ShellInterpreter | undefined;
+      let stream: ReadableStream<Uint8Array<ArrayBuffer>> | undefined;
+      try {
+        interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
+        this.#args = undefined;
+        stream = interp.runStreaming();
+      } catch (e) {
+        this.#args = undefined;
+        this.#reject(e);
+      }
+      // `then()` did not start this run, so a rejection has no handler while the iterator is live.
+      $pokePromiseAsHandled(this);
+      if (stream === undefined) {
+        await this;
+        return;
+      }
+
+      const reader = stream.getReader();
+      // The chunks since the last newline: the start of a line that has not ended yet.
+      let pending: Buffer[] | undefined;
+      let ended = false;
+      try {
+        while (true) {
+          const result = reader.readMany();
+          const { done, value } = $isPromise(result) ? await result : result;
+          if (done) break;
+
+          for (let i = 0, count = value.length; i < count; i++) {
+            const chunk = value[i];
+            let bytes = new $Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+            const end = bytes.lastIndexOf(10) + 1;
+            if (end === 0) {
+              (pending ??= []).push(bytes);
+              continue;
+            }
+            const rest = end < bytes.length ? bytes.subarray(end) : undefined;
+            if (rest !== undefined) bytes = bytes.subarray(0, end);
+            if (pending !== undefined) {
+              pending.push(bytes);
+              bytes = concat(pending);
+            }
+            pending = rest === undefined ? undefined : [rest];
+
+            // Decoded up to a newline, so no character is split. The last element is the empty string after that newline.
+            const lines = bytes.toString().split("\n");
+            for (let j = 0, last = lines.length - 1; j < last; j++) yield lines[j];
+          }
+        }
+        ended = true;
+
+        if (pending !== undefined) yield (pending.length === 1 ? pending[0] : concat(pending)).toString();
+        await this;
+      } finally {
+        if (!ended) {
+          // The consumer left before the end of the output. Stop the command, and return when it has stopped.
+          await reader.cancel().$then(undefined, noop);
+          interp!.cancel();
+          await this.$then(undefined, noop);
+        }
       }
     }
 

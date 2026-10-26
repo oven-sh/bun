@@ -8,7 +8,10 @@ export const ShellInterpreter = b.class({
   estimatedSize: true,
   internalFields: ["resolve", "reject", "jsobjs"],
   proto: {
+    cancel: { capability: "js" },
     run: { capability: "js", throws: true, rustName: "run_from_js" },
+    /** Returns the stream of the script's stdout. */
+    runStreaming: { returns: b.any, capability: "js", throws: true, rustName: "run_streaming_from_js" },
   },
 });
 

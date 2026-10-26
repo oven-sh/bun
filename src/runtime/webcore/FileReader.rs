@@ -92,6 +92,8 @@ pub(crate) type IOReader = BufferedReader;
 pub(crate) enum Lazy {
     None,
     Blob(RefPtr<blob::Store>),
+    /// The read end of a pipe that the reader owns. Closed here if the reader never starts.
+    Pipe(sys::File),
 }
 
 pub(crate) struct OpenedFileBlob {
@@ -308,7 +310,18 @@ impl FileReader {
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `RefPtr<Store>`
         // is owned locally and the cell borrow is released immediately.
-        if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
+        let lazy = self.lazy.replace(Lazy::None);
+        if let Lazy::Pipe(pipe) = lazy {
+            #[cfg(unix)]
+            use bun_io::pipe_reader::PosixFlags as Flags;
+            #[cfg(windows)]
+            use bun_io::pipe_reader::WindowsFlags as Flags;
+            self.fd.set(pipe.into_raw());
+            // Windows opens the fd as a libuv source whatever this says, as for a `Lazy::Blob` fd.
+            pollable = cfg!(unix);
+            self.reader().flags.set(Flags::NONBLOCKING, true);
+            self.reader().flags.set(Flags::POLLABLE, pollable);
+        } else if let Lazy::Blob(store) = lazy {
             // Single-threaded JS event loop; we hold the only mutating handle.
             match blob::Store::data_mut(&store) {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
@@ -601,6 +614,10 @@ impl FileReader {
             return;
         }
         self.done.set(true);
+        if matches!(self.lazy.get(), Lazy::Pipe(_)) {
+            // The reader never started, so the pipe is still here and not the reader's to close.
+            self.lazy.set(Lazy::None);
+        }
         self.reader().update_ref(false);
         if !self.reader().is_done() {
             self.reader().close();

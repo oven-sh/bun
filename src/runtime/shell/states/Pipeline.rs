@@ -96,8 +96,8 @@ impl Pipeline {
     /// Starts ONE child per call; `drain_pipelines` (Yield.rs) re-enters
     /// `Pipeline::next` for the next one once the current child suspends.
     fn next_starting(interp: &Interpreter, this: NodeId, idx: u32) -> Yield {
-        if interp.failed() {
-            // A nested pipeline's member failed while this one was still starting.
+        if interp.stopped() {
+            // A nested pipeline's member failed, or the script was cancelled, while this one was still starting.
             if interp.as_pipeline(this).cmds.is_none() {
                 return Self::finish(interp, this, 1);
             }
@@ -345,7 +345,7 @@ impl Pipeline {
         // Subshell frees its own; Assigns is skipped.
         Self::deinit_child_duped_env(interp, child);
         interp.deinit_node(child);
-        if interp.failed() {
+        if interp.stopped() {
             Self::release_unstarted(interp, this);
         }
         Self::finish_if_all_exited(interp, this)

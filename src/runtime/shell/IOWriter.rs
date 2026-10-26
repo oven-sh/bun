@@ -99,6 +99,7 @@ pub(crate) enum WriterTag {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Flags {
     pub(crate) pollable: bool,
+    /// The fd is written with `O_NONBLOCK` set, and `write` sets it again after a spawn cleared it.
     pub(crate) nonblock: bool,
     pub(crate) is_socket: bool,
     pub(crate) broken_pipe: bool,
@@ -448,6 +449,12 @@ impl IOWriter {
         let s = self.state();
         #[cfg(not(windows))]
         debug_assert!(s.flags.pollable);
+        #[cfg(not(windows))]
+        if s.flags.nonblock {
+            // A spawn clears `O_NONBLOCK` on a description it hands to a child. Without the flag
+            // a write of more than the pipe has room for blocks this thread.
+            let _ = sys::update_nonblocking(s.fd, true);
+        }
 
         if !s.started {
             crate::shell_log!("IOWriter(fd={}) starting", s.fd);

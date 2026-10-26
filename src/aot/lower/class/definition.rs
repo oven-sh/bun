@@ -1,6 +1,6 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Decl};
-use bun_sema::hir::ClassId;
+use bun_sema::hir::{ClassId, ExprKind};
 
 use super::members::ClassHead;
 use super::{
@@ -59,7 +59,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         let heritage = node.extends.some().map(|extends| {
             let value = self.lower_expression(extends);
-            self.set_position(node.start);
+            self.set_position(self.file.heritage_position(class));
             (value, self.builder.resolve_heritage(value))
         });
         if has_instance_brand(hir, bound, class) {
@@ -178,6 +178,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    // JSC reports what it asks of a superclass where the expression starts. In front of a parenthesis, the last token the source map knows is the name of the class.
+    fn heritage_position(&self, class: ClassId) -> u32 {
+        let hir = self.hir;
+        let node = hir[class];
+        let is_printed_in_parentheses = matches!(
+            hir[self.skip_type_syntax(node.extends)].kind,
+            ExprKind::Binary { .. }
+                | ExprKind::Cond { .. }
+                | ExprKind::Assign { .. }
+                | ExprKind::Unary { .. }
+                | ExprKind::Await(_)
+                | ExprKind::Yield { .. }
+                | ExprKind::Fn(_)
+        );
+        match is_printed_in_parentheses {
+            true if node.name.is_some() => node.name_pos,
+            true => node.text_start,
+            false => self.first_position(node.extends),
+        }
+    }
+
     fn find_static_name(&self, name: Option<PropertyName>) -> Option<StringId> {
         match name {
             Some(PropertyName::Constant(key)) => self.find_key_text(key),

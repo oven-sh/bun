@@ -292,8 +292,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         match hir[source].kind {
             ExprKind::Object(properties) => {
+                let mut start = Some(hir[source].pos);
                 for property in properties.iter() {
-                    self.lower_property_definition(object, dictionary, property);
+                    self.lower_property_definition(object, dictionary, property, start.take());
                 }
             }
             ExprKind::Binary { left, right, .. } => {
@@ -330,13 +331,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         object: &mut ObjectBuilder,
         dictionary: Option<Dictionary>,
         property: PropId,
+        // Where the literal starts, for its first property.
+        literal_start: Option<u32>,
     ) {
         let hir = self.file.hir;
         let prop = hir[property];
         let key = hir.runtime_property_key(property);
         self.set_position(prop.pos);
         match prop.kind {
-            PropKind::Spread => self.lower_spread(object, dictionary, prop.value, prop.pos),
+            // JSC copies the object that a literal begins with in one step, which it reports at the start of the literal.
+            PropKind::Spread => {
+                let position = literal_start.unwrap_or(prop.pos);
+                self.lower_spread(object, dictionary, prop.value, position);
+            }
             PropKind::Init if is_proto_setter(&prop) => {
                 let prototype = self.lower_expression(prop.value);
                 self.set_position(prop.pos);
@@ -515,7 +522,7 @@ pub(crate) fn lower_object_literal(
             let first = hir[rest.next().expect("a literal that begins with a spread")];
             lowering.set_position(first.pos);
             let source = lowering.lower_expression(first.value);
-            lowering.set_position(first.pos);
+            lowering.set_position(hir[literal].pos);
             lowering.begin_copy(source)
         }
         None => {
@@ -523,8 +530,9 @@ pub(crate) fn lower_object_literal(
             lowering.begin_object(layout)
         }
     };
+    let mut start = (rest.len() == props.len()).then_some(hir[literal].pos);
     for prop in rest {
-        lowering.lower_property_definition(&mut object, dictionary, prop);
+        lowering.lower_property_definition(&mut object, dictionary, prop, start.take());
     }
     lowering.set_position(hir[literal].pos);
     super::finish_object(lowering, object)

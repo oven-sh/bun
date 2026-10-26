@@ -391,12 +391,17 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     }
     // A program that stops the compiler with the default flags stops it in the other modes too, and every such program in a shared build costs that build once more.
     const stopsTheBuild = new Set<Generated>();
+    // What plain Bun does not get through once, it is not asked again for each of the other modes.
+    const plainRunFailed = new Set<Generated>();
     for (const { mode, members: all } of modes.values()) {
-      const members = all.filter(generated => !stopsTheBuild.has(generated));
-      if (members.length < all.length) bump(counts.skipped, `stops the build, not tried in mode ${mode.name}`, all.length - members.length);
+      const built = all.filter(generated => !stopsTheBuild.has(generated));
+      if (built.length < all.length) bump(counts.skipped, `stops the build, not tried in mode ${mode.name}`, all.length - built.length);
+      const members = built.filter(generated => !plainRunFailed.has(generated));
+      if (members.length < built.length) bump(counts.skipped, `plain run failed, not tried in mode ${mode.name}`, built.length - members.length);
       if (!members.length) continue;
       const look = async (generated: Generated, verdict: Verdict, inTheBuild: Generated[]) => {
         if (mode.name === bed.modes(generated)[0].name && ["internal compiler error", "build crash", "build hang", "build error", "build refused"].includes(verdict.kind)) stopsTheBuild.add(generated);
+        if (verdict.kind === "skipped" && verdict.why.startsWith("plain run ")) plainRunFailed.add(generated);
         if (verdict.kind === "skipped") bump(counts.skipped, verdict.why);
         else bump(counts.runs, `${bed.name} ${mode.name}`);
         inGroup(generated, `${mode.name} ${verdict.kind === "skipped" ? `skipped: ${verdict.why}` : verdict.kind}`);

@@ -101,7 +101,7 @@ pub(in crate::lower) fn lower_binary(
         OperatorClass::In => return lowering.lower_in(expression, left, right),
         OperatorClass::Plain | OperatorClass::Ordering | OperatorClass::ControlFlow => {}
     }
-    lowering.lower_binary_spine(expression, op, left, right)
+    lowering.lower_binary_spine(op, left, right)
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -166,16 +166,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.logical_not(boolean)
     }
 
-    fn lower_binary_spine(
-        &mut self,
-        expression: ExprId,
-        op: BinOp,
-        left: ExprId,
-        right: ExprId,
-    ) -> ValueId {
+    fn lower_binary_spine(&mut self, op: BinOp, left: ExprId, right: ExprId) -> ValueId {
         let hir = self.file.hir;
-        let mut spine: SmallVec<[(ExprId, BinOp, ExprId); 8]> = SmallVec::new();
-        spine.push((expression, op, right));
+        let mut spine: SmallVec<[(BinOp, ExprId); 8]> = SmallVec::new();
+        spine.push((op, right));
         let mut innermost = left;
         while let ExprKind::Binary { op, left, right } = hir[innermost].kind {
             let is_spine_operator = match classify_operator(op) {
@@ -190,16 +184,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             {
                 break;
             }
-            spine.push((innermost, op, right));
+            spine.push((op, right));
             innermost = left;
         }
+        // Every operator of the spine starts with the same operand.
+        let first_position = self.file.first_position(innermost);
         let mut value = self.lower_expression(innermost);
-        for &(node, node_op, node_right) in spine.iter().rev() {
+        for &(node_op, node_right) in spine.iter().rev() {
             let right_value = self.lower_expression(node_right);
             // JSC reports `instanceof`, like `in`, where the right operand starts.
             self.set_position(match node_op {
                 BinOp::Instanceof => hir[node_right].pos,
-                _ => hir[node].pos,
+                _ => first_position,
             });
             value = self.emit_binary(node_op, value, right_value);
         }

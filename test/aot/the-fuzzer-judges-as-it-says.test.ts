@@ -5,6 +5,7 @@
 //   a program that has to be the entry point of its build is never a module of a shared build
 //   behind the end of a run a few failures are confirmed, the rest is listed, and nothing is built again
 //   a build or a run that holds more memory than it may is ended and named, and whatever a bed started ends with the fuzzer
+//   what plain Bun does not get through is not run again for every mode
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -203,6 +204,38 @@ test(
     expect(rest).toEqual([]);
     expect(name).toStartWith("crash-not-tried-again-");
     expect(readFileSync(join(String(folder), "out", "findings", name, "count.txt"), "utf8")).toBe("8");
+  },
+  timeout,
+);
+
+test(
+  "a program that plain Bun does not get through is tried in one mode only",
+  async () => {
+    using folder = tempDir("aot-fuzzer-plain", {});
+    let judged = 0;
+    const bed: Bed = {
+      ...standIn(() => {}),
+      batch: 1,
+      modes: () => ["default", "validate", "erased"].map(name => ({ name, flags: [] })),
+      judge: async (_folder, programs) =>
+        programs.map(() => {
+          judged++;
+          return {
+            plain: { stdout: "", stderr: "", exitCode: null, signal: null, timedOut: true },
+            verdict: { kind: "skipped", why: "plain run too slow" },
+          };
+        }),
+    };
+    const summary = await fuzz({
+      ...settings(String(folder)),
+      beds: [{ bed, jobs: 1 }],
+      sources: ["numbers-across-their-borders"],
+      seconds: 60,
+      programs: 8,
+      batch: 1,
+    });
+    expect(summary.programs).toBe(8);
+    expect(judged).toBe(8);
   },
   timeout,
 );

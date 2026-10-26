@@ -438,7 +438,6 @@ const kInternalAssertionSuffix =
 
 const kHandle = Symbol("kHandle");
 const kClusterOwner = Symbol("kClusterOwner");
-const kAutoDestroyed = Symbol("kAutoDestroyed");
 const kCapture = Symbol("kCapture");
 const kShapeMode = Symbol("shapeMode");
 const kWeakHandler = Symbol("kWeak");
@@ -448,7 +447,7 @@ declare global {
   namespace $Node {
     interface Readable {
       /** Set when the stream destroyed itself after its end, as `autoDestroy` asks. */
-      [kAutoDestroyed]?: boolean;
+      $autoDestroyed?: boolean;
     }
   }
 }
@@ -489,7 +488,6 @@ export default {
 
   kHandle,
   kClusterOwner,
-  kAutoDestroyed,
   kCapture,
   kShapeMode,
   kWeakHandler,

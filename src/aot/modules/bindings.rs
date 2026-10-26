@@ -109,16 +109,11 @@ pub struct SyntheticExport {
 pub struct RequiredName {
     pub module: ModuleRef,
     pub name: Atom,
-    pub may_be_absent: bool,
 }
 
 impl RequiredName {
     pub fn new(module: ModuleRef, name: Atom) -> RequiredName {
-        RequiredName {
-            module,
-            name,
-            may_be_absent: false,
-        }
+        RequiredName { module, name }
     }
 }
 

@@ -933,8 +933,9 @@ pub(super) fn with_compile_context<R>(
 pub(super) fn load_files<'s>(session: &'s Session, build: &TestBuild<'_>) -> Files<'s> {
     with_compile_inputs(session, build, |inputs| {
         let (options, roots) = (build.options.clone(), to_paths(build.roots));
-        Files::load_for_compile(
+        Files::load_for_compile_with_parsed_files(
             session,
+            None,
             build.host,
             options,
             RootFileNames::Listed(&roots),

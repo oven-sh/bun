@@ -142,7 +142,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let name = name.expect("the resolver found the name of an intrinsic in the table");
                 Ok(self.emit_private_global_get(table::text_of_name(name)))
             }
-            Intrinsic::PrivateName | Intrinsic::SymbolKey(_) => {
+            Intrinsic::PrivateName | Intrinsic::ModulePrivateName | Intrinsic::SymbolKey(_) => {
                 Ok(self.lower_private_member(expression, exit)?.function)
             }
             Intrinsic::LinkedFunction(linked) => {
@@ -220,7 +220,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 count.ok_or((site.call, Misuse::Position))
             }
             Intrinsic::Argument => self.lower_argument_read(site),
-            Intrinsic::PrivateName | Intrinsic::SymbolKey(_) => {
+            Intrinsic::PrivateName | Intrinsic::ModulePrivateName | Intrinsic::SymbolKey(_) => {
                 let callee = self.lower_private_member(site.callee, site.exit)?;
                 Ok(self.lower_call_with_rest(site, callee, site.arguments))
             }

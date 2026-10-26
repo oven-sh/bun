@@ -399,7 +399,7 @@ impl RecordBuilder<'_, '_, '_> {
             .map(|required| generated::RequiredName {
                 module: input.id_of(project, required.module),
                 name: self.intern_atom(required.name),
-                may_be_absent: required.may_be_absent,
+                may_be_absent: false,
             })
             .collect();
     }

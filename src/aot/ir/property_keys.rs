@@ -21,6 +21,14 @@ impl PropertyKey {
         }
     }
 
+    pub fn from_module_private_name(text: StringId) -> PropertyKey {
+        PropertyKey {
+            kind: PropertyKeyKind::ModulePrivateName,
+            text: Some(text),
+            ..PropertyKey::default()
+        }
+    }
+
     pub fn from_private_name(text: StringId, owner: LayoutId) -> PropertyKey {
         PropertyKey {
             kind: PropertyKeyKind::PrivateName,

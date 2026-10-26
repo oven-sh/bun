@@ -108,6 +108,7 @@ import { describedRows, readTable, type Row } from "./built-ins-alone/table";
 import { shareNumber } from "./fresh-seed";
 import { findBuiltinTable, generators, writeGroups, writeProgram, type WrittenProgram } from "./generate";
 import { locksEnvironment } from "./hardened";
+import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./harness/memory-limit";
 
 const root = join(import.meta.dir, "programs");
 // A debug or ASAN build of Bun is many times slower, so it runs the quick subset unless told otherwise.
@@ -420,6 +421,7 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
     timeout,
     killSignal: "SIGKILL",
   });
+  using held = endAtMemoryLimit(proc, memoryLimitOfAKnownProgram);
   // A build that is asked to end says what each of its threads is still compiling. One that is killed says nothing.
   const secondsToAnswer = 3;
   const isBuild = behindTheFlag && (cmd.includes("build") || cmd.includes("compile"));
@@ -430,6 +432,10 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   const milliseconds = Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1000;
   const result = { stdout, stderr, exitCode, signal: proc.signalCode };
   const lasted = performance.now() - start;
+  if (held.exceeded)
+    console.error(
+      `KILLED at its memory limit of ${Math.round(memoryLimitOfAKnownProgram / 2 ** 20)} MB: ${cmd.at(-1)}`,
+    );
   if (
     (proc.signalCode === "SIGKILL" && lasted >= timeout) ||
     (proc.signalCode === "SIGTERM" && asked && lasted >= timeout - secondsToAnswer * 1000)

@@ -43,6 +43,12 @@ export function collectSyntaxUses(bunRoot: string, engineFiles: readonly ModelEn
     names,
     prefixedGlobals: [...globalsToPrefix, ...errorKinds],
     privateNames: [...jscNames.private, ...Array.from(bunNames.matchAll(/^\s*macro\((\w+)\)/gm), match => match[1])],
+    modulePrivateNames: Array.from(
+      bunNames
+        .slice(bunNames.indexOf("#define BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME"))
+        .matchAll(/^\s*macro\((\w+)\)/gm),
+      match => match[1],
+    ),
     errorCodes: numberedErrorCodes,
     inheritableClasses: numberedClasses,
   };

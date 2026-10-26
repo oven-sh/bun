@@ -24,6 +24,8 @@ const CRASH_REQUEST: &[u8] = b"fuzzilli('FUZZILLI_CRASH', 0)";
 
 unsafe extern "C" {
     safe fn Bun__REPRL__resetCoverage();
+    #[cfg(bun_asan)]
+    safe fn pas_scavenger_suspend();
 }
 
 /// Resident bytes when the current build began. 0: no build is running.
@@ -153,6 +155,9 @@ impl Channel {
     /// Returns once for each program, in a process of its own. The caller's process tells Fuzzilli how each of them ended.
     fn fork_for_each_program(&self) {
         Bun__REPRL__resetCoverage();
+        // A build with the address sanitizer allocates with libpas. A forked process would wait forever for a lock that its scavenger thread held.
+        #[cfg(bun_asan)]
+        pas_scavenger_suspend();
         loop {
             self.receive_program();
             Output::flush();

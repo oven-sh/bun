@@ -111,6 +111,10 @@ impl Printer<'_> {
                 self.out.push('@');
                 self.print_optional_string(key.text);
             }
+            PropertyKeyKind::ModulePrivateName => {
+                self.out.push_str("@#");
+                self.print_optional_string(key.text);
+            }
             PropertyKeyKind::PrivateName => {
                 self.out.push('#');
                 self.print_optional_string(key.text);

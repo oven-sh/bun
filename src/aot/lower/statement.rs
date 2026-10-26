@@ -2,10 +2,10 @@ mod declarations;
 mod loops;
 
 use bun_sema::bind::ScopeId;
-use bun_sema::hir::{ExprId, ExprKind, IdList, StmtId, StmtKind};
+use bun_sema::hir::{ExprId, ExprKind, Flags, IdList, PatKind, StmtId, StmtKind};
 
 use super::control::BreakTargetKind;
-use super::{FunctionLowering, commonjs, dispose, module};
+use super::{FileLowering, FunctionLowering, commonjs, dispose, module};
 use crate::builtins::SourceDialect;
 use crate::ir::BlockId;
 
@@ -22,6 +22,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_statements_with_resources(rest);
                 return;
             }
+            let earlier = IdList::new(statements.start, index);
+            self.joined_declarations_end =
+                self.file.find_joined_declarations_end(earlier, statement);
             self.lower_statement(statement);
         }
     }
@@ -53,6 +56,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         let stmt = self.file.hir[statement];
+        let joined_declarations_end = self.joined_declarations_end.take();
         if !self.enter_nesting(stmt.start) {
             return;
         }
@@ -73,8 +77,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             }
             StmtKind::Var(declarations) => {
+                let has_pattern = self.file.declares_pattern(statement);
+                let mut mapped = joined_declarations_end.unwrap_or(stmt.start);
                 for declaration in declarations.iter() {
-                    self.lower_variable_declaration(declaration);
+                    self.lower_variable_declaration(declaration, mapped);
+                    if has_pattern {
+                        mapped = self
+                            .file
+                            .last_mapped_declaration_position(declaration, mapped);
+                    }
                 }
             }
             StmtKind::Fn(function) => {
@@ -215,5 +226,57 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.enter_with_scope(scope, object);
         self.lower_statement(body);
         self.leave_scope(scope);
+    }
+}
+
+impl FileLowering<'_, '_, '_, '_> {
+    fn declares_pattern(&self, statement: StmtId) -> bool {
+        let hir = self.hir;
+        let StmtKind::Var(declarations) = hir[statement].kind else {
+            return false;
+        };
+        let mut patterns = declarations
+            .iter()
+            .map(|declaration| hir[hir[declaration].pat].kind);
+        patterns.any(|pattern| matches!(pattern, PatKind::Object(_) | PatKind::Array(_)))
+    }
+
+    // `const a = f(); const [b] = c;` is printed `const a = f(), [b] = c;`.
+    fn find_joined_declarations_end(
+        &self,
+        earlier: IdList<StmtId>,
+        statement: StmtId,
+    ) -> Option<u32> {
+        let hir = self.hir;
+        let head_of = |statement: StmtId| match hir[statement].kind {
+            StmtKind::Var(declarations) => declarations.iter().next().map(|head| hir[head]),
+            _ => None,
+        };
+        if !self.declares_pattern(statement) {
+            return None;
+        }
+        let head = head_of(statement)?;
+        let is_printed = |&earlier: &StmtId| {
+            let is_type = matches!(
+                hir[earlier].kind,
+                StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty
+            );
+            !is_type && !self.decisions().is_dead_stmt(earlier)
+        };
+        let previous = hir.ids(earlier).rev().find(is_printed)?;
+        let previous_head = head_of(previous)?;
+        let is_exported = |flags: Flags| flags.contains(Flags::EXPORT);
+        let is_ambient = previous_head.flags.contains(Flags::AMBIENT);
+        if is_ambient
+            || previous_head.kind != head.kind
+            || is_exported(previous_head.flags) != is_exported(head.flags)
+        {
+            return None;
+        }
+        let StmtKind::Var(declarations) = hir[previous].kind else {
+            return None;
+        };
+        let last = declarations.iter().last()?;
+        Some(self.last_mapped_declaration_position(last, hir[previous].start))
     }
 }

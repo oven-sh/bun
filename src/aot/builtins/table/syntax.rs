@@ -97,6 +97,7 @@ pub enum Intrinsic {
     PrivateGlobal,
     ReplaceablePrivateGlobal,
     PrivateName,
+    ModulePrivateName,
     LinkedFunction(RuntimeFunction),
     Directive(DirectiveKind),
     PrependArgument {

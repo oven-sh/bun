@@ -22,7 +22,6 @@ const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
 const shared = require("internal/shared");
-const { kAutoDestroyed } = shared;
 const isStandardOutputStream: (value: unknown) => boolean = $newCppFunction(
   "BunProcess.cpp",
   "jsFunctionIsStandardOutputStream",
@@ -1767,7 +1766,7 @@ function finishEnd(state: ReadableState, stream: $Node.Readable): void {
           (wState.finished || wState.writable === false));
 
     if (autoDestroy) {
-      stream[kAutoDestroyed] = true; // workaround for node:http Server not using node:net Server
+      stream.$autoDestroyed = true; // workaround for node:http Server not using node:net Server
       stream.destroy();
     }
   }

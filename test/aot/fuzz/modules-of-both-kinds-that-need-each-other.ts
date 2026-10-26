@@ -15,6 +15,8 @@
 //
 // Every read stands in a try, and an error prints its name alone: the words of an error are not compared.
 //
+// A program in which plain Bun runs a CommonJS module a second time, because it threw the first time, is counted and is no finding where the two part: an executable runs a module once.
+//
 // Where the two part and --node is given, Node is asked: an executable that prints what Node prints is counted and is no finding.
 //
 // A finding: a command that ends by a signal or runs out of its clock, a build that is refused, an executable that prints something else. One folder a finding in --out, at most three of one kind and first difference.
@@ -241,6 +243,12 @@ if (import.meta.main) {
     writeFileSync(join(target, "finding.txt"), `${kind}\nseed ${seed}\nflags ${flags.join(" ")}\n${notes}\n\n${said.slice(0, 6000)}\n`);
   }
 
+  // The next require() of a CommonJS module that threw runs it again under plain Bun, and throws the same error in an executable: docs/compiler/compatibility.mdx, "The module cache".
+  const runsModuleAgain = (out: string) => {
+    const begun = out.split("\n").filter(line => /^m\d+ begins$/.test(line));
+    return new Set(begun).size < begun.length;
+  };
+
   // Whether the same graph without its awaits prints what plain Bun prints.
   async function agreesWithoutAwaits(seed: number, job: number): Promise<boolean> {
     const folder = join(work, `job-${job}-without`);
@@ -281,6 +289,7 @@ if (import.meta.main) {
     if (compiled.signal) return finding("the executable ends by a signal", folder, seed, notes, `${compiled.signal}\n${compiled.text}`, String(compiled.signal));
     if (compiled.late) return finding("the executable hangs", folder, seed, notes, compiled.text);
     if (compiled.out === plain.out && compiled.code === plain.code) return void count("as plain");
+    if (runsModuleAgain(plain.out)) return void count("a CommonJS module that threw runs again under plain Bun");
     if (node && !Object.keys(files).some(file => file.endsWith(".ts")) && (await run([node, entry], folder, 30)).out === compiled.out) return void count("plain Bun is by itself: the executable prints what Node prints");
     if (awaits && !(await agreesWithoutAwaits(seed, job))) return void count("prints something else without its awaits too");
     const [expected, got] = [plain.out.split("\n"), compiled.out.split("\n")];

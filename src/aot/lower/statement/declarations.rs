@@ -6,10 +6,28 @@ use bun_sema::hir::{
 
 use crate::ir::generated::TypeSiteKind;
 use crate::lower::member::PropertyName;
-use crate::lower::{FunctionLowering, scope};
+use crate::lower::pattern::PatternOrigin;
+use crate::lower::{FileLowering, FunctionLowering, scope};
+
+impl FileLowering<'_, '_, '_, '_> {
+    pub(crate) fn last_mapped_declaration_position(
+        &self,
+        declaration: VarDeclId,
+        before: u32,
+    ) -> u32 {
+        let decl = self.hir[declaration];
+        match decl.init.some() {
+            Some(initializer) => self.last_mapped_position(initializer),
+            None => self
+                .last_mapped_pattern_position(decl.pat)
+                .unwrap_or(before),
+        }
+    }
+}
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    pub(crate) fn lower_variable_declaration(&mut self, declaration: VarDeclId) {
+    /// `mapped` is the last token before the declaration that the source map of Bun's transpiler knows.
+    pub(crate) fn lower_variable_declaration(&mut self, declaration: VarDeclId, mapped: u32) {
         let (hir, bound) = (self.file.hir, self.file.bound);
         let decl = hir[declaration];
         if decl.flags.contains(Flags::AMBIENT) || self.is_unread_export(decl.pat) {
@@ -60,7 +78,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.set_position(hir[decl.pat].pos);
                 self.set_identifier_target(&target, value, Some(initializer));
             }
-            None => self.bind_pattern(decl.pat, value, Some(initializer)),
+            None => {
+                let recorded = self.file.last_reported_position(initializer);
+                let origin = PatternOrigin { mapped, recorded };
+                self.bind_pattern(decl.pat, value, Some(initializer), origin);
+            }
         }
     }
 

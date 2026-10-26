@@ -7,9 +7,9 @@
 //
 // A bed answers with what the program printed or with how the build or the run failed; compare() turns the two into a verdict.
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { totalmem } from "os";
 import { join } from "path";
 import { limitsLowered } from "../harness/limits";
+import { endAtMemoryLimit, memoryLimit } from "../harness/memory-limit";
 import { company, memberNames } from "./company";
 import { laterProbes, probeProgram, probes } from "./engine-probes";
 import { asBunInitWritesIt, typeChecker, typingsOfBun, type Checker } from "./type-check";
@@ -113,40 +113,16 @@ async function textUpToTheLimit(stream: ReadableStream<Uint8Array>) {
   return Buffer.concat(kept).toString();
 }
 
-/** A process that holds more than this is ended. A quarter of the machine or of its container: the few that run at once leave room for everything else on it. */
-export const memoryLimit = Math.min(totalmem(), process.constrainedMemory() || Infinity, 64 * 2 ** 30) / 4;
-
-/** In bytes; 0 where nothing tells. */
-function residentMemory(pid: number) {
-  try {
-    if (process.platform === "linux") return Number(/^VmRSS:\s*(\d+) kB/m.exec(readFileSync(`/proc/${pid}/status`, "utf8"))?.[1] ?? 0) * 1024;
-    if (process.platform === "darwin") return Number(Bun.spawnSync(["/bin/ps", "-o", "rss=", "-p", String(pid)]).stdout.toString()) * 1024;
-  } catch {}
-  return 0;
-}
-
 export async function spawned(cmd: string[], cwd: string, seconds: number, more?: Record<string, string>, memory = memoryLimit): Promise<Run> {
   // No core files, and a limit on processor time behind the limit on wall time. Where core files go to a program through a pipe, Linux asks for no limit but one: at a limit of one byte it starts no such program.
   // When the machine runs out of memory all the same, Linux ends this process first.
   const killedFirst = process.platform === "linux" ? "{ echo 1000 > /proc/$$/oom_score_adj; } 2> /dev/null; " : "";
   const limited = process.platform === "win32" ? cmd : ["/bin/sh", "-c", `${killedFirst}prlimit --pid $$ --core=1:1 2> /dev/null || ulimit -c 0; ulimit -t ${Math.ceil(seconds * 4)}; exec "$@"`, "--", ...cmd];
   await using child = Bun.spawn({ cmd: limited, cwd, env: { ...environment, ...more }, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
-  let tookTooMuchMemory = false;
-  const watch = setInterval(
-    () => {
-      if (residentMemory(child.pid) <= memory) return;
-      tookTooMuchMemory = true;
-      child.kill("SIGKILL");
-    },
-    process.platform === "linux" ? 100 : 1000,
-  );
-  try {
-    const [stdout, stderr, exitCode] = await Promise.all([textUpToTheLimit(child.stdout), textUpToTheLimit(child.stderr), child.exited]);
-    const timedOut = child.signalCode === "SIGKILL" || child.signalCode === "SIGXCPU";
-    return { stdout, stderr, exitCode: child.signalCode ? null : exitCode, signal: timedOut || child.signalCode === null ? null : String(child.signalCode), timedOut, tookTooMuchMemory };
-  } finally {
-    clearInterval(watch);
-  }
+  using held = endAtMemoryLimit(child, memory);
+  const [stdout, stderr, exitCode] = await Promise.all([textUpToTheLimit(child.stdout), textUpToTheLimit(child.stderr), child.exited]);
+  const timedOut = child.signalCode === "SIGKILL" || child.signalCode === "SIGXCPU";
+  return { stdout, stderr, exitCode: child.signalCode ? null : exitCode, signal: timedOut || child.signalCode === null ? null : String(child.signalCode), timedOut, tookTooMuchMemory: held.exceeded };
 }
 
 export interface Bed {

@@ -2190,6 +2190,7 @@ async function keptOnceTheRestIsCollected<T>(label: string, make: (track: (blob:
     rounds++;
   }
   console.log(label, collected < tracked ? "is still held" : "was collected");
+  registry.unregister(registry);
   return kept;
 }
 

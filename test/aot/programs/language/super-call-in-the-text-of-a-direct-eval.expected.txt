@@ -1,0 +1,17 @@
+plain: throws TypeError: super() cannot be called from direct eval in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+with an argument: throws TypeError: super() cannot be called from direct eval in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+arguments ran first: argument
+an arrow in the text: throws TypeError: super() cannot be called from direct eval in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+the eval in an arrow: throws TypeError: super() cannot be called from direct eval in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+a class with fields: throws TypeError: super() cannot be called from direct eval in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+behind a call outside of the text: throws TypeError: super() cannot be called from direct eval in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+a built-in parent: throws TypeError: super() cannot be called from direct eval in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+a function as the parent: throws TypeError: super() cannot be called from direct eval in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+caught in the text: "TypeError"
+on one of two paths: throws TypeError: super() cannot be called from direct eval in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+this behind the call: true
+this before the call: throws ReferenceError: 'super()' must be called in derived constructor before accessing |this| or returning non-object.
+a member of the parent: "hi"
+new.target: true
+text without the call: 1
+in a method: throws SyntaxError: super is not valid in this context.

@@ -513,7 +513,6 @@ fn a_module_says_which_deferred_exports_of_the_library_it_binds() {
             let mut names: Vec<String> = required_names
                 .map(|required| {
                     assert!(matches!(required.module, ModuleRef::Runtime(_)));
-                    assert!(!required.may_be_absent);
                     BStr::new(input.files.atoms.bytes(required.name)).to_string()
                 })
                 .collect();

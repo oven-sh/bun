@@ -3,7 +3,7 @@ use bun_sema::bind::{Binding, PatParent};
 use bun_sema::hir::{ExprId, ExprKind, NameKind, PatKind, PropKey, PropKind};
 use smallvec::SmallVec;
 
-use super::PatternNode;
+use super::{PatternNode, PatternOrigin};
 use crate::lower::FileLowering;
 use crate::lower::expression::AssignmentTarget;
 
@@ -48,6 +48,36 @@ impl FileLowering<'_, '_, '_, '_> {
                 AssignmentTarget::Identifier { .. } | AssignmentTarget::Expression => {
                     NodeShape::Leaf
                 }
+            },
+        }
+    }
+
+    // A property is printed as its key, its target and its default, and evaluated as its key, its default and its target.
+    pub(super) fn property_origin(
+        &self,
+        property: &PatternProperty,
+        recorded: u32,
+    ) -> PatternOrigin {
+        let key = match property.key {
+            PropKey::Computed(key) => Some(key),
+            PropKey::None | PropKey::Name(_) | PropKey::Private(_) => None,
+        };
+        let evaluated = property.default.some().or(key);
+        PatternOrigin {
+            mapped: key.map_or(property.position, |key| self.last_mapped_position(key)),
+            recorded: evaluated.map_or(recorded, |last| self.last_reported_position(last)),
+        }
+    }
+
+    pub(super) fn last_mapped_element_position(&self, element: &PatternElement) -> Option<u32> {
+        if let Some(default) = element.default.some() {
+            return Some(self.last_mapped_position(default));
+        }
+        match element.target {
+            PatternNode::Binding(pattern) => self.last_mapped_pattern_position(pattern),
+            PatternNode::Assignment(target) => match self.node_shape(element.target) {
+                NodeShape::Hole => None,
+                _ => Some(self.last_mapped_position(target)),
             },
         }
     }

@@ -1,8 +1,8 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, PatParent, PrivateMembers, SymbolId};
+use bun_sema::bind::{Binding, Parent, PatParent, PrivateMembers, SymbolId};
 use bun_sema::check::aot::{ClassRef, MemberLookup, ObjectMemberKind, ShapeKind};
 use bun_sema::fold::Constant;
-use bun_sema::hir::{ExprId, ExprKind, MemberKey, PatId};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, MemberKey, PatId, UnOp};
 use bun_sema::program::FileRole;
 
 use crate::ir::generated::{FunctionFlags, FunctionKind, TypeSiteKind};
@@ -79,7 +79,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The checker narrows only references, but an `int32` member is claimed at every read, whatever the receiver is. Under a key that is no constant it is claimed where an `int32` is expected.
+    // The checker narrows only references, but an `int32` member is claimed at every read, whatever the receiver is. Under a key that is no constant it is claimed where an `int32` is expected or computed with.
     fn reads_int32_member(&mut self, access: ExprId) -> bool {
         let Some((_, key)) = self.hir.member_key(access) else {
             return false;
@@ -88,13 +88,67 @@ impl FileLowering<'_, '_, '_, '_> {
             Ok(ty) => lists_int32(self, ty),
             Err(_) => false,
         };
-        is_int32 && (self.has_constant_key(key) || self.is_expected_to_be_int32(access))
+        is_int32 && (self.has_constant_key(key) || self.is_used_as_int32(access))
     }
 
     fn is_expected_to_be_int32(&mut self, expression: ExprId) -> bool {
         match self.queries.contextual_type(expression) {
             Ok(Some(ty)) => lists_int32(self, ty),
             Ok(None) | Err(_) => false,
+        }
+    }
+
+    // A bitwise operator makes an `int32` of any operand, and an equality says the same of any two numbers.
+    fn is_used_as_int32(&mut self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        let mut child = expression;
+        loop {
+            if self.is_expected_to_be_int32(child) {
+                return true;
+            }
+            let Parent::Expr(parent) = self.bound.parent_of_expr(child) else {
+                return false;
+            };
+            match hir[parent].kind {
+                ExprKind::As { .. }
+                | ExprKind::Satisfies { .. }
+                | ExprKind::AsConst(_)
+                | ExprKind::NonNull(_)
+                | ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    ..
+                } => child = parent,
+                ExprKind::Cond { test, .. } if test != child => child = parent,
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } if right == child => child = parent,
+                ExprKind::Binary {
+                    op:
+                        BinOp::Add
+                        | BinOp::Sub
+                        | BinOp::Mul
+                        | BinOp::Div
+                        | BinOp::Rem
+                        | BinOp::Pow
+                        | BinOp::Lt
+                        | BinOp::Le
+                        | BinOp::Gt
+                        | BinOp::Ge,
+                    ..
+                }
+                | ExprKind::Unary {
+                    op: UnOp::Plus | UnOp::Minus,
+                    ..
+                } => return true,
+                ExprKind::Call(site) => {
+                    let callee = hir[site].callee;
+                    return callee != child
+                        && self.builtins.builtin_of_expression(callee).is_some();
+                }
+                _ => return false,
+            }
         }
     }
 

@@ -34,7 +34,6 @@ const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, dra
 const abortedSymbol = Symbol("aborted");
 const headerStateSymbol = Symbol("headerState");
 const eofInProgress = Symbol("eofInProgress");
-const fakeSocketSymbol = Symbol("fakeSocket");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
 const kOnReadParsed = Symbol("kOnReadParsed");
@@ -66,7 +65,6 @@ const kChunkedBuffer = Symbol("kChunkedBuffer");
 const kChunkedLength = Symbol("kChunkedLength");
 const kBytesWritten = Symbol("kBytesWritten");
 const kLenientValidation = Symbol("kLenientValidation");
-const kExchange = Symbol("kExchange");
 const requestRoad: {
   endsUnseen?: (request: $Node.IncomingMessage) => boolean;
   endUnseen?: (request: $Node.IncomingMessage) => void;
@@ -562,7 +560,7 @@ declare global {
     interface ServerResponse {
       [kHandle]: NodeHTTPResponse | Http1ResponseHandle | undefined;
       [kPendingCallbacks]: HttpWriteCallback[] | undefined;
-      [fakeSocketSymbol]: HttpSocket | null | undefined;
+      $fakeSocket: HttpSocket | null | undefined;
     }
 
     interface HttpServer {
@@ -760,7 +758,6 @@ export {
   emitEOFIncomingMessageOuter,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
-  fakeSocketSymbol,
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,
@@ -773,7 +770,6 @@ export {
   kClosedWithUnsentData,
   kCorked,
   kErrored,
-  kExchange,
   kHandle,
   kHandoffResponse,
   kHasQueuedReads,

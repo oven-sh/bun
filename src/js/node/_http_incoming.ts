@@ -36,7 +36,6 @@ const {
   takeRequestTrailers,
 } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
-const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
 const kCapture: typeof shared.kCapture = shared.kCapture;
 const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
 const abortedSymbol: typeof http.abortedSymbol = http.abortedSymbol;
@@ -176,7 +175,7 @@ declare global {
       [kTrailers]: IncomingHttpHeaders | null;
       [kTrailersDistinct]?: Dictionary<string[]>;
       [kTrailersCount]: number;
-      [kAutoDestroyed]: boolean;
+      $autoDestroyed: boolean;
       [kAbortController]: AbortController | null;
     }
 
@@ -234,7 +233,7 @@ function IncomingMessage(
     this[kRawHeaders] = null;
     this[kHeaderSource] = nativeHandle;
     this[noBodySymbol] = !nativeHasBody;
-    this[kAutoDestroyed] = false;
+    this.$autoDestroyed = false;
     this[kAbortController] = null;
     return;
   }
@@ -287,7 +286,7 @@ function IncomingMessage(
   this[kHeaderSource] = isFromNativeServer ? nativeHandle : undefined;
   this[kAbortController] = null;
   this[noBodySymbol] = isFromNativeServer && !nativeHasBody;
-  this[kAutoDestroyed] = false;
+  this.$autoDestroyed = false;
   if (isFromNativeServer) {
     addFlags(this._readableState, kReadingMore);
   } else {
@@ -1014,7 +1013,7 @@ function destroyOnNextTick(req: $Node.IncomingMessage, state: $Node.ReadableStat
     ("unlikely");
     return endOnNextTick(state, req);
   }
-  req[kAutoDestroyed] = true;
+  req.$autoDestroyed = true;
   req[kHandle] = undefined;
   handle.onabort = undefined;
   queueTick1(closeUnwatched, req);
@@ -1349,7 +1348,7 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
     ("unlikely");
     return false;
   }
-  req[kAutoDestroyed] = true;
+  req.$autoDestroyed = true;
   state[kState] |= kDestroyed;
   req[kHandle] = undefined;
   handle.onabort = handle.ondata = undefined;
@@ -1441,7 +1440,7 @@ function endUnseen(req: $Node.IncomingMessage): void {
   req._consuming = true;
   req.complete = true;
   req[eofInProgress] = true;
-  req[kAutoDestroyed] = true;
+  req.$autoDestroyed = true;
   req[kHandle] = undefined;
   req._readableState[kState] = kFlagsClosed | kCloseEmitted;
 }

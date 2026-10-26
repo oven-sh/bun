@@ -5,6 +5,7 @@ use super::FunctionLowering;
 use super::call::{self};
 use super::control::{CleanupLanding, CleanupPath};
 use super::member::PropertyName;
+use super::pattern::PatternOrigin;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::BlockRole;
 use crate::ir::{Edge, LocalVariable, ValueId};
@@ -262,7 +263,12 @@ fn add_resource(
         hint,
         position: lowering.position(),
     });
-    lowering.bind_pattern(decl.pat, value, source);
+    let position = lowering.file.hir[decl.pat].pos;
+    let origin = PatternOrigin {
+        mapped: position,
+        recorded: position,
+    };
+    lowering.bind_pattern(decl.pat, value, source, origin);
 }
 
 #[allow(clippy::needless_pass_by_value)] // the end of the scope

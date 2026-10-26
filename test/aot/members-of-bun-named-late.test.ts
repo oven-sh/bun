@@ -84,6 +84,11 @@ describe.concurrent.each([6, 14])("the class that a module of Bun makes, behind 
     ["named on a spread copy", "", `() => new ({ ...Bun }).SQL(${url})`],
     ["named on a copy by Object.assign", "", `() => new (Object.assign({}, Bun).SQL)(${url})`],
     gap(notCompiled, ["named on an object below Bun", "", `() => new (Object.create(Bun).SQL)(${url})`]),
+    [
+      "named on what an async function returns",
+      "const find = async () => Bun;\n",
+      `async () => new (await find()).SQL(${url})`,
+    ],
     gap(notCompiled, [
       "named on what a promise resolves to",
       "",

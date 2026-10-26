@@ -44,8 +44,6 @@ pub(in crate::modules) struct ExportEntries {
 #[derive(Copy, Clone, Debug)]
 pub(in crate::modules) struct WrittenImport {
     pub imported: CommonJsImport,
-    /// `false`: the name may be a type, which no module has at run time.
-    pub must_be_there: bool,
     pub written: WrittenPart,
 }
 
@@ -175,7 +173,6 @@ impl EntryCollector<'_, '_> {
                         exporter,
                         name,
                     },
-                    must_be_there: true,
                     written: WrittenPart::new(site, part, site_kind, range),
                 });
             }
@@ -203,7 +200,6 @@ impl EntryCollector<'_, '_> {
                     exporter,
                     name,
                 },
-                must_be_there: !self.hir.has_typescript_semantics(),
                 written,
             }));
         }

@@ -15,6 +15,7 @@ import { availableParallelism } from "os";
 import { join } from "path";
 import { freshSeed } from "./fresh-seed";
 import { withPackedPrograms } from "./generate";
+import { endAtMemoryLimit } from "./harness/memory-limit";
 import { unsupported } from "./run-programs";
 
 const programCount = Number(process.env.AOT_FUZZ_PROGRAMS) || 20;
@@ -110,6 +111,7 @@ function mutate(source: string, random: () => number): string {
 
 async function run(cmd: string[], cwd: string, timeout: number) {
   await using spawned = Bun.spawn({ cmd, cwd, env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout });
+  using _ = endAtMemoryLimit(spawned);
   const [stdout, stderr, exitCode] = await Promise.all([spawned.stdout.text(), spawned.stderr.text(), spawned.exited]);
   const timedOut = spawned.signalCode === "SIGTERM" || spawned.signalCode === "SIGKILL";
   return { stdout, stderr, exitCode, timedOut, signal: timedOut ? null : spawned.signalCode };

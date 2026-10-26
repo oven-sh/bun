@@ -2,6 +2,7 @@ use bun_sema::check::aot::{CheckedType, GaveUp};
 use bun_sema::hir::{ExprId, PatId, PatKind, StmtId, StmtKind, VarKind};
 
 use super::control::{BreakTargetKind, CleanupLanding, CleanupPath};
+use super::pattern::PatternOrigin;
 use super::types::find_contents_type;
 use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::{
@@ -116,7 +117,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let head = hir[declaration];
         match head.kind {
             VarKind::Var if head.init.is_some() => {
-                self.lower_variable_declaration(declaration);
+                self.lower_variable_declaration(declaration, hir[left].start);
             }
             VarKind::Var | VarKind::Let | VarKind::Const | VarKind::Using | VarKind::AwaitUsing => {
             }
@@ -205,14 +206,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         });
                     }
                     VarKind::Var | VarKind::Let | VarKind::Const => {
-                        self.bind_pattern(hir[declaration].pat, value, None);
+                        let origin = PatternOrigin {
+                            mapped: hir[statement].start,
+                            recorded: self.file.last_mapped_head_position(statement, left),
+                        };
+                        self.bind_pattern(hir[declaration].pat, value, None, origin);
                         self.lower_statement(body);
                     }
                 },
                 None => self.lower_statement(body),
             },
             StmtKind::Expr(target) => {
-                self.assign_pattern(target, value, None);
+                let recorded = self.file.last_mapped_head_position(statement, left);
+                self.assign_pattern(target, value, None, recorded);
                 self.lower_statement(body);
             }
             _ => self.lower_statement(body),
@@ -258,7 +264,7 @@ impl FileLowering<'_, '_, '_, '_> {
         position.unwrap_or(hir[statement].start)
     }
 
-    fn last_mapped_pattern_position(&self, pattern: PatId) -> Option<u32> {
+    pub(in crate::lower) fn last_mapped_pattern_position(&self, pattern: PatId) -> Option<u32> {
         let hir = self.hir;
         let last_of = |part: PatId, default: ExprId| match default.is_some() {
             true => Some(self.last_mapped_position(default)),

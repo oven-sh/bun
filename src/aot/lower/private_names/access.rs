@@ -281,7 +281,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.builder.undefined();
         };
         let object = self.lower_expression(right);
-        self.set_position(hir[expression].pos);
+        self.set_position(self.file.first_position(right));
         match self.file.bound.private_name_of_reference(left) {
             Some(name) => self.emit_name_test(object, name),
             None => self.emit_error(RuntimeErrorKind::UnresolvableReference),

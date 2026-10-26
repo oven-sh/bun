@@ -1,7 +1,7 @@
-use bun_sema::atom::{Atom, written_name};
-use bun_sema::fold::Decision;
+use bun_sema::atom::{Atom, known, written_name};
+use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, MemberKey, StmtKind,
+    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, MemberKey, StmtKind, UnOp,
 };
 
 use super::Callee;
@@ -204,23 +204,159 @@ impl FileLowering<'_, '_, '_, '_> {
         let hir = self.hir;
         let mut last = self.skip_type_syntax(expression);
         loop {
+            if self.is_printed_as_literal(last) {
+                return self.first_position(last);
+            }
             let next = match hir[last].kind {
                 ExprKind::Index { index, .. } => index,
+                ExprKind::Binary {
+                    op: BinOp::Add,
+                    left,
+                    right,
+                } if self.is_joined_with_text_on_the_left(left, right) => left,
                 ExprKind::Binary { right, .. } => right,
                 ExprKind::Assign { value, .. } => value,
-                ExprKind::Cond { branches, .. } => hir.branches(branches).no,
-                ExprKind::Await(operand) => operand,
+                ExprKind::Cond { test, branches } => match self.find_printed_condition(test) {
+                    Some(true) => hir.branches(branches).yes,
+                    Some(false) | None => hir.branches(branches).no,
+                },
+                ExprKind::Await(operand) | ExprKind::Unary { operand, .. } => operand,
+                ExprKind::Template { exprs } => match hir.ids(exprs).last() {
+                    Some(substitution) => substitution,
+                    None => return hir[last].pos,
+                },
+                ExprKind::Class(_) => return self.last_token_position(last),
                 ExprKind::New(site) if hir[site].close_pos == u32::MAX => hir[site].callee,
                 ExprKind::Fn(function) => match self.last_expression_of_body(function) {
                     Some(expression) => expression,
-                    None => return hir[last].end - 1,
+                    None => return self.last_token_position(last),
                 },
                 ExprKind::Dot { .. } => return hir.name_pos(last),
                 ExprKind::Call(site) | ExprKind::New(site) => return hir[site].close_pos,
-                ExprKind::Array(_) | ExprKind::Object(_) => return hir[last].end - 1,
+                ExprKind::Array(_) | ExprKind::Object(_) => {
+                    return self.last_token_position(last);
+                }
                 _ => return hir[last].pos,
             };
             last = self.skip_type_syntax(next);
+        }
+    }
+
+    // An expression that no file holds has no end.
+    fn last_token_position(&self, expression: ExprId) -> u32 {
+        let node = self.hir[expression];
+        match node.end {
+            0 => node.pos,
+            end => end - 1,
+        }
+    }
+
+    // Bun's transpiler gives an expression the position of its first operand, without the parentheses around it.
+    pub(in crate::lower) fn first_position(&self, expression: ExprId) -> u32 {
+        let hir = self.hir;
+        let mut first = self.skip_type_syntax(expression);
+        loop {
+            let next = match hir[first].kind {
+                ExprKind::Binary { left, .. } => left,
+                ExprKind::Cond { test, .. } => test,
+                ExprKind::Assign { target, .. } => target,
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+                ExprKind::Call(site) | ExprKind::TaggedTemplate(site) => hir[site].callee,
+                ExprKind::Unary {
+                    op: UnOp::PostInc | UnOp::PostDec,
+                    operand,
+                } => operand,
+                _ => return hir[first].pos,
+            };
+            first = self.skip_type_syntax(next);
+        }
+    }
+
+    // Bun's transpiler computes an operator whose operands are literals, and prints the result at the position of the operator's expression.
+    fn is_printed_as_literal(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        match hir[self.skip_type_syntax(expression)].kind {
+            ExprKind::Unary { op, operand } => {
+                matches!(
+                    op,
+                    UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof
+                ) && self.is_literal_operand(operand)
+            }
+            ExprKind::Binary { op, left, right } => {
+                !matches!(
+                    op,
+                    BinOp::And
+                        | BinOp::Or
+                        | BinOp::Nullish
+                        | BinOp::Comma
+                        | BinOp::In
+                        | BinOp::Instanceof
+                ) && self.is_literal_operand(left)
+                    && self.is_literal_operand(right)
+            }
+            ExprKind::Template { exprs } => {
+                let mut substitutions = hir.ids(exprs);
+                !exprs.is_empty() && substitutions.all(|part| self.is_literal_operand(part))
+            }
+            _ => false,
+        }
+    }
+
+    fn is_literal_operand(&self, expression: ExprId) -> bool {
+        let inner = self.skip_type_syntax(expression);
+        match self.hir[inner].kind {
+            ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_) => true,
+            ExprKind::Template { exprs } => exprs.is_empty(),
+            _ => self.is_printed_as_literal(inner),
+        }
+    }
+
+    fn is_text(&self, expression: ExprId) -> bool {
+        match self.hir[self.skip_type_syntax(expression)].kind {
+            ExprKind::String(_) => true,
+            ExprKind::Template { exprs } => exprs.is_empty(),
+            _ => false,
+        }
+    }
+
+    // `x + "a" + "b"` is printed `x + "ab"`.
+    fn is_joined_with_text_on_the_left(&self, left: ExprId, right: ExprId) -> bool {
+        let left = self.hir[self.skip_type_syntax(left)].kind;
+        let ExprKind::Binary {
+            op: BinOp::Add,
+            right: middle,
+            ..
+        } = left
+        else {
+            return false;
+        };
+        self.is_text(middle) && self.is_text(right)
+    }
+
+    // Of `true ? a : b` Bun's transpiler prints `a`.
+    fn find_printed_condition(&self, test: ExprId) -> Option<bool> {
+        let hir = self.hir;
+        let test = self.skip_type_syntax(test);
+        match hir[test].kind {
+            ExprKind::True => Some(true),
+            ExprKind::False | ExprKind::Null => Some(false),
+            ExprKind::Unary {
+                op: UnOp::Not,
+                operand,
+            } => self.find_printed_condition(operand).map(|is_true| !is_true),
+            _ if !self.is_literal_operand(test) => None,
+            _ => match self.decisions().constant(hir, test) {
+                FoldedValue::Constant(Constant::Boolean(value)) => Some(value),
+                FoldedValue::Constant(Constant::Number(value)) => {
+                    Some(value != 0.0 && !value.is_nan())
+                }
+                FoldedValue::Constant(Constant::String(value)) => Some(value != known::empty),
+                _ => None,
+            },
         }
     }
 

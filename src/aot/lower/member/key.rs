@@ -52,15 +52,19 @@ impl FileLowering<'_, '_, '_, '_> {
         if let Some(symbol) = find_symbol_key(names, name) {
             return self.symbol_key(symbol);
         }
-        let private_name = match find_intrinsic(names, name, IntrinsicPosition::Member) {
-            Some(Intrinsic::PrivateName) => names.get_private(name),
+        let intrinsic = find_intrinsic(names, name, IntrinsicPosition::Member);
+        let private_name = match intrinsic {
+            Some(Intrinsic::PrivateName | Intrinsic::ModulePrivateName) => names.get_private(name),
             Some(_) | None => None,
         };
         let Some(private_name) = private_name else {
             return self.atom_key(name);
         };
         let text = self.intern_bytes(table::text_of_name(private_name));
-        let key = PropertyKey::from_engine_private_name(text);
+        let key = match intrinsic {
+            Some(Intrinsic::ModulePrivateName) => PropertyKey::from_module_private_name(text),
+            _ => PropertyKey::from_engine_private_name(text),
+        };
         self.fragment.property_keys.intern(key)
     }
 

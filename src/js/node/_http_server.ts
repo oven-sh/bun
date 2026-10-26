@@ -99,7 +99,6 @@ const kRequest: typeof http.kRequest = http.kRequest;
 const kCloseCallback: typeof http.kCloseCallback = http.kCloseCallback;
 const kClosedWithUnsentData: typeof http.kClosedWithUnsentData = http.kClosedWithUnsentData;
 const isTlsSymbol: typeof http.isTlsSymbol = http.isTlsSymbol;
-const fakeSocketSymbol: typeof http.fakeSocketSymbol = http.fakeSocketSymbol;
 const kOutHeaders: typeof http.kOutHeaders = http.kOutHeaders;
 const kErrored: typeof http.kErrored = http.kErrored;
 const kHighWaterMark: typeof http.kHighWaterMark = http.kHighWaterMark;
@@ -117,15 +116,6 @@ const kChunkedLength: typeof http.kChunkedLength = http.kChunkedLength;
 const kBytesWritten: typeof http.kBytesWritten = http.kBytesWritten;
 const kLenientValidation: typeof http.kLenientValidation = http.kLenientValidation;
 const kNeedDrain: typeof http.kNeedDrain = http.kNeedDrain;
-const kExchange: typeof http.kExchange = http.kExchange;
-const kArmedTimeout = Symbol("kArmedTimeout");
-const kWritableMark = Symbol("kWritableMark");
-const kReadableMark = Symbol("kReadableMark");
-const kOwnReadableState = Symbol("kOwnReadableState");
-const kOwnWritableState = Symbol("kOwnWritableState");
-const kIsOpen = Symbol("kIsOpen");
-const kIsPrepared = Symbol("kIsPrepared");
-const kHasWaitingResponses = Symbol("kHasWaitingResponses");
 type Exchange = $Node.HttpExchange;
 const HEADER_DATE = 1 << 0;
 const HEADER_CONNECTION = 1 << 1;
@@ -232,7 +222,7 @@ function emitCloseNTServer(this: $Node.HttpServer, generation: ListenerGeneratio
 }
 
 function settleDispatchAtClose(res: $Node.ServerResponse) {
-  const exchange = res[kExchange];
+  const exchange = res.$exchange;
   if (exchange === undefined || !exchange.awaitsClose) return;
   exchange.awaitsClose = false;
   const pendingPromise = exchange.dispatchPromise;
@@ -343,7 +333,7 @@ function releaseServerParserShim(socket: $Node.HttpServerSocket, req?: $Node.Inc
   const parser = socket.parser;
   if (parser == null) return;
   socket.parser = null;
-  socket[kIsPrepared] = false;
+  socket.$isPrepared = false;
   parser.incoming = null;
   parser.socket = null;
   parser[kParserOnTimeout] = null;
@@ -527,11 +517,11 @@ declare global {
       [kHandedOff]?: boolean;
       [kUpgradeIncoming]?: IncomingMessage | null;
       /** In the order of their requests. */
-      [kPipelinedResponses]?: PipelinedResponse[];
+      $pipelinedResponses?: PipelinedResponse[];
       [kOutgoingData]?: number;
       [kPipelineKickScheduled]?: boolean;
-      [kSocketTimeoutTimer]?: Timeout;
-      [kKeepAliveTimeoutSet]?: boolean;
+      $socketTimeoutTimer?: Timeout;
+      $keepAliveTimeoutSet?: boolean;
       [kKeepAliveIdleStart]?: number;
     }
 
@@ -562,17 +552,17 @@ declare global {
       [kHandedOff]: boolean;
       [kUpgradeIncoming]: IncomingMessage | null;
       [kStreamingEnabled]: boolean;
-      [kArmedTimeout]: number;
-      [kIsOpen]: boolean;
-      [kIsPrepared]: boolean;
-      [kHasWaitingResponses]: boolean;
-      [kWritableMark]: number;
-      [kReadableMark]: number;
-      [kOwnReadableState]: ReadableState;
-      [kOwnWritableState]: WritableState;
-      [kKeepAliveTimeoutSet]: boolean;
-      [kSocketTimeoutTimer]: Timeout | undefined;
-      [kPipelinedResponses]: PipelinedResponse[] | undefined;
+      $armedTimeout: number;
+      $isOpen: boolean;
+      $isPrepared: boolean;
+      $hasWaitingResponses: boolean;
+      $writableMark: number;
+      $readableMark: number;
+      $ownReadableState: ReadableState;
+      $ownWritableState: WritableState;
+      $keepAliveTimeoutSet: boolean;
+      $socketTimeoutTimer: Timeout | undefined;
+      $pipelinedResponses: PipelinedResponse[] | undefined;
       [kDestroySoon]: boolean;
       [kBoundOnAbort]: ((event: number) => void) | null;
       [kKeepAliveIdleStart]: number | undefined;
@@ -581,7 +571,7 @@ declare global {
       [kEnableStreaming](enable: boolean): void;
     }
 
-    /** A native response in `kPipelinedResponses`: it holds the turn of a request whose `ServerResponse` is not made yet. */
+    /** A native response in `$pipelinedResponses`: it holds the turn of a request whose `ServerResponse` is not made yet. */
     interface PipelinedTurn extends NodeHTTPResponse {
       /** Never there, which tells it from a `ServerResponse` that waits. */
       [kPipelinedQueuedState]?: undefined;
@@ -619,7 +609,7 @@ declare global {
       detachSocket(socket: HttpSocket | null | undefined): void;
       _callPendingCallbacks(): void;
       [kPipelinedQueuedState]: PipelinedQueuedState | undefined;
-      [kExchange]: HttpExchange;
+      $exchange: HttpExchange;
       [kServerResponseStatistics]?: object;
     }
 
@@ -1102,8 +1092,8 @@ Server.prototype[kRealListen] = function (
 
       if (isPipelinedDispatch) {
         // The native handle holds this request's turn until its response exists, also when a throw prevents that.
-        socket[kHasWaitingResponses] = true;
-        (socket[kPipelinedResponses] ??= []).push(handle);
+        socket.$hasWaitingResponses = true;
+        (socket.$pipelinedResponses ??= []).push(handle);
         // For a throw before the kick below. drainMicrotasks() further down runs this one when nothing throws.
         kickPipelineIfIdle(server, socket);
       }
@@ -1111,15 +1101,15 @@ Server.prototype[kRealListen] = function (
       // Like Node.js's resetSocketTimeout (parserOnIncoming): a new request
       // arriving on a kept-alive connection replaces the keep-alive idle
       // timeout with the server's regular per-socket timeout.
-      if (socket[kKeepAliveTimeoutSet]) {
-        socket[kKeepAliveTimeoutSet] = false;
+      if (socket.$keepAliveTimeoutSet) {
+        socket.$keepAliveTimeoutSet = false;
         const serverTimeout = server.timeout;
         if (serverTimeout) {
           socket.setTimeout(serverTimeout);
         } else {
           // No regular per-socket timeout: leave the existing keep-alive
           // timer armed (instead of clear + re-allocate next finish).
-          // onSocketTimeoutTimerExpired ignores it while kKeepAliveTimeoutSet
+          // onSocketTimeoutTimerExpired ignores it while $keepAliveTimeoutSet
           // is false; the next response-finish refreshes it in place.
           socket.timeout = 0;
         }
@@ -1211,13 +1201,13 @@ Server.prototype[kRealListen] = function (
           kHandle,
           handle,
           socket,
-          socket[kWritableMark],
+          socket.$writableMark,
           server.rejectNonStandardBodyWrites,
           server.keepAliveTimeout,
           method !== "HEAD",
         );
         http_res[kSocket] = null;
-        http_res[fakeSocketSymbol] = undefined;
+        http_res.$fakeSocket = undefined;
         if (isAncientHTTP) {
           http_res.useChunkedEncodingByDefault = chunkExpression.test(
             (http_req.headers?.te as string | undefined) ?? "",
@@ -1249,7 +1239,7 @@ Server.prototype[kRealListen] = function (
       // maxRequestsPerSocket limit - pipelined requests past the limit
       // still need to be answered with 503.)
       if (!requestAllowsKeepAlive) {
-        http_res[kExchange].mustClose = true;
+        http_res.$exchange.mustClose = true;
       }
       // One plain on() listener (once() allocates a wrapper, a second listener
       // deoptimizes every 'finish' emit), registered before the 'request' event
@@ -1308,7 +1298,7 @@ Server.prototype[kRealListen] = function (
         // Node.js, this response is queued (res.socket === null) and its
         // writes are buffered until the in-flight response finishes and the
         // pipeline assigns it the socket (advanceResponsePipeline).
-        socket[kPipelinedResponses]?.pop(); // the turn that the native handle held
+        socket.$pipelinedResponses?.pop(); // the turn that the native handle held
         queuePipelinedResponse(socket, http_res, !!isAncientHTTP);
         // A pipelined dispatch can arrive after the previous response finished and detached
         // (bytes still flushing keep it pending), leaving nothing in flight to advance the
@@ -1336,7 +1326,7 @@ Server.prototype[kRealListen] = function (
         }
       }
       if (!isPipelined) {
-        http_res[kExchange].awaitsClose = true;
+        http_res.$exchange.awaitsClose = true;
       }
       // Node traces every parsed request before Expect/limit routing
       // (parserOnIncoming); upgrades never reach that path.
@@ -1388,7 +1378,7 @@ Server.prototype[kRealListen] = function (
         if (isPipelined) {
           // The 503 is queued behind the in-flight responses; the connection
           // closes once it has been written, like Node.js (Connection: close).
-          http_res[kExchange].mustClose = true;
+          http_res.$exchange.mustClose = true;
         } else {
           socket.destroy();
         }
@@ -1477,22 +1467,22 @@ Server.prototype[kRealListen] = function (
         return;
       }
 
-      if (handle.finished || !http_res[kExchange].awaitsClose) {
+      if (handle.finished || !http_res.$exchange.awaitsClose) {
         handle = undefined!;
         // Set in time only because end() defers the 'finish' emit to a
         // process.nextTick (see ServerResponse.prototype.end) and nothing
         // between the 'request' emit and here drains the tick queue.
-        http_res[kExchange].awaitsClose = false;
-        http_res[kExchange].detachedFrom = socket;
+        http_res.$exchange.awaitsClose = false;
+        http_res.$exchange.detachedFrom = socket;
         http_res.detachSocket(socket);
-        if (socket[kPipelinedResponses] !== undefined) {
+        if (socket.$pipelinedResponses !== undefined) {
           advanceResponsePipeline(server, socket);
         }
         return;
       }
 
       const pendingPromise: Promise<void> = $newPromise();
-      http_res[kExchange].dispatchPromise = pendingPromise;
+      http_res.$exchange.dispatchPromise = pendingPromise;
       return pendingPromise;
     };
     this[serverSymbol] = Bun.serve<any>({
@@ -1531,7 +1521,7 @@ Server.prototype[kRealListen] = function (
           method !== "CONNECT" &&
           !hasObserver("http") &&
           !traceEvents.isCategoryGroupEnabled(kHttpTraceCat) &&
-          (socket[kIsPrepared] || prepareSocket(socket))
+          (socket.$isPrepared || prepareSocket(socket))
         ) {
           return dispatchUsualRequest(server, url, method, handle, socket, hasBody);
         }
@@ -1572,14 +1562,14 @@ Server.prototype[kRealListen] = function (
 };
 
 function prepareSocket(socket: $Node.HttpServerSocket): boolean {
-  if (socket[kStreamingEnabled] || socket[kHandedOff] || !socket[kIsOpen]) return false;
+  if (socket[kStreamingEnabled] || socket[kHandedOff] || !socket.$isOpen) return false;
   if (socket.parser === null) socket.parser = createServerParserShim(socket);
   if (socket[kBoundOnAbort] === null) socket[kBoundOnAbort] = onServerRequestEvent.bind(socket);
   if (!socket[kStopParsingOnCloseListener]) {
     socket[kStopParsingOnCloseListener] = true;
     socket.on("close", onSocketCloseStopParsing);
   }
-  socket[kIsPrepared] = true;
+  socket.$isPrepared = true;
   return true;
 }
 
@@ -1591,15 +1581,15 @@ function dispatchUsualRequest(
   socket: $Node.HttpServerSocket,
   hasBody: boolean,
 ): Promise<void> | undefined {
-  if (socket[kKeepAliveTimeoutSet]) {
-    socket[kKeepAliveTimeoutSet] = false;
+  if (socket.$keepAliveTimeoutSet) {
+    socket.$keepAliveTimeoutSet = false;
     const serverTimeout = server.timeout;
     if (serverTimeout) {
       ("unlikely");
       socket.setTimeout(serverTimeout);
     } else socket.timeout = 0;
-  } else if (socket[kArmedTimeout] !== 0) {
-    socket[kSocketTimeoutTimer]!.refresh();
+  } else if (socket.$armedTimeout !== 0) {
+    socket.$socketTimeoutTimer!.refresh();
   }
 
   const req: $Node.IncomingMessage = new IncomingMessage(
@@ -1609,7 +1599,7 @@ function dispatchUsualRequest(
     handle,
     hasBody,
     socket,
-    socket[kReadableMark],
+    socket.$readableMark,
   );
   let parser = socket.parser;
   if (parser == null) parser = socket.parser = createServerParserShim(socket);
@@ -1620,7 +1610,7 @@ function dispatchUsualRequest(
     kHandle,
     handle,
     socket,
-    socket[kWritableMark],
+    socket.$writableMark,
     server.rejectNonStandardBodyWrites,
     server.keepAliveTimeout,
     method !== "HEAD",
@@ -1630,7 +1620,7 @@ function dispatchUsualRequest(
   socket[kRequest] = req;
   socket._httpMessage = res;
   socket[kCloseCallback] = onServerResponseClose;
-  const exchange = res[kExchange];
+  const exchange = res.$exchange;
   exchange.awaitsClose = true;
   if (!emitsUnseen(res)) {
     ("unlikely");
@@ -1653,12 +1643,12 @@ function dispatchUsualRequest(
       socket._httpMessage = null;
       socket[kRequest] = undefined;
     }
-    res[fakeSocketSymbol] = null;
+    res.$fakeSocket = null;
     res[kSocket] = null;
     exchange.awaitsClose = false;
     return undefined;
   }
-  if (!exchange.awaitsClose || ((res.finished || res.destroyed || !socket[kIsOpen]) && handle.finished)) {
+  if (!exchange.awaitsClose || ((res.finished || res.destroyed || !socket.$isOpen) && handle.finished)) {
     exchange.awaitsClose = false;
     exchange.detachedFrom = socket;
     res.detachSocket(socket);
@@ -2013,23 +2003,20 @@ function detachSocketListenersForHandoff(socket: $Node.HttpServerSocket) {
 function resolveHandoffPromise(promise: Promise<unknown>) {
   $resolvePromise(promise, undefined);
 }
-const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
 // destroySoon() was called: native lets the read that is being parsed reach the request, then closes right behind the FIN.
 const kDestroySoon = Symbol("kDestroySoon");
 // Per-socket cached bound abort handler (the socket outlives its requests).
 const kBoundOnAbort = Symbol("kBoundOnAbort");
-const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // When the keep-alive idle period on a connection started (the last response
 // finish). onResponseFinishHandleSocket records this instead of rescheduling
 // the socket timer on every response; onSocketTimeoutTimerExpired reads it to
 // grant the remaining idle budget when the timer actually fires.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
 // HTTP/1.1 pipelining (responses queued behind an in-flight response):
-// - on the socket: array of queued ServerResponses, in arrival order
+// - `$pipelinedResponses` on the socket: array of queued ServerResponses, in arrival order
 // - on a queued response: { ops, bytes, needDrain, ended, isAncient } while it
 //   is queued (undefined once it owns the socket)
-const kPipelinedResponses = Symbol("kPipelinedResponses");
 const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
 // Node's `state.outgoingData`: bytes buffered across this connection's queued
 // responses. Reads are paused while it is at or above the high water mark.
@@ -2067,7 +2054,7 @@ function socketOnError(this: $Node.HttpServerSocket, err: Error) {
     // Node checks _headerSent (bytes reached the socket), not headersSent
     // (writeHead called): after res.writeHead() but before write/end/flush,
     // no bytes are on the wire yet so the raw error response is still safe.
-    if (this.writable && (!message || message[kExchange].headerState !== NodeHTTPHeaderState.sent)) {
+    if (this.writable && (!message || message.$exchange.headerState !== NodeHTTPHeaderState.sent)) {
       let response: Buffer;
       switch (err?.code) {
         case "HPE_HEADER_OVERFLOW":
@@ -2100,32 +2087,32 @@ function noopOnError() {}
 function onSocketTimeoutTimerExpired(socket: $Node.HttpServerSocket) {
   // The keep-alive idle timer is left armed across the request to avoid a
   // clear + setTimeout cycle per request. A fire while a request is in
-  // flight (kKeepAliveTimeoutSet was cleared on request arrival) is stale;
+  // flight ($keepAliveTimeoutSet was cleared on request arrival) is stale;
   // re-arm the timer so the response-finish fast path, which relies on it
   // staying live, keeps working, and bail. This runs at most once per idle
   // interval per busy connection, not once per request.
-  if (socket.timeout === 0 && !socket[kKeepAliveTimeoutSet]) {
-    socket[kSocketTimeoutTimer]?.refresh();
+  if (socket.timeout === 0 && !socket.$keepAliveTimeoutSet) {
+    socket.$socketTimeoutTimer?.refresh();
     return;
   }
   // onResponseFinishHandleSocket records when the last response finished
   // instead of rescheduling the timer on every response, so the timer's
   // deadline may predate the start of the real idle period. Grant the
   // remaining budget once, measured from that last finish. Gated on
-  // kKeepAliveTimeoutSet so a fire of the server's regular per-socket
+  // $keepAliveTimeoutSet so a fire of the server's regular per-socket
   // timeout (socket.timeout !== 0 with no response outstanding) never
   // consumes a stale keep-alive idle mark.
   const idleStart = socket[kKeepAliveIdleStart];
-  if (idleStart !== undefined && socket[kKeepAliveTimeoutSet]) {
+  if (idleStart !== undefined && socket.$keepAliveTimeoutSet) {
     socket[kKeepAliveIdleStart] = undefined;
     const remaining = socket.timeout - (DateNow() - idleStart);
     if (remaining > 0) {
-      const existingTimer = socket[kSocketTimeoutTimer];
+      const existingTimer = socket.$socketTimeoutTimer;
       if (existingTimer !== undefined) clearTimeout(existingTimer);
       const timer: $Node.Timeout = setTimeout(onSocketTimeoutTimerExpired, remaining, socket);
       timer.unref();
-      socket[kSocketTimeoutTimer] = timer;
-      socket[kArmedTimeout] = remaining;
+      socket.$socketTimeoutTimer = timer;
+      socket.$armedTimeout = remaining;
       return;
     }
   }
@@ -2135,9 +2122,9 @@ function onSocketTimeoutTimerExpired(socket: $Node.HttpServerSocket) {
   // the socket alive). Only for the keep-alive case: the server.timeout
   // path relies on _unrefTimer() refreshing the fired timer in the slot,
   // like net.Socket.
-  if (socket[kKeepAliveTimeoutSet]) {
-    socket[kSocketTimeoutTimer] = undefined;
-    socket[kArmedTimeout] = 0;
+  if (socket.$keepAliveTimeoutSet) {
+    socket.$socketTimeoutTimer = undefined;
+    socket.$armedTimeout = 0;
   }
   socket._onTimeout();
 }
@@ -2188,17 +2175,17 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     [kStreamingEnabled] = false;
     [kBoundOnAbort]: ((event: number) => void) | null = null;
     [kKeepAliveIdleStart]: number | undefined = undefined;
-    [kPipelinedResponses]: $Node.PipelinedResponse[] | undefined = undefined;
-    [kKeepAliveTimeoutSet] = false;
-    [kSocketTimeoutTimer]: $Node.Timeout | undefined = undefined;
-    [kArmedTimeout] = 0;
-    [kIsOpen] = true;
-    [kIsPrepared] = false;
-    [kHasWaitingResponses] = false;
-    [kWritableMark] = 0;
-    [kReadableMark] = 0;
-    [kOwnReadableState]: $Node.ReadableState;
-    [kOwnWritableState]: $Node.WritableState;
+    $pipelinedResponses: $Node.PipelinedResponse[] | undefined = undefined;
+    $keepAliveTimeoutSet = false;
+    $socketTimeoutTimer: $Node.Timeout | undefined = undefined;
+    $armedTimeout = 0;
+    $isOpen = true;
+    $isPrepared = false;
+    $hasWaitingResponses = false;
+    $writableMark = 0;
+    $readableMark = 0;
+    $ownReadableState: $Node.ReadableState;
+    $ownWritableState: $Node.WritableState;
     [kRequest]: $Node.IncomingMessage | undefined = undefined;
     [kCloseCallback]: ((this: $Node.HttpServerSocket) => void) | undefined = undefined;
     [kStopParsingOnCloseListener] = false;
@@ -2248,10 +2235,10 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       this._writableState.emitClose = true;
       this._readableState.emitClose = true;
       this._writableState.decodeStrings = true;
-      this[kOwnReadableState] = this._readableState;
-      this[kOwnWritableState] = this._writableState;
-      this[kWritableMark] = +this.writableHighWaterMark;
-      this[kReadableMark] = +this.readableHighWaterMark;
+      this.$ownReadableState = this._readableState;
+      this.$ownWritableState = this._writableState;
+      this.$writableMark = +this.writableHighWaterMark;
+      this.$readableMark = +this.readableHighWaterMark;
       this.server = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
       this[kHandle] = handle;
@@ -2312,7 +2299,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       if (handle) {
         this[kStreamingEnabled] = enable;
         if (enable) {
-          this[kIsPrepared] = false;
+          this.$isPrepared = false;
           handle.ondata = this.#onData.bind(this);
           handle.ondrain = this.#onDrain.bind(this);
           this[kRememberPeer]();
@@ -2364,7 +2351,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     #closeHandle(handle: $Node.NodeHTTPServerSocket, callback: $Node.ErrorCallback, err?: Error | null) {
       this[kSocketBytesWritten] = handleBytesWritten(handle);
       this[kHandle] = undefined;
-      this[kIsOpen] = false;
+      this.$isOpen = false;
       // Capture the in-flight response before detachSocket() can clear it: a
       // synchronous res.destroy() inside the request handler runs detachSocket()
       // between here and the native close delivering #onClose. The abort itself
@@ -2389,7 +2376,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       // released parser (free() invoked, kOnTimeout nulled).
       releaseServerParserShim(this);
       this[kHandle] = null;
-      this[kIsOpen] = false;
+      this.$isOpen = false;
       if (closedHandle) {
         this[kSocketBytesWritten] = handleBytesWritten(closedHandle);
         this[kClosedWithUnsentData] = closedHandle.closedWithUnsentData;
@@ -2415,11 +2402,11 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
           this.once("close", () => process.nextTick(emitCloseServer, server));
         }
       }
-      const timer = this[kSocketTimeoutTimer];
+      const timer = this.$socketTimeoutTimer;
       if (timer) {
         clearTimeout(timer);
-        this[kSocketTimeoutTimer] = undefined;
-        this[kArmedTimeout] = 0;
+        this.$socketTimeoutTimer = undefined;
+        this.$armedTimeout = 0;
       }
 
       // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
@@ -2455,7 +2442,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
         failPendingWriteCallbacks(message, writeFailure);
       }
       // An ended response that was still draining finishes first, like Node.js's failed last write: its request is not aborted.
-      const wasDraining = message != null && message[kExchange].pendingFinish !== undefined;
+      const wasDraining = message != null && message.$exchange.pendingFinish !== undefined;
       if (wasDraining) flushPendingFinish.$call(message);
       const req = wasDraining ? undefined : message?.req;
 
@@ -2531,7 +2518,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       // Socket activity: push the inactivity timeout (socket.setTimeout /
       // server.timeout / keepAliveTimeout) further out, like Node.js's
       // net.Socket._unrefTimer.
-      this[kSocketTimeoutTimer]?.refresh();
+      this.$socketTimeoutTimer?.refresh();
     }
 
     address() {
@@ -2549,11 +2536,11 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     _destroy(err: Error | null, callback: $Node.ErrorCallback) {
       sendWhatIsHeld(this._httpMessage);
       // Match net.Socket._destroy: #onClose clears this too, but the native close is async and an already-due timer would fire first.
-      const timer = this[kSocketTimeoutTimer];
+      const timer = this.$socketTimeoutTimer;
       if (timer) {
         clearTimeout(timer);
-        this[kSocketTimeoutTimer] = undefined;
-        this[kArmedTimeout] = 0;
+        this.$socketTimeoutTimer = undefined;
+        this.$armedTimeout = 0;
       }
       const handle = this[kHandle];
       if (!handle) {
@@ -2736,12 +2723,12 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       // Assigned after validation (unlike setStreamTimeout): onSocketTimeoutTimerExpired reads this.timeout.
       this.timeout = msecs;
 
-      const existingTimer = this[kSocketTimeoutTimer];
+      const existingTimer = this.$socketTimeoutTimer;
       if (msecs === 0) {
         if (existingTimer) {
           clearTimeout(existingTimer);
-          this[kSocketTimeoutTimer] = undefined;
-          this[kArmedTimeout] = 0;
+          this.$socketTimeoutTimer = undefined;
+          this.$armedTimeout = 0;
         }
         if (callback !== undefined) {
           validateFunction(callback, "callback");
@@ -2750,14 +2737,14 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       } else {
         // The keep-alive cycle re-arms the same idle interval after every
         // response: refresh the existing timer instead of clear+allocate.
-        if (existingTimer && this[kArmedTimeout] === msecs) {
+        if (existingTimer && this.$armedTimeout === msecs) {
           existingTimer.refresh();
         } else {
           if (existingTimer) clearTimeout(existingTimer);
           const timer: $Node.Timeout = setTimeout(onSocketTimeoutTimerExpired, msecs, this);
           timer.unref();
-          this[kSocketTimeoutTimer] = timer;
-          this[kArmedTimeout] = msecs;
+          this.$socketTimeoutTimer = timer;
+          this.$armedTimeout = msecs;
         }
         if (callback !== undefined) {
           validateFunction(callback, "callback");
@@ -2850,7 +2837,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
 // been decided, so `this.chunkedEncoding` is already set. Bun frames the body in uWS
 // and never sets `response.chunkedEncoding`, so reproduce Node's decision here.
 function willBeChunked(response: $Node.ServerResponse) {
-  spillHeaders(response[kExchange]);
+  spillHeaders(response.$exchange);
   // kOutHeaders is a null-proto map of lowercased name -> [name, value];
   // index it directly instead of paying hasHeader/getHeader (each of which
   // re-reads the symbol and lowercases its argument) per check.
@@ -2868,7 +2855,7 @@ function willBeChunked(response: $Node.ServerResponse) {
 // A non-chunked message is terminated by the first empty line after the header
 // fields, so it can carry neither a body nor trailers.
 function hasInvalidTrailer(response: $Node.ServerResponse) {
-  if (!response._trailer && (response[kExchange].headerBits & (HEADER_TRAILER | HEADER_SPILLED)) === 0) return false;
+  if (!response._trailer && (response.$exchange.headerBits & (HEADER_TRAILER | HEADER_SPILLED)) === 0) return false;
   if (willBeChunked(response)) return false;
   if (response._trailer) return true;
   const outHeaders = response[kOutHeaders];
@@ -3048,14 +3035,14 @@ function ServerResponse(
     this[kHighWaterMark] = nativeHighWaterMark!;
     this[kRejectNonStandardBodyWrites] = nativeRejectsBodyWrites;
     this[kLenientValidation] = undefined;
-    this[kExchange] = makeExchange(this, nativeSocket!, events, req._readableState);
+    this.$exchange = makeExchange(this, nativeSocket!, events, req._readableState);
     this.req = req;
     this._sent100 = false;
     this[kPendingCallbacks] = undefined;
     this[kHandle] = nativeHandle;
     this.statusCode = 200;
     this.statusMessage = undefined;
-    this[fakeSocketSymbol] = nativeSocket!;
+    this.$fakeSocket = nativeSocket!;
     if (this.on !== eventEmitterOn) {
       ("unlikely");
       this._events = Object.create(null);
@@ -3109,14 +3096,14 @@ function ServerResponse(
   this[kRejectNonStandardBodyWrites] =
     options?.[kRejectNonStandardBodyWrites] ?? options?.rejectNonStandardBodyWrites ?? false;
   this[kLenientValidation] = undefined;
-  this[kExchange] = exchange;
+  this.$exchange = exchange;
   this.req = req;
   this._sent100 = false;
   this[kPendingCallbacks] = [];
   this[kHandle] = (options ? options[kHandle] : undefined) || req[kHandle];
   this.statusCode = 200;
   this.statusMessage = undefined;
-  this[fakeSocketSymbol] = undefined;
+  this.$fakeSocket = undefined;
 
   if (req.httpVersionMajor! < 1 || req.httpVersionMinor! < 1) {
     this.useChunkedEncodingByDefault = chunkExpression.test((req.headers?.te as string | undefined) ?? "");
@@ -3134,12 +3121,12 @@ function isUnheard(res: $Node.ServerResponse, exchange: Exchange): boolean {
 }
 
 function statusCodeToSend(res: $Node.ServerResponse): number {
-  const exchange = res[kExchange];
+  const exchange = res.$exchange;
   return (exchange.flags & EXCHANGE_HAS_SNAPSHOT) !== 0 ? exchange.statusCode : res.statusCode;
 }
 
 function statusMessageToSend(res: $Node.ServerResponse): string | undefined {
-  const exchange = res[kExchange];
+  const exchange = res.$exchange;
   // Native code writes the status code's own message for an empty one as for none.
   if ((exchange.flags & EXCHANGE_HAS_SNAPSHOT) !== 0) return exchange.statusMessage || undefined;
   return res.statusMessage === undefined ? undefined : res.statusMessage;
@@ -3355,7 +3342,7 @@ function stopServerResponsePerf(this: $Node.ServerResponse) {
 // arm keep-alive) runs first because onResponseFinishHandleSocket's guards
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish(this: $Node.ServerResponse) {
-  const exchange = this[kExchange];
+  const exchange = this.$exchange;
   if ((exchange.flags & EXCHANGE_FINISHES_HERE) !== 0) {
     finishConnection(exchange, this, this.req, exchange.connection!, false);
     return;
@@ -3389,10 +3376,10 @@ function finishResponseOnSocket(
   onResponseFinishHandleSocket(server, socket, res);
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
-  if (res[kExchange].detachedFrom !== null) return;
+  if (res.$exchange.detachedFrom !== null) return;
   if (socket != null) {
     res.detachSocket(socket);
-    if (socket[kPipelinedResponses] !== undefined) {
+    if (socket.$pipelinedResponses !== undefined) {
       ("unlikely");
       advanceResponsePipeline(server, socket);
     }
@@ -3408,7 +3395,7 @@ function onResponseFinishHandleSocket(
   socket: $Node.HttpServerSocket | null | undefined,
   res: $Node.ServerResponse,
 ) {
-  if (res[kExchange].mustClose) {
+  if (res.$exchange.mustClose) {
     if (socket != null) {
       if (typeof socket.destroySoon === "function") {
         socket.destroySoon();
@@ -3429,7 +3416,7 @@ function onResponseFinishHandleSocket(
   }
   // Pipelined responses are still queued behind this one: the connection is
   // not idle, so do not arm the keep-alive idle timeout yet.
-  if (socket[kPipelinedResponses]?.length) {
+  if (socket.$pipelinedResponses?.length) {
     return;
   }
   const rawKeepAliveTimeout = server.keepAliveTimeout;
@@ -3448,13 +3435,13 @@ function onResponseFinishHandleSocket(
     // idle period started; onSocketTimeoutTimerExpired grants the remaining
     // budget if the timer fires early, so the socket still closes after
     // exactly `total` ms of idle.
-    if (socket[kArmedTimeout] === total) {
+    if (socket.$armedTimeout === total) {
       socket.timeout = total;
     } else {
       socket.setTimeout(total);
     }
     socket[kKeepAliveIdleStart] = DateNow();
-    socket[kKeepAliveTimeoutSet] = true;
+    socket.$keepAliveTimeoutSet = true;
   }
 }
 
@@ -3537,7 +3524,7 @@ function kickPipelineIfIdle(server: $Node.HttpServer, socket: $Node.HttpServerSo
 }
 function advancePipelineIfIdleNT(server: $Node.HttpServer, socket: $Node.HttpServerSocket) {
   socket[kPipelineKickScheduled] = false;
-  if (socket._httpMessage == null && socket[kPipelinedResponses]?.length) {
+  if (socket._httpMessage == null && socket.$pipelinedResponses?.length) {
     advanceResponsePipeline(server, socket);
   }
 }
@@ -3556,14 +3543,14 @@ function queuePipelinedResponse(socket: $Node.HttpSocket, res: $Node.ServerRespo
     isAncient,
     socket,
   };
-  res[kExchange].flags |= EXCHANGE_WAITS_ITS_TURN;
-  (socket as any)[kHasWaitingResponses] = true;
-  (socket[kPipelinedResponses] ??= []).push(res);
+  res.$exchange.flags |= EXCHANGE_WAITS_ITS_TURN;
+  (socket as any).$hasWaitingResponses = true;
+  (socket.$pipelinedResponses ??= []).push(res);
 }
 
 // Like Node.js's socketOnEnd: the response that gets `_last` after the client's FIN is the last one in the queue.
 function lastPipelinedResponse(socket: $Node.HttpSocket) {
-  const queue = socket[kPipelinedResponses];
+  const queue = socket.$pipelinedResponses;
   return queue?.[queue.length - 1];
 }
 
@@ -3572,10 +3559,10 @@ function lastPipelinedResponse(socket: $Node.HttpSocket) {
 // (abortIncoming). Runs from the native socket's close path and from the
 // http1 fallback's socket 'close' listener.
 function abortQueuedPipelinedResponses(socket: $Node.HttpSocket, error: Error = $ERR_STREAM_DESTROYED("write")) {
-  const pipelined = socket[kPipelinedResponses];
+  const pipelined = socket.$pipelinedResponses;
   const pipelinedLength = pipelined ? pipelined.length : 0;
   if (pipelinedLength) {
-    socket[kPipelinedResponses] = undefined;
+    socket.$pipelinedResponses = undefined;
     for (let i = 0; i < pipelinedLength; i++) {
       const queuedRes = pipelined![i];
       // A turn that the native handle still holds: the native close path notifies that one.
@@ -3631,7 +3618,7 @@ function advanceResponsePipeline(
   if (!socket || socket.writableEnded || socket.destroyed) {
     return;
   }
-  const queue = socket[kPipelinedResponses];
+  const queue = socket.$pipelinedResponses;
   if (!queue || queue.length === 0) {
     return;
   }
@@ -3673,7 +3660,7 @@ function advanceResponsePipeline(
 
   queue.shift();
   res[kPipelinedQueuedState] = undefined;
-  res[kExchange].flags &= ~EXCHANGE_WAITS_ITS_TURN;
+  res.$exchange.flags &= ~EXCHANGE_WAITS_ITS_TURN;
   releasePipelineOutgoingData(socket, queued.bytes);
 
   if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) {
@@ -3723,7 +3710,7 @@ function advanceResponsePipeline(
     if (queued.ended) {
       res.finished = false;
     }
-    res[kExchange].isReplaying = true;
+    res.$exchange.isReplaying = true;
     try {
       for (let i = 0; i < opsLength; i++) {
         const op = ops[i];
@@ -3740,7 +3727,7 @@ function advanceResponsePipeline(
         }
       }
     } finally {
-      res[kExchange].isReplaying = false;
+      res.$exchange.isReplaying = false;
     }
   }
   if (queued.needDrain && !queued.ended) {
@@ -3776,7 +3763,7 @@ function accountQueuedHeaderBytes(res: $Node.ServerResponse, queued: PipelinedQu
   }
   // Status line: "HTTP/1.1 NNN <message>\r\n".
   let bytes = 15 + String(res.statusMessage ?? STATUS_CODES[res.statusCode] ?? "unknown").length;
-  spillHeaders(res[kExchange]);
+  spillHeaders(res.$exchange);
   const outHeaders = res[kOutHeaders];
   if (outHeaders !== null && outHeaders !== undefined) {
     for (const key in outHeaders) {
@@ -3812,8 +3799,8 @@ function bufferPipelinedWrite(
   encoding: string | null | undefined,
   callback: $Node.HttpWriteCallback | undefined,
 ) {
-  callWriteHeadIfObservable(res, res[kExchange].headerState);
-  if (res[kExchange].headerState === NodeHTTPHeaderState.none) {
+  callWriteHeadIfObservable(res, res.$exchange.headerState);
+  if (res.$exchange.headerState === NodeHTTPHeaderState.none) {
     updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
@@ -3849,8 +3836,8 @@ function bufferPipelinedEnd(
   encoding: string | null | undefined,
   callback: $Node.HttpWriteCallback | undefined,
 ) {
-  callWriteHeadIfObservable(res, res[kExchange].headerState, true);
-  if (res[kExchange].headerState === NodeHTTPHeaderState.none) {
+  callWriteHeadIfObservable(res, res.$exchange.headerState, true);
+  if (res.$exchange.headerState === NodeHTTPHeaderState.none) {
     updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
@@ -3930,7 +3917,7 @@ function isHTTPServerHeaderStateSentOrAssigned(state: NodeHTTPHeaderState) {
 // by also checking the header state, then defer to the OutgoingMessage
 // implementations.
 function throwIfServerHeadersSent(self: $Node.ServerResponse, action: string) {
-  if (isHTTPServerHeaderStateSentOrAssigned(self[kExchange].headerState)) {
+  if (isHTTPServerHeaderStateSentOrAssigned(self.$exchange.headerState)) {
     throw $ERR_HTTP_HEADERS_SENT(action);
   }
 }
@@ -3940,7 +3927,7 @@ function outgoingSetHeaderIsOurs(): boolean {
 }
 
 const responseSetHeader = function setHeader(this: $Node.ServerResponse, name: string, value: $Node.HttpHeaderValue) {
-  const exchange = this[kExchange];
+  const exchange = this.$exchange;
   if (exchange.headerState !== NodeHTTPHeaderState.none) throw $ERR_HTTP_HEADERS_SENT("set");
   if (!outgoingSetHeaderIsOurs()) {
     return OutgoingMessagePrototype.setHeader.$call(this, name, value);
@@ -3989,7 +3976,7 @@ Object.defineProperty(ServerResponse.prototype, "headers", {
       | undefined,
   ) {
     throwIfServerHeadersSent(this, "set");
-    spillHeaders(this[kExchange]);
+    spillHeaders(this.$exchange);
     this[kOutHeaders] = null;
     if (!value) return;
     if ($isArray(value)) {
@@ -4012,15 +3999,15 @@ Object.defineProperty(ServerResponse.prototype, "headers", {
 
 Object.defineProperty(ServerResponse.prototype, "socket", {
   get(this: $Node.ServerResponse) {
-    if ((this[kExchange].flags & EXCHANGE_WAITS_ITS_TURN) !== 0) {
+    if ((this.$exchange.flags & EXCHANGE_WAITS_ITS_TURN) !== 0) {
       // Queued pipelined response: like Node.js, res.socket is null until the
       // response is assigned the socket.
       return null;
     }
-    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
+    return (this.$fakeSocket ??= new FakeSocket(this));
   },
   set(this: $Node.ServerResponse, value: $Node.HttpSocket | null) {
-    this[fakeSocketSymbol] = value;
+    this.$fakeSocket = value;
     // Keep the OutgoingMessage storage in sync: the standalone no-handle path
     // routes through OutgoingMessage.write/end, whose kSocket-gated checks
     // (_finish()/'prefinish', _flushOutput) must see the assigned socket.
@@ -4063,7 +4050,7 @@ ServerResponse.prototype.setTimeout = function setTimeout(
   // response's 'timeout' event (emitted by onNodeHTTPServerSocketTimeout);
   // only msecs is delegated to the socket.
   if (callback) this.on("timeout", callback);
-  if (!this[fakeSocketSymbol]) {
+  if (!this.$fakeSocket) {
     this.once("socket", function socketSetTimeoutOnConnect(socket: $Node.HttpSocket) {
       socket.setTimeout!(msecs);
     });
@@ -4077,10 +4064,10 @@ ServerResponse.prototype.setTimeout = function setTimeout(
 // The end() callback (or null) while the body end() buffered is still draining.
 Object.defineProperty(ServerResponse.prototype, "headersSent", {
   get(this: $Node.ServerResponse) {
-    return isHTTPServerHeaderStateSentOrAssigned(this[kExchange].headerState);
+    return isHTTPServerHeaderStateSentOrAssigned(this.$exchange.headerState);
   },
   set(this: $Node.ServerResponse, value: boolean) {
-    this[kExchange].headerState = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
+    this.$exchange.headerState = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
   },
 });
 
@@ -4257,7 +4244,7 @@ function sendHeldChunk(res: $Node.ServerResponse, exchange: Exchange): void {
 
 function sendWhatIsHeld(res: $Node.ServerResponse | null | undefined): void {
   if (res == null) return;
-  const exchange = res[kExchange];
+  const exchange = res.$exchange;
   if ((exchange.flags & EXCHANGE_HOLDS_CHUNK) !== 0) sendHeldChunk(res, exchange);
 }
 
@@ -4330,7 +4317,7 @@ function finishExchange(exchange: Exchange): void {
     return;
   }
   const idleTimeout = keepAliveTimeout + keepAliveTimeoutBuffer;
-  if (socket[kArmedTimeout] !== idleTimeout && socket.setTimeout !== serverSocketSetTimeout) {
+  if (socket.$armedTimeout !== idleTimeout && socket.setTimeout !== serverSocketSetTimeout) {
     ("unlikely");
     finishExchangeInSteps(exchange, flags);
     return;
@@ -4410,20 +4397,20 @@ function finishConnection(
     }
   }
   const idleTimeout = exchange.idleTimeout;
-  if (socket[kArmedTimeout] === idleTimeout) socket.timeout = idleTimeout;
+  if (socket.$armedTimeout === idleTimeout) socket.timeout = idleTimeout;
   else {
     ("unlikely");
     socket.setTimeout(idleTimeout);
   }
   socket[kKeepAliveIdleStart] = DateNow();
-  socket[kKeepAliveTimeoutSet] = true;
+  socket.$keepAliveTimeoutSet = true;
   if (exchange.detachedFrom === null) {
     if (socket._httpMessage === res) {
       socket[kCloseCallback] = undefined;
       socket._httpMessage = null;
       socket[kRequest] = undefined;
     }
-    res[fakeSocketSymbol] = null;
+    res.$fakeSocket = null;
     res[kSocket] = null;
   }
 }
@@ -4544,12 +4531,12 @@ function detachesItself(res: $Node.ServerResponse): boolean {
 
 function isAtRest(socket: $Node.HttpServerSocket): boolean {
   return (
-    socket[kIsOpen] &&
+    socket.$isOpen &&
     !socket._paused &&
-    !socket[kHasWaitingResponses] &&
+    !socket.$hasWaitingResponses &&
     !socket[kStreamingEnabled] &&
     !socket[kHandedOff] &&
-    (flagsOf(socket[kOwnReadableState]) & kSocketFlowMask) === kSocketFlows
+    (flagsOf(socket.$ownReadableState) & kSocketFlowMask) === kSocketFlows
   );
 }
 
@@ -4611,7 +4598,7 @@ ServerResponse.prototype.end = function (
     }
   }
 
-  const exchange = this[kExchange];
+  const exchange = this.$exchange;
   let flags = exchange.flags;
   if ((flags & EXCHANGE_WAITS_ITS_TURN) !== 0) {
     ("unlikely");
@@ -4673,7 +4660,7 @@ ServerResponse.prototype.end = function (
   // Node's _implicitHeader() ran unless the chunk was dropped above, so on a socket that has gone the head counts as sent like on the normal path below.
   const countsAsSent = !droppedChunk || headerState !== NodeHTTPHeaderState.none;
   const socket = exchange.connection;
-  if (socket === null || !socket[kIsOpen]) {
+  if (socket === null || !socket.$isOpen) {
     ("unlikely");
     if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) {
       if (countsAsSent) {
@@ -4797,17 +4784,17 @@ function emitResponseFinished(res: $Node.ServerResponse, callback: $Node.HttpWri
 }
 
 function flushPendingFinish(this: $Node.ServerResponse) {
-  const callback = this[kExchange].pendingFinish;
+  const callback = this.$exchange.pendingFinish;
   if (callback === undefined) return;
-  this[kExchange].pendingFinish = undefined;
+  this.$exchange.pendingFinish = undefined;
   queueResponseFinished(this, callback);
 }
 
 // For internal/http1_server_fallback. Like Node.js's onFinish it emits 'finish' in place: a tick later, a closing socket's 'close' listeners would run first.
 function finishDrainedResponse(res: $Node.ServerResponse) {
-  const callback = res[kExchange].pendingFinish;
+  const callback = res.$exchange.pendingFinish;
   if (callback === undefined) return;
-  res[kExchange].pendingFinish = undefined;
+  res.$exchange.pendingFinish = undefined;
   res._callPendingCallbacks();
   emitResponseFinished(res, callback);
 }
@@ -4836,7 +4823,7 @@ ServerResponse.prototype.write = function (
     }
   }
 
-  const exchange = this[kExchange];
+  const exchange = this.$exchange;
   const flags = exchange.flags;
   if ((flags & EXCHANGE_WAITS_ITS_TURN) !== 0) {
     ("unlikely");
@@ -4880,7 +4867,7 @@ ServerResponse.prototype.write = function (
     ticksAreUnhooked()
   ) {
     const socket = exchange.connection;
-    if (socket !== null && socket[kIsOpen]) {
+    if (socket !== null && socket.$isOpen) {
       exchange.heldChunk = chunk;
       exchange.headerState = NodeHTTPHeaderState.sent;
       // The head counts as sent, so what is assigned to statusCode or statusMessage from here on has no effect on the wire.
@@ -4959,13 +4946,13 @@ ServerResponse.prototype.write = function (
   if (buffered === 0) return true;
   const connection = exchange.connection;
   if (connection !== null && this[kSocket] === connection) {
-    return buffered < connection[kOwnWritableState].highWaterMark;
+    return buffered < connection.$ownWritableState.highWaterMark;
   }
   return buffered < this.writableHighWaterMark;
 };
 
 function addPendingCallback(res: $Node.ServerResponse, callback: $Node.HttpWriteCallback): void {
-  const exchange = res[kExchange];
+  const exchange = res.$exchange;
   if ((exchange.flags & EXCHANGE_HAS_PENDING_CALLBACKS) === 0) {
     exchange.flags |= EXCHANGE_HAS_PENDING_CALLBACKS;
     res[kPendingCallbacks] = [callback];
@@ -4979,21 +4966,21 @@ const ServerResponsePrototypeWrite: $Node.ServerResponse["write"] = ServerRespon
 const ServerResponsePrototypeEnd: $Node.ServerResponse["end"] = ServerResponse.prototype.end;
 
 function flushWriteAccountingNT(res: $Node.ServerResponse) {
-  res[kExchange].isFlushScheduled = false;
-  const needsDrain = (res[kExchange].bytesBuffered ?? 0) >= res.writableHighWaterMark;
-  res[kExchange].bytesBuffered = 0;
+  res.$exchange.isFlushScheduled = false;
+  const needsDrain = (res.$exchange.bytesBuffered ?? 0) >= res.writableHighWaterMark;
+  res.$exchange.bytesBuffered = 0;
   if (needsDrain && !res.destroyed && !res.finished) {
     res.emit("drain");
   }
 }
 function scheduleWriteAccountingFlush(res: $Node.ServerResponse) {
-  if (res[kExchange].isFlushScheduled) return;
-  res[kExchange].isFlushScheduled = true;
+  if (res.$exchange.isFlushScheduled) return;
+  res.$exchange.isFlushScheduled = true;
   queueTick1(flushWriteAccountingNT, res);
 }
 
 ServerResponse.prototype._callPendingCallbacks = function (this: $Node.ServerResponse) {
-  if ((this[kExchange].flags & EXCHANGE_HAS_PENDING_CALLBACKS) === 0) return;
+  if ((this.$exchange.flags & EXCHANGE_HAS_PENDING_CALLBACKS) === 0) return;
   const callbacks = this[kPendingCallbacks]!;
   const originalLength = callbacks.length;
   if (originalLength === 0) return;
@@ -5053,7 +5040,7 @@ Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
       !this.finished &&
       ((handle?.bufferedAmount ?? 0) !== 0 ||
         handle?.onwritable !== undefined ||
-        (this[kExchange].bytesBuffered ?? 0) >= this.writableHighWaterMark ||
+        (this.$exchange.bytesBuffered ?? 0) >= this.writableHighWaterMark ||
         (this[kPipelinedQueuedState]?.needDrain ?? false))
     );
   },
@@ -5079,7 +5066,7 @@ Object.defineProperty(ServerResponse.prototype, "writableLength", {
     // has buffered, plus anything buffered while queued behind a pipelined
     // response.
     return (
-      (this[kExchange].bytesBuffered ?? 0) +
+      (this.$exchange.bytesBuffered ?? 0) +
       (this[kHandle]?.bufferedAmount ?? 0) +
       (this[kPipelinedQueuedState]?.bytes ?? 0)
     );
@@ -5113,17 +5100,17 @@ ServerResponse.prototype._send = function (
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
 
-  const headerState = this[kExchange].headerState;
+  const headerState = this.$exchange.headerState;
   const strict = strictContentLength(this, headerState, false);
   if (headerState !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
-      const renderedHeaders = renderNativeHeaders(this, this[kExchange]);
+      const renderedHeaders = renderNativeHeaders(this, this.$exchange);
       const statusCode = statusCodeToSend(this);
       const statusMessage = statusMessageToSend(this);
       const autoHeaders = renderedAutoHeaders;
       const keepAliveSecs = renderedKeepAliveSecs;
       handle.writeHead(statusCode, statusMessage, renderedHeaders as string[], autoHeaders, keepAliveSecs);
-      this[kExchange].headerState = NodeHTTPHeaderState.sent;
+      this.$exchange.headerState = NodeHTTPHeaderState.sent;
       handle.write(data, encoding, callback, strict);
     });
   } else {
@@ -5137,7 +5124,7 @@ const OriginalWriteHeadFn = function writeHead(
   statusMessage?: string | $Node.HttpHeadersInit | null,
   headers?: $Node.HttpHeadersInit | null,
 ) {
-  const exchange = this[kExchange];
+  const exchange = this.$exchange;
   if (exchange.headerState !== NodeHTTPHeaderState.none) throw $ERR_HTTP_HEADERS_SENT("writeHead");
   _writeHead(statusCode, statusMessage, headers, this, exchange);
 
@@ -5212,11 +5199,11 @@ ServerResponse.prototype.destroy = function (this: $Node.ServerResponse, err?: E
 
 const responseEmit = function emit(this: $Node.ServerResponse, event: $Node.EventName) {
   if (event === "close") {
-    if (this[kExchange].pendingFinish !== undefined) {
+    if (this.$exchange.pendingFinish !== undefined) {
       ("unlikely");
       // The connection died mid-drain: like Node.js, the response still finishes, then closes.
-      const callback = this[kExchange].pendingFinish!;
-      this[kExchange].pendingFinish = undefined;
+      const callback = this.$exchange.pendingFinish!;
+      this.$exchange.pendingFinish = undefined;
       this._closed = true;
       this._callPendingCallbacks();
       queueTick2(emitResponseFinishedThenClose, this, callback);
@@ -5235,7 +5222,7 @@ function emitResponseFinishedThenClose(res: $Node.ServerResponse, callback: $Nod
 
 ServerResponse.prototype.flushHeaders = function (this: $Node.ServerResponse) {
   sendWhatIsHeld(this);
-  const headerState = this[kExchange].headerState;
+  const headerState = this.$exchange.headerState;
   if (headerState === NodeHTTPHeaderState.sent) return; // Should be idempotent.
   if (headerState !== NodeHTTPHeaderState.assigned) this._implicitHeader();
 
@@ -5247,10 +5234,10 @@ ServerResponse.prototype.flushHeaders = function (this: $Node.ServerResponse) {
 
   const handle = this[kHandle];
   if (handle) {
-    if (this[kExchange].headerState === NodeHTTPHeaderState.assigned) {
-      this[kExchange].headerState = NodeHTTPHeaderState.sent;
+    if (this.$exchange.headerState === NodeHTTPHeaderState.assigned) {
+      this.$exchange.headerState = NodeHTTPHeaderState.sent;
 
-      const renderedHeaders = renderNativeHeaders(this, this[kExchange]);
+      const renderedHeaders = renderNativeHeaders(this, this.$exchange);
       const statusCode = statusCodeToSend(this);
       const statusMessage = statusMessageToSend(this);
       const autoHeaders = renderedAutoHeaders;
@@ -5293,11 +5280,11 @@ function callWriteHeadIfObservable(self: $Node.ServerResponse, headerState: Node
     // Node's end(chunk) assigns _contentLength before _implicitHeader reaches
     // _storeHeader, so this implicit call must not freeze the framing to chunked
     // the way an explicit writeHead() does — the body is already in hand.
-    if (fromEnd) self[kExchange].isImplicitFromEnd = true;
+    if (fromEnd) self.$exchange.isImplicitFromEnd = true;
     try {
       self.writeHead(self.statusCode, self.statusMessage);
     } finally {
-      if (fromEnd) self[kExchange].isImplicitFromEnd = false;
+      if (fromEnd) self.$exchange.isImplicitFromEnd = false;
     }
   }
 }
@@ -5445,7 +5432,7 @@ http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
 http1ServerPipeline.mustCloseConnection = function (res: $Node.ServerResponse) {
-  return res[kExchange].mustClose;
+  return res.$exchange.mustClose;
 };
 
 export default {

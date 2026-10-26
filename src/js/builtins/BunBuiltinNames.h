@@ -218,6 +218,24 @@ using namespace JSC;
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 
+// Among the names above: those that only src/js reads and writes, never native code. A property under one of them is an
+// ordinary property that nothing lists: a Proxy reads and writes it on its target, without a trap. Keep this list sorted.
+#define BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
+    macro(armedTimeout) \
+    macro(autoDestroyed) \
+    macro(exchange) \
+    macro(fakeSocket) \
+    macro(hasWaitingResponses) \
+    macro(isOpen) \
+    macro(isPrepared) \
+    macro(keepAliveTimeoutSet) \
+    macro(ownReadableState) \
+    macro(ownWritableState) \
+    macro(pipelinedResponses) \
+    macro(readableMark) \
+    macro(socketTimeoutTimer) \
+    macro(writableMark)
+
 class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);
     friend class JSVMClientData;

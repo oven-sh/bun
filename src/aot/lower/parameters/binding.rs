@@ -1,11 +1,12 @@
 use bun_sema::bind::{Binding, CodeUnit, Decl, has_simple_parameter_list};
-use bun_sema::hir::{FnId, ParamId, PatKind};
+use bun_sema::fold::{TreeNode, push_children};
+use bun_sema::hir::{ExprId, ExprKind, FnId, FnKind, ParamId, PatId, PatKind, UnOp};
 use smallvec::SmallVec;
 
 use crate::ir::{DeclaredType, ValueId};
-use crate::lower::pattern::{PatternNode, apply_default_with};
+use crate::lower::pattern::{PatternNode, PatternOrigin, apply_default_with};
 use crate::lower::scope::{BindingForm, BindingRef, ScopeSlot};
-use crate::lower::{FunctionLowering, convert, scope};
+use crate::lower::{FileLowering, FunctionLowering, convert, scope};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_parameters(&mut self, source: FnId) {
@@ -43,21 +44,40 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.allocate_scope(top, &initial);
         } else {
             self.allocate_scope(top, &initial);
+            let mut mapped = self.file.parameters_position(source);
+            let mut recorded = None;
             for (index, parameter) in parameters.iter().enumerate() {
                 let node = hir[parameter];
                 self.set_position(node.pos);
                 let value =
                     apply_default(self, parameter, values[index], positions.parameters[index]);
+                if let Some(default) = node.default.some() {
+                    recorded = Some(self.file.last_reported_position(default));
+                }
                 match hir[node.pat].kind {
                     PatKind::Ident(name) => {
                         let symbol = self.file.bound.declared_symbol(Decl::Param(node.pat));
                         self.initialize_converted_symbol(symbol, name, value);
                     }
                     PatKind::Object(_) | PatKind::Array(_) => {
-                        self.bind_pattern(node.pat, value, None);
+                        let recorded = recorded.unwrap_or_else(|| {
+                            self.file.first_recorded_position(source, node.pat, mapped)
+                        });
+                        let origin = PatternOrigin { mapped, recorded };
+                        self.bind_pattern(node.pat, value, None, origin);
                     }
                     PatKind::Missing => {}
                 }
+                if let PatKind::Array(_) = hir[node.pat].kind {
+                    recorded = Some(mapped);
+                }
+                mapped = match node.default.some() {
+                    Some(default) => self.file.last_mapped_position(default),
+                    None => {
+                        let last = self.file.last_mapped_pattern_position(node.pat);
+                        last.unwrap_or(mapped)
+                    }
+                };
             }
         }
         let bound = self.file.bound;
@@ -101,4 +121,74 @@ fn apply_default(
             lowering.convert_initializer(default, initialized, Some(node.default))
         },
     )
+}
+
+impl FileLowering<'_, '_, '_, '_> {
+    // The source map of Bun's transpiler knows the `(` of a function and the first token of an arrow function.
+    pub(in crate::lower) fn parameters_position(&self, function: FnId) -> u32 {
+        let node = self.hir[function];
+        match node.kind {
+            FnKind::Arrow => node.text_start,
+            _ => node.anchor,
+        }
+    }
+
+    // In front of the first position that JSC records in a function, it reports that one. Without any, it reports where the parameters start.
+    fn first_recorded_position(&self, function: FnId, pattern: PatId, mapped: u32) -> u32 {
+        let hir = self.hir;
+        let node = hir[pattern];
+        let has_rest = match node.kind {
+            PatKind::Object(properties) => properties.iter().any(|property| hir[property].is_rest),
+            PatKind::Missing | PatKind::Ident(_) | PatKind::Array(_) => false,
+        };
+        let (mut inside, mut behind) = (None::<u32>, None::<u32>);
+        let mut stack = vec![TreeNode::Function(function)];
+        while let Some(next) = stack.pop() {
+            let TreeNode::Expr(expression) = next else {
+                let is_inner_code = matches!(next, TreeNode::Function(inner) if inner != function);
+                if !is_inner_code {
+                    push_children(hir, next, &mut stack);
+                }
+                continue;
+            };
+            let recorded = match hir[expression].kind {
+                ExprKind::Ident(_) => Some(hir[expression].pos),
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
+                    Some(self.last_mapped_position(obj))
+                }
+                ExprKind::Call(site) | ExprKind::New(site) | ExprKind::TaggedTemplate(site) => {
+                    Some(self.last_mapped_position(hir[site].callee))
+                }
+                _ => None,
+            };
+            let first = match recorded {
+                Some(position) if position < node.pos => None,
+                Some(position) if position < node.end => Some((&mut inside, position)),
+                Some(position) => Some((&mut behind, position)),
+                None => None,
+            };
+            if let Some((first, position)) = first {
+                *first = Some(first.map_or(position, |first| first.min(position)));
+            }
+            match hir[expression].kind {
+                // A store to a name and an update of one record nothing.
+                ExprKind::Assign { target, value, .. } if self.is_name(target) => {
+                    stack.push(TreeNode::Expr(value));
+                }
+                ExprKind::Unary {
+                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                    operand,
+                } if self.is_name(operand) => {}
+                _ => push_children(hir, next, &mut stack),
+            }
+        }
+        let rest = has_rest.then_some(mapped);
+        let parameters = self.parameters_position(function);
+        inside.or(rest).or(behind).unwrap_or(parameters)
+    }
+
+    fn is_name(&self, expression: ExprId) -> bool {
+        let inner = self.skip_type_syntax(expression);
+        matches!(self.hir[inner].kind, ExprKind::Ident(_))
+    }
 }

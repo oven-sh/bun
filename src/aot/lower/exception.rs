@@ -1,6 +1,7 @@
 use bun_sema::hir::{StmtId, VarDeclId};
 
 use super::FunctionLowering;
+use super::pattern::PatternOrigin;
 use crate::ir::generated::{BlockRole, RuntimeErrorKind};
 use crate::ir::{StringId, ValueId};
 
@@ -43,7 +44,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let caught = self.builder.catch_value();
             let scope = self.enter_own_scope(statement);
             if param.is_some() {
-                self.bind_pattern(hir[param].pat, caught, None);
+                let position = hir[hir[param].pat].pos;
+                let origin = PatternOrigin {
+                    mapped: position,
+                    recorded: position,
+                };
+                self.bind_pattern(hir[param].pat, caught, None, origin);
             }
             self.lower_statement(catch_body);
             self.leave_own_scope(scope);

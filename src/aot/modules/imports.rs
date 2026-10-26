@@ -447,14 +447,9 @@ impl<'a, 's> FileBinder<'a, 's> {
     }
 
     fn add_required_export_names(&mut self) {
-        // A name that a TypeScript module re-exports may be a type, which no module has at run time.
-        let may_be_absent = self.hir.has_typescript_semantics();
         for &(_, resolved) in self.context.tables.own_names(self.file) {
             if let Some(required_name) = resolved.required_name {
-                self.add_required_name(RequiredName {
-                    may_be_absent,
-                    ..required_name
-                });
+                self.add_required_name(required_name);
             }
         }
         // The export table names the variable.

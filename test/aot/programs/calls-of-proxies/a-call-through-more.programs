@@ -1,9 +1,9 @@
 //// a-call-through-more-proxies-than-the-stack-holds-is-a-range-error.js
-// A function behind 200,000 proxies without an apply trap. Each proxy hands the call on to its target and waits for the answer, so the call needs more stack than there is: a RangeError,
-// however the call is made and whatever stands at the end of the chain.
+// A function behind 200,000 proxies without an apply trap. A handler without a prototype is asked at every call, so each proxy hands the call on to its target and waits for the answer,
+// and the call needs more stack than there is: a RangeError, however the call is made and whatever stands at the end of the chain.
 function behindProxies(target) {
   let chain = target;
-  for (let i = 0; i < 200000; i++) chain = new Proxy(chain, {});
+  for (let i = 0; i < 200000; i++) chain = new Proxy(chain, Object.create(null));
   return chain;
 }
 

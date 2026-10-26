@@ -1,7 +1,7 @@
 use bun_sema::hir::PropKey;
 use smallvec::SmallVec;
 
-use super::PatternNode;
+use super::{PatternNode, PatternOrigin};
 use crate::ir::generated::RuntimeErrorKind;
 use crate::ir::{LayoutId, ValueId};
 use crate::lower::FunctionLowering;
@@ -14,12 +14,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         node: PatternNode,
         value: ValueId,
-        source_position: Option<u32>,
+        source_position: u32,
     ) {
         let properties = self.file.pattern_properties(node);
-        if let Some(position) = source_position {
-            self.set_position(position);
-        }
+        self.set_position(source_position);
         let error_name = self.file.nullish_error_name(&properties);
         let error_name = error_name.map(|name| self.file.intern_atom(name));
         let nullish = self.create_unlikely_block();
@@ -37,7 +35,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.set_position(property.position);
                 let layout = self.find_rest_layout(property.target);
                 let copy = self.emit_object_rest(object, &read_names, layout);
-                self.finish_target(property.target, prepared, copy);
+                let origin = PatternOrigin {
+                    mapped: property.position,
+                    recorded: source_position,
+                };
+                self.finish_target(property.target, prepared, copy, origin);
                 continue;
             }
             let name = match property.key {
@@ -50,11 +52,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             };
             let prepared = self.prepare_target(property.target);
-            self.set_position(source_position.unwrap_or(property.position));
+            self.set_position(source_position);
             let read = self.emit_get(object, name);
             self.set_position(property.position);
             let read = super::apply_default(self, read, property.default, property.target);
-            self.finish_target(property.target, prepared, read);
+            let origin = self.file.property_origin(property, source_position);
+            self.finish_target(property.target, prepared, read, origin);
             if has_rest {
                 read_names.push(name);
             }
@@ -77,7 +80,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 None => self.builder.undefined(),
             };
             let read = super::apply_default(self, read, property.default, property.target);
-            self.finish_target(property.target, prepared, read);
+            let origin = self.file.property_origin(property, property.position);
+            self.finish_target(property.target, prepared, read, origin);
         }
     }
 

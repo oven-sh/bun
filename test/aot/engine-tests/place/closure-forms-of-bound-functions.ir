@@ -25,7 +25,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v12 = Call v11
     v13 = NewClosure v2, v2 function=f8
     v14 = PropGet v13 key="bind"
-    v15 = Call v14, v13, v3, v2, v2 calleeKey="bind"
+    v15 = Call v14, v13, v3, v2, v2, v2, v2 calleeKey="bind"
     v16 = Call v15
     Return
 }
@@ -80,9 +80,9 @@ function f7 name="withCapture" kind=Arrow captures=[{type=number}] parameters=[{
   b0(v0: number, v1: anything):
     Return v1
 }
-function f8 name="withTwoCaptures" kind=Arrow captures=[{type=number}, {type=number}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: anything, v3: anything):
-    Return v3
+function f8 name="withTwoCaptures" kind=Arrow captures=[{type=number}, {type=number}] parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: number, v1: number, v2: anything, v3: anything, v4: anything, v5: anything):
+    Return v5
 }
 
 # The closure of a target is the receiver of bind, so it is not only called.
@@ -117,7 +117,7 @@ function f8 name="withTwoCaptures" kind=Arrow captures=[{type=number}, {type=num
 # SITES: = NewClosure function=f6
 # SITES: = NewClosure [[number]] function=[[nameIsReadInApplication]] {{*}}closureForm=Slim
 # SITES: [[closure]]: f7 = NewClosure [[number]] function=f7
-# SITES: = NewClosure [[number]], [[number]], [[closure]] function=[[withCapture]] {{*}}closureForm=Slim
+# SITES: = NewClosure [[number]], [[closure]] function=[[withCapture]] {{*}}closureForm=Slim
 # SITES: [[otherClosure]]: f8 = NewClosure [[number]], [[number]] function=f8
 # SITES: = NewClosure [[number]], [[number]], [[number]], [[number]], [[otherClosure]] function=[[withTwoCaptures]]
 # SITES-NOT: closureForm
@@ -139,5 +139,5 @@ function f8 name="withTwoCaptures" kind=Arrow captures=[{type=number}, {type=num
 # SITES: function [[lengthIsRead]] name="lengthIsRead"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f4 numberOfBoundArguments=1 numberOfCapturedArguments=1}
 # SITES: function [[testedWithInstanceOf]] name="testedWithInstanceOf"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f5 numberOfBoundArguments=1 numberOfCapturedArguments=1}
 # SITES: function [[nameIsReadInApplication]] name="nameIsReadInApplication"{{*}}role=BoundFunction{{*}}creator=BoundFunction{target=f6 numberOfBoundArguments=1 numberOfCapturedArguments=1}
-# SITES: function [[withCapture]] name="withCapture"{{*}}role=BoundFunction{{*}}{type=function}]{{*}}creator=BoundFunction{target=f7 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}
-# SITES: function [[withTwoCaptures]] name="withTwoCaptures"{{*}}role=BoundFunction{{*}}{type=function}]{{*}}creator=BoundFunction{target=f8 numberOfBoundArguments=2 numberOfCapturedArguments=2 capturesTargetClosure=true}
+# SITES: function [[withCapture]] name="withCapture"{{*}}role=BoundFunction{{*}}{type=f7}]{{*}}creator=BoundFunction{target=f7 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}
+# SITES: function [[withTwoCaptures]] name="withTwoCaptures"{{*}}role=BoundFunction{{*}}{type=f8}]{{*}}creator=BoundFunction{target=f8 numberOfBoundArguments=4 numberOfCapturedArguments=4 capturesTargetClosure=true}

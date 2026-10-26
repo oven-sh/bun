@@ -13,7 +13,17 @@ const handlers: any = {
   },
 };
 const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: true, socket: handlers });
-Bun.connect({ hostname: "127.0.0.1", port: listener.port, tls: { serverName: "localhost" }, socket: { data(): void {}, close(): void { finished.resolve(); } } }).catch((): void => {});
+Bun.connect({
+  hostname: "127.0.0.1",
+  port: listener.port,
+  tls: { serverName: "localhost" },
+  socket: {
+    data(): void {},
+    close(): void {
+      finished.resolve();
+    },
+  },
+}).catch((): void => {});
 await finished.promise;
 listener.stop(true);
 console.log(said.join(), Object.keys(handlers).join());

@@ -30,6 +30,8 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) unclaimed_narrowings: FxHashMap<ValueId, TypeId>,
     // The constants that stand for members of enums.
     pub(in crate::lower) enum_constants: FxHashSet<ValueId>,
+    // Where the declarations end that Bun's transpiler prints in one statement with the next one.
+    pub(in crate::lower) joined_declarations_end: Option<u32>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -58,6 +60,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             described_int32_flow: None,
             unclaimed_narrowings: FxHashMap::default(),
             enum_constants: FxHashSet::default(),
+            joined_declarations_end: None,
             handler: None,
             position,
             nesting_depth: 0,

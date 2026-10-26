@@ -32,17 +32,6 @@ pub(super) struct CompileLoad<'a, 's> {
 }
 
 impl<'s> Files<'s> {
-    #[cfg(test)]
-    pub(crate) fn load_for_compile(
-        session: &'s Session,
-        host: &dyn CodeHost,
-        options: Options,
-        roots: RootFileNames<'_>,
-        inputs: &CompileInputs<'_, 's>,
-    ) -> Files<'s> {
-        Self::load_for_compile_with_parsed_files(session, None, host, options, roots, inputs)
-    }
-
     /// `parsed`: `Run::of_compile_build` with the atoms of `inputs`.
     pub fn load_for_compile_with_parsed_files(
         session: &'s Session,

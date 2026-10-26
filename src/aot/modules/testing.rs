@@ -77,8 +77,7 @@ pub(crate) fn describe_module(
     for required in graph.required_names(file) {
         let module = describe_module_ref(input, required.module);
         let name = atom_text(input, required.name);
-        let suffix = ["", " may-be-absent"][usize::from(required.may_be_absent)];
-        lines.push(format!("required {module} {name}{suffix}"));
+        lines.push(format!("required {module} {name}"));
     }
     let mut text = lines.join("\n");
     text.push('\n');

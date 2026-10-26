@@ -11,22 +11,10 @@ static constexpr ASCIILiteral builtinNameStrings[BunBuiltinNames::count] = {
 #undef BUN_BUILTIN_NAME_STRING
 };
 
-// State of the objects of node:http. A method that is called on a Proxy of such an object finds it on the object.
 static constexpr std::string_view namesThatPassThroughProxies[] = {
-    "armedTimeout",
-    "autoDestroyed",
-    "exchange",
-    "fakeSocket",
-    "hasWaitingResponses",
-    "isOpen",
-    "isPrepared",
-    "keepAliveTimeoutSet",
-    "ownReadableState",
-    "ownWritableState",
-    "pipelinedResponses",
-    "readableMark",
-    "socketTimeoutTimer",
-    "writableMark",
+#define BUN_MODULE_PRIVATE_NAME_STRING(name) #name,
+    BUN_MODULE_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_MODULE_PRIVATE_NAME_STRING)
+#undef BUN_MODULE_PRIVATE_NAME_STRING
 };
 
 static consteval bool passesThroughProxies(std::string_view name)

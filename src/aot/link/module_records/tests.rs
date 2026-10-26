@@ -712,7 +712,7 @@ fn names_resolved_at_run_time_are_required() {
 }
 
 #[test]
-fn only_name_re_exported_by_typescript_may_be_absent() {
+fn name_re_exported_by_typescript_is_required() {
     let re_export = "export { x } from './barrel.js';\n";
     let program = link_program(&[
         ("main.js", "import './typed.ts';\nimport './untyped.js';\n"),
@@ -725,11 +725,11 @@ fn only_name_re_exported_by_typescript_may_be_absent() {
         ("one.cjs", "exports.x = 1;\n"),
         ("two.cjs", "exports.y = 2;\n"),
     ]);
-    for (exporter, expected) in [("typed.ts", true), ("untyped.js", false)] {
+    for exporter in ["typed.ts", "untyped.js"] {
         let [required] = record_named(&program, exporter).required_names.as_slice() else {
             panic!("{exporter} requires one name");
         };
-        assert_eq!(required.may_be_absent, expected, "{exporter}");
+        assert!(!required.may_be_absent, "{exporter}");
         assert_eq!(required.module, module_named(&program, "barrel.js"));
         assert_eq!(program.strings.get(required.name), b"x");
     }

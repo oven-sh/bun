@@ -1,5 +1,5 @@
-use super::PatternNode;
 use super::view::NodeShape;
+use super::{PatternNode, PatternOrigin};
 use crate::ir::generated::{BlockRole, IteratorCompletion, IteratorKind};
 use crate::ir::{Edge, TypeTable, ValueId};
 use crate::lower::FunctionLowering;
@@ -10,7 +10,12 @@ pub(super) fn destructure_array(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     node: PatternNode,
     value: ValueId,
+    mapped: u32,
 ) {
+    // The `[` of an assignment is the start of an expression, which the source map knows.
+    if let PatternNode::Binding(_) = node {
+        lowering.set_position(mapped);
+    }
     let elements = lowering.file.pattern_elements(node);
     let has_rest = elements.last().is_some_and(|element| element.is_rest);
     let shape = PatternShape {
@@ -20,6 +25,7 @@ pub(super) fn destructure_array(
     let iterator = lowering.emit_iterator_open(value, IteratorKind::Sync, Some(shape));
     let position = lowering.position();
     lowering.begin_cleanup(BlockRole::IterationCleanup, Some(iterator));
+    let mut mapped = position;
     for (index, element) in elements.iter().enumerate() {
         let prepared = lowering.prepare_target(element.target);
         let read = if element.is_rest {
@@ -32,7 +38,12 @@ pub(super) fn destructure_array(
             step.value
         };
         let read = super::apply_default(lowering, read, element.default, element.target);
-        lowering.finish_target(element.target, prepared, read);
+        let file = &*lowering.file;
+        let default = element.default.some();
+        let recorded = default.map_or(position, |default| file.last_reported_position(default));
+        let origin = PatternOrigin { mapped, recorded };
+        mapped = file.last_mapped_element_position(element).unwrap_or(mapped);
+        lowering.finish_target(element.target, prepared, read, origin);
     }
     lowering.end_cleanup_per_exit(CleanupLanding::KeepsException, &mut |lowering, path| {
         lowering.set_position(position);

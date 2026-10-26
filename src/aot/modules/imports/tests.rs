@@ -649,7 +649,7 @@ fn name_of_static_and_commonjs_stars_is_required() {
 }
 
 #[test]
-fn name_re_exported_by_typescript_may_be_absent() {
+fn name_re_exported_by_typescript_is_required() {
     let re_export = "export { x } from './barrel.js';";
     let files = [
         ("main.js", "import './untyped.js'; import './typed.ts';"),
@@ -665,11 +665,7 @@ fn name_re_exported_by_typescript_may_be_absent() {
     with_program(&files, |program| {
         let required = RequiredName::new(program.module("barrel.js"), program.atom("x"));
         assert_eq!(program.required_names("untyped.js"), [required]);
-        let may_be_absent = RequiredName {
-            may_be_absent: true,
-            ..required
-        };
-        assert_eq!(program.required_names("typed.ts"), [may_be_absent]);
+        assert_eq!(program.required_names("typed.ts"), [required]);
     });
 }
 
@@ -689,7 +685,6 @@ fn name_imported_by_typescript_is_required() {
     ];
     with_program(&files, |program| {
         let required = RequiredName::new(program.module("barrel.js"), program.atom("x"));
-        assert!(!required.may_be_absent);
         assert_eq!(program.required_names("main.ts"), [required]);
     });
 }

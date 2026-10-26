@@ -133,7 +133,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match self.file.classify_assignment_target(target) {
             AssignmentTarget::ArrayPattern(_) | AssignmentTarget::ObjectPattern(_) => {
                 let assigned = self.lower_expression(value);
-                self.assign_pattern(target, assigned, Some(value));
+                let recorded = self.file.last_reported_position(value);
+                self.assign_pattern(target, assigned, Some(value), recorded);
                 assigned
             }
             _ => {

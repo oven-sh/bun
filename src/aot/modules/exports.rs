@@ -581,14 +581,13 @@ fn find_absent_name(
         name,
     } = written.imported;
     let exporter = ModuleRef::File(exporter);
-    let may_be_absent = written.must_be_there
-        && match tables.resolve_in(modules, exporter, name).resolution {
-            // Without a `default` of its own a module exports its value under the name.
-            Resolution::Synthetic { module, name } => {
-                name != known::default && tables.commonjs.may_lack(module, name)
-            }
-            _ => false,
-        };
+    let may_be_absent = match tables.resolve_in(modules, exporter, name).resolution {
+        // Without a `default` of its own a module exports its value under the name.
+        Resolution::Synthetic { module, name } => {
+            name != known::default && tables.commonjs.may_lack(module, name)
+        }
+        _ => false,
+    };
     let kind = ModuleFailureKind::ExportMayBeAbsent { exporter, name };
     may_be_absent.then(|| written.written.fail(importer, kind))
 }

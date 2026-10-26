@@ -19,10 +19,25 @@ pub(super) enum PatternNode {
     Assignment(ExprId),
 }
 
+/// Where JSC and the source map of Bun's transpiler stand in front of a pattern.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct PatternOrigin {
+    /// The last token before the pattern that the source map knows. A `[` that binds names is not one.
+    pub(crate) mapped: u32,
+    /// The last position JSC has recorded. An object pattern records none.
+    pub(crate) recorded: u32,
+}
+
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    pub(crate) fn bind_pattern(&mut self, pattern: PatId, value: ValueId, source: Option<ExprId>) {
+    pub(crate) fn bind_pattern(
+        &mut self,
+        pattern: PatId,
+        value: ValueId,
+        source: Option<ExprId>,
+        origin: PatternOrigin,
+    ) {
         self.file.record_binding_pattern_flow(pattern, source);
-        self.destructure(PatternNode::Binding(pattern), value, source);
+        self.destructure(PatternNode::Binding(pattern), value, source, origin);
     }
 
     pub(crate) fn assign_pattern(
@@ -30,14 +45,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         target: ExprId,
         value: ValueId,
         source: Option<ExprId>,
+        recorded: u32,
     ) {
         if let Some(source) = source {
             self.file.record_assignment_pattern_flow(target, source);
         }
-        self.destructure(PatternNode::Assignment(target), value, source);
+        let mapped = self.file.hir[target].pos;
+        let origin = PatternOrigin { mapped, recorded };
+        self.destructure(PatternNode::Assignment(target), value, source, origin);
     }
 
-    fn destructure(&mut self, node: PatternNode, value: ValueId, source: Option<ExprId>) {
+    fn destructure(
+        &mut self,
+        node: PatternNode,
+        value: ValueId,
+        source: Option<ExprId>,
+        origin: PatternOrigin,
+    ) {
         match self.file.node_shape(node) {
             NodeShape::Hole => {}
             NodeShape::Leaf => {
@@ -63,16 +87,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                 } else if self.enter_pattern(node) {
                     let value = self.convert_element(node, value);
-                    let source_position =
-                        source.map(|source| self.file.last_reported_position(source));
-                    self.destructure_object(node, value, source_position);
+                    self.destructure_object(node, value, origin.recorded);
                     self.leave_nesting();
                 }
             }
             NodeShape::Array => {
                 if self.enter_pattern(node) {
                     let value = self.convert_element(node, value);
-                    array::destructure_array(self, node, value);
+                    array::destructure_array(self, node, value, origin.mapped);
                     self.leave_nesting();
                 }
             }
@@ -106,14 +128,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn finish_target(&mut self, target: PatternNode, prepared: Option<Reference>, value: ValueId) {
+    fn finish_target(
+        &mut self,
+        target: PatternNode,
+        prepared: Option<Reference>,
+        value: ValueId,
+        origin: PatternOrigin,
+    ) {
         match prepared {
             Some(reference) => {
                 let position = self.file.node_position(target);
                 self.set_position(position);
                 self.put_reference(&reference, value, None);
             }
-            None => self.destructure(target, value, None),
+            None => self.destructure(target, value, None, origin),
         }
     }
 }

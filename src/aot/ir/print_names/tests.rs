@@ -141,6 +141,7 @@ fn missing_key_field_prints_a_minus() {
     let kinds = [
         (PropertyKeyKind::Text, "-"),
         (PropertyKeyKind::EnginePrivateName, "@-"),
+        (PropertyKeyKind::ModulePrivateName, "@#-"),
         (PropertyKeyKind::PrivateName, "#-@-"),
         (PropertyKeyKind::WellKnownSymbol, "@@-"),
         (PropertyKeyKind::CreatedSymbol, "symbol@-:-"),

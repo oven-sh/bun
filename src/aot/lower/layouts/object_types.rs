@@ -614,7 +614,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut description = KeyDescription::new();
         description.push(key.kind.to_wire() as u8);
         match key.kind {
-            PropertyKeyKind::Text | PropertyKeyKind::EnginePrivateName => {
+            PropertyKeyKind::Text
+            | PropertyKeyKind::EnginePrivateName
+            | PropertyKeyKind::ModulePrivateName => {
                 description.extend_from_slice(self.fragment.strings.get(key.text?));
             }
             PropertyKeyKind::WellKnownSymbol => description.push(key.symbol?.to_wire() as u8),

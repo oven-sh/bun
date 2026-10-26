@@ -51,7 +51,8 @@ pub(crate) struct BundleThread<C: Node> {
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
     pub(crate) queue: UnboundedQueue<C>,
-    pub(crate) generation: bun_core::Generation,
+    /// The resolver generation of the builds of one queue drain. `None`: the next build draws a new one.
+    pub(crate) generation: Option<bun_core::Generation>,
 }
 
 /// Trait capturing the interface a completion task must satisfy.
@@ -131,7 +132,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             waker: Async::Waker::placeholder(),
             waker_error: None,
             queue: UnboundedQueue::new(),
-            generation: 0,
+            generation: Some(0),
             ready_event: ResetEvent::default(),
         }
     }
@@ -258,7 +259,11 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
                 // SAFETY: `generation` is only read/written on this (bundle) thread.
-                let generation = unsafe { (*instance).generation };
+                let generation = unsafe {
+                    *(*instance)
+                        .generation
+                        .get_or_insert_with(bun_resolver::next_generation)
+                };
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
@@ -272,10 +277,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 has_bundled = true;
             }
             // SAFETY: `generation` is only read/written on this (bundle) thread.
-            unsafe {
-                let g = core::ptr::addr_of_mut!((*instance).generation);
-                *g = (*g).saturating_add(1);
-            }
+            unsafe { (*instance).generation = None };
 
             if has_bundled {
                 crate::bundle_v2::dispatch::__bun_jsc_destroy_bytecode_cache_vm();

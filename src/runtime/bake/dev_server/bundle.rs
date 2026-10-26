@@ -341,6 +341,13 @@ impl DevServer {
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
 
+        if ::core::mem::take(&mut self.reread_directories) {
+            let generation = bun_resolver::next_generation();
+            self.server_transpiler_mut().resolver.generation = generation;
+            self.client_transpiler_mut().resolver.generation = generation;
+            self.ssr_transpiler_mut().resolver.generation = generation;
+        }
+
         // Notify inspector about bundle start
         if let Some(agent) = self.inspector() {
             let mut trigger_files: Vec<BunString> = Vec::with_capacity(entry_points.set.len());

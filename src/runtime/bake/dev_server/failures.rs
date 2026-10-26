@@ -331,6 +331,16 @@ impl DevServer {
 
         let mut watch_for_route_file = false;
         if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
+            let never_bundled = match graph {
+                bake::Graph::Server | bake::Graph::Ssr => {
+                    self.server_graph.get_file_index(abs_path).is_none()
+                }
+                bake::Graph::Client => self.client_graph.get_file_index(abs_path).is_none(),
+            };
+            // `ModuleNotFound` is a failed resolve, not a file that a cached listing named.
+            if never_bundled && err.name() != "ModuleNotFound" {
+                self.reread_directories = true;
+            }
             // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {

@@ -558,6 +558,8 @@ pub(crate) struct DevServer {
     // `Watcher::shutdown` instead.
     pub(crate) bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
     pub(crate) directory_watchers: DirectoryWatchStore,
+    /// The resolver named a file that is not there. The next build reads its directories again.
+    pub(crate) reread_directories: bool,
     /// Heap-owned via `heap::into_raw` so a still-queued
     /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
     /// `next_event` check in `Drop`.

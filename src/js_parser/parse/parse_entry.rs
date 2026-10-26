@@ -1050,6 +1050,8 @@ impl<'a> Parser<'a> {
                 ..Default::default()
             });
         }
+        // The visit pass moves the classes that it hoists to `before`, from here on.
+        let hoisted_start = before.len();
 
         // When "using" declarations appear at the top level, we change all TDZ
         // variables in the top-level scope into "var" so that they aren't harmed
@@ -2083,6 +2085,9 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
         }
 
+        // The bindings that the parser generates go to `before`, from here on.
+        let generated_start = before.len();
+
         // Auto inject jest globals into the test file
         'outer: {
             if !p.options.features.inject_jest_globals {
@@ -2289,20 +2294,23 @@ impl<'a> Parser<'a> {
             );
 
             if i > 0 {
-                // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
-                // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
-                // never touches `self.runtime_imports`, so the clone is purely a
-                // borrow-checker workaround.
-                let symbols = p.runtime_imports.clone();
+                let mut imports: [(&'static [u8], js_ast::Ref); RuntimeImports::ALL.len()] =
+                    [(b"", js_ast::Ref::NONE); RuntimeImports::ALL.len()];
+                for (import, &key) in imports.iter_mut().zip(&runtime_imports[0..i]) {
+                    *import = (
+                        RuntimeImports::ALL[key as usize],
+                        p.runtime_imports.get(key as usize).expect("unreachable"),
+                    );
+                }
                 p.generate_import_stmt(
                     RuntimeImports::NAME,
-                    &runtime_imports[0..i],
+                    &imports[0..i],
                     &mut before,
-                    &symbols,
                     None,
                     b"import_",
                     true,
                     js_ast::PartTag::Runtime,
+                    wrap_mode,
                 )
                 .expect("unreachable");
             }
@@ -2313,49 +2321,45 @@ impl<'a> Parser<'a> {
             && p.options.features.auto_import_jsx
             && p.options.jsx.runtime == options::JSX::Runtime::Automatic
         {
-            // `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
-            // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
-            // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
-            // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
-            // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
-            // semantically a no-op.
             let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
             let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
-            let jsx_imports = core::mem::take(&mut p.jsx_imports);
 
-            let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
-            let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
+            let mut buf: [(&'static [u8], js_ast::Ref); 3] = [(b"", js_ast::Ref::NONE); 3];
+            let runtime_imports = p.jsx_imports.runtime_imports(&mut buf);
 
-            if !runtime_import_names.is_empty() {
+            if !runtime_imports.is_empty() {
                 p.generate_import_stmt(
                     import_source,
-                    runtime_import_names,
+                    runtime_imports,
                     &mut before,
-                    &jsx_imports,
                     None,
                     b"",
                     false,
                     js_ast::PartTag::JsxImport,
+                    wrap_mode,
                 )
                 .expect("unreachable");
             }
 
-            let source_import_names = jsx_imports.source_import_names();
-            if !source_import_names.is_empty() {
+            if let Some(create_element) = p.jsx_imports.create_element {
                 p.generate_import_stmt(
                     package_name,
-                    source_import_names,
+                    &[(b"createElement", create_element.ref_)],
                     &mut before,
-                    &jsx_imports,
                     None,
                     b"",
                     false,
                     js_ast::PartTag::JsxImport,
+                    wrap_mode,
                 )
                 .expect("unreachable");
             }
+        }
 
-            p.jsx_imports = jsx_imports;
+        if wrap_mode == WrapMode::BunCommonjs && before.len() > generated_start {
+            // A hoisted class can call a helper in its definition, and a `require()` is not hoisted as an `import` is.
+            let generated = before.len() - generated_start;
+            before[hoisted_start..].rotate_right(generated);
         }
 
         if p.server_components_wrap_ref.is_valid() {
@@ -2490,15 +2494,24 @@ impl<'a> Parser<'a> {
 
         let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
 
+        // An empty range marks a record that the parser generated.
+        debug_assert!(
+            wrap_mode != WrapMode::BunCommonjs
+                || !ast.import_records.as_slice().iter().any(|import_record| {
+                    import_record.kind == bun_ast::ImportKind::Stmt
+                        && import_record.range.is_empty()
+                        && !import_record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                }),
+            "a generated `import` statement is inside the CommonJS wrapper"
+        );
+
         if reject_import_statements {
-            // An empty range marks a parser-generated record, like the JSX runtime import.
             let import_record: Option<&ImportRecord> =
                 ast.import_records.as_slice().iter().find(|import_record| {
                     !import_record
                         .flags
                         .intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED)
                         && import_record.kind == bun_ast::ImportKind::Stmt
-                        && !import_record.range.is_empty()
                 });
 
             if let Some(record) = import_record {

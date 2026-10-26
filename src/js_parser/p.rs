@@ -2371,23 +2371,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn generate_import_stmt<I, Sym>(
+    /// `imports` holds the name of each export and the symbol it is bound to.
+    pub(crate) fn generate_import_stmt(
         &mut self,
         import_path: &'a [u8],
-        imports: I,
+        imports: &[(&'static [u8], Ref)],
         parts: &mut ListManaged<'a, js_ast::Part>,
-        symbols: &Sym,
         additional_stmt: Option<Stmt>,
         prefix: &'static [u8],
         is_internal: bool,
         tag: bun_ast::PartTag,
-    ) -> Result<(), crate::Error>
-    where
-        I: AsRef<[<Sym as GenerateImportSymbols>::Key]>,
-        Sym: GenerateImportSymbols,
-    {
+        wrap_mode: WrapMode,
+    ) -> Result<(), crate::Error> {
+        if wrap_mode == WrapMode::BunCommonjs {
+            debug_assert!(additional_stmt.is_none());
+            return self.generate_require_stmt(import_path, imports, parts, is_internal, tag);
+        }
+
         let arena = self.arena;
-        let imports = imports.as_ref();
         let import_record_i =
             self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
         {
@@ -2436,9 +2437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
-        for (alias, clause_item) in imports.iter().zip(clause_items.iter_mut()) {
-            let ref_ = symbols.get(alias).expect("unreachable");
-            let alias_name: &'static [u8] = symbols.alias_name(alias);
+        for (&(alias_name, ref_), clause_item) in imports.iter().zip(clause_items.iter_mut()) {
             *clause_item = js_ast::ClauseItem {
                 alias: js_ast::StoreStr::new(alias_name),
                 original_name: js_ast::StoreStr::new(alias_name),
@@ -2519,6 +2518,90 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             tag,
             can_be_removed_if_unused: is_jsx,
             force_tree_shaking: is_jsx,
+            ..Default::default()
+        });
+        Ok(())
+    }
+
+    /// `const { name: symbol } = require(import_path)`. An `import` can't stand in the function that wraps a CommonJS module.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn generate_require_stmt(
+        &mut self,
+        import_path: &'a [u8],
+        imports: &[(&'static [u8], Ref)],
+        parts: &mut ListManaged<'a, js_ast::Part>,
+        is_internal: bool,
+        tag: bun_ast::PartTag,
+    ) -> Result<(), crate::Error> {
+        let import_record_i =
+            self.add_import_record_by_range(ImportKind::Require, bun_ast::Range::NONE, import_path);
+        if is_internal {
+            let import_record = &mut self.import_records.items_mut()[import_record_i as usize];
+            import_record.path.namespace = b"runtime";
+            import_record
+                .flags
+                .insert(bun_ast::ImportRecordFlags::IS_INTERNAL);
+        }
+
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+        declared_symbols.ensure_total_capacity(imports.len())?;
+        let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), self.arena);
+        for &(alias_name, ref_) in imports {
+            let key = self.new_expr(
+                E::String {
+                    data: alias_name.into(),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            );
+            let value = self.b(B::Identifier { r#ref: ref_ }, bun_ast::Loc::EMPTY);
+            properties.push(B::Property {
+                flags: bun_ast::flags::PROPERTY_NONE,
+                key,
+                value,
+                default_value: None,
+            });
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_,
+                is_top_level: true,
+            });
+        }
+
+        let binding = self.b(
+            B::Object {
+                properties: bun_ast::StoreSlice::from_bump(properties),
+                is_single_line: false,
+                close_brace_loc: bun_ast::Loc::EMPTY,
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let value = self.new_expr(
+            E::RequireString {
+                import_record_index: import_record_i,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        let mut decls = G::DeclList::init_capacity(1);
+        decls.append_assume_capacity(G::Decl {
+            binding,
+            value: Some(value),
+        });
+        let stmt = self.s(
+            S::Local {
+                kind: js_ast::LocalKind::KConst,
+                decls,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        );
+
+        parts.push(js_ast::Part {
+            stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
+            declared_symbols,
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
+            tag,
             ..Default::default()
         });
         Ok(())
@@ -10239,15 +10322,6 @@ impl LowerUsingDeclarationsContext {
 
         result
     }
-}
-
-// ─── Helper trait for generate_import_stmt's generic `symbols` param ───
-// Dispatches the alias lookup via `alias_name()`; implemented
-// for `RuntimeImports` (Key = u8 index) and `JSXImportSymbols` (Key = alias).
-pub trait GenerateImportSymbols {
-    type Key;
-    fn get(&self, key: &Self::Key) -> Option<Ref>;
-    fn alias_name(&self, key: &Self::Key) -> &'static [u8];
 }
 
 // ─── Module-level constructor fns ───

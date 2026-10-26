@@ -515,25 +515,6 @@ pub struct JSXImportSymbols {
 }
 
 impl JSXImportSymbols {
-    fn get(&self, name: &[u8]) -> Option<Ref> {
-        if name == b"jsx" {
-            return self.jsx.map(|jsx| jsx.ref_);
-        }
-        if name == b"jsxDEV" {
-            return self.jsx_dev.map(|jsx| jsx.ref_);
-        }
-        if name == b"jsxs" {
-            return self.jsxs.map(|jsxs| jsxs.ref_);
-        }
-        if name == b"Fragment" {
-            return self.fragment.map(|f| f.ref_);
-        }
-        if name == b"createElement" {
-            return self.create_element.map(|c| c.ref_);
-        }
-        None
-    }
-
     pub(crate) fn get_with_tag(&self, tag: JSXImport) -> Option<Ref> {
         match tag {
             JSXImport::Jsx => self.jsx.map(|jsx| jsx.ref_),
@@ -566,78 +547,35 @@ impl JSXImportSymbols {
         }
     }
 
-    pub(crate) fn runtime_import_names<'b>(
+    /// What the file uses of the JSX runtime: the name of each export and the symbol it is bound to.
+    pub(crate) fn runtime_imports<'b>(
         &self,
-        buf: &'b mut [&'static [u8]; 3],
-    ) -> &'b [&'static [u8]] {
+        buf: &'b mut [(&'static [u8], Ref); 3],
+    ) -> &'b [(&'static [u8], Ref)] {
         let mut i: usize = 0;
-        if self.jsx_dev.is_some() {
+        if let Some(jsx_dev) = self.jsx_dev {
             debug_assert!(self.jsx.is_none()); // we should never end up with this in the same file
-            buf[0] = b"jsxDEV";
+            buf[0] = (b"jsxDEV", jsx_dev.ref_);
             i += 1;
         }
 
-        if self.jsx.is_some() {
+        if let Some(jsx) = self.jsx {
             debug_assert!(self.jsx_dev.is_none()); // we should never end up with this in the same file
-            buf[0] = b"jsx";
+            buf[0] = (b"jsx", jsx.ref_);
             i += 1;
         }
 
-        if self.jsxs.is_some() {
-            buf[i] = b"jsxs";
+        if let Some(jsxs) = self.jsxs {
+            buf[i] = (b"jsxs", jsxs.ref_);
             i += 1;
         }
 
-        if self.fragment.is_some() {
-            buf[i] = b"Fragment";
+        if let Some(fragment) = self.fragment {
+            buf[i] = (b"Fragment", fragment.ref_);
             i += 1;
         }
 
         &buf[0..i]
-    }
-
-    pub(crate) fn source_import_names(&self) -> &'static [&'static [u8]] {
-        if self.create_element.is_some() {
-            &[b"createElement"]
-        } else {
-            &[]
-        }
-    }
-}
-
-// ─── GenerateImportSymbols impls (for `P::generate_import_stmt`) ───
-// `generate_import_stmt` maps a key to its string name via this trait, with
-// `Key = u8` (index into `ALL`) for `RuntimeImports` and
-// `Key = &'static [u8]` (the alias string itself) for `JSXImportSymbols`.
-
-impl crate::p::GenerateImportSymbols for RuntimeImports {
-    /// Index into [`RuntimeImports::ALL`].
-    type Key = u8;
-
-    #[inline]
-    fn get(&self, key: &u8) -> Option<Ref> {
-        // Disambiguate from the trait method: call the inherent `get(usize)`.
-        RuntimeImports::get(self, *key as usize)
-    }
-
-    #[inline]
-    fn alias_name(&self, key: &u8) -> &'static [u8] {
-        RuntimeImports::ALL[*key as usize]
-    }
-}
-
-impl crate::p::GenerateImportSymbols for JSXImportSymbols {
-    type Key = &'static [u8];
-
-    #[inline]
-    fn get(&self, key: &&'static [u8]) -> Option<Ref> {
-        // Disambiguate from the trait method: call the inherent `get(&[u8])`.
-        JSXImportSymbols::get(self, *key)
-    }
-
-    #[inline]
-    fn alias_name(&self, key: &&'static [u8]) -> &'static [u8] {
-        *key
     }
 }
 

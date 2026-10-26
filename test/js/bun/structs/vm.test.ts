@@ -1,25 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import vm from "node:vm";
 
-// The structs surface in `node:vm` contexts. Raw vm scripts go to JavaScriptCore without passing through Bun's
-// transpiler, so `struct` syntax is only available to a script that was transpiled first; the helper it calls,
-// `__structBase`, is handed to the context as a global.
-const wrap = await import("bun:wrap");
-const transpiler = new Bun.Transpiler({ loader: "js" });
-
-/** Transpiles `source` (which may use struct syntax), then runs it in a new context with `sandbox` plus the runtime helpers. */
-function runStructsInNewContext(source: string, sandbox: Record<string, unknown> = {}) {
-  const helpers: Record<string, unknown> = { __structBase: wrap.__structBase };
-  const code = transpiler.transformSync(source).replace(/import\s*\{([^}]*)\}\s*from\s*["']bun:wrap["'];?/g, (_, names) => {
-    for (const part of names.split(",")) {
-      const [name, alias = name] = part.trim().split(/\s+as\s+/);
-      if (name) helpers[alias] = (wrap as Record<string, unknown>)[name];
-    }
-    return "";
-  });
-  // The helpers go onto `sandbox` itself, so the caller sees what the script assigns to the global.
-  return vm.runInNewContext(code, Object.assign(sandbox, helpers));
-}
+// The structs surface in `node:vm` contexts, and `struct` / `shared struct` declarations in the sources vm compiles.
+// Those sources do not pass through Bun's transpiler, so vm lowers a source that has a struct declaration first
+// (src/js/internal/structs.ts); the helper the lowered code calls, `__structBase`, is installed in the realm that runs it.
 
 describe("structs in node:vm contexts", () => {
   test("every global is present in a new context", () => {
@@ -156,9 +140,9 @@ describe("structs in node:vm contexts", () => {
     expect(outer.value).toBe(inner);
   });
 
-  test("a struct declared in a context", () => {
+  test("struct syntax in vm.runInNewContext", () => {
     const sandbox: Record<string, unknown> = {};
-    runStructsInNewContext(
+    vm.runInNewContext(
       `
       struct Point {
         x;
@@ -193,9 +177,36 @@ describe("structs in node:vm contexts", () => {
     });
   });
 
-  test("a shared struct declared in a context is usable in both realms", () => {
+  test("a new Script with struct syntax runs in several contexts, and a later script sees its declarations", () => {
+    const script = new vm.Script(`struct Point { x; }
+const p = new Point();
+p.x = 5;
+p.x`);
+    const first = vm.createContext({});
+    const second = vm.createContext({});
+    expect(script.runInContext(first)).toBe(5);
+    expect(script.runInContext(second)).toBe(5);
+    // Point is a global lexical declaration of the first context.
+    expect(vm.runInContext(`const q = new Point(); q.x = 6; [q.x, Object.isExtensible(q), q instanceof Point].join()`, first)).toBe(
+      "6,false,true",
+    );
+    expect(() => vm.runInContext("new Point()", vm.createContext({}))).toThrow(/Point/);
+  });
+
+  test("vm.runInContext with struct syntax", () => {
+    const context = vm.createContext({ seen: [] as unknown[] });
+    vm.runInContext("shared struct Cell { value; }
+const cell = new Cell();
+cell.value = 3;
+seen.push(cell);", context);
+    const cell = (context as { seen: object[] }).seen[0];
+    expect(Reflect.canBeShared(cell)).toBe(true);
+    expect(Atomics.load(cell, "value")).toBe(3);
+  });
+
+  test("a shared struct declared in one context is the same object in another and in the main realm", () => {
     const sandbox: Record<string, unknown> = {};
-    runStructsInNewContext(
+    vm.runInNewContext(
       `
       shared struct Box {
         value;
@@ -216,6 +227,75 @@ describe("structs in node:vm contexts", () => {
     expect(Reflect.canBeShared(box)).toBe(true);
     expect(Atomics.load(box, "value")).toBe(7);
     Atomics.store(box, "value", 8);
-    expect(vm.runInNewContext(`Atomics.load(box, "value")`, { box })).toBe(8);
+    // A second context declares its own struct with the same shape and also reads and writes the first one's instance.
+    expect(
+      vm.runInNewContext(
+        `
+        shared struct Other { value; }
+        const other = new Other();
+        Atomics.store(box, "value", Atomics.load(box, "value") + 1);
+        Atomics.store(other, "value", 1);
+        [Atomics.load(box, "value"), Atomics.load(other, "value"), Reflect.canBeShared(other)].join()
+        `,
+        { box },
+      ),
+    ).toBe("9,1,true");
+    expect(Atomics.load(box, "value")).toBe(9);
+  });
+
+  test("vm.compileFunction with struct syntax", () => {
+    const fn = vm.compileFunction(
+      `struct Pair { a; b; }
+      const pair = new Pair();
+      pair.a = first;
+      pair.b = second;
+      return pair.a + pair.b;`,
+      ["first", "second"],
+    );
+    expect(fn(2, 3)).toBe(5);
+    expect(() => vm.compileFunction("struct Bad { a = 1; }")).toThrow(SyntaxError);
+  });
+
+  test("struct syntax in a vm.SourceTextModule", async () => {
+    const { SourceTextModule } = vm as unknown as { SourceTextModule: new (code: string, options: object) => any };
+    const module = new SourceTextModule(
+      `struct Point { x; }
+      const point = new Point();
+      point.x = 4;
+      export const x = point.x;
+      export const frozen = !Object.isExtensible(point);`,
+      { context: vm.createContext({}) },
+    );
+    await module.link(() => {
+      throw new Error("no imports");
+    });
+    await module.evaluate();
+    expect(module.namespace.x).toBe(4);
+    expect(module.namespace.frozen).toBe(true);
+  });
+
+  test("an invalid struct declaration is a SyntaxError", () => {
+    expect(() => vm.runInNewContext("struct S { x = 1; }")).toThrow(SyntaxError);
+    expect(() => vm.runInNewContext("struct S { [name]; }")).toThrow(SyntaxError);
+    expect(() => new vm.Script("shared struct S { x = 1; }")).toThrow(SyntaxError);
+    // Not struct syntax at all, still raised by the engine.
+    expect(() => vm.runInNewContext("struct S {")).toThrow(SyntaxError);
+  });
+
+  test("a source that only mentions the word runs unchanged", () => {
+    expect(vm.runInNewContext("const struct = 1; struct + 1")).toBe(2);
+    expect(vm.runInNewContext("var struct = { shared: 2 }; struct.shared")).toBe(2);
+    expect(vm.runInNewContext(`"struct S { x; }"`)).toBe("struct S { x; }");
+    expect(vm.runInNewContext("`
+struct S { x; }`")).toBe("
+struct S { x; }");
+    expect(vm.runInNewContext("// struct S { x; }
+3")).toBe(3);
+    expect(vm.runInNewContext("/* struct S { x; } */ 4")).toBe(4);
+    expect(vm.runInNewContext("function struct() { return 5 }
+struct()")).toBe(5);
+    // Nothing was added to the context for a source that was not lowered.
+    expect(vm.runInNewContext(`typeof __structBase`)).toBe("undefined");
+    expect(vm.runInNewContext(`const struct = 1; typeof __structBase`)).toBe("undefined");
   });
 });

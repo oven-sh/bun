@@ -1124,7 +1124,9 @@ pub mod fs {
         /// no real path. When it has none, the caller reads the directory into
         /// a `DirEntry` named `real` and stores it with
         /// [`put_listing`](Self::put_listing), which maps `walked` to the new
-        /// slot. The caller holds `entries_mutex`.
+        /// slot. A key of `real` that is mapped to a listing under another
+        /// name, from when a link at `real` led to that directory, is unmapped
+        /// here and has none. The caller holds `entries_mutex`.
         #[inline(always)]
         pub(crate) fn listing_slot(
             &mut self,
@@ -1145,9 +1147,21 @@ pub mod fs {
             real: &[u8],
         ) -> crate::CrateResult<bun_alloc::Result> {
             let slot = self.entries.get_or_put(real)?;
-            if slot.status == bun_alloc::ItemStatus::Exists {
-                self.map_to_listing_slot(walked, &slot);
+            if slot.status != bun_alloc::ItemStatus::Exists {
+                return Ok(slot);
             }
+            // A listing is named by the key it was read under. One under another name got
+            // this key while a link at `real` led to its directory, which it no longer does.
+            let real_dir = strings::paths::without_trailing_slash_windows_path(real);
+            if matches!(
+                self.entries.at_index(slot.index),
+                Some(EntriesOption::Entries(listing))
+                    if strings::paths::without_trailing_slash_windows_path(listing.dir) != real_dir
+            ) {
+                self.entries.remove_hash(slot.hash);
+                return self.entries.get_or_put(real);
+            }
+            self.map_to_listing_slot(walked, &slot);
             Ok(slot)
         }
 

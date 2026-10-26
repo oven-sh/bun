@@ -128,18 +128,14 @@ function expression). The bundler's renamer then numbers the new symbols like
 the locals of any other function. `Host::new_generated` is for a name declared
 at module level, such as an outlined `_temp`.
 
-### Memory
+### The compiler as a linter
 
-The working memory of a function is on the global heap and is freed when it
-drops: `HirVec` is `Vec`, and `IndexMap` / `IndexSet` / `IdMap` use the default
-allocator. So an upstream hunk that builds a `Vec` or a map applies unchanged.
-The AST arena is only for what the output AST keeps, because it frees nothing
-before the AST goes (in `bun build`, the end of the bundle).
-
-A `StoreStr` is a pointer with no lifetime, and codegen puts it in the output
-AST without a copy of the bytes. So the bytes must be source text, a `'static`,
-or a copy in the arena (`bun_ast::data_store_dupe_str`). Never point one at a
-local `Vec<u8>` or `String`.
+`bun lint` has the validations as rules (`react/refs`, `react-hooks/refs`, ...). `lint.rs` is upstream's
+`outputMode: 'lint'` for one function: lowering, the passes, all validations, no codegen, and every
+error that upstream would log. The function comes from `src/lint/react_compiler/convert.rs`, which
+makes a `bun_ast` tree of the linter's own syntax tree, without a visit pass. In that tree a `Loc` is
+an index into a table of ranges, so that what is reported has an end, and
+`Host::is_module_level` says what is bound outside of the function.
 
 ### Bail-out semantics
 
@@ -148,6 +144,10 @@ Any `bun_ast` node the port cannot lower (bundler-only synthetics: `ESpecial`,
 with category `Unsupported`. `program.rs` catches that per-function, leaves the
 original `G::Fn` untouched, and logs a `CompileSkip` event — exactly what
 upstream does for its own unsupported cases.
+
+A function that is nested more deeply than the thread has the stack for bails out the same way, with the
+Todo "Support functions of this size". Every function of the compiler that calls itself along the nesting
+of the source asks `Environment::has_stack()`, and the pipeline asks after each pass whether one has said no.
 
 ## Hook placement
 

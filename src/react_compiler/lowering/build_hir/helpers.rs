@@ -87,6 +87,7 @@ pub(super) fn expression_type_name(expr: &Expr) -> &'static str {
         Data::EImport(_) => "CallExpression",
         Data::EAwait(_) => "AwaitExpression",
         Data::EYield(_) => "YieldExpression",
+        Data::ETemplate(template) if template.tag.is_some() => "TaggedTemplateExpression",
         Data::ETemplate(_) => "TemplateLiteral",
         Data::EArrow(_) => "ArrowFunctionExpression",
         Data::EFunction(_) => "FunctionExpression",
@@ -191,7 +192,29 @@ pub(super) fn lower_expression_to_temporary(
     expr: &Expr,
 ) -> Result<Place, CompilerError> {
     let value = lower_expression(builder, expr)?;
-    lower_value_to_temporary(builder, value)
+    let place = lower_value_to_temporary(builder, value)?;
+    match builder.type_cast_around(expr.loc) {
+        None => Ok(place),
+        Some(cast) => lower_type_cast(builder, place, cast),
+    }
+}
+
+/// Not inlined: what calls it calls itself along the source.
+#[inline(never)]
+fn lower_type_cast(
+    builder: &mut HirBuilder,
+    value: Place,
+    cast: ast::Loc,
+) -> Result<Place, CompilerError> {
+    let cast = InstructionValue::TypeCastExpression {
+        value,
+        type_: Type::Poly,
+        type_annotation_name: None,
+        type_annotation_kind: Some("as"),
+        type_annotation: None,
+        loc: convert_loc(cast),
+    };
+    lower_value_to_temporary(builder, cast)
 }
 
 // =============================================================================
@@ -263,7 +286,7 @@ pub(super) fn lower_arguments(
     builder: &mut HirBuilder,
     args: &[Expr],
 ) -> Result<HirVec<PlaceOrSpread>, CompilerError> {
-    let mut result = Vec::new();
+    let mut result = AstAlloc::vec();
     for arg in args {
         match &arg.data {
             Data::ESpread(spread) => {
@@ -481,6 +504,9 @@ pub(super) fn lower_assignment(
     value: Place,
     assignment_style: AssignmentStyle,
 ) -> Result<Option<Place>, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     match &target.data {
         Data::EIdentifier(_) | Data::EImportIdentifier(_) => {
             let ref_ = assignment_target_ref(target).unwrap();
@@ -579,7 +605,7 @@ pub(super) fn lower_assignment(
         }
 
         Data::EArray(pattern) => {
-            let mut items: HirVec<ArrayPatternElement> = Vec::new();
+            let mut items: HirVec<ArrayPatternElement> = AstAlloc::vec();
             let mut followups: Vec<(Place, &Expr)> = Vec::new();
 
             let force_temporaries = if kind == InstructionKind::Reassign {
@@ -726,9 +752,11 @@ pub(super) fn lower_assignment(
         }
 
         Data::EObject(pattern) => {
-            let mut properties: HirVec<ObjectPropertyOrSpread> = Vec::new();
+            let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
             let mut followups: Vec<(Place, &Expr, Option<&Expr>)> = Vec::new();
 
+            let config = &builder.environment().config;
+            let with_keys = config.captured_targets_with_keys_force_temporaries;
             let force_temporaries = if kind == InstructionKind::Reassign {
                 let mut found = false;
                 for prop in pattern.properties.iter() {
@@ -741,6 +769,14 @@ pub(super) fn lower_assignment(
                         break;
                     };
                     match assignment_target_ref(val) {
+                        Some(ref_)
+                            if with_keys
+                                && !prop.flags.contains(ast::flags::Property::WasShorthand)
+                                && builder.is_context_identifier(ref_) =>
+                        {
+                            found = true;
+                            break;
+                        }
                         Some(ref_) => {
                             match builder.resolve_identifier(ref_, convert_loc(val.loc))? {
                                 VariableBinding::Identifier { .. } => {}
@@ -1123,10 +1159,10 @@ pub(super) fn lower_object_property_key(
             Ok(Some(ObjectPropertyKey::String { name }))
         }
         Data::ENumber(n) if !computed => {
-            let mut buf: HirVec<u8> = Vec::with_capacity(24);
+            let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(24);
             let _ = core::fmt::write(&mut WriteBytes(&mut buf), format_args!("{}", n.value()));
             Ok(Some(ObjectPropertyKey::Identifier {
-                name: arena_str(&buf),
+                name: StoreStr::new(buf.leak()),
             }))
         }
         _ if computed => {
@@ -1184,6 +1220,9 @@ fn lower_optional_member_expression_impl(
     expr: &Expr,
     parent_alternate: Option<BlockId>,
 ) -> Result<(Place, Place), CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let optional = matches!(optional_chain_of(expr), Some(OptionalChain::Start));
     let loc = convert_loc(expr.loc);
     let place = build_temporary_place(builder, loc);
@@ -1304,6 +1343,9 @@ fn lower_optional_call_expression_impl(
     expr: &Expr,
     parent_alternate: Option<BlockId>,
 ) -> Result<InstructionValue, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let Data::ECall(call) = &expr.data else {
         return Err(cold_todo(
             "lower_optional_call_expression: expected ECall",

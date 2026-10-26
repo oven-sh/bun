@@ -8,16 +8,16 @@
 //! Outlines JSX expressions in callbacks into separate component functions.
 //! This pass is conditional on `env.config.enable_jsx_outlining` (defaults to false).
 
-use std::collections::{HashMap, HashSet};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::collections::IndexMap;
 use crate::hir::environment::Environment;
 use crate::hir::{
-    BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, HIR, HirFunction, IdentifierId,
-    IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
-    JsxTag, LValuePattern, NonLocalBinding, NonLocalKind, ObjectPattern, ObjectProperty,
-    ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern, Pattern, Place,
-    ReactFunctionType, ReturnVariant, StoreStr, Terminal,
+    AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, HIR, HirFunction,
+    IdentifierId, IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue,
+    JsxAttribute, JsxTag, LValuePattern, NonLocalBinding, NonLocalKind, ObjectPattern,
+    ObjectProperty, ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern,
+    Pattern, Place, ReactFunctionType, ReturnVariant, StoreStr, Terminal,
 };
 use crate::hir_vec;
 
@@ -56,8 +56,12 @@ fn outline_jsx_impl(
     env: &mut Environment,
     outlined_fns: &mut Vec<HirFunction>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     // Collect LoadGlobal instructions (tag -> instr)
-    let mut globals: HashMap<IdentifierId, usize> = HashMap::new(); // id -> instr_idx
+    let mut globals: HashMap<IdentifierId, usize> = HashMap::default(); // id -> instr_idx
 
     // Process each block
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
@@ -65,9 +69,9 @@ fn outline_jsx_impl(
         let block = &func.body.blocks[block_id];
         let instr_ids = block.instructions.clone();
 
-        let mut rewrite_instr: HashMap<EvaluationOrder, Vec<Instruction>> = HashMap::new();
+        let mut rewrite_instr: HashMap<EvaluationOrder, Vec<Instruction>> = HashMap::default();
         let mut jsx_group: Vec<JsxInstrInfo> = Vec::new();
-        let mut children_ids: HashSet<IdentifierId> = HashSet::new();
+        let mut children_ids: HashSet<IdentifierId> = HashSet::default();
 
         // First pass: collect all instruction info without borrowing func mutably
         enum InstrAction {
@@ -182,7 +186,7 @@ fn outline_jsx_impl(
         if !rewrite_instr.is_empty() {
             let block = func.body.blocks.get_mut(block_id).unwrap();
             let old_instr_ids = block.instructions.clone();
-            let mut new_instr_ids = Vec::new();
+            let mut new_instr_ids = AstAlloc::vec();
             for &iid in &old_instr_ids {
                 let eval_order = func.instructions[iid.0 as usize].id;
                 if let Some(replacement_instrs) = rewrite_instr.get(&eval_order) {
@@ -264,7 +268,7 @@ fn collect_props(
     jsx_group: &[JsxInstrInfo],
 ) -> Option<Vec<OutlinedJsxAttribute>> {
     let mut id_counter = 1u32;
-    let mut seen: HashSet<StoreStr> = HashSet::new();
+    let mut seen: HashSet<StoreStr> = HashSet::default();
     let mut attributes = Vec::new();
     let jsx_ids: HashSet<IdentifierId> = jsx_group.iter().map(|j| j.lvalue_id).collect();
 
@@ -340,7 +344,7 @@ fn emit_outlined_jsx(
     outlined_props: &[OutlinedJsxAttribute],
     outlined_tag: StoreStr,
 ) -> Option<Vec<Instruction>> {
-    let props = Vec::from_iter(outlined_props.iter().map(|p| JsxAttribute::Attribute {
+    let props = AstAlloc::vec_from_iter(outlined_props.iter().map(|p| JsxAttribute::Attribute {
         name: p.new_name,
         place: p.place.clone(),
     }));
@@ -426,8 +430,8 @@ fn emit_outlined_fn(
     instructions.extend(updated_jsx_instrs);
 
     // Build instruction table and instruction IDs
-    let mut instr_table = Vec::new();
-    let mut instr_ids = Vec::new();
+    let mut instr_table = AstAlloc::vec();
+    let mut instr_ids = AstAlloc::vec();
     for instr in instructions {
         let idx = instr_table.len();
         instr_table.push(instr);
@@ -458,7 +462,7 @@ fn emit_outlined_fn(
             loc: None,
             effects: None,
         },
-        phis: Vec::new(),
+        phis: AstAlloc::vec(),
     };
 
     let mut blocks = IndexMap::new();
@@ -471,7 +475,7 @@ fn emit_outlined_fn(
         params: hir_vec![ParamPattern::Place(props_obj)],
         return_type_annotation: None,
         returns: returns_place,
-        context: Vec::new(),
+        context: AstAlloc::vec(),
         body: HIR {
             entry: BlockId(0),
             blocks,
@@ -479,8 +483,8 @@ fn emit_outlined_fn(
         instructions: instr_table,
         generator: false,
         is_async: false,
-        directives: Vec::new(),
-        aliasing_effects: Some(Vec::new()),
+        directives: AstAlloc::vec(),
+        aliasing_effects: Some(AstAlloc::vec()),
         loc: None,
     };
 
@@ -524,7 +528,7 @@ fn emit_updated_jsx(
             closing_loc,
         } = &instr.value
         {
-            let mut new_props = Vec::new();
+            let mut new_props = AstAlloc::vec();
             for prop in props {
                 // TS: invariant(prop.kind === 'JsxAttribute', ...)
                 // Spread attributes would have caused collectProps to return null earlier
@@ -548,7 +552,7 @@ fn emit_updated_jsx(
             }
 
             let new_children = children.as_ref().map(|kids| {
-                Vec::from_iter(kids.iter().map(|child| {
+                AstAlloc::vec_from_iter(kids.iter().map(|child| {
                     if jsx_ids.contains(&child.identifier) {
                         child.clone()
                     } else {
@@ -620,7 +624,7 @@ fn emit_destructure_props(
     props_obj: &Place,
     old_to_new_props: &IndexMap<IdentifierId, OutlinedJsxAttribute>,
 ) -> Instruction {
-    let mut properties = Vec::new();
+    let mut properties = AstAlloc::vec();
     for prop in old_to_new_props.values() {
         properties.push(ObjectPropertyOrSpread::Property(ObjectProperty {
             key: ObjectPropertyKey::String {

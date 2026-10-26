@@ -9,10 +9,10 @@ use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, Ref, StoreRef, symbol};
 
 use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
-    AssignmentStyle, MemberProperty, arena_str, build_temporary_place, expression_type_name,
-    lower_arguments, lower_assignment, lower_expression_to_temporary, lower_identifier,
-    lower_member_expression, lower_object_property_key, lower_optional_call_expression,
-    lower_optional_member_expression, lower_value_to_temporary,
+    AssignmentStyle, MemberProperty, build_temporary_place, expression_type_name, lower_arguments,
+    lower_assignment, lower_expression_to_temporary, lower_identifier, lower_member_expression,
+    lower_object_property_key, lower_optional_call_expression, lower_optional_member_expression,
+    lower_value_to_temporary,
 };
 use super::jsx::lower_jsx_call;
 use crate::lowering::FunctionNode;
@@ -22,6 +22,9 @@ pub(crate) fn lower_expression(
     builder: &mut HirBuilder,
     expr: &Expr,
 ) -> Result<InstructionValue, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let loc = convert_loc(expr.loc);
     match &expr.data {
         Data::EObjectJSON(_) | Data::EArrayJSON(_) => Ok(unsupported_node("JSONValue", loc)),
@@ -78,7 +81,7 @@ pub(crate) fn lower_expression(
             if is_member {
                 let lowered = lower_member_expression(builder, &call.target, None)?;
                 let property = lower_value_to_temporary(builder, lowered.value)?;
-                let args = lower_arguments(builder, &call.args)?;
+                let args = AstAlloc::vec_from_iter(lower_arguments(builder, &call.args)?);
                 Ok(InstructionValue::MethodCall {
                     receiver: lowered.object,
                     property,
@@ -87,7 +90,7 @@ pub(crate) fn lower_expression(
                 })
             } else {
                 let callee = lower_expression_to_temporary(builder, &call.target)?;
-                let args = lower_arguments(builder, &call.args)?;
+                let args = AstAlloc::vec_from_iter(lower_arguments(builder, &call.args)?);
                 Ok(InstructionValue::CallExpression { callee, args, loc })
             }
         }
@@ -121,7 +124,7 @@ pub(crate) fn lower_expression(
         )
         .map_err(CompilerError::from),
         Data::EObject(obj) => {
-            let mut properties: HirVec<ObjectPropertyOrSpread> = Vec::new();
+            let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
             for prop in obj.properties.iter() {
                 use ast::flags::Property as PF;
                 if matches!(prop.kind, G::PropertyKind::Spread) {
@@ -164,7 +167,7 @@ pub(crate) fn lower_expression(
             Ok(InstructionValue::ObjectExpression { properties, loc })
         }
         Data::EArray(arr) => {
-            let mut elements: HirVec<ArrayElement> = Vec::new();
+            let mut elements: HirVec<ArrayElement> = AstAlloc::vec();
             for element in arr.items.iter() {
                 match &element.data {
                     Data::EMissing(_) => {
@@ -184,7 +187,7 @@ pub(crate) fn lower_expression(
         }
         Data::ENew(new_expr) => {
             let callee = lower_expression_to_temporary(builder, &new_expr.target)?;
-            let args = lower_arguments(builder, &new_expr.args)?;
+            let args = AstAlloc::vec_from_iter(lower_arguments(builder, &new_expr.args)?);
             Ok(InstructionValue::NewExpression { callee, args, loc })
         }
         Data::ETemplate(tmpl) => lower_template(builder, tmpl, loc),
@@ -261,7 +264,7 @@ pub(crate) fn lower_expression(
                     loc,
                 },
             )?;
-            let mut args: HirVec<PlaceOrSpread> = Vec::new();
+            let mut args: HirVec<PlaceOrSpread> = AstAlloc::vec();
             args.push(PlaceOrSpread::Place(lower_expression_to_temporary(
                 builder, &i.expr,
             )?));
@@ -422,7 +425,9 @@ fn lower_logical(
     let test_block = builder.reserve(BlockKind::Value);
     let test_block_id = test_block.id;
     let place = build_temporary_place(builder, loc);
-    let left_loc = convert_loc(bin.left.loc);
+    let around_left = (builder.parentheses_around(bin.left.loc))
+        .or_else(|| builder.type_cast_around(bin.left.loc));
+    let left_loc = convert_loc(around_left.unwrap_or(bin.left.loc));
     let left_place = build_temporary_place(builder, left_loc);
 
     let consequent_block = builder.try_enter(BlockKind::Value, |builder, _block_id| {
@@ -614,6 +619,10 @@ fn lower_sequence(
 
     let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
         fn flatten_comma(builder: &mut HirBuilder, e: &Expr) -> Result<Place, CompilerError> {
+            if !builder.environment().has_stack() {
+                return Err(crate::lowering::nested_too_deeply().into());
+            }
+
             if let Data::EBinary(b) = &e.data {
                 if b.op == OpCode::BinComma {
                     flatten_comma(builder, &b.left)?;
@@ -1260,8 +1269,8 @@ fn lower_template(
         return Ok(InstructionValue::TaggedTemplateExpression { tag, value, loc });
     }
 
-    let mut subexprs: HirVec<Place> = Vec::with_capacity(parts.len());
-    let mut quasis: HirVec<TemplateQuasi> = Vec::with_capacity(parts.len() + 1);
+    let mut subexprs: HirVec<Place> = AstAlloc::vec_with_capacity(parts.len());
+    let mut quasis: HirVec<TemplateQuasi> = AstAlloc::vec_with_capacity(parts.len() + 1);
     quasis.push(convert_template_contents(&tmpl.head, loc)?);
     for part in parts {
         subexprs.push(lower_expression_to_temporary(builder, &part.value)?);
@@ -1301,13 +1310,13 @@ fn arena_utf8_from_utf16(
     units: &[u16],
     loc: Option<SourceLocation>,
 ) -> Result<StoreStr, CompilerError> {
-    let mut buf: HirVec<u8> = Vec::with_capacity(units.len() * 3);
+    let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(units.len() * 3);
     for r in char::decode_utf16(units.iter().copied()) {
         let c = r.map_err(|_| cold_todo("non-utf16 template", loc))?;
         let mut tmp = [0u8; 4];
         buf.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
     }
-    Ok(arena_str(&buf))
+    Ok(StoreStr::new(buf.leak()))
 }
 
 // =============================================================================
@@ -1338,6 +1347,9 @@ fn is_reorderable_expression(
     expr: &Expr,
     allow_local_identifiers: bool,
 ) -> bool {
+    if !builder.environment().has_stack() {
+        return false;
+    }
     match &expr.data {
         Data::EIdentifier(ident) => {
             if is_module_level_or_global(builder, ident.ref_) {
@@ -1408,6 +1420,11 @@ fn is_reorderable_expression(
             }
             stmts.is_empty()
         }
+        Data::ECall(call)
+            if call.was_jsx_element && !builder.environment().config.jsx_can_be_reordered =>
+        {
+            false
+        }
         Data::ECall(call) if call.optional_chain.is_none() => {
             is_reorderable_expression(builder, &call.target, allow_local_identifiers)
                 && call
@@ -1469,17 +1486,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
     ) {
         return true;
     }
-    if let Some(member) = builder
-        .host()
-        .module_scope()
-        .members
-        .get(sym.original_name.slice())
-    {
-        if member.ref_ == ref_ {
-            return true;
-        }
-    }
-    false
+    builder.host().is_module_level(ref_)
 }
 
 // =============================================================================

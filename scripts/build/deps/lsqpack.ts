@@ -20,7 +20,12 @@ export const lsqpack: Dependency = {
 
   // QPACK uses the same RFC 7541 Huffman code as HPACK; share lshpack's
   // .bss-backed hencs/hdecs instead of carrying a second 768 KB copy.
-  patches: ["patches/lsqpack/bss-huff-tables.patch"],
+  patches: [
+    "patches/lsqpack/bss-huff-tables.patch",
+    // The decoder asks dhi_prepare_decode() for room for the bytes it has in
+    // hand, so the buffer of a long name or value grows as it arrives.
+    "patches/lsqpack/decode-room-for-bytes-in-hand.patch",
+  ],
 
   // lsqpack.c is compiled inside the lsquic dep because lsquic feeds it a
   // non-FILE* logger context that only works with LSQPACK_*_LOGGER_HEADER

@@ -2143,12 +2143,15 @@ pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
 pub struct StylesheetExtra {
     /// Used when css modules is enabled
     pub symbols: SymbolList,
+    /// Some declaration in this file names a `border-image` property.
+    pub(crate) uses_border_image: bool,
 }
 
 pub struct ParserExtra {
     pub(crate) symbols: SymbolList,
     pub(crate) local_scope: LocalScope,
     pub(crate) source_index: SrcIndex,
+    pub(crate) uses_border_image: bool,
 }
 
 /// Reference to a symbol in a stylesheet.
@@ -2368,7 +2371,9 @@ mod stylesheet_impl {
         where
             AtRule: for<'b> generic::DeepClone<'b>,
         {
-            let ctx = PropertyHandlerContext::new(arena, &options.targets, &options.unused_symbols);
+            let mut ctx =
+                PropertyHandlerContext::new(arena, &options.targets, &options.unused_symbols);
+            ctx.uses_border_image = extra.uses_border_image;
             let mut handler = DeclarationHandler::new(arena);
             let mut important_handler = DeclarationHandler::new(arena);
 
@@ -2586,6 +2591,7 @@ mod stylesheet_impl {
                 local_scope: LocalScope::default(),
                 symbols: SymbolList::default(),
                 source_index,
+                uses_border_image: false,
             };
             let mut local_properties = LocalPropertyUsage::default();
 
@@ -2667,6 +2673,7 @@ mod stylesheet_impl {
                 },
                 StylesheetExtra {
                     symbols: parser_extra.symbols,
+                    uses_border_image: parser_extra.uses_border_image,
                 },
             ))
         }
@@ -2688,6 +2695,7 @@ mod stylesheet_impl {
                 local_scope: LocalScope::default(),
                 symbols: SymbolList::default(),
                 source_index,
+                uses_border_image: false,
             };
             let mut input = ParserInput::new(code, arena);
             let mut parser = Parser::new(
@@ -3146,6 +3154,12 @@ impl<'a> Parser<'a> {
             flags,
             import_records,
             extra,
+        }
+    }
+
+    pub(crate) fn note_border_image(&mut self) {
+        if let Some(extra) = self.extra.as_deref_mut() {
+            extra.uses_border_image = true;
         }
     }
 

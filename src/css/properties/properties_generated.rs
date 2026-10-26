@@ -2902,11 +2902,13 @@ impl Property {
                 }
             }
             PropertyId::BorderImageSource => {
+                input.note_border_image();
                 if let Some(c) = parse_value::<css::css_values::image::Image>(input, options) {
                     return Ok(Property::BorderImageSource(c));
                 }
             }
             PropertyId::BorderImageOutset => {
+                input.note_border_image();
                 if let Some(c) = parse_value::<
                     css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>,
                 >(input, options)
@@ -2915,11 +2917,13 @@ impl Property {
                 }
             }
             PropertyId::BorderImageRepeat => {
+                input.note_border_image();
                 if let Some(c) = parse_value::<border_image::BorderImageRepeat>(input, options) {
                     return Ok(Property::BorderImageRepeat(c));
                 }
             }
             PropertyId::BorderImageWidth => {
+                input.note_border_image();
                 if let Some(c) = parse_value::<
                     css::css_values::rect::Rect<border_image::BorderImageSideWidth>,
                 >(input, options)
@@ -2928,11 +2932,13 @@ impl Property {
                 }
             }
             PropertyId::BorderImageSlice => {
+                input.note_border_image();
                 if let Some(c) = parse_value::<border_image::BorderImageSlice>(input, options) {
                     return Ok(Property::BorderImageSlice(c));
                 }
             }
             PropertyId::BorderImage(pre) => {
+                input.note_border_image();
                 if let Some(c) = parse_value::<border_image::BorderImage>(input, options) {
                     return Ok(Property::BorderImage((c, pre)));
                 }

@@ -35,6 +35,8 @@ pub struct PropertyHandlerContext<'a> {
     pub(crate) dark: Vec<css::Property>,
     pub(crate) context: DeclarationContext,
     pub(crate) unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
+    /// Some declaration in this file names a `border-image` property.
+    pub(crate) uses_border_image: bool,
 }
 
 impl<'a> PropertyHandlerContext<'a> {
@@ -53,6 +55,7 @@ impl<'a> PropertyHandlerContext<'a> {
             dark: Vec::new(),
             context: DeclarationContext::None,
             unused_symbols,
+            uses_border_image: false,
         }
     }
 
@@ -67,6 +70,7 @@ impl<'a> PropertyHandlerContext<'a> {
             dark: Vec::new(),
             context,
             unused_symbols: self.unused_symbols,
+            uses_border_image: self.uses_border_image,
         }
     }
 

@@ -1,5 +1,7 @@
 // import.meta properties are inlined at parse time in Bake
-import { expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 const platformPath = (path: string) => {
@@ -191,6 +193,51 @@ console.log(JSON.stringify([import.meta.file, import.meta.file.charCodeAt(5), im
     await using c = await dev.client("/");
     expect(JSON.parse(await c.getStringMessage())).toEqual(["filé.js", 106, 115]);
   },
+});
+
+// A production build minifies, so `[n]`, `.length` and a `case` on the inlined path fold there too.
+test("import.meta.file of a non-ASCII path folds per UTF-16 code unit in a production build", async () => {
+  using dir = tempDir("bake-production-non-ascii-path", {
+    "client.ts": `console.log("client loaded");`,
+    "server.ts": `
+      export function render(req, meta) {
+        return new Response(String(meta.pageModule.default()));
+      }
+      export async function prerender(meta) {
+        return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
+      }
+    `,
+    "dér/filé.ts": `
+      export function read() {
+        let taken = "default";
+        switch (import.meta.file[3]) {
+          case "é":
+            taken = "case é";
+            break;
+        }
+        return JSON.stringify([import.meta.file, import.meta.file[3], import.meta.file[4], import.meta.file.length, import.meta.file.charCodeAt(5), \`\${import.meta.file}\`.length, (import.meta.file + "x").length, taken]);
+      }
+    `,
+    "routes/index.ts": `import { read } from "../dér/filé.ts";\nexport default () => read();`,
+    "app.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+      export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--app", "./app.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const html = await Bun.file(join(String(dir), "dist", "index.html"))
+    .text()
+    .catch(() => stdout + stderr);
+  expect(html).toBe('<body>["filé.ts","é",".",7,116,7,8,"case é"]</body>');
+  expect(exitCode).toBe(0);
 });
 
 devTest("import.meta properties in catch-all routes", {

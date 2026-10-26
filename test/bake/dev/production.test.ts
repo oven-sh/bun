@@ -489,48 +489,6 @@ export default function () {
     expect(exitCode).toBe(0);
   });
 
-  // A production build minifies, and inlines `import.meta.file` as 8-bit text that can be non-ASCII. Its folds have to
-  // read that text per UTF-16 code unit, not per byte.
-  test("folds import.meta.file of a non-ASCII path per UTF-16 code unit", async () => {
-    using dir = tempDir("bake-production-non-ascii-path", {
-      "client.ts": `console.log("client loaded");`,
-      "server.ts": `
-        export function render(req, meta) {
-          return new Response(String(meta.pageModule.default()));
-        }
-        export async function prerender(meta) {
-          return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
-        }
-      `,
-      "dér/filé.ts": `
-        export function read() {
-          let taken = "default";
-          switch (import.meta.file[3]) {
-            case "é":
-              taken = "case é";
-              break;
-          }
-          return JSON.stringify([import.meta.file, import.meta.file[3], import.meta.file[4], import.meta.file.length, import.meta.file.charCodeAt(5), \`\${import.meta.file}\`.length, (import.meta.file + "x").length, taken]);
-        }
-      `,
-      "routes/index.ts": `import { read } from "../dér/filé.ts";\nexport default () => read();`,
-      "app.ts": `
-        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
-        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
-      `,
-    });
-
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
-      .cwd(String(dir))
-      .env(bunEnv)
-      .throws(false);
-    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
-      .text()
-      .catch(() => stderr.toString());
-    expect(html).toBe('<body>["filé.ts","é",".",7,116,7,8,"case é"]</body>');
-    expect(exitCode).toBe(0);
-  });
-
   test("fails the build for a route file with an invalid name", async () => {
     using dir = tempDir("bake-production-invalid-route", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

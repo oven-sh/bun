@@ -99,7 +99,8 @@ test.concurrent.each([
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("(fail) a");
+  // Either error of the snapshot matcher for a .snap file that it cannot load.
+  expect(stderr).toMatch(/error: Failed to (snapshot value|parse snapshot file for): /);
   expect(stderr).toContain(" 0 pass\n 1 fail\n");
   expect(fs.existsSync(join(String(dir), "ran"))).toBe(false);
   expect(fs.readFileSync(join(String(dir), "__snapshots__", "a.test.ts.snap"), "utf8")).toBe(snap);

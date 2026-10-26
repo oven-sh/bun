@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 const nestedFunctions = /* js */ `
@@ -112,6 +114,262 @@ describe("bundler", () => {
       })(),
     },
     run: { stdout: "Hello, world!", setCwd: true },
+  });
+
+  // An import that gets the sqlite loader from its `.sqlite` name stays external too, and the
+  // build warns. It used to become a module that holds the path of the database on the build
+  // machine. The database of the build and the one next to the bundle hold different rows, so
+  // the output of the program tells which of the two the bundle opened.
+  const sqliteDatabase = (row: string) => {
+    const db = new Database(":memory:");
+    db.exec("create table t (x text)");
+    db.exec(`insert into t values ('${row}')`);
+    return db.serialize();
+  };
+  const ofTheBuild = sqliteDatabase("of the build");
+  const nextToTheBundle = sqliteDatabase("next to the bundle");
+  const importsDatabase = /* js */ `
+    import db from './db.sqlite';
+    console.log(db.query("select x from t").get().x);
+  `;
+  const notBundled = `"./db.sqlite" is not bundled: the program opens it at run time, relative to the bundle`;
+
+  itBundled("bun/sqlite-file-without-type-attribute", {
+    target: "bun",
+    outdir: "/out",
+    files: { "/src/entry.ts": importsDatabase, "/src/db.sqlite": ofTheBuild },
+    runtimeFiles: { "/out/db.sqlite": nextToTheBundle },
+    bundleWarnings: { "/src/entry.ts": [notBundled] },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain(`import db from "./db.sqlite";`);
+    },
+    run: { stdout: "next to the bundle" },
+  });
+  // The bundle prints what bun prints when it runs this file next to the database.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`bun/sqlite-file-without-type-attribute-every-import-kind-${format}`, {
+      target: "bun",
+      format,
+      outdir: "/out",
+      files: {
+        "/src/entry.ts": /* js */ `
+          import viaDefault from "./db.sqlite";
+          import { db as viaNamed } from "./db.sqlite";
+          import * as viaNamespace from "./db.sqlite";
+          const viaRequire = require("./db.sqlite");
+          const { dirname, join } = require("node:path");
+          const row = db => db.query("select x from t").get().x;
+          console.log(row(viaDefault), row(viaNamed), row(viaNamespace.default), row(viaRequire.db));
+          console.log(viaRequire.default === viaDefault, Object.keys(viaRequire).sort().join());
+          console.log(require.resolve("./db.sqlite") === join(dirname(process.argv[1]), "db.sqlite"));
+          import("./db.sqlite").then(viaImport => console.log(row(viaImport.default), viaImport.default === viaDefault));
+        `,
+        "/src/db.sqlite": ofTheBuild,
+      },
+      runtimeFiles: { "/out/db.sqlite": nextToTheBundle },
+      onAfterApiBundle(build) {
+        expect(build.logs.map(log => log.message)).toEqual(Array(6).fill(notBundled));
+      },
+      run: {
+        stdout: `
+          next to the bundle next to the bundle next to the bundle next to the bundle
+          true __esModule,db,default
+          true
+          next to the bundle true
+        `,
+      },
+    });
+  }
+  itBundled("bun/sqlite-file-without-type-attribute-onresolve-declines", {
+    target: "bun",
+    outdir: "/out",
+    files: { "/src/entry.ts": importsDatabase, "/src/db.sqlite": ofTheBuild },
+    runtimeFiles: { "/out/db.sqlite": nextToTheBundle },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    onAfterApiBundle(build) {
+      expect(build.logs.map(log => log.message)).toEqual([notBundled]);
+    },
+    run: { stdout: "next to the bundle" },
+  });
+  // The executable opens the database of its working directory.
+  itBundled("bun/sqlite-file-without-type-attribute-compile", {
+    compile: true,
+    files: { "/src/entry.ts": importsDatabase, "/src/db.sqlite": ofTheBuild },
+    runtimeFiles: { "/db.sqlite": nextToTheBundle },
+    bundleWarnings: {
+      "/src/entry.ts": [
+        `"./db.sqlite" is not bundled: the program opens it at run time, relative to the working directory`,
+      ],
+    },
+    run: { stdout: "next to the bundle", setCwd: true },
+  });
+  itBundled("bun/sqlite-file-without-type-attribute-zero-bytes", {
+    target: "bun",
+    outdir: "/out",
+    files: { "/src/entry.ts": importsDatabase, "/src/db.sqlite": "" },
+    runtimeFiles: { "/out/db.sqlite": nextToTheBundle },
+    bundleWarnings: { "/src/entry.ts": [notBundled] },
+    run: { stdout: "next to the bundle" },
+  });
+  // The embed import copies the database. The other import of the same file does not use the copy.
+  const embedImport = `import embedded from "./db.sqlite" with { type: "sqlite", embed: "true" };`;
+  const plainImport = `import plain from "./db.sqlite";`;
+  for (const [order, imports] of [
+    ["embed-first", [embedImport, plainImport]],
+    ["embed-last", [plainImport, embedImport]],
+  ] as const) {
+    itBundled(`bun/sqlite-file-without-type-attribute-${order}`, {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/src/entry.ts": /* js */ `
+          ${imports.join("\n")}
+          const row = db => db.query("select x from t").get().x;
+          console.log(row(embedded), row(plain));
+        `,
+        "/src/db.sqlite": ofTheBuild,
+      },
+      runtimeFiles: { "/out/db.sqlite": nextToTheBundle },
+      run: { stdout: "of the build next to the bundle" },
+    });
+  }
+  // `Bun.build({ files })` resolves an import in another place than the file system does.
+  for (const declines of [false, true]) {
+    test(`bun/sqlite-file-without-type-attribute-in-memory${declines ? "-onresolve-declines" : ""}`, async () => {
+      using dir = tempDir("sqlite-without-type-attribute", {
+        "src/entry.ts": importsDatabase,
+        "out/db.sqlite": nextToTheBundle,
+      });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "src/entry.ts")],
+        outdir: join(String(dir), "out"),
+        target: "bun",
+        files: { [join(String(dir), "src/db.sqlite")]: ofTheBuild },
+        plugins: declines
+          ? [{ name: "declines", setup: b => void b.onResolve({ filter: /.*/ }, () => undefined) }]
+          : [],
+      });
+      expect(build.logs.map(log => log.message)).toEqual([notBundled]);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "out/entry.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "next to the bundle\n", stderr: "", exitCode: 0 });
+    });
+  }
+
+  // These do not print the import as written, so the database stays a module of the bundle.
+  itBundled("bun/sqlite-file-without-type-attribute-export-star", {
+    backend: "cli",
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/src/entry.ts": /* js */ `
+        import * as all from "./reexport";
+        console.log(Object.keys(all).join());
+      `,
+      "/src/reexport.ts": /* js */ `
+        export * from "./db.sqlite";
+        export const other = 1;
+      `,
+      "/src/db.sqlite": ofTheBuild,
+    },
+    run: { stdout: "other" },
+  });
+  itBundled("bun/sqlite-file-without-type-attribute-require-shim", {
+    backend: "cli",
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/src/entry.ts": /* js */ `
+        import db from "./shim.cjs";
+        console.log(db.query("select x from t").get().x);
+      `,
+      "/src/shim.cjs": `module.exports = require("./db.sqlite");`,
+      "/src/db.sqlite": ofTheBuild,
+    },
+    runtimeFiles: { "/out/db.sqlite": nextToTheBundle },
+    run: { stdout: "of the build" },
+  });
+
+  // What the user or a plugin says about the file goes first. The CLI backend fails on a warning.
+  itBundled("bun/sqlite-file-without-type-attribute-explicit-external", {
+    backend: "cli",
+    target: "bun",
+    outdir: "/out",
+    external: ["*.sqlite"],
+    files: { "/src/entry.ts": importsDatabase, "/src/db.sqlite": ofTheBuild },
+    runtimeFiles: { "/out/db.sqlite": nextToTheBundle },
+    run: { stdout: "next to the bundle" },
+  });
+  itBundled("bun/sqlite-file-with-type-attribute-does-not-warn", {
+    backend: "cli",
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/src/entry.ts": /* js */ `
+        import db from './db.sqlite' with { type: "sqlite" };
+        console.log(db.query("select x from t").get().x);
+      `,
+    },
+    runtimeFiles: { "/out/db.sqlite": nextToTheBundle },
+    run: { stdout: "next to the bundle" },
+  });
+  for (const [name, entry, loader] of [
+    ["file-type-attribute", `import path from './db.sqlite' with { type: "file" };`, undefined],
+    ["file-loader", `import path from './db.sqlite';`, { ".sqlite": "file" }],
+  ] as const) {
+    itBundled(`bun/sqlite-file-without-type-attribute-${name}`, {
+      backend: "cli",
+      target: "bun",
+      outdir: "/out",
+      loader,
+      files: {
+        "/src/entry.ts": `${entry}\nconsole.log(require("node:path").extname(path));`,
+        "/src/db.sqlite": ofTheBuild,
+      },
+      run: { stdout: ".sqlite" },
+    });
+  }
+  itBundled("bun/sqlite-file-without-type-attribute-onresolve-external", {
+    target: "bun",
+    outdir: "/out",
+    files: { "/src/entry.ts": importsDatabase, "/src/db.sqlite": ofTheBuild },
+    runtimeFiles: { "/out/db.sqlite": nextToTheBundle },
+    plugins(builder) {
+      builder.onResolve({ filter: /\.sqlite$/ }, ({ path }) => ({ path, external: true }));
+    },
+    onAfterApiBundle(build) {
+      expect(build.logs).toEqual([]);
+    },
+    run: { stdout: "next to the bundle" },
+  });
+  itBundled("bun/sqlite-file-without-type-attribute-onload", {
+    target: "bun",
+    outdir: "/out",
+    files: { "/src/entry.ts": importsDatabase, "/src/db.sqlite": ofTheBuild },
+    plugins(builder) {
+      builder.onLoad({ filter: /\.sqlite$/ }, () => ({
+        contents: `export default { query: () => ({ get: () => ({ x: "from the plugin" }) }) };`,
+        loader: "js",
+      }));
+    },
+    onAfterApiBundle(build) {
+      expect(build.logs).toEqual([]);
+    },
+    run: { stdout: "from the plugin" },
+  });
+  itBundled("bun/sqlite-file-without-type-attribute-target-node", {
+    target: "node",
+    outdir: "/out",
+    files: { "/src/entry.ts": importsDatabase, "/src/db.sqlite": ofTheBuild },
+    bundleErrors: { "/src/db.sqlite": [`To use the "sqlite" loader, set target to "bun"`] },
   });
   itBundled("bun/TargetBunNoSourcemapMessage", {
     target: "bun",

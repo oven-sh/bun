@@ -378,9 +378,15 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
     );
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
     let source_path: &'static [u8] = source.path.text;
+    let export_star_import_records = core::mem::replace(
+        &mut this.graph.ast.items_export_star_import_records_mut()[idx],
+        bun_alloc::AstAlloc::vec(),
+    );
 
     let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
         import_records: &mut barrel_ir,
+        export_star_import_records: &export_star_import_records,
+        redirect_import_record_index: this.graph.ast.items_redirect_import_record_index()[idx],
         source: &source,
         loader,
         target,
@@ -388,6 +394,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
     });
 
     this.graph.input_files.items_source_mut()[idx] = source;
+    this.graph.ast.items_export_star_import_records_mut()[idx] = export_star_import_records;
 
     let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
 

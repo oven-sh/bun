@@ -621,9 +621,15 @@ describe("bundler", async () => {
       hash: Bun.hash(bytes).toString(16),
     });
 
-    // Every loader whose output is the input file.
+    // Without this option a `.txt` file is text.
+    const loaderOption = { ".txt": "file" } as const;
+    const loaderFlags = Object.entries(loaderOption).flatMap(([ext, loader]) => ["--loader", `${ext}:${loader}`]);
+    // Every loader whose output is the input file, and every way to select the `file` loader.
     const copyLoaders = [
       { loader: "file", ext: ".bin", attributes: ' with { type: "file" }' },
+      { loader: "file_by_option", ext: ".txt", attributes: "" },
+      // An extension that has no loader.
+      { loader: "file_by_default", ext: ".dat", attributes: "" },
       { loader: "wasm", ext: ".wasm", attributes: "" },
       { loader: "napi", ext: ".node", attributes: "" },
       { loader: "sqlite_embedded", ext: ".sqlite", attributes: ' with { type: "sqlite", embed: "true" }' },
@@ -657,6 +663,7 @@ describe("bundler", async () => {
         backend,
         target: "bun",
         outdir: "/out",
+        loader: loaderOption,
         files: { "/entry.ts": assetEntry, ...assetFiles },
         async onAfterBundle(api) {
           expect(emittedSummaries(api.outdir)).toEqual(sourceSummaries);
@@ -666,6 +673,7 @@ describe("bundler", async () => {
             entrypoints: ["/entry.ts"],
             files: { "/entry.ts": assetEntry, ...assetFiles },
             target: "bun",
+            loader: loaderOption,
           });
           expect(
             fromMemory.outputs
@@ -822,7 +830,7 @@ describe("bundler", async () => {
         ...Object.fromEntries(assets.map(asset => [`${asset.name}${asset.ext}`, asset.bytes])),
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "build", "./entry.ts", "--outdir", "out", "--target", "bun"],
+        cmd: [bunExe(), "build", "./entry.ts", "--outdir", "out", "--target", "bun", ...loaderFlags],
         env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" },
         cwd: String(dir),
         stdout: "ignore",

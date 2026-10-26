@@ -2,6 +2,7 @@
 name = "bun_lsquic_sys"
 version = "0.0.0"
 edition = "2024"
+publish.workspace = true
 
 [lib]
 path = "lib.rs"

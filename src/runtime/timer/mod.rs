@@ -24,6 +24,10 @@ use crate::jsc::JSValue;
 
 // ─── JS-facing surface (`impl All { set_timeout / clear_* / … }`) ────────────
 #[path = "Timer.rs"]
+#[expect(
+    clippy::module_inception,
+    reason = "a namespace carried over from the Zig port"
+)]
 pub(crate) mod timer;
 
 // ─── impl_timer_object! ──────────────────────────────────────────────────────

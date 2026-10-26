@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 pub mod builtins;
 pub mod elf;
 pub mod error;

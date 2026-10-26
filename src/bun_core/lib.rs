@@ -12,7 +12,6 @@
     clippy::disallowed_methods,
     clippy::disallowed_macros
 )]
-#![warn(unused_must_use)]
 
 pub mod Global;
 pub mod atomic_cell;

@@ -1,4 +1,3 @@
-#![warn(unused_must_use)]
 use crate::p::P;
 use bun_alloc::Arena as Bump;
 use bun_ast::e::CallUnwrap;
@@ -494,7 +493,6 @@ impl SideEffects {
         }
     }
 
-    ///
     fn simplify_unused_binary_comma_expr<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         expr: Expr,

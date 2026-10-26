@@ -183,7 +183,8 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
 
   // Hashes, computed topologically over the DAG. `symbolHash` (→ `-C metadata`) must differ wherever two builds
   // of one crate name can meet in a link — host vs target, sysroot std vs build-std std, feature sets — and must
-  // *not* differ between builds meant to have identical symbols (PGO generate/use), so it excludes the rustflags.
+  // *not* differ between builds meant to have identical symbols (PGO generate/use), so it excludes the rustflags,
+  // the plan's and the profile's: a release link orders its symbols by the names an earlier build had (`linker.order`).
   // `hash` (→ file names) additionally covers the rustflags. cargo: compute_metadata's c_metadata vs unit_id.
   // A package from a registry is named by its id (source URL + name + version), also when it is one of std's
   // dependencies: those live under $CARGO_HOME, and a path to them would put the machine's directory layout into
@@ -196,8 +197,10 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
         : relative(plan.workspaceRoot, unit.pkg.manifest_path);
   const digest = (parts: unknown[]): string =>
     createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 16);
-  const identity = (unit: RustUnit): unknown[] => {
+  const identity = (unit: RustUnit, of: "symbols" | "files"): unknown[] => {
     const u = g.units[unit.index]!;
+    // cargo leaves the key out of a profile that has none.
+    const { rustflags: _, ...profileWithoutRustflags } = u.profile;
     return [
       3, // bump to invalidate every artifact
       packageKey(unit),
@@ -207,7 +210,7 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
       unit.platform,
       u.mode,
       [...unit.features].sort(),
-      u.profile,
+      of === "symbols" ? profileWithoutRustflags : u.profile,
       unit.isStd,
       plan.rustc.version,
       plan.rustc.commitHash,
@@ -219,12 +222,12 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
     for (const d of unit.deps) hashesOf(d.unit);
     if (unit.buildScript !== undefined) hashesOf(unit.buildScript);
     unit.symbolHash = digest([
-      ...identity(unit),
+      ...identity(unit, "symbols"),
       unit.deps.map(d => [d.externName, d.unit.symbolHash]),
       unit.buildScript?.symbolHash ?? null,
     ]);
     unit.hash = digest([
-      ...identity(unit),
+      ...identity(unit, "files"),
       unit.platform === "host" ? [] : targetRustflags.filter(f => !f.startsWith("--remap-path-prefix")),
       unit.deps.map(d => [d.externName, d.unit.hash]),
       unit.buildScript?.hash ?? null,

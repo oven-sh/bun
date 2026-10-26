@@ -13,6 +13,8 @@ on:
     branches: [main]
     paths:
       - "src/**/*.rs"
+      - "src/**/Cargo.toml"
+      - "Cargo.toml"
       - "src/**/*.h"
       - "src/**/*.cpp"
       - "src/**/*.bind.ts"
@@ -37,6 +39,8 @@ on:
   pull_request:
     paths:
       - "src/**/*.rs"
+      - "src/**/Cargo.toml"
+      - "Cargo.toml"
       - "src/**/*.h"
       - "src/**/*.cpp"
       - "src/**/*.bind.ts"

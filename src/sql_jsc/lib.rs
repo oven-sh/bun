@@ -1,5 +1,3 @@
-#![warn(unused_must_use)]
-
 // ──────────────────────────────────────────────────────────────────────────
 // Module tree wired with explicit `#[path]` attrs (files use PascalCase
 // basenames).

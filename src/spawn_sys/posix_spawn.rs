@@ -1,5 +1,3 @@
-#![warn(unused_must_use)]
-
 #[cfg(target_os = "macos")]
 use core::ffi::c_short;
 use core::ffi::{c_char, c_int};
@@ -250,6 +248,10 @@ pub mod bun_spawn {
     }
 }
 
+#[expect(
+    clippy::module_inception,
+    reason = "a namespace carried over from the Zig port"
+)]
 pub mod posix_spawn {
     use super::bun_spawn;
     use super::*;

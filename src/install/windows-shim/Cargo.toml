@@ -38,6 +38,7 @@
 name = "bun_shim_impl"
 version.workspace = true
 edition.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "bun-shim-impl"

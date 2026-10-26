@@ -25,6 +25,10 @@ use bun_standalone_graph::StandaloneModuleGraph;
 // with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
 use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_slice};
 
+#[expect(
+    clippy::module_inception,
+    reason = "a namespace carried over from the Zig port"
+)]
 pub(crate) mod js_bundler {
     use super::*;
     use bun_core::Utf8Bytes;
@@ -793,13 +797,13 @@ pub(crate) mod js_bundler {
                     } else if env.is_string() {
                         let slice = env.to_utf8(global_this)?;
                         match api::DotEnvBehavior::parse_str(slice.slice()) {
-                            Ok((behavior, prefix)) => {
+                            Some((behavior, prefix)) => {
                                 this.env_behavior = behavior;
                                 if let Some(prefix) = prefix {
                                     this.env_prefix.append_slice_exact(prefix)?;
                                 }
                             }
-                            Err(()) => {
+                            None => {
                                 return Err(global_this.throw_invalid_arguments(format_args!("env must be 'inline', 'disable', or a string with a '*' character")));
                             }
                         }

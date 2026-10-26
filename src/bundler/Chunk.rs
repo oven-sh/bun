@@ -1277,6 +1277,10 @@ impl EntryPoint {
     const IS_ENTRY_POINT_BIT: u64 = 1 << 62;
 
     /// The chunk that entry point `entry_point_id` itself produces.
+    #[expect(
+        clippy::self_named_constructors,
+        reason = "the counterpart of `non_entry_point`"
+    )]
     pub(crate) fn entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
         EntryPoint(Self::non_entry_point(source_index, entry_point_id).0 | Self::IS_ENTRY_POINT_BIT)
     }

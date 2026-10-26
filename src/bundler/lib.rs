@@ -2,7 +2,6 @@
 #![feature(adt_const_params, allocator_api, thread_local)]
 #![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
 #![allow(non_snake_case, non_upper_case_globals)]
-#![warn(unused_must_use)]
 
 pub mod error;
 pub use error::{Error, Result};

@@ -1580,7 +1580,7 @@ impl PackageFiles<'_> {
         let destbase = destination_dir;
         let destpath = self.destination_dir_subpath;
 
-        let cached_package_dir = match {
+        let opened = {
             #[cfg(windows)]
             {
                 if method == Method::Symlink {
@@ -1599,7 +1599,8 @@ impl PackageFiles<'_> {
                 let _ = method;
                 open_dir(self.cache_dir, self.cache_dir_subpath)
             }
-        } {
+        };
+        let cached_package_dir = match opened {
             Ok(d) => d,
             Err(err) => return Err(Failure::boxed(err, Step::OpeningCacheDir)),
         };

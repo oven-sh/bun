@@ -579,8 +579,7 @@ pub use bun_core::JsError;
 /// takes it.
 ///
 /// Note: `#[must_use]` cannot be applied to type aliases; `Result` already
-/// carries it. We instead `#![warn(unused_must_use)]` in every crate that
-/// blanket-`allow(unused)`s so the underlying lint is never silenced.
+/// carries it, and `[workspace.lints]` denies `unused_must_use`.
 pub type JsResult<T> = core::result::Result<T, JsError>;
 
 /// Converts `bun.JSError` → `std.Io.Writer.Error` for Console formatting paths.

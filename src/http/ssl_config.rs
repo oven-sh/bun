@@ -93,36 +93,6 @@ impl core::ops::Deref for SharedPtr {
 }
 
 impl SSLConfig {
-    pub(crate) const ZERO: SSLConfig = SSLConfig {
-        server_name: core::ptr::null(),
-        key_file_name: core::ptr::null(),
-        cert_file_name: core::ptr::null(),
-        ca_file_name: core::ptr::null(),
-        dh_params_file_name: core::ptr::null(),
-        passphrase: core::ptr::null(),
-        key: None,
-        cert: None,
-        ca: None,
-        crl: None,
-        secure_options: 0,
-        session_timeout: 0,
-        allow_partial_trust_chain: false,
-        sigalgs: core::ptr::null(),
-        ecdh_curve: core::ptr::null(),
-        ssl_min_version: 0,
-        ssl_max_version: 0,
-        request_cert: 0,
-        reject_unauthorized: 0,
-        ssl_ciphers: core::ptr::null(),
-        protos: core::ptr::null(),
-        client_renegotiation_limit: 0,
-        client_renegotiation_window: 0,
-        requires_custom_request_ctx: false,
-        is_using_default_ciphers: true,
-        low_memory_mode: false,
-        cached_hash: AtomicU64::new(0),
-    };
-
     #[inline]
     pub fn zero() -> Self {
         Self::default()
@@ -462,7 +432,35 @@ impl SSLConfig {
 
 impl Default for SSLConfig {
     fn default() -> Self {
-        Self::ZERO
+        Self {
+            server_name: core::ptr::null(),
+            key_file_name: core::ptr::null(),
+            cert_file_name: core::ptr::null(),
+            ca_file_name: core::ptr::null(),
+            dh_params_file_name: core::ptr::null(),
+            passphrase: core::ptr::null(),
+            key: None,
+            cert: None,
+            ca: None,
+            crl: None,
+            secure_options: 0,
+            session_timeout: 0,
+            allow_partial_trust_chain: false,
+            sigalgs: core::ptr::null(),
+            ecdh_curve: core::ptr::null(),
+            ssl_min_version: 0,
+            ssl_max_version: 0,
+            request_cert: 0,
+            reject_unauthorized: 0,
+            ssl_ciphers: core::ptr::null(),
+            protos: core::ptr::null(),
+            client_renegotiation_limit: 0,
+            client_renegotiation_window: 0,
+            requires_custom_request_ctx: false,
+            is_using_default_ciphers: true,
+            low_memory_mode: false,
+            cached_hash: AtomicU64::new(0),
+        }
     }
 }
 

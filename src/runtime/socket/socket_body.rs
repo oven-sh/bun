@@ -2132,7 +2132,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         this: bun_ptr::ThisPtr<Self>,
         socket: SocketHandler<SSL>,
         err: c_int,
-        reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
         this.set_latest_session(ptr::null_mut());
@@ -2188,7 +2187,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // release it a second time. This frame is the twin's trampoline for
             // the event, so what its handlers left pending is folded here and
             // this socket's own close proceeds regardless.
-            crate::dispatch::fold(Self::on_close(raw.into_this_ptr(), socket, err, reason));
+            crate::dispatch::fold(Self::on_close(raw.into_this_ptr(), socket, err));
             scope
         });
 
@@ -3952,7 +3951,7 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
             ctx.upgrade.teardown();
             let socket = ctx.duplex_socket();
             // `Err` is left pending for the release dispatcher's fold.
-            let _ = TLSSocket::on_close(tls.into_this_ptr(), socket, 0, None);
+            let _ = TLSSocket::on_close(tls.into_this_ptr(), socket, 0);
         }
         // Not `release_connection`: at zero that queues the hop this call stands in for.
         if ctx.take_connection_ref() {
@@ -4242,7 +4241,7 @@ impl DuplexUpgradeContext {
             // in `on_error` instead of reading the Handlers that `TLSSocket::on_close`
             // → `mark_inactive` just released.
             let p = tls.into_this_ptr();
-            crate::dispatch::fold(TLSSocket::on_close(p, socket, 0, None));
+            crate::dispatch::fold(TLSSocket::on_close(p, socket, 0));
         }
 
         Self::release_connection(this);

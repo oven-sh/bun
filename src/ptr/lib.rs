@@ -7,7 +7,6 @@
 )]
 // Tests lock std's Mutex: bun_threading depends on this crate.
 #![cfg_attr(test, allow(clippy::disallowed_types))]
-#![warn(unused_must_use)]
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!
 //! Per PORTING.md §Pointers, most consumers of `bun.ptr.*` map directly to std

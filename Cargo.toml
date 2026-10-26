@@ -1,3 +1,6 @@
+# For `rustflags` in `[profile.dev]` and `[profile.release]`.
+cargo-features = ["profile-rustflags"]
+
 [workspace]
 resolver = "2"
 members = [
@@ -133,6 +136,7 @@ exclude = ["vendor"]
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
+publish = false
 
 # ─── Release optimization ───────────────────────────────────────────────────
 # Zig's release build is one compilation unit with whole-program optimization.
@@ -155,9 +159,51 @@ codegen-units = 1
 debug = "line-tables-only"
 strip = "none"
 panic = "abort"
+# The nightly features the workspace's own crates may enable, as the Linux kernel lists its own. A `#![feature(..)]`
+# that is not here is error E0725. A nightly feature can change or go away with any toolchain bump, so taking on a new
+# one is a decision, made by adding it to this list and to the one in `[profile.dev]`.
+rustflags = ["""-Zallow-features=\
+  adt_const_params,\
+  allocator_api,\
+  arbitrary_self_types_pointers,\
+  const_cmp,\
+  const_trait_impl,\
+  core_intrinsics,\
+  freeze,\
+  generic_const_exprs,\
+  hasher_prefixfree_extras,\
+  inherent_associated_types,\
+  linkage,\
+  optimize_attribute,\
+  rustc_attrs,\
+  thread_local,\
+  type_info,\
+  unsized_const_params"""]
+
+# Dependencies, and std under `-Zbuild-std`, enable features of their own.
+[profile.release.package."*"]
+rustflags = []
 
 [profile.dev]
 panic = "abort"
+# See `[profile.release]`.
+rustflags = ["""-Zallow-features=\
+  adt_const_params,\
+  allocator_api,\
+  arbitrary_self_types_pointers,\
+  const_cmp,\
+  const_trait_impl,\
+  core_intrinsics,\
+  freeze,\
+  generic_const_exprs,\
+  hasher_prefixfree_extras,\
+  inherent_associated_types,\
+  linkage,\
+  optimize_attribute,\
+  rustc_attrs,\
+  thread_local,\
+  type_info,\
+  unsized_const_params"""]
 # Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
 # being packed into the rlibs. Per-crate codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
 # the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
@@ -165,6 +211,9 @@ panic = "abort"
 # (rustc ignores it); Darwin's `"unpacked"` is the `.o`-is-the-debuginfo mode
 # `dsymutil` already expects.
 split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+rustflags = []
 
 # Release with debuginfo retained for `perf record` / flamegraphs. Same opt
 # level as release; binary is large but profilable.
@@ -226,8 +275,17 @@ unused_variables = "deny"
 unused_mut = "deny"
 unused_assignments = "deny"
 unused_macros = "deny"
+unused_must_use = "deny"
 unreachable_code = "deny"
 unreachable_patterns = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+redundant_lifetimes = "deny"
+macro_use_extern_crate = "deny"
+meta_variable_misuse = "deny"
+ambiguous_negative_literals = "deny"
+non_ascii_idents = "deny"
+ffi_unwind_calls = "deny"
 
 [workspace.lints.clippy]
 # == provenance-safe pointer casts ==
@@ -249,6 +307,18 @@ transmute_ptr_to_ptr = "deny"
 as_ptr_cast_mut = "deny"
 drop_non_drop = "deny"
 uninit_vec = "deny"
+transmute_undefined_repr = "deny"
+uninhabited_references = "deny"
+trailing_empty_array = "deny"
+read_zero_byte_vec = "deny"
+coerce_container_to_any = "deny"
+fallible_impl_from = "deny"
+unchecked_time_subtraction = "deny"
+invalid_upcast_comparisons = "deny"
+same_functions_in_if_condition = "deny"
+suspicious_xor_used_as_pow = "deny"
+float_cmp_const = "deny"
+path_buf_push_overwrite = "deny"
 
 # == performance ==
 redundant_clone = "deny"
@@ -267,6 +337,15 @@ vec_init_then_push = "deny"
 format_collect = "deny"
 manual_memcpy = "deny"
 needless_pass_by_value = "deny"
+inefficient_to_string = "deny"
+unnecessary_join = "deny"
+string_add_assign = "deny"
+clear_with_drain = "deny"
+set_contains_or_insert = "deny"
+iter_on_empty_collections = "deny"
+with_capacity_zero = "deny"
+trivial_regex = "deny"
+linkedlist = "deny"
 
 # == clarity / api hygiene ==
 unnecessary_unwrap = "deny"
@@ -292,6 +371,45 @@ manual_c_str_literals = "deny"
 precedence = "deny"
 implicit_saturating_sub = "deny"
 ptr_eq = "deny"
+ptr_offset_by_literal = "deny"
+explicit_deref_methods = "deny"
+get_unwrap = "deny"
+try_err = "deny"
+filter_map_next = "deny"
+flat_map_option = "deny"
+iter_filter_is_ok = "deny"
+iter_filter_is_some = "deny"
+search_is_some = "deny"
+manual_is_variant_and = "deny"
+manual_bit_width = "deny"
+manual_instant_elapsed = "deny"
+duration_suboptimal_units = "deny"
+ip_constant = "deny"
+range_minus_one = "deny"
+index_refutable_slice = "deny"
+single_char_pattern = "deny"
+string_lit_chars_any = "deny"
+non_zero_suggestions = "deny"
+large_digit_groups = "deny"
+unicode_not_nfc = "deny"
+unnecessary_debug_formatting = "deny"
+unnecessary_literal_bound = "deny"
+unused_peekable = "deny"
+unused_rounding = "deny"
+self_only_used_in_recursion = "deny"
+ref_option_ref = "deny"
+into_iter_without_iter = "deny"
+mismatching_type_param_order = "deny"
+trait_duplication_in_bounds = "deny"
+macro_use_imports = "deny"
+inline_asm_x86_att_syntax = "deny"
+unnecessary_safety_doc = "deny"
+doc_broken_link = "deny"
+doc_comment_double_space_linebreaks = "deny"
+doc_include_without_cfg = "deny"
+# These two read the manifests, not the code.
+negative_feature_names = "deny"
+redundant_feature_names = "deny"
 
 # == disallowed-* (configured in clippy.toml) ==
 disallowed_methods = "deny"
@@ -307,7 +425,6 @@ type_complexity = "allow"
 len_zero = "allow"
 len_without_is_empty = "allow"
 needless_return = "allow"
-module_inception = "allow"
 missing_safety_doc = "allow"
 let_unit_value = "allow"
 needless_update = "allow"
@@ -319,27 +436,16 @@ upper_case_acronyms = "allow"
 wrong_self_convention = "allow"
 should_implement_trait = "allow"
 new_without_default = "allow"
-self_named_constructors = "allow"  # Zig-port `Type::init()` constructor convention
 single_match = "allow"
 manual_range_contains = "allow"
 needless_lifetimes = "allow"
 needless_range_loop = "allow"
 while_let_loop = "allow"
 while_let_on_iterator = "allow"
-blocks_in_conditions = "allow"
-diverging_sub_expression = "allow"
-declare_interior_mutable_const = "allow"
-empty_line_after_doc_comments = "allow"
-empty_docs = "allow"
 excessive_precision = "allow"
 unreadable_literal = "allow"
-approx_constant = "allow"
-result_unit_err = "allow"
-only_used_in_recursion = "allow"
 # `as u32` etc. is identity on some libc targets, required widen on others
 unnecessary_cast = "allow"
-new_ret_no_self = "allow"
-map_identity = "allow"
 
 [workspace.dependencies]
 rust-argon2 = { path = "vendor/rust-argon2" }

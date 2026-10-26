@@ -623,7 +623,23 @@ impl Lockfile {
         manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
-        let mut result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
+        self.load_from_dir_with_mode::<ATTEMPT_LOADING_FROM_OTHER_LOCKFILE>(
+            dir,
+            manager,
+            log,
+            TextLockfile::ReadMode::Install,
+        )
+    }
+
+    pub fn load_from_dir_with_mode<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
+        &'a mut self,
+        dir: Fd,
+        manager: Option<&mut PackageManager>,
+        log: &mut bun_ast::Log,
+        mode: TextLockfile::ReadMode,
+    ) -> LoadResult<'a> {
+        let mut result =
+            self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log, mode);
         if let LoadResult::Ok(ok) = &mut result {
             ok.lockfile.rebase_folder_dependencies().unwrap_or_oom();
         }
@@ -638,6 +654,7 @@ impl Lockfile {
         dir: Fd,
         manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
+        mode: TextLockfile::ReadMode,
     ) -> LoadResult<'a> {
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
@@ -680,6 +697,7 @@ impl Lockfile {
                 &source,
                 log,
                 manager.as_deref(),
+                mode,
             ) {
                 if matches!(e, TextLockfile::ParseError::OutOfMemory) {
                     bun_core::out_of_memory();
@@ -2038,6 +2056,11 @@ impl Lockfile {
     /// The `lockfileVersion` a text lockfile was loaded with, which a re-save keeps.
     pub fn text_lockfile_version(&self) -> bun_lock::Version {
         self.text_lockfile_version
+    }
+
+    /// The `lockfileVersion` a re-save of this lockfile stamps.
+    pub fn text_lockfile_version_to_write(&self) -> bun_lock::Version {
+        TextLockfile::Stringifier::version_to_write(self)
     }
 
     /// Stamp the `lockfileVersion` a fresh write gets (v2, or v3 with scoped override

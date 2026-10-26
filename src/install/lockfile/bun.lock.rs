@@ -227,7 +227,7 @@ impl Stringifier {
     /// are actually serialized are considered, not every entry in the in-memory
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
-    fn version_to_write(lockfile: &BinaryLockfile) -> Version {
+    pub(crate) fn version_to_write(lockfile: &BinaryLockfile) -> Version {
         let loaded = lockfile.text_lockfile_version;
         let has_scoped = lockfile.overrides.has_scoped();
         if !has_scoped && !loaded.at_least(Version::V3) {
@@ -1744,6 +1744,7 @@ fn item_loc(source: &bun_ast::Source, key_loc: bun_ast::Loc, index: usize) -> bu
 fn parse_integrity(
     integrity_str: &[u8],
     lockfile_version: Version,
+    mode: ReadMode,
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     key_loc: bun_ast::Loc,
@@ -1754,7 +1755,7 @@ fn parse_integrity(
         return Ok(integrity);
     }
     let (source, loc) = (Some(source), item_loc(source, key_loc, index));
-    if lockfile_version.at_least(Version::V2) {
+    if lockfile_version.at_least(Version::V2) || mode == ReadMode::Rewrite {
         log.add_error(source, loc, b"Unsupported or malformed integrity hash");
         return Err(ParseError::InvalidPackageInfo);
     }
@@ -1850,12 +1851,27 @@ fn parse_catalog(
     Ok(())
 }
 
+/// What the text parser reads differently for an install and for a rewrite.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ReadMode {
+    /// An empty registry field is the reader's registry (the install downloads from there).
+    /// Below version 2, an integrity hash the parser cannot read is dropped with a warning.
+    Install,
+    /// A rewrite that keeps every row as it is: an empty registry field is the default
+    /// registry, so it is written back empty whatever the writer has configured, and an
+    /// integrity hash the parser cannot read is an error at every version. The two
+    /// version 2 checks that `Stringifier::fresh_version` repeats are left to it, so the
+    /// writer names the entry and what a re-save does with the file.
+    Rewrite,
+}
+
 pub(crate) fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
     root: JSON::Expr,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     manager: Option<&PackageManager>,
+    mode: ReadMode,
 ) -> Result<(), ParseError> {
     let at_value = |key_loc| value_loc_of(source, key_loc);
     let at_item = |key_loc, index| item_loc(source, key_loc, index);
@@ -2506,10 +2522,12 @@ pub(crate) fn parse_into_binary_lockfile(
                 };
 
                 // Use scope-specific registry if available, otherwise fall back to default
-                let configured_registry = manager
-                    .map_or(Npm::Registry::DEFAULT_URL.as_bytes(), |mgr| {
+                let configured_registry = match (mode, manager) {
+                    (ReadMode::Install, Some(mgr)) => {
                         mgr.scope_for_package_name(name_str).url.href()
-                    });
+                    }
+                    _ => Npm::Registry::DEFAULT_URL.as_bytes(),
+                };
                 if registry_str.is_empty() {
                     let url = ExtractTarball::build_url(
                         configured_registry,
@@ -2703,8 +2721,15 @@ pub(crate) fn parse_into_binary_lockfile(
                         );
                     };
 
-                    pkg.meta.integrity =
-                        parse_integrity(integrity_str, lockfile_version, log, source, key_loc, i)?;
+                    pkg.meta.integrity = parse_integrity(
+                        integrity_str,
+                        lockfile_version,
+                        mode,
+                        log,
+                        source,
+                        key_loc,
+                        i,
+                    )?;
 
                     // Fail closed: otherwise a tampered lockfile could redirect
                     // the tarball URL off-registry and install arbitrary content
@@ -2714,6 +2739,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     // and may legitimately omit integrity for an off-registry
                     // tarball; rejecting them would break existing installs.
                     if lockfile_version.at_least(Version::V2)
+                        && mode == ReadMode::Install
                         && npm_url_needs_integrity
                         && !pkg.meta.integrity.tag.is_supported()
                     {
@@ -2753,8 +2779,8 @@ pub(crate) fn parse_into_binary_lockfile(
                     // (the tarball-download path feeds the tag straight into the
                     // cache folder name), so the check must stay unconditional to
                     // keep the path-traversal guard intact at every version.
-                    let enforce_safe_tag =
-                        tag == ResolutionTag::Github || lockfile_version.at_least(Version::V2);
+                    let enforce_safe_tag = tag == ResolutionTag::Github
+                        || (lockfile_version.at_least(Version::V2) && mode == ReadMode::Install);
                     let too_long = bun_tag_str.len() > crate::repository::MAX_RESOLVED_TAG_LEN;
                     if too_long
                         || (enforce_safe_tag
@@ -2786,8 +2812,15 @@ pub(crate) fn parse_into_binary_lockfile(
                     | ResolutionTag::Github
             ) && let Some(integrity_str) = pkg_info.get(i).and_then(|item| item.as_str())
             {
-                pkg.meta.integrity =
-                    parse_integrity(integrity_str, lockfile_version, log, source, key_loc, i)?;
+                pkg.meta.integrity = parse_integrity(
+                    integrity_str,
+                    lockfile_version,
+                    mode,
+                    log,
+                    source,
+                    key_loc,
+                    i,
+                )?;
             }
 
             pkg.name = name;

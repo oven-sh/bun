@@ -171,39 +171,44 @@ impl PackageManagerCommand {
         let not_silent = log_level != LogLevel::Silent;
         let pm_raw: *mut PackageManager = pm;
         let log: *mut bun_ast::Log = pm.log;
-        // SAFETY: `pm.log` is the live log of this command. Nothing else holds it.
-        let warnings_before = unsafe { (*log).warnings };
-        let mut load_lockfile = pm.load_lockfile_from_cwd::<false>();
+        let mut load_lockfile =
+            pm.load_lockfile_from_cwd_with_mode::<false>(TextLockfile::ReadMode::Rewrite);
+        if matches!(load_lockfile, LoadResult::Err(_)) && not_silent {
+            Output::flush();
+            // SAFETY: `pm.log` is the live log of this command. Nothing else holds it.
+            let _ = unsafe { (*log).print(std::ptr::from_mut(Output::error_writer())) };
+        }
         Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "migrate");
         let lockfile: &mut Lockfile = load_lockfile.ok_mut().lockfile;
         let from = lockfile.text_lockfile_version();
+        let on_resave = lockfile.text_lockfile_version_to_write();
         // After the error that names the entry: what `bun install` does with the file.
         let held = || -> ! {
-            if from != TextLockfile::Version::V1 {
+            if on_resave != from {
                 bun_core::note!(
-                    "the next 'bun install' writes bun.lock at lockfileVersion 1 (it is now {})",
+                    "the next 'bun install' writes bun.lock at lockfileVersion {} (it is now {})",
+                    on_resave as u32,
                     from as u32
                 );
             }
             Output::flush();
             Global::exit(1);
         };
-        // The v1 parser drops an integrity hash it cannot read, with a warning. Version 2
-        // rejects it, and a re-save would write the entry without the hash.
-        // SAFETY: as above.
-        if unsafe { (*log).warnings } > warnings_before {
-            if not_silent {
-                Output::flush();
-                // SAFETY: as above.
-                let _ = unsafe { (*log).print(std::ptr::from_mut(Output::error_writer())) };
-            }
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: bun.lock is held at lockfileVersion 1: version 2 rejects the entry the warning above names"
-            );
-            held();
-        }
         let to = match lockfile.restamp_text_lockfile_version() {
             Ok((_, to)) => to,
+            // `bun install` keeps a loaded 1 or 2 without scoped override rules. Only a new
+            // lockfile for this project would be held at 1.
+            Err(blocker) if on_resave == from && from != TextLockfile::Version::V1 => {
+                if not_silent {
+                    bun_core::prettyln!("bun.lock is already at lockfileVersion {}", from as u32);
+                    bun_core::warn!(
+                        "a new bun.lock for this project would be at lockfileVersion 1: {}",
+                        blocker
+                    );
+                }
+                Output::flush();
+                Global::exit(0);
+            }
             Err(blocker) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bun.lock is held at lockfileVersion 1: {}",

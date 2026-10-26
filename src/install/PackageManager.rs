@@ -1046,6 +1046,15 @@ impl PackageManager {
     pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
         &mut self,
     ) -> lockfile::LoadResult<'_> {
+        self.load_lockfile_from_cwd_with_mode::<ATTEMPT_OTHER>(
+            crate::TextLockfile::ReadMode::Install,
+        )
+    }
+
+    pub fn load_lockfile_from_cwd_with_mode<const ATTEMPT_OTHER: bool>(
+        &mut self,
+        mode: crate::TextLockfile::ReadMode,
+    ) -> lockfile::LoadResult<'_> {
         self.clear_cached_items_depending_on_lockfile_buffer();
         let pm: *mut PackageManager = self;
         // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
@@ -1057,7 +1066,12 @@ impl PackageManager {
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;
-            (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), &mut *log)
+            (*lf).load_from_dir_with_mode::<ATTEMPT_OTHER>(
+                Fd::cwd(),
+                Some(&mut *pm),
+                &mut *log,
+                mode,
+            )
         }
     }
 

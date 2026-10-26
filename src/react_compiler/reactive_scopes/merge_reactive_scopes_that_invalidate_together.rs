@@ -16,8 +16,8 @@ use crate::collections::FxHashSet as HashSet;
 use crate::collections::{FxHashMap, IdMap};
 use crate::diagnostics::CompilerError;
 use crate::hir::{
-    AstAlloc, DeclarationId, DependencyPathEntry, EvaluationOrder, HirVec, IdentifierId,
-    InstructionKind, InstructionValue, Place, ReactiveBlock, ReactiveFunction, ReactiveScopeBlock,
+    DeclarationId, DependencyPathEntry, EvaluationOrder, HirVec, IdentifierId, InstructionKind,
+    InstructionValue, Place, ReactiveBlock, ReactiveFunction, ReactiveScopeBlock,
     ReactiveScopeDeclaration, ReactiveScopeDependency, ReactiveStatement, ReactiveValue, ScopeId,
     Type,
     environment::Environment,
@@ -493,11 +493,13 @@ impl CandidateDeclarations {
             &mut entries,
             |(_, (a, _)), (_, (b, _))| a.cmp(b),
         );
-        AstAlloc::vec_from_iter(
+        let mut declarations = crate::hir_vec![];
+        declarations.extend(
             entries
                 .into_iter()
                 .map(|(key, (_position, decl))| (key, decl)),
-        )
+        );
+        declarations
     }
 }
 

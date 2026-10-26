@@ -497,8 +497,13 @@ impl DirEntry {
             if let Some(map) = prev_map {
                 // `data` keys are the lowercased basenames, so an exact match on
                 // `name_lc` is the case-insensitive match — and reuses
-                // `name_hash` instead of re-hashing.
-                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
+                // `name_hash` instead of re-hashing. An entry is kept only for the
+                // name it has, whose `base_` and `abs_path` are never rewritten: a
+                // file renamed to another case gets a new one.
+                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc)
+                    // SAFETY: EntryStore-owned pointer, valid for lifetime of store
+                    && unsafe { (*existing_ptr).base() } == name_slice
+                {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };
                     // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
@@ -519,11 +524,14 @@ impl DirEntry {
                     // fresh cache; a reader that raced the flag sees the old
                     // cache, stale but untorn.
                     // Relaxed load: writes are serialized on the per-entry
-                    // mutex held above.
+                    // mutex held above. What was a link is read again too: the
+                    // file or directory that replaced it can be of the kind the
+                    // link led to, and the cache would keep the link's target.
                     existing.need_stat.store(
                         existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
-                            || Some(existing.cache().kind) != found_kind,
+                            || Some(existing.cache().kind) != found_kind
+                            || !existing.cache().symlink.as_bytes().is_empty(),
                         Ordering::Release,
                     );
                     break 'brk existing_ptr;

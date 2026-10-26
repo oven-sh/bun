@@ -1,11 +1,7 @@
 //! Implements prompt, alert, and confirm Web API
 
-use crate::webcore::jsc::{JSValue, JsResult};
 use bun_collections::VecExt as _;
-use bun_core::EncodedSlice;
 use bun_core::Output;
-use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::bindgen::{JsLocal, JsScope};
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 pub(crate) fn alert(message: Option<&[u8]>) {
@@ -214,16 +210,11 @@ fn read_until_delimiter_array_list_infinity<R: ReadByte>(
 }
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
-pub(crate) fn prompt<'a>(
-    cx: &mut JsScope<'a>,
+pub(crate) fn prompt(
     message: Option<&[u8]>,
-    default_value: Option<JsLocal<'a>>,
-) -> JsResult<JSValue> {
-    let global = cx.global();
+    default_value: Option<bun_core::String>,
+) -> Option<bun_core::String> {
     let output = Output::writer();
-    // 4. Set default to the result of optionally truncating default.
-    // *  We don't really need to do this.
-    let default = default_value.map(JsLocal::to_js);
 
     if let Some(message) = message {
         // 2. Set message to the result of normalizing newlines given message.
@@ -233,11 +224,12 @@ pub(crate) fn prompt<'a>(
         // *  Not necessary so we won't do it.
         if output.write_all(message).is_err() {
             // 1. If we cannot show simple dialogs for this, then return null.
-            return Ok(JSValue::NULL);
+            return None;
         }
     }
 
     // 4. Set default to the result of optionally truncating default.
+    // *  We don't really need to do this.
 
     // 5. Show message to the user, treating U+000A LF as a line break,
     //    and ask the user to either respond with a string value or
@@ -251,24 +243,18 @@ pub(crate) fn prompt<'a>(
         })
         .is_err()
     {
-        // 1. If we cannot show simple dialogs for this, then return false.
-        return Ok(JSValue::FALSE);
+        // 1. If we cannot show simple dialogs for this, then return null.
+        return None;
     }
 
-    if let Some(default) = default {
-        let default_string = default.to_utf8(global)?;
-
-        if output
-            .print(format_args!(
-                "[{}] ",
-                bstr::BStr::new(default_string.slice())
-            ))
-            .is_err()
-        {
-            // 1. If we cannot show simple dialogs for this, then return false.
-            return Ok(JSValue::FALSE);
+    if let Some(default) = &default_value {
+        if output.print(format_args!("[{default}] ")).is_err() {
+            // 1. If we cannot show simple dialogs for this, then return null.
+            return None;
         }
     }
+    // `optional DOMString default = ""`: the response to an empty line.
+    let default = default_value.unwrap_or(bun_core::String::EMPTY);
 
     // 6. Invoke WebDriver BiDi user prompt opened with this, "prompt" and message.
     // *  Not relevant in a server context.
@@ -293,20 +279,20 @@ pub(crate) fn prompt<'a>(
     let Ok(first_byte) = reader.read_byte() else {
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        return Ok(JSValue::NULL);
+        return None;
     };
 
     if first_byte == b'\n' {
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        return Ok(default.unwrap_or(JSValue::NULL));
+        return Some(default);
     } else if first_byte == b'\r' {
         let Ok(second) = reader.read_byte() else {
-            return Ok(JSValue::NULL);
+            return None;
         };
         second_byte = Some(second);
         if second == b'\n' {
-            return Ok(default.unwrap_or(JSValue::NULL));
+            return Some(default);
         }
     }
 
@@ -330,7 +316,7 @@ pub(crate) fn prompt<'a>(
         if !matches!(e, ReadError::StreamTooLong) {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
-            return Ok(JSValue::NULL);
+            return None;
         }
 
         input.ensure_total_capacity(4096);
@@ -344,13 +330,13 @@ pub(crate) fn prompt<'a>(
             if !matches!(e2, ReadError::StreamTooLong) {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
-                return Ok(JSValue::NULL);
+                return None;
             }
 
             if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n').is_err() {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
-                return Ok(JSValue::NULL);
+                return None;
             }
         }
     }
@@ -363,12 +349,12 @@ pub(crate) fn prompt<'a>(
 
     // 8. Let result be null if the user aborts, or otherwise the string
     //    that the user responded with.
-    let result = EncodedSlice::utf8(&input);
+    let result = bun_core::String::clone_utf8(&input);
 
     // 9. Invoke WebDriver BiDi user prompt closed with this, false if
     //    result is null or true otherwise, and result.
     // *  Too complex for server context.
 
     // 9. Return result.
-    Ok(result.to_js(global))
+    Some(result)
 }

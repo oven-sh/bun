@@ -444,6 +444,85 @@ test.concurrent.each([
   });
 });
 
+// The dialog goes to stdout. The fixture writes what the call returns to stderr, as JSON.
+async function runDialog(call, stdin) {
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", `console.error(JSON.stringify(${call}));`],
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  proc.stdin.write(stdin);
+  await proc.stdin.flush();
+  proc.stdin.end();
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// 5001 bytes. The read of a line grows its buffer at 2048 and at 4096 bytes, here inside a two-byte character.
+const longAnswer = "a" + Buffer.alloc(5000, "\u00e9").toString();
+
+// `prompt(optional DOMString message = "", optional DOMString default = "")` returns the response, a string.
+// `null` is the end of the input.
+test.concurrent.each([
+  ["an answer", `prompt("Q?")`, "x\n", "Q? ", "x"],
+  [
+    "a non-ASCII answer",
+    `prompt("Q?")`,
+    "h\u00e9llo \u20ac \u65e5\u672c\u8a9e \ud83d\ude00\n",
+    "Q? ",
+    "h\u00e9llo \u20ac \u65e5\u672c\u8a9e \ud83d\ude00",
+  ],
+  [
+    "an answer that is not UTF-8",
+    `prompt("Q?")`,
+    Buffer.from([0x61, 0xff, 0x62, 0xe2, 0x82, 0x0a]),
+    "Q? ",
+    "a\ufffdb\ufffd",
+  ],
+  ["an answer longer than the read buffer", `prompt("Q?")`, longAnswer + "\n", "Q? ", longAnswer],
+  ["end of input", `prompt("Q?")`, "", "Q? ", null],
+  ["empty line", `prompt("Q?")`, "\n", "Q? ", ""],
+  ["empty line, CRLF", `prompt("Q?")`, "\r\n", "Q? ", ""],
+  ["empty line, no message", `prompt()`, "\n", "Prompt ", ""],
+  ["undefined default is no default", `prompt("Q?", undefined)`, "\n", "Q? ", ""],
+  ["default, empty line", `prompt("Q?", "dflt")`, "\n", "Q? [dflt] ", "dflt"],
+  ["default, empty line, CRLF", `prompt("Q?", "dflt")`, "\r\n", "Q? [dflt] ", "dflt"],
+  ["default, an answer", `prompt("Q?", "dflt")`, "hi\n", "Q? [dflt] ", "hi"],
+  ["default, end of input", `prompt("Q?", "dflt")`, "", "Q? [dflt] ", null],
+  ["empty default", `prompt("Q?", "")`, "\n", "Q? [] ", ""],
+  ["Latin-1 default", `prompt("Q?", "caf\\u00e9")`, "\n", "Q? [caf\u00e9] ", "caf\u00e9"],
+  ["number default is its string", `prompt("Q?", 5)`, "\n", "Q? [5] ", "5"],
+  ["null default is the string null", `prompt("Q?", null)`, "\n", "Q? [null] ", "null"],
+  ["object default is its string", `prompt("Q?", {})`, "\r\n", "Q? [[object Object]] ", "[object Object]"],
+  ["default with a lone surrogate", `prompt("Q?", "a\\ud800b")`, "\n", "Q? [a\ufffdb] ", "a\ud800b"],
+  ["empty line, then an answer", `[prompt("A"), prompt("B")]`, "\nz\n", "A B ", ["", "z"]],
+  [
+    "empty line between answers, then end of input",
+    `[prompt(), prompt(), prompt(), prompt()]`,
+    "a\n\nb\n",
+    "Prompt Prompt Prompt Prompt ",
+    ["a", "", "b", null],
+  ],
+  [
+    "each argument converts once, in order, before the message prints",
+    `prompt({ toString: () => (console.log("m"), "Q?") }, { toString: () => (console.log("d"), "D") })`,
+    "\n",
+    "m\nd\nQ? [D] ",
+    "D",
+  ],
+  [
+    "a default that throws prints nothing and reads nothing",
+    `(() => { try { prompt("Q?", { toString() { throw new Error("boom"); } }); } catch (e) { return [e.message, prompt("next")]; } })()`,
+    "line\n",
+    "next ",
+    ["boom", "line"],
+  ],
+])("prompt: %s", async (_, call, stdin, stdout, result) => {
+  expect(await runDialog(call, stdin)).toEqual({ stdout, stderr: JSON.stringify(result) + "\n", exitCode: 0 });
+});
+
 test("globalThis.self = 123 works", () => {
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
     configurable: true,

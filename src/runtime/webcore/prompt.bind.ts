@@ -7,10 +7,8 @@ const message = b.string.loose.utf8.ifPassed;
 
 export const alert = b.fn({ args: { message } });
 export const confirm = b.fn({ args: { message }, returns: b.bool });
-/** An empty answer returns `defaultValue` as it is. */
+/** `null` is the end of the input. An empty answer is `defaultValue`, and "" without one. */
 export const prompt = b.fn({
-  args: { message, defaultValue: b.any.ifPassed },
-  returns: b.any,
-  capability: "js",
-  throws: true,
+  args: { message, defaultValue: b.string.loose.optional },
+  returns: b.string.nullable,
 });

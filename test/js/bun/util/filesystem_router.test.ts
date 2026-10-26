@@ -1331,7 +1331,9 @@ it("reload() returns after a failed lookup in the routes directory and a router 
       const routes = import.meta.dir;
       try {
         Bun.resolveSync("./missing.ts", routes);
-      } catch {}
+      } catch (e) {
+        console.log(e.code);
+      }
       new Bun.FileSystemRouter({ dir: path.join(routes, "z"), style: "nextjs" });
       const router = new Bun.FileSystemRouter({ dir: routes, style: "nextjs", fileExtensions: [".tsx"] });
       router.reload();
@@ -1347,5 +1349,9 @@ it("reload() returns after a failed lookup in the routes directory and a router 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "/ /z/a\n", stderr: "", exitCode: 0 });
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "ERR_MODULE_NOT_FOUND\n/ /z/a\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });

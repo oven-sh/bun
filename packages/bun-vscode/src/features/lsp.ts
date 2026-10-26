@@ -9,8 +9,9 @@ export const LSP_LANGUAGE_IDS: readonly string[] = (
 
 export const MARKER_GLOB = "**/{bunfig.toml,bun.lock,bun.lockb}";
 
-// First release that ships `bun fmt --lsp`.
-export const MIN_BUN_VERSION = "1.4.5";
+// The first release with `--no-script`. Before it, `bun fmt` runs the project's `fmt` script. A 1.4.4 without
+// `--lsp` (a release, not a canary) exits during startup, which is handled below.
+export const MIN_BUN_VERSION = "1.4.4";
 
 export interface LanguageClientLike {
   readonly state: State;
@@ -150,7 +151,7 @@ async function startLanguageServer(options: LanguageServerOptions): Promise<void
     if (!actual || !isAtLeast(actual, parseVersion(MIN_BUN_VERSION)!)) {
       failed = true;
       getOutput().appendLine(
-        `Bun ${version} does not have bun fmt --lsp; the Bun language server needs Bun ${MIN_BUN_VERSION} or later`,
+        `Bun ${version} does not have bun fmt --no-script; the Bun language server needs Bun ${MIN_BUN_VERSION} or later`,
       );
       return;
     }
@@ -189,6 +190,7 @@ function ensureStarted(options: LanguageServerOptions): Promise<void> {
   return starting;
 }
 
+// Only a folder that has a marker is remembered: one can gain a marker later, after `bun init` or `bun install`.
 function hasMarker(folder: vscode.WorkspaceFolder): Promise<boolean> {
   const key = folder.uri.toString();
   let cached = markerCache.get(key);
@@ -200,6 +202,9 @@ function hasMarker(folder: vscode.WorkspaceFolder): Promise<boolean> {
       () => false,
     );
     markerCache.set(key, cached);
+    cached.then(found => {
+      if (!found && markerCache.get(key) === cached) markerCache.delete(key);
+    });
   }
   return cached;
 }

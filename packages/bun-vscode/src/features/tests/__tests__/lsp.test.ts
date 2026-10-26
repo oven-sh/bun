@@ -273,7 +273,7 @@ describe("registerLanguageServer", () => {
     expect(clients[0].started).toBe(1);
   });
 
-  test("looks for the marker once per workspace folder, skipping node_modules", async () => {
+  test("looks for the marker once per workspace folder that has one, and again for one that had none", async () => {
     const lsp = await loadLsp();
     const { context, createClient, probeVersion } = makeHarness();
     lsp.registerLanguageServer(context, { createClient, probeVersion });
@@ -293,9 +293,11 @@ describe("registerLanguageServer", () => {
     await open(doc(`${NO_MARKER}/other.ts`));
     await open(doc(`${OTHER_WITH_MARKER}/index.ts`));
 
-    expect(findFiles).toHaveBeenCalledTimes(3);
+    // A folder without a marker is asked again: `bun init` or `bun install` can add one later.
+    expect(findFiles).toHaveBeenCalledTimes(4);
     expect(findFiles.mock.calls.map(([include]) => patternBase(include))).toEqual([
       WITH_MARKER,
+      NO_MARKER,
       NO_MARKER,
       OTHER_WITH_MARKER,
     ]);
@@ -502,9 +504,9 @@ describe("registerLanguageServer", () => {
   });
 
   describe("version gate", () => {
-    test("exports MIN_BUN_VERSION as 1.4.5", async () => {
+    test("exports MIN_BUN_VERSION as 1.4.4", async () => {
       const lsp = await loadLsp();
-      expect(lsp.MIN_BUN_VERSION).toBe("1.4.5");
+      expect(lsp.MIN_BUN_VERSION).toBe("1.4.4");
     });
 
     test("does not start on Bun 1.4.3 and logs the too-old line once", async () => {
@@ -517,7 +519,7 @@ describe("registerLanguageServer", () => {
       expect(createClient).not.toHaveBeenCalled();
       expect(clients).toHaveLength(0);
       expect(getOutputLines("Bun")).toEqual([
-        "Bun 1.4.3 does not have bun fmt --lsp; the Bun language server needs Bun 1.4.5 or later",
+        "Bun 1.4.3 does not have bun fmt --no-script; the Bun language server needs Bun 1.4.4 or later",
       ]);
       expect(vscodeMockState.messages).toHaveLength(0);
 
@@ -544,7 +546,7 @@ describe("registerLanguageServer", () => {
       expect(vscodeMockState.messages).toHaveLength(0);
     });
 
-    test.each(["1.4.5", "1.4.5-canary.1", "1.4.5-canary.1+abcdef12", "1.5.0", "2.0.0"])(
+    test.each(["1.4.4", "1.4.4-canary.1+abcdef12", "1.4.5", "1.4.5-canary.1", "1.5.0", "2.0.0"])(
       "starts one client on Bun %s",
       async version => {
         const lsp = await loadLsp();

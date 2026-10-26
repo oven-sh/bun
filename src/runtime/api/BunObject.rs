@@ -369,10 +369,11 @@ pub(crate) fn table<'a>(
 pub(crate) fn table_with_properties<'a>(
     cx: &mut JsScope<'a>,
     tabular_data: Option<JsLocal<'a, JSObject>>,
-    properties: JsLocal<'a, JSArray>,
+    properties: Option<JsLocal<'a, JSArray>>,
     options: Option<&InspectOptions>,
 ) -> JsResult<Vec<u8>> {
-    print_table(cx, tabular_data, properties.to_js(), options)
+    let properties = properties.map_or(JSValue::UNDEFINED, |properties| properties.to_js());
+    print_table(cx, tabular_data, properties, options)
 }
 
 fn print_table(

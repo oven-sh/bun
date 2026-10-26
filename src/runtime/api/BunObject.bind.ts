@@ -192,7 +192,7 @@ const tableSignature = {
 export const table = b.overloads(
   {
     ...tableSignature,
-    args: { tabularData, properties: b.jsArray, options: InspectOptions.otherAsNull },
+    args: { tabularData, properties: b.jsArray.nullable, options: InspectOptions.otherAsNull },
     rustPath: "crate::api::bun_object::table_with_properties",
   },
   {

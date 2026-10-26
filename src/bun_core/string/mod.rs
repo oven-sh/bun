@@ -560,6 +560,16 @@ impl String {
             core::ptr::null_mut()
         }
     }
+    /// Address of the JSC atom behind `self`: equal for equal text of live atoms on one thread.
+    #[inline]
+    pub fn atom_address(&self) -> Option<core::num::NonZeroUsize> {
+        if self.tag != Tag::WTFStringImpl {
+            return None;
+        }
+        let atom = self.as_wtf();
+        debug_assert!(atom.is_atom());
+        core::num::NonZeroUsize::new(core::ptr::from_ref(atom).addr())
+    }
     /// An isolated copy of a WTF-backed impl (+1, `clone()` for other tags),
     /// for handing the value to one other thread; not for sharing one impl
     /// between VMs.

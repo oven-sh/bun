@@ -2226,10 +2226,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let js_ast::ExprData::EIdentifier(id) = expr.data
             && let Some(value) = self.long_const_read(id)
         {
-            self.ignore_usage(id.ref_);
+            self.forget_long_const_read(id.ref_);
             return Some(value);
         }
         None
+    }
+
+    /// Un-counts a read of a long const string that a fold removes. A read that a substitution moved was counted too.
+    pub(crate) fn forget_long_const_read(&mut self, ref_: Ref) {
+        let is_revisit = core::mem::replace(&mut self.is_revisit_for_substitution, false);
+        self.ignore_usage(ref_);
+        self.is_revisit_for_substitution = is_revisit;
     }
 
     /// Gives a consumer that needs a literal the string in place of a read of a long const string.

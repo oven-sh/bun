@@ -118,7 +118,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn long_const_length(&mut self, id: E::Identifier, loc: bun_ast::Loc) -> Option<Expr> {
         let string = self.long_const_read(id)?.unwrap_inlined().data.e_string()?;
         let length = e_string_javascript_length(&string)?;
-        self.ignore_usage(id.ref_);
+        self.forget_long_const_read(id.ref_);
         Some(self.new_expr(E::Number::new(length as f64), loc))
     }
 

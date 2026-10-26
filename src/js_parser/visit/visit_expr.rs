@@ -167,6 +167,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // function) would be re-bound to a fresh `Unbound` and the renamer
         // would lose the link to its declaration.
         if p.is_revisit_for_substitution {
+            // A read that the substitution moved under a consumer of a literal is the literal there.
+            if p.const_literal_required {
+                *e = p.long_const_literal(*e);
+            }
             return;
         }
         let expr = *e;

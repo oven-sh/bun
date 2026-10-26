@@ -106,7 +106,7 @@ fn long_const_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONL
 ) -> Equality {
     let equality = data_eql::<STRICT, TYPESCRIPT, SCAN_ONLY>(value, right, p);
     if !matches!(equality, Equality::Unknown) {
-        p.ignore_usage(ref_);
+        p.forget_long_const_read(ref_);
     }
     equality
 }

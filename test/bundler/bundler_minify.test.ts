@@ -2173,7 +2173,8 @@ describe("bundler", () => {
     });
   }
 
-  // `require()`, `import()` and `feature()` need the literal at any length.
+  // `require()`, `import()` and `feature()` need the literal at any length,
+  // also when the read reaches `import()` through a `let` that is used once.
   itBundled("minify/ConstStringOverInlineBoundIsALiteralForSpecifiers", {
     files: {
       "/entry.js": /* js */ `
@@ -2183,10 +2184,16 @@ describe("bundler", () => {
         const FLAG = "${textOf("F", 70)}";
         const ALIAS_OF_FLAG = FLAG;
         const flags = [feature(FLAG) ? "on" : "off", feature(ALIAS_OF_FLAG) ? "on" : "off"];
-        console.log(require(REQUIRED).name, (await import(IMPORTED)).name, flags.join());
+        async function throughLet(load) {
+          const SPECIFIER = "./${textOf("l", 70)}.js";
+          let specifier = SPECIFIER;
+          return load ? import(specifier) : null;
+        }
+        console.log(require(REQUIRED).name, (await import(IMPORTED)).name, (await throughLet(true)).name, flags.join());
       `,
       ["/" + textOf("r", 70) + ".js"]: /* js */ `exports.name = "was required";`,
       ["/" + textOf("i", 70) + ".js"]: /* js */ `export const name = "was imported";`,
+      ["/" + textOf("l", 70) + ".js"]: /* js */ `export const name = "was imported through a let";`,
     },
     minifySyntax: true,
     features: [textOf("F", 70)],
@@ -2194,11 +2201,12 @@ describe("bundler", () => {
       const code = api.readFile("/out.js");
       expect({
         required: code.includes("was required"),
-        imported: code.includes("was imported"),
+        imported: code.includes(`"was imported"`),
+        importedThroughLet: code.includes("was imported through a let"),
         flag: countOf(code, textOf("F", 70)),
-      }).toEqual({ required: true, imported: true, flag: 0 });
+      }).toEqual({ required: true, imported: true, importedThroughLet: true, flag: 0 });
     },
-    run: { stdout: "was required was imported on,on" },
+    run: { stdout: "was required was imported was imported through a let on,on" },
   });
 
   // An exported const and a const in a scope with a direct eval keep their
@@ -2488,6 +2496,13 @@ const constStringRows = [
     (text: string) => `function f() { const S = "${text}"; return class { [S] = 1; static [S]() {} }; }`,
     `function f() {\n  return class {\n    ["<L>"] = 1;\n    static ["<L>"]() {}\n  };\n}`,
     `function f() {\n  return class {\n    ["<L>"] = 1;\n    static ["<L>"]() {}\n  };\n}`,
+  ],
+  [
+    "a let in an inner block that holds the const and is used once",
+    (text: string) =>
+      `async function f(c) { const S = "${text}"; if (c === 1) { let t = S; return !t; } if (c === 2) { let t = S; return t.length + 1; } if (c === 3) { let t = S; return t === "a" ? 1 : 2; } if (c) { let t = S; return c ? import(t) : null; } }`,
+    `async function f(c) {\n  if (c === 1)\n    return !1;\n  if (c === 2)\n    return 65;\n  if (c === 3)\n    return 2;\n  if (c)\n    return c ? import("<L>") : null;\n}`,
+    `async function f(c) {\n  if (c === 1)\n    return !1;\n  if (c === 2)\n    return 66;\n  if (c === 3)\n    return 2;\n  if (c)\n    return c ? import("<L>") : null;\n}`,
   ],
   [
     "a branch that the value decides",

@@ -157,14 +157,16 @@ test.skipIf(!isDebug)("a directory that is read again keeps its parses and the d
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const output = stdout + stderr;
-  const count = (line: string) => output.split(line).length - 1;
+  // The log has a directory with or without a separator at the end.
+  const opens = (directory: string) =>
+    [...output.matchAll(/open\((.*)\)/g)].filter(([, opened]) => opened.replace(/[\\/]$/, "") === directory).length;
   expect({
     // tsconfig.json and the file it extends, once. Before, once for each drop.
-    tsconfigParses: count("new(TSConfigJSON)") < drops,
+    tsconfigParses: output.split("new(TSConfigJSON)").length - 1 < drops,
     // The project root is opened again after each drop. A directory below it is not.
-    rootOpens: count(`open(${String(dir)})`) >= drops,
-    srcOpens: count(`open(${path.join(String(dir), "src")})`),
-    deepOpens: count(`open(${path.join(String(dir), "src", "deep")})`),
+    rootOpens: opens(String(dir)) > drops,
+    srcOpens: opens(path.join(String(dir), "src")),
+    deepOpens: opens(path.join(String(dir), "src", "deep")),
   }).toEqual({ tsconfigParses: true, rootOpens: true, srcOpens: 1, deepOpens: 1 });
   expect(exitCode).toBe(0);
 });

@@ -406,7 +406,7 @@ values;`,
     console.log(resultPromise);
     `;
 
-    const buildScript = path.join(tempdir, "crash_build.ts");
+    const buildScript = path.join(tempdir, "crash-fixture.ts");
     await Bun.write(buildScript, build_code);
     // BUN_CRASH_REPORT_URL="": this segfault is deliberate; uploading it to
     // CI's remap server pins a spurious "crash reported" error on the next
@@ -677,10 +677,10 @@ values;`,
       });
       console.log(JSON.stringify({ failed, freed: napiModule.getCompilationCtxFreedCount(external) }));
     `;
-    await Bun.write(path.join(tempdir, "json_entry_build.ts"), buildScript);
+    await Bun.write(path.join(tempdir, "json-entry-fixture.ts"), buildScript);
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", path.join(tempdir, "json_entry_build.ts")],
+      cmd: [bunExe(), "run", path.join(tempdir, "json-entry-fixture.ts")],
       env: { ...bunEnv, BUN_TEST_TEMP_DIR: tempdir },
       cwd: tempdir,
       stdout: "pipe",
@@ -707,18 +707,17 @@ values;`,
     // What the emitted asset must be, byte for byte (file loader).
     asset?: BunFile | Uint8Array;
   };
-  // The plugin searches with strstr, which stops at the NUL in the PNG header,
-  // so it hands the PNG back untouched.
+  // bun.png holds no "foo", so the plugin hands it back untouched.
   const png = Bun.file(path.join(import.meta.dir, "../integration/sharp/bun.png"));
   const additional_files: AdditionalFile[] = [
     { title: "works with file loader", name: "probe_asset.png", contents: png, asset: png },
     {
-      // "foo" before the first NUL is rewritten. The bytes after it, with a
-      // second "foo" that strstr never reaches, must come out unchanged.
+      // Both "foo" are rewritten, also the one after the NUL. The other bytes
+      // must come out unchanged.
       title: "works with file loader when the plugin rewrites the asset",
       name: "probe_asset.bin",
       contents: Buffer.from("\x89BIN foo \x00\x01\xff\xfefoo\x00", "latin1"),
-      asset: Buffer.from("\x89BIN qoo \x00\x01\xff\xfefoo\x00", "latin1"),
+      asset: Buffer.from("\x89BIN qoo \x00\x01\xff\xfeqoo\x00", "latin1"),
     },
     {
       title: "works with js loader",

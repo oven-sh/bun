@@ -1037,6 +1037,11 @@ impl<'a> Parser<'a> {
             // The bundler requires a part for generated module wrappers. This
             // part must be at the start as it is referred to by index.
             before.push(js_ast::Part::default());
+
+            // Only a CommonJS file: an ES module is not one, and a lazy export never gets here.
+            p.unwrap_all_requires = !p.has_es_module_syntax
+                && p.options.module_type != options::ModuleType::Esm
+                && crate::p::is_in_unwrapped_package(&p.options, source.path.text);
         }
 
         // --inspect-brk
@@ -1735,7 +1740,6 @@ impl<'a> Parser<'a> {
         if p.options.features.unwrap_commonjs_to_esm
             && p.unwrap_all_requires
             && !p.options.is_entry_point
-            && !p.has_es_module_syntax
             && p.commonjs_named_exports.count() == 0
             && !p.has_top_level_return
             && !p.has_with_scope

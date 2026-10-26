@@ -15,6 +15,8 @@ const extensions = ["ts", "tsx", "mts", "cts", "js", "mjs", "cjs"];
 const plainBunVaries: Record<string, string> = {
   "arrays/sort-write-back-after-mutation":
     "plain Bun prints one of several outputs from run to run, the stored one among them: what its sort does with an array that changed under it goes by the tier that runs it",
+  "async-and-generators/what-a-suspended-function-holds":
+    "plain Bun prints one of several outputs from run to run, the stored one among them",
   "calls/deep-tail-recursion":
     "a call in a catch block a million deep ends or overflows with the limit of the stack in the shell that runs it",
   "calls/stack-across-vm-entries":

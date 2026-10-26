@@ -267,8 +267,8 @@ function f13 name="casts" module=m0 parameters=[{type=anything}, {type=anything}
   b0(v0: anything, v1: anything):
     v2 = Upcast v0 castType=anything
     v3 = NarrowByField v0, v1 key="x"
-    v4 = Check v0 castType=string site=w0
-    v5 = Check v0 castType=number
+    v4 = Check v0 expectedType=string site=w0
+    v5 = Check v0 expectedType=number
     v6 = Convert v0 declared={type=L0 site=w0} illTypedCause=Assertion
     v7 = Convert v0 declared={type=number}
     v8 = Convert v0 declared={type=anything}

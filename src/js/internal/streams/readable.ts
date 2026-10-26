@@ -41,6 +41,7 @@ const TypedArrayPrototypeSet = Uint8Array.prototype.set;
 const { errorOrDestroy } = destroyImpl;
 const nop = () => {};
 const { emit } = shared.originals.eventEmitter!;
+const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
 
 // The bits of ReadableState[kState].
 const enum Flag {
@@ -1766,7 +1767,7 @@ function finishEnd(state: ReadableState, stream: $Node.Readable): void {
           (wState.finished || wState.writable === false));
 
     if (autoDestroy) {
-      stream.$autoDestroyed = true; // workaround for node:http Server not using node:net Server
+      stream[kAutoDestroyed] = true; // workaround for node:http Server not using node:net Server
       stream.destroy();
     }
   }

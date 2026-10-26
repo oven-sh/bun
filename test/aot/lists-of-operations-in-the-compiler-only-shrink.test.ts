@@ -9,7 +9,16 @@
 // of the schema (a new one, where the question is new: the generator refuses a row that must answer and does not), or the
 // overloads and behaviors of the table of built-ins.
 import { expect, test } from "bun:test";
-import { closingOf, filesOfCompiler, sayWhenSkipped, sources } from "./harness/engine-text";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  closingOf,
+  filesOfCompiler,
+  sayWhenSkipped,
+  sources,
+  switchesOf,
+  withoutCommentsAndLiterals,
+} from "./harness/engine-text";
 
 sayWhenSkipped("test/aot/lists-of-operations-in-the-compiler-only-shrink.test.ts");
 
@@ -31,7 +40,6 @@ const known: Record<string, number> = {
   "builtins/AOTBuiltinUses.h builtinUseOpcodes": 7,
   "builtins/AOTResolveBuiltins.cpp resolvedCallsByValue": 3,
   "builtins/AOTResolveBuiltinsInternal.h callsWithList": 3,
-  "builtins/AOTResolveBuiltinsListCalls.cpp listCallOpcodes": 3,
   "builtins/AOTSimplifyBuiltinCallsInternal.h constantListCallOpcodes": 3,
   "builtins/AOTSimplifyBuiltinCallsInternal.h constantListSourceOpcodes": 3,
   "builtins/AOTSimplifyBuiltinCallsInternal.h simplifiedIntrinsics": 9,
@@ -90,7 +98,6 @@ const known: Record<string, number> = {
   "passes/AOTInt32Conversions.h int32ConvertingOperations": 9,
   "passes/AOTJSONVerification.cpp cursorInvalidatingOpcodes": 3,
   "passes/AOTKnownValue.h opcodesCreatingKnownStrings": 3,
-  "passes/AOTKnownValue.h opcodesWithKnownValueRules": 28,
   "passes/AOTModuleVariables.cpp definitionByDescriptorMayMove": 5,
   "passes/AOTModuleVariables.cpp isMadeGiven": 5,
   "passes/AOTModuleVariables.cpp isOnlyFilledHere": 15,
@@ -107,18 +114,12 @@ const known: Record<string, number> = {
   "passes/AOTResolveCalls.cpp mayHavePlan": 3,
   "passes/AOTRingPasses.cpp evaluateRelation": 4,
   "passes/AOTRingPasses.cpp foldOnce": 16,
-  "passes/AOTRingPasses.cpp opcodesWithOwnFoldingRule": 16,
   "passes/AOTRingPasses.cpp primitiveConstantOpcodes": 6,
   "passes/AOTSimplifyCasts.cpp repeatableCasts": 4,
   "passes/AOTSinkAllocationsCandidates.cpp AllocationPrefilter::neverFolds": 3,
   "passes/AOTSinkAllocationsCandidates.cpp AllocationSinking::collectCandidates": 7,
   "passes/AOTSinkAllocationsCandidates.cpp operationsOnSlots": 7,
   "passes/AOTSinkAllocationsCandidates.cpp testsIndependentOfStores": 7,
-  "passes/AOTSinkAllocationsInterpreter.h interpretedAllocations": 14,
-  "passes/AOTSinkAllocationsInterpreter.h interpretedCasts": 8,
-  "passes/AOTSinkAllocationsInterpreter.h interpretedListUses": 8,
-  "passes/AOTSinkAllocationsInterpreter.h interpretedReads": 11,
-  "passes/AOTSinkAllocationsInterpreter.h interpretedStores": 13,
   "passes/AOTSplitUnions.h accessesByNameOrKey": 13,
   "passes/AOTStringPasses.cpp keyedAccesses": 3,
   "passes/AOTStringPasses.cpp operationsHandingOnValues": 7,
@@ -144,7 +145,6 @@ const known: Record<string, number> = {
   "represent/AOTRepresentationRules.cpp binaryOperatorsOnInt32": 5,
   "represent/AOTRepresentationRules.cpp isTestOfNumber": 4,
   "represent/AOTRepresentationRules.cpp operationsIndexedByNumber": 12,
-  "represent/AOTRepresentationRules.cpp relations": 4,
   "represent/AOTRepresentationRules.cpp representedBitwiseOperators": 7,
   "represent/AOTRepresentationRules.cpp testOperators": 7,
   "represent/AOTRepresentationRules.cpp testsOfCellOrBoxedValue": 4,
@@ -158,33 +158,23 @@ const known: Record<string, number> = {
   "valueflow/AOTFlowLiteralOrderResults.cpp literalPieceOperations": 5,
   "valueflow/AOTFlowReportAccesses.cpp constants": 8,
   "valueflow/AOTValueFlowBodies.cpp isObjectUnderConstruction": 4,
-  "valueflow/AOTValueFlowBodies.cpp operationsCallingValues": 6,
-  "valueflow/AOTValueFlowBodies.cpp operationsWithoutRule": 27,
-  "valueflow/AOTValueFlowResultsCalls.cpp callsValue": 6,
   "valueflow/AOTValueFlowResultsClasses.cpp ClosuresTakenOutOfMembers::leavesClosuresInPlace": 3,
   "valueflow/AOTValueFlowResultsEscape.cpp readsArgumentsOfFrame": 5,
-  "valueflow/AOTValueFlowResultsHeap.cpp statementCallsValue": 6,
-  "valueflow/AOTValueFlowResultsPlaces.cpp callsValue": 6,
   "valueflow/AOTValueFlowResultsTypes.cpp NumbersOfPositions::typeWritersByRules": 3,
   "valueflow/AOTValueFlowResultsUnseenCode.cpp opcodeCallsValue": 6,
   "valueflow/AOTValueFlowRules.h passesList": 3,
   "valueflow/AOTValueFlowRulesArithmetic.cpp answersInt32": 6,
   "valueflow/AOTValueFlowRulesArithmetic.cpp makesNoFraction": 8,
-  "valueflow/AOTValueFlowRulesHeap.cpp isHeapOperation": 51,
   "valueflow/AOTValueFlowRulesHeapLookups.cpp HeapRule::namesObjectOfAccess": 3,
-  "valueflow/AOTValueFlowRulesModules.cpp isModuleOperation": 11,
   "valueflow/AOTValueFlowUnobservedDefinitions.cpp returnsOnlyConstructedObject": 4,
 };
 
-// TODO: each of these spells one name more than its number: Opcode::HasInPrototypeChain (the two of AOTRingPasses.cpp), Opcode::PropDelete (interpretedStores, neverFolds),
-// Opcode::GetStringCodeUnit (interpretedReads), Opcode::FindSourcePlan (isRequestOf), Opcode::LoopHint (opcodesThrowingOnlyForLackOfMemory). They grew while this test read the text of an older engine. The question that each name answers goes into the schema, and its line out of here.
+// TODO: each of these spells one name more than its number: Opcode::HasInPrototypeChain (foldOnce), Opcode::PropDelete (neverFolds),
+// Opcode::FindSourcePlan (isRequestOf), Opcode::LoopHint (opcodesThrowingOnlyForLackOfMemory). They grew while this test read the text of an older engine. The question that each name answers goes into the schema, and its line out of here.
 for (const list of [
   "ir/AOTEffectsDeclared.h opcodesThrowingOnlyForLackOfMemory",
   "passes/AOTRingPasses.cpp foldOnce",
-  "passes/AOTRingPasses.cpp opcodesWithOwnFoldingRule",
   "passes/AOTSinkAllocationsCandidates.cpp AllocationPrefilter::neverFolds",
-  "passes/AOTSinkAllocationsInterpreter.h interpretedReads",
-  "passes/AOTSinkAllocationsInterpreter.h interpretedStores",
   "place/AOTPlacementSiteCheck.cpp isRequestOf",
 ])
   known[list]++;
@@ -240,3 +230,37 @@ test.skipIf(!sources)("no list of operations or built-ins that answers a questio
     .map(([key, size]) => `${key}: spells ${size}, and ${known[key] ?? 0} are known`);
   expect(grown).toEqual([]);
 });
+
+// A function that a column of the schema sends operations to, and that goes by the operation once more.
+const switchesBehindColumns = [
+  ["valueflow/AOTValueFlowRulesHeap.cpp", "void HeapRule::runOperation(", "flowRule", "Heap"],
+  ["valueflow/AOTValueFlowRulesModules.cpp", "void runModuleOperation(", "flowRule", "Module"],
+  ["valueflow/AOTValueFlowBodies.cpp", "void describeOperationWithoutRule(", "flowsWithoutRule", "true"],
+  ["passes/AOTRingPasses.cpp", "KnownValue evaluateOperation(", "hasKnownValueRule", "true"],
+  ["passes/AOTRingPasses.cpp", "bool foldOnce(", "hasOwnFoldingRule", "true"],
+] as const;
+
+test.skipIf(!sources)(
+  "a switch behind a column of the schema has a case for each operation of the column and no other",
+  () => {
+    const rows = new Map<string, string>();
+    for (const file of new Bun.Glob("ir/schema/*.def").scanSync(sources!))
+      for (const [row, name] of readFileSync(join(sources!, file), "utf8").matchAll(
+        /^(?:engine )?operation (\w+) .*$/gm,
+      ))
+        rows.set(name, row);
+    expect(rows.size).toBeGreaterThan(300);
+    for (const [file, head, column, value] of switchesBehindColumns) {
+      const text = withoutCommentsAndLiterals(readFileSync(join(sources!, file), "utf8"));
+      const open = text.indexOf("{", text.indexOf(head));
+      const [byOperation] = switchesOf(text.slice(open, closingOf(text, open) + 1))
+        .map(({ labels }) => labels.filter(label => label.startsWith("Opcode::")).map(label => label.slice(8)))
+        .sort((a, b) => b.length - a.length);
+      const says = new RegExp(` ; ${column} = ${value}(?: ;|$)`);
+      expect({ file, operations: byOperation.sort() }).toEqual({
+        file,
+        operations: [...rows].flatMap(([name, row]) => (says.test(row) ? [name] : [])).sort(),
+      });
+    }
+  },
+);

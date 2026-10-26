@@ -17,8 +17,22 @@ export type Stretch = {
   returns?: true;
 };
 
-/** A stretch and how the loops of its place are written: `upTo` for a number of turns, `listOf` for a list that is walked. */
-type Placed = Stretch & { upTo: (turns: number) => string; listOf: (list: string) => string };
+/** How loops are written: `upTo` for a number of turns, `listOf` for a list that is walked. */
+export type Loops = { upTo: (turns: number) => string; listOf: (list: string) => string };
+type Placed = Stretch & Loops;
+
+/** A loop of a few turns whose number is written down may be laid out turn by turn, and is a loop no more. Half of the names leave the number to the run. */
+export function loopsOf(name: string): Loops {
+  const isWrittenDown = Bun.hash(name + " turns") % 2n === 0n;
+  return {
+    upTo: turns => (isWrittenDown ? `${turns}` : `${turns} + extraTurns`),
+    listOf: list => (isWrittenDown ? list : `${list}.slice(extraTurns)`),
+  };
+}
+
+/** A text that is written already, with its counted loops of under ten turns as loopsOf(name) writes them. The program declares `extraTurns`. */
+export const withLoopsOf = (name: string, text: string) =>
+  text.replace(/(for \(let \w+ = 0; \w+ < )(\d)(?=;)/g, (_, start, turns) => start + loopsOf(name).upTo(Number(turns)));
 
 type Place = { kind?: "await" | "yield"; isOutsideFunctions?: true; text: (stretch: Placed) => string };
 
@@ -94,13 +108,7 @@ export function inEveryPlace(stretches: Stretch[], isTyped: boolean | undefined,
       if (stretch.suspends && stretch.suspends !== place.kind) continue;
       if (stretch.returns && place.isOutsideFunctions) continue;
       const name = `${stretch.name}-${placeName}`;
-      // A loop of a few turns whose number is written down may be laid out turn by turn, and is a loop no more. Half of the programs, dealt by their names, leave the number to the run.
-      const isWrittenDown = Bun.hash(name + " turns") % 2n === 0n;
-      const placed: Placed = {
-        ...stretch,
-        upTo: turns => (isWrittenDown ? `${turns}` : `${turns} + extraTurns`),
-        listOf: list => (isWrittenDown ? list : `${list}.slice(extraTurns)`),
-      };
+      const placed: Placed = { ...stretch, ...loopsOf(name) };
       const text = () => {
         const inPlace = place.text(placed);
         return `${head}${inPlace.includes("extraTurns") ? turnsNobodyKnows : ""}${stretch.beside ?? ""}\n${inPlace}\nexport {};\n`;

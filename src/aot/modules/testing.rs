@@ -111,6 +111,9 @@ fn describe_request(input: &BindInput<'_, '_>, request: ModuleRequest) -> String
     if request.is_dynamic_star_export {
         line.push_str(" dynamic-star");
     }
+    if request.is_hoisted {
+        line.push_str(" hoisted");
+    }
     line
 }
 

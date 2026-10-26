@@ -68,7 +68,7 @@ let bunCompilerProfile = Profile(
         ("fuzzilli('FUZZILLI_CRASH', 0)", .shouldCrash)
     ],
 
-    additionalCodeGenerators: bunCodeGenerators + (TypeScriptSettings.fromEnvironment == nil ? [] : typeScriptCodeGenerators),
+    additionalCodeGenerators: bunCodeGenerators + bunCallbackGenerators + (TypeScriptSettings.fromEnvironment == nil ? [] : typeScriptCodeGenerators),
 
     additionalProgramTemplates: WeightedList<ProgramTemplate>([]),
 

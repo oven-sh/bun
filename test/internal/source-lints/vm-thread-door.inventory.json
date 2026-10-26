@@ -61,6 +61,7 @@
   "src/jsc/web_worker.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
+      "OwnedByThread",
       "ThreadStart"
     ]
   },

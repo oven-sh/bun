@@ -1036,7 +1036,22 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                     false => Interest::Binding(defined),
                 },
-                Some(Member::Undefined | Member::Marker(_) | Member::OnObject) | None => continue,
+                Some(Member::Undefined | Member::Marker(_) | Member::OnObject) => continue,
+                // A name of a CommonJS module that an ES module hands on, on what `require` gives of the ES module.
+                None => match (
+                    graph.member_binding(self.file, access),
+                    self.find_accessed_module(access),
+                ) {
+                    (Some(ImportBinding::Synthetic(export)), Some(accessed))
+                        if graph.shape(accessed) == Shape::EsModule =>
+                    {
+                        match self.is_called(access) {
+                            true => Interest::CalledName(export, accessed),
+                            false => Interest::Name(export, accessed),
+                        }
+                    }
+                    _ => continue,
+                },
             };
             self.add_interest(hir[access].pos, interest);
         }
@@ -1716,7 +1731,10 @@ impl<'a, 's> Walk<'a, 's> {
     // A name of a CommonJS module that no expression is bound for: a key of a pattern, a member of a namespace object.
     fn reach_named_member(&mut self, module: ModuleRef, name: Atom) -> bool {
         self.evaluate(module);
-        match self.input.graph.member_named(module, name) {
+        let graph = self.input.graph;
+        // A name that stands for another name or for a binding has no variable of its own.
+        let member = graph.member_named(module, name);
+        match member.or_else(|| graph.commonjs().member_named(module, name)) {
             Some(Member::Variable(export) | Member::Copy(export)) => self.reach_name(export),
             Some(Member::Binding(defined)) => self.reach_binding(defined),
             Some(Member::OnObject) => {

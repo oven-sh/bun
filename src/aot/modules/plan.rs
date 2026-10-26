@@ -378,6 +378,20 @@ impl ModuleGraph {
         self.plan.has(&self.plan.order.is_half, module)
     }
 
+    /// The loader of the run time loads the module and what it imports one by one, as `bun run` does.
+    pub fn is_loaded_by_loader(&self, module: ModuleRef) -> bool {
+        matches!(module, ModuleRef::File(_))
+            && self.plan.has(&self.plan.order.is_loaded_by_loader, module)
+    }
+
+    /// A `require` of the module may run while a graph is being loaded.
+    pub fn is_required_during_load(&self, module: ModuleRef) -> bool {
+        matches!(module, ModuleRef::File(_))
+            && self
+                .plan
+                .has(&self.plan.order.is_required_during_load, module)
+    }
+
     /// A later site of a module whose body threw throws the same error again.
     pub fn keeps_error(&self, module: ModuleRef) -> bool {
         match module {
@@ -645,7 +659,10 @@ impl ModuleGraph {
             .map(|root| (root, Vec::new()))
             .collect();
         for_each_mut(&mut prefixes, in_parallel, &|(root, prefix)| {
-            *prefix = self.collect_prefix(*root, &linked_files);
+            // The loader runs the files of such a root where it comes to them.
+            if !self.is_loaded_by_loader(ModuleRef::File(*root)) {
+                *prefix = self.collect_prefix(*root, &linked_files);
+            }
         });
         let mut prefixes = prefixes.into_iter();
         for &file in self.record_files() {
@@ -657,34 +674,23 @@ impl ModuleGraph {
             if is_prefix_root(file) {
                 let (root, prefix) = prefixes.next().expect("a prefix for each root");
                 debug_assert_eq!(root, file);
-                requests.extend(prefix.into_iter().map(ModuleRequest::import));
+                requests.extend(prefix.into_iter().map(ModuleRequest::hoisted_import));
                 if !self.commonjs().checked_copies(file).is_empty() {
-                    requests.push(ModuleRequest::import(ModuleRef::Check(file)));
+                    requests.push(ModuleRequest::hoisted_import(ModuleRef::Check(file)));
                 }
             }
-            let prefix_end = requests.len();
-            for &written in self.requests(file) {
-                let request = match written.kind {
-                    ModuleRequestKind::Import => ModuleRequest {
-                        target: self.face(written.target).unwrap_or(written.target),
-                        ..written
-                    },
-                    ModuleRequestKind::Require => written,
-                };
-                // Of two equal entries the first stays.
-                let is_same = |earlier: &ModuleRequest| {
-                    earlier.target == request.target
-                        && earlier.phase == request.phase
-                        && earlier.kind == request.kind
-                };
-                match requests[start..prefix_end].iter().position(is_same) {
-                    Some(earlier) => {
-                        let earlier = &mut requests[start + earlier];
-                        earlier.is_dynamic_star_export |= request.is_dynamic_star_export;
-                    }
-                    None => requests.push(request),
-                }
-            }
+            // The loader of the run time goes by what the module writes, in the order in which it is written.
+            requests.extend(
+                self.requests(file)
+                    .iter()
+                    .map(|&written| match written.kind {
+                        ModuleRequestKind::Import => ModuleRequest {
+                            target: self.face(written.target).unwrap_or(written.target),
+                            ..written
+                        },
+                        ModuleRequestKind::Require => written,
+                    }),
+            );
             ranges.insert(module, start as u32..requests.len() as u32);
         }
         // Also a face that no list names: `import(K)` asks for it, or another face does.

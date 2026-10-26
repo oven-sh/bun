@@ -2,7 +2,6 @@
 # The formatter walks over what it is handed. The host makes `allowedNodeEnvironmentFlags` with a function of the library when the name is first looked for, so the walk needs that function.
 # `process` itself stays out of unknown hands.
 # LIBRARY: own
-# LOSS: MaxValueFlowMembersToldApart x2
 # RUN: valueflow-why used-builtin=ProcessAllowedNodeEnvironmentFlags escaped-builtin=Process
 # CHECK: used-builtin=ProcessAllowedNodeEnvironmentFlags
 # CHECK-NEXT: by Lookup

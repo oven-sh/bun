@@ -172,7 +172,11 @@ impl<'s> Folder<'_, 's> {
         };
         let is_const = self.bound.binding_kind(symbol) == BindingKind::Const;
         let is_primitive = matches!(self.folded(init).value, Value::Known(_));
-        if !is_const || !is_primitive || !self.is_folded_by_bun_run(init) {
+        let is_inlined_by_bun_run = is_const
+            && is_primitive
+            && self.is_folded_by_bun_run(init)
+            && self.is_in_constant_prefix(init);
+        if !is_inlined_by_bun_run {
             self.mark_folded_by_build_alone(ident);
         }
         match self.folded_value(init) {
@@ -212,10 +216,21 @@ impl<'s> Folder<'_, 's> {
             DefineValue::Constant(constant) => self.decide(e, Decision::Constant(constant)),
             DefineValue::GlobalPath(path) => self.decide(e, Decision::GlobalPath(path)),
             DefineValue::Data(data) => self.decide(e, Decision::of_data(data)),
-            DefineValue::RuntimeValue(_) => self.note_loader_value(e),
+            DefineValue::RuntimeValue(_) => {
+                let folded = self.note_loader_value(e);
+                self.effects[e.idx()] = self.effects_of_path(e);
+                folded
+            }
             DefineValue::RuntimeConstant(_) if self.is_delete_operand(e) => return None,
             DefineValue::RuntimeConstant(constant) => Folded::constant(constant),
         })
+    }
+
+    fn effects_of_path(&self, path: ExprId) -> Effects {
+        match self.hir[path].kind {
+            ExprKind::Ident(_) => Effects::None,
+            _ => Effects::MemberRead,
+        }
     }
 
     pub(super) fn find_runtime_value_kind(&self, e: ExprId) -> Option<RuntimeValueKind> {

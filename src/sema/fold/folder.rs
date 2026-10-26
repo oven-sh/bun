@@ -23,6 +23,8 @@ use std::cell::{Cell, OnceCell};
 pub(super) enum Effects {
     Unknown,
     DeadZoneCheck,
+    /// The host may add a member to a built-in object when the member is first read.
+    MemberRead,
     None,
 }
 
@@ -61,6 +63,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) loader_names: OnceCell<LoaderNames>,
     pub(super) this_of_file: OnceCell<PositionSet>,
     pub(super) run_order: OnceCell<RunOrder>,
+    pub(super) initializers_in_constant_prefixes: OnceCell<Vec<ExprId>>,
     pub(super) process_imports: OnceCell<Vec<SymbolId>>,
     pub(super) relies_on_running_before_calls: Cell<bool>,
     pub(super) values: Vec<Value>,
@@ -101,6 +104,7 @@ pub(super) fn run<'s>(
         loader_names: OnceCell::new(),
         this_of_file: OnceCell::new(),
         run_order: OnceCell::new(),
+        initializers_in_constant_prefixes: OnceCell::new(),
         process_imports: OnceCell::new(),
         relies_on_running_before_calls: Cell::new(false),
         values: vec![Value::Unknown; hir.exprs.len()],
@@ -198,7 +202,7 @@ impl<'s> Folder<'_, 's> {
             (Value::Known(value), Effects::None) => {
                 FoldedValue::Constant(self.evaluator.to_constant(value))
             }
-            (Value::Known(value), Effects::DeadZoneCheck) => {
+            (Value::Known(value), Effects::DeadZoneCheck | Effects::MemberRead) => {
                 FoldedValue::ConstantOutsideDeadZone(self.evaluator.to_constant(value))
             }
             (Value::Known(_), Effects::Unknown) | (Value::Unknown, _) => FoldedValue::Unknown,
@@ -245,6 +249,16 @@ impl<'s> Folder<'_, 's> {
         found
     }
 
+    fn collect_member_reads(&self) -> PositionSet {
+        let mut found = PositionSet::new(self.hir.exprs.len());
+        for (index, &effects) in self.effects.iter().enumerate() {
+            if effects == Effects::MemberRead {
+                found.insert(index);
+            }
+        }
+        found
+    }
+
     fn finish(mut self, mut errors: Vec<FoldError>, arena: &'s Arena) -> FoldResult<'s> {
         self.specifiers.shared_sort_unstable_by_key(|entry| entry.0);
         self.paths_from_own_directory.shared_sort_unstable();
@@ -277,6 +291,7 @@ impl<'s> Folder<'_, 's> {
             dead_functions: NodeBits::freeze(&dead.functions, arena),
             short_circuited_links: NodeBits::freeze(&self.short_circuited_links, arena),
             truthy_without_effects: NodeBits::freeze(&self.collect_truthy_without_effects(), arena),
+            member_reads: NodeBits::freeze(&self.collect_member_reads(), arena),
         };
         let call_errors = self.call_errors.iter();
         let live_call_errors = call_errors.filter(|entry| !decisions.is_dead_expr(entry.0));

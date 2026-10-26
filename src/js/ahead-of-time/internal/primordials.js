@@ -15,6 +15,12 @@ function uncurryThis(func) {
   return FunctionPrototypeCall.bind(func);
 }
 
+const callOwnFunctionsWithoutParameters = $newCppFunction(
+  "BunCompiledModules.cpp",
+  "jsFunctionCallOwnFunctionsWithoutParameters",
+  3,
+);
+
 const sealClass = constructor => {
   const prototype = constructor.prototype;
   ObjectSetPrototypeOf(prototype, null);
@@ -64,6 +70,7 @@ class SafeMap extends Map {
   }
 }
 const SafeMapPrototype = SafeMap.prototype;
+callOwnFunctionsWithoutParameters(MapPrototype, SafeMapPrototype, new Map());
 ReflectDefineProperty(SafeMapPrototype, "clear", {
   value: MapPrototype.clear,
   writable: true,
@@ -164,6 +171,7 @@ class SafeSet extends Set {
   }
 }
 const SafeSetPrototype = SafeSet.prototype;
+callOwnFunctionsWithoutParameters(SetPrototype, SafeSetPrototype, new Set());
 ReflectDefineProperty(SafeSetPrototype, "add", {
   value: SetPrototype.add,
   writable: true,

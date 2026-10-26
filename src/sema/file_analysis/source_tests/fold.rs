@@ -1630,7 +1630,8 @@ fn tests_of_runtime_values() {
         |s| {
             let type_test = last_expr(s, |kind| matches!(kind, ExprKind::Unary { .. }));
             let function = Constant::String(s.workspace.atom("function"));
-            assert_eq!(constant(s, type_test), FoldedValue::Constant(function));
+            let expected = FoldedValue::ConstantOutsideDeadZone(function);
+            assert_eq!(constant(s, type_test), expected);
             assert_eq!(decision(s, last_member(s)), Decision::Unknown);
             assert_eq!(constant(s, last_member(s)), FoldedValue::Unknown);
         },

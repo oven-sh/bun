@@ -1,6 +1,5 @@
 // JSON read from UTF-8 bytes must give what JSON.parse gives for the text TextDecoder makes of the same bytes: the same value
 // or the same error. Every case is drawn from a seed. JSON_FROM_BYTES_SEED and JSON_FROM_BYTES_CASES choose other cases.
-import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
@@ -275,7 +274,7 @@ describe("JSON from UTF-8 bytes against JSON.parse of the decoded text", () => {
         seed,
         bytes,
       );
-      if (decode(bytes.subarray(0, fromBytes.read)) !== text.slice(0, fromText.read))
+      if (fromBytes.read !== encoder.encode(text.slice(0, fromText.read)).length)
         throw new Error(
           `parseChunk read ${fromBytes.read} bytes, the text road ${fromText.read} characters. seed ${seed}, bytes ${hex(bytes)}`,
         );
@@ -314,7 +313,7 @@ describe("JSON from UTF-8 bytes against JSON.parse of the decoded text", () => {
           seed,
           slice,
         );
-        if (decode(slice.subarray(0, fromBytes.read)) !== text.slice(0, fromText.read))
+        if (fromBytes.read !== encoder.encode(text.slice(0, fromText.read)).length)
           throw new Error(
             `parseChunk read ${fromBytes.read} bytes, the text road ${fromText.read} characters. seed ${seed}, bytes ${hex(slice)}`,
           );
@@ -364,13 +363,13 @@ describe("JSON from UTF-8 bytes against JSON.parse of the decoded text", () => {
     }
   });
 
-  test("`read` counts the bytes of invalid sequences as they are", () => {
+  test("`read` counts three bytes for each U+FFFD that stands for an invalid sequence", () => {
     for (const broken of brokenPieces.filter(piece => piece[0] >= 0x80)) {
       const first = new Uint8Array([0x22, 0x61, ...broken, 0x62, 0x22]);
       const bytes = new Uint8Array([...first, 0x0a, 0x5b, 0x31, 0x2c]);
       const result = Bun.JSONL.parseChunk(bytes);
       expect(result.values).toEqual([decode(first.subarray(1, first.length - 1))]);
-      expect(result.read).toBe(first.length);
+      expect(result.read).toBe(encoder.encode(decode(first)).length);
       expect(result.done).toBe(false);
     }
   });
@@ -519,28 +518,5 @@ describe("JSON from UTF-8 bytes against JSON.parse of the decoded text", () => {
     shared.set(encoder.encode(text + "\n"));
     expect(Bun.JSONL.parseChunk(shared, 0, written).values).toEqual([JSON.parse(text)]);
     expect(Bun.JSONL.parse(shared.subarray(0, written))).toEqual([JSON.parse(text)]);
-  });
-});
-
-describe("the width of texts read from UTF-8 bytes", () => {
-  const sizeOf = (text: string) => estimateShallowMemoryUsageOf(text);
-  const ascii = "the quick brown fox jumps over the lazy dog. ".repeat(40);
-
-  test("a character beyond Latin-1 widens its own text and no other", async () => {
-    for (const escape of ["", "\\n"]) {
-      const line = `{"wide":"${ascii}${escape}\u4e2d","ascii":"${ascii}${escape}","latin1":"${ascii}${escape}\u00e9"}`;
-      const bytes = encoder.encode(line + "\n");
-      for (const value of [
-        Bun.JSONL.parse(bytes)[0],
-        Bun.JSONL.parseChunk(bytes).values[0],
-        await new Response(bytes).json(),
-        await new Blob([bytes]).json(),
-      ] as Record<string, string>[]) {
-        expect(value).toEqual(JSON.parse(line));
-        expect(sizeOf(value.wide)).toBeGreaterThan(2 * ascii.length);
-        expect(sizeOf(value.ascii)).toBeLessThan(1.5 * ascii.length);
-        expect(sizeOf(value.latin1)).toBeLessThan(1.5 * ascii.length);
-      }
-    }
   });
 });

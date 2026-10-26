@@ -133,7 +133,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(text) = builtins.evaluated_text(call) {
             return self.lower_evaluated_text_call(call, text, exit, evaluation.tail);
         }
-        if let Some(value) = self.try_lower_call(call, site) {
+        if let Some(value) = self.try_lower_call(call, site, evaluation.tail) {
             return value;
         }
 
@@ -208,8 +208,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 options.expected_result,
             ),
         };
-        match options.tail {
-            Tail::No => value,
+        self.return_call_in_tail_position(value, options.tail)
+    }
+
+    pub(in crate::lower) fn return_call_in_tail_position(
+        &mut self,
+        call: ValueId,
+        tail: Tail<'_>,
+    ) -> ValueId {
+        match tail {
+            Tail::No => call,
             Tail::Yes { casts } => {
                 let mut cast_positions: SmallVec<[DeclaredType; 4]> = SmallVec::new();
                 let mut next = casts;
@@ -217,7 +225,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     cast_positions.push(cast.position);
                     next = cast.outer;
                 }
-                self.emit_return_call(value, &cast_positions);
+                self.emit_return_call(call, &cast_positions);
                 self.builder.undefined()
             }
         }
@@ -279,7 +287,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn call_result_position(&mut self, call: ExprId) -> DeclaredType {
+    pub(in crate::lower) fn call_result_position(&mut self, call: ExprId) -> DeclaredType {
         if !self.file.is_checked() {
             return DeclaredType::untyped();
         }

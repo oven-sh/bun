@@ -1,7 +1,7 @@
 // A loop that reads or stores a variable of its module, of an enclosing function, or a static member. What the loop reads may be read once ahead of it, what it stores may be stored once
 // behind it, and between the two the value may go around the loop in a register: all of it only while nobody else looks at the variable or changes it before the loop is over.
 // Where the variable lives x what a turn does with it x who else comes by in that turn, and what it holds x what a turn does x the form of the loop: each in every place.
-import { inEveryPlace, type Stretch } from "./where-a-stretch-stands";
+import { inEveryPlace, loopsOf, type Loops, type Stretch } from "./where-a-stretch-stands";
 
 type Kind = { type: string; first: (seed: string) => string; next: (held: string, by: string) => string; show: (held: string) => string };
 const kinds: Record<string, Kind> = {
@@ -63,12 +63,12 @@ const accesses: Record<string, (held: string, kind: Kind, other: string) => stri
   storesOnBothSides: (held, kind, other) => `${held} = ${kind.next(held, "at")}; ${other} ${held} = ${kind.next(held, "at + 1")};`,
 };
 
-const loops: Record<string, (turn: string, inner: string) => string> = {
-  counted: (_, inner) => `for (let at = 0; at < 4; at++) { ${inner} }`,
-  tested: (_, inner) => `let at = 0; while (at < 4) { ${inner} at++; }`,
-  testedBehind: (_, inner) => `let at = 0; do { ${inner} } while (++at < 4);`,
-  overAList: (_, inner) => `for (const at of [0, 1, 2, 3]) { ${inner} }`,
-  insideAnother: (_, inner) => `for (let out = 0; out < 2; out++) for (let at = 0; at < 3; at++) { ${inner} }`,
+const loops: Record<string, (turn: string, inner: string, written: Loops) => string> = {
+  counted: (_, inner, { upTo }) => `for (let at = 0; at < ${upTo(4)}; at++) { ${inner} }`,
+  tested: (_, inner, { upTo }) => `let at = 0; while (at < ${upTo(4)}) { ${inner} at++; }`,
+  testedBehind: (_, inner, { upTo }) => `let at = 0; do { ${inner} } while (++at < ${upTo(4)});`,
+  overAList: (_, inner, { listOf }) => `for (const at of ${listOf("[0, 1, 2, 3]")}) { ${inner} }`,
+  insideAnother: (_, inner, { upTo }) => `for (let out = 0; out < ${upTo(2)}; out++) for (let at = 0; at < ${upTo(3)}; at++) { ${inner} }`,
   asLongAsTheTurnSays: (turn, inner) => `for (let at = 0; at < (${turn}) % 4; at++) { ${inner} }`,
 };
 
@@ -101,12 +101,13 @@ const homes: Record<string, Home> = {
 function stretch(homeName: string, kindName: string, accessName: string, observerName: string, loopName: string): Stretch | undefined {
   const [home, kind, observer] = [homes[homeName], kinds[kindName], observers[observerName]];
   if (home.holdsTheLoop && observer.suspends) return undefined;
+  const name = `${homeName}-${kindName}-${accessName}-${observerName}-${loopName}`;
   const loop = (held: string, turn: string) => {
-    const turns = loops[loopName](turn, accesses[accessName](held, kind, observer.text));
+    const turns = loops[loopName](turn, accesses[accessName](held, kind, observer.text), loopsOf(name));
     return `let seen = ""; ${observer.around ? observer.around(turns, kind.show(held)) : turns} say(seen);`;
   };
   return {
-    name: `${homeName}-${kindName}-${accessName}-${observerName}-${loopName}`,
+    name,
     ...home.make(kind, held => helpers(kind, held, observer.needs ?? []), loop),
     suspends: observer.suspends,
     returns: observer.returns && !home.holdsTheLoop ? true : undefined,

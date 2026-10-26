@@ -62,17 +62,19 @@ fn latin1_answer<'a>(heap: &JsHeap<'a>, answer: &[u8]) -> Option<Text<'a>> {
     (answer.len() <= JSString::MAX_LENGTH).then(|| heap.create_latin1_string(answer))
 }
 
-/// With `FLAT_ONLY`, `None` for all but an 8-bit string that is no rope, and nothing is called.
+/// `None` for all but an 8-bit string of ASCII characters: an answer with any other character is made from UTF-8.
+/// With `FLAT_ONLY`, `None` for a rope too, and nothing is called.
 #[inline(always)]
 fn latin1_of<'a, const FLAT_ONLY: bool>(
     heap: &JsHeap<'a>,
     text: Text<'a>,
 ) -> bindgen::Result<'a, Option<JsLatin1<'a>>> {
-    if FLAT_ONLY {
-        Ok(text.flat_latin1())
+    let text = if FLAT_ONLY {
+        text.flat_latin1()
     } else {
-        text.resolved_latin1(heap)
-    }
+        text.resolved_latin1(heap)?
+    };
+    Ok(text.filter(|text| text.characters().is_ascii()))
 }
 
 /// `$name` answers `$of_latin1` of the operands' Latin-1 characters, or `$of_utf8` where that is `None`.

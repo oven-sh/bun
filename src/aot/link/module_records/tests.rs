@@ -144,6 +144,7 @@ fn es_module_record_has_body_and_requests() {
         is_dynamic_star_export: false,
         kind: ModuleRequestKind::Import,
         completes: true,
+        is_hoisted: false,
     };
     let expected_requests = [
         request(module_named(&program, "second.js"), ImportPhase::Evaluation),

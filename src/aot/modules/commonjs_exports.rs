@@ -161,7 +161,7 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
             half,
             certain_helper: &|callee| {
                 let known = bind.known_helpers.certain_callee(files, file, callee)?;
-                Some(known.shape.helper())
+                Some(known.shape)
             },
         });
     });
@@ -349,21 +349,19 @@ impl CommonJsExports {
 
     fn add_module(&mut self, module: usize, text: &OwnText) {
         let mut sources: Vec<ModuleRef> = Vec::new();
-        let table = &mut self.files[text.file.idx()];
         for alias in &text.aliases {
-            match alias.target {
-                AliasTarget::Member { module: source, .. } if !sources.contains(&source) => {
-                    sources.push(source);
-                    self.dependents
-                        .entry(source)
-                        .or_default()
-                        .push(text.module());
-                }
-                AliasTarget::Member { .. } => {}
-                AliasTarget::Binding(symbol) => table.exported_bindings.push(symbol.id),
+            if let AliasTarget::Member { module: source, .. } = alias.target
+                && !sources.contains(&source)
+            {
+                sources.push(source);
+                self.dependents
+                    .entry(source)
+                    .or_default()
+                    .push(text.module());
             }
         }
         self.name_sources.push(sources);
+        let table = &mut self.files[text.file.idx()];
         let accesses = text.accesses.iter().map(|access| OwnAccess {
             node: access.node,
             module,
@@ -399,6 +397,10 @@ impl CommonJsExports {
             };
             if target != Target::Name(module, alias.name) {
                 self.targets.insert((module, alias.name), target);
+            }
+            if let Target::Binding(symbol) = target {
+                let table = &mut self.files[symbol.file.idx()];
+                table.exported_bindings.push(symbol.id);
             }
         }
     }
@@ -551,6 +553,30 @@ impl CommonJsExports {
         self.faces = faces;
     }
 
+    /// `ns.name()` hands the namespace object over as `this`. Called once it is known which modules have an object.
+    pub(super) fn call_through_namespace(&mut self, module: ModuleRef, name: Atom) {
+        // Whoever has the object may store anything under the name, and without a `default` of its own it is the value of the module that is called.
+        let is_stored_by_name = self.has_names(module)
+            && (name != known::default || self.has_default_of_its_own(module));
+        if !is_stored_by_name || !self.ignores_this(module, name) {
+            self.see_namespace(module);
+        }
+    }
+
+    // The namespace object shows `module.exports` as `default`, and only the object says which names it has.
+    fn see_namespace(&mut self, module: ModuleRef) {
+        let ModuleRef::File(file) = module else {
+            return;
+        };
+        if self.number_of(module).is_none() {
+            return;
+        }
+        self.look_at(module);
+        let mut faces = core::mem::take(&mut self.faces);
+        faces.see_namespace(self, file);
+        self.faces = faces;
+    }
+
     /// `AsToday`: no CommonJS module of the program.
     pub fn shape(&self, module: ModuleRef) -> Shape {
         let number = self.number_of(module);
@@ -669,10 +695,10 @@ impl CommonJsExports {
         module.is_some_and(|module| !self.has_object[module])
     }
 
-    /// A binding of the top of a CommonJS file that a name of the module stands for. Other files read it, so it is a variable.
+    /// A binding of the top of a CommonJS file that a name of a module stands for. Imports of the name are bound to it whether or not the module has an object, so it is a variable.
     pub fn is_exported_binding(&self, file: FileId, symbol: SymbolId) -> bool {
         let is_listed = |table: &FileTable| table.exported_bindings.binary_search(&symbol).is_ok();
-        self.table(file).is_some_and(is_listed) && self.has_names(ModuleRef::File(file))
+        self.table(file).is_some_and(is_listed)
     }
 
     /// Every run of the body stores the name, nothing stores it once the body has ended, and nobody sees the module half evaluated: then what an importer took at the link and what the variable holds cannot be told apart.
@@ -692,10 +718,12 @@ impl CommonJsExports {
         let Some(text) = self.text_of(module) else {
             return false;
         };
-        if self.stored_by_other_files.get(&(module, name)) == Some(&false) {
+        // The text says what is stored only where every store names what it stores under.
+        if !text.has_names || self.stored_by_other_files.get(&(module, name)) == Some(&false) {
             return false;
         }
-        if let Some(alias) = text.alias_of(name)
+        let alias = text.alias_of(name);
+        if let Some(alias) = alias
             && matches!(alias.target, AliasTarget::Binding(_))
         {
             return alias.value != StoredValue::Unknown;
@@ -704,6 +732,8 @@ impl CommonJsExports {
             Some(&Target::Name(owner, owner_name)) => self.ignores_this(owner, owner_name),
             Some(Target::Binding(_)) => false,
             Some(Target::Nothing) => true,
+            // The build does not know what the getter returns.
+            None if alias.is_some() => false,
             None => text
                 .creations_of(name)
                 .all(|it| it.value != StoredValue::Unknown),

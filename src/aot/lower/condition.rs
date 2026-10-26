@@ -50,6 +50,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(position);
         if self.file.decisions().is_truthy_without_effects(expression) {
             // `if (module)`: nothing is read, so that the test makes no module object.
+            self.lower_member_reads(expression);
             let value = self.builder.boolean(true);
             self.branch_on_truthiness(None, value, if_true, if_false);
         } else if self.file.is_statically_resolved(expression) {

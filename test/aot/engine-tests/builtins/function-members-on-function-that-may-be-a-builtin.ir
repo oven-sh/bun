@@ -13,7 +13,7 @@ module m0 path="main.js" displayPath="main.js"
 
 function f0 name="inheritedMember" parameters=[{type=f1|f2 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ f1|f2):
-    v1 = AssumeType v0 castType=f1|f2|builtin(SetTimeout)
+    v1 = AssumeType v0 provenType=f1|f2|builtin(SetTimeout)
     v2 = PropGet v1 key="bind"
     Return v2
 }

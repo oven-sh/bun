@@ -92,7 +92,10 @@ export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
   const transpiler = new Bun.Transpiler({ loader: "ts" });
   const seen = new Set<string>();
   const list: NativeCall[] = [];
-  for (const file of [...sourceFiles, ...functionFiles].map(file => path.join(BASE, file))) {
+  const files = [...sourceFiles, ...functionFiles];
+  // The bundler of the modules numbers what the first texts call before it comes here: what only a second text calls is numbered behind all of that.
+  const secondTexts = files.map(file => path.join(BASE, "ahead-of-time", file)).filter(file => fs.existsSync(file));
+  for (const file of [...files.map(file => path.join(BASE, file)), ...secondTexts]) {
     const source = fs.readFileSync(file, "utf8");
     const calls = new Set(transpiler.transformSync(source).matchAll(nativeCall).map(keyOf));
     for (const match of source.matchAll(nativeCall)) {

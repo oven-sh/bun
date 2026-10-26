@@ -93,7 +93,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     new_target: None,
                     parameters: &values,
                 };
-                self.emit_direct_call(function, entry_arguments)
+                let call = self.emit_direct_call(function, entry_arguments);
+                self.return_call_in_tail_position(call, site.options.tail)
             }
             Arguments::Values(_) | Arguments::List(_) => {
                 let closure = self.builder.new_closure(function, &[]);

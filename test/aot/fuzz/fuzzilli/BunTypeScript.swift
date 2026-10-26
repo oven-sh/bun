@@ -323,6 +323,8 @@ final class TypeScriptPlan {
     private var sitesWithTests = 0
     private var moduleVariables = [String]()
     private var sceneIsAsync = false
+    private var functionsAtTheTop = [String]()
+    private var classesSoFar = [String]()
     private var usesInt32 = false
     private var interfaceOrder = [String]()
 
@@ -2274,7 +2276,7 @@ final class TypeScriptPlan {
         "note": """
             let notes = 0;
             function note(value: unknown): void {
-                if (notes++ < 80) console.log("noted", value);
+                if (notes++ < 80) console.log("noted", value instanceof Date ? "a date" : value);
             }
             """,
         "assert": """
@@ -2332,6 +2334,17 @@ final class TypeScriptPlan {
                     this.seen = held;
                 }
                 @traced read(): T { return this.held; }
+            }
+            """,
+        "shelf": """
+            const shelf: { count: number; names: string[]; top: { held: number }; pairs: [number, string][] } = {
+                count: 1,
+                names: ["first", "second"],
+                top: { held: 2 },
+                pairs: [[1, "one"]],
+            };
+            function readShelf(): unknown[] {
+                return [shelf.count + 1, shelf.names.length, shelf.names[0].length, shelf.top.held * 2, shelf.pairs[0][0] - 1, shelf.pairs[0][1].length];
             }
             """,
         "Link": "type Link<T> = { value: T; next: Link<T> | null };",
@@ -2553,9 +2566,18 @@ final class TypeScriptPlan {
             let typesCanMove = !declarations.contains { declaration in classes.contains { declaration.contains($0) } }
             var imports = [String]()
             var paths = [String]()
+            let sharesHelpers = seedOfProgram % 3 == 0 && !helpers.isEmpty
+            if sharesHelpers {
+                // The file has every helper, so all programs that do this import the same file.
+                let made = makeFile(named: "shared", firstLines, Self.helperDeclarations.keys.sorted().map { Self.helperDeclarations[$0]! })
+                imports.append(made.import)
+                otherFiles += made.file
+                paths.append(made.path)
+                library.removeFirst(helpers.count)
+            }
             if !library.isEmpty {
                 // Two files can import each other: one counts what is noted, the other one reads the count to say how much may be.
-                let isCycle = helpers.contains("note") && seedOfProgram % 5 < 2
+                let isCycle = !sharesHelpers && helpers.contains("note") && seedOfProgram % 5 < 2
                 if isCycle { library = library.map { $0.replacingOccurrences(of: "notes++ < 80", with: "notes++ < limit()") } }
                 let limits = "./limits-\(String(mix(0, (firstLines + library).joined(separator: "\n").utf8), radix: 36)).ts"
                 let made = makeFile(
@@ -2590,6 +2612,11 @@ final class TypeScriptPlan {
             head += library + declarations
         }
         head += moduleVariables
+        if importsCommonFiles {
+            let made = makeCommonFiles()
+            head += made.head
+            otherFiles += made.files
+        }
 
         var tail = [String]()
         var printed = Set<String>()
@@ -2617,13 +2644,75 @@ final class TypeScriptPlan {
         return nil
     }
 
+    private var importsCommonFiles: Bool { hasSeveralFiles && seedOfProgram % 5 < 2 }
+
+    /// Two files in CommonJS, and the lines of the program that import the first one and use it.
+    private func makeCommonFiles() -> (files: String, head: [String]) {
+        var choices = ChoiceGenerator(state: mix(seedOfProgram, 0xc75))
+        var (exportsForm, importForm, needEachOther) = (choices.below(8), choices.below(6), choices.percent(50))
+        if exportsForm == 6, importForm == 3 { importForm = 2 }
+        // The text of both files follows from these two choices, and so do their names.
+        let key = "\(exportsForm) \(needEachOther)"
+        let common = "./common-\(String(mix(1, key.utf8), radix: 36)).cjs"
+        let second = "./second-\(String(mix(2, key.utf8), radix: 36)).cjs"
+        let names = ["double", "held", "count", "mode", "readSecond"]
+        let list = names.joined(separator: ", ")
+        var lines = [
+            "console.log(\"loads common\");", "const second = require(\"\(second)\");", "function double(value) { return value + value; }",
+            "const held = { count: 1, names: [\"a\"] };", "let calls = 0;", "function count() { return ++calls; }",
+            "const mode = (function () { return typeof this; })();", "const readSecond = () => second.name;",
+        ]
+        switch exportsForm {
+        case 0: lines += names.map { "exports.\($0) = \($0);" }
+        case 1: lines.append("module.exports = { \(list) };")
+        case 2: lines += names.map { "this.\($0) = \($0);" }
+        case 3:
+            lines += ["Object.defineProperty(exports, \"__esModule\", { value: true });", "exports.default = { \(list) };"]
+            lines += names.map { "exports.\($0) = \($0);" }
+        case 4:
+            lines.append("module.exports = double;")
+            lines += names.map { "module.exports.\($0) = \($0);" }
+        case 5:
+            lines.append("class Common {")
+            lines += names.map { "    static \($0) = \($0);" }
+            lines += ["}", "module.exports = Common;"]
+        case 6: lines += names.map { "Object.defineProperty(exports, \"\($0)\", { enumerable: true, get() { return \($0); } });" }
+        default: lines.append("for (const [key, value] of Object.entries({ \(list) })) exports[key] = value;")
+        }
+        var others = ["console.log(\"loads second\");", "exports.name = \"second\";"]
+        if needEachOther {
+            others += [
+                "const common = require(\"\(common)\");", "exports.sawAtLoad = Object.keys(common).join();",
+                "exports.readCommon = () => typeof common.double;",
+            ]
+        }
+        let files = "// @filename: \(common)\n\(lines.joined(separator: "\n"))\n// @filename: \(second)\n\(others.joined(separator: "\n"))\n"
+        var head = ["// @ts-ignore"]
+        switch importForm {
+        case 0: head += ["import common from \"\(common)\";", "const commonExports: any = common;"]
+        case 1: head += ["import { \(list) } from \"\(common)\";", "const commonExports: any = { \(list) };"]
+        case 2: head += ["import * as common from \"\(common)\";", "const commonExports: any = common;"]
+        case 3: head += ["import common, { double } from \"\(common)\";", "const commonExports: any = common;", "printValue(\"double\", double === commonExports.double);"]
+        case 4: head += ["const commonExports: any = require(\"\(common)\");"]
+        default: head += ["const commonExports: any = await import(\"\(common)\");"]
+        }
+        for shown in [
+            "Object.keys(commonExports).sort().join(), commonExports.mode, typeof commonExports.default",
+            "commonExports.double(2), commonExports.double(\"a\"), commonExports.count(), commonExports.count(), commonExports.held",
+            "commonExports.readSecond()",
+        ] {
+            head.append("try { printValue(\"common\", \(shown)); } catch (error) { printValue(\"threw\", (error as any)?.name); \(Self.messageToStderr) }")
+        }
+        return (files, head)
+    }
+
     /// Writes declarations as a file of their own, behind a line with its name, and the import of everything in it.
     private func makeFile(named name: String, _ firstLines: [String], _ declarations: [String]) -> (file: String, import: String, path: String) {
         var values = [String]()
         var types = [String]()
         var lines = firstLines
         for line in declarations.flatMap({ $0.split(separator: "\n", omittingEmptySubsequences: false) }) {
-            guard let keyword = ["function* ", "function ", "class ", "abstract class ", "let ", "const enum ", "enum ", "namespace ", "type ", "interface "].first(where: { line.hasPrefix($0) })
+            guard let keyword = ["function* ", "function ", "class ", "abstract class ", "let ", "const enum ", "const ", "enum ", "namespace ", "type ", "interface "].first(where: { line.hasPrefix($0) })
             else {
                 lines.append(String(line))
                 continue
@@ -3022,6 +3111,9 @@ extension TypeScriptPlan {
 
     // MARK: The statements
 
+    /// run-batch.ts reads the messages of documented differences from stderr, which it doesn't compare.
+    private static let messageToStderr = "console.error(String((error as any)?.[\"message\"]));"
+
     private func note(_ expression: String, ignoring: Bool = false) -> String {
         helpers.insert("note")
         return "\(ignoring ? Self.ignoredLineMarker : "")note(\(expression));"
@@ -3043,7 +3135,9 @@ extension TypeScriptPlan {
             }
             return [note(otherwise, ignoring: unsure)]
         }
-        switch choices.below(subject.isConstant ? 13 : 11) {
+        var form = choices.below(subject.isConstant ? 13 : 11)
+        if form == 5, isInStaticBlock(subject.index) { form = 0 }
+        switch form {
         case 0, 1:
             var lines = ["\(mark)if (\(test.condition)) {"]
             lines += indented(further(test.kept, kept))
@@ -3213,7 +3307,7 @@ extension TypeScriptPlan {
         let isGuarded = choices.percent(80)
         var enclosed = [isGuarded ? "try {" : "{"]
         enclosed += indented(lines)
-        enclosed += isGuarded ? ["} catch (error) {", "    \(note("(error as any)?.name"))", "}"] : ["}"]
+        enclosed += isGuarded ? ["} catch (error) {", "    \(note("(error as any)?.name"))", "    \(Self.messageToStderr)", "}"] : ["}"]
         return enclosed
     }
 
@@ -3234,12 +3328,87 @@ extension TypeScriptPlan {
         }
     }
 
+    /// Statements that change what a variable holds, or call what the program declares, with values of every kind.
+    private func disturb(_ v: Variable, named n: String) -> [String]? {
+        func value() -> String { choices.pick(Self.valuesOfEveryKind) }
+        var lines = [String]()
+        let any = "(\(n) as any)"
+        for _ in 0..<(1 + choices.below(2)) {
+            var candidates = [String]()
+            switch (declared[v] ?? .untracked).plain {
+            case .named(let name) where !allMembers(of: name).isEmpty:
+                let key = choices.pick(allMembers(of: name)).name
+                let member = read(key, of: any)
+                candidates = [
+                    "\(member) = \(value());", "\(member) = \(value());", "delete \(member);", "\(any).extra = \(value());",
+                    "Object.defineProperty(\(n), \"\(key)\", { get() { return \(value()); }, configurable: true });",
+                    "Object.defineProperty(\(n), \"\(key)\", { value: \(value()), writable: false });",
+                    "Object.setPrototypeOf(\(n), \(choices.pick(["null", "[]", "{ \"\(key)\": 1 }", "new Proxy({}, {})"])));",
+                    "Object.freeze(\(n));", "Object.seal(\(n));", "Object.preventExtensions(\(n));",
+                    "Object.assign(\(any), { \"\(key)\": \(value()) });",
+                ]
+                for method in (methods[name] ?? [:]).keys.sorted() {
+                    candidates += ["note(\(read(method, of: any))(\(value()), \(value())));", "\(read(method, of: any)) = () => \(value());"]
+                }
+            case .array, .readonlyArray, .tuple:
+                candidates = [
+                    "\(any)[0] = \(value());", "\(any)[1] = \(value());", "\(any).push(\(value()));", "\(any).length = 0;", "delete \(any)[0];",
+                    "\(any)[10] = \(value());", "\(any).extra = 1;", "Object.freeze(\(n));", "\(any).unshift(\(value()));",
+                    "Object.defineProperty(\(n), 0, { get() { return \(value()); }, configurable: true });", "\(any).length = 3;",
+                    "Object.setPrototypeOf(\(n), \(choices.pick(["null", "{}", "{ 0: \"inherited\", length: 1 }"])));", "\(any).fill(\(value()));",
+                ]
+            case .generic("Map", _): candidates = ["\(any).set(\(value()), \(value()));", "\(any).clear();", "\(any).set(\"key\", \(value()));"]
+            case .generic("Set", _): candidates = ["\(any).add(\(value()));", "\(any).clear();"]
+            case .function:
+                candidates = [
+                    "note(\(any)(\(value()), \(value())));", "note(\(any).call(\(value()), \(value())));", "note(new \(any)(\(value())));",
+                    "note(\(any)());", "note([\(value()), \(value())].map(\(any)));",
+                ]
+            case .classOf(let name):
+                candidates = ["note(new \(any)(\(value()), \(value())));", "note(new \(any)());", "\(any).extra = \(value());"]
+                for method in (methods[name] ?? [:]).keys.sorted() {
+                    candidates += ["\(read(method, of: "\(any).prototype")) = () => \(value());", "note(\(read(method, of: "new \(any)()"))(\(value())));"]
+                }
+            case .number, .string, .boolean, .bigint, .union, .literals:
+                if reassigned.contains(v) { candidates = ["\(any) = \(value());"] }
+            default: break
+            }
+            if choices.percent(25) {
+                helpers.insert("shelf")
+                let place = choices.pick(["count", "names", "names[0]", "top", "top.held", "pairs[0]", "pairs[0][0]", "pairs[0][1]", "names.length"])
+                candidates += ["(shelf as any).\(place) = \(choices.percent(50) ? n : value()); note(readShelf());"]
+            }
+            if importsCommonFiles {
+                candidates += [
+                    "note(commonExports.double(\(n)));", "commonExports.held.count = \(n); note(commonExports.held);", "note(commonExports.count());",
+                    "commonExports.held.names.push(\(n)); note(commonExports.held.names.length);",
+                ]
+            }
+            if !functionsAtTheTop.isEmpty {
+                let function = choices.pick(functionsAtTheTop)
+                candidates += ["note((\(function) as any)(\(value()), \(n), \(value())));", "note((\(function) as any)(\(n)));"]
+            }
+            if !classesSoFar.isEmpty {
+                let name = choices.pick(classesSoFar)
+                candidates.append("note(new (\(name) as any)(\(value()), \(n)));")
+                for method in (methods[name] ?? [:]).keys.sorted() {
+                    candidates.append("note(\(read(method, of: "new (\(name) as any)(\(n))"))(\(value()), \(n)));")
+                }
+            }
+            guard !candidates.isEmpty else { return nil }
+            lines.append(choices.pick(candidates))
+        }
+        helpers.insert("note")
+        return ["try {"] + indented(lines) + ["} catch (error) {", "    note((error as any)?.name);", "    \(Self.messageToStderr)", "}"]
+    }
+
     /// What is written behind the declaration of a variable.
     fileprivate func testsBehindDeclaration(of v: Variable, named name: String, isStore: Bool = false) -> [String] {
         guard let index = indexOfDefinition[v], sitesWithTests < 10, inferred[v]?.group != "Date" else { return [] }
         choose(at: index, for: 0x7e57)
         guard choices.percent(settings.tested) else { return [] }
         sitesWithTests += 1
+        if choices.percent(30), let lines = disturb(v, named: name) { return lines }
         if !isStore, let type = annotations[v], type != .int32, !type.arms.contains(.int32), choices.percent(60) {
             var isExact = type.arms.count == 1 && type.plain != .boolean && !type.isLiterals && !type.mentionsEnumeration
             switch outputConversions[v] {
@@ -3273,7 +3442,18 @@ extension TypeScriptPlan {
         let canTest = settings.tested > 0 && !code.contains { $0.op is BeginCodeString }
         var result = [Substring]()
         var storedTo = Set<Int>()
+        var openClass: String? = nil
         for line in lines {
+            for keyword in ["function f", "async function f", "function* f", "async function* f"] where line.hasPrefix(keyword) {
+                functionsAtTheTop.append("f" + line.dropFirst(keyword.count).prefix(while: \.isNumber))
+            }
+        }
+        for line in lines {
+            if line.hasPrefix("class C") { openClass = "C" + line.dropFirst(7).prefix(while: \.isNumber) }
+            if line == "}", let name = openClass {
+                classesSoFar.append(name)
+                openClass = nil
+            }
             let indentation = String(line.prefix(while: { $0 == " " }))
             var added = [String]()
             var written = line
@@ -3301,6 +3481,21 @@ extension TypeScriptPlan {
             result += added.map { Substring(indentation + $0) }
         }
         return result
+    }
+
+    /// Whether the instruction is in a static block of a class, however deep.
+    fileprivate func isInStaticBlock(_ index: Int) -> Bool {
+        var depth = 0
+        for i in stride(from: index - 1, through: 0, by: -1) {
+            if code[i].isBlockEnd { depth += 1 }
+            guard code[i].isBlockStart else { continue }
+            if depth > 0 {
+                depth -= 1
+            } else if code[i].op is BeginClassStaticInitializer {
+                return true
+            }
+        }
+        return false
     }
 
     /// Whether the instruction is directly in a class that has a base class.
@@ -3498,7 +3693,16 @@ extension TypeScriptPlan {
         var lines = [String]()
         var (text, current) = (s, type)
         for step in firstStep..<(firstStep + 1 + choices.below(4)) {
-            if choices.percent(12) {
+            if case .named(let name) = current, choices.percent(30),
+                let method = (methods[name] ?? [:]).filter({ $0.value.isTracked && $0.value.genericPosition == nil })
+                    .sorted(by: { $0.key < $1.key }).first
+            {
+                let arguments = method.value.parameters.filter { !$0.isOptional && !$0.isRest }.map { sample(of: $0.type) ?? "undefined as any" }
+                lines.append("const method\(step) = \(read(method.key, of: text));")
+                lines.append(compareOnly(text, current))
+                lines.append("const called\(step) = method\(step).call(\(([text] + arguments).joined(separator: ", ")));")
+                (text, current) = ("called\(step)", method.value.result == .void ? .undefined : method.value.result == .int32 ? .number : method.value.result)
+            } else if choices.percent(12) {
                 let anew = declareAnew(text, current, step)
                 lines += anew.lines
                 lines.append("const anew\(step) = \(anew.text);")
@@ -3606,7 +3810,7 @@ extension TypeScriptPlan {
         }
         if guarded { lines.append("        try {") }
         lines += body.map { "\(guarded ? "            " : "        ")\($0)" }
-        if guarded { lines += ["        } catch (error) {", "            note((error as any)?.name);", "        }"] }
+        if guarded { lines += ["        } catch (error) {", "            note((error as any)?.name);", "            \(Self.messageToStderr)", "        }"] }
         lines.append(kind == 4 ? "    };" : "    }")
         var given = [name]
         for _ in 0..<(1 + choices.below(4)) { given.append(choices.pick(takesFunction && choices.percent(70) ? Self.functionsOfEveryKind : Self.valuesOfEveryKind)) }
@@ -3616,8 +3820,8 @@ extension TypeScriptPlan {
             let call = "\(function)((\(value)) as any\(hasSecond ? ", (\(others[i])) as any" : ""))"
             switch kind {
             case 2: lines.append("    \(call).catch(() => note(\"rejected\"));")
-            case 3: lines.append("    try { note([...\(call)]); } catch { note(\"threw\"); }")
-            default: lines.append(guarded ? "    \(call);" : "    try { \(call); } catch { note(\"threw\"); }")
+            case 3: lines.append("    try { note([...\(call)]); } catch (error) { note(\"threw\"); \(Self.messageToStderr) }")
+            default: lines.append(guarded ? "    \(call);" : "    try { \(call); } catch (error) { note(\"threw\"); \(Self.messageToStderr) }")
             }
         }
         lines.append("}")

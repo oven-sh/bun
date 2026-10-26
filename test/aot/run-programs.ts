@@ -20,7 +20,8 @@
 //                                         "erased": "as plain Bun": there is an .expected.txt, and the build with erased types prints what plain Bun prints all the same
 //                                         "compiled": compare with `bun build --compile` without --aot, for features that
 //                                         only the bundler provides (--define, --feature, files imported as text)
-//                                         "seconds": the executable is killed, and the test fails, once it has run for that long. Default: the limit of spawned()
+//                                         "seconds": the executable is killed, and the test fails, once it has run for that long. Default: the limit of spawned().
+//                                         A Bun built with AddressSanitizer gets longer, in the proportion of that default
 //                                         "skipInShell": why shell/quick.py skips the program; not read here
 //                                         "skipWithASAN": why a Bun built with AddressSanitizer skips the program
 //                                         "runWithASAN": why a Bun built with AddressSanitizer runs the program even where the quick subset leaves it out
@@ -402,6 +403,9 @@ export async function withEverySlot<T>(held: 0 | 1, work: () => Promise<T>): Pro
 // AOT_BUILD_FLAGS="--aot-validate": every build with --aot or by `bun compile` that a test file starts through spawned() takes these flags too: a whole file, such as servers/servers.test.ts, in a checking build.
 const moreBuildFlags = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").filter(Boolean);
 
+const limitOfARun = 90_000;
+const limitWithASAN = 240_000;
+
 export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>, limit?: number) {
   const behindTheFlag = cmd.indexOf("--aot") + 1 || (cmd[1] === "compile" && !cmd.includes("--library") ? 2 : 0);
   if (moreBuildFlags.length && behindTheFlag) cmd = cmd.toSpliced(behindTheFlag, 0, ...moreBuildFlags);
@@ -409,7 +413,12 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   // A build that verifies the IR after every pass takes sixteen times as long as one that does not. --aot-validate checks each built-in module that a program holds: one that starts a Worker holds most of them, one that may load code from disk all.
   const isLong = cmd.includes("--aot-check=verify-each-pass") || cmd.includes("--aot-validate");
   const timeout =
-    limit ?? (isLong || moreBuildFlags.length || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000);
+    limit ??
+    (isLong || moreBuildFlags.length || isASAN
+      ? limitWithASAN
+      : collectsAtEveryAllocation(env)
+        ? 120_000
+        : limitOfARun);
   const start = performance.now();
   await using proc = Bun.spawn({
     cmd,
@@ -669,7 +678,7 @@ async function runCompiled(
           withoutCoreDump([build.executable]),
           program.cwd,
           { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" },
-          program.secondsToRun && program.secondsToRun * 1000,
+          program.secondsToRun && program.secondsToRun * 1000 * (isASAN ? limitWithASAN / limitOfARun : 1),
         );
       let ran = await (program.measures ? withEverySlot(1, startExecutable) : startExecutable());
       if (collectsAtEveryAllocation(environment)) spentCollecting += performance.now() - start;

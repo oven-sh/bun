@@ -66,7 +66,7 @@ function f2 name="runChanged" parameters=[{type=L0}] results=[{type=anything}] {
 # CHECK-LABEL: function f2 name="runChanged"
 # CHECK: parameters=[{type=L2}]
 # CHECK: [[changedRead]]: anything{{*}} = PropGet {{*}}key="m" accessSite={{*}} receivers=[L2]
-# CHECK: [[arrives]]: {{*}}"text"|f5{{*}} = AssumeType [[changedRead]] castType=
+# CHECK: [[arrives]]: {{*}}"text"|f5{{*}} = AssumeType [[changedRead]] provenType=
 # CHECK: = Call [[arrives]], {{*}}callees=[f5]
 function f3 name="expectKept" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: L0):

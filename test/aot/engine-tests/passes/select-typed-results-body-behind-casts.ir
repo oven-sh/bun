@@ -18,7 +18,7 @@ function f0 name="castBeforeAwait" flags=[IsAsync] parameters=[{type=Response}] 
     v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
     v2 = Upcast v1 castType=anything
     v3 = Await v2
-    v4 = Check v3 castType=undefined|null|L0
+    v4 = Check v3 expectedType=undefined|null|L0
     Return v4
 }
 # CHECK-LABEL: function f0 name="castBeforeAwait"
@@ -27,7 +27,7 @@ function f0 name="castBeforeAwait" flags=[IsAsync] parameters=[{type=Response}] 
 # CHECK-NEXT: [[bytes0]]:{{*}}= Await v1
 # CHECK-NEXT: [[open0]]: boolean = JSONSourceOpen [[bytes0]]
 # CHECK: [[done0]](v3:{{*}}):
-# CHECK-NEXT: v4:{{*}}= Check v3 castType=undefined|null|L0
+# CHECK-NEXT: v4:{{*}}= Check v3 expectedType=undefined|null|L0
 # CHECK: = JSONDecodeBytes [[bytes0]]
 # CHECK: = CallDirect {{*}} function=[[parser]]
 # CHECK-NOT: ResponsePrototypeJson
@@ -35,7 +35,7 @@ function f0 name="castBeforeAwait" flags=[IsAsync] parameters=[{type=Response}] 
 function f1 name="twoCastsBeforeAwait" flags=[IsAsync] parameters=[{type=Request}] results=[{type=Promise}] {
   b0(v0: Request):
     v1 = CallBuiltin v0 overload=RequestPrototypeJson/0
-    v2 = AssumeType v1 castType=Promise<undefined|null|object, proven>
+    v2 = AssumeType v1 provenType=Promise<undefined|null|object, proven>
     v3 = Upcast v2 castType=anything
     v4 = Await v3
     v5 ~ undefined|null|L0 = Upcast v4 castType=anything
@@ -52,7 +52,7 @@ function f2 name="castPromiseHasAnotherUse" flags=[IsAsync] parameters=[{type=Re
     v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
     v2 = Upcast v1 castType=anything
     v3 = Await v2
-    v4 = Check v3 castType=undefined|null|L0
+    v4 = Check v3 expectedType=undefined|null|L0
     v5 = NewArray v2, v4 contents=anything
     Return v5
 }
@@ -67,7 +67,7 @@ function f3 name="checkBehindSecondAwait" flags=[IsAsync] parameters=[{type=Resp
     v2 = Upcast v1 castType=anything
     v3 = Await v2
     v4 = Await v3
-    v5 = Check v4 castType=undefined|null|L0
+    v5 = Check v4 expectedType=undefined|null|L0
     Return v5
 }
 # CHECK-LABEL: function f3 name="checkBehindSecondAwait"

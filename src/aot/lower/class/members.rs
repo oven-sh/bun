@@ -8,7 +8,7 @@ use super::{
 };
 use crate::ir::generated::{ClassSide, MethodKind, RuntimeErrorKind};
 use crate::ir::{ClassSlot, Edge, LayoutId, TypeTable, ValueId};
-use crate::lower::member::PropertyName;
+use crate::lower::member::{GivenName, PropertyName};
 use crate::lower::{FunctionLowering, layouts};
 
 #[derive(Default)]
@@ -143,7 +143,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         };
         self.set_position(node.name_pos);
-        let closure = self.lower_method(node.func, name, head.value);
+        let given = GivenName::under_member(&node, name);
+        let closure = self.lower_method(node.func, given, head.value);
         let side = class_side(node);
         self.emit_method_definition(head, side, kind, name, closure, next_method_index);
     }

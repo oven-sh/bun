@@ -16,7 +16,7 @@
 # CHECK: [[stepOnOnePath]]: undefined = SetNext
 # CHECK: [[element]]: undefined|"a" = ResultAt [[stepOnOnePath]] index=2
 # CHECK: String string="end"
-# CHECK: "a" = AssumeType [[element]] castType="a"
+# CHECK: "a" = AssumeType [[element]] provenType="a"
 # RUN(LATER): pipeline ExpandIteration
 # LATER-LABEL: function f0
 # LATER: calleeName="fill"

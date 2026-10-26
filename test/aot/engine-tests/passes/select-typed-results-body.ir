@@ -19,7 +19,7 @@ function f0 name="responseAwaitedAtOnce" flags=[IsAsync] parameters=[{type=Respo
   b0(v0: Response):
     v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
     v2 = Await v1
-    v3 = Check v2 castType=undefined|null|L0
+    v3 = Check v2 expectedType=undefined|null|L0
     Return v3
 }
 # CHECK-LABEL: function f0 name="responseAwaitedAtOnce"
@@ -29,7 +29,7 @@ function f0 name="responseAwaitedAtOnce" flags=[IsAsync] parameters=[{type=Respo
 # CHECK-NEXT: [[open0]]: boolean = JSONSourceOpen [[bytes0]]
 # CHECK-NEXT: Branch [[open0]] -> taken [[opened0]](| 0), notTaken
 # CHECK: [[done0]](v2:{{*}}):
-# CHECK-NEXT: v3:{{*}}= Check v2 castType=undefined|null|L0
+# CHECK-NEXT: v3:{{*}}= Check v2 expectedType=undefined|null|L0
 # CHECK-NEXT: Return v3
 # CHECK: [[generic0]]() frequency=Rare:
 # CHECK-NEXT: [[text0]]:{{*}}= JSONDecodeBytes [[bytes0]]
@@ -48,7 +48,7 @@ function f1 name="requestAwaitedAtOnce" flags=[IsAsync] parameters=[{type=Reques
   b0(v0: Request):
     v1 = CallBuiltin v0 overload=RequestPrototypeJson/0
     v2 = Await v1
-    v3 = Check v2 castType=undefined|null|L0
+    v3 = Check v2 expectedType=undefined|null|L0
     Return v3
 }
 # CHECK-LABEL: function f1 name="requestAwaitedAtOnce"
@@ -61,7 +61,7 @@ function f2 name="blobAwaitedAtOnce" flags=[IsAsync] parameters=[{type=Blob}] re
   b0(v0: Blob):
     v1 = CallBuiltin v0 overload=BlobPrototypeJson/0
     v2 = Await v1
-    v3 = Check v2 castType=undefined|null|L0
+    v3 = Check v2 expectedType=undefined|null|L0
     Return v3
 }
 # CHECK-LABEL: function f2 name="blobAwaitedAtOnce"
@@ -90,7 +90,7 @@ function f4 name="promiseHasAnotherUse" flags=[IsAsync] parameters=[{type=Respon
   b0(v0: Response):
     v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
     v2 = Await v1
-    v3 = Check v2 castType=undefined|null|L0
+    v3 = Check v2 expectedType=undefined|null|L0
     v4 = NewArray v1, v3 contents=anything
     Return v4
 }
@@ -98,14 +98,14 @@ function f4 name="promiseHasAnotherUse" flags=[IsAsync] parameters=[{type=Respon
 # CHECK: b0(v0: Response):
 # CHECK-NEXT: v1:{{*}}= CallBuiltin v0 overload=ResponsePrototypeJson/0
 # CHECK-NEXT: v2:{{*}}= Await v1
-# CHECK-NEXT: v3:{{*}}= Check v2 castType=undefined|null|L0
+# CHECK-NEXT: v3:{{*}}= Check v2 expectedType=undefined|null|L0
 
 function f5 name="unknownCodeBetweenCallAndAwait" flags=[IsAsync] parameters=[{type=Response}, {type=anything}] results=[{type=Promise}] {
   b0(v0: Response, v1: anything):
     v2 = CallBuiltin v0 overload=ResponsePrototypeJson/0
     v3 = Call v1
     v4 = Await v2
-    v5 = Check v4 castType=undefined|null|L0
+    v5 = Check v4 expectedType=undefined|null|L0
     Return v5
 }
 # CHECK-LABEL: function f5 name="unknownCodeBetweenCallAndAwait"
@@ -119,7 +119,7 @@ function f6 name="awaitInAnotherBlock" flags=[IsAsync] parameters=[{type=Respons
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = Await v2
-    v4 = Check v3 castType=undefined|null|L0
+    v4 = Check v3 expectedType=undefined|null|L0
     Return v4
   b2():
     Return v1

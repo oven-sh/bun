@@ -125,6 +125,8 @@ pub struct ModuleRequest {
     pub kind: ModuleRequestKind,
     /// Behind the request, or behind any site of it, the target has run to its end or lies on a cycle with the module that asks.
     pub completes: bool,
+    /// The build put the request in front of those that the module writes.
+    pub is_hoisted: bool,
 }
 
 impl ModuleRequest {
@@ -135,6 +137,14 @@ impl ModuleRequest {
             is_dynamic_star_export: false,
             kind: ModuleRequestKind::Import,
             completes: true,
+            is_hoisted: false,
+        }
+    }
+
+    pub fn hoisted_import(target: ModuleRef) -> ModuleRequest {
+        ModuleRequest {
+            is_hoisted: true,
+            ..ModuleRequest::import(target)
         }
     }
 

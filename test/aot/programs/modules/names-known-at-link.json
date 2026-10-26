@@ -1,1 +1,4 @@
-{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+{
+  "skipInShell": "it needs Bun's CommonJS modules and require()",
+  "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }
+}

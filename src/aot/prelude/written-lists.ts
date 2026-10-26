@@ -1,5 +1,6 @@
 // What a program writes to make a list of a given length.
 declare var $visibility: "Public" | "Private" | "PrivateRecursive";
+declare var $overriddenName: string;
 
 // Array(length) throws where the length is a number that no list can have. What the program evaluates behind it comes behind this.
 $visibility = "Private";
@@ -9,8 +10,8 @@ export function checkedArrayLength(length: unknown): unknown {
   return length;
 }
 
-// Array.from({ length }, mapper)
-$visibility = "Private";
+// Array.from({ length }, mapper). A stack trace that the mapper takes lists Array.from.
+$overriddenName = "from";
 export function arrayFromLength(length: unknown, mapper: unknown): unknown[] {
   if (typeof length === "number" && typeof mapper === "function") {
     const count = length | 0;

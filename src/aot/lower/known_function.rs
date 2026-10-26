@@ -60,7 +60,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(self.file.hir[definition].pos);
         let [target, module, source_key, target_key] = [target, module, source_key, target_key]
             .map(|(symbol, name)| self.get_binding(Binding::Symbol(symbol), name));
-        let getter = self.lower_function_expression(getter, Some(name));
+        let getter = self.lower_function_expression(getter, Some(name.into()));
         let is_defined = self
             .builder
             .try_define_live_binding(target, module, source_key, target_key, getter);

@@ -5,10 +5,9 @@
 // condition (../typed-packages/small-renderer/terminal.ts). Each is built the way a user builds it, and the build's report says how often each
 // pass changed something.
 //
-//   every pass        changes something in at least one of the programs, or stands in one of the two lists below: the passes that only look
-//                     or only lay out, which never report a change, and the passes whose form none of these programs has. Each of the
-//                     latter has a program of its own in ../passes-that-large-programs-seldom-need-change-small-ones.test.ts or a test of
-//                     the engine. A listed pass that does change something fails the test as well, so the lists say what is so.
+//   every pass        changes something in at least one of the programs, or stands in the list below: the passes that only look or only
+//                     lay out, which never report a change. A listed pass that does change something fails the test as well, so the
+//                     list says what is so.
 //   write barriers    a store of a cell into an object is followed by a write barrier unless the compiler shows that none is needed: the
 //                     object is younger than any collection, or a later store into it has the barrier. The share of stores that go
 //                     without is held for every program, and the number of barriers for the terminal program, whose whole text lies in
@@ -55,9 +54,6 @@ const statisticsOfPassesThatReportNoChange = {
   ElideStackChecks: "FunctionsEnteredWithoutStackCheck",
   NumberLiteralStrings: "LiteralStringsNumbered",
 };
-
-/** None of the programs has what they are for. */
-const passesWithoutWorkInThesePrograms = ["RemoveDeadCountedLoops"];
 
 /**
  * The barriers the terminal program is compiled with on Linux x64, within five percent. Without the removal of barriers: 221.
@@ -139,7 +135,7 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/every pass chan
     for (const pass of names)
       console.log(`PASS ${pass}: ${programs.map(program => `${program} ${changesOf(pass, program)}`).join(", ")}`);
     const idle = names.filter(pass => programs.every(program => changesOf(pass, program) === 0));
-    expect(idle.toSorted()).toEqual([...passesThatReportNoChange, ...passesWithoutWorkInThesePrograms].toSorted());
+    expect(idle.toSorted()).toEqual(passesThatReportNoChange.toSorted());
     for (const [pass, statistic] of Object.entries(statisticsOfPassesThatReportNoChange))
       expect({ pass, counts: programs.some(program => reports.get(program)!.statistics[statistic] > 0) }).toEqual({
         pass,

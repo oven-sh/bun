@@ -24,7 +24,7 @@
 # CHECK-NEXT: v1:{{*}}= KeyConstant key=@@iterator
 # CHECK-NEXT: v2:{{*}}= KeyConstant key=Symbol.for("x")
 # CHECK-NEXT: v3:{{*}}= Unspecified valueType=number
-# CHECK-NEXT: v4:{{*}}= AssumeType v0 castType=string
+# CHECK-NEXT: v4:{{*}}= AssumeType v0 provenType=string
 # CHECK-NEXT: ReportMismatch v0 expectedType=number
 # CHECK-NEXT: v6:{{*}}= EmptyArgumentList valueType=Array
 # CHECK-NEXT: Return v4
@@ -175,7 +175,7 @@
 # CHECK-NEXT: v8:{{*}}= StringBuilderToString v2
 # CHECK-NEXT: v9:{{*}}= StringBuilderFinish v2 [isLikelyKey]
 # CHECK-NEXT: v10:{{*}}= StringBuilderBegin
-# CHECK-NEXT: v11:{{*}}= StringBuilderAppendJSON v10, v0, v1
+# CHECK-NEXT: v11:{{*}}= StringBuilderAppendJSON v10, v0, v1, v0
 # CHECK-NEXT: StringBuilderDiscard v10
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
@@ -442,7 +442,7 @@ function f2 name="constantsAndCasts" module=m0 thisType={type=anything} paramete
     v1 = KeyConstant key=@@iterator
     v2 = KeyConstant key=Symbol.for("x")
     v3 = Unspecified valueType=number
-    v4 = AssumeType v0 castType=string
+    v4 = AssumeType v0 provenType=string
     ReportMismatch v0 expectedType=number
     v6 = EmptyArgumentList valueType=Array
     Return v4
@@ -593,7 +593,7 @@ function f9 name="stringBuilders" module=m0 thisType={type=anything} parameters=
     v8 = StringBuilderToString v2
     v9 = StringBuilderFinish v2 [isLikelyKey]
     v10 = StringBuilderBegin
-    v11 = StringBuilderAppendJSON v10, v0, v1
+    v11 = StringBuilderAppendJSON v10, v0, v1, v0
     StringBuilderDiscard v10
     Return v9
 }

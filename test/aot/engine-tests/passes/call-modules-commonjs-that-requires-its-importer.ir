@@ -29,10 +29,14 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 # CHECK-LABEL: function f0 name="main"
 # CHECK-NEXT: b0():
 # CHECK-NEXT: = CallDirect function=f1
-# CHECK-NEXT: = CallDirect function=f3
-# CHECK-NEXT: = BeginModuleEvaluation module=m0
+# CHECK-NEXT: = StopLoadingBehindFile module=m1
 # CHECK-NEXT: Branch
-# CHECK-NEXT: b1():
+# CHECK: = CallDirect function=f3
+# CHECK-NEXT: = StopLoadingBehindFile module=m3
+# CHECK-NEXT: Branch
+# CHECK: = BeginModuleEvaluation module=m0
+# CHECK-NEXT: Branch
+# CHECK-NEXT: b4():
 # CHECK-NEXT: = CallDirect function=f2
 # CHECK-NEXT: = CallDirect function=f5
 # CHECK-NEXT: FinishModuleEvaluation module=m0

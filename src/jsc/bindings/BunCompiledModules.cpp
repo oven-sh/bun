@@ -23,6 +23,53 @@
 #include <JavaScriptCore/RegExp.h>
 #include <wtf/SetForScope.h>
 
+namespace Bun {
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCallOwnFunctionsWithoutParameters, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    using namespace JSC;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* holder = callFrame->uncheckedArgument(0).getObject();
+    JSObject* except = callFrame->uncheckedArgument(1).getObject();
+    JSValue receiver = callFrame->uncheckedArgument(2);
+
+    PropertyNameArrayBuilder keys(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    holder->methodTable()->getOwnPropertyNames(holder, globalObject, keys, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callUnder = [&](const Identifier& key) {
+        bool isExcepted = except->hasOwnProperty(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (isExcepted)
+            return;
+        PropertyDescriptor descriptor;
+        bool isOwn = holder->getOwnPropertyDescriptor(globalObject, key, descriptor);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!isOwn || !descriptor.value() || !descriptor.value().isCallable())
+            return;
+        JSValue length = descriptor.value().get(globalObject, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!length.isNumber() || length.asNumber())
+            return;
+        JSValue answer = call(globalObject, descriptor.value(), getCallData(descriptor.value()), receiver, ArgList());
+        RETURN_IF_EXCEPTION(scope, void());
+        if (answer.isObject() && !answer.isCallable())
+            asObject(answer)->hasProperty(globalObject, vm.propertyNames->iteratorSymbol);
+    };
+    // Reflect.ownKeys lists the symbols behind the strings.
+    for (bool takesSymbols : { false, true }) {
+        for (const Identifier& key : keys) {
+            if (key.isSymbol() != takesSymbols)
+                continue;
+            callUnder(key);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+}
+
 #if ENABLE(AOT)
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);

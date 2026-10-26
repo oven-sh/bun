@@ -209,6 +209,6 @@ function f16 name="resultOutsideStoredTypeIsAssumed" parameters=[{type=Array fla
 # PLAN-NEXT: stretch 0: test TypeTest v0 testedType=Array before v3; test IsPristine v0 builtinClass=Array aspects=[Storage] before v3; uses v3;
 # CHECK-LABEL: function f16 name="resultOutsideStoredTypeIsAssumed"
 # CHECK: [[called16]]: anything = CallDirect {{*}}, v1, v2 function=f1
-# CHECK-NEXT: v3: boolean = AssumeType [[called16]] castType=boolean
+# CHECK-NEXT: v3: boolean = AssumeType [[called16]] provenType=boolean
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: boolean = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSome/0 builtinCallForm=AnyReceiver

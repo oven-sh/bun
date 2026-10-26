@@ -520,7 +520,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let value = match (property.kind, hir[property.value].kind) {
                 // A method that uses `super` needs the object, so the module would have one.
                 (PropKind::Method, ExprKind::Fn(method)) => {
-                    self.lower_function_expression(method, Some(key))
+                    self.lower_function_expression(method, Some(key.into()))
                 }
                 _ => self.lower_named_evaluation(property.value, key),
             };

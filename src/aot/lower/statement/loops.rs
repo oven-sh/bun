@@ -30,7 +30,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(super) fn lower_while(&mut self, statement: StmtId, test: ExprId, body: StmtId) {
         if self.file.decisions().is_dead_stmt(body) {
-            self.lower_expression_for_effect(test);
+            self.lower_decided_test(test);
+            self.hold_names_of_removed_statement(body);
             return;
         }
         let body_block = self.create_block();
@@ -88,7 +89,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             unreachable!("lower_for_loop takes a For statement");
         };
         if self.file.decisions().is_dead_stmt(body) {
-            self.lower_expression_for_effect(test);
+            self.lower_decided_test(test);
+            self.hold_names_of_removed_statement(body);
             return;
         }
         let scope = self.file.bound.own_scope(statement);

@@ -18,6 +18,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         for index in 0..statements.len {
             let statement = hir.id_at(statements, index as usize);
             if self.file.decisions().is_dead_stmt(statement) {
+                self.hold_names_of_removed_statement(statement);
                 continue;
             }
             self.returned_declaration = None;
@@ -176,14 +177,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let decisions = self.file.decisions();
         let has_live_else = no.is_some() && !decisions.is_dead_stmt(no);
         if decisions.is_dead_stmt(yes) {
-            self.lower_expression_for_effect(test);
+            self.lower_decided_test(test);
+            self.hold_names_of_removed_statement(yes);
             if has_live_else {
                 self.lower_statement(no);
             }
             return;
         }
         if no.is_some() && !has_live_else {
-            self.lower_expression_for_effect(test);
+            self.lower_decided_test(test);
+            self.hold_names_of_removed_statement(no);
             self.lower_statement(yes);
             return;
         }

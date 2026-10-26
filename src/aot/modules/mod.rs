@@ -143,6 +143,11 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             }
         }
     }
+    for file_imports in &imports {
+        for &(module, name) in &file_imports.called_namespace_members {
+            commonjs_exports.call_through_namespace(module, name);
+        }
+    }
     let mut pending = collect_pending_failures(&scans, &modules, &tables, &imports);
     drop_errors_of_unloadable_modules(&mut pending, &unloadable);
     let failures = number_failures(file_count, pending);

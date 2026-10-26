@@ -1,7 +1,7 @@
 use super::text::Text;
 use super::{Access, AccessKind, StoredValue};
 use crate::builtins::id::BuiltinId;
-use crate::known_helpers::{Helper, Quiet};
+use crate::known_helpers::{Helper, Quiet, Shape};
 use crate::modules::ModuleRef;
 use crate::modules::requests::ScannedSite;
 use bun_sema::atom::{Atom, known};
@@ -168,7 +168,7 @@ pub(super) struct ScanInput<'t, 'a, 's> {
     pub is_entry_point: bool,
     pub half: &'t dyn Fn(ModuleRef) -> bool,
     /// The helper of a compiler that a callee is whenever the call runs.
-    pub certain_helper: &'t dyn Fn(ExprId) -> Option<Helper>,
+    pub certain_helper: &'t dyn Fn(ExprId) -> Option<Shape>,
 }
 
 struct Scan<'t, 'a, 's> {
@@ -181,6 +181,8 @@ struct Scan<'t, 'a, 's> {
     mentions: Vec<Mention>,
     replacements: Vec<Replacement>,
     stores_to_exports_name: usize,
+    /// The calls of a helper that defines a true `__esModule` on the exports.
+    marking_calls: Vec<ExprId>,
 }
 
 #[derive(Copy, Clone)]
@@ -484,11 +486,12 @@ impl Scan<'_, '_, '_> {
             return None;
         };
         let call = hir[call];
+        let shape = (self.input.certain_helper)(call.callee);
         if call.chain != Chain::No
             || call.args.len() != 2
             || hir.id_at::<ExprId>(call.args, 0) != object
             || !text.is_statement_in_order(call_node, self.body)
-            || (self.input.certain_helper)(call.callee) != Some(Helper::Export)
+            || shape.map(Shape::helper) != Some(Helper::Export)
         {
             return None;
         }
@@ -511,6 +514,16 @@ impl Scan<'_, '_, '_> {
         }
         for (name, target, returned) in aliases {
             self.add_alias(name, target, call_node, returned, true);
+        }
+        if shape == Some(Shape::ExportMarksModuleAndDefinesGetters) {
+            let ignored = StoredValue::IgnoresThis;
+            let creation = self.create(known::__esModule, call_node, ExprId::NONE, ignored);
+            self.found.creations.push(Creation {
+                is_enumerable: false,
+                is_read_only: true,
+                ..creation
+            });
+            self.marking_calls.push(call_node);
         }
         self.found.erased.extend(text.statement_of(call_node));
         Some(())
@@ -920,14 +933,18 @@ impl Scan<'_, '_, '_> {
             _ if found.alias_of(known::__esModule).is_some() => None,
             [] => Some(false),
             [creation] => (creation.is_in_order
-                && is_true(creation.value_node)
+                && (is_true(creation.value_node) || self.marking_calls.contains(&creation.node))
                 && text.is_statement(creation.node)
                 // Whoever finds the module half evaluated in front of that statement finds no marker.
                 && (!found.is_half || self.runs_nothing_else_in_front_of(creation.start)))
             .then_some(true),
             _ => None,
         };
+        // Such a call stores nothing under a name, so the flag that it defines is a constant or a property of the object.
+        let is_marked_by_call = |it: &Creation| self.marking_calls.contains(&it.node);
+        let keeps_names = marker == Some(true) || !creations.iter().any(is_marked_by_call);
         let found = &mut self.found;
+        found.has_names &= keeps_names;
         found.marker = marker;
         if let (Some(true), [creation]) = (marker, &creations[..]) {
             found.marker_nodes.push(creation.node);
@@ -1015,6 +1032,7 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
         mentions: Vec::new(),
         replacements: Vec::new(),
         stores_to_exports_name: 0,
+        marking_calls: Vec::new(),
     };
     // The file comes first, also where it is no module of this kind: then nothing is added to it.
     let mut scans = vec![create_scan(ModuleRef::File(text.file), CodeUnit::File)];

@@ -140,6 +140,15 @@ export default b.declarations(
     uses: { object: [b.runs("OwnKeys"), b.readsContents()], filter: converted },
     implementation: b.hostCall,
   }),
+  // What a program has stored on an object of the table is in hands that nobody follows already: the row says that such code runs, and that it gets the receiver.
+  b.static(cpp("BunCompiledModules.cpp", "jsFunctionCallOwnFunctionsWithoutParameters"), {
+    args: { holder: b.object, except: b.object, receiver: b.object },
+    returns: b.undefined,
+    capability: "js",
+    throws: true,
+    uses: { holder: b.inspected, except: b.inspected, receiver: [b.everything] },
+    implementation: b.hostCall,
+  }),
   b.static(cpp("JSEventTarget.cpp", "jsEventTargetGetEventListenersCount"), {
     ...operandCodeOnly,
     args: { target: b.any.optional, type: b.any.optional },

@@ -1,4 +1,5 @@
 const http = require("internal/http");
+const { kAutoDestroyed } = require("internal/shared");
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kInternalSocketData: typeof http.kInternalSocketData = http.kInternalSocketData;
 const serverSymbol: typeof http.serverSymbol = http.serverSymbol;
@@ -40,7 +41,7 @@ var FakeSocket = class Socket extends Duplex {
   _destroy(_err: Error | null, _callback: $Node.ErrorCallback) {
     const socketData = this[kInternalSocketData];
     if (!socketData) return; // sometimes 'this' is Socket not FakeSocket
-    if (!socketData[1]["req"].$autoDestroyed) socketData[1].end();
+    if (!socketData[1]["req"][kAutoDestroyed]) socketData[1].end();
   }
 
   _final(_callback: $Node.ErrorCallback) {}

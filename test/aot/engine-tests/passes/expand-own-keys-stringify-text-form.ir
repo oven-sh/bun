@@ -26,7 +26,7 @@ function f0 name="bodyOnly" parameters=[{type=object}] results=[{type=anything}]
 # CHECK: = CallDirect v0, [[builder0]] function=
 # CHECK: [[text0]]: string = StringBuilderFinish [[builder0]]
 # CHECK-NEXT: [[unchecked0]]: anything = CallBuiltin -, [[text0]] overload=JSONTextResponseJson/0
-# CHECK-NEXT: [[response0]]: Response = AssumeType [[unchecked0]] castType=Response
+# CHECK-NEXT: [[response0]]: Response = AssumeType [[unchecked0]] provenType=Response
 # CHECK-NEXT: Jump -> next [[done0]]([[response0]])
 
 function f1 name="bodyAndOptions" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {

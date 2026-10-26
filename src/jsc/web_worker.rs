@@ -553,14 +553,13 @@ impl WebWorker {
                     Bun__AOT__releaseUnusedPagesOfThread();
                     // The thread's ref (and the parent ticket) drop here.
                 });
-            // SAFETY: `parent` is the calling thread's VM.
-            if spawn.is_err()
-                && !table_pages.is_null()
-                && unsafe { Self::join_ending_children(parent) }
-            {
-                continue;
+            if spawn.is_ok() || table_pages.is_null() {
+                break spawn;
             }
-            break spawn;
+            // SAFETY: `parent` is the calling thread's VM.
+            if !unsafe { Self::join_ending_children(parent) } {
+                break spawn;
+            }
         };
         match spawn {
             Ok(handle) => {

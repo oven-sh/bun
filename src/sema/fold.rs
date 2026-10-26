@@ -136,6 +136,7 @@ pub struct Decisions<'s> {
     dead_stmts_in_bun_run: NodeBits<'s>,
     short_circuited_links: NodeBits<'s>,
     truthy_without_effects: NodeBits<'s>,
+    member_reads: NodeBits<'s>,
 }
 
 impl<'s> Decisions<'s> {
@@ -220,9 +221,16 @@ impl<'s> Decisions<'s> {
         self.short_circuited_links.has(expr.idx())
     }
 
+    /// It may read members of built-in objects: `reads_member`.
     #[inline]
     pub fn is_truthy_without_effects(&self, expr: ExprId) -> bool {
         self.truthy_without_effects.has(expr.idx())
+    }
+
+    /// The build knows the value or what a test of it answers, and evaluating it reads members of built-in objects.
+    #[inline]
+    pub fn reads_member(&self, expr: ExprId) -> bool {
+        self.member_reads.has(expr.idx())
     }
 }
 

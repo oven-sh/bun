@@ -200,8 +200,8 @@
 # CHECK-NEXT: b0(v0: anything, v1: anything):
 # CHECK-NEXT: v2 = Upcast v0 castType=anything
 # CHECK-NEXT: v3 = NarrowByField v0, v1 key="x"
-# CHECK-NEXT: v4 = Check v0 castType=string site=w0 cause=UnknownObject
-# CHECK-NEXT: v5 = Check v0 castType=number
+# CHECK-NEXT: v4 = Check v0 expectedType=string site=w0 cause=UnknownObject
+# CHECK-NEXT: v5 = Check v0 expectedType=number
 # CHECK-NEXT: v6 = Convert v0 declared={type=L0 site=w0 flags=[IsFromCompiler, IsExpected]} illTypedCause=Assertion
 # CHECK-NEXT: v7 = Convert v0 declared={type=i32 flags=[IsInt32Promise]}
 # CHECK-NEXT: v8 = Convert v0 declared={type=anything}
@@ -655,8 +655,8 @@ function f13 module=m0 thisType={type=anything} parameters=[{type=anything}, {ty
   b0(v0: anything, v1: anything):
     v2 = Upcast v0 castType=anything
     v3 = NarrowByField v0, v1 key="x"
-    v4 = Check v0 castType=string site=w0 cause=UnknownObject
-    v5 = Check v0 castType=number
+    v4 = Check v0 expectedType=string site=w0 cause=UnknownObject
+    v5 = Check v0 expectedType=number
     v6 = Convert v0 declared={type=L0 site=w0 flags=[IsFromCompiler, IsExpected]} illTypedCause=Assertion
     v7 = Convert v0 declared={type=i32 flags=[IsInt32Promise]}
     v8 = Convert v0 declared={type=anything}

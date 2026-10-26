@@ -74,7 +74,7 @@ impl Removable<'_, '_> {
             Decision::GlobalPath(_) | Decision::DeferredData => return false,
             Decision::Unknown => {}
         }
-        if self.find_constant(expression).is_some() {
+        if !decisions.reads_member(expression) && self.find_constant(expression).is_some() {
             return true;
         }
         if !self.stack.is_safe_to_recurse() {

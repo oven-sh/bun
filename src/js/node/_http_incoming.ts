@@ -38,6 +38,7 @@ const {
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kCapture: typeof shared.kCapture = shared.kCapture;
 const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
+const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
 const abortedSymbol: typeof http.abortedSymbol = http.abortedSymbol;
 const eofInProgress: typeof http.eofInProgress = http.eofInProgress;
 const kHandle: typeof http.kHandle = http.kHandle;
@@ -63,7 +64,12 @@ const emitReadableNow = internals.emitReadableNow!;
 const finishEnd = internals.finishEnd!;
 const { read, push, resume, removeAllListeners } = internals.readableMethods!;
 const { destroy } = internals.destroyMethods!;
-const { emit, listenerCount, removeAllListeners: eventEmitterRemoveAllListeners } = shared.originals.eventEmitter!;
+const {
+  emit,
+  emitWithRejectionCapture,
+  listenerCount,
+  removeAllListeners: eventEmitterRemoveAllListeners,
+} = shared.originals.eventEmitter!;
 const StreamPrototype = Object.getPrototypeOf(Readable.prototype) as { removeAllListeners: unknown };
 
 const kAutoDestroy = 1 << 2;
@@ -175,7 +181,6 @@ declare global {
       [kTrailers]: IncomingHttpHeaders | null;
       [kTrailersDistinct]?: Dictionary<string[]>;
       [kTrailersCount]: number;
-      $autoDestroyed: boolean;
       [kAbortController]: AbortController | null;
     }
 
@@ -206,93 +211,70 @@ function IncomingMessage(
   nativeSocket?: $Node.HttpServerSocket,
   nativeHighWaterMark?: number,
 ) {
-  if (socket === kHandle && nativeHighWaterMark !== undefined) {
-    this._events = preallocatedEvents();
-    this._readableState = createUnreadByteState(nativeHighWaterMark);
-    this[kShapeMode] = true;
-    this._maxListeners = undefined;
-    this[kCapture] = EventEmitterPrototype[kCapture];
-    this.socket = nativeSocket;
-    this.complete = false;
-    this.rawTrailers = [];
-    this.upgrade = false;
-    this.url = nativeUrl!;
-    this.method = nativeMethod!;
-    this.client = nativeSocket;
-    this[kHandle] = nativeHandle;
-    this._consuming = false;
-    this._dumped = false;
-    this._closed = false;
-    this[kHeaders] = null;
-    this[kHeadersCount] = 0;
-    this[kTrailers] = null;
-    this[kTrailersCount] = 0;
-    this[abortedSymbol] = false;
-    this[eofInProgress] = false;
-    this[kReqShouldKeepAlive] = true;
-    this[kRawHeaders] = null;
-    this[kHeaderSource] = nativeHandle;
-    this[noBodySymbol] = !nativeHasBody;
-    this.$autoDestroyed = false;
-    this[kAbortController] = null;
-    return;
-  }
-
   const isFromNativeServer = socket === kHandle;
-  if (isFromNativeServer) {
-    constructReadable(this, nativeSocket ? nativeSocket.readableHighWaterMark : undefined);
-    this.socket = nativeSocket;
-    this.complete = false;
-    this.rawTrailers = [];
-    this.upgrade = null;
-    this.url = nativeUrl!;
-    this.method = nativeMethod!;
-    this.client = nativeSocket;
-    this[kHandle] = nativeHandle;
-  } else {
-    let streamOptions;
-    if (socket) {
-      streamOptions = {
-        highWaterMark: socket.readableHighWaterMark,
-      };
-    }
-    Readable.$call(this, streamOptions);
-    this.socket = socket;
-    this.httpVersionMajor = null;
-    this.httpVersionMinor = null;
-    this.httpVersion = null;
-    this.complete = false;
-    this.rawTrailers = [];
-    this.joinDuplicateHeaders = false;
-    this.upgrade = null;
-    this.url = "";
-    this.method = null;
-    this.statusCode = null;
-    this.statusMessage = null;
-    this.client = socket;
-  }
-
+  const isUnreadFromNativeServer = isFromNativeServer && nativeHighWaterMark !== undefined;
+  this[abortedSymbol] = false;
+  this[eofInProgress] = false;
   this._consuming = false;
   this._dumped = false;
+  this.complete = false;
   this._closed = false;
   this[kHeaders] = null;
+  this[kReqShouldKeepAlive] = isUnreadFromNativeServer ? true : undefined;
+  this[kRawHeaders] = null;
+  this[kHeaderSource] = isFromNativeServer ? nativeHandle : undefined;
   this[kHeadersCount] = 0;
   this[kTrailers] = null;
   this[kTrailersCount] = 0;
-  this[abortedSymbol] = false;
-  this[eofInProgress] = false;
-  this[kReqShouldKeepAlive] = undefined;
-  this[kRawHeaders] = null;
-  this[kHeaderSource] = isFromNativeServer ? nativeHandle : undefined;
+  this.rawTrailers = [];
   this[kAbortController] = null;
-  this[noBodySymbol] = isFromNativeServer && !nativeHasBody;
-  this.$autoDestroyed = false;
+
   if (isFromNativeServer) {
+    this.url = nativeUrl!;
+    this.method = nativeMethod!;
+    this[kHandle] = nativeHandle;
+    this[noBodySymbol] = !nativeHasBody;
+    this.socket = nativeSocket;
+    this.client = nativeSocket;
+    if (isUnreadFromNativeServer) {
+      this.upgrade = false;
+      this._events = preallocatedEvents();
+      this._readableState = createUnreadByteState(nativeHighWaterMark);
+      this[kShapeMode] = true;
+      this._maxListeners = undefined;
+      if ((this[kCapture] = EventEmitterPrototype[kCapture])) {
+        ("unlikely");
+        this.emit = emitWithRejectionCapture;
+      }
+      return;
+    }
+    this.upgrade = null;
+    constructReadable(this, nativeSocket ? nativeSocket.readableHighWaterMark : undefined);
     addFlags(this._readableState, kReadingMore);
-  } else {
-    this.rawHeaders = [];
-    this._readableState.readingMore = true;
+    return;
   }
+
+  let streamOptions;
+  if (socket) {
+    streamOptions = {
+      highWaterMark: socket.readableHighWaterMark,
+    };
+  }
+  Readable.$call(this, streamOptions);
+  this.socket = socket;
+  this.httpVersionMajor = null;
+  this.httpVersionMinor = null;
+  this.httpVersion = null;
+  this.rawHeaders = [];
+  this.joinDuplicateHeaders = false;
+  this.upgrade = null;
+  this.url = "";
+  this.method = null;
+  this.statusCode = null;
+  this.statusMessage = null;
+  this.client = socket;
+  this[noBodySymbol] = false;
+  this._readableState.readingMore = true;
 }
 $toClass(IncomingMessage, "IncomingMessage", Readable);
 ObjectDefineProperty(IncomingMessage, "length", { __proto__: null, value: 1, configurable: true });
@@ -1013,7 +995,7 @@ function destroyOnNextTick(req: $Node.IncomingMessage, state: $Node.ReadableStat
     ("unlikely");
     return endOnNextTick(state, req);
   }
-  req.$autoDestroyed = true;
+  req[kAutoDestroyed] = true;
   req[kHandle] = undefined;
   handle.onabort = undefined;
   queueTick1(closeUnwatched, req);
@@ -1348,7 +1330,7 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
     ("unlikely");
     return false;
   }
-  req.$autoDestroyed = true;
+  req[kAutoDestroyed] = true;
   state[kState] |= kDestroyed;
   req[kHandle] = undefined;
   handle.onabort = handle.ondata = undefined;
@@ -1440,7 +1422,7 @@ function endUnseen(req: $Node.IncomingMessage): void {
   req._consuming = true;
   req.complete = true;
   req[eofInProgress] = true;
-  req.$autoDestroyed = true;
+  req[kAutoDestroyed] = true;
   req[kHandle] = undefined;
   req._readableState[kState] = kFlagsClosed | kCloseEmitted;
 }

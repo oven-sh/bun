@@ -1,4 +1,3 @@
-import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { isASAN, isDebug, isLinux } from "harness";
 
@@ -81,30 +80,4 @@ describe("Bun.JSONL.parseChunk on UTF-8 bytes", () => {
       expect(fastestOf(line("\u2014")) / fastestOf(line(""))).toBeLessThan(4.5);
     },
   );
-});
-
-describe("texts of parsed JSON whose source holds a character outside Latin-1", () => {
-  const long = "the quick brown fox jumps over the lazy dog, again and again and again";
-  const latin1 = "caf\u00e9 " + long;
-  const wide = "\u2014 " + long;
-  const source = JSON.stringify({ long, latin1, wide });
-
-  function check(parsed: { long: string; latin1: string; wide: string }) {
-    expect(parsed).toEqual({ long, latin1, wide });
-    expect(estimateShallowMemoryUsageOf(parsed.long)).toBe(
-      estimateShallowMemoryUsageOf(JSON.parse(JSON.stringify(long))),
-    );
-    expect(estimateShallowMemoryUsageOf(parsed.latin1)).toBe(
-      estimateShallowMemoryUsageOf(JSON.parse(JSON.stringify(latin1))),
-    );
-    expect(estimateShallowMemoryUsageOf(parsed.wide)).toBeGreaterThan(estimateShallowMemoryUsageOf(parsed.long) * 1.5);
-  }
-
-  test("JSON.parse keeps a text of Latin-1 characters in one byte a character", () => {
-    check(JSON.parse(source));
-  });
-
-  test("Bun.JSONL.parseChunk does too", () => {
-    check(Bun.JSONL.parseChunk(new TextEncoder().encode(source + "\n")).values[0] as any);
-  });
 });

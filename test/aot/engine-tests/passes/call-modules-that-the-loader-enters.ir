@@ -68,8 +68,8 @@ function f4 name="between" module=m5 kind=CommonJsModule flags=[IsSloppy] result
 }
 # CHECK-LABEL: function f4 name="between"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: = RequireModule module=m1 referrer=m5 specifier="/imports-library.mjs"
-# CHECK-NEXT: = RequireModule module=m3 referrer=m5 specifier="/imports-awaiting.mjs"
+# CHECK-NEXT: EvaluateRequiredModule module=m1 referrer=m5 specifier="/imports-library.mjs"
+# CHECK-NEXT: EvaluateRequiredModule module=m3 referrer=m5 specifier="/imports-awaiting.mjs"
 # CHECK-NEXT: Return
 function f5 name="below" module=m6 kind=Module results=[{type=anything}] {
   b0():

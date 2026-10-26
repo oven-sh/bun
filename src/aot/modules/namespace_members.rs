@@ -131,10 +131,13 @@ impl FileBinder<'_, '_> {
             self.imports.namespace_values.push(module);
         }
         // The namespace object of a CommonJS module shows `module.exports` as `default`.
-        let is_commonjs = self.context.modules.interop(module).kind == ModuleKind::CommonJs;
-        if is_commonjs && !self.imports.exports_values.contains(&module) {
+        if self.is_commonjs(module) && !self.imports.exports_values.contains(&module) {
             self.imports.exports_values.push(module);
         }
+    }
+
+    fn is_commonjs(&self, module: ModuleRef) -> bool {
+        self.context.modules.interop(module).kind == ModuleKind::CommonJs
     }
 
     fn marker(&self, module: ModuleRef) -> Option<bool> {
@@ -319,14 +322,17 @@ impl FileBinder<'_, '_> {
             is_imported,
         };
         self.imports.accessed.push((member, accessed));
-        if is_exports
-            && let PendingBinding::Synthetic {
-                module: owner,
-                name,
-            } = binding
-            && is_callee(hir, bound, member)
-        {
-            self.imports.called_members.push((module, owner, name));
+        if is_callee(hir, bound, member) {
+            match binding {
+                PendingBinding::Synthetic {
+                    module: owner,
+                    name,
+                } if is_exports => self.imports.called_members.push((module, owner, name)),
+                _ if is_imported && self.is_commonjs(module) => {
+                    self.imports.called_namespace_members.push((module, name));
+                }
+                _ => {}
+            }
         }
         let inner = eager_namespace_module(binding).map(|inner| match stands_for {
             StandsFor::RequiredNamespace(_) => StandsFor::RequiredNamespace(inner),

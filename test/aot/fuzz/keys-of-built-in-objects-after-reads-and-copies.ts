@@ -3,7 +3,9 @@
 // pattern, asks for them with `in`, Object.hasOwn and descriptors, copies the object with a spread, a rest pattern or Object.assign (into a new,
 // a frozen, a sealed object or an instance of a class), adds a member of its own and deletes it again. After each step it lists
 // the keys with Object.keys, Reflect.ownKeys, Object.getOwnPropertyNames, for-in or Object.entries, of the object or of the copy. The
-// steps stand at the top of the module, in a function, or in a function that a loop calls many times.
+// steps stand at the top of the module, in a function, or in a function that a loop calls many times. Where `readsForNothing` is set, half
+// of the steps read a member where nothing takes its value or only a test does: under typeof or void, as a statement, to the left of a comma,
+// under `!`, beside `&&`, `||` and `??`, in front of `?`, or compared with undefined or null.
 import type { Random } from "./random";
 
 const objects: [string, string[]][] = [
@@ -87,7 +89,24 @@ const objects: [string, string[]][] = [
   ["Uint8Array.prototype", ["toHex", "toBase64", "BYTES_PER_ELEMENT", "constructor"]],
 ];
 
-export function generate(random: Random, typed: boolean): string {
+const readsForNothing: ((member: string) => string)[] = [
+  member => `typeof ${member}; return "read";`,
+  member => `void ${member}; return "read";`,
+  member => `${member}; return "read";`,
+  member => `return String((${member}, 1));`,
+  member => `return String(void ${member});`,
+  member => `if (${member}) return "yes"; return "no";`,
+  member => `return String(!${member});`,
+  member => `return String((${member} && 1) === 1);`,
+  member => `return String((${member} || 1) === 1);`,
+  member => `return String((${member} ?? 1) === 1);`,
+  member => `return ${member} ? "yes" : "no";`,
+  member => `return String(${member} === undefined);`,
+  member => `return String(${member} != null);`,
+  member => `return String(typeof ${member} === "function");`,
+];
+
+export function generate(random: Random, typed: boolean, readsMembersForNothing = false): string {
   const as = (type: string) => (typed ? `: ${type}` : "");
   const any = typed ? " as any" : "";
   const out: string[] = [
@@ -141,10 +160,14 @@ export function generate(random: Random, typed: boolean): string {
       const key = random.pick(members);
       const label = JSON.stringify(`${path} ${step}`);
       // A compiled program may not change prototypes of built-in classes and the constant lists of process: there it only reads and copies.
-      const drawn = random.between(0, 13);
+      const drawn = random.between(0, readsMembersForNothing ? 27 : 13);
       const kind = closed && (drawn === 4 || (drawn >= 10 && drawn <= 12)) ? drawn % 4 : drawn;
       let copy = "";
-      if (kind === 0) body.push(`attempt(${label}, () => typeof ${it}.${key});`);
+      if (kind > 13)
+        body.push(
+          `attempt(${label}, () => { ${readsForNothing[kind - 14](random.chance(0.8) ? `${it}.${key}` : `${it}[${JSON.stringify(key)}]`)} });`,
+        );
+      else if (kind === 0) body.push(`attempt(${label}, () => typeof ${it}.${key});`);
       else if (kind === 1) body.push(`attempt(${label}, () => typeof ${it}[${JSON.stringify(key)}]);`);
       else if (kind === 2)
         body.push(`attempt(${label}, () => { const { ${key}: found } = ${it}; return typeof found; });`);

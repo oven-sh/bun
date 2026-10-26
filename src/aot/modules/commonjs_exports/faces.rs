@@ -374,6 +374,14 @@ impl Faces {
         self.is_decided = true;
     }
 
+    /// Something looks at the namespace object of the file, which has lost its names.
+    pub(super) fn see_namespace(&mut self, exports: &CommonJsExports, file: FileId) {
+        if let Err(position) = self.seen_namespaces.binary_search(&file) {
+            self.seen_namespaces.insert(position, file);
+            self.add_seen_namespace(exports, file);
+        }
+    }
+
     /// The module has lost its names, so no import is bound to a variable of it any more.
     pub(super) fn decide_behind(&mut self, exports: &CommonJsExports, module: ModuleRef) {
         if !self.is_decided {

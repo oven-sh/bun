@@ -33,6 +33,7 @@ const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, dra
 
 const abortedSymbol = Symbol("aborted");
 const headerStateSymbol = Symbol("headerState");
+const fakeSocketSymbol = Symbol("fakeSocket");
 const eofInProgress = Symbol("eofInProgress");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
@@ -560,7 +561,9 @@ declare global {
     interface ServerResponse {
       [kHandle]: NodeHTTPResponse | Http1ResponseHandle | undefined;
       [kPendingCallbacks]: HttpWriteCallback[] | undefined;
-      $fakeSocket: HttpSocket | null | undefined;
+      [fakeSocketSymbol]?: HttpSocket | null;
+      [headerStateSymbol]: number;
+      [kCloseCallback]?: () => void;
     }
 
     interface HttpServer {
@@ -758,6 +761,7 @@ export {
   emitEOFIncomingMessageOuter,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
+  fakeSocketSymbol,
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,

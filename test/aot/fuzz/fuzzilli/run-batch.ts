@@ -241,6 +241,8 @@ const documentedNames = [
 ];
 
 /** `Reflect.setPrototypeOf()` of a built-in object returns false in an executable, and `Object.setPrototypeOf()` throws. */
+// `bun run` replaces the length of a string that it knows by a number, also below `delete`.
+const deletesTheLengthOfAString = /\bdelete \(?(?:"[^"\n]*"|t\d+)\)?\.length\b/;
 const setsThePrototypeOfABuiltIn = /\bsetPrototypeOf\([A-Z]/;
 
 // What `bun run` says when it refuses a file that the compiler builds.
@@ -250,6 +252,7 @@ const refusalsOfBunRun = [
   "Unexpected token '...'",
   "Unexpected private name",
   "Ambiguous unary expression",
+  "cannot cross static block boundary",
 ];
 
 /** `console.log(error)` prints lines of the source, which an executable doesn't have, a message, whose words can differ, and a stack. A time is that of the run. */
@@ -295,21 +298,35 @@ function definesAnAccessorTwice(text: string) {
   }
   return false;
 }
+/** A function under a computed key that is a literal shows that key as its name in an executable: `[Function: 1.5]` for `[Function]`. */
+const hasALiteralAsComputedKey = /^\s*(?:(?:static|async|get|set)\s+)*\*?\s*\[\(?-?(?:\d|NaN\b|Infinity\b|")/m;
+const withoutNamesOfFunctions = (output: string) =>
+  removeDetailsOfErrors(output).replace(/\[(\w*Function|class)\b[^\]]*\]/g, "[$1]");
 const opensAFunctionOrAClass =
   /\bfunction\b|\bclass\b|^\s*static \{$|^\s*(?!(?:if|for|while|switch|catch|with)\b)(?:(?:static|async|get|set)\s+)*\*?\s*(?:[\w$#]+|"[^"]*"|\[.*\])\s*\(.*\{$/;
-/** Whether `text` reads `this` outside every function and class. In a module that is `undefined` in an executable and `null` under `bun run`. */
-function readsThisOfTheModule(text: string) {
+/** `text` with `undefined` for `this` outside every function and class. In a module that is `undefined` in an executable and `null` under `bun run`. */
+function withUndefinedAsThisOfTheModule(text: string) {
   const blocks: { indent: number; hasItsOwnThis: boolean }[] = [];
-  for (const line of text.split("\n")) {
-    const indent = line.search(/\S/);
-    if (indent < 0) continue;
-    while (blocks.length && blocks.at(-1)!.indent >= indent) blocks.pop();
-    if (/\bthis\b/.test(line) && !blocks.some(block => block.hasItsOwnThis) && !opensAFunctionOrAClass.test(line))
-      return true;
-    if (line.endsWith("{")) blocks.push({ indent, hasItsOwnThis: opensAFunctionOrAClass.test(line) });
-  }
-  return false;
+  return text
+    .split("\n")
+    .map(line => {
+      const indent = line.search(/\S/);
+      if (indent < 0) return line;
+      while (blocks.length && blocks.at(-1)!.indent >= indent) blocks.pop();
+      const isOfTheModule = !blocks.some(block => block.hasItsOwnThis);
+      const opens = opensAFunctionOrAClass.test(line);
+      if (line.endsWith("{")) blocks.push({ indent, hasItsOwnThis: opens });
+      if (!isOfTheModule) return line;
+      if (!opens) return line.replace(/\bthis\b/g, "undefined");
+      // The computed key of a method belongs to the code around the method.
+      return line.replace(
+        /^(\s*(?:(?:async|get|set)\s+)*\*?\s*\[)(.*)(\]\s*\()/,
+        (_, before, key, after) => before + key.replace(/\bthis\b/g, "undefined") + after,
+      );
+    })
+    .join("\n");
 }
+const readsThisOfTheModule = (text: string) => withUndefinedAsThisOfTheModule(text) !== text;
 const withNullAsUndefined = (output: string) =>
   removeDetailsOfErrors(output)
     .replace(/\[Object: null prototype\] /g, "")
@@ -407,6 +424,29 @@ async function printsTheDepthOfTheStack(folder: string, extension: string) {
     outputs.push(removeDetailsOfErrors((await spawn("stack", command, folder, plainEnv, 30)).stdout));
   }
   return outputs[0] !== outputs[1];
+}
+
+/** Whether what the executable of the one program in `folder` prints changes when it is built without the text of its functions. */
+async function printsFromTheTextOfFunctions(folder: string, extension: string) {
+  const outputs: string[] = [];
+  for (const more of [[], ["--no-compile-function-source"]]) {
+    await build(folder, 1, extension, 1, ["--aot", ...buildFlags, ...more]);
+    const ran = await run("text", [join(folder, "batch")], folder, extension, 1, [0], milliseconds * 20);
+    outputs.push(removeDetailsOfErrors(ran.get(0)!.stdout));
+  }
+  return outputs[0] !== outputs[1];
+}
+
+/** Whether `bun run` prints what the executable printed once `this` of the module is `undefined` there too. Lays the changed program out in `folder`. */
+async function agreesWithUndefinedAsThisOfTheModule(
+  folder: string,
+  extension: string,
+  text: string,
+  { stdout }: Ended,
+) {
+  layOut(folder, [withUndefinedAsThisOfTheModule(text)], extension, 1);
+  const ran = await spawn("this", [bun, "run", `./programs/0${extension}`], folder, plainEnv, 30);
+  return removeDetailsOfErrors(ran.stdout) === removeDetailsOfErrors(stdout);
 }
 
 /** Whether the executable stopped at a name that `bun run` doesn't know either. `bun run` removes an unused read of some names. */
@@ -529,9 +569,13 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
                   (!isLimit(second) && referenceAgain.stderr.includes("Maximum call stack size exceeded")) ||
                   documentedNames.some(name => texts[index].includes(name)) ||
                   setsThePrototypeOfABuiltIn.test(texts[index]) ||
+                  deletesTheLengthOfAString.test(texts[index]) ||
                   (second.end === referenceAgain.end &&
                     withNullAsUndefined(second.stdout) === withNullAsUndefined(referenceAgain.stdout) &&
                     readsThisOfTheModule(texts[index])) ||
+                  (second.end === referenceAgain.end &&
+                    withoutNamesOfFunctions(second.stdout) === withoutNamesOfFunctions(referenceAgain.stdout) &&
+                    hasALiteralAsComputedKey.test(texts[index])) ||
                   writesToBuiltins.has(index)
                 ? "documented difference"
                 : referenceAgain.stdout === "" &&
@@ -557,6 +601,12 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
       else if (
         stoppedAtAnUnusedLiteral(texts[index], referenceAgain) ||
         (!referenceAgain.stderr.includes("ReferenceError") && (await stoppedAtANameThatDoesNotExist(alone, second)))
+      )
+        kind = "documented difference";
+      else if (!hidesFunctionText && (await printsFromTheTextOfFunctions(alone, extension))) kind = "function text";
+      else if (
+        readsThisOfTheModule(texts[index]) &&
+        (await agreesWithUndefinedAsThisOfTheModule(alone, extension, texts[index], second))
       )
         kind = "documented difference";
       rmSync(alone, { recursive: true, force: true });

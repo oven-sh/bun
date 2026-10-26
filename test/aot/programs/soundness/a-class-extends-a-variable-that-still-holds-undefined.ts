@@ -8,7 +8,7 @@ interface Shape {}
 
 let parent: Shape = pass<Shape>(undefined as any);
 try {
-  const first = class extends (Int16Array as any) {
+  const first: any = class extends (Int16Array as any) {
     // @ts-ignore
     [first];
   };

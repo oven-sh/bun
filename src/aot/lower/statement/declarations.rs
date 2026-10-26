@@ -74,7 +74,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     false => Tail::No,
                 };
                 let evaluation = Evaluation {
-                    name: Some(PropertyName::Constant(key)),
+                    name: Some(PropertyName::Constant(key).into()),
                     ..Evaluation::at_tail(tail)
                 };
                 self.lower_expression_in(initializer, evaluation)

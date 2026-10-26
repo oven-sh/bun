@@ -399,10 +399,11 @@ fn the_commonjs_files_of_a_graph_run_first() {
     ];
     with_plan(&files, |plan| {
         let expected = [
-            "request k1.cjs",
-            "request k2.cjs",
-            "request k3.cjs",
+            "request k1.cjs hoisted",
+            "request k2.cjs hoisted",
+            "request k3.cjs hoisted",
             "request a.mjs",
+            "request k1.cjs",
         ];
         assert_eq!(plan.requests("main.mjs"), expected);
         assert_eq!(plan.requests("a.mjs"), ["request b.mjs", "request k2.cjs"]);
@@ -422,7 +423,39 @@ fn an_es_module_that_is_required_links_a_graph_of_its_own() {
     ];
     with_plan(&files, |plan| {
         assert_eq!(plan.graph.prefix_roots(), [plan.file("a.mjs")]);
-        assert_eq!(plan.requests("a.mjs"), ["request k.cjs", "request b.mjs"]);
+        let expected = ["request k.cjs hoisted", "request b.mjs"];
+        assert_eq!(plan.requests("a.mjs"), expected);
+    });
+}
+
+// `bun run` runs an imported CommonJS file while it loads the graph of the importer.
+#[test]
+fn what_an_imported_file_requires_is_required_during_a_load() {
+    let files = [
+        ("main.mjs", "import './k.cjs'; import './late.mjs';"),
+        ("k.cjs", "require('./other.mjs');"),
+        ("other.mjs", "export const one = 1;"),
+        ("late.mjs", "export const two = 2;"),
+    ];
+    with_plan(&files, |plan| {
+        let graph = &plan.graph;
+        assert!(graph.is_required_during_load(plan.module("other.mjs")));
+        assert!(!graph.is_required_during_load(plan.module("late.mjs")));
+        assert!(!graph.is_loaded_by_loader(plan.module("main.mjs")));
+    });
+}
+
+#[test]
+fn the_loader_loads_a_program_where_a_required_module_imports_the_file_that_requires_it() {
+    let files = [
+        ("main.mjs", "import './k.cjs';"),
+        ("k.cjs", "require('./other.mjs');"),
+        ("other.mjs", "import './k.cjs';"),
+    ];
+    with_plan(&files, |plan| {
+        for file in ["main.mjs", "k.cjs", "other.mjs"] {
+            assert!(plan.graph.is_loaded_by_loader(plan.module(file)));
+        }
     });
 }
 

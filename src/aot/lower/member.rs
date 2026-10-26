@@ -4,7 +4,9 @@ mod reference;
 use bun_sema::atom::known;
 use bun_sema::check::aot::ShapeKind;
 use bun_sema::fold::Constant;
-use bun_sema::hir::{Chain, ExprId, ExprKind, MemberKey, NodeData};
+use bun_sema::hir::{
+    Chain, ExprId, ExprKind, Flags, Member, MemberKey, NameKind, NodeData, Prop, PropKey,
+};
 use bun_sema::types::EnumValue;
 
 use super::FunctionLowering;
@@ -25,6 +27,43 @@ impl PropertyName {
         match self {
             PropertyName::Constant(key) => (None, Some(key)),
             PropertyName::Computed(value) => (Some(value), None),
+        }
+    }
+}
+
+/// The name that a function or a class takes from the place where it stands.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) struct GivenName {
+    pub(crate) name: PropertyName,
+    pub(crate) is_under_computed_key: bool,
+}
+
+impl GivenName {
+    pub(crate) fn under_property(property: &Prop, name: PropertyName) -> GivenName {
+        let is_literal_in_brackets = matches!(
+            property.name_kind,
+            NameKind::ComputedString | NameKind::ComputedNumber
+        );
+        GivenName {
+            name,
+            is_under_computed_key: is_literal_in_brackets
+                || matches!(property.key, PropKey::Computed(_)),
+        }
+    }
+
+    pub(crate) fn under_member(member: &Member, name: PropertyName) -> GivenName {
+        GivenName {
+            name,
+            is_under_computed_key: member.flags.contains(Flags::COMPUTED_NAME),
+        }
+    }
+}
+
+impl From<PropertyName> for GivenName {
+    fn from(name: PropertyName) -> GivenName {
+        GivenName {
+            name,
+            is_under_computed_key: false,
         }
     }
 }

@@ -12,7 +12,7 @@ function f0 name="theCountsAreKept" parameters=[{type=string}, {type=Uint8Array}
 }
 # CHECK-LABEL: function f0 name="theCountsAreKept"
 # CHECK-NOT: AnyReceiver
-# CHECK: [[view]]: {{*}} = AssumeType v1 castType=
+# CHECK: [[view]]: {{*}} = AssumeType v1 provenType=
 # CHECK-NEXT: CallBuiltin -, v0, [[view]], v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0
 # CHECK-NOT: AnyReceiver
 
@@ -23,7 +23,7 @@ function f1 name="onlyTheCountsAreRead" parameters=[{type=string}, {type=Uint8Ar
     Return v5
 }
 # CHECK-LABEL: function f1 name="onlyTheCountsAreRead"
-# CHECK: [[assumed]]: {{*}} = AssumeType v1 castType=
+# CHECK: [[assumed]]: {{*}} = AssumeType v1 provenType=
 # CHECK-NEXT: CallBuiltin -, v0, [[assumed]], v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields
 
 function f2 name="theViewKeptItsType" parameters=[{type=string}, {type=Uint8Array}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=object}] {

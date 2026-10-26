@@ -1,4 +1,6 @@
-use bun_sema::hir::{self, ExprId, ExprKind, Flags, FnId};
+use bun_sema::bind::Binding;
+use bun_sema::hir::{self, ExprId, ExprKind, Flags, FnId, StmtId};
+use bun_sema::node::{Node, NodeData, ToNode};
 
 use smallvec::SmallVec;
 
@@ -63,6 +65,68 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let yielded = self.coroutine.yielded;
         debug_assert!(yielded.is_some(), "InitialYield dominates every Yield");
         yielded.unwrap_or_else(DeclaredType::untyped)
+    }
+
+    /// `bun run` keeps text that only a build removes. A function that is suspended in front of such text holds the locals that it names.
+    pub(in crate::lower) fn hold_names_of_removed_statement(&mut self, statement: StmtId) {
+        let in_bun_run = self.file.decisions().as_folded_by_bun_run();
+        if !in_bun_run.is_dead_stmt(statement) {
+            self.hold_names_under(statement.to_node(self.file.hir));
+        }
+    }
+
+    pub(in crate::lower) fn hold_names_of_removed_expression(&mut self, expression: ExprId) {
+        let in_bun_run = self.file.decisions().as_folded_by_bun_run();
+        if !in_bun_run.is_dead_expr(expression) {
+            self.hold_names_under(expression.to_node(self.file.hir));
+        }
+    }
+
+    fn hold_names_under(&mut self, removed: Node) {
+        let flags = self.builder.function().flags;
+        let can_be_suspended = FunctionFlags::IS_ASYNC | FunctionFlags::IS_GENERATOR;
+        if !flags.intersects(can_be_suspended) || !self.builder.is_open() {
+            return;
+        }
+        let hir = self.file.hir;
+        let mut named: SmallVec<[ValueId; 4]> = SmallVec::new();
+        let mut pending: SmallVec<[Node; 16]> = SmallVec::from_slice(&[removed]);
+        while let Some(node) = pending.pop() {
+            if let NodeData::Expr(expression) = hir.data(node)
+                && let ExprKind::Ident(_) = hir[expression].kind
+            {
+                if let Binding::Symbol(symbol) = self.file.bound.binding(expression)
+                    && let Some(local) = self.scopes.find_local(BindingRef::Symbol(symbol))
+                {
+                    let value = self.builder.read_variable(local.variable);
+                    if !named.contains(&value) {
+                        named.push(value);
+                    }
+                }
+                continue;
+            }
+            hir.for_each_child(node, &mut |child| {
+                pending.push(child);
+                false
+            });
+        }
+        if named.is_empty() {
+            return;
+        }
+        // A suspension that is never reached lists them, so they are live behind every suspension in front of it.
+        let never = self.builder.boolean(false);
+        let split = self.split_on_truthiness(never);
+        let after = self.create_block();
+        self.builder.switch_to(split.taken);
+        let nothing = self.builder.undefined();
+        match flags.contains(FunctionFlags::IS_ASYNC) {
+            true => _ = self.builder.await_value(nothing, &named, false),
+            false => _ = self.builder.yield_value(nothing, &named),
+        }
+        self.jump(after);
+        self.builder.switch_to(split.not_taken);
+        self.jump(after);
+        self.continue_in(after);
     }
 
     pub(in crate::lower) fn emit_yield(&mut self, value: ValueId) -> Resumption {

@@ -18,14 +18,14 @@ function f0 name="checkedAsArrayOfUser" flags=[IsAsync] parameters=[{type=anythi
     v1 = Undefined
     v2 = CallBuiltin v1, v0 overload=Bun_sql/0
     v3 = Await v2
-    v4 = Check v3 castType=undefined|null|Array<L0>
+    v4 = Check v3 expectedType=undefined|null|Array<L0>
     Return v4
 }
 # CHECK-LABEL: function f0 name="checkedAsArrayOfUser"
 # CHECK: v2:{{*}}= CallBuiltin v1, v0 overload=Bun_sql/0
 # CHECK-NEXT: ExpectRows v2 layout=L0
 # CHECK-NEXT: v3:{{*}}= Await v2
-# CHECK-NEXT: v4:{{*}}= Check v3 castType=undefined|null|Array<L0>
+# CHECK-NEXT: v4:{{*}}= Check v3 expectedType=undefined|null|Array<L0>
 # CHECK-NEXT: Return v4
 # CHECK-NOT: ExpectRows
 
@@ -34,7 +34,7 @@ function f1 name="declaredSetHasLiteralMember" flags=[IsAsync] parameters=[{type
     v1 = Undefined
     v2 = CallBuiltin v1, v0 overload=Bun_sql/0
     v3 = Await v2
-    v4 = Check v3 castType=undefined|null|Array<L0|L1>
+    v4 = Check v3 expectedType=undefined|null|Array<L0|L1>
     Return v4
 }
 # CHECK-LABEL: function f1 name="declaredSetHasLiteralMember"

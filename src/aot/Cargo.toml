@@ -34,6 +34,7 @@ bun_removable_features.workspace = true
 bun_collections.workspace = true
 bun_core.workspace = true
 bun_ast.workspace = true
+bun_js_parser.workspace = true
 bun_alloc.workspace = true
 bun_base64.workspace = true
 bun_glob.workspace = true

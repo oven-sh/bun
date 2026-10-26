@@ -1,7 +1,6 @@
 # console.log({ holder: process })
 # The formatter goes on down into what the literal holds.
 # LIBRARY: own
-# LOSS: MaxValueFlowMembersToldApart x2
 # RUN: valueflow-why used-builtin=ProcessAllowedNodeEnvironmentFlags
 # CHECK: used-builtin=ProcessAllowedNodeEnvironmentFlags
 # CHECK-NEXT: by Lookup

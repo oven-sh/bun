@@ -7,6 +7,7 @@ use super::{Arguments, Callee, emit_call_of};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Resolved, table};
 use crate::ir::{PropertyKeyId, ValueId};
+use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, object};
 
@@ -198,7 +199,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(self.claim_call_result(call, defined))
     }
 
-    pub(super) fn try_lower_call(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
+    pub(super) fn try_lower_call(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        tail: Tail<'_>,
+    ) -> Option<ValueId> {
         if !matches!(site.chain, Chain::No) {
             return None;
         }
@@ -207,7 +213,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(BuiltinId::ObjectDefineProperties) => {
                 self.lower_definition_by_descriptors(call, site)
             }
-            Some(BuiltinId::ArrayFrom) => self.lower_array_from(call, site),
+            Some(BuiltinId::ArrayFrom) => self.lower_array_from(call, site, tail),
             Some(BuiltinId::Object) => self.lower_empty_object(call, site),
             Some(_) => None,
             None => self.try_lower_method_call(call, site),

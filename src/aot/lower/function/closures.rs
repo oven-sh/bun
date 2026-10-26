@@ -4,14 +4,14 @@ use smallvec::SmallVec;
 use super::EntryArguments;
 use crate::ir::generated::{EntryParameter, FunctionFlags, MethodKind};
 use crate::ir::{DeclaredType, FunctionId, TypeTable, ValueId};
-use crate::lower::member::{self, PropertyName};
+use crate::lower::member::{self, GivenName, PropertyName};
 use crate::lower::{FunctionLowering, convert};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_function_expression(
         &mut self,
         function: FnId,
-        name: Option<PropertyName>,
+        name: Option<GivenName>,
     ) -> ValueId {
         self.create_named_closure(function, name, None)
     }
@@ -19,10 +19,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_method(
         &mut self,
         function: FnId,
-        name: PropertyName,
+        name: impl Into<GivenName>,
         home: ValueId,
     ) -> ValueId {
-        self.create_named_closure(function, Some(name), Some(home))
+        self.create_named_closure(function, Some(name.into()), Some(home))
     }
 
     pub(crate) fn emit_closure(&mut self, function: FunctionId, home: Option<ValueId>) -> ValueId {
@@ -98,7 +98,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn create_named_closure(
         &mut self,
         function: FnId,
-        name: Option<PropertyName>,
+        name: Option<GivenName>,
         home: Option<ValueId>,
     ) -> ValueId {
         let func = self.file.hir[function];
@@ -107,23 +107,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             _ => false,
         };
         let inferred_name = name.filter(|_| !has_own_name);
-        let header_name = match inferred_name {
-            Some(PropertyName::Constant(key)) => member::find_function_name(self.file, key),
+        let constant_key = match inferred_name.map(|given| given.name) {
+            Some(PropertyName::Constant(key)) => Some(key),
             Some(PropertyName::Computed(_)) | None => None,
         };
-        if let (Some(PropertyName::Constant(key)), None) = (inferred_name, header_name)
-            && let Some(name) = self.file.find_name_under_symbol(key)
-        {
+        let text_name = constant_key.and_then(|key| member::find_function_name(self.file, key));
+        let name_under_computed_key = match text_name {
+            Some(name) => inferred_name
+                .is_some_and(|given| given.is_under_computed_key)
+                .then_some(name),
+            None => constant_key.and_then(|key| self.file.find_name_under_symbol(key)),
+        };
+        if let Some(name) = name_under_computed_key {
             let id = super::declare_source_function_with(self.file, function, &mut |_, header| {
                 header.name = Some(name);
-                header.flags |= FunctionFlags::IS_NAMED_BY_SYMBOL;
+                header.flags |= FunctionFlags::IS_NAMED_BY_COMPUTED_KEY;
             });
             return self.emit_closure(id, home);
         }
-        let id = super::declare_source_function(self.file, function, header_name);
+        let id = super::declare_source_function(self.file, function, text_name);
         let closure = self.emit_closure(id, home);
-        if let (Some(name), None) = (inferred_name, header_name) {
-            let key = self.emit_name_value(name);
+        if let (Some(given), None) = (inferred_name, text_name) {
+            let key = self.emit_name_value(given.name);
             let kind = match func.kind {
                 FnKind::Getter => MethodKind::Getter,
                 FnKind::Setter => MethodKind::Setter,

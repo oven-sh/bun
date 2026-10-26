@@ -90,11 +90,12 @@ impl<'s> Folder<'_, 's> {
         if op == UnOp::Typeof
             && let Some(kind) = self.find_runtime_value_kind(operand)
         {
-            return Folded::constant(Constant::String(match kind {
+            let type_name = Constant::String(match kind {
                 RuntimeValueKind::Function => known::function,
                 RuntimeValueKind::Object => known::object,
                 RuntimeValueKind::Symbol => known::symbol,
-            }));
+            });
+            return Folded::new(Value::from(type_name), self.folded(operand).effects);
         }
         let type_of_literal = match self.hir[operand].kind {
             ExprKind::Fn(_) => Some(known::function),
@@ -156,7 +157,10 @@ impl<'s> Folder<'_, 's> {
             Value::Unknown => false,
         };
         match is_member {
-            true => Folded::new(Value::from(Constant::Boolean(true)), effects),
+            true => {
+                let effects = effects.min(Effects::MemberRead);
+                Folded::new(Value::from(Constant::Boolean(true)), effects)
+            }
             false => self.fold_operands(BinOp::In, name, object),
         }
     }

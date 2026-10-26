@@ -45,7 +45,7 @@ function f2 name="untypedHelper" parameters=[{type=anything}] results=[{type=any
 # A typed function checks what it was called with, and its parameter is only expected to hold its type
 function f3 name="checksItsParameter" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|L0):
-    v1 = Check v0 castType=undefined|null|L0 site=w0
+    v1 = Check v0 expectedType=undefined|null|L0 site=w0
     Return v1
 }
 
@@ -56,21 +56,21 @@ function f4 name="untyped" parameters=[{type=anything}] results=[{type=anything}
 
 function f5 name="pair" flags=[IsChecked] parameters=[{type=undefined|null|L1 site=w1 flags=[IsExpected]}, {type=undefined|null|L0 site=w0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|L1, v1: anything ~ undefined|null|L0):
-    v2 = Check v0 castType=undefined|null|L1 site=w1
-    v3 = Check v1 castType=undefined|null|L0 site=w0
+    v2 = Check v0 expectedType=undefined|null|L1 site=w1
+    v3 = Check v1 expectedType=undefined|null|L0 site=w0
     v4 = NewArray v2, v3 contents=anything
     Return v4
 }
 
 function f6 name="method" kind=Method flags=[HasThis, IsChecked] thisType={type=undefined|null|L1 flags=[IsExpected]} parameters=[{type=undefined|null|L0 site=w0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|L1, v1: anything ~ undefined|null|L0):
-    v2 = Check v1 castType=undefined|null|L0 site=w0
+    v2 = Check v1 expectedType=undefined|null|L0 site=w0
     Return v2
 }
 
 function f7 name="checksForAnotherType" flags=[IsChecked] parameters=[{type=undefined|null|L1 site=w1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|L1):
-    v1 = Check v0 castType=undefined|null|L1 site=w1
+    v1 = Check v0 expectedType=undefined|null|L1 site=w1
     Return v1
 }
 
@@ -183,7 +183,7 @@ function f15 name="checkedForAWiderTypeThenHandedOn" parameters=[{type=string}] 
   b0(v0: string):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 = Check v2 castType=undefined|null|L0|L1
+    v3 = Check v2 expectedType=undefined|null|L0|L1
     v4 = CallDirect v3 function=f3
     Return v4
 }

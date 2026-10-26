@@ -88,6 +88,38 @@ test("an assignment in a finally block is one place", async () => {
   ).toEqual({ places: ["warn main.js:5"], exitCode: 0 });
 }, 120_000);
 
+test("a store to __proto__, Object.setPrototypeOf and Reflect.setPrototypeOf", async () => {
+  expect(
+    await reportedPlaces({
+      "main.js": [
+        `const held = WeakMap;`,
+        `if (${rarely}) Uint8ClampedArray.__proto__ = {};`,
+        `if (${rarely}) Object.setPrototypeOf(Uint8ClampedArray, {});`,
+        `if (${rarely}) Object.setPrototypeOf(Uint8ClampedArray.prototype, {});`,
+        `if (${rarely}) Object.setPrototypeOf(Math, null);`,
+        `if (${rarely}) Object.setPrototypeOf(held, {});`,
+        `if (${rarely}) console.log(Reflect.setPrototypeOf(Uint8ClampedArray, {}));`,
+        `// The prototype that it has already, and objects of the program.`,
+        `Object.setPrototypeOf(Map.prototype, Object.prototype);`,
+        `console.log(Reflect.setPrototypeOf(Map, Function.prototype));`,
+        `class Mine extends Map {}`,
+        `Object.setPrototypeOf(Mine.prototype, {});`,
+        `Object.setPrototypeOf({}, Map.prototype);`,
+      ].join("\n"),
+    }),
+  ).toEqual({
+    places: [
+      "warn main.js:2",
+      "warn main.js:3",
+      "warn main.js:4",
+      "warn main.js:5",
+      "warn main.js:6",
+      "warn main.js:7",
+    ],
+    exitCode: 0,
+  });
+}, 120_000);
+
 test("one that always runs, and others that may", async () => {
   expect(
     await reportedPlaces({

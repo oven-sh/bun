@@ -724,7 +724,10 @@ mod elf {
         let Some(capacity) = mapped_end.and_then(|end| (end - target).checked_sub(8)) else {
             return 0;
         };
-        exit_if_page_is_past_eof(target);
+        // `get_data` reports a truncated executable, at a time when errors can be printed.
+        if is_page_past_eof(target) {
+            return 0;
+        }
         // SAFETY: at least 8 bytes are mapped at `target`.
         let len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target as *const [u8; 8]) });
@@ -732,7 +735,9 @@ mod elf {
             return 0;
         }
         let end = target + 8 + len as usize;
-        exit_if_page_is_past_eof(end - 1);
+        if is_page_past_eof(end - 1) {
+            return 0;
+        }
         // SAFETY: the payload is mapped up to `end` and is at least as long as both.
         let (offsets, trailer) = unsafe {
             (
@@ -768,20 +773,26 @@ mod elf {
     }
 
     /// Exits with an error if the page at `addr` is past the end of a truncated executable.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn exit_if_page_is_past_eof(addr: usize) {
+        if is_page_past_eof(addr) {
+            exit_truncated();
+        }
+    }
+
+    /// Whether the page at `addr` is past the end of a truncated executable.
     ///
     /// Linux maps a `PT_LOAD`'s full `p_filesz` without checking the file's length, so a truncated
     /// executable still starts, and reading a page past the end of the file raises SIGBUS.
     /// `MADV_POPULATE_READ` (Linux 5.14) faults the page in like a read, but fails with `EFAULT`
     /// instead. Any other result, such as `EINVAL` from an older kernel, skips the check.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn exit_if_page_is_past_eof(addr: usize) {
+    fn is_page_past_eof(addr: usize) -> bool {
         let page_size = bun_alloc::page_size();
         let page = (addr & !(page_size - 1)) as *mut core::ffi::c_void;
         // SAFETY: `madvise` validates the range and doesn't read or write through it.
         let rc = unsafe { libc::madvise(page, page_size, libc::MADV_POPULATE_READ) };
-        if rc != 0 && bun_sys::last_errno() == libc::EFAULT {
-            exit_truncated();
-        }
+        rc != 0 && bun_sys::last_errno() == libc::EFAULT
     }
 
     /// No-op, because FreeBSD's `execve` rejects a truncated executable.

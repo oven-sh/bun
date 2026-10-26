@@ -170,6 +170,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_glob",
+ "bun_js_parser",
  "bun_lint",
  "bun_lint_react_compiler",
  "bun_options_types",

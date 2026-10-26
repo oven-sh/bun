@@ -1,4 +1,4 @@
-// Names that only exist at run time: imports of CommonJS, JSON and node: modules, export * of them, hoisted functions in a cycle, and the errors of each. The CommonJS files that a module imports are all evaluated at link, in import order, before a name is looked for in them, and the default export is the object `module.exports`, with what is added to it later. Plain Bun differs in both ("absent name", "CommonJS imported back while it runs"), so the output is stored.
+// Names that only exist at run time: imports of CommonJS, JSON and node: modules, export * of them, hoisted functions in a cycle, and the errors of each. Which of the other CommonJS files of a graph have run when one of them fails goes, under `bun run`, by the order in which their texts arrive: the program is run with the transpiler on the main thread, where that is the order of the import statements.
 async function attempt(name, run) {
   try {
     console.log(name + ":", await run());

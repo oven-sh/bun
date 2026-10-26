@@ -8,7 +8,7 @@ use super::{ClassElement, FieldValue, is_auto_accessor, is_derived_class};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{Field, FieldFlags, FunctionFlags, FunctionKind, TypeSiteKind};
 use crate::ir::{ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, TypeTable, ValueId};
-use crate::lower::member::PropertyName;
+use crate::lower::member::{GivenName, PropertyName};
 use crate::lower::positions::SiteOrigin;
 use crate::lower::{FileLowering, FunctionLowering, convert, function, layouts};
 
@@ -248,11 +248,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) {
         let target = self.find_field_target(class, member);
         let function_name = is_defined.then(|| match target {
-            FieldTarget::Property(name) => name,
+            FieldTarget::Property(name) => GivenName::under_member(&self.file.hir[member], name),
             FieldTarget::Private(id) => {
                 let layout = self.file.own_class_layout(class);
                 let name = self.file.bound.private_name(id).name;
-                PropertyName::Constant(layouts::private_key(self.file, layout, name))
+                PropertyName::Constant(layouts::private_key(self.file, layout, name)).into()
             }
         });
         let value = self.lower_field_value(class, member, value, function_name, this);
@@ -298,7 +298,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         class: ClassId,
         member: MemberId,
         value: FieldValue,
-        function_name: Option<PropertyName>,
+        function_name: Option<GivenName>,
         this: ValueId,
     ) -> ValueId {
         let source = self.file.hir[member].init.some();
@@ -326,7 +326,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn lower_field_initializer_expression(
         &mut self,
         member: MemberId,
-        function_name: Option<PropertyName>,
+        function_name: Option<GivenName>,
     ) -> ValueId {
         let initializer = self.file.hir[member].init;
         let scope = self.file.bound.field_initializer_scope(member);

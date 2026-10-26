@@ -65,6 +65,8 @@ pub(super) struct FileImports {
     pub named_members: Vec<((ModuleRef, Atom), NamedMember)>,
     /// The module that the access is written on, the module that has the variable, and its name there.
     pub called_members: Vec<(ModuleRef, ModuleRef, Atom)>,
+    /// `ns.name()`: the CommonJS module whose namespace `ns` is, and the name.
+    pub called_namespace_members: Vec<(ModuleRef, Atom)>,
     pub jsx: Vec<PendingJsxImport>,
     pub namespace_values: Vec<ModuleRef>,
     /// The CommonJS modules whose `module.exports` something in the file looks at.

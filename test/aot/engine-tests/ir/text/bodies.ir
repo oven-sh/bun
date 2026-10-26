@@ -117,7 +117,7 @@
 # CHECK-NEXT: v10 = NewObject -, v4, v1 layout=L1 fields=[0, 1]
 # CHECK-NEXT: v11 = FinishObject v10
 # CHECK-NEXT: v12 = TypeTest v1 testedType=undefined|number
-# CHECK-NEXT: v13 = Check v1 castType=number site=w0
+# CHECK-NEXT: v13 = Check v1 expectedType=number site=w0
 # CHECK-NEXT: v14 = NewRegExp pattern="a" regExpFlags=[Global, IgnoreCase]
 # CHECK-NEXT: v15 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {raw="\\q"}]
 # CHECK-NEXT: v16 = NewArray v4 contents=number holes=[1]
@@ -304,7 +304,7 @@ function f5 name="payloads" module=m0 flags=[HasThis] thisType={type=anything} p
     v10 = NewObject -, v4, v1 layout=L1 fields=[0, 1]
     v11 = FinishObject v10
     v12 = TypeTest v1 testedType=undefined|number
-    v13 = Check v1 castType=number site=w0
+    v13 = Check v1 expectedType=number site=w0
     v14 = NewRegExp pattern="a" regExpFlags=[Global, IgnoreCase]
     v15 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {raw="\\q"}]
     v16 = NewArray v4 contents=number holes=[1]

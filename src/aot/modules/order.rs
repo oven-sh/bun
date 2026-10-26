@@ -199,6 +199,8 @@ pub(super) struct OrderParts {
     pub is_code_of_program: Vec<bool>,
     pub is_exposed: Vec<bool>,
     pub is_half: Vec<bool>,
+    pub is_loaded_by_loader: Vec<bool>,
+    pub is_required_during_load: Vec<bool>,
     pub prefix_roots: Vec<FileId>,
 }
 
@@ -210,6 +212,8 @@ impl OrderParts {
             is_code_of_program: vec![false; file_count],
             is_exposed: vec![false; file_count],
             is_half: vec![false; file_count],
+            is_loaded_by_loader: vec![false; file_count],
+            is_required_during_load: vec![false; file_count],
             prefix_roots: Vec::new(),
         }
     }
@@ -708,6 +712,78 @@ fn find_program_code(
     is_code
 }
 
+struct LoadsSeenByProgram {
+    is_loaded_by_loader: Vec<bool>,
+    is_required_during_load: Vec<bool>,
+}
+
+// `bun run` loads a graph in steps, and an imported CommonJS file runs in one of them. What such a file reaches runs while the graph is loaded, in the file or in a job that it queues.
+// A `require` of an ES module there asks the run time. Where the ES module leads back to the file that requires it, the loader of the run time loads the program from its start.
+fn find_loads_seen_by_program(
+    scans: &Scans,
+    modules: &ModuleSet,
+    numbers: &ModuleNumbers,
+    edges: &[Vec<u32>],
+    is_code_of_program: &[bool],
+    planned: &[(FileId, FileSites)],
+) -> LoadsSeenByProgram {
+    let count = is_code_of_program.len();
+    let mut seen = LoadsSeenByProgram {
+        is_loaded_by_loader: vec![false; count],
+        is_required_during_load: vec![false; count],
+    };
+    let kind_of = |module: ModuleRef| match module {
+        ModuleRef::File(file) if is_code_of_program[file.idx()] => {
+            Some((file, scans.of(file).interop.kind))
+        }
+        _ => None,
+    };
+    let files_of_program = modules.compiled_files.iter();
+    let files_of_program = files_of_program.filter_map(|&file| kind_of(ModuleRef::File(file)));
+    let es_modules = files_of_program
+        .clone()
+        .filter(|known| known.1 == ModuleKind::SourceText);
+    let imported = es_modules.flat_map(|(file, _)| scans.of(file).requests.iter());
+    let imported = imported.filter_map(|request| kind_of(request.target));
+    let imported = imported.filter(|known| known.1 == ModuleKind::CommonJs);
+    let imported: Vec<u32> = imported.map(|known| known.0.0).collect();
+    if imported.is_empty() {
+        return seen;
+    }
+
+    let runs_during_load = find_reached(edges, imported);
+    let mut component_of = None;
+    let mut leads_back = false;
+    for (file, file_sites) in planned {
+        let sites = file_sites.sites.iter();
+        let sites = sites.map(|site| (site.referrer, site.target));
+        for (referrer, target) in sites.chain(file_sites.required_candidates.iter().copied()) {
+            let Some((target, ModuleKind::SourceText)) = kind_of(target) else {
+                continue;
+            };
+            let Some(referrer) = numbers.number_of(referrer) else {
+                continue;
+            };
+            if !runs_during_load[referrer] {
+                continue;
+            }
+            seen.is_required_during_load[target.idx()] = true;
+            if scans.of(*file).interop.kind != ModuleKind::CommonJs {
+                continue;
+            }
+            let component_of =
+                component_of.get_or_insert_with(|| strongly_connected_components(edges).0);
+            leads_back |= component_of[referrer] == component_of[target.idx()];
+        }
+    }
+    if leads_back {
+        for (file, _) in files_of_program {
+            seen.is_loaded_by_loader[file.idx()] = true;
+        }
+    }
+    seen
+}
+
 fn find_prefix_roots(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -795,11 +871,21 @@ pub(super) fn compute_order(
         .map(|(&on_cycle, &exposed)| on_cycle || exposed)
         .collect();
     let prefix_roots = find_prefix_roots(input, scans, &is_code_of_program, &planned);
+    let loads = find_loads_seen_by_program(
+        scans,
+        modules,
+        &numbers,
+        &edges,
+        &is_code_of_program,
+        &planned,
+    );
     let parts = OrderParts {
         numbers,
         is_code_of_program,
         is_exposed,
         is_half,
+        is_loaded_by_loader: loads.is_loaded_by_loader,
+        is_required_during_load: loads.is_required_during_load,
         prefix_roots,
     };
     let order = EvaluationOrder {

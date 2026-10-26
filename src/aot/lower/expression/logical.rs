@@ -74,12 +74,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             && spine.last().is_some_and(|&(_, operator, right)| {
                 operator == LogicalOperator::And && !decisions.is_dead_expr(right)
             });
+        if is_left_only_tested {
+            self.lower_member_reads(innermost);
+        }
         let (mut value, mut tested) = match is_left_only_tested {
             true => (self.builder.boolean(true), None),
             false => (self.lower_expression(innermost), Some(innermost)),
         };
         for &(node, operator, right) in spine.iter().rev() {
             if decisions.is_dead_expr(right) {
+                self.hold_names_of_removed_expression(right);
                 continue;
             }
             self.set_position(hir[node].pos);
@@ -140,12 +144,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             let Branches { yes, no } = hir.branches(branches);
             if decisions.is_dead_expr(yes) {
-                self.lower_expression_for_effect(test);
+                self.lower_decided_test(test);
+                self.hold_names_of_removed_expression(yes);
                 current = no;
                 continue;
             }
             if decisions.is_dead_expr(no) {
-                self.lower_expression_for_effect(test);
+                self.lower_decided_test(test);
+                self.hold_names_of_removed_expression(no);
                 current = yes;
                 break;
             }

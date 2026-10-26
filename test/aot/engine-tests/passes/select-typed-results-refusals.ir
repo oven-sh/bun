@@ -55,7 +55,7 @@ function f3 name="rowsOfTwoLayouts" flags=[IsAsync] parameters=[{type=anything}]
     v1 = Undefined
     v2 = CallBuiltin v1, v0 overload=Bun_sql/0
     v3 = Await v2
-    v4 = Check v3 castType=undefined|null|Array<L0|L1>
+    v4 = Check v3 expectedType=undefined|null|Array<L0|L1>
     Return v4
 }
 # CHECK-LABEL: function f3 name="rowsOfTwoLayouts"
@@ -71,7 +71,7 @@ function f4 name="anotherSourceIsOpen" parameters=[{type=string}, {type=string}]
     v4 = JSONSourceStart v3
     v5 = Undefined
     v6 = CallBuiltin -, v1, v5 overload=JSONParse/0
-    v7 = Check v6 castType=undefined|null|L0
+    v7 = Check v6 expectedType=undefined|null|L0
     v8 = JSONGetByte v4
     v9 = NewArray v7, v8 contents=anything
     Return v9
@@ -80,5 +80,5 @@ function f4 name="anotherSourceIsOpen" parameters=[{type=string}, {type=string}]
 }
 # CHECK-LABEL: function f4 name="anotherSourceIsOpen"
 # CHECK: v6:{{*}}= CallBuiltin -, v1, v5 overload=JSONParse/0
-# CHECK-NEXT: v7:{{*}}= Check v6 castType=undefined|null|L0
+# CHECK-NEXT: v7:{{*}}= Check v6 expectedType=undefined|null|L0
 # CHECK-NOT: JSONSourceOpen

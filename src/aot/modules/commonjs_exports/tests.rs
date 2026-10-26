@@ -574,7 +574,7 @@ fn a_name_is_settled_where_only_its_own_body_stores_it_in_order() {
 fn a_call_through_the_object_hands_the_object_over() {
     let ignores_this = |module: &str| ask(READS_A, module, CommonJsExports::ignores_this);
     for module in [
-        "exports.a = () => this;",
+        "exports.a = () => 1;",
         "exports.a = function () { return 1; };",
         "function a() {} exports.a = a;",
         "exports.a = class {};",
@@ -585,6 +585,8 @@ fn a_call_through_the_object_hands_the_object_over() {
     for module in [
         "exports.a = function () { return this; };",
         "exports.a = function () { return () => this; };",
+        // The arrow function hands the object out.
+        "exports.a = () => this;",
         "exports.a = Math.random;",
         "exports.a = () => 1; exports.a = Math.random;",
         "exports.a ??= function () { return this; };",
@@ -749,5 +751,134 @@ fn a_name_that_may_be_absent_is_checked_once_every_file_has_run() {
                 .is_empty()
         );
         assert!(exports.face(k).is_some());
+    });
+}
+
+#[test]
+fn a_call_through_the_namespace_hands_the_namespace_over() {
+    let captures = |main: &str, k: &str| {
+        let files = [("main.mjs", main), ("k.cjs", k)];
+        with_exports(&files, |exports, input| {
+            exports.face_captures(file_named(input, "k.cjs"))
+        })
+    };
+    let calls_a = "import * as ns from './k.cjs'; console.log(ns.a());";
+    for k in [
+        "exports.a = function () { return this.b; }; exports.b = 1;",
+        "exports.a = Math.random; exports.b = 1;",
+        "Object.assign(exports, { a() { return this.b; }, b: 1 });",
+    ] {
+        assert!(captures(calls_a, k), "{k}");
+    }
+    for k in [
+        "exports.a = function () { return 1; }; exports.b = 1;",
+        "exports.a = () => 1; exports.b = 1;",
+    ] {
+        assert!(!captures(calls_a, k), "{k}");
+    }
+    let reads_this = "exports.a = function () { return this.b; }; exports.b = 1;";
+    for main in [
+        "import * as ns from './k.cjs'; console.log(ns['a']());",
+        "import * as ns from './k.cjs'; console.log(ns.a``);",
+        "import * as ns from './k.cjs'; console.log(ns.a?.());",
+    ] {
+        assert!(captures(main, reads_this), "{main}");
+    }
+    for main in [
+        "import * as ns from './k.cjs'; console.log(ns.a);",
+        "import * as ns from './k.cjs'; console.log((0, ns.a)());",
+        "import * as ns from './k.cjs'; console.log(new ns.a());",
+    ] {
+        assert!(!captures(main, reads_this), "{main}");
+    }
+    // The value of the module is called.
+    let calls_default = "import * as ns from './k.cjs'; console.log(ns.default());";
+    assert!(captures(calls_default, "exports.b = 1;"));
+}
+
+#[test]
+fn a_binding_that_a_getter_returns_is_a_variable_with_and_without_the_object() {
+    let k = "Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return a; } }); const a = 1;";
+    for (main, shape) in [
+        ("import { a } from './k.cjs'; console.log(a);", Shape::Names),
+        (
+            "import k, { a } from './k.cjs'; console.log(k, a);",
+            Shape::Value,
+        ),
+        (
+            "import * as ns from './k.cjs'; console.log(ns, ns.a);",
+            Shape::Value,
+        ),
+    ] {
+        let files = [("main.mjs", main), ("k.cjs", k)];
+        with_exports(&files, |exports, input| {
+            let file = file_named(input, "k.cjs");
+            assert_eq!(exports.shape(ModuleRef::File(file)), shape, "{main}");
+            let Some(&super::Target::Binding(symbol)) = exports
+                .targets
+                .get(&(ModuleRef::File(file), atom(input, "a")))
+            else {
+                panic!("{main}");
+            };
+            assert!(exports.is_exported_binding(file, symbol.id), "{main}");
+        });
+    }
+    // The text of the file looks at the object, so no import is bound to the binding.
+    let files = [
+        ("main.mjs", "import { a } from './k.cjs'; console.log(a);"),
+        ("k.cjs", &format!("{k} console.log(exports);")),
+    ];
+    with_exports(&files, |exports, input| {
+        let key = (module_named(input, "k.cjs"), atom(input, "a"));
+        assert_eq!(exports.targets.get(&key), None);
+    });
+}
+
+#[test]
+fn a_helper_that_marks_the_module_before_it_defines_getters() {
+    const HELPERS: &str = "var __defProp = Object.defineProperty;\nvar __markAsModule = (target) => __defProp(target, \"__esModule\", { value: true });\nvar __export = (target, all) => {\n  __markAsModule(target);\n  for (var name in all)\n    __defProp(target, name, { get: all[name], enumerable: true });\n};\n";
+    let ask_module = |rest: &str| {
+        let module = format!("{HELPERS}{rest}");
+        ask(READS_A, &module, |exports, module, a| {
+            let member = exports.member_named(module, a);
+            (exports.shape(module), exports.marker(module), member)
+        })
+    };
+    let (shape, marker, member) = ask_module("__export(exports, { a: () => a });\nvar a = 1;\n");
+    assert_eq!((shape, marker), (Shape::Names, Some(true)));
+    assert!(matches!(member, Some(Member::Binding(_))), "{member:?}");
+    // The property that the helper defines takes no store.
+    let (shape, marker, _) =
+        ask_module("__export(exports, { a: () => a });\nvar a = 1;\nexports.__esModule = false;\n");
+    assert_eq!((shape, marker), (Shape::Value, None));
+    // Whoever finds the module half evaluated in front of the call finds no marker.
+    let (shape, marker, _) =
+        ask_module("require('./main.cjs');\n__export(exports, { a: () => a });\nvar a = 1;\n");
+    assert_eq!((shape, marker), (Shape::Value, None));
+}
+
+#[test]
+fn nothing_is_said_of_this_where_the_text_does_not_name_every_store() {
+    let ignores_this = |module: &str| ask(READS_A, module, CommonJsExports::ignores_this);
+    for module in [
+        "Object.assign(exports, { a() { return this; } });",
+        "exports.a = () => 1; console.log(exports);",
+    ] {
+        assert!(!ignores_this(module), "{module}");
+    }
+    // A getter that returns a name of a module that has only its object.
+    let files = [
+        ("main.cjs", READS_A),
+        (
+            "module.cjs",
+            "var inner = require('./inner.cjs'); Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return inner.a; } });",
+        ),
+        (
+            "inner.cjs",
+            "Object.assign(exports, { a() { return this; } });",
+        ),
+    ];
+    with_exports(&files, |exports, input| {
+        assert!(!exports.ignores_this(module_named(input, "module.cjs"), atom(input, "a")));
     });
 }

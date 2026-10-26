@@ -110,12 +110,13 @@ impl<'s> Folder<'_, 's> {
     }
 
     pub(super) fn is_truthy_without_effects(&self, e: ExprId) -> bool {
-        self.conditions.get(&e) == Some(&true) && self.effects[e.idx()] == Effects::None
+        self.conditions.get(&e) == Some(&true) && self.effects[e.idx()] >= Effects::MemberRead
     }
 
     pub(super) fn copy_loader_value(&mut self, e: ExprId, source: ExprId) {
         if self.is_truthy_without_effects(source) {
             self.note_loader_value(e);
+            self.effects[e.idx()] = self.effects[source.idx()];
         }
     }
 }

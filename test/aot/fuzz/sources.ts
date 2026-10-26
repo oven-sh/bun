@@ -82,6 +82,8 @@
 //   values-of-another-kind-through-type-parameters a value that is not what the type argument says goes in through `any`, passes through the type parameter by one of seventy roads, is kept in a place whose type says otherwise, a variable that closures share above all, and is used there in up to forty ways (values-of-another-kind-through-type-parameters.ts)
 //   values-of-another-kind-behind-a-test a value that is not what the type says reaches a place of a primitive type through `any`, a switch, a comparison, typeof, instanceof, `in`, its truth, `?.` or `??` looks at it there, and what stands behind the test uses it in up to forty ways (values-of-another-kind-behind-a-test.ts)
 //   variables-that-never-took-their-class-are-constructed-called-and-extended a variable is meant to take a class and the store never runs (something throws in front of it, its branch is not taken, the class throws while it is defined); what the variable still holds is constructed, called, extended, handed to Reflect.construct and used as a tag, in a try block or not, at the top level, in a function, behind an await or a yield (variables-that-never-took-their-class-are-constructed-called-and-extended.ts)
+//   functions-capture-what-is-made-of-a-value-declared-as-another-type a value is declared as an interface that it may not fit (a list, a text, a number, undefined, null, an object of another shape, a function; out of a generic helper, JSON, a cast, a field, a parameter); the program makes something of it (an element, a member, its length, a sum, a spread ..) and an arrow function, a method, a getter, a generator or an async function captures what was made; nobody calls it, the scene does, or somebody outside does (functions-capture-what-is-made-of-a-value-declared-as-another-type.ts)
+//   a-class-definition-throws-and-the-program-goes-on something throws while a class is defined or first used (in a static block, a field, a computed key, the heritage, a decorator, a getter, a constructor before or after super()): an undeclared name, a dead zone, a call of what is no function, a thrown value; a try block round the class, at the site or in the caller catches it, or nobody does; a function at the site captures a variable that was never assigned, `this`, a value read from a list or the binding of the class, and the program shows it afterwards (a-class-definition-throws-and-the-program-goes-on.ts)
 //   arguments-made-for-a-call-whose-callee-may-return-early a caller makes a rest array, an object literal or an array literal for a call; the callee tests something first and may return, throw or call on before it keeps, changes, returns, spreads, captures or compares that argument
 //   functions-handed-to-async-functions-and-used-around-their-awaits a caller hands a closure or a bound function over its own locals to an async function, which calls, keeps, stores, captures, passes on or returns it before and behind its awaits; the caller returns first, the stack is written over and a collection runs before the async function goes on (functions-handed-to-async-functions-and-used-around-their-awaits.ts)
 //   functions-that-return-before-they-touch-what-the-caller-made a function takes a rest parameter, or a parameter for which its callers write an object or a list, and may return, throw or go on before it touches it; what stands in front of the first use has effects, what the caller writes has effects too, and the switch that decides turns while the program runs (functions-that-return-before-they-touch-what-the-caller-made.ts)
@@ -487,7 +489,10 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     sources["keys-of-built-in-objects-after-reads-and-copies"] = (seed, bed) => {
       if (bed.name !== "product") return;
       const typed = seed % 2 === 1;
-      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      const program: Program = {
+        text: generate(new Random(seed), typed, seed % 4 >= 2),
+        extension: typed ? "ts" : "js",
+      };
       return bed.accepts(program) && bed.allows(program.text)
         ? {
             source: "keys-of-built-in-objects-after-reads-and-copies",
@@ -719,6 +724,9 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     "values-of-another-kind-through-type-parameters",
     "values-of-another-kind-behind-a-test",
     "variables-that-never-took-their-class-are-constructed-called-and-extended",
+    "values-that-hold-themselves-written-as-json",
+    "functions-capture-what-is-made-of-a-value-declared-as-another-type",
+    "a-class-definition-throws-and-the-program-goes-on",
   ])
     if (existsSync(join(import.meta.dir, name + ".ts")))
       sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);

@@ -114,6 +114,7 @@ fn create_module(names: &Names) -> Module {
             is_dynamic_star_export: true,
             kind: ModuleRequestKind::Import,
             completes: true,
+            is_hoisted: false,
         }],
         exports: vec![ModuleExport {
             name: names.name,

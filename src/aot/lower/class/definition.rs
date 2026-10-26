@@ -10,14 +10,14 @@ use super::{
 use crate::ir::generated::MethodKind;
 use crate::ir::{ClassSlot, StringId, ValueId};
 use crate::lower::decorators::StandardDecorationResult;
-use crate::lower::member::PropertyName;
+use crate::lower::member::{GivenName, PropertyName};
 use crate::lower::{FileLowering, FunctionLowering, layouts, scope};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_class_expression(
         &mut self,
         class: ClassId,
-        name: Option<PropertyName>,
+        name: Option<GivenName>,
     ) -> ValueId {
         self.evaluate_class(class, name, None)
     }
@@ -30,14 +30,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         let default_key = self.file.name_key(known::default);
-        let default_name = PropertyName::Constant(default_key);
+        let default_name = PropertyName::Constant(default_key).into();
         self.evaluate_class(class, Some(default_name), Some((binding, known::default)));
     }
 
     fn evaluate_class(
         &mut self,
         class: ClassId,
-        name: Option<PropertyName>,
+        name: Option<GivenName>,
         outer: Option<(Binding, Atom)>,
     ) -> ValueId {
         let (hir, bound) = (self.file.hir, self.file.bound);
@@ -72,7 +72,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let has_own_name = node.name.is_some();
         let binding = self.file.class_binding(class);
         let own_key = has_own_name.then(|| self.file.function_name_key(binding, node.name));
-        let name = own_key.map(PropertyName::Constant).or(name);
+        let own_name = own_key.map(|key| GivenName::from(PropertyName::Constant(key)));
+        let name = own_name.or(name);
         let head = self.emit_class_head(class, &plan, name, heritage);
         let values = self.define_members(head, &plan);
         self.set_position(node.start);
@@ -119,17 +120,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         class: ClassId,
         plan: &ClassPlan,
-        name: Option<PropertyName>,
+        name: Option<GivenName>,
         heritage: Option<(ValueId, ValueId)>,
     ) -> ClassHead {
         let static_name = self.file.find_static_name(name);
-        let constructor = constructor::declare_constructor(self.file, class, plan, static_name);
+        let is_under_computed_key = name.is_some_and(|given| given.is_under_computed_key);
+        let constructor = constructor::declare_constructor(
+            self.file,
+            class,
+            plan,
+            static_name,
+            is_under_computed_key,
+        );
         let layout = layouts::define_class_layout(self.file, class, Some(constructor));
 
         self.set_position(self.file.hir[class].start);
         let closure = self.emit_closure(constructor, None);
-        if let (Some(name), None) = (name, static_name) {
-            let key = self.emit_name_value(name);
+        if let (Some(given), None) = (name, static_name) {
+            let key = self.emit_name_value(given.name);
             self.builder
                 .set_function_name(closure, key, MethodKind::Method);
         }
@@ -199,8 +207,8 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_static_name(&self, name: Option<PropertyName>) -> Option<StringId> {
-        match name {
+    fn find_static_name(&self, name: Option<GivenName>) -> Option<StringId> {
+        match name.map(|given| given.name) {
             Some(PropertyName::Constant(key)) => self.find_key_text(key),
             Some(PropertyName::Computed(_)) | None => None,
         }

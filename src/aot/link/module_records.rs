@@ -348,6 +348,12 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.keeps_error(module) {
             flags |= ModuleFlags::KEEPS_ERROR;
         }
+        if graph.is_loaded_by_loader(module) {
+            flags |= ModuleFlags::IS_LOADED_BY_LOADER;
+        }
+        if graph.is_required_during_load(module) {
+            flags |= ModuleFlags::IS_REQUIRED_DURING_LOAD;
+        }
         if graph.names_way_to_module_objects(module) {
             flags |= ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
         }
@@ -368,6 +374,7 @@ impl RecordBuilder<'_, '_, '_> {
                 is_dynamic_star_export: request.is_dynamic_star_export,
                 kind: request.kind,
                 completes: request.completes,
+                is_hoisted: request.is_hoisted,
             })
             .collect()
     }

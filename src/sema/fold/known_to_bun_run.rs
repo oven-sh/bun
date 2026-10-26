@@ -1,7 +1,9 @@
 use super::evaluate::Value;
 use super::folder::Folder;
 use crate::bind::CommonJsVariable;
-use crate::hir::{BinOp, ExprId, ExprKind, UnOp};
+use crate::hir::{
+    BinOp, ExprId, ExprKind, FnBody, IdList, PatKind, StmtId, StmtKind, UnOp, VarKind,
+};
 use crate::import_sites::is_free_common_js;
 
 #[derive(Copy, Clone)]
@@ -19,6 +21,56 @@ impl Folder<'_, '_> {
 
     pub(super) fn is_folded_by_bun_run(&self, e: ExprId) -> bool {
         !self.folded_by_build_alone.contains(e.idx())
+    }
+
+    /// `bun run` puts the value of a constant in place of its reads only where nothing but declarations of constants
+    /// stands in front of it in its list of statements.
+    pub(super) fn is_in_constant_prefix(&self, init: ExprId) -> bool {
+        let initializers = self.initializers_in_constant_prefixes.get_or_init(|| {
+            let hir = self.hir;
+            let mut initializers = Vec::new();
+            self.push_constant_prefix(hir.body, &mut initializers);
+            for function in hir.fns.iter() {
+                if let FnBody::Block(statements) = function.body {
+                    self.push_constant_prefix(statements, &mut initializers);
+                }
+            }
+            for statement in hir.stmts.iter() {
+                if let StmtKind::Block(statements) = statement.kind {
+                    self.push_constant_prefix(statements, &mut initializers);
+                }
+            }
+            initializers.sort_unstable();
+            initializers
+        });
+        initializers.binary_search(&init).is_ok()
+    }
+
+    fn push_constant_prefix(&self, statements: IdList<StmtId>, initializers: &mut Vec<ExprId>) {
+        let hir = self.hir;
+        for statement in hir.ids(statements) {
+            match hir[statement].kind {
+                StmtKind::Empty
+                | StmtKind::Debugger
+                | StmtKind::Directive { .. }
+                | StmtKind::Interface(_)
+                | StmtKind::TypeAlias(_)
+                | StmtKind::Enum(_) => {}
+                StmtKind::Var(declarations) => {
+                    for declaration in declarations.iter() {
+                        let declaration = &hir[declaration];
+                        if !matches!(hir[declaration.pat].kind, PatKind::Ident(_)) {
+                            continue;
+                        }
+                        if declaration.kind != VarKind::Const {
+                            return;
+                        }
+                        initializers.extend(declaration.init.some());
+                    }
+                }
+                _ => return,
+            }
+        }
     }
 
     pub(super) fn condition_in_bun_run(&self, e: ExprId) -> Option<bool> {

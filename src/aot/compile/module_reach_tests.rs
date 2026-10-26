@@ -243,3 +243,53 @@ fn test_of_the_main_module_costs_nothing() {
     ];
     assert_eq!(describe(&files), ["main.cjs: value []", "a.cjs: names []"]);
 }
+
+#[test]
+fn binding_behind_a_getter_that_a_pattern_takes_from_an_awaited_import_stays() {
+    let files = [
+        (
+            "main.mjs",
+            "const { a } = await import('./a.cjs'); console.log(a);",
+        ),
+        (
+            "a.cjs",
+            "Object.defineProperty(exports, '__esModule', { value: true });\n\
+             Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return a; } });\n\
+             Object.defineProperty(exports, 'b', { enumerable: true, get: function () { return b; } });\n\
+             const a = 1;\n\
+             const b = 2;\n\
+             exports.default = 3;",
+        ),
+    ];
+    // The definitions have no code where the names are variables. `const a = 1;` stays.
+    assert_eq!(
+        describe(&files),
+        [
+            "main.mjs: ES []",
+            "a.cjs: names [Object.defineProperty(exports, '__esModule', { value: true }); | \
+             Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return a; } }); | \
+             Object.defineProperty(exports, 'b', { enumerable: true, get: function () { return b; } }); | \
+             const b = 2; | exports.default = 3;]"
+        ]
+    );
+}
+
+#[test]
+fn name_that_is_read_on_what_require_gives_of_an_es_module_that_hands_it_on_stays() {
+    let files = [
+        (
+            "main.cjs",
+            "const a = require('./a.mjs'); console.log(a.c);",
+        ),
+        ("a.mjs", "export { c, f } from './b.cjs';"),
+        ("b.cjs", LIBRARY),
+    ];
+    assert_eq!(
+        describe(&files),
+        [
+            "main.cjs: value []",
+            "a.mjs: ES []",
+            "b.cjs: names [class K { get() { return 1; } } | exports.f = function (x) { return x; }; | exports.K = K;]"
+        ]
+    );
+}

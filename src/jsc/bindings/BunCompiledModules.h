@@ -73,6 +73,9 @@ JSC::JSValue errorIfDebuggerIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin
 // These two come before the change they announce, and throw: the code of an ahead-of-time executable calls the module that each name stood for when it was compiled.
 void willSetRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key, JSC::JSValue entry);
 
+// (holder, except, receiver): calls each own function of `holder` that takes no parameters on `receiver`, in the order of the keys, but for the keys that `except` owns, and asks each object that comes back for Symbol.iterator.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCallOwnFunctionsWithoutParameters);
+
 inline void willChangeRequireOverride(JSC::JSGlobalObject* globalObject, JSC::AOT::RequireOverride location, bool isOverridden)
 {
     if (hasCompiledModules())

@@ -288,8 +288,8 @@ The first passes of the engine spell the requests out. Anybody may call a functi
 
 ```txt
   b0(v0: anything ~ undefined|null|L0, v1: anything ~ undefined|null|L0):
-    v10: undefined|null|L0 = Check v0 castType=undefined|null|L0 site=w2 @58
-    v11: undefined|null|L0 = Check v1 castType=undefined|null|L0 site=w3 @66
+    v10: undefined|null|L0 = Check v0 expectedType=undefined|null|L0 site=w2 @58
+    v11: undefined|null|L0 = Check v1 expectedType=undefined|null|L0 site=w3 @66
     Jump -> next b1() @45
   b1():
     v2: anything ~ number = PropGet v10 key="x" @93
@@ -297,7 +297,7 @@ The first passes of the engine spell the requests out. Anybody may call a functi
     v4: number|bigint ~ number = Mul v2, v3 @93
     ..
     v8: number|string|bigint ~ number = Add v4, v7 @93
-    v9: number = Check v8 castType=number site=w4 @93
+    v9: number = Check v8 expectedType=number site=w4 @93
     Return v9 @93
 ```
 
@@ -313,8 +313,8 @@ The flow analysis follows values through the whole program. For each `Check` it 
 
 ```txt
   b0(v0: L0, v1: anything ~ undefined|null|L0):
-    v10: L0 = AssumeType v0 castType=undefined|null|L0 @58
-    v11: undefined|null|L0 = Check v1 castType=undefined|null|L0 site=w3 @66
+    v10: L0 = AssumeType v0 provenType=undefined|null|L0 @58
+    v11: undefined|null|L0 = Check v1 expectedType=undefined|null|L0 site=w3 @66
     Jump -> next b1() @45
   b1():
     v2: int[-2147483643, 2147483647] = PropGet v10 key="x" accessSite=10 receivers=[L0] @93
@@ -322,7 +322,7 @@ The flow analysis follows values through the whole program. For each `Check` it 
     v4: int|whole = Mul v2, v3 @93
     v5: fractional = PropGet v10 key="y" accessSite=12 receivers=[L0] @105
     ..
-    v9: number = AssumeType v8 castType=number @93
+    v9: number = AssumeType v8 provenType=number @93
 ```
 
 - **`a` is proven.** The only call of `dot` passes `unit`, and the only thing that reaches `unit` is the object literal. The check has become an `AssumeType`, which is no code. The parameter is now declared `L0`, without `undefined` and `null`.
@@ -740,7 +740,7 @@ It has a text form with a parser and a printer, which is what you've been readin
 
 ### One schema, two languages
 
-The front end is Rust and the engine is C++, in two repositories. Everything that both have to agree on is written once, in `aot/ir/AOTSchema.def` and the 22 files of `aot/ir/schema/`. A generator in TypeScript, `aot/ir/generator/`, reads them and writes both sides. None of its output is checked in.
+The front end is Rust and the engine is C++, in two repositories. Everything that both have to agree on is written once, in `aot/ir/AOTSchema.def` and the 23 files of `aot/ir/schema/`. A generator in TypeScript, `aot/ir/generator/`, reads them and writes both sides. None of its output is checked in.
 
 | Generated for the engine, in C++                     | Generated for the front end, in Rust                                      |
 | ---------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -750,6 +750,7 @@ The front end is Rust and the engine is C++, in two repositories. Everything tha
 | Declared effects and result rules of every operation | A typed builder with one method per operation                             |
 | The per-operation half of the verifier               | Checks of what the builder is handed                                      |
 | Signatures of the run-time operations                | The records of the compile call: options, limits, statistics, diagnostics |
+| Rows of the image's tables with writer and reader    |                                                                           |
 
 This is the whole definition of a property read by name.
 
@@ -1607,12 +1608,21 @@ A `B3::Procedure` carries a `B3::Policy` (`b3/B3Policy.h`, `b3/air/AirPolicy.h`)
 `ChooseRepresentations` runs before B3 and decides in which form each value lives.
 
 ```txt aot/ir/AOTSchema.def
-enum Representation { | engine Unchosen Void Boolean Int32 Int64 Double OptionalInt64 OptionalDouble Cell Cell32 JSValue LiteralString RawWord }
+enum Representation (holdsCells: Bool, isPassedInFPR: Bool, canBeKey: Bool, canBeNamedByThrowWords: Bool) {
+    | engine
+    Unchosen(false, false, false, false) Void(false, false, false, false) Boolean(false, false, false, false)
+    Int32(false, false, true, false) Int64(false, false, true, true) Double(false, true, true, true)
+    DoubleWithPayload(false, true, true, true) ImpureDouble(false, true, true, true) OptionalInt64(false, false, false, true)
+    OptionalDouble(false, true, false, true) Cell(true, false, false, true) Cell32(true, false, false, false)
+    JSValue(true, false, true, true) LiteralString(true, false, false, false) RawWord(false, false, false, false)
+}
 ```
 
 A value's type bounds the choice and its uses decide it. An `int` that's only added to doubles is best kept as a `Double`. A `number` that's passed to a generic operation has to be a `JSValue` at that point. The pass puts conversions where they run least often. A guard is `Void`: it exists for ordering and costs no register.
 
 `OptionalDouble` and `OptionalInt64` hold a number or `undefined`, in a register, unboxed. They're why `sum += list[i]` doesn't need a branch for an index out of bounds. The marker for `undefined` is a NaN, and `NaN` is what the addition has to produce anyway.
+
+A `Double` is boxed without a test for NaN, because its NaN never has a payload. Two more forms hold the doubles that can't promise that. `ImpureDouble` is a double read from the bytes of a buffer (a `Float64Array` element, `DataView.getFloat32()`), or computed from one: `y[i] = k * x[i] + y[i]` never looks at it. `DoubleWithPayload` is what an operator makes of an operand that may be the marker for `undefined`. Both are in the same register as a `Double`, and both are tested for NaN only where a `Double` or a boxed value is wanted: a field, an argument, a return value.
 
 ### The calling convention
 

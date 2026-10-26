@@ -7,6 +7,7 @@ use super::written_operands::find_locked_builtin;
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, Mutability};
 use crate::ir::{TypeTable, ValueId};
+use crate::lower::expression::{Tail, TailCast};
 use crate::lower::{FileLowering, FunctionLowering};
 
 // The ways in which programs write "a list of this length": `Array.from({ length }, mapper)`, `Array(length).fill(value)`.
@@ -89,11 +90,29 @@ impl FileLowering<'_, '_, '_, '_> {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_maker(&mut self, call: ExprId, maker: BuiltinId, operands: &[ValueId]) -> ValueId {
+        self.emit_maker_at(call, maker, operands, Tail::No)
+    }
+
+    // A maker that stands for one call of the program is in tail position where that call is.
+    fn emit_maker_at(
+        &mut self,
+        call: ExprId,
+        maker: BuiltinId,
+        operands: &[ValueId],
+        tail: Tail<'_>,
+    ) -> ValueId {
         let callee = call_site(self.file, call).callee;
         self.set_position(self.file.last_mapped_position(callee));
         let made = self.emit_locked_call(maker, None, operands);
-        self.set_position(self.file.hir[call].pos);
-        self.claim_call_result(call, made)
+        let Tail::Yes { casts } = tail else {
+            self.set_position(self.file.hir[call].pos);
+            return self.claim_call_result(call, made);
+        };
+        let cast = TailCast {
+            position: self.call_result_position(call),
+            outer: casts,
+        };
+        self.return_call_in_tail_position(made, Tail::Yes { casts: Some(&cast) })
     }
 
     // `Array(-1)` throws before what stands behind it is evaluated.
@@ -116,7 +135,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     // Array.from({ length: n }), Array.from({ length: n }, mapper)
-    pub(super) fn lower_array_from(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
+    pub(super) fn lower_array_from(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        tail: Tail<'_>,
+    ) -> Option<ValueId> {
         let hir = self.file.hir;
         let arguments: SmallVec<[ExprId; 4]> = hir.ids(site.args).collect();
         if has_spread(hir, &arguments) {
@@ -130,16 +154,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let length = self.file.find_written_length(items)?;
         let length = self.lower_expression(length);
         let Some(mapper) = mapper else {
-            let made = self.emit_maker(call, BuiltinId::CompilerHelpersArrayOfUndefined, &[length]);
-            return Some(made);
+            let maker = BuiltinId::CompilerHelpersArrayOfUndefined;
+            return Some(self.emit_maker_at(call, maker, &[length], tail));
         };
         let is_written_as_function = matches!(hir[mapper].kind, ExprKind::Fn(_));
         let mut written = [self.builder.undefined(), self.lower_expression(mapper)];
         self.convert_arguments(call, &mut written);
         if is_written_as_function {
             let operands = [length, written[1]];
-            let made = self.emit_maker(call, BuiltinId::CompilerHelpersArrayFromLength, &operands);
-            return Some(made);
+            let maker = BuiltinId::CompilerHelpersArrayFromLength;
+            return Some(self.emit_maker_at(call, maker, &operands, tail));
         }
 
         // Array.from takes undefined for no mapper at all, and the list then holds undefined: not what a mapper returns.
@@ -147,12 +171,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let result = self.builder.create_variable(None);
         let join = self.create_block();
         self.builder.switch_to(split.taken);
-        let made = self.emit_maker(call, BuiltinId::CompilerHelpersArrayOfUndefined, &[length]);
+        let maker = BuiltinId::CompilerHelpersArrayOfUndefined;
+        let made = self.emit_maker_at(call, maker, &[length], tail);
         self.builder.write_variable(result, made);
         self.jump(join);
         self.builder.switch_to(split.not_taken);
         let operands = [length, split.not_taken_value];
-        let made = self.emit_maker(call, BuiltinId::CompilerHelpersArrayFromLength, &operands);
+        let maker = BuiltinId::CompilerHelpersArrayFromLength;
+        let made = self.emit_maker_at(call, maker, &operands, tail);
         self.builder.write_variable(result, made);
         self.jump(join);
         self.continue_in(join);

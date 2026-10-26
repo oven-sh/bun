@@ -91,9 +91,17 @@ pub(super) fn declare_constructor(
     class: ClassId,
     plan: &ClassPlan,
     name: Option<StringId>,
+    is_under_computed_key: bool,
 ) -> FunctionId {
+    let name_flags = match (name, is_under_computed_key) {
+        (Some(_), true) => FunctionFlags::IS_NAMED_BY_COMPUTED_KEY,
+        _ => FunctionFlags::default(),
+    };
     if let Some(function) = plan.constructor {
-        return function::declare_source_function(file, function, name);
+        return function::declare_source_function_with(file, function, &mut |_, header| {
+            header.name = header.name.or(name);
+            header.flags |= name_flags;
+        });
     }
     let key = FunctionKey::ImplicitConstructor(file.own_class(class));
     file.declare_function(key, |file| {
@@ -107,6 +115,7 @@ pub(super) fn declare_constructor(
             header.parameters.push(arguments);
         }
         file.finish_constructor_header(class, name, &mut header);
+        header.flags |= name_flags;
         header
     })
 }

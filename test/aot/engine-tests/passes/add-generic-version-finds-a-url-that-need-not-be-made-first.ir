@@ -14,7 +14,7 @@ function f0 name="readsThePathBehindACheck" parameters=[{type=string}, {type=any
     v2 = Builtin builtin=URL
     v3 = Construct v2, -, v0 calleeName="URL"
     v4 = Call v1
-    v5 = Check v4 castType=number
+    v5 = Check v4 expectedType=number
     v6 = PropGet v3 key="pathname"
     v7 = Add v6, v5
     Return v7

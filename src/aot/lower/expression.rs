@@ -11,7 +11,7 @@ use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, Keyword, TypeNodeId, TypeNodeKind, UnOp};
 use smallvec::SmallVec;
 
-use super::member::{self, PropertyName};
+use super::member::{self, GivenName};
 use super::{
     FileLowering, FunctionLowering, async_function, call, control, generator, module, object,
     operator, scope, template,
@@ -39,7 +39,7 @@ pub(in crate::lower) enum Tail<'t> {
 pub(in crate::lower) struct Evaluation<'t> {
     pub(in crate::lower) tail: Tail<'t>,
     pub(in crate::lower) chain_exit: Option<BlockId>,
-    pub(in crate::lower) name: Option<PropertyName>,
+    pub(in crate::lower) name: Option<GivenName>,
 }
 
 impl<'t> Evaluation<'t> {
@@ -77,6 +77,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn lower_expression_for_effect(&mut self, expression: ExprId) {
+        self.lower_for_effect(expression, true);
+    }
+
+    /// The build knows what the test answers, and `bun run` takes its value.
+    pub(crate) fn lower_decided_test(&mut self, test: ExprId) {
+        self.lower_for_effect(test, false);
+    }
+
+    fn lower_for_effect(&mut self, expression: ExprId, is_unused_in_bun_run: bool) {
         let position = self.file.hir[expression].pos;
         if !self.enter_nesting(position) {
             return;
@@ -87,8 +96,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Decision::GlobalPath(_) => {
                 self.lower_by_decision(expression, Evaluation::PLAIN);
             }
-            Decision::Unknown if self.file.decisions().is_truthy_without_effects(expression) => {}
-            Decision::Unknown => self.lower_for_effect_by_kind(expression),
+            Decision::Unknown
+                if is_unused_in_bun_run && self.file.is_read_left_out_by_bun_run(expression) => {}
+            Decision::Unknown if self.file.decisions().is_truthy_without_effects(expression) => {
+                self.lower_member_reads(expression);
+            }
+            Decision::Unknown => self.lower_for_effect_by_kind(expression, is_unused_in_bun_run),
         }
         self.leave_nesting();
     }
@@ -105,10 +118,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_named_evaluation(
         &mut self,
         expression: ExprId,
-        name: PropertyName,
+        name: impl Into<GivenName>,
     ) -> ValueId {
         let evaluation = Evaluation {
-            name: Some(name),
+            name: Some(name.into()),
             ..Evaluation::PLAIN
         };
         self.lower_expression_in(expression, evaluation)
@@ -353,7 +366,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !self.file.passes_every_assertion(expression, constant) {
             return lower(self, expression);
         }
-        if has_dead_zone {
+        if self.file.decisions().reads_member(inner) {
+            self.lower_member_reads(inner);
+        } else if has_dead_zone {
             lower(self, expression);
         }
         self.emit_constant(constant)
@@ -390,7 +405,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         converted
     }
 
-    fn lower_for_effect_by_kind(&mut self, expression: ExprId) {
+    fn lower_for_effect_by_kind(&mut self, expression: ExprId, is_unused_in_bun_run: bool) {
         if self.file.is_simplified(expression) {
             return self.lower_simplified_expression(expression);
         }
@@ -417,7 +432,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
                     assignment::lower_update(self, expression, ResultUsage::Effect);
                 }
-                UnOp::Void | UnOp::Not => self.lower_expression_for_effect(operand),
+                UnOp::Void => self.lower_expression_for_effect(operand),
+                UnOp::Not => self.lower_for_effect(operand, is_unused_in_bun_run),
+                UnOp::Typeof if self.file.builtins.of_expr(operand).is_some() => {
+                    self.lower_for_effect(operand, is_unused_in_bun_run);
+                }
                 UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Typeof | UnOp::Delete => {
                     self.lower_by_decision(expression, Evaluation::PLAIN);
                 }
@@ -426,7 +445,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             | ExprKind::AsConst(operand)
             | ExprKind::NonNull(operand)
             | ExprKind::Instantiation { expr: operand, .. } => {
-                self.lower_expression_for_effect(operand);
+                self.lower_for_effect(operand, is_unused_in_bun_run);
             }
             ExprKind::Null
             | ExprKind::True

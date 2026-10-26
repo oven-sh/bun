@@ -27,7 +27,7 @@ function f0 name="intoVariable" parameters=[{type=string}] results=[{type=anythi
   b0(v0: string):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 = Check v2 castType=undefined|null|L0 site=w0
+    v3 = Check v2 expectedType=undefined|null|L0 site=w0
     v4 = PropGet v3 key="id"
     Return v4
 }
@@ -36,7 +36,7 @@ function f0 name="intoVariable" parameters=[{type=string}] results=[{type=anythi
 # CHECK-NEXT: [[open0]]: boolean = JSONSourceOpen v0
 # CHECK-NEXT: Branch [[open0]] -> taken [[opened0]](| 0), notTaken
 # CHECK: [[done0]](v2:{{*}}):
-# CHECK-NEXT: v3:{{*}}= Check v2 castType=undefined|null|L0 site=w0
+# CHECK-NEXT: v3:{{*}}= Check v2 expectedType=undefined|null|L0 site=w0
 # CHECK-NEXT: v4:{{*}}= PropGet v3 key="id"
 # CHECK-NEXT: Return v4
 # CHECK: [[generic0]]() frequency=Rare:
@@ -51,38 +51,38 @@ function f1 name="checkOfAnotherValue" parameters=[{type=string}, {type=anything
   b0(v0: string, v1: anything):
     v2 = Undefined
     v3 = CallBuiltin -, v0, v2 overload=JSONParse/0
-    v4 = Check v1 castType=undefined|null|L0 site=w0
+    v4 = Check v1 expectedType=undefined|null|L0 site=w0
     v5 = NewArray v3, v4 contents=anything
     Return v5
 }
 # CHECK-LABEL: function f1 name="checkOfAnotherValue"
 # CHECK: v2: undefined = Undefined
 # CHECK-NEXT: v3:{{*}}= CallBuiltin -, v0, v2 overload=JSONParse/0
-# CHECK-NEXT: v4:{{*}}= Check v1 castType=undefined|null|L0 site=w0
+# CHECK-NEXT: v4:{{*}}= Check v1 expectedType=undefined|null|L0 site=w0
 
 function f2 name="asserted" parameters=[{type=string}] results=[{type=anything}] {
   b0(v0: string):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 = Check v2 castType=undefined|null|L0 site=w1
+    v3 = Check v2 expectedType=undefined|null|L0 site=w1
     Return v3
 }
 # CHECK-LABEL: function f2 name="asserted"
 # CHECK: = JSONSourceOpen v0
-# CHECK: = Check v2 castType=undefined|null|L0 site=w1
+# CHECK: = Check v2 expectedType=undefined|null|L0 site=w1
 # CHECK: = CallDirect {{*}} function=[[parserOfUser]]
 
 function f3 name="intoField" parameters=[{type=string}, {type=L2}] results=[{type=undefined}] {
   b0(v0: string, v1: L2):
     v2 = Undefined
     v3 = CallBuiltin -, v0, v2 overload=JSONParse/0
-    v4 = Check v3 castType=undefined|null|L0 site=w2
+    v4 = Check v3 expectedType=undefined|null|L0 site=w2
     PropSet v1, v4 key="user"
     Return
 }
 # CHECK-LABEL: function f3 name="intoField"
 # CHECK: = JSONSourceOpen v0
-# CHECK: v4:{{*}}= Check v3 castType=undefined|null|L0 site=w2
+# CHECK: v4:{{*}}= Check v3 expectedType=undefined|null|L0 site=w2
 # CHECK-NEXT: PropSet v1, v4 key="user"
 # CHECK: = CallDirect {{*}} function=[[parserOfUser]]
 
@@ -91,12 +91,12 @@ function f4 name="returned" parameters=[{type=string}] results=[{type=undefined|
   b0(v0: string):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 = Check v2 castType=undefined|null|L0 site=w3
+    v3 = Check v2 expectedType=undefined|null|L0 site=w3
     Return v3
 }
 # CHECK-LABEL: function f4 name="returned"
 # CHECK: = JSONSourceOpen v0
-# CHECK: v3:{{*}}= Check v2 castType=undefined|null|L0 site=w3
+# CHECK: v3:{{*}}= Check v2 expectedType=undefined|null|L0 site=w3
 # CHECK-NEXT: Return v3
 # CHECK: = CallDirect {{*}} function=[[parserOfUser]]
 
@@ -104,14 +104,14 @@ function f5 name="awaitedBody" flags=[IsAsync] parameters=[{type=Response}] resu
   b0(v0: Response):
     v1 = CallBuiltin v0 overload=ResponsePrototypeJson/0
     v2 = Await v1
-    v3 = Check v2 castType=undefined|null|L0 site=w0
+    v3 = Check v2 expectedType=undefined|null|L0 site=w0
     Return v3
 }
 # CHECK-LABEL: function f5 name="awaitedBody"
 # CHECK: v1:{{*}}= CallBuiltin -, v0 overload=CompilerHelpersJsonSourceOfBody/0
 # CHECK-NEXT: [[bytes5]]:{{*}}= Await v1
 # CHECK-NEXT: = JSONSourceOpen [[bytes5]]
-# CHECK: = Check v2 castType=undefined|null|L0 site=w0
+# CHECK: = Check v2 expectedType=undefined|null|L0 site=w0
 # CHECK: = CallDirect {{*}} function=[[parserOfUser]]
 
 # Where the test fails the generic version goes on with the value as it came
@@ -197,8 +197,8 @@ function f10 name="narrowerCheckBehindAWiderOne" parameters=[{type=string}] resu
   b0(v0: string):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 = Check v2 castType=undefined|null|L0|L1 site=w0
-    v4 = Check v3 castType=undefined|null|L0
+    v3 = Check v2 expectedType=undefined|null|L0|L1 site=w0
+    v4 = Check v3 expectedType=undefined|null|L0
     Return v4
 }
 # CHECK-LABEL: function f10 name="narrowerCheckBehindAWiderOne"
@@ -210,7 +210,7 @@ function f11 name="expectedTypeOfTheCheckedValue" parameters=[{type=string}] res
   b0(v0: string):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 ~ null|L0 = Check v2 castType=undefined|null|L0|L1 site=w0
+    v3 ~ null|L0 = Check v2 expectedType=undefined|null|L0|L1 site=w0
     Return v3
 }
 # CHECK-LABEL: function f11 name="expectedTypeOfTheCheckedValue"
@@ -223,7 +223,7 @@ function f12 name="readOperandOfANarrowing" parameters=[{type=string}, {type=und
     v2 = Undefined
     v3 = CallBuiltin -, v0, v2 overload=JSONParse/0
     v4 = NarrowByField v1, v3 key="id"
-    v5 = Check v4 castType=undefined|null|L0
+    v5 = Check v4 expectedType=undefined|null|L0
     Return v5
 }
 # CHECK-LABEL: function f12 name="readOperandOfANarrowing"

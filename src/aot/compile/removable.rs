@@ -3,8 +3,13 @@ mod tests;
 mod unused;
 
 use core::cell::RefCell;
+use std::sync::OnceLock;
 
 use bun_core::StackCheck;
+use bun_js_parser::defines_table::{
+    GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
+    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
+};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{
     Binding, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl, ModuleInstanceState,
@@ -77,6 +82,38 @@ fn is_read_without_code(builtin: BuiltinId, is_global: bool) -> bool {
         BuiltinKind::Accessor | BuiltinKind::NativeBinding => false,
         _ => is_global || !entry.flags.contains(BuiltinFlags::IS_LAZILY_CREATED),
     }
+}
+
+fn find_path(names: &[&[u8]]) -> Option<BuiltinId> {
+    let (first, members) = names.split_first()?;
+    let global = table::global(table::find_name(first)?)?;
+    members.iter().try_fold(global, |holder, name| {
+        table::own_member(table::canonical_id(holder), table::find_name(name)?)
+    })
+}
+
+// `bun run` does not read such a member where nothing takes its value.
+pub(crate) fn is_read_left_out_by_bun_run(member: BuiltinId) -> bool {
+    static READS: OnceLock<Vec<BuiltinId>> = OnceLock::new();
+    let reads = READS.get_or_init(|| {
+        let paths = GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES
+            .iter()
+            .chain(GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING);
+        let mut reads: Vec<BuiltinId> = paths.filter_map(|names| find_path(names)).collect();
+        reads.sort_unstable();
+        reads
+    });
+    reads.binary_search(&member).is_ok()
+}
+
+// The host may add a member to an object below the global object when the member is first read. What a module exports is filled when the module runs.
+fn may_be_added_by_first_read(member: BuiltinId) -> bool {
+    let is_global =
+        |builtin: BuiltinId| table::entry(builtin).holder == Some(BuiltinId::GlobalThis);
+    // A constructor is made with its prototype.
+    table::entry(table::canonical_id(member)).kind != BuiltinKind::Prototype
+        && !is_global(member)
+        && is_global(table::root_of(member))
 }
 
 fn is_arithmetic(op: BinOp) -> bool {
@@ -273,7 +310,7 @@ impl<'a, 's> Removable<'a, 's> {
             Decision::GlobalPath(_) | Decision::DeferredData => return false,
             Decision::Unknown => {}
         }
-        if self.find_constant(expression).is_some() {
+        if !decisions.reads_member(expression) && self.find_constant(expression).is_some() {
             return true;
         }
         if !self.stack.is_safe_to_recurse() {
@@ -309,6 +346,7 @@ impl<'a, 's> Removable<'a, 's> {
                         || self.expression(branch)
                 };
                 self.expression(test)
+                    && !self.is_decided_by_member_read(test, &[branches.yes, branches.no])
                     && is_removable(branches.yes, true)
                     && is_removable(branches.no, false)
             }
@@ -592,7 +630,16 @@ impl<'a, 's> Removable<'a, 's> {
         };
         let is_guarded = matches!(op, BinOp::Or | BinOp::And)
             && self.is_guarded_free_name(right, left, op == BinOp::And);
-        converts_nothing && self.expression(left) && (is_guarded || self.expression(right))
+        converts_nothing
+            && self.expression(left)
+            && !self.is_decided_by_member_read(left, &[right])
+            && (is_guarded || self.expression(right))
+    }
+
+    // `bun run` takes the value of the test, which the build knows.
+    fn is_decided_by_member_read(&self, test: ExprId, arms: &[ExprId]) -> bool {
+        let decisions = &self.analysis.decisions;
+        decisions.reads_member(test) && arms.iter().any(|&arm| decisions.is_dead_expr(arm))
     }
 
     fn identifier(&self, identifier: ExprId) -> bool {
@@ -614,7 +661,7 @@ impl<'a, 's> Removable<'a, 's> {
                 }
                 _ => false,
             },
-            Some(Binding::Free) => self.is_builtin_read(identifier),
+            Some(Binding::Free) => self.is_builtin_read(identifier, false),
             None => false,
         }
     }
@@ -673,7 +720,7 @@ impl<'a, 's> Removable<'a, 's> {
         is_export_of_namespace
             || self.is_bound_to_binding(expression, object)
             || self.inlined_member(expression).is_some()
-            || self.is_builtin_read(expression)
+            || self.is_builtin_read(expression, false)
     }
 
     // The read of a binding of another module, whatever becomes of the object that the member is written on.
@@ -685,15 +732,17 @@ impl<'a, 's> Removable<'a, 's> {
     }
 
     // A free name, or a path of names from one, that the table of built-ins knows at every step.
-    fn is_builtin_read(&self, expression: ExprId) -> bool {
+    fn is_builtin_read(&self, expression: ExprId, is_below_path_left_out: bool) -> bool {
         let Some(Resolved::Builtin(path)) = self.builtins.of_expr(expression) else {
             return false;
         };
         match self.find_link(expression) {
             Some((object, _)) => {
+                let is_left_out = is_below_path_left_out || is_read_left_out_by_bun_run(path.id);
                 self.stack.is_safe_to_recurse()
                     && is_read_without_code(path.id, false)
-                    && self.is_builtin_read(object)
+                    && (is_left_out || !may_be_added_by_first_read(path.id))
+                    && self.is_builtin_read(object, is_left_out)
             }
             None => {
                 self.find_static_binding(expression) == Some(Binding::Free)

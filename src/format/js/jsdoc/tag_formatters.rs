@@ -44,6 +44,55 @@ fn dedent_lines(text: &[u8], base_indent: usize) -> Vec<u8> {
     result
 }
 
+/// Returns `text` without the blank lines at its start, and without the blanks before it on its first line. A line
+/// that has text keeps its indentation.
+fn trim_leading_blank_lines(text: &[u8]) -> &[u8] {
+    let first_text = text.len() - strings::trim_unicode_whitespace_start(text).len();
+    match strings::last_index_of_char(&text[..first_text], b'\n') {
+        Some(line_break) => &text[line_break + 1..],
+        None => &text[first_text..],
+    }
+}
+
+/// Splits `rest`, the lines after an opening fence, at its closing fence: the last line that is ``` behind its
+/// indentation. Returns the code inside, without the blank lines before the fence, and the closing fence. The fence
+/// has the indentation of the code once the example has been formatted. oxfmt 0.72 only finds a fence at the start of
+/// its line, so on its second pass it parses the whole block as code and prints ` *   ```;`.
+fn split_at_closing_fence(rest: &[u8]) -> Option<(&[u8], &[u8])> {
+    let mut end = rest.len();
+    loop {
+        let start = strings::last_index_of_char(&rest[..end], b'\n').map_or(0, |at| at + 1);
+        if strings::trim_unicode_whitespace_start(&rest[start..end]).starts_with(b"```") {
+            let inner = strings::trim_unicode_whitespace_end(&rest[..start]);
+            return Some((inner, strings::trim_unicode_whitespace(&rest[start..])));
+        }
+        if start == 0 {
+            return None;
+        }
+        end = start - 1;
+    }
+}
+
+/// Returns the lines of `code` without `indent` at the start of those that have it.
+fn without_indent(code: &[u8], indent: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(code.len());
+    for (index, line) in lines(code).enumerate() {
+        if index > 0 {
+            result.push(b'\n');
+        }
+        result.extend_from_slice(line.strip_prefix(indent).unwrap_or(line));
+    }
+    result
+}
+
+/// Returns `indent` if every line of `code` that has text starts with it, else nothing.
+fn indent_of_every_line<'a>(code: &[u8], indent: &'a [u8]) -> &'a [u8] {
+    let has_it = lines(code)
+        .filter(|line| !strings::is_all_unicode_whitespace(line))
+        .all(|line| line.starts_with(indent));
+    if has_it { indent } else { b"" }
+}
+
 /// True if there's an empty line between a tag and `raw`, the text that follows it.
 fn starts_with_blank_line(raw: &[u8]) -> bool {
     let rest = trim_start_matches(raw, |c| c == ' ');
@@ -76,18 +125,23 @@ fn push_default(out: &mut Vec<u8>, value: &[u8]) {
 impl JsdocFormatter<'_> {
     pub(super) fn format_example_tag(&mut self, normalized_kind: &[u8], tag: JSDocTag<'_>) {
         let raw_text = tag.comment().parsed_preserving_whitespace();
-        let mut code = strings::trim_unicode_whitespace(&raw_text);
+        // The first line of the code keeps its indentation, like the lines after it, so that `push_raw_code_lines`
+        // sees what an earlier pass wrote in front of all of them. oxfmt trims it, and so moves the lines after it to
+        // the right by the code indent on every pass.
+        let mut code = strings::trim_unicode_whitespace_end(trim_leading_blank_lines(&raw_text));
         let out = self.content_lines.begin_line();
         out.push(b'@');
         out.extend_from_slice(normalized_kind);
         // A caption stays on the tag's line.
         const END: &[u8] = b"</caption>";
-        if let Some(rest) = code.strip_prefix(b"<caption>")
+        if let Some(rest) = strings::trim_unicode_whitespace_start(code).strip_prefix(b"<caption>")
             && let Some(end) = strings::index_of(rest, END)
         {
             out.extend_from_slice(b" <caption>");
             out.extend_from_slice(&rest[..end + END.len()]);
-            code = strings::trim_unicode_whitespace(&rest[end + END.len()..]);
+            code = strings::trim_unicode_whitespace_end(trim_leading_blank_lines(
+                &rest[end + END.len()..],
+            ));
         }
         self.format_example_code(code);
     }
@@ -105,9 +159,16 @@ impl JsdocFormatter<'_> {
         }
     }
 
-    fn push_raw_code_lines(&mut self, code: &[u8], indent: &[u8]) {
-        for line in lines(code) {
-            let content = if self.options.keep_unparsable_example_indent {
+    /// Pushes the lines of code that is not formatted. With `keepUnparsableExampleIndent` each line keeps its
+    /// indentation, but for `written`: what an earlier pass wrote in front of the lines, which oxfmt writes once more
+    /// on every pass.
+    fn push_raw_code_lines(&mut self, code: &[u8], written: &[u8], indent: &[u8]) {
+        let kept = self
+            .options
+            .keep_unparsable_example_indent
+            .then(|| without_indent(code, written));
+        for line in lines(kept.as_deref().unwrap_or(code)) {
+            let content = if kept.is_some() {
                 line
             } else {
                 strings::trim_unicode_whitespace(line)
@@ -125,23 +186,18 @@ impl JsdocFormatter<'_> {
             return;
         }
         // Three backticks also parse as JavaScript, so check for fences first.
-        if let Some((first_line, rest)) = strings::split_once_char(code, b'\n')
-            && first_line.starts_with(b"```")
+        let (first_line, rest) = strings::split_once_char(code, b'\n').unwrap_or((code, b""));
+        let lang_line = strings::trim_unicode_whitespace_start(first_line);
+        if lang_line.starts_with(b"```")
+            && let Some((inner_code, closing_fence)) = split_at_closing_fence(rest)
         {
-            if let Some(closing) = strings::last_index_of(rest, b"\n```") {
-                return self.format_example_fenced_block(
-                    first_line,
-                    &rest[..closing],
-                    strings::trim_unicode_whitespace(&rest[closing + 1..]),
-                );
-            }
-            if strings::trim_unicode_whitespace(rest) == b"```" {
-                return self.format_example_fenced_block(
-                    first_line,
-                    b"",
-                    strings::trim_unicode_whitespace(rest),
-                );
-            }
+            let fence_indent = &first_line[..first_line.len() - lang_line.len()];
+            return self.format_example_fenced_block(
+                fence_indent,
+                lang_line,
+                inner_code,
+                closing_fence,
+            );
         }
         let indent = self.code_indent();
         let effective_width = self.wrap_width.saturating_sub(self.code_indent_width());
@@ -150,12 +206,15 @@ impl JsdocFormatter<'_> {
             .filter(|formatted| lines(formatted).count() <= lines(code).count() * 2 + 1)
         {
             Some(formatted) => self.push_formatted_code_lines(&formatted, indent),
-            None => self.push_raw_code_lines(code, indent),
+            // The code indent is in front of every line once the example has been formatted.
+            None => self.push_raw_code_lines(code, indent_of_every_line(code, indent), indent),
         }
     }
 
+    /// The code of a fence is indented like the fence: what is in front of the fence comes off the code.
     fn format_example_fenced_block(
         &mut self,
+        fence_indent: &[u8],
         lang_line: &[u8],
         inner_code: &[u8],
         closing_fence: &[u8],
@@ -170,7 +229,7 @@ impl JsdocFormatter<'_> {
             };
             match formatted {
                 Some(formatted) => self.push_formatted_code_lines(&formatted, indent),
-                None => self.push_raw_code_lines(inner_code, indent),
+                None => self.push_raw_code_lines(inner_code, fence_indent, indent),
             }
         }
         self.content_lines.push([indent, closing_fence].concat());

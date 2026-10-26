@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 
@@ -307,6 +307,8 @@ describe("an inlined env value that is not UTF-8", () => {
       "PUB_OVER=\xC0\xAF",
       "PUB_STRAY=a\xA9b",
       "PUB_KEY=caf\xFC",
+      "PUB_HEAD=caf\xC3",
+      "PUB_TAIL=\xA9!",
       "",
     ].join("\n"),
     "latin1",
@@ -320,6 +322,7 @@ describe("an inlined env value that is not UTF-8", () => {
       equal: [${E}.PUB_E9 === ${E}.PUB_E8, ${E}.PUB_E9 == ${E}.PUB_E8, ${E}.PUB_E9 !== ${E}.PUB_E8, ${E}.PUB_E9 === "x\\uFFFDy", ${E}.PUB_E9 < ${E}.PUB_E8],
       over: [${E}.PUB_OVER.length, ${E}.PUB_OVER.charCodeAt(0), ${E}.PUB_OVER.charCodeAt(1), ${E}.PUB_OVER[1]],
       stray: [${E}.PUB_STRAY.length, ${E}.PUB_STRAY.charCodeAt(1), ${E}.PUB_STRAY[2], ${E}.PUB_STRAY === "a\\uFFFDb"],
+      seam: [(${E}.PUB_HEAD + ${E}.PUB_TAIL).length, (${E}.PUB_HEAD + ${E}.PUB_TAIL)[5], (${E}.PUB_HEAD + ${E}.PUB_TAIL).charCodeAt(4)],
     }));
   `;
   const text = {
@@ -329,10 +332,12 @@ describe("an inlined env value that is not UTF-8", () => {
     equal: [true, true, false, true, false],
     over: [2, 65533, 65533, "\uFFFD"],
     stray: [3, 65533, "b", true],
+    seam: [6, "!", 65533],
   };
   // PUB_OVER and PUB_STRAY have a byte that starts no sequence. The printer writes that byte of a literal as it is, and
-  // Bun reads it as Latin-1 when it loads the bundle. So only a fold has the text of those two.
-  const { over: _over, stray: _stray, ...textOfLiterals } = text;
+  // Bun reads it as Latin-1 when it loads the bundle. So only a fold has the text of those two. PUB_HEAD ends in the
+  // start of a sequence that PUB_TAIL goes on with: each is a text of its own, and the joined literal is not.
+  const { over: _over, stray: _stray, seam: _seam, ...textOfLiterals } = text;
 
   const files = {
     ".env": dotEnv,
@@ -367,6 +372,8 @@ describe("an inlined env value that is not UTF-8", () => {
       .trim()
       .split("\n")
       .map(line => JSON.parse(line));
+  // Each test runs bun several times, which takes seconds on a debug build. `itBundled` has no limit there.
+  const timeout = isDebug ? 30_000 : undefined;
 
   test.concurrent("the text is what process.env has at run time", async () => {
     using dir = tempDir("bun-build-env-not-inlined", files);
@@ -376,39 +383,54 @@ describe("an inlined env value that is not UTF-8", () => {
   });
 
   for (const backend of ["cli", "api"] as const) {
-    test.concurrent(`${backend}: a fold and the printed literal are that text`, async () => {
-      using dir = tempDir(`bun-build-env-bytes-${backend}`, files);
-      const cwd = String(dir);
-      if (backend === "api") {
-        expect(await run(cwd, bunExe(), "build.mjs")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-      } else {
-        const builds = ["browser", "bun"].flatMap(target =>
-          ["plain", "minify"].map(async mode => {
-            const flags = mode === "minify" ? ["--minify-syntax"] : [];
-            const outfile = `cli-${target}-${mode}.mjs`;
-            const cmd = ["build", "--env", "PUB_*", `--target=${target}`, ...flags, "entry.mjs", "--outfile", outfile];
-            return { outfile, ...(await run(cwd, bunExe(), ...cmd)), stdout: "" };
-          }),
-        );
-        expect(await Promise.all(builds)).toEqual(
-          bundles(backend).map(outfile => ({ outfile: outfile.slice(2), stdout: "", stderr: "", exitCode: 0 })),
-        );
-      }
-      const { stdout, stderr, exitCode } = await run(cwd, bunExe(), "run.mjs", ...bundles(backend));
-      const [browserPlain, browserMinify, bunPlain, bunMinify] = rowsOf(stdout);
-      expect({ browserMinify, bunMinify, stderr }).toEqual({ browserMinify: text, bunMinify: text, stderr: "" });
-      expect({ browserPlain, bunPlain }).toEqual({
-        browserPlain: expect.objectContaining(textOfLiterals),
-        bunPlain: expect.objectContaining(textOfLiterals),
-      });
-      expect(exitCode).toBe(0);
-    });
+    test.concurrent(
+      `${backend}: a fold and the printed literal are that text`,
+      async () => {
+        using dir = tempDir(`bun-build-env-bytes-${backend}`, files);
+        const cwd = String(dir);
+        if (backend === "api") {
+          expect(await run(cwd, bunExe(), "build.mjs")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+        } else {
+          const builds = ["browser", "bun"].flatMap(target =>
+            ["plain", "minify"].map(async mode => {
+              const flags = mode === "minify" ? ["--minify-syntax"] : [];
+              const outfile = `cli-${target}-${mode}.mjs`;
+              const cmd = [
+                "build",
+                "--env",
+                "PUB_*",
+                `--target=${target}`,
+                ...flags,
+                "entry.mjs",
+                "--outfile",
+                outfile,
+              ];
+              return { outfile, ...(await run(cwd, bunExe(), ...cmd)), stdout: "" };
+            }),
+          );
+          expect(await Promise.all(builds)).toEqual(
+            bundles(backend).map(outfile => ({ outfile: outfile.slice(2), stdout: "", stderr: "", exitCode: 0 })),
+          );
+        }
+        const { stdout, stderr, exitCode } = await run(cwd, bunExe(), "run.mjs", ...bundles(backend));
+        const [browserPlain, browserMinify, bunPlain, bunMinify] = rowsOf(stdout);
+        expect({ browserMinify, bunMinify, stderr }).toEqual({ browserMinify: text, bunMinify: text, stderr: "" });
+        expect({ browserPlain, bunPlain }).toEqual({
+          browserPlain: expect.objectContaining(textOfLiterals),
+          bunPlain: expect.objectContaining(textOfLiterals),
+        });
+        expect(exitCode).toBe(0);
+      },
+      timeout,
+    );
   }
-  test.concurrent("a fold is the constant that a dead branch, a macro argument and a computed key need", async () => {
-    using dir = tempDir("bun-build-env-constant", {
-      ".env": dotEnv,
-      "macro.mjs": `export const units = (length, char) => [length * 2, char.charCodeAt(0)];`,
-      "entry.mjs": /* js */ `
+  test.concurrent(
+    "a fold is the constant that a dead branch, a macro argument and a computed key need",
+    async () => {
+      using dir = tempDir("bun-build-env-constant", {
+        ".env": dotEnv,
+        "macro.mjs": `export const units = (length, char) => [length * 2, char.charCodeAt(0)];`,
+        "entry.mjs": /* js */ `
         import { units } from "./macro.mjs" with { type: "macro" };
         if (process.env.PUB_NAME[5] === "b") console.log("name");
         else require("./missing-1.js");
@@ -422,58 +444,69 @@ describe("an inlined env value that is not UTF-8", () => {
         globalThis.byKey = {};
         byKey[process.env.PUB_KEY] = 1;
       `,
-    });
-    const cwd = String(dir);
-    const built = await run(
-      cwd,
-      bunExe(),
-      "build",
-      "--env",
-      "PUB_*",
-      "--minify-syntax",
-      "entry.mjs",
-      "--outfile",
-      "out.mjs",
-    );
-    expect({ ...built, stdout: "" }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-    expect(await run(cwd, bunExe(), "out.mjs")).toEqual({
-      stdout: "name\ncut\nword\nequal\n[16,65533]\n",
-      stderr: "",
-      exitCode: 0,
-    });
-    // A key that is not UTF-8 is no name to write after a dot.
-    expect(await Bun.file(`${cwd}/out.mjs`).text()).toContain('byKey["caf');
-  });
+      });
+      const cwd = String(dir);
+      const built = await run(
+        cwd,
+        bunExe(),
+        "build",
+        "--env",
+        "PUB_*",
+        "--minify-syntax",
+        "entry.mjs",
+        "--outfile",
+        "out.mjs",
+      );
+      expect({ ...built, stdout: "" }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      expect(await run(cwd, bunExe(), "out.mjs")).toEqual({
+        stdout: "name\ncut\nword\nequal\n[16,65533]\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      // A key that is not UTF-8 is no name to write after a dot.
+      expect(await Bun.file(`${cwd}/out.mjs`).text()).toContain('byKey["caf');
+    },
+    timeout,
+  );
 
   // The shell gives the bytes of the script to bun as they are.
-  test.skipIf(isWindows).concurrent("a --define value with the same bytes is the same text", async () => {
-    using dir = tempDir("bun-build-define-bytes", {
-      "build.sh": Buffer.from(`exec "$1" build --define 'NAME="Caf\xE9-bar"' $3 entry.mjs --outfile "$2"\n`, "latin1"),
-      "entry.mjs": `console.log(JSON.stringify([NAME[5], NAME.charCodeAt(5), (NAME + "/x").length, NAME < "D", NAME.length]));`,
-      "run.mjs": files["run.mjs"],
-    });
-    const cwd = String(dir);
-    const build = async (outfile: string, ...flags: string[]) => ({
-      ...(await run(cwd, "sh", "build.sh", bunExe(), outfile, ...flags)),
-      stdout: "",
-    });
-    const built = { stdout: "", stderr: "", exitCode: 0 };
-    expect(await Promise.all([build("plain.mjs"), build("minify.mjs", "--minify-syntax")])).toEqual([built, built]);
-    expect(await run(cwd, bunExe(), "run.mjs", "./plain.mjs", "./minify.mjs")).toEqual({
-      stdout: '["b",98,10,true,8]\n["b",98,10,true,8]\n',
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  test.skipIf(isWindows).concurrent(
+    "a --define value with the same bytes is the same text",
+    async () => {
+      using dir = tempDir("bun-build-define-bytes", {
+        "build.sh": Buffer.from(
+          `exec "$1" build --define 'NAME="Caf\xE9-bar"' $3 entry.mjs --outfile "$2"\n`,
+          "latin1",
+        ),
+        "entry.mjs": `console.log(JSON.stringify([NAME[5], NAME.charCodeAt(5), (NAME + "/x").length, NAME < "D", NAME.length]));`,
+        "run.mjs": files["run.mjs"],
+      });
+      const cwd = String(dir);
+      const build = async (outfile: string, ...flags: string[]) => ({
+        ...(await run(cwd, "sh", "build.sh", bunExe(), outfile, ...flags)),
+        stdout: "",
+      });
+      const built = { stdout: "", stderr: "", exitCode: 0 };
+      expect(await Promise.all([build("plain.mjs"), build("minify.mjs", "--minify-syntax")])).toEqual([built, built]);
+      expect(await run(cwd, bunExe(), "run.mjs", "./plain.mjs", "./minify.mjs")).toEqual({
+        stdout: '["b",98,10,true,8]\n["b",98,10,true,8]\n',
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
 
   // The resolver needs the bytes of a joined path as they are: a join does not make text of them.
-  test.skipIf(!isLinux).concurrent("a path through bytes that are not UTF-8 resolves", async () => {
-    using dir = tempDir("bun-build-env-path-bytes", {
-      ".env": Buffer.from(
-        "PUB_DIR=./d\xE9r\nPUB_A=./d\xC3\nPUB_B=\xA9r\nPUB_HIGH=./d\xED\xA0\xBD\nPUB_LOW=\xED\xB8\x80r\n",
-        "latin1",
-      ),
-      "entry.mjs": /* js */ `
+  test.skipIf(!isLinux).concurrent(
+    "a path through bytes that are not UTF-8 resolves",
+    async () => {
+      using dir = tempDir("bun-build-env-path-bytes", {
+        ".env": Buffer.from(
+          "PUB_DIR=./d\xE9r\nPUB_A=./d\xC3\nPUB_B=\xA9r\nPUB_HIGH=./d\xED\xA0\xBD\nPUB_LOW=\xED\xB8\x80r\n",
+          "latin1",
+        ),
+        "entry.mjs": /* js */ `
         console.log(require(process.env.PUB_DIR + "/m.js"));
         console.log(require(\`\${process.env.PUB_DIR}/m.js\`));
         console.log((await import(process.env.PUB_DIR + "/m.js")).default);
@@ -482,39 +515,41 @@ describe("an inlined env value that is not UTF-8", () => {
         // The two halves of a surrogate pair, three bytes each.
         console.log(require(process.env.PUB_HIGH + process.env.PUB_LOW + "/m.js"));
       `,
-      "nested/dir.cjs": `console.log(require(import.meta.dir + "/m.cjs"));`,
-      "nested/m.cjs": `module.exports = "in the directory of the module";`,
-    });
-    const cwd = String(dir);
-    const at = (name: string) => Buffer.concat([Buffer.from(cwd + "/"), Buffer.from(name, "latin1")]);
-    for (const name of ["d\xE9r", "d\xC3\xA9r", "d\xED\xA0\xBD\xED\xB8\x80r"]) {
-      mkdirSync(at(name));
-      writeFileSync(
-        at(`${name}/m.js`),
-        `module.exports = ${JSON.stringify(Buffer.from(name, "latin1").toString("hex"))};`,
-      );
-    }
-    renameSync(`${cwd}/nested`, at("p\xEFx"));
-    const built = { stdout: "", stderr: "", exitCode: 0 };
-    const build = async (...cmd: string[]) => ({ ...(await run(cwd, ...cmd)), stdout: "" });
-    const bundle = (outfile: string, ...flags: string[]) =>
-      build(bunExe(), "build", "--env", "PUB_*", "--target=bun", ...flags, "entry.mjs", "--outfile", outfile);
-    // `import.meta.dir` of a module in a directory with such a name.
-    const inDir = `cd p*x && exec "$0" build --target=bun --format=cjs dir.cjs --outfile ../dir.cjs`;
-    expect(
-      await Promise.all([
-        bundle("plain.mjs"),
-        bundle("minify.mjs", "--minify-syntax"),
-        build("sh", "-c", inDir, bunExe()),
-      ]),
-    ).toEqual([built, built, built]);
-    const modules = { stdout: "64e972\n64e972\n64e972\n64c3a972\n64eda0bdedb88072\n", stderr: "", exitCode: 0 };
-    expect(
-      await Promise.all([
-        run(cwd, bunExe(), "plain.mjs"),
-        run(cwd, bunExe(), "minify.mjs"),
-        run(cwd, bunExe(), "dir.cjs"),
-      ]),
-    ).toEqual([modules, modules, { stdout: "in the directory of the module\n", stderr: "", exitCode: 0 }]);
-  });
+        "nested/dir.cjs": `console.log(require(import.meta.dir + "/m.cjs"));`,
+        "nested/m.cjs": `module.exports = "in the directory of the module";`,
+      });
+      const cwd = String(dir);
+      const at = (name: string) => Buffer.concat([Buffer.from(cwd + "/"), Buffer.from(name, "latin1")]);
+      for (const name of ["d\xE9r", "d\xC3\xA9r", "d\xED\xA0\xBD\xED\xB8\x80r"]) {
+        mkdirSync(at(name));
+        writeFileSync(
+          at(`${name}/m.js`),
+          `module.exports = ${JSON.stringify(Buffer.from(name, "latin1").toString("hex"))};`,
+        );
+      }
+      renameSync(`${cwd}/nested`, at("p\xEFx"));
+      const built = { stdout: "", stderr: "", exitCode: 0 };
+      const build = async (...cmd: string[]) => ({ ...(await run(cwd, ...cmd)), stdout: "" });
+      const bundle = (outfile: string, ...flags: string[]) =>
+        build(bunExe(), "build", "--env", "PUB_*", "--target=bun", ...flags, "entry.mjs", "--outfile", outfile);
+      // `import.meta.dir` of a module in a directory with such a name.
+      const inDir = `cd p*x && exec "$0" build --target=bun --format=cjs dir.cjs --outfile ../dir.cjs`;
+      expect(
+        await Promise.all([
+          bundle("plain.mjs"),
+          bundle("minify.mjs", "--minify-syntax"),
+          build("sh", "-c", inDir, bunExe()),
+        ]),
+      ).toEqual([built, built, built]);
+      const modules = { stdout: "64e972\n64e972\n64e972\n64c3a972\n64eda0bdedb88072\n", stderr: "", exitCode: 0 };
+      expect(
+        await Promise.all([
+          run(cwd, bunExe(), "plain.mjs"),
+          run(cwd, bunExe(), "minify.mjs"),
+          run(cwd, bunExe(), "dir.cjs"),
+        ]),
+      ).toEqual([modules, modules, { stdout: "in the directory of the module\n", stderr: "", exitCode: 0 }]);
+    },
+    timeout,
+  );
 });

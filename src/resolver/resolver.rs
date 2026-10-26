@@ -1654,7 +1654,7 @@ impl<'a> Resolver<'a> {
                         ));
                     }
                 } else if !dir.abs_real_path.is_empty()
-                    && let Some(real) = Self::entry_abs_path(query.entry())
+                    && let Some(real) = Self::entry_abs_path(query.entry(), query.entry().base())
                 {
                     // Behind a link, `dir` lists the real directory, so the entry's path is real.
                     if core::ptr::eq(real.as_ptr(), path.text.as_ptr()) {
@@ -3801,7 +3801,9 @@ impl<'a> Resolver<'a> {
                     return MatchStatus::NotFound;
                 }
 
-                let Some(absolute_out_path) = Self::entry_abs_path(entry_query.entry()) else {
+                let Some((absolute_out_path, _)) =
+                    Self::found_file_path(entry_query.entry(), resolved_dir_info.abs_path, base)
+                else {
                     esm_resolution.status = Status::ModuleNotFound;
                     return MatchStatus::NotFound;
                 };
@@ -3961,7 +3963,11 @@ impl<'a> Resolver<'a> {
         query: &crate::fs::EntryLookup<'static>,
         out: &mut MatchResult,
     ) -> bool {
-        let Some(abs_path) = Self::entry_abs_path(query.entry()) else {
+        let Some((abs_path, _)) = Self::found_file_path(
+            query.entry(),
+            resolved_dir_info.abs_path,
+            query.entry().base(),
+        ) else {
             return false;
         };
         let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
@@ -5464,7 +5470,9 @@ impl<'a> Resolver<'a> {
             if unsafe { lookup.entry().kind(rfs, self.store_fd) }
                 == Fs::file_system::EntryKind::File
             {
-                let Some(out_buf) = Self::entry_abs_path(lookup.entry()) else {
+                let Some((out_buf, _)) =
+                    Self::found_file_path(lookup.entry(), dir_info.abs_path, &base[..])
+                else {
                     return MatchStatus::NotFound;
                 };
 
@@ -5975,7 +5983,9 @@ impl<'a> Resolver<'a> {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
 
-                let Some(abs_path) = Self::entry_abs_path(query.entry()) else {
+                let Some((abs_path, via_link)) =
+                    Self::found_file_path(query.entry(), dir_path, query.entry().base())
+                else {
                     dec_ret!(None);
                 };
 
@@ -5983,7 +5993,7 @@ impl<'a> Resolver<'a> {
                     path: abs_path,
                     dirname_fd: plain_dirname_fd,
                     file_fd: query.entry().cache().fd,
-                    via_link: !listing_is_named(query.entry().dir, dir_path),
+                    via_link,
                 }));
             }
         }
@@ -6051,14 +6061,16 @@ impl<'a> Resolver<'a> {
                                 ));
                             }
 
-                            let Some(abs_path) = Self::entry_abs_path(query.entry()) else {
+                            let Some((abs_path, via_link)) =
+                                Self::found_file_path(query.entry(), dir_path, &buffer[..])
+                            else {
                                 dec_ret!(None);
                             };
                             dec_ret!(Some(LoadResult {
                                 path: abs_path,
                                 dirname_fd: ts_dirname_fd,
                                 file_fd: query.entry().cache().fd,
-                                via_link: !listing_is_named(query.entry().dir, dir_path),
+                                via_link,
                             }));
                         }
                     }
@@ -6210,11 +6222,13 @@ impl<'a> Resolver<'a> {
                 }
 
                 // now that we've found it, we allocate it.
+                let (found, via_link) =
+                    Self::found_file_path(query.entry(), Dirname::dirname(path), file_name)?;
                 return Some(LoadResult {
-                    path: Self::entry_abs_path(query.entry())?,
+                    path: found,
                     dirname_fd,
                     file_fd: query.entry().cache().fd,
-                    via_link: !listing_is_named(query.entry().dir, Dirname::dirname(path)),
+                    via_link,
                 });
             }
         }
@@ -6222,11 +6236,12 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    /// The one writer of `Entry.abs_path`: `entry.dir` joined with the name. `None` if too long.
-    pub fn entry_abs_path(entry: &Fs::file_system::Entry) -> Option<&'static [u8]> {
+    /// The one writer of `Entry.abs_path`: `entry.dir` joined with `name`, the name the file
+    /// was first found by. `None` if too long.
+    pub fn entry_abs_path(entry: &Fs::file_system::Entry, name: &[u8]) -> Option<&'static [u8]> {
         entry
             .abs_path_or_try_fill(|| {
-                let parts = [entry.dir, entry.base()];
+                let parts = [entry.dir, name];
                 let joined = Fs::FileSystem::get()
                     .abs_buf_checked(&parts, bufs!(entry_abs_path))
                     .ok_or(())?;
@@ -6238,6 +6253,64 @@ impl<'a> Resolver<'a> {
             })
             .ok()
             .map(Interned::as_bytes)
+    }
+
+    /// The path of the file `entry`, found as `name` in the directory walked as `dir`, and
+    /// whether a link led to the directory. Behind a link the file goes by the name the
+    /// directory has for it, and by the path walked if its real path is too long.
+    fn found_file_path(
+        entry: &Fs::file_system::Entry,
+        dir: &[u8],
+        name: &[u8],
+    ) -> Option<(&'static [u8], bool)> {
+        if listing_is_named(entry.dir, dir) {
+            return Some((Self::entry_abs_path(entry, name)?, false));
+        }
+        if let Some(real) = Self::entry_abs_path(entry, entry.base()) {
+            return Some((real, true));
+        }
+        let walked = Fs::FileSystem::get().abs_buf_checked(&[dir, name], bufs!(entry_abs_path))?;
+        Some((
+            Fs::file_system::DirnameStore::instance()
+                .append_slice(walked)
+                .expect("unreachable"),
+            false,
+        ))
+    }
+
+    /// Where the file of `entry` is by what the entry keeps, for a reader that ran `kind()`
+    /// on it: where a link leads, else `Entry.abs_path`. `None` until that is filled.
+    pub fn entry_file_path(entry: &Fs::file_system::Entry) -> Option<&'static [u8]> {
+        let own = entry.abs_path();
+        if own.is_empty() {
+            return None;
+        }
+        let link = entry.cache().symlink;
+        Some(if link.is_empty() {
+            own.as_bytes()
+        } else {
+            link.as_bytes()
+        })
+    }
+
+    /// Fills `Entry.abs_path` if `entry_file_path` then gives `fd_path`, which a reader got
+    /// from a descriptor of the file. Otherwise `None`, and the entry is left as it was.
+    pub fn fill_entry_file_path(
+        entry: &Fs::file_system::Entry,
+        fd_path: &[u8],
+    ) -> Option<&'static [u8]> {
+        let link = entry.cache().symlink;
+        if link.is_empty() {
+            let own = Fs::FileSystem::get()
+                .abs_buf_checked(&[entry.dir, entry.base()], bufs!(entry_abs_path))?;
+            if own != fd_path {
+                return None;
+            }
+        } else if link.as_bytes() != fd_path {
+            return None;
+        }
+        Self::entry_abs_path(entry, entry.base())?;
+        Self::entry_file_path(entry).filter(|kept| *kept == fd_path)
     }
 
     /// The real path of the directory walked as `path`: where a link at `path`

@@ -422,7 +422,7 @@ impl<'a> Scanner<'a> {
 
                 // Marks `entry` as seen when `path` is its own. The file is kept as `path`.
                 let entry_path = if self.reached_by_own_path(entry) {
-                    bun_resolver::Resolver::entry_abs_path(entry)
+                    bun_resolver::Resolver::entry_abs_path(entry, entry.base())
                 } else {
                     None
                 };

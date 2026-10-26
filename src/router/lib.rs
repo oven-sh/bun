@@ -848,8 +848,12 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            // Asked on every load: `Entry.abs_path` is the entry's path, not where a link leads.
-            let abs_path_str: &'static [u8] = {
+            // The file is asked once per entry: a load from the cache opens no route file.
+            let abs_path_str: &'static [u8] = if let Some(kept) =
+                bun_resolver::Resolver::entry_file_path(entry_r)
+            {
+                kept
+            } else {
                 let mut abs_path_str: &[u8] = b"";
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
@@ -920,10 +924,10 @@ impl Route {
                     }
                 };
 
-                // No new string per load when the file is where its `Entry` says.
-                match bun_resolver::Resolver::entry_abs_path(entry_r) {
-                    Some(entry_path) if entry_path == _abs => entry_path,
-                    _ => FileSystem::instance()
+                // An entry that does not give this path by itself is asked again on the next load.
+                match bun_resolver::Resolver::fill_entry_file_path(entry_r, _abs) {
+                    Some(kept) => kept,
+                    None => FileSystem::instance()
                         .dirname_store()
                         .append(_abs)
                         .expect("unreachable"),

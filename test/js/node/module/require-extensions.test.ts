@@ -208,7 +208,9 @@ test.concurrent("default loader throws when module._compile was replaced with a 
 // cache stored straight into the object. With a literal key (`[".js"] =`) the
 // interpreter caches the second execution already; with a variable key (the
 // `extensions[ext] =` loop in pirates, @babel/register and ts-node) the cache
-// appears once the helper is JIT compiled, which the last test forces.
+// appears once the helper is JIT compiled. The last two tests run their helpers
+// as DFG code. There the compiler can also store straight into the object with
+// no cache at all, once a read in the same helper tells it the object's structure.
 describe("assigning require.extensions repeatedly from one statement", () => {
   test("a builtin extension can be overridden again after it was restored", () => {
     using dir = tempDir("require-extensions-reoverride", {
@@ -396,6 +398,64 @@ describe("assigning require.extensions repeatedly from one statement", () => {
       ],
       dispatched: ["js-0", "hooked-0", "js-1", "hooked-1", "js-2", "hooked-2"],
       restored: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a helper that reads the current handler before it stores a new one keeps working after it is DFG compiled", async () => {
+    const files: Record<string, string> = {
+      "index.js": `
+        const Module = require("node:module");
+        const path = require("node:path");
+        const { numberOfDFGCompiles, noInline } = require("bun:jsc");
+        const dispatched = [];
+
+        function wrap(tag) {
+          const previous = Module._extensions[".wrapped"];
+          Module._extensions[".wrapped"] = function (module) {
+            dispatched.push(tag);
+            module.exports = tag;
+          };
+          return previous;
+        }
+        noInline(wrap);
+
+        // No require() in here: this only gets the helper compiled by every JIT tier.
+        for (let i = 0; i < 300; i++) wrap("warm-" + i);
+        const compiles = numberOfDFGCompiles(wrap);
+
+        const rounds = [];
+        for (let i = 0; i < 3; i++) {
+          wrap("round-" + i);
+          rounds.push(require(path.join(__dirname, "file-" + i + ".wrapped")));
+        }
+
+        console.log(JSON.stringify({ compiles, rounds, dispatched }));
+      `,
+    };
+    for (let i = 0; i < 3; i++) {
+      files[`file-${i}.wrapped`] = "only loadable through the .wrapped handler";
+    }
+    using dir = tempDir("require-extensions-read-then-store", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      // The default tier-up policy, on purpose. The baseline tier must run the helper
+      // long enough to cache the read. The DFG takes the structure of the object from
+      // that cached read, and that is what lets it compile the store as a direct write.
+      // With BUN_JSC_jitPolicyScale the DFG compiles the helper before the read is cached.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { compiles, ...result } = JSON.parse(stdout);
+    expect(compiles).toBeGreaterThanOrEqual(1);
+    expect(result).toEqual({
+      rounds: ["round-0", "round-1", "round-2"],
+      dispatched: ["round-0", "round-1", "round-2"],
     });
     expect(exitCode).toBe(0);
   });

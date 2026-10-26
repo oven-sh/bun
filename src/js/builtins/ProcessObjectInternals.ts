@@ -140,11 +140,15 @@ export function getStdinStream(
     }
   }
 
-  function disown() {
+  // Asked when pause() or destroy() is called, because disown() runs a tick later.
+  const isHeldByAnotherReader = () => !reader && native.locked;
+
+  function disown(wasHeldByAnotherReader = false) {
     $debug("unref();");
 
-    // Another reader of Bun.stdin.stream() may hold the source by now. Once it has let go, nothing else stops the source.
-    if (reader || !native.locked) source?.setFlowing?.(false);
+    // Only a reader of Bun.stdin.stream() that came after the call keeps the source. Nothing else stops it.
+    if (reader || wasHeldByAnotherReader || !native.locked) source?.setFlowing?.(false);
+    if (wasHeldByAnotherReader) source?.updateRef?.(false);
     if (reader) {
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that
       // rejection is handled there by observing that `reader` was cleared here.
@@ -290,11 +294,12 @@ export function getStdinStream(
   stream._readableState.reading = false;
 
   stream.on("pause", () => {
+    const wasHeldByAnotherReader = isHeldByAnotherReader();
     process.nextTick(() => {
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
         stream._readableState.reading = false;
-        disown();
+        disown(wasHeldByAnotherReader);
       }
     });
   });
@@ -313,9 +318,10 @@ export function getStdinStream(
   stream.on("close", () => {
     if (!stream_destroyed) {
       stream_destroyed = true;
+      const wasHeldByAnotherReader = isHeldByAnotherReader();
       process.nextTick(() => {
         stream.destroy();
-        disown();
+        disown(wasHeldByAnotherReader);
       });
     }
   });

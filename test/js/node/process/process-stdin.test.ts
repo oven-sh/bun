@@ -795,6 +795,22 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
     });
   });
 
+  describe.each(["pause()", "destroy()"])("process.stdin.%s lets a program exit that holds a reader", call => {
+    test.each([
+      ["it never read from", ""],
+      ["it read one chunk from", "await reader.read();"],
+      ["with a read pending", "await reader.read(); reader.read();"],
+    ])("%s", async (_, reads) => {
+      const script = `const reader = (globalThis.reader = Bun.stdin.stream().getReader()); ${reads} process.stdin.${call};`;
+      expect(await run(script, [[null, "one\n"]], { end: false })).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
   test("process.stdin takes stdin back after the next reader releases it", async () => {
     const script = `
       const got = [];

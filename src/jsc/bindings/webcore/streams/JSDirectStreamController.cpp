@@ -108,13 +108,32 @@ JSPromise* JSDirectStreamSource::cancel(JSGlobalObject* globalObject, JSReadable
     RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, cancelMethod, thisValue(), args));
 }
 
-void JSDirectStreamSource::close(JSGlobalObject* globalObject, JSValue reason)
+void JSDirectStreamSource::cancelFromSink(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* cancelMethod = cancelFunction();
+    if (!cancelMethod)
+        return;
+    std::optional<StreamAsyncContextScope> asyncContext;
+    if (stream)
+        asyncContext.emplace(globalObject, stream);
+    MarkedArgumentBuffer args;
+    args.append(reason);
+    JSValue result = JSC::call(globalObject, cancelMethod, JSC::getCallData(cancelMethod), thisValue(), args);
+    RETURN_IF_EXCEPTION(scope, );
+    if (auto* cancelPromise = dynamicDowncast<JSPromise>(result))
+        markPromiseAsHandled(vm, cancelPromise);
+}
+
+void JSDirectStreamSource::close(JSGlobalObject* globalObject, JSValue asyncContext, JSValue reason)
 {
     JSObject* closeMethod = closeFunction();
     if (!closeMethod)
         return;
     MarkedArgumentBuffer args;
     args.append(reason);
+    AsyncContextScope asyncContextScope(globalObject, asyncContext);
     JSC::call(globalObject, closeMethod, JSC::getCallData(closeMethod), thisValue(), args);
 }
 
@@ -665,7 +684,7 @@ bool JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
     const bool wasClosed = m_closed;
     m_closed = true;
     auto* source = m_source.get();
-    directStreamControllerClearSource(this);
+    JSValue asyncContext = directStreamControllerClearSource(this);
     settlePendingWrite(vm, jsBoolean(false));
 
     bool delivered = false;
@@ -688,7 +707,7 @@ bool JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
         return delivered;
     closeDirectSinkForError(vm, this, error);
     if (source) {
-        source->close(globalObject, error);
+        source->close(globalObject, asyncContext, error);
         RETURN_IF_EXCEPTION(scope, false);
     }
     return delivered;
@@ -715,18 +734,18 @@ static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirec
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
-    auto* source = controller->m_source.get();
-    JSObject* pullFunction = source ? source->pullFunction() : nullptr;
     controller->m_pullInFlight = true;
-    MarkedArgumentBuffer args;
-    args.append(controller);
-    JSValue result = JSC::call(globalObject, pullFunction ? JSValue(pullFunction) : jsUndefined(), source ? source->thisValue() : jsUndefined(), args, "underlyingSource.pull is not a function"_s);
+    JSPromise* pullPromise = nullptr;
+    if (auto* source = controller->m_source.get())
+        pullPromise = source->pull(globalObject, asyncContextScope, controller);
+    else
+        throwTypeError(globalObject, scope, "underlyingSource.pull is not a function"_s);
     if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
         controller->m_pullInFlight = false;
         TRY_CLEAR_EXCEPTION(scope, {});
         return exception->value();
     }
-    if (auto* pullPromise = dynamicDowncast<JSPromise>(result)) {
+    if (pullPromise) {
         auto* runtime = JSStreamsRuntime::from(globalObject);
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onDirectPullFulfilled(), runtime->onDirectPullRejected(), jsUndefined(), controller);
         if (scope.exception()) [[unlikely]]
@@ -890,7 +909,7 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
     // No "Closing" stream state exists: m_closed set here is what blocks re-entry.
     m_closed = true;
     auto* source = m_source.get();
-    directStreamControllerClearSource(this);
+    JSValue asyncContext = directStreamControllerClearSource(this);
 
     JSValue flushed = endDirectSink(vm, globalObject, this);
     RETURN_IF_EXCEPTION(scope, );
@@ -899,7 +918,7 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
     // The user's close(reason) hook runs once the stream is fully closed, so a throw from it
     // propagates to whoever closed with nothing left half-done.
     if (source)
-        RELEASE_AND_RETURN(scope, source->close(globalObject, reason));
+        RELEASE_AND_RETURN(scope, source->close(globalObject, asyncContext, reason));
 }
 
 // The rest of close(): hand end()'s final chunk to whoever is reading (or arm it for the next read),
@@ -1259,12 +1278,17 @@ using WebCore::JSStreamsRuntime;
 // The most an explicit highWaterMark pre-allocates; the buffer still grows past it on demand.
 static constexpr size_t maxDirectBufferReserve = 256 * 1024 * 1024;
 
-void directStreamControllerClearSource(JSDirectStreamController* controller)
+// Returns the async context that the stream releases here: the close() hook runs after this, in that context.
+JSValue directStreamControllerClearSource(JSDirectStreamController* controller)
 {
     controller->m_source.clear();
     controller->m_deferCloseReason.clear();
-    if (auto* stream = controller->m_stream.get())
-        readableStreamClearSourceBarriers(stream);
+    auto* stream = controller->m_stream.get();
+    if (!stream)
+        return {};
+    JSValue asyncContext = stream->m_asyncContext.get();
+    readableStreamClearSourceBarriers(stream);
+    return asyncContext;
 }
 
 void setUpDirectStreamController(JSC::JSGlobalObject* globalObject, JSReadableStream* stream, DirectSinkKind sinkKind)

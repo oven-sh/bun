@@ -20,15 +20,21 @@ import {
   tmpdirSync,
 } from "harness";
 import { mkfifo } from "mkfifo";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import * as nodeStreamConsumers from "node:stream/consumers";
 import {
   consumers as directConsumers,
   expected as directExpected,
+  expectedStore as directExpectedStore,
   observe as directObserve,
+  observeStore as directObserveStore,
   readerConsumers as directReaderConsumers,
   shapes as directShapes,
+  store as directStore,
+  storeShapes as directStoreShapes,
 } from "./direct-stream-contract";
 
 it("TransformStream", async () => {
@@ -4557,6 +4563,144 @@ describe("direct stream contract", () => {
       }
       expect(got).toEqual(directExpected(shape));
     });
+  });
+
+  describe("source callbacks run in the AsyncLocalStorage store the stream was built in", () => {
+    const decode = value => new TextDecoder().decode(value);
+    const storeConsumers = {
+      ...consumers,
+      "new HTMLRewriter().transform(new Response(s))": s => new HTMLRewriter().transform(new Response(s)).text(),
+      "node:stream/consumers arrayBuffer()": async s => decode(await nodeStreamConsumers.arrayBuffer(s)),
+      "node:stream/consumers bytes()": async s => decode(await nodeStreamConsumers.bytes(s)),
+      "node:stream/consumers buffer()": async s => decode(await nodeStreamConsumers.buffer(s)),
+    };
+    describe.each(Object.keys(directStoreShapes))("%s", shapeName => {
+      const shape = directStoreShapes[shapeName];
+      test.concurrent.each(Object.keys(storeConsumers))("%s", async consumerName => {
+        expect(await directObserveStore(shape, storeConsumers[consumerName])).toEqual(directExpectedStore(shape));
+      });
+    });
+
+    // The close() hook runs after the stream is closed or errored. A reader and the buffer consumers are the ones that call it.
+    const hookConsumers = {
+      "getReader() loop": directConsumers["getReader() loop"],
+      "Bun.readableStreamToArrayBuffer": directConsumers["Bun.readableStreamToArrayBuffer"],
+    };
+    const closers = {
+      "pull() itself": (close, done) => (close(), done()),
+      "another store": (close, done) => void setImmediate(() => directStore.run("closer", () => (close(), done()))),
+      "no store": (close, done) => void directStore.exit(() => setImmediate(() => (close(), done()))),
+    };
+    describe.each(Object.keys(hookConsumers))("the close() hook under %s", consumerName => {
+      for (const [label, reason] of [
+        ["close()", undefined],
+        ["close(error)", new Error("source failed")],
+      ]) {
+        test.concurrent.each(Object.keys(closers))(`${label} called from %s`, async closerName => {
+          const seen = [];
+          const closed = Promise.withResolvers();
+          const stream = directStore.run("built", () => {
+            return new ReadableStream({
+              type: "direct",
+              pull(c) {
+                c.write("hello world");
+                closers[closerName](() => c.close(reason), closed.resolve);
+                // pull() stays pending until the closer ran, so a reader does not call it again.
+                return closed.promise;
+              },
+              close(error) {
+                seen.push(`close(${error?.message ?? ""}):${directStore.getStore()}`);
+              },
+            });
+          });
+          const result = await directStore
+            .run("consumer", () => hookConsumers[consumerName](stream))
+            .then(
+              body => ({ body }),
+              error => ({ error: error.message }),
+            );
+          await closed.promise;
+          expect({ ...result, seen }).toEqual(
+            reason
+              ? { error: "source failed", seen: ["close(source failed):built"] }
+              : { body: "hello world", seen: ["close():built"] },
+          );
+        });
+      }
+    });
+
+    // A failed pull() errors the stream, and the stream releases its context there. A buffer consumer still runs the hook when the source closes the controller it kept.
+    test.concurrent.each([
+      [
+        "throws",
+        () => {
+          throw new Error("source failed");
+        },
+      ],
+      ["rejects", () => Promise.reject(new Error("source failed"))],
+    ])("close() after pull() %s runs the close() hook under Bun.readableStreamToArrayBuffer", async (_, fail) => {
+      const seen = [];
+      let controller;
+      const stream = directStore.run("built", () => {
+        return new ReadableStream({
+          type: "direct",
+          pull(c) {
+            controller = c;
+            return fail();
+          },
+          close() {
+            seen.push(`close():${directStore.getStore()}`);
+          },
+        });
+      });
+      const error = await directStore
+        .run("consumer", async () => await Bun.readableStreamToArrayBuffer(stream))
+        .then(
+          () => undefined,
+          error => error.message,
+        );
+      directStore.run("closer", () => controller.close());
+      expect({ error, seen }).toEqual({ error: "source failed", seen: ["close():built"] });
+    });
+
+    // The snapshot is the whole async context, not one storage's store. With nothing at all current at construction it restores nothing, and the source runs in the store of the code that calls it.
+    test.concurrent.each(Object.keys(hookConsumers))(
+      "a stream built with no async context runs pull() in the consumer's store under %s",
+      async consumerName => {
+        const seen = [];
+        const stream = new ReadableStream({
+          type: "direct",
+          pull(c) {
+            seen.push(`pull():${directStore.getStore()}`);
+            c.write("hello world");
+            c.close();
+          },
+        });
+        const body = await directStore.run("consumer", () => hookConsumers[consumerName](stream));
+        expect({ body, seen }).toEqual({ body: "hello world", seen: ["pull():consumer"] });
+      },
+    );
+
+    // With another storage's store current at construction, the source runs in that context: the consumer's store is not in it.
+    test.concurrent.each(Object.keys(hookConsumers))(
+      "a stream built inside another storage's run() runs pull() without the consumer's store under %s",
+      async consumerName => {
+        const tracer = new AsyncLocalStorage();
+        const seen = [];
+        const stream = tracer.run("trace", () => {
+          return new ReadableStream({
+            type: "direct",
+            pull(c) {
+              seen.push(`pull():${tracer.getStore()},${directStore.getStore()}`);
+              c.write("hello world");
+              c.close();
+            },
+          });
+        });
+        const body = await directStore.run("consumer", () => hookConsumers[consumerName](stream));
+        expect({ body, seen }).toEqual({ body: "hello world", seen: ["pull():trace,undefined"] });
+      },
+    );
   });
 });
 

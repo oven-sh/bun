@@ -161,6 +161,33 @@ void JSOneShotDirectSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ArrayBufferSink), "arrayBufferSink"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::CapabilityPromise), "capabilityPromise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Source), "source"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ReleasedAsyncContext), "releasedAsyncContext"_s);
+}
+
+void JSOneShotDirectSink::errorStream(JSGlobalObject* globalObject, JSValue error)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = this->stream();
+    if (!stream)
+        return;
+    stream->m_lockedWithoutReader = false;
+    if (stream->m_state != ReadableStreamState::Readable)
+        return;
+    if (source())
+        internalField(Field::ReleasedAsyncContext).set(vm, this, stream->m_asyncContext.get());
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::readableStreamError(globalObject, stream, error));
+}
+
+JSValue JSOneShotDirectSink::takeCloseHookAsyncContext()
+{
+    if (auto* stream = this->stream()) {
+        if (JSValue asyncContext = stream->m_asyncContext.get())
+            return asyncContext;
+    }
+    JSValue kept = internalField(Field::ReleasedAsyncContext).get();
+    internalField(Field::ReleasedAsyncContext).clear();
+    return kept;
 }
 
 // JSReadableStreamIntoArrayOperation — the queue-backed array pump's persistent state.
@@ -1071,17 +1098,14 @@ static void installOneShotMethods(JSC::VM& vm, JSGlobalObject* globalObject, JSO
 
 // Calls the user's pull(oneShotController) exactly once (its own scope so the caller may
 // catch the abrupt completion).
-static JSValue oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamSource* source, JSOneShotDirectSink* sink)
+static JSPromise* oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamSource* source, WebCore::JSReadableStream* stream, JSOneShotDirectSink* sink)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* pullFunction = source->pullFunction();
-    if (!pullFunction) [[unlikely]] {
+    if (!source->hasPull()) [[unlikely]] {
         throwTypeError(globalObject, scope, "The 'pull' method of a direct ReadableStream's underlying source is not a function"_s);
-        return {};
+        return nullptr;
     }
-    MarkedArgumentBuffer arguments;
-    arguments.append(sink);
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, pullFunction, JSC::getCallData(pullFunction), source->thisValue(), arguments));
+    RELEASE_AND_RETURN(scope, source->pull(globalObject, stream, sink));
 }
 
 JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, bool asUint8Array)
@@ -1128,21 +1152,18 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
     // throw errors the stream and rejects the returned promise; a returned promise's rejection is
     // handled by its reaction.
     sink->m_insidePullCall = true;
-    JSValue firstPull = oneShotCallPull(vm, globalObject, source, sink);
+    JSPromise* pullPromise = oneShotCallPull(vm, globalObject, source, stream, sink);
     sink->m_insidePullCall = false;
     if (JSC::Exception* exception = scope.exception()) {
         TRY_CLEAR_EXCEPTION(scope, {});
-        stream->m_lockedWithoutReader = false;
         // pull() may already have errored the stream through the sink before throwing.
-        if (stream->m_state == ReadableStreamState::Readable) {
-            readableStreamError(globalObject, stream, exception->value());
-            RETURN_IF_EXCEPTION(scope, {});
-        }
+        sink->errorStream(globalObject, exception->value());
+        RETURN_IF_EXCEPTION(scope, {});
         // The throw is the result. A close(error) before it rejected the capability, which nobody gets now.
         markPromiseAsHandled(vm, capability);
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, exception->value()));
     }
-    if (auto* pullPromise = dynamicDowncast<JSPromise>(firstPull)) {
+    if (pullPromise) {
         // The caller holds the capability that close()/end() settle, so it does not wait for a pull() that outlives them. The reactions settle it only when pull() settles first.
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onConsumeDirectToArrayBufferPullFulfilled(), runtime->onConsumeDirectToArrayBufferPullRejected(), jsUndefined(), sink);
         if (capability->status() == JSPromise::Status::Pending)
@@ -1686,7 +1707,7 @@ static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneS
     sink->m_closed = true;
     if (auto* source = sink->source()) {
         sink->clearSource();
-        source->close(globalObject, reason);
+        source->close(globalObject, sink->takeCloseHookAsyncContext(), reason);
         RETURN_IF_EXCEPTION(scope, );
     }
     MarkedArgumentBuffer noArguments;
@@ -1696,13 +1717,8 @@ static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneS
     if (!capability || capability->status() != JSPromise::Status::Pending)
         return;
     if (reason.toBoolean(globalObject)) {
-        if (auto* stream = sink->stream()) {
-            stream->m_lockedWithoutReader = false;
-            if (stream->m_state == ReadableStreamState::Readable) {
-                Bun::WebStreams::readableStreamError(globalObject, stream, reason);
-                RETURN_IF_EXCEPTION(scope, );
-            }
-        }
+        sink->errorStream(globalObject, reason);
+        RETURN_IF_EXCEPTION(scope, );
         capability->reject(vm, reason);
         return;
     }
@@ -1722,13 +1738,8 @@ static void oneShotDirectFail(JSC::VM& vm, JSGlobalObject* globalObject, JSOneSh
     auto* capability = sink->capabilityPromise();
     if (!capability || capability->status() != JSPromise::Status::Pending)
         return;
-    if (auto* stream = sink->stream()) {
-        stream->m_lockedWithoutReader = false;
-        if (stream->m_state == ReadableStreamState::Readable) {
-            Bun::WebStreams::readableStreamError(globalObject, stream, error);
-            RETURN_IF_EXCEPTION(scope, );
-        }
-    }
+    sink->errorStream(globalObject, error);
+    RETURN_IF_EXCEPTION(scope, );
     capability->reject(vm, error);
 }
 

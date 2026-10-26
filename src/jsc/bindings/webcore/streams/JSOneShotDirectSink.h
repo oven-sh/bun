@@ -26,9 +26,9 @@
 
 namespace WebCore {
 
-class JSOneShotDirectSink final : public JSC::JSInternalFieldObjectImpl<4> {
+class JSOneShotDirectSink final : public JSC::JSInternalFieldObjectImpl<5> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<4>;
+    using Base = JSC::JSInternalFieldObjectImpl<5>;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
 
@@ -42,6 +42,8 @@ public:
         CapabilityPromise,
         // The stream's source; its close() hook runs from end()/close().
         Source,
+        // The async context that the stream released when a failed pull() errored it: end()/close() can still run the close() hook after that.
+        ReleasedAsyncContext,
     };
 
     static JSOneShotDirectSink* create(JSC::VM&, JSC::Structure*);
@@ -74,6 +76,11 @@ public:
     void setSource(JSC::VM& vm, JSDirectStreamSource* source) { internalField(Field::Source).set(vm, this, source); }
 
     void clearSource() { internalField(Field::Source).clear(); }
+
+    // Unlocks the stream and errors it if it is still readable. While the sink holds the source, it keeps the async context that the stream releases there.
+    void errorStream(JSC::JSGlobalObject*, JSC::JSValue error);
+    // The async context for the source's close() hook: the stream's, or the one that errorStream() kept.
+    JSC::JSValue takeCloseHookAsyncContext();
 
     // Set by end()/close(): later write()/end()/close()/flush() calls are no-ops.
     bool m_closed : 1 { false };

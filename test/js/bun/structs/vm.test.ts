@@ -59,7 +59,7 @@ describe("structs in node:vm contexts", () => {
       const mutex = new Atomics.Mutex();
       const token = Atomics.Mutex.lock(mutex);
       let deadlock = false;
-      try { Atomics.Mutex.lockIfAvailable(mutex, 0); } catch (e) { deadlock = e instanceof TypeError; }
+      try { Atomics.Mutex.lockIfAvailable(mutex, 0); } catch (e) { deadlock = e.name === "TypeError"; }
       token.unlock();
       [array.length, array[0], array[1], deadlock, Reflect.canBeShared(array)].join();
     `);

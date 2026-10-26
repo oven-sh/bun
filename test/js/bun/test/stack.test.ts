@@ -491,6 +491,36 @@ setTimeout(() => {
     },
   );
 
+  // node:events rethrows an 'error' event nobody listens for, from a tick. The
+  // stream's error is built by native code with no JS on the stack.
+  test.concurrent("an unhandled 'error' event prints the properties of the system error", async () => {
+    using dir = tempDir("uncaught-print", {
+      "stream.js": `require("fs").createReadStream(__dirname + "/does-not-exist");\n`,
+      "child.js": `require("child_process").spawn(__dirname + "/does-not-exist");\n`,
+    });
+    const [stream, child] = await Promise.all(
+      ["stream.js", "child.js"].map(file => bunRun(join(String(dir), file), env)),
+    );
+    const properties = ({ stderr, exitCode }: { stderr: string; exitCode: number }) => ({
+      ...Object.fromEntries(
+        [...stderr.matchAll(/^ +(code|errno|syscall): (.+?),?$/gm)].map(([, key, value]) => [key, value]),
+      ),
+      exitCode,
+    });
+    expect(properties(stream)).toEqual({
+      syscall: `"open"`,
+      errno: expect.stringMatching(/^-\d+$/),
+      code: `"ENOENT"`,
+      exitCode: 1,
+    });
+    expect(properties(child)).toEqual({
+      syscall: expect.stringMatching(/^"spawn .*does-not-exist"$/),
+      errno: expect.stringMatching(/^-\d+$/),
+      code: `"ENOENT"`,
+      exitCode: 1,
+    });
+  });
+
   // A ResolveMessage thrown through the exception has no stack of its own
   // either, and is still printed once.
   test.concurrent("bun test prints a synchronously thrown resolve error once", async () => {

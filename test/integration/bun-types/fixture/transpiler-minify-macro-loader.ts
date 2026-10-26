@@ -38,6 +38,12 @@ import { expectType } from "./utilities";
 
   // @ts-expect-error - the constructor throws "macro must be an object" for a number
   new Bun.Transpiler({ macro: 1 });
+
+  // `Bun.build()` has the same switch with the name `macros`.
+  expectType<Bun.BuildConfig["macros"]>().is<boolean | undefined>();
+  Bun.build({ entrypoints: ["./index.ts"], macros: false });
+  // @ts-expect-error - `macro` is the name in Bun.Transpiler. Bun.build() does not read it.
+  Bun.build({ entrypoints: ["./index.ts"], macro: false });
 }
 
 // `transform()` and `transformSync()` take a JavaScript loader or a data loader for one call.

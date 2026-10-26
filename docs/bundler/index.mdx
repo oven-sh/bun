@@ -1882,6 +1882,12 @@ interface BuildConfig {
    * the only behavior in a future release.
    */
   deprecatedNamespaceObjectSetters?: boolean;
+  /**
+   * Set to `false` to turn macros off. A call of a macro then fails the build
+   * with `Macros are disabled`. Equivalent to `--no-macros` in the CLI.
+   * @default true
+   */
+  macros?: boolean;
 
   /**
    * Generate bytecode for the output. This can dramatically improve cold

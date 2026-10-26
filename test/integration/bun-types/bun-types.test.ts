@@ -1212,7 +1212,7 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  describe("Bun.Transpiler options", () => {
+  describe("Bun.Transpiler and Bun.build options", () => {
     typeTest("accept a value that is not set with exactOptionalPropertyTypes", {
       options: { exactOptionalPropertyTypes: true },
       files: {
@@ -1223,11 +1223,13 @@ describe("@types/bun integration test", () => {
             syntax?: boolean;
             identifiers?: boolean;
             macro?: boolean;
+            macros?: boolean;
           };
           new Bun.Transpiler({ minify: flags.minify, macro: flags.macro });
           new Bun.Transpiler({
             minify: { whitespace: flags.whitespace, syntax: flags.syntax, identifiers: flags.identifiers },
           });
+          Bun.build({ entrypoints: ["./index.ts"], macros: flags.macros });
         `,
       },
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,

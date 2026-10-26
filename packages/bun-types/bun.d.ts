@@ -2984,6 +2984,8 @@ declare module "bun" {
      *    for code that you do not trust. `true` is the same as no `macro`
      *    option.
      *
+     *    `Bun.build()` has the same switch: {@link BuildConfig.macros}.
+     *
      *    @example
      *    ```json
      *    {
@@ -3479,6 +3481,18 @@ declare module "bun" {
      * keep dead code in the output for debugging or test fixtures.
      */
     treeShaking?: boolean;
+
+    /**
+     * Set to `false` to turn macros off. The build then fails with
+     * `Macros are disabled` where the code calls a macro, and Bun does not
+     * load the module of the macro.
+     *
+     * Equivalent to `--no-macros` in the CLI. `new Bun.Transpiler()` has the
+     * same switch: {@link TranspilerOptions.macro}.
+     *
+     * @default true
+     */
+    macros?: boolean | undefined;
 
     // jsx?:
     //   | "automatic"

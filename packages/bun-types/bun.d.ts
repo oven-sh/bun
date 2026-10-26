@@ -3027,6 +3027,9 @@ declare module "bun" {
     };
     treeShaking?: boolean;
     trimUnusedImports?: boolean;
+    /**
+     * @deprecated Bun has ignored this option since v1.1.28.
+     */
     jsxOptimizationInline?: boolean;
 
     /**

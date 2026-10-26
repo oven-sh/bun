@@ -1,4 +1,5 @@
 // Use bun:test in Bun, or node:test in Node.js
+import { spawnSync } from "child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import Module from "module";
 import { tmpdir } from "os";
@@ -7,9 +8,11 @@ import { dirname, join, resolve } from "path";
 // Detect runtime and import appropriate test framework
 const isBun = typeof Bun !== "undefined";
 let test, expect;
+let childEnv = process.env;
 
 if (isBun) {
   ({ test, expect } = await import("bun:test"));
+  ({ bunEnv: childEnv } = await import("harness"));
 } else {
   // Node.js
   const { createRequire } = await import("module");
@@ -184,55 +187,169 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
 });
 
 test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is not an array", () => {
+  // The request is not a builtin id: Node returns a builtin id before it reads `options.paths`.
+  const fakeParent = new Module("/some/other/directory/file.js");
+
   // Test with string (which is iterable but not an array)
   expect(() => {
-    Module._resolveFilename("path", __filename, false, { paths: "/some/path" });
+    Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: "/some/path" });
   }).toThrow();
 
   // Test with Set (which is iterable but not an array)
   expect(() => {
-    Module._resolveFilename("path", __filename, false, { paths: new Set(["/some/path"]) });
+    Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: new Set(["/some/path"]) });
   }).toThrow();
 
   // Test with object (not iterable)
   expect(() => {
-    Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
+    Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: { 0: "/some/path" } });
   }).toThrow();
+
+  expect(Module._resolveFilename("path", fakeParent, false, { paths: "/some/path" })).toBe("path");
 });
 
-test("require.resolve anchors a relative options.paths entry at the cwd", () => {
-  // Node resolves a relative entry with path.resolve(), so it is relative to process.cwd().
-  const { path: dir, cleanup } = createTempDir("require-resolve-relative-paths", {
-    "lib/node_modules/relative-paths-pkg/package.json": JSON.stringify({
-      name: "relative-paths-pkg",
-      main: "index.js",
-    }),
-    "lib/node_modules/relative-paths-pkg/index.js": "module.exports = 'relative-paths';",
-  });
-  const previousCwd = process.cwd();
+// Node turns each `options.paths` entry into a directory with path.resolve(): a relative entry is
+// relative to process.cwd(), and only the host's separators separate. Each resolve runs in a child
+// process so that the cwd is the fixture and the resolver starts with empty caches.
+const probeSource = `
+const Module = require("node:module");
+const path = require("node:path");
+const root = process.cwd();
+const rows = JSON.parse(require("node:fs").readFileSync("rows.json", "utf8"));
+const resolvers = {
+  "require.resolve": (request, paths) => require.resolve(request, { paths }),
+  "Module._resolveFilename": (request, paths) => Module._resolveFilename(request, module, false, { paths }),
+  "createRequire().resolve": (request, paths) => Module.createRequire(__filename).resolve(request, { paths }),
+};
+const order = rows.map((row, i) => i);
+if (process.argv[2] === "reverse") order.reverse();
+const results = [];
+for (const i of order) {
+  const [request, paths, chdir] = rows[i];
+  if (chdir) process.chdir(chdir);
+  results[i] = {};
+  for (const name in resolvers) {
+    try {
+      results[i][name] = path.relative(root, resolvers[name](request, paths)).split(path.sep).join("/");
+    } catch (error) {
+      results[i][name] = error.code;
+    }
+  }
+  process.chdir(root);
+}
+console.log(JSON.stringify(results));
+`;
+
+function resolveRowsInChild(order) {
+  const isWindows = process.platform === "win32";
+  const files = {
+    "probe.cjs": probeSource,
+    // A node_modules directory at the root also keeps Bun's auto-install off.
+    "node_modules/plugroot/index.js": "",
+    "plugins/node_modules/plug/index.js": "",
+    "plugins/file.js": "",
+  };
+  if (!isWindows) {
+    files["back/slash/node_modules/plugc/index.js"] = "";
+    files["C:/plugins/node_modules/plugd/index.js"] = "";
+  }
+  const { path: dir, cleanup } = createTempDir("resolve-paths-entries", files);
+
+  const plug = "plugins/node_modules/plug/index.js";
+  const plugroot = "node_modules/plugroot/index.js";
+  const file = "plugins/file.js";
+  const missing = "MODULE_NOT_FOUND";
+  // [request, paths, expected, directory to chdir() into first]
+  const rows = [
+    // A bare request searches node_modules from the entry upward.
+    ["plug", ["./plugins"], plug],
+    ["plug", ["plugins"], plug],
+    ["plug", ["plugins/"], plug],
+    ["plug", ["plugins/../plugins"], plug],
+    ["plug", ["nowhere", "plugins"], plug],
+    ["plug", ["./nowhere"], missing],
+    ["plug", ["."], missing],
+    ["plugroot", [""], plugroot],
+    ["plugroot", ["."], plugroot],
+    ["plugroot", ["./nowhere/deeper"], plugroot],
+    ["plug", ["."], plug, "plugins"],
+    ["plugroot", [".."], plugroot, "plugins"],
+    // A relative request is joined to the entry. The entry must be a directory unless the
+    // request leaves it.
+    ["./node_modules/plug/index.js", ["plugins"], plug],
+    ["./node_modules/plug/index.js", ["./plugins"], plug],
+    ["./node_modules/plug/index.js", [join(dir, "plugins")], plug],
+    ["./node_modules/plug/index.js", ["nowhere", "plugins"], plug],
+    ["./file.js", ["plugins"], file],
+    ["./file.js", ["nowhere"], missing],
+    [".", ["plugins/file.js"], missing],
+    ["../plugins/file.js", ["nowhere"], file],
+    // A builtin id is resolved before `paths` is read. Any other bare request needs strings.
+    ["node:fs", [0], "node:fs"],
+    ["plugroot", [0], "ERR_INVALID_ARG_TYPE"],
+    ["plugroot", [".", null], "ERR_INVALID_ARG_TYPE"],
+  ];
+  if (isWindows) {
+    rows.push(["plug", ["plugins\\"], plug], ["plug", [".\\plugins"], plug]);
+  } else {
+    const tooLong = Buffer.alloc(5000, "a").toString();
+    rows.push(
+      ["plug", [dir + "/nope/../plugins"], plug],
+      // A backslash and a drive letter are file name characters on POSIX.
+      ["plug", ["plugins\\"], missing],
+      ["plug", [".\\plugins"], missing],
+      ["plug", [dir + "/plugins\\"], missing],
+      ["plugroot", ["plugins\\"], plugroot],
+      ["plugc", ["back\\slash"], missing],
+      ["plugd", ["C:/plugins"], "C:/plugins/node_modules/plugd/index.js"],
+      ["plugd", ["C:\\plugins"], missing],
+      ["./node_modules/plug/index.js", ["plugins\\"], missing],
+      ["./node_modules/plug/index.js", [".\\plugins"], missing],
+      ["./node_modules/plugc/index.js", ["back\\slash"], missing],
+      ["./node_modules/plugd/index.js", ["C:/plugins"], "C:/plugins/node_modules/plugd/index.js"],
+      ["../plugins/file.js", ["plugins\\"], file],
+      // The OS does not collapse "nowhere/..": the directory does not exist.
+      ["./node_modules/plugroot/index.js", ["nowhere/.."], missing],
+      ["plug", ["plugins\0x"], missing],
+      ["./index.js", [dir + "/plugins/node_modules/plug\0"], missing],
+      ["plug", [tooLong], missing],
+      ["./file.js", [tooLong], missing],
+    );
+  }
 
   try {
-    process.chdir(dir);
-    const expected = resolve(dir, "lib/node_modules/relative-paths-pkg/index.js");
-
-    expect(require.resolve("relative-paths-pkg", { paths: ["./lib"] })).toBe(expected);
-    expect(require.resolve("relative-paths-pkg", { paths: ["lib"] })).toBe(expected);
-
-    const fakeParent = new Module("/some/other/directory/file.js");
-    fakeParent.filename = "/some/other/directory/file.js";
-    fakeParent.paths = Module._nodeModulePaths("/some/other/directory");
-    expect(Module._resolveFilename("relative-paths-pkg", fakeParent, false, { paths: ["lib"] })).toBe(expected);
-
-    // An entry that does not exist under the cwd is not found.
-    let caught;
+    writeFileSync(
+      join(dir, "rows.json"),
+      JSON.stringify(rows.map(([request, paths, , chdir]) => [request, paths, chdir])),
+    );
+    const { stdout, stderr, status } = spawnSync(
+      process.execPath,
+      isBun ? ["--no-install", "probe.cjs", order] : ["probe.cjs", order],
+      { cwd: dir, env: childEnv, encoding: "utf8" },
+    );
+    let results;
     try {
-      require.resolve("relative-paths-pkg", { paths: ["./missing"] });
-    } catch (err) {
-      caught = err.code;
+      results = JSON.parse(stdout);
+    } catch {
+      results = { stdout, stderr };
     }
-    expect(caught).toBe("MODULE_NOT_FOUND");
+    expect(results).toEqual(
+      rows.map(([, , expected]) => ({
+        "require.resolve": expected,
+        "Module._resolveFilename": expected,
+        "createRequire().resolve": expected,
+      })),
+    );
+    expect(status).toBe(0);
   } finally {
-    process.chdir(previousCwd);
     cleanup();
   }
+}
+
+test("options.paths entries are resolved like path.resolve() does", () => {
+  resolveRowsInChild("forward");
+});
+
+test("options.paths entries resolve the same in the reverse call order", () => {
+  resolveRowsInChild("reverse");
 });

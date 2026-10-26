@@ -278,6 +278,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)))));
 }
 
+// The requests the resolver reads as relative to a directory instead of as a package name.
+static bool isRelativeRequest(const WTF::String& request)
+{
+    return request == "."_s || request == ".."_s || request.startsWith("./"_s) || request.startsWith("../"_s)
+#if OS(WINDOWS)
+        || request.startsWith(".\\"_s) || request.startsWith("..\\"_s)
+#endif
+        ;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
@@ -343,6 +353,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
 
         JSC::EncodedJSValue result;
 
+        // Like Node: a builtin id wins before `paths` is read; any other non-relative request needs string entries.
+        bool entriesMustBeStrings = false;
+        if (!pathsValue.isUndefinedOrNull() && moduleName.isString()) {
+            auto request = moduleName.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (Bun::isBuiltinModule(request))
+                pathsValue = JSC::jsUndefined();
+            else
+                entriesMustBeStrings = !isRelativeRequest(request);
+        }
+
         // If paths are provided, use Bun__resolveSyncWithPaths
         if (!pathsValue.isUndefinedOrNull()) {
             // Node.js requires options.paths to be an array
@@ -356,11 +377,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             }
 
             WTF::Vector<BunString> paths;
+            size_t index = 0;
 
             // Iterate through the array using forEachInIterable
             forEachInIterable(globalObject, pathsValue, [&](JSC::VM&, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue item) {
                 if (scope.exception())
                     return;
+
+                if (entriesMustBeStrings && !item.isString()) {
+                    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, makeString("paths["_s, index, "]"_s), "string"_s, item);
+                    return;
+                }
+                index++;
 
                 WTF::String pathStr = item.toWTFString(lexicalGlobalObject);
                 if (scope.exception())

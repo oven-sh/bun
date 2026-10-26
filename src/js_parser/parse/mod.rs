@@ -338,11 +338,42 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// The target of `super(...)` inside a struct constructor: `__structBase.s(this)`, a function
-    /// that runs the parent struct's constructor on that `this`.
-    pub(crate) fn struct_super_target(&mut self, loc: bun_ast::Loc) -> Expr {
+    /// The target of `super(...)` inside a struct constructor: `__structBase.s(this, self)`, a function that runs the
+    /// parent of the struct `self` holds on that `this`. `self` is the symbol that `struct_self_prologue` sets, so the parent is
+    /// the one of the struct whose constructor the call is written in, wherever and whenever the call runs.
+    pub(crate) fn struct_super_target(
+        &mut self,
+        loc: bun_ast::Loc,
+        struct_self: js_ast::Ref,
+    ) -> Expr {
         let this = self.new_expr(E::This {}, loc);
-        self.call_struct_helper(loc, b"s", &[this])
+        let struct_self = self.new_expr(E::Identifier::init(struct_self), loc);
+        self.call_struct_helper(loc, b"s", &[this, struct_self])
+    }
+
+    /// `self = __structBase.r();`, the first statement of a struct constructor: `self` is the struct whose constructor is running.
+    pub(crate) fn struct_self_prologue(
+        &mut self,
+        loc: bun_ast::Loc,
+        struct_self: js_ast::Ref,
+    ) -> Stmt {
+        let target = self.new_expr(E::Identifier::init(struct_self), loc);
+        let running = self.call_struct_helper(loc, b"r", &[]);
+        let assign = self.new_expr(
+            E::Binary {
+                op: js_ast::op::Code::BinAssign,
+                left: target,
+                right: running,
+            },
+            loc,
+        );
+        self.s(
+            S::SExpr {
+                value: assign,
+                ..Default::default()
+            },
+            loc,
+        )
     }
 
     fn struct_number(&mut self, loc: bun_ast::Loc, value: f64) -> Expr {

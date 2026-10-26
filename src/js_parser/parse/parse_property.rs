@@ -87,13 +87,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `super(...)` in a struct constructor is rewritten by the prefix parser; a constructor
-        // of any other class (also one nested in a struct constructor) keeps the plain meaning.
-        let old_struct_ctor_super = if is_constructor {
-            Some(core::mem::replace(&mut p.struct_ctor_super, opts.is_struct))
+        // `super(...)` in a struct constructor is rewritten by the prefix parser, and refers to a symbol that holds the struct;
+        // a constructor of any other class (also one nested in a struct constructor) keeps the plain meaning.
+        let struct_self = if is_constructor && opts.is_struct {
+            Some(
+                p.declare_symbol(symbol::Kind::Hoisted, loc, b"__bunStructSelf")
+                    .expect("unreachable"),
+            )
         } else {
             None
         };
+        let old_struct_ctor_self = if is_constructor {
+            Some(core::mem::replace(&mut p.struct_ctor_self, struct_self))
+        } else {
+            None
+        };
+        let private_name_uses_before = p.private_name_uses;
         let func = p.parse_fn(
             None,
             FnOrArrowDataParse {
@@ -120,10 +129,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
-        if let Some(old) = old_struct_ctor_super {
-            p.struct_ctor_super = old;
+        if let Some(old) = old_struct_ctor_self {
+            p.struct_ctor_self = old;
         }
         let mut func = func?;
+
+        if is_constructor
+            && opts.is_shared_struct
+            && p.private_name_uses != private_name_uses_before
+        {
+            p.log().add_error(
+                Some(p.source),
+                key.loc,
+                b"The constructor of a shared struct cannot use private names",
+            );
+        }
+        if let Some(struct_self) = struct_self {
+            let prologue = p.struct_self_prologue(func.body.loc, struct_self);
+            let mut stmts =
+                bun_alloc::ArenaVec::<Stmt>::with_capacity_in(func.body.stmts.len() + 1, p.arena);
+            stmts.push(prologue);
+            stmts.extend_from_slice(func.body.stmts.slice());
+            func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+        }
 
         opts.has_argument_decorators =
             opts.has_argument_decorators || p.fn_or_arrow_data_parse.has_argument_decorators;

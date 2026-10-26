@@ -371,7 +371,8 @@ export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
 //   d(S, shared, noProto)  the first static element: collects those methods and sets `S` up
 //   z(S)                 the last static element: seals `S.prototype` once the static elements ran
 //   b(newTarget, entry)  the start of the class constructor, e(...) its end
-//   s(this)              the target of `super(...)` inside a struct constructor
+//   r()                  the struct whose constructor is running: the first statement of that constructor keeps it
+//   s(this, struct)      the target of `super(...)` inside a struct constructor
 //
 // `new S(...)` therefore runs the class constructors of the whole chain, which only allocate the instance and
 // add its private names, and `e` then does what the proposal's [[Construct]] does: defines every declared field
@@ -386,7 +387,7 @@ export var __structBase = /* @__PURE__ */ (() => {
   var sharedObjects = new WeakSet();
   var emulatedObjects = new WeakSet();
   // key of a method standing for a field initializer or a constructor -> what it stands for
-  var tags = new Map();
+  var tags = new WeakMap();
   // the struct whose chain of class constructors is running, so a parent's constructor can tell it was
   // reached through `super()` of the `new` that started it
   var active;
@@ -420,13 +421,18 @@ export var __structBase = /* @__PURE__ */ (() => {
   };
 
   // Only plain methods are non-generic; accessors, generators and async methods are not wrapped.
-  var brandMethods = (proto, brand) => {
+  // A plain method has the Function.prototype of its realm as its prototype and no `prototype` property of its own; a generator,
+  // an async function and an async generator have another prototype (and a generator has `prototype`).
+  var brandMethods = (proto, brand, functionPrototype) => {
     for (var key of Reflect.ownKeys(proto)) {
-      if (key === "constructor") continue;
       var desc = Reflect.getOwnPropertyDescriptor(proto, key);
       var method = desc.value;
-      // Generator and async methods have a Symbol.toStringTag (the same in every realm).
-      if (typeof method !== "function" || method[Symbol.toStringTag] !== undefined) continue;
+      if (
+        typeof method !== "function" ||
+        Reflect.getPrototypeOf(method) !== functionPrototype ||
+        Reflect.getOwnPropertyDescriptor(method, "prototype") !== undefined
+      )
+        continue;
       desc.value = brandedMethod(method, brand);
       Reflect.defineProperty(proto, key, desc);
     }
@@ -467,15 +473,24 @@ export var __structBase = /* @__PURE__ */ (() => {
       else records.push({ field: false, key: undefined, init: method });
     }
     if (nullPrototype) Reflect.setPrototypeOf(proto, null);
+    // The prototype of a struct has no `constructor` property (a method that a script gave that name by a computed key stays).
+    var own = Reflect.getOwnPropertyDescriptor(proto, "constructor");
+    if (own !== undefined && own.value === struct) Reflect.deleteProperty(proto, "constructor");
+    var root = parent === undefined ? struct : parent.root;
     var brand = {};
     var brands = new Set(parent === undefined ? [] : parent.brands);
     brands.add(brand);
-    if (!shared) brandMethods(proto, brand);
+    if (!shared) {
+      var functionPrototype = Reflect.getPrototypeOf(root);
+      if (functionPrototype === NullBase) functionPrototype = Reflect.getPrototypeOf(NullBase);
+      brandMethods(proto, brand, functionPrototype);
+    }
     var info = {
       shared,
       records,
       initializer,
       parent,
+      root,
       brands,
       chain: parent === undefined ? [] : parent.chain.slice(),
       names: undefined,
@@ -553,10 +568,17 @@ export var __structBase = /* @__PURE__ */ (() => {
 
   var end = (self, newTarget, args, isEntry) => {
     var info = infos.get(newTarget);
+    if (isEntry) active = undefined;
     // The class constructors allocate an ordinary object; a shared struct is made once, by the first of them.
-    if (info.shared && !sharedObjects.has(self)) self = createShared(info);
+    if (info.shared && !sharedObjects.has(self)) {
+      try {
+        self = createShared(info);
+      } catch (error) {
+        active = undefined;
+        throw error;
+      }
+    }
     if (!isEntry) return self;
-    active = undefined;
     if (!info.shared) {
       for (var level of info.chain)
         for (var record of level.records) if (record.field) defineField(self, record.key, undefined);
@@ -574,10 +596,12 @@ export var __structBase = /* @__PURE__ */ (() => {
     return self;
   };
 
+  // `super(...)` in the constructor of the struct that `info` describes (see `r`): it calls the constructor of the parent of that
+  // struct, whenever it runs, with the `this` the constructor was running on.
   var superCall =
-    self =>
+    (self, info) =>
     (...args) => {
-      var parent = running === undefined ? undefined : running.parent;
+      var parent = info === undefined ? undefined : info.parent;
       if (parent === undefined) throw new TypeError("Super constructor is not a constructor");
       return parent.initializer === undefined ? undefined : runInitializer(parent, self, args);
     };
@@ -590,6 +614,7 @@ export var __structBase = /* @__PURE__ */ (() => {
     b: begin,
     e: end,
     s: superCall,
+    r: () => running,
     n: hooks => {
       if (native === undefined) native = hooks;
     },

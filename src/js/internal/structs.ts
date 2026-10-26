@@ -73,6 +73,11 @@ let heldMutex: (token: unknown) => unknown;
 class UnlockToken {
   #mutex: unknown = null;
 
+  constructor() {
+    // The prototype of a token is always this one, whatever `new.target` says.
+    if (new.target !== UnlockToken) return new UnlockToken();
+  }
+
   static {
     armToken = (token, mutex) => {
       token.#mutex = mutex;

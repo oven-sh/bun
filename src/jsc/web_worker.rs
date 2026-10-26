@@ -137,6 +137,16 @@ enum EntryOutcome {
     Stop,
 }
 
+/// Whether the render that made the text handed to `WebWorker__dispatchError` threw.
+/// Mirrors `WorkerErrorText` in WorkerMessagingProxy.h.
+#[repr(u8)]
+#[derive(Copy, Clone)]
+enum WorkerErrorText {
+    Rendered = 0,
+    /// The text is empty or stops where the render threw.
+    RenderFailed = 1,
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Status {
@@ -170,6 +180,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         proxy: *mut c_void,
         message: BunString,
+        text: WorkerErrorText,
         err: JSValue,
     );
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
@@ -1132,7 +1143,13 @@ impl WebWorker {
             }
         };
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
-            WebWorker__dispatchError(global, self.messaging_proxy, str, err)
+            WebWorker__dispatchError(
+                global,
+                self.messaging_proxy,
+                str,
+                WorkerErrorText::Rendered,
+                err,
+            )
         });
         if let Err(e) = dispatch {
             let _ = crate::task::report_error_or_terminate(global, e);
@@ -1215,11 +1232,16 @@ fn on_unhandled_rejection(
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
     let error_message = BunString::clone_utf8(&array);
+    let text = match thrown {
+        None => WorkerErrorText::Rendered,
+        Some(_) => WorkerErrorText::RenderFailed,
+    };
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         WebWorker__dispatchError(
             global_object,
             worker.messaging_proxy,
             error_message,
+            text,
             error_instance,
         );
     })

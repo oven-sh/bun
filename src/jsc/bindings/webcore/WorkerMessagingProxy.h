@@ -64,6 +64,14 @@ class Worker;
 // m_workerObject on the parent thread, which workerObjectDestroyed() nulls first.
 enum class DrainBudget;
 
+// Whether the render that made the text of a worker's uncaught error threw.
+// Mirrors `WorkerErrorText` in src/jsc/web_worker.rs.
+enum class WorkerErrorText : uint8_t {
+    Rendered = 0,
+    // The text is empty or stops where the render threw.
+    RenderFailed = 1,
+};
+
 class WorkerMessagingProxy final : public ThreadSafeRefCounted<WorkerMessagingProxy> {
     WTF_MAKE_TZONE_ALLOCATED(WorkerMessagingProxy);
 
@@ -103,7 +111,7 @@ public:
     // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
-    void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
+    void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, WorkerErrorText, JSC::JSValue error);
     // The thread's global scope, VM and per-thread state are gone; only the OS thread remains.
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);
@@ -126,8 +134,16 @@ private:
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
+    enum class ErrorCloneResult : uint8_t {
+        Posted,
+        // Structured clone refused the value.
+        NotCloneable,
+        // Nothing to report: script that the clone ran stopped the worker, or the parent takes no more tasks.
+        Abandoned,
+    };
     void postMessageErrorToWorkerObject(String&& message);
-    bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
+    ErrorCloneResult postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
+    void postUnserializableErrorToWorkerObject();
 
     // Parent thread only.
     RefPtr<ScriptExecutionContext> m_scriptExecutionContext;

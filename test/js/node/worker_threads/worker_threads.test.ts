@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, nodeExeAtLeast, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -719,6 +719,57 @@ describe("error event", () => {
     const [err] = await once(worker, "error");
     expect(err).toBeInstanceOf(TypeError);
     expect(err.message).toBe("oh no");
+  });
+
+  // Node builds ERR_WORKER_UNSERIALIZABLE_ERROR on the parent when the uncaught value can be neither cloned nor
+  // inspected: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L412-L414
+  // Bun emitted null. The expected output is node v26.3.0's, and the fixture runs under node too where one is installed.
+  const unserializable = `["error",{"name":"Error","message":"Serializing an uncaught exception failed","code":"ERR_WORKER_UNSERIALIZABLE_ERROR"}]`;
+  const uncaughtUnserializableExpected = `null: {"events":["online",["error",null]],"exitCode":1}
+an object: {"events":["online",${unserializable}],"exitCode":1}
+an object whose render throws null: {"events":["online",${unserializable}],"exitCode":1}
+an object that holds an unprintable object: {"events":["online",${unserializable}],"exitCode":1}
+an object whose clone throws: {"events":["online",${unserializable}],"exitCode":1}
+an object thrown from a callback: {"events":["online",${unserializable}],"exitCode":1}
+process.exit() in a getter of a printable object: {"events":["online"],"exitCode":4}
+process.exit() in a getter of an unprintable object: {"events":["online"],"exitCode":4}
+an object, through a worker with no 'error' listener: {"events":["online",${unserializable}],"exitCode":1}
+`;
+  for (const [name, runtime] of [
+    ["bun", bunExe()],
+    ["node", nodeExeAtLeast("26.3.0")],
+  ] as const) {
+    test.skipIf(!runtime)(
+      `is ERR_WORKER_UNSERIALIZABLE_ERROR for a value that can be neither cloned nor rendered (${name})`,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [runtime!, join(import.meta.dir, "uncaught-unserializable-fixture.js")],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: uncaughtUnserializableExpected,
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+  }
+
+  // A node:vm timeout ends the clone with a termination as process.exit() does, but this worker was not stopped.
+  test("is the render for a value whose clone a node:vm timeout cuts short", async () => {
+    const worker = new Worker(
+      `globalThis.target = new EventTarget();
+       target.addEventListener("x", () => { throw { get a() { for (;;) {} } }; });
+       try { require("node:vm").runInThisContext("target.dispatchEvent(new Event('x'))", { timeout: 2000 }); } catch {}`,
+      { eval: true },
+    );
+    const errors: any[] = [];
+    worker.on("error", err => errors.push(err));
+    await new Promise(resolve => worker.on("exit", resolve));
+    expect(errors.map(err => err?.message)).toEqual(["{\n  a: [Getter],\n}"]);
   });
 
   test("falls back to string when the error cannot be serialized", async () => {

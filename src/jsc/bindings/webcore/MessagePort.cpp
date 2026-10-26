@@ -68,7 +68,7 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
-    // A listening port can be collected before the peer-close task (which holds it weakly) runs; its loop ref must not outlive it.
+    // Backstop for peerClosed(): its task holds the port weakly, so a listening port that is collected first gives its loop ref back here.
     ASSERT(!m_hasRef);
     m_isRefd = false;
     updateListenerEventLoopRef();
@@ -507,8 +507,7 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
         break;
     }
     port.updateListenerEventLoopRef();
-    // node's setupPortReferencing unref()s the port when its last 'message' listener is removed, .ref() or not.
-    // removeAllListeners() arrives here as one Remove per listener; node's skips this step and leaves the port ref'd.
+    // node unref()s a port when its last 'message' listener is removed, after .ref() too: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker/io.js#L241-L246
     if (hadListeners && !port.m_messageEventCount)
         port.releaseJsRef();
 }

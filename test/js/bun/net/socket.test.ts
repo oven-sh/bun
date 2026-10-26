@@ -1185,6 +1185,37 @@ it("getServername on a closed TLS socket should not crash", async () => {
   expect(await promise).toBeUndefined();
   expect(client.getServername()).toBeUndefined();
 });
+
+it("reload() of a stopped listener says that the listener is closed", () => {
+  const socket = { data() {} };
+  const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket });
+  listener.stop();
+  expect(() => listener.reload({ socket })).toThrow("Listener is closed");
+});
+
+it("getPeerCertificate and exportKeyingMaterial accept undefined for optional arguments", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+  const socket = await connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      data() {},
+      handshake: () => resolve(),
+      error: (_, error) => reject(error),
+      close: () => reject(new Error("closed before the handshake")),
+    },
+  });
+  try {
+    await promise;
+    expect(socket.getPeerCertificate(undefined)).toEqual(socket.getPeerCertificate());
+    expect(socket.exportKeyingMaterial(8, "label", undefined)).toEqual(socket.exportKeyingMaterial(8, "label"));
+  } finally {
+    socket.end();
+  }
+});
+
 it("exportKeyingMaterial with a context whose toPrimitive terminates the socket does not use-after-free", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -6606,16 +6637,15 @@ it("a view of part of a buffer as a tls option is read as the view", () => {
   }
 });
 
-it("Array.prototype as a tls option is none of the types one takes", () => {
+it("Array.prototype as a tls option is an empty array, as in Node", () => {
   for (const name of ["key", "cert", "ca", "crl"]) {
-    expect(() =>
-      Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: Array.prototype } as any }),
-    ).toThrow(
-      expect.objectContaining({
-        code: "ERR_INVALID_ARG_TYPE",
-        message: `TLSOptions.${name} must be of type string, ArrayBuffer, Blob, array of <string, ArrayBuffer, or Blob>, or null`,
-      }),
-    );
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+      tls: { [name]: Array.prototype } as any,
+    });
+    expect(listener.port).toBeGreaterThan(0);
   }
 });
 

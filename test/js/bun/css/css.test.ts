@@ -7744,8 +7744,9 @@ describe("css tests", () => {
     );
 
     // Every entry asks what the rest of its list says, and the answer must not cost a walk
-    // of the list per entry. With one, a release build needs over a minute for each list
-    // below, so the child runs into the spawn timeout. `transition` takes the same path.
+    // of the list per entry. With one, a release build needs about three minutes for the
+    // second list below (44s for half of it), so the child runs into the spawn timeout. The
+    // linear version needs about 5s under debug+ASAN. `transition` takes the same path.
     test("a long list is expanded in linear time", async () => {
       const script = `
         const { minifyTest } = require("bun:internal-for-testing").cssInternals;
@@ -7757,7 +7758,7 @@ describe("css tests", () => {
         console.log(prefixed === ".a{transition-property:" + list(200_000, "-webkit-mask-size,mask-size") + "}");
 
         // Each mask-border finds -webkit-mask-box-image at the far end of the list.
-        const listed = ".a{transition-property:" + list(500_000, "mask-border") + ",-webkit-mask-box-image}";
+        const listed = ".a{transition-property:" + list(1_000_000, "mask-border") + ",-webkit-mask-box-image}";
         console.log(minifyTest(listed, "", safari15) === listed);
       `;
       await using proc = Bun.spawn({
@@ -7765,7 +7766,7 @@ describe("css tests", () => {
         env: bunEnv,
         stdout: "pipe",
         stderr: "inherit",
-        timeout: 20_000,
+        timeout: 60_000,
         killSignal: "SIGKILL",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
@@ -7774,7 +7775,7 @@ describe("css tests", () => {
         signalCode: null,
         exitCode: 0,
       });
-    }, 30_000);
+    }, 90_000);
 
     prefix_test(
       `

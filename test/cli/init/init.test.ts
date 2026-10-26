@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCanary, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
@@ -45,6 +45,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       "module": "index.ts",
       "type": "module",
       "private": true,
+      "scripts": {
+        "typecheck": "bun check",
+      },
       "devDependencies": {
         "@types/bun": "latest",
       },
@@ -56,6 +59,11 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(readme).toStartWith("# " + path.basename(temp).toLowerCase().replaceAll(" ", "-") + "\n");
     expect(readme).toInclude("v" + Bun.version.replaceAll("-debug", ""));
     expect(readme).toInclude("index.ts");
+    expect(readme).toInclude("bun check");
+    // A release build has no `bun lint`.
+    expect(readme.includes("`bun lint`")).toBe(isCanary);
+    expect(readme).toInclude("`bun fmt`");
+    expect(readme).not.toInclude("{[");
 
     expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
@@ -276,6 +284,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
         "typescript": "^7",
       },
       "private": true,
+      "scripts": {
+        "typecheck": "bun check",
+      },
       "type": "module",
     }
   `);
@@ -303,11 +314,32 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
     expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
       name: "x",
+      scripts: { typecheck: "bun check" },
       devDependencies: { "@types/bun": "latest" },
       peerDependencies: { typescript: "^7" },
       module: "index.ts",
       type: "module",
       private: true,
+    });
+  }, 30_000);
+
+  test("bun init writes a typecheck script that is the type checker where `bun check` is a script", async () => {
+    await using temp = tempDir("bun-init-check-script", {
+      "package.json": JSON.stringify({ name: "x", scripts: { check: "echo mine" } }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    expect((await Bun.file(path.join(temp, "package.json")).json()).scripts).toEqual({
+      check: "echo mine",
+      typecheck: "bun --check",
     });
   }, 30_000);
 
@@ -386,6 +418,34 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);
 
+  test.skipIf(!isCanary).each(["--react", "--react=tailwind", "--react=shadcn"])(
+    "bun init %s writes the same [lint] section to bunfig.toml as bun lint --init",
+    async flag => {
+      await using temp = tempDir("bun-init-lint-section", { "alone/a.js": "" });
+      const run = async (cwd: string, ...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd,
+          stdio: ["ignore", "pipe", "inherit"],
+          env: initEnv,
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        return { stdout, exitCode };
+      };
+      expect((await run(path.join(temp, "alone"), "lint", "--init")).exitCode).toBe(0);
+      expect((await run(String(temp), "init", flag, "app")).exitCode).toBe(0);
+      expect(fs.readFileSync(path.join(temp, "app/bunfig.toml"), "utf8")).toEndWith(
+        'env = "BUN_PUBLIC_*"\n\n' + fs.readFileSync(path.join(temp, "alone/bunfig.toml"), "utf8"),
+      );
+      expect(await run(path.join(temp, "app"), "lint", "--init")).toEqual({
+        stdout: "bunfig.toml already has a [lint] section\n",
+        exitCode: 0,
+      });
+      expect(fs.readFileSync(path.join(temp, "app/README.md"), "utf8")).toInclude("`bun lint`");
+    },
+    30_000,
+  );
+
   // Every template declares `typescript: "^7"`, so the `bun install` that
   // `bun init` runs installs TypeScript 7. Typecheck and build with that
   // exact install. https://github.com/oven-sh/bun/issues/33050
@@ -423,10 +483,54 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       const [tscStdout, tscStderr, tscExited] = await Promise.all([tsc.stdout.text(), tsc.stderr.text(), tsc.exited]);
       expect({ tscStdout, tscStderr, tscExited }).toMatchObject({ tscExited: 0 });
 
-      // The blank template has no `build` script; the react templates do.
+      // So does `bun check`, which is what the `typecheck` script of every template runs.
       // bun-plugin-tailwind's `bun` peer dep links a node_modules/.bin/bun that
-      // would otherwise shadow bunExe() in the nested `bun run build.ts`, so
-      // pass --bun.
+      // would otherwise shadow bunExe() in the nested `bun check`, so pass --bun.
+      await using check = Bun.spawn({
+        cmd: [bunExe(), "--bun", "run", "typecheck"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: bunEnv,
+      });
+      const [checkStdout, checkStderr, checkExited] = await Promise.all([
+        check.stdout.text(),
+        check.stderr.text(),
+        check.exited,
+      ]);
+      expect({ checkStdout, checkStderr, checkExited }).toMatchObject({ checkStdout: "", checkExited: 0 });
+
+      // `bun lint` reports nothing, not even a warning, and `bun fmt` has nothing to change.
+      if (isCanary) {
+        await using lint = Bun.spawn({
+          cmd: [bunExe(), "lint", "-f", "json"],
+          cwd: temp,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: bunEnv,
+        });
+        const [lintStdout, lintStderr, lintExited] = await Promise.all([
+          lint.stdout.text(),
+          lint.stderr.text(),
+          lint.exited,
+        ]);
+        const problems = JSON.parse(lintStdout).flatMap((file: { messages: unknown[] }) => file.messages);
+        expect({ problems, lintStderr, lintExited }).toMatchObject({ problems: [], lintExited: 0 });
+      }
+
+      await using format = Bun.spawn({
+        cmd: [bunExe(), "fmt", "--check"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: bunEnv,
+      });
+      const [formatStdout, formatStderr, formatExited] = await Promise.all([
+        format.stdout.text(),
+        format.stderr.text(),
+        format.exited,
+      ]);
+      expect({ formatStdout, formatStderr, formatExited }).toMatchObject({ formatExited: 0 });
+
+      // The blank template has no `build` script; the react templates do.
+      // --bun for the same reason: the script is `bun run build.ts`.
       const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
       if (pkg.scripts?.build) {
         await using build = Bun.spawn({
@@ -444,6 +548,32 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       }
     },
     180_000,
+  );
+
+  test.skipIf(isWindows)(
+    "`bun fmt --check` passes on the generated CLAUDE.md",
+    async () => {
+      await using temp = tempDir("bun-init-claude-md", { "bin/claude": "#!/bin/sh\n" });
+      fs.chmodSync(path.join(temp, "bin/claude"), 0o755);
+      await using init = Bun.spawn({
+        cmd: [bunExe(), "init", "-y", "app"],
+        cwd: temp,
+        stdio: ["ignore", "ignore", "inherit"],
+        env: { ...bunEnv, PATH: `${path.join(temp, "bin")}:${bunEnv.PATH}`, CURSOR_AGENT_RULE_DISABLED: "1" },
+      });
+      expect(await init.exited).toBe(0);
+      expect(fs.readFileSync(path.join(temp, "app/CLAUDE.md"), "utf8")).toStartWith("Default to using Bun");
+
+      await using format = Bun.spawn({
+        cmd: [bunExe(), "fmt", "--check", "CLAUDE.md"],
+        cwd: path.join(temp, "app"),
+        stdio: ["ignore", "pipe", "pipe"],
+        env: bunEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([format.stdout.text(), format.stderr.text(), format.exited]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    },
+    30_000,
   );
 
   test("nested `bun install` output is inherited", async () => {

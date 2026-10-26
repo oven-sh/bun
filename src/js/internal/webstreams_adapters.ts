@@ -19,7 +19,7 @@ const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
 const { kEosNodeSynchronousCallback } = eos;
 
-const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const normalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
 
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeMap = Array.prototype.map;
@@ -89,7 +89,7 @@ class ReadableFromWeb extends Readable {
   // source to "closed" before the consumer can abort, and cancel() on a closed
   // stream is a spec no-op, so the source's cancel hook would never run.
   _read() {
-    $debug("ReadableFromWeb _read()", this.__id);
+    $debug("ReadableFromWeb _read()");
     if (this.#closed) return;
     var reader = this.#reader;
     var stream = this.#stream;
@@ -120,25 +120,19 @@ class ReadableFromWeb extends Readable {
   _destroy(error, callback) {
     if (!this.#closed) {
       this.#closed = true;
+      // As in Node, a cancel() that rejects doesn't error the Readable.
+      const done = () => callback(error);
       var reader = this.#reader;
       if (reader) {
         this.#reader = undefined;
-        PromisePrototypeThen.$call(
-          reader.cancel(error),
-          () => callback(error),
-          cancelError => callback(error ?? cancelError),
-        );
+        PromisePrototypeThen.$call(reader.cancel(error), done, done);
         return;
       }
       var stream = this.#stream;
       if (stream) {
         this.#stream = undefined;
         if (!this.#takenByResponse(stream)) {
-          PromisePrototypeThen.$call(
-            stream.cancel(error),
-            () => callback(error),
-            cancelError => callback(error ?? cancelError),
-          );
+          PromisePrototypeThen.$call(stream.cancel(error), done, done);
           return;
         }
       }
@@ -154,7 +148,7 @@ class ReadableFromWeb extends Readable {
 const encoder = new TextEncoder();
 
 // Collect all negative (error) ZLIB codes and Z_NEED_DICT
-const ZLIB_FAILURES: Set<string> = new SafeSet([
+const ZLIB_FAILURES: Set<string | undefined> = new SafeSet([
   ...ArrayPrototypeFilter.$call(
     ArrayPrototypeMap.$call(ObjectEntries(constants_zlib), ({ 0: code, 1: value }) => (value < 0 ? code : null)),
     Boolean,
@@ -258,7 +252,8 @@ function newWritableStreamFromStreamWritable(streamWritable) {
         closed.reject(error);
         closed = undefined;
       }
-      controller.error(error);
+      // close() clears the controller when the stream has already ended.
+      controller?.error(error);
       controller = undefined;
       return;
     }
@@ -268,7 +263,7 @@ function newWritableStreamFromStreamWritable(streamWritable) {
       closed = undefined;
       return;
     }
-    controller.error($makeAbortError());
+    controller?.error($makeAbortError());
     controller = undefined;
   });
 
@@ -466,6 +461,14 @@ function newStreamWritableFromWritableStream(writableStream, options = kEmptyObj
 
 const kErrorSentinelAttached = Symbol("kErrorSentinelAttached");
 
+interface StreamReadableUnderlyingSource {
+  __proto__?: null;
+  type: "bytes" | undefined;
+  start(c: ReadableStreamDefaultController | ReadableByteStreamController): void;
+  cancel(reason: unknown): void;
+  pull?(): void;
+}
+
 function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObject) {
   // Not using the internal/streams/utils isReadableNodeStream utility
   // here because it will return false if streamReadable is a Duplex
@@ -485,7 +488,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   let wasCanceled = false;
   let strategy;
 
-  const underlyingSource = {
+  const underlyingSource: StreamReadableUnderlyingSource = {
     __proto__: null,
     type: isBYOB ? "bytes" : undefined,
     start(c) {
@@ -550,6 +553,8 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     streamReadable.pause();
 
     streamReadable.on("data", function onData(chunk) {
+      // Buffered data can still be emitted after cancel() destroys the stream.
+      if (wasCanceled) return;
       // Copy the Buffer to detach it from the pool.
       if (Buffer.isBuffer(chunk) && !objectMode) chunk = new Uint8Array(chunk);
       controller.enqueue(chunk);
@@ -560,7 +565,18 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   return readableStream;
 }
 
-function newStreamReadableFromReadableStream(readableStream, options: Record<string, unknown> = kEmptyObject) {
+interface StreamReadableFromReadableStreamOptions {
+  highWaterMark?: number;
+  encoding?: string;
+  objectMode?: boolean;
+  signal?: AbortSignal;
+  responseBody?: boolean;
+}
+
+function newStreamReadableFromReadableStream(
+  readableStream,
+  options: StreamReadableFromReadableStreamOptions = kEmptyObject,
+) {
   if (!$inheritsReadableStream(readableStream)) {
     throw $ERR_INVALID_ARG_TYPE("readableStream", "ReadableStream", readableStream);
   }

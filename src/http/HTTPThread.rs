@@ -6,6 +6,7 @@ use std::time::Instant;
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
+use bun_errno::SystemErrno;
 use bun_ptr::RefPtr;
 use bun_threading::{Mutex, UnboundedQueue};
 use bun_uws as uws;
@@ -103,11 +104,16 @@ pub struct HttpThread {
     pub(crate) queued_writes: Vec<WriteMessage>,
     pub(crate) queued_receive_resumes: Vec<u32>,
     pub(crate) queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
+    /// `PoolOptions::id`s whose idle connections to close. Rare:
+    /// `has_queued_pool_closes` lets a tick skip the lock.
+    pub(crate) queued_pool_closes: Vec<u64>,
+    pub(crate) has_queued_pool_closes: AtomicBool,
 
     pub(crate) queued_shutdowns_lock: Mutex,
     pub(crate) queued_writes_lock: Mutex,
     pub(crate) queued_receive_resumes_lock: Mutex,
     pub(crate) queued_cert_check_resumes_lock: Mutex,
+    pub(crate) queued_pool_closes_lock: Mutex,
 
     /// Refs released on the next loop tick rather than inside the socket
     /// callback that gave them up.
@@ -168,10 +174,13 @@ impl HttpThread {
             queued_writes: Vec::new(),
             queued_receive_resumes: Vec::new(),
             queued_cert_check_resumes: Vec::new(),
+            queued_pool_closes: Vec::new(),
+            has_queued_pool_closes: AtomicBool::new(false),
             queued_shutdowns_lock: Mutex::new(),
             queued_writes_lock: Mutex::new(),
             queued_receive_resumes_lock: Mutex::new(),
             queued_cert_check_resumes_lock: Mutex::new(),
+            queued_pool_closes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
             dead_ssl_contexts: Vec::new(),
             has_awoken: AtomicBool::new(false),
@@ -203,6 +212,8 @@ pub struct WriteMessage {
 pub enum WriteMessageType {
     Data = 0,
     End = 1,
+    /// The stream body broke its declared Content-Length; a no-op once that body was dropped.
+    LengthMismatch = 2,
 }
 
 pub struct ShutdownMessage {
@@ -215,10 +226,12 @@ pub struct CertCheckResumeMessage {
     pub(crate) async_http_id: u32,
 }
 
+pub(crate) const LIBDEFLATE_SHARED_BUFFER_LEN: usize = 512 * 1024;
+
 pub struct LibdeflateState {
     pub(crate) decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
     pub(crate) compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
-    pub(crate) shared_buffer: [u8; 512 * 1024],
+    pub(crate) shared_buffer: [u8; LIBDEFLATE_SHARED_BUFFER_LEN],
 }
 
 // SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over
@@ -501,6 +514,8 @@ impl HttpThread {
             }
         }
         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
+        // The hostname is passed to the socket layer as a C string, so it must not contain a NUL.
+        crate::validate_request_target(hn)?;
         ctx.connect(client, hn, pt)
     }
 
@@ -612,7 +627,6 @@ impl HttpThread {
             };
             for write in &queued_writes {
                 let message = write.kind;
-                let ended = message == WriteMessageType::End;
 
                 if let Some(socket_ptr) = abort_tracker().get(&write.async_http_id) {
                     match *socket_ptr {
@@ -622,18 +636,13 @@ impl HttpThread {
                             }
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
-                                if let crate::HTTPRequestBody::Stream(stream) =
-                                    &mut client.state.original_request_body
-                                {
-                                    stream.ended = ended;
-                                    client.flush_stream::<true>(socket);
-                                }
+                                client.on_request_stream_message::<true>(message, socket);
                             }
                             if let Some(session) = tagged.session() {
                                 h2::ClientSession::stream_body_by_http_id(
                                     session,
                                     write.async_http_id,
-                                    ended,
+                                    message,
                                 );
                             }
                         }
@@ -643,24 +652,19 @@ impl HttpThread {
                             }
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
-                                if let crate::HTTPRequestBody::Stream(stream) =
-                                    &mut client.state.original_request_body
-                                {
-                                    stream.ended = ended;
-                                    client.flush_stream::<false>(socket);
-                                }
+                                client.on_request_stream_message::<false>(message, socket);
                             }
                             if let Some(session) = tagged.session() {
                                 h2::ClientSession::stream_body_by_http_id(
                                     session,
                                     write.async_http_id,
-                                    ended,
+                                    message,
                                 );
                             }
                         }
                     }
                 } else {
-                    h3::ClientContext::stream_body_by_http_id(write.async_http_id, ended);
+                    h3::ClientContext::stream_body_by_http_id(write.async_http_id, message);
                 }
             }
             let len = queued_writes.len();
@@ -717,6 +721,28 @@ impl HttpThread {
         }
     }
 
+    fn drain_queued_pool_closes(&mut self) {
+        // Read before writing so an idle tick leaves the cache line shared. The
+        // flag is a hint: the queue is published by its lock, and the producer
+        // wakes the loop after raising the flag.
+        while self.has_queued_pool_closes.load(Ordering::Relaxed)
+            && self.has_queued_pool_closes.swap(false, Ordering::Acquire)
+        {
+            let queued = {
+                let _guard = self.queued_pool_closes_lock.lock_guard();
+                core::mem::take(&mut self.queued_pool_closes)
+            };
+            for pool_id in queued {
+                self.http_context.close_idle_sockets(pool_id);
+                self.https_context.close_idle_sockets(pool_id);
+                for entry in custom_ssl_context_map().values_mut() {
+                    entry.ctx_mut().close_idle_sockets(pool_id);
+                }
+                h3::ClientContext::close_idle_sessions(pool_id);
+            }
+        }
+    }
+
     fn drain_queued_receive_resumes(&mut self) {
         loop {
             let queued = {
@@ -765,6 +791,27 @@ impl HttpThread {
         }
     }
 
+    /// Parks a request that found every connection taken. Parked requests start in the order they
+    /// came, except that the ones with `yields_to_other_requests` start after all the others.
+    fn defer(&mut self, http: NonNull<AsyncHttp<'static>>) {
+        // A parked `AsyncHttp` is alive and nobody else borrows it; see `drain_events`.
+        let yields = |http: &NonNull<AsyncHttp<'static>>| {
+            bun_ptr::ParentRef::from(*http)
+                .client
+                .flags
+                .yields_to_other_requests
+        };
+        // The list keeps the requests that yield at its end, so the last one tells if there are any.
+        if yields(&http) || !self.deferred_tasks.last().is_some_and(yields) {
+            self.deferred_tasks.push(http);
+            return;
+        }
+        let first_that_yields = self
+            .deferred_tasks
+            .partition_point(|parked| !yields(parked));
+        self.deferred_tasks.insert(first_that_yields, http);
+    }
+
     pub(crate) fn drain_events(&mut self) {
         // Process any pending writes **before** aborting.
         self.drain_queued_receive_resumes();
@@ -774,6 +821,7 @@ impl HttpThread {
         // turn removes the abort-tracker entry first, so the resume becomes a
         // no-op and the request is never transmitted after a same-tick abort.
         self.drain_queued_cert_check_resumes();
+        self.drain_queued_pool_closes();
         h3::PendingConnect::drain_resolved();
 
         self.queued_threadlocal_proxy_derefs.clear();
@@ -850,7 +898,7 @@ impl HttpThread {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
                 // later pops) and keep draining — there may be aborted tasks
                 // behind it that we can fail-fast right now.
-                self.deferred_tasks.push(http);
+                self.defer(http);
                 continue;
             }
             start_queued_task(http.as_ptr(), &mut self.in_flight);
@@ -898,6 +946,16 @@ impl HttpThread {
                 async_http_id: http.async_http_id,
             });
         }
+        self.wakeup();
+    }
+
+    /// Close the idle keep-alive connections of fetch session `pool_id`.
+    pub fn schedule_pool_close(&mut self, pool_id: u64) {
+        {
+            let _guard = self.queued_pool_closes_lock.lock_guard();
+            self.queued_pool_closes.push(pool_id);
+        }
+        self.has_queued_pool_closes.store(true, Ordering::Release);
         self.wakeup();
     }
 
@@ -1185,8 +1243,27 @@ mod _event_loop_draft {
             Ok(t) => {
                 let _ = HTTP_THREAD_HANDLE.set(t);
             }
-            Err(err) => Output::panic(format_args!("Failed to start HTTP Client thread: {}", err)),
+            Err(err) => exit_spawn_failed(&err),
         }
+    }
+
+    /// A refused thread is the environment's limit, not a bug: no crash reporter.
+    #[cold]
+    #[inline(never)]
+    fn exit_spawn_failed(err: &std::io::Error) -> ! {
+        match SystemErrno::from_io_error(err) {
+            Some(errno) => {
+                bun_core::err_generic!("Failed to start HTTP Client thread: {}", errno);
+                if errno == SystemErrno::EAGAIN {
+                    bun_core::note!(
+                        "The process or thread limit may have been reached (ulimit -u, or the container's pids limit); raise it or reduce concurrency"
+                    );
+                }
+            }
+            // No errno name for this OS code (most Windows thread-creation failures).
+            None => bun_core::err_generic!("Failed to start HTTP Client thread: {}", err),
+        }
+        bun_core::Global::crash()
     }
 
     fn on_start(opts: InitOpts) {
@@ -1329,6 +1406,11 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Guarded::new(false),
     bun_threading::Condvar::new(),
 );
+
+/// Whether [`init`] has run; [`crate::http_thread`] panics before that.
+pub fn is_initialized() -> bool {
+    crate::HTTP_THREAD_INIT.load(Ordering::Acquire)
+}
 
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
 /// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight

@@ -251,6 +251,15 @@ export const lsquic: Dependency = {
     // its own. The peer read trailers as body bytes, or closed the connection
     // when the block didn't fit in that frame's packet.
     "patches/lsquic/headers-after-buffered-body.patch",
+    // lsquic_stream_write() refused body bytes only while a stream's first header
+    // block was unsent. While a later block (a response after a 1xx, trailers)
+    // was unsent, it wrote them into that block's HEADERS frame, and the peer
+    // closed the connection with a QPACK error. These are the three hunks of
+    // lsquic 4.11.0 that stop that: the check for any unsent block and the write
+    // readiness of a stashed block (4.10.2, a9616720af), and the check for a
+    // reset stream ahead of them (litespeedtech/lsquic#711). Delete this patch
+    // with the update to 4.11.0.
+    "patches/lsquic/headers-pending-guards.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

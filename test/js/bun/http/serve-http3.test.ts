@@ -2529,6 +2529,75 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
     expect(await exchange(server, { handshakeFirst: false })).toEqual(expected);
   });
 
+  // The final header blocks of a burst share the congestion window. lsquic keeps the part of a block
+  // that has no room and sends it later, and the body that the handler writes in the same turn has
+  // to stay behind that part.
+  test("and every response of a burst keeps its body behind its header block", async () => {
+    const requests = 24;
+    // About 5 KB a response as a header block: together several times lsquic's initial window of 32 packets.
+    const value = Buffer.alloc(6000, "v").toString();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: async req => new Response("content:" + (await req.text()), { headers: { "x-large": value } }),
+    });
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+
+    const exchanges = [];
+    for (let i = 0; i < requests; i++) {
+      const seen: string[] = [];
+      const continued = Promise.withResolvers<void>();
+      const stream = await client.createBidirectionalStream({
+        oninfo(received) {
+          seen.push("info " + received[":status"]);
+          continued.resolve();
+        },
+        onheaders(received) {
+          seen.push(`headers ${received[":status"]} ${received["x-large"] === value ? "with" : "without"} its field`);
+          continued.resolve();
+        },
+      });
+      stream.closed.catch(() => continued.resolve());
+      stream.sendHeaders(requestHeaders("/" + i, { ":method": "POST", expect: "100-continue" }));
+      exchanges.push({ seen, continued: continued.promise, stream });
+    }
+    // Every handler then answers in the same read.
+    await Promise.all(exchanges.map(exchange => exchange.continued));
+    for (const { stream } of exchanges) {
+      stream.writer.writeSync(new TextEncoder().encode("request-content"));
+      stream.writer.endSync();
+    }
+    const responses = await Promise.all(
+      exchanges.map(async ({ seen, stream }) => {
+        try {
+          let body = "";
+          for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+            for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+          }
+          seen.push("body " + body);
+        } catch (error: any) {
+          seen.push("error " + error.code);
+        }
+        return seen.join(", ");
+      }),
+    );
+    if (!client.destroyed) client.close().catch(() => {});
+    expect(responses).toEqual(
+      Array.from({ length: requests }, () => "info 100, headers 200 with its field, body content:request-content"),
+    );
+  });
+
   // A 100 Continue would start an upload that the 413 behind it refuses. HTTP/1.1 and HTTP/2 do the same.
   test("but not when content-length exceeds maxRequestBodySize", async () => {
     await using server = Bun.serve({

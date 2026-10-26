@@ -70,6 +70,71 @@ describe("QuicStream.destroy after the app ended the send side", () => {
     expect(chunks).toBeGreaterThan(0);
     expect(await gotHeaders.promise).toBe("200");
   });
+
+  // lsquic keeps the part of a header block that the congestion window has no room for, and sends it
+  // later. destroy() can't deliver a body that waits behind that part, so it resets the stream.
+  test("resets only that stream when the body waits behind a header block that lsquic still holds", async () => {
+    // About 175 KB as a header block. lsquic's initial window is 32 packets.
+    const value = Buffer.alloc(2000, "v").toString();
+    const large: Record<string, string> = { ":status": "200" };
+    for (let i = 0; i < 100; i++) large[`x-large-${i}`] = value;
+    const application = { maxHeaderLength: 1 << 20 };
+    const transportParams = { maxIdleTimeout: 2 };
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams,
+        application,
+        onheaders(this: any, headers: Record<string, string>) {
+          if (headers[":path"] === "/next") return void this.sendHeaders({ ":status": "204" }, { terminal: true });
+          // lsquic itself keeps a body behind the first header block of a stream, so the large one is the second.
+          this.sendInformationalHeaders({ ":status": "103" });
+          this.sendHeaders(large);
+          this.writer.writeSync(new TextEncoder().encode("hello"));
+          this.writer.endSync();
+          this.destroy();
+        },
+      },
+    );
+    // An endpoint keeps the limits it was created with, so not the shared one.
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams,
+      application,
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+
+    // How a request ends for the client: with the final status, or with the error's code.
+    async function get(path: string) {
+      let status = "no response";
+      try {
+        const stream: any = await client.createBidirectionalStream({
+          headers: { ":method": "GET", ":path": path, ":scheme": "https", ":authority": "localhost" },
+          onheaders: (headers: Record<string, string>) => void (status = "status " + headers[":status"]),
+        });
+        stream.closed.catch(() => {});
+        for await (const _ of stream);
+        return status;
+      } catch (error: any) {
+        return "error " + error.code;
+      }
+    }
+    const outcome = { destroyed: await get("/"), next: await get("/next") };
+    if (!client.destroyed) client.close().catch(() => {});
+    // A body in the header block's frame makes the client close the whole connection.
+    expect(outcome).toEqual({ destroyed: "error ERR_QUIC_STREAM_RESET", next: "status 204" });
+  });
 });
 
 // H3 header octets are latin1 on the wire (as node's StringBytes LATIN1 write

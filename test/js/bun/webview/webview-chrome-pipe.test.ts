@@ -508,6 +508,33 @@ for (const [name, [body, expected]] of Object.entries(helperScenarios)) {
   });
 }
 
+// Chrome's ProcessSingleton keeps its socket and cookie in a second temp
+// directory that the profile links to (`<profile>/SingletonSocket`), and
+// removes it only on a clean shutdown. The runtime always kills the browser,
+// so that directory goes with the profile. Windows Chrome has no such directory.
+test.concurrent.skipIf(isWindows)("the singleton socket directory is deleted with the temporary profile", async () => {
+  using tmp = tempDir("webview-chrome-profile", {});
+  const chromeDirs = (dir: string) =>
+    readdirSync(dir).filter(name => name.endsWith(".bun-chrome") || name.startsWith("com.google.Chrome."));
+  const result = await runScenario(
+    profileProbe +
+      `
+    const chromeDirs = () =>
+      readdirSync(process.env.BUN_TMPDIR).filter(name => name.endsWith(".bun-chrome") || name.startsWith("com.google.Chrome."));
+    backend.argv.push("--singleton");
+    const view = newView();
+    await view.navigate("http://fake/");
+    print({ whileRunning: chromeDirs().length });
+    view.close();
+  `,
+    { BUN_TMPDIR: String(tmp) },
+  );
+  expect({ result, afterExit: chromeDirs(String(tmp)) }).toEqual({
+    result: { whileRunning: 2 },
+    afterExit: [],
+  });
+});
+
 // A spawn that fails after the directory was made (here: no such binary) takes it with it.
 test.concurrent("a failed spawn leaves no profile directory behind", async () => {
   using tmp = tempDir("webview-chrome-profile", {});

@@ -6,8 +6,8 @@
 // evaluate() and screenshot(). evaluate() runs the expression in this
 // process, which is how the tests move chosen payloads across the pipes and
 // how they make the fake browser misbehave on cue (the __fake_* globals).
-import { closeSync, mkdirSync, readSync, writeFileSync, writeSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, mkdirSync, mkdtempSync, readSync, symlinkSync, writeFileSync, writeSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const COMMANDS = 3;
 const REPLIES = 4;
@@ -42,6 +42,18 @@ if (userDataDir && process.argv.includes("--helper")) {
     stdout: "inherit",
     stderr: "ignore",
   });
+}
+
+// `--singleton`: the files of Chrome's ProcessSingleton. Its socket and cookie
+// live in a second temp directory that the profile links to, and a killed
+// Chrome leaves that directory behind.
+if (userDataDir && process.argv.includes("--singleton")) {
+  const socketDir = mkdtempSync(join(dirname(userDataDir), "com.google.Chrome."));
+  writeFileSync(join(socketDir, "SingletonSocket"), "");
+  symlinkSync("cookie", join(socketDir, "SingletonCookie"));
+  symlinkSync(join(socketDir, "SingletonSocket"), join(userDataDir, "SingletonSocket"));
+  symlinkSync("cookie", join(userDataDir, "SingletonCookie"));
+  symlinkSync("host-" + process.pid, join(userDataDir, "SingletonLock"));
 }
 
 // Same bytes as SCREENSHOT_BYTES in the test file.

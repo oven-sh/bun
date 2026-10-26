@@ -25,7 +25,7 @@ use core::sync::atomic::AtomicU32;
 use core::sync::atomic::{AtomicPtr, Ordering};
 use std::io::Write as _;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(unix)]
 use bun_core::ZStr;
 use bun_core::{self, ZBox, env_var, getenv_z, strings, zstr};
 use bun_jsc::JSGlobalObject;
@@ -752,6 +752,8 @@ impl TempProfile {
 
 impl Drop for TempProfile {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        delete_singleton_socket(self.path());
         if let Err(err) = bun_sys::delete_tree_absolute(self.path()) {
             scoped_log!(
                 Chrome,
@@ -761,6 +763,36 @@ impl Drop for TempProfile {
             );
         }
     }
+}
+
+/// `<profile>/SingletonSocket` links into a second temp dir a killed Chrome never removes.
+#[cfg(unix)]
+fn delete_singleton_socket(profile_dir: &[u8]) {
+    let mut link_buf = path_buffer_pool::get();
+    let link = resolve_path::join_string_buf_z::<platform::Auto>(
+        &mut link_buf[..],
+        &[profile_dir, b"SingletonSocket".as_slice()],
+    );
+    let mut target_buf = path_buffer_pool::get();
+    let Ok(len) = bun_sys::readlink(link, &mut target_buf[..]) else {
+        return;
+    };
+    let socket = ZStr::from_buf(&target_buf[..], len);
+    let Some(socket_dir) = bun_paths::dirname(socket.as_bytes()) else {
+        return;
+    };
+    if !socket.as_bytes().starts_with(b"/") || socket_dir == profile_dir {
+        return;
+    }
+    let _ = bun_sys::unlink(socket);
+    let mut buf = path_buffer_pool::get();
+    let cookie = resolve_path::join_string_buf_z::<platform::Auto>(
+        &mut buf[..],
+        &[socket_dir, b"SingletonCookie".as_slice()],
+    );
+    let _ = bun_sys::unlink(cookie);
+    let dir = resolve_path::join_string_buf_z::<platform::Auto>(&mut buf[..], &[socket_dir]);
+    let _ = bun_sys::rmdir(dir);
 }
 
 // Implemented in ChromeBackend.cpp. Rejects all pending CDP promises.

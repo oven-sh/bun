@@ -768,7 +768,7 @@ describe.concurrent(".env that is not a regular file", () => {
   test("directory", async () => {
     using dir = tempDir("dotenv-dir", { ...files, ".env/keep": "" });
 
-    const install = await run(String(dir), "install", "--verbose");
+    const install = await run(String(dir), "install");
     expect(install.stderr).not.toContain("error loading .env file");
     expect(install.exitCode).toBe(0);
 
@@ -786,7 +786,7 @@ describe.concurrent(".env that is not a regular file", () => {
     mkfifo(path.join(String(dir), "fifo"));
     fs.symlinkSync("fifo", path.join(String(dir), ".env"));
 
-    const install = await run(String(dir), "install", "--verbose");
+    const install = await run(String(dir), "install");
     expect(install.stderr).not.toContain("error loading .env file");
     expect(install.exitCode).toBe(0);
 
@@ -804,7 +804,7 @@ describe.concurrent(".env that is not a regular file", () => {
     });
     fs.symlinkSync("sock", path.join(String(dir), ".env"));
 
-    const install = await run(String(dir), "install", "--verbose");
+    const install = await run(String(dir), "install");
     expect(install.stderr).not.toContain("ENXIO");
     expect(install.exitCode).toBe(0);
 

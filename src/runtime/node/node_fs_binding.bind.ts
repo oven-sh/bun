@@ -98,3 +98,8 @@ export const createMemfdForTesting = b.fn({
   throws: true,
   length: 1,
 });
+
+/** `clock` is the time now. */
+export const TimeOrClock = b.union({ clock: b.undefined, time: b.f64.allowDate, ignored: b.any });
+/** The time value of a Date, or the clock's without an argument, in milliseconds. `undefined` for anything else. */
+export const timeValueOrNow = b.fn({ args: { time: TimeOrClock }, returns: b.f64.optional, capability: "heap" });

@@ -11,8 +11,6 @@ const {
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
-const isDate = types.isDate;
-
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
 
@@ -26,10 +24,6 @@ const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared")
 
 // Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
 const nextTick = process.nextTick;
-
-// Captured at load, like Node's primordials: _toUnixTimestamp must not call a replaced Date.now or getTime.
-const DateNow = Date.now;
-const DatePrototypeGetTime = Date.prototype.getTime;
 
 // guardCallback reroutes a throw inside the user callback to the
 // uncaughtException path.
@@ -1005,6 +999,9 @@ function cp(src, dest, options, callback) {
   settleCallbackWithNull(require("node:fs/promises").cp(src, dest, options), callback);
 }
 
+// Reads the clock and a Date's time value natively. Made at the first call: node:fs reads nothing from Date at load.
+let timeValueOrNow;
+
 function _toUnixTimestamp(time: any, name = "time") {
   // @ts-ignore
   if (typeof time === "string" && +time == time) {
@@ -1014,13 +1011,14 @@ function _toUnixTimestamp(time: any, name = "time") {
   // @ts-ignore
   if (typeof time === "number" && $isFinite(time)) {
     if (time < 0) {
-      return DateNow() / 1000;
+      return (timeValueOrNow ??= $bindgen("node_fs_binding.bind.ts", "timeValueOrNow"))() / 1000;
     }
     return time;
   }
-  if (isDate(time)) {
+  if (typeof time === "object") {
     // Convert to 123.456 UNIX timestamp
-    return DatePrototypeGetTime.$call(time) / 1000;
+    const ms = (timeValueOrNow ??= $bindgen("node_fs_binding.bind.ts", "timeValueOrNow"))(time);
+    if (ms !== undefined) return ms / 1000;
   }
   throw $ERR_INVALID_ARG_TYPE(name, "number or Date", time);
 }

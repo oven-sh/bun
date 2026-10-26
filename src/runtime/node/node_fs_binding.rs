@@ -381,6 +381,16 @@ pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
     .into_js(&cx.heap)
 }
 
+/// What `fs._toUnixTimestamp` reads: no JavaScript runs, so nothing that user code replaced is called.
+pub(crate) fn time_value_or_now(heap: &JsHeap<'_>, time: TimeOrClock<'_>) -> Option<f64> {
+    match time {
+        // SAFETY: it only reads the clock.
+        TimeOrClock::Clock => Some(unsafe { heap.global() }.js_date_now()),
+        TimeOrClock::Time(ms) => Some(ms),
+        TimeOrClock::Ignored(_) => None,
+    }
+}
+
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
 /// exact argument parser `fs.rm` uses and return the parsed options, so node's
 /// `internal/fs/utils` `validateRmOptionsSync` tests exercise the production
@@ -446,15 +456,5 @@ pub(crate) fn create_memfd_for_testing(
             }
             Err(err) => Err(global.throw_value(err.to_js(global))),
         }
-    }
-}
-
-/// What `fs._toUnixTimestamp` reads: no JavaScript runs, so nothing that user code replaced is called.
-pub(crate) fn time_value_or_now(heap: &JsHeap<'_>, time: TimeOrClock<'_>) -> Option<f64> {
-    match time {
-        // SAFETY: it only reads the clock.
-        TimeOrClock::Clock => Some(unsafe { heap.global() }.js_date_now()),
-        TimeOrClock::Time(ms) => Some(ms),
-        TimeOrClock::Ignored(_) => None,
     }
 }

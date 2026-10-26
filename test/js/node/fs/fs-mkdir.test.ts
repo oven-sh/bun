@@ -420,12 +420,12 @@ describe.skipIf(isWindows)("fs.mkdir - recursive on a symlink loop", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/43651
-// The directory exists, but the process is not allowed to read its attributes.
+// The path exists, but the process is not allowed to read its attributes.
 // CreateDirectoryW reports ERROR_ALREADY_EXISTS, and the "is it a directory"
 // probe fails with STATUS_ACCESS_DENIED. Node reports the probe error (EPERM).
 // The child drops SeBackupPrivilege first: an elevated token with it enabled
 // bypasses the deny ACE, and the probe succeeds.
-describe.skipIf(!isWindows)("fs.mkdir - recursive on an existing directory with denied attributes (Windows)", () => {
+describe.skipIf(!isWindows)("fs.mkdir - recursive with denied attributes (Windows)", () => {
   const fixture = `
     import { dlopen, FFIType, ptr } from "bun:ffi";
     import fs from "node:fs";
@@ -465,38 +465,33 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive on an existing directory with 
     }
 
     const target = process.argv[2];
+    const pick = e => ({ code: e.code, syscall: e.syscall, path: e.path });
     const result = {};
     try {
       await fs.promises.mkdir(target, { recursive: true });
       result.async = "ok";
     } catch (e) {
-      result.async = e.code;
+      result.async = pick(e);
     }
     try {
       fs.mkdirSync(target, { recursive: true });
       result.sync = "ok";
     } catch (e) {
-      result.sync = e.code;
+      result.sync = pick(e);
     }
     process.stdout.write(JSON.stringify(result));
   `;
 
-  it("reports the access error instead of EEXIST", async () => {
-    using dir = tempDir("mkdir-denied", { "fixture.mjs": fixture });
-    const root = String(dir);
-    const chain = [path.join(root, "a"), path.join(root, "a", "b"), path.join(root, "a", "b", "c")];
-    const target = chain[2];
-    fs.mkdirSync(target, { recursive: true });
-
-    // NTFS answers an attribute query if the object grants FILE_READ_ATTRIBUTES
-    // or the parent grants FILE_LIST_DIRECTORY, so deny Everyone on the chain.
+  // NTFS answers an attribute query if the object grants FILE_READ_ATTRIBUTES
+  // or the parent grants FILE_LIST_DIRECTORY, so deny Everyone on the chain.
+  // The test process owns the entries, so it keeps WRITE_DAC for the cleanup.
+  async function mkdirWithDenied(root: string, deny: string[], target: string) {
     const denied: string[] = [];
     try {
-      for (const d of [...chain].reverse()) {
+      for (const d of deny) {
         execFileSync("icacls", [d, "/deny", "*S-1-1-0:(F)"], { stdio: "pipe" });
         denied.push(d);
       }
-
       await using proc = Bun.spawn({
         cmd: [bunExe(), "fixture.mjs", target],
         env: bunEnv,
@@ -506,13 +501,38 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive on an existing directory with 
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({ async: "EPERM", sync: "EPERM" });
       expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
     } finally {
-      // The test process owns these directories, so it keeps WRITE_DAC.
       for (const d of denied.reverse()) {
         execFileSync("icacls", [d, "/remove:d", "*S-1-1-0"], { stdio: "pipe" });
       }
     }
+  }
+
+  it("existing directory: reports the access error instead of EEXIST", async () => {
+    using dir = tempDir("mkdir-denied", { "fixture.mjs": fixture });
+    const root = String(dir);
+    const a = path.join(root, "a");
+    const b = path.join(a, "b");
+    const target = path.join(b, "c");
+    fs.mkdirSync(target, { recursive: true });
+
+    const expected = { code: "EPERM", syscall: "mkdir", path: target };
+    expect(await mkdirWithDenied(root, [target, b, a], target)).toEqual({ async: expected, sync: expected });
+  });
+
+  // The first mkdir of a\b\c reports ENOENT because a\b is a file. The walk-up
+  // mkdir of a\b reports EEXIST, and the probe of a\b fails. Node reports the
+  // probe error with the requested path.
+  it("file at a parent component: reports the access error instead of ENOENT", async () => {
+    using dir = tempDir("mkdir-denied-parent", { "fixture.mjs": fixture, "a/b": "" });
+    const root = String(dir);
+    const a = path.join(root, "a");
+    const b = path.join(a, "b");
+    const target = path.join(b, "c");
+
+    const expected = { code: "EPERM", syscall: "mkdir", path: target };
+    expect(await mkdirWithDenied(root, [b, a], target)).toEqual({ async: expected, sync: expected });
   });
 });

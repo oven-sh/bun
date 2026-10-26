@@ -4118,6 +4118,113 @@ describe("bundler", () => {
       });
     },
   });
+
+  // ValidateNoRefAccessInRender gives the join of two different refs a new ref id each time, also in the later
+  // rounds of its fixpoint. The guard of `TwoRefs` then reads another id than the first round stored, the guard of
+  // `TwoJoins` another id than the write has, and both stay as written, as upstream. The join of a ref with itself
+  // keeps the id, so `OneRef` compiles. Where such a join is between two nested types, the pass gives one id to all
+  // the refs that it makes, and runs again with an id for each once the type of a `.current` keeps that id. Without
+  // that second run, the three with two refs compile.
+  itBundled("react-compiler/GuardOnARefFromAJoinOfTwoRefs", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useRef } from "react";
+        import { calls } from "react/compiler-runtime";
+
+        function OneRef(p) {
+          const aRef = useRef(null);
+          const refs = p.c ? [aRef] : [aRef];
+          const [xRef] = refs;
+          if (xRef.current == null) {
+            xRef.current = p.v;
+          }
+          return <div ref={aRef} />;
+        }
+        function TwoRefs(p) {
+          const aRef = useRef(null);
+          const bRef = useRef(null);
+          const refs = p.c ? [aRef] : [bRef];
+          const [xRef] = refs;
+          if (xRef.current == null) {
+            xRef.current = p.v;
+          }
+          return <div ref={aRef} />;
+        }
+        function TwoJoins(p) {
+          const aRef = useRef(null);
+          const bRef = useRef(null);
+          const [xRef] = p.c ? [aRef] : [bRef];
+          const [yRef] = p.d ? [aRef] : [bRef];
+          if (xRef.current == null) {
+            yRef.current = p.v;
+          }
+          return <div ref={aRef} />;
+        }
+        function OneRefInAFunction(p) {
+          const aRef = useRef(null);
+          const holder = p.c ? [aRef] : [aRef];
+          const init = () => {
+            const [xRef] = holder;
+            if (xRef.current == null) {
+              xRef.current = p.v;
+            }
+          };
+          init();
+          return <div ref={aRef} />;
+        }
+        function TwoRefsInAFunction(p) {
+          const aRef = useRef(null);
+          const bRef = useRef(null);
+          const holder = p.c ? [aRef] : [bRef];
+          const init = () => {
+            const [xRef] = holder;
+            if (xRef.current == null) {
+              xRef.current = p.v;
+            }
+          };
+          init();
+          return <div ref={aRef} />;
+        }
+
+        function render(fn, props) {
+          const before = calls();
+          const result = fn(props);
+          return [result.props.ref.current, calls() - before];
+        }
+        console.log(JSON.stringify({
+          OneRef: render(OneRef, { c: true, v: 1 }),
+          TwoRefs: render(TwoRefs, { c: true, v: 2 }),
+          TwoJoins: render(TwoJoins, { c: true, d: true, v: 3 }),
+          OneRefInAFunction: render(OneRefInAFunction, { c: true, v: 4 }),
+          TwoRefsInAFunction: render(TwoRefsInAFunction, { c: true, v: 5 }),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.useRef = current => ({ current });`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        let count = 0;
+        exports.c = size => {
+          count++;
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.calls = () => count;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        OneRef: [1, 1],
+        TwoRefs: [2, 0],
+        TwoJoins: [3, 0],
+        OneRefInAFunction: [4, 1],
+        TwoRefsInAFunction: [5, 0],
+      }),
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting
@@ -4344,6 +4451,167 @@ test("react-compiler time does not grow with the cube of a chain of functions", 
   };
 
   // A debug build: 2 to 2.6, and 5.5 without the fix. A release build: 2.9 to 4.2, which is a square's, and 14.5 to 16.6.
+  expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(isDebug || isASAN ? 4 : 8);
+});
+
+// ValidateNoRefAccessInRender joins two nested types once, but it did not where the join makes a ref id: upstream
+// makes a new id at each join of two different refs. `w` returns one. `v1` returns `v0`, and `v0` is then assigned
+// what holds `v1`, so the type of `v0` holds its own earlier type, and with `w` in it that type was joined again on
+// each path to it: 1.5 seconds for one reassignment, 17 for two, and no end for these three. Now such a join gives
+// one id to the refs that it makes. It still makes one each where the type of a `.current` keeps that id, or where a
+// call is reported after one of two functions that access different refs stood for the other: neither is so here.
+test("react-compiler ref validation ends on a local that holds a closure over itself next to a join of two refs", async () => {
+  // `v0` with three reassignments, after `head` and before `tail`.
+  const component = (name: string, head: string, fields: [string, string], tail: string) => `
+      export function ${name}(props) {
+        const [st] = useState(props.a);
+        const r1 = useRef(null);
+        const r2 = useRef(null);
+        ${head}
+        let v0 = [st, st];
+        const v1 = () => v0;
+        const v2 = { k0: v1, k1: v0, ${fields[0]} };
+        const v3 = { k0: v2, k1: v1, k2: v0${fields[1]} };
+        if (props.b) { v0 = [...v2, v1, v3]; }
+        if (props.c) { v0 = [v3, v2, v0]; }
+        if (props.d) { v0 = [v0, v3, v2]; }
+        ${tail}
+      }
+    `;
+  const w = "const w = () => () => [props.c ? r1 : r2];";
+  using dir = tempDir("react-compiler-ref-ids", {
+    "entry.jsx": `
+      import { useState, useRef } from "react";
+      import { mutate } from "lib";
+      ${component("Comp", w, ["kw: w", ""], "mutate(v0); return st;")}
+      ${component(
+        "WithTwoHandlers",
+        `const h1 = () => { r1.current = 1; }; const h2 = () => r2.current; ${w}`,
+        ["kw: w, k1: h1", ", kh: h2"],
+        "return <div data-x={v0}>{st}</div>;",
+      )}
+      ${component(
+        "WithARead",
+        w,
+        ["kw: w", ""],
+        "const onClick = () => { const [x] = w()(); x.current?.focus(); }; mutate(v0); return <div onClick={onClick}>{st}</div>;",
+      )}
+      export function Other(props) {
+        return <div>{props.a}</div>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // A build that joins the type on each path takes all the memory that it gets, and does not end.
+    timeout: 4_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(proc.signalCode).toBeNull();
+  expect(stderr).toBe("");
+  // The types of the three do not settle in 10 rounds, so they stay as written, as upstream. `Other` compiles.
+  expect(stdout.match(/v0 = \[\.\.\.v2, v1, v3\]/g)).toHaveLength(3);
+  expect(stdout.match(/\b_c\(\d+\)/g)).toEqual(["_c(2)"]);
+  expect(exitCode).toBe(0);
+});
+
+// The run that gives one id to the refs of a join ends where it no longer counts: at the first `xRef.current` here.
+// If it went on, the guard and the write would have one id, the error that ends the other run in its first round
+// would not be found, and each of the three functions would take its 10 rounds for each round of the one around it.
+test("react-compiler ref validation leaves its first run where a guard reads a ref from a join of two", async () => {
+  const guard = (n: number) => `
+          const [x${n}Ref] = p.c ? [aRef] : [bRef];
+          const [y${n}Ref] = p.d ? [aRef] : [bRef];
+          if (x${n}Ref.current == null) { y${n}Ref.current = p.v; }`;
+  using dir = tempDir("react-compiler-ref-ids-first-run", {
+    "entry.jsx": `
+      import { useRef, useState } from "react";
+      export function Comp(p) {
+        const [st] = useState(p.a);
+        const aRef = useRef(null);
+        const bRef = useRef(null);
+        const deep = () => {${guard(1)}
+          return () => {${guard(2)}
+            return () => {${guard(3)}
+              let v0 = [st, st];
+              const v1 = () => v0;
+              const v2 = { k0: v1, k1: v0 };
+              if (p.b) { v0 = [v2, v1]; }
+              return v0;
+            };
+          };
+        };
+        return <div ref={aRef} onClick={deep} />;
+      }
+      export function Other(props) {
+        return <div>{props.a}</div>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // Where the first run goes on, the build takes 20 seconds, and 100 times that with one more function.
+    timeout: 4_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(proc.signalCode).toBeNull();
+  expect(stderr).toBe("");
+  expect(stdout).toContain("y3Ref.current = p.v");
+  expect(stdout.match(/\b_c\(\d+\)/g)).toEqual(["_c(2)"]);
+  expect(exitCode).toBe(0);
+});
+
+// Each `o` holds the one before it and a function that returns that one, so the type of the last has 2 to the power
+// of n paths to the first. That one holds a ref whose id is made again in each round: one of two refs, a ref next to
+// a function, a ref that is a prop. The pass joined and compared what holds it once for each path: 20 levels took 2
+// seconds, 24 half a minute. Without such a ref the types are shared and each is seen once.
+test("react-compiler ref validation time does not double with each level of a type over a ref with a new id each round", async () => {
+  const component = (name: string, params: string, first: string, ref: string, n: number) => `
+    export function ${name}(${params}) {
+      const r1 = useRef(null);
+      const r2 = useRef(null);
+      const o0 = ${first};
+      const f0 = () => o0;
+      ${Array.from({ length: n }, (_, i) => `const o${i + 1} = [o${i}, f${i}]; const f${i + 1} = () => o${i + 1};`).join("\n")}
+      return <div ref={${ref}} data-x={o${n}}>{a}</div>;
+    }
+  `;
+  const source = (n: number) => `
+    import { useRef } from "react";
+    ${component("OneOfTwoRefs", "{ a, c }", "[c ? r1 : r2]", "r1", n)}
+    ${component("RefAndFunction", "{ a }", "[r1, () => { r1.current = a; }]", "r1", n)}
+    ${component("RefProp", "{ a, inputRef }", "[inputRef]", "inputRef", n)}
+  `;
+  // In a release build, enough of them that the build takes several ticks of the CPU time that Windows counts.
+  const n = isDebug || isASAN ? 32 : 512;
+  using dir = tempDir("react-compiler-paths-to-a-join", { "n.jsx": source(n), "2n.jsx": source(2 * n) });
+
+  const cpuTime = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+    return Number(proc.resourceUsage()!.cpuTime.total);
+  };
+
+  // A release build: 2.5 to 3.1, which is a square's. A debug build: 1.2, most of which is not this pass.
   expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(isDebug || isASAN ? 4 : 8);
 });
 

@@ -25,6 +25,9 @@ const ERROR_DESCRIPTION: &str = "React refs are values that are not needed for r
 
 type RefId = u32;
 
+/// The id of each ref that a join of two nested types makes, where `Joins::shares_new_ids`.
+const SHARED: RefId = RefId::MAX;
+
 // --- RefAccessType / RefAccessRefType / RefFnType ---
 
 /// Corresponds to TS `RefAccessType`.
@@ -57,7 +60,7 @@ impl PartialEq for RefAccessType {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         match (self.view(), other.view()) {
-            (a @ View::Structure(..), b @ View::Structure(..)) => are_equal(a, b),
+            (a @ View::Structure(..), b @ View::Structure(..)) => are_equal(a, b, false),
             (a, b) => are_equal_leaves(a, b),
         }
     }
@@ -89,7 +92,7 @@ impl PartialEq for RefAccessRefType {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         match (self.view(), other.view()) {
-            (a @ View::Structure(..), b @ View::Structure(..)) => are_equal(a, b),
+            (a @ View::Structure(..), b @ View::Structure(..)) => are_equal(a, b, false),
             (a, b) => are_equal_leaves(a, b),
         }
     }
@@ -161,33 +164,56 @@ fn are_equal_leaves(a: View<'_>, b: View<'_>) -> bool {
     }
 }
 
-/// TS `tyEqual`
-fn are_equal<'a>(mut a: View<'a>, mut b: View<'a>) -> bool {
-    let mut others: SmallVec<[(View<'a>, View<'a>); 2]> = SmallVec::new();
+/// Where two that are compared are.
+fn addresses<T>(a: &Rc<T>, b: &Rc<T>) -> [usize; 2] {
+    [Rc::as_ptr(a) as usize, Rc::as_ptr(b) as usize]
+}
+
+/// TS `tyEqual`. With `Joins::has_shared`, two paths can lead to the same two types, which are then walked once.
+fn are_equal<'a>(mut a: View<'a>, mut b: View<'a>, has_shared: bool) -> bool {
+    // Each two with their addresses, by which `walked` knows them.
+    let mut others: SmallVec<[([usize; 2], View<'a>, View<'a>); 2]> = SmallVec::new();
+    let mut walked: Option<HashSet<[usize; 2]>> = None;
     loop {
         match (a, b) {
             (View::Structure(a_value, a_fn), View::Structure(b_value, b_fn)) => {
+                let before = others.len();
                 match (a_value, b_value) {
                     (None, None) => {}
                     (Some(a), Some(b)) if Rc::ptr_eq(a, b) => {}
-                    (Some(a), Some(b)) => others.push((a.view(), b.view())),
+                    (Some(a), Some(b)) => others.push((addresses(a, b), a.view(), b.view())),
                     _ => return false,
                 }
                 match (a_fn, b_fn) {
                     (None, None) => {}
                     (Some(a), Some(b)) if a.read_ref_effect != b.read_ref_effect => return false,
                     (Some(a), Some(b)) if Rc::ptr_eq(&a.return_type, &b.return_type) => {}
-                    (Some(a), Some(b)) => others.push((a.return_type.view(), b.return_type.view())),
+                    (Some(a), Some(b)) => {
+                        let (a, b) = (&a.return_type, &b.return_type);
+                        others.push((addresses(a, b), a.view(), b.view()));
+                    }
                     _ => return false,
+                }
+                if has_shared && others.len() == before + 2 {
+                    walked.get_or_insert_default();
                 }
             }
             _ if are_equal_leaves(a, b) => {}
             _ => return false,
         }
-        match others.pop() {
-            Some(next) => (a, b) = next,
-            None => return true,
-        }
+        (a, b) = loop {
+            match others.pop() {
+                Some((addresses, a, b)) => {
+                    if walked
+                        .as_mut()
+                        .is_none_or(|walked| walked.insert(addresses))
+                    {
+                        break (a, b);
+                    }
+                }
+                None => return true,
+            }
+        };
     }
 }
 
@@ -219,14 +245,16 @@ fn is_the_same(a: View<'_>, b: View<'_>) -> bool {
 
 /// `joined`, which comes from `a` and `b`, behind a pointer: theirs, if it came out as one of them. Then the next
 /// join with it, and `==`, see that by the pointer and do not go down.
-fn kept<T: Viewed>(joined: T, a: &Rc<T>, b: &Rc<T>) -> Rc<T> {
-    if is_the_same(joined.view(), b.view()) {
-        Rc::clone(b)
+fn kept<T: Viewed>(joined: T, a: &Rc<T>, b: &Rc<T>, joins: &Joins) -> Rc<T> {
+    let it = if is_the_same(joined.view(), b.view()) {
+        b
     } else if is_the_same(joined.view(), a.view()) {
-        Rc::clone(a)
+        a
     } else {
-        Rc::new(joined)
-    }
+        return Rc::new(joined);
+    };
+    joins.stands_for(&**it, &joined);
+    Rc::clone(it)
 }
 
 enum Held {
@@ -333,6 +361,18 @@ struct Joins {
     new_ids: Cell<u32>,
     values: Joined<RefAccessRefType>,
     returned: Joined<RefAccessType>,
+    /// Not in upstream: a join of two nested types gives `SHARED` to each ref that it makes, so that `once` keeps it.
+    shares_new_ids: bool,
+    /// How many joins of nested types are under way.
+    nested: Cell<u32>,
+    /// Whether a ref has `SHARED`.
+    has_shared: Cell<bool>,
+    /// With `SHARED` about, one type stood for another that has another `access`, which `is_the_same` does not see.
+    has_other_access: Cell<bool>,
+    /// This run does not count: a `RefValue` kept `SHARED`, or a call reported an `access` after `has_other_access`.
+    is_given_up: Cell<bool>,
+    /// For `is_as_upstream`: the run is given up once it has made this many ids.
+    most_ids: u32,
 }
 
 impl Joins {
@@ -344,10 +384,60 @@ impl Joins {
         !self.is_out_of_stack.get()
     }
 
+    /// Whether to join on: there is stack for it, and what the run finds counts.
+    fn goes_on(&self) -> bool {
+        self.has_stack() && !self.is_given_up.get()
+    }
+
     fn next_ref_id(&self) -> RefId {
+        if self.shares_new_ids && self.nested.get() > 0 {
+            self.has_shared.set(true);
+            return SHARED;
+        }
         let id = self.new_ids.get();
+        debug_assert!(id != SHARED || !self.shares_new_ids);
+        if cfg!(debug_assertions) && id == self.most_ids {
+            self.is_given_up.set(true);
+        }
         self.new_ids.set(id.wrapping_add(1));
         id
+    }
+
+    /// `it`, which `is_the_same` as `other`, stays where the join of `other` with it would come.
+    #[inline]
+    fn stands_for(&self, it: &impl Viewed, other: &impl Viewed) {
+        if self.has_shared.get() {
+            self.stands_for_with_shared(it, other);
+        }
+    }
+
+    /// Not inlined: `once` calls itself as deep as a type is nested, on a stack that its frame has to fit in.
+    #[inline(never)]
+    fn stands_for_with_shared(&self, it: &impl Viewed, other: &impl Viewed) {
+        if let (View::Structure(_, Some(it)), View::Structure(_, Some(other))) =
+            (it.view(), other.view())
+        {
+            if other.access.is_some() && other.access != it.access {
+                self.has_other_access.set(true);
+            }
+        }
+    }
+
+    /// A call reports the `access` of the function that it calls.
+    fn reports_access(&self) {
+        if self.has_other_access.get() {
+            self.is_given_up.set(true);
+        }
+    }
+
+    /// `a == b`, for what `Env::join` has joined.
+    fn are_equal(&self, a: &RefAccessType, b: &RefAccessType) -> bool {
+        match (a.view(), b.view()) {
+            (a @ View::Structure(..), b @ View::Structure(..)) => {
+                are_equal(a, b, self.has_shared.get())
+            }
+            (a, b) => are_equal_leaves(a, b),
+        }
     }
 
     /// `join(a, b)` behind a pointer. What types hold is shared, so that the same two meet again and again on the way
@@ -364,7 +454,9 @@ impl Joins {
             return Rc::clone(known);
         }
         let new_ids = self.new_ids.get();
-        let it = kept(join(), a, b);
+        self.nested.set(self.nested.get() + 1);
+        let it = kept(join(), a, b, self);
+        self.nested.set(self.nested.get() - 1);
         if new_ids == self.new_ids.get() && self.has_stack() {
             let of = [Rc::clone(a), Rc::clone(b)];
             joined.borrow_mut().insert(key, (of, Rc::clone(&it)));
@@ -378,7 +470,7 @@ fn join_ref_access_ref_types(
     b: &RefAccessRefType,
     joins: &Joins,
 ) -> RefAccessRefType {
-    if !joins.has_stack() {
+    if !joins.goes_on() {
         return a.clone();
     }
     let keeps_place = joins.keeps_place;
@@ -536,7 +628,7 @@ struct Env {
 }
 
 impl Env {
-    fn new(env: &Environment) -> Self {
+    fn new(env: &Environment, shares_new_ids: bool) -> Self {
         let has_ref_types = env.types.iter().any(crate::hir::is_ref_or_ref_value);
         let type_kind_of =
             |identifier: &Identifier| TypeKind::of(&env.types[identifier.type_.0 as usize]);
@@ -548,6 +640,12 @@ impl Env {
                 new_ids: Cell::new(0),
                 values: Joined::default(),
                 returned: Joined::default(),
+                shares_new_ids,
+                nested: Cell::new(0),
+                has_shared: Cell::new(false),
+                has_other_access: Cell::new(false),
+                is_given_up: Cell::new(false),
+                most_ids: RefId::MAX,
             },
             looks_into_functions: env.config.captured_refs_are_known_in_functions,
             has_ref_types,
@@ -660,17 +758,25 @@ impl Env {
                 self.has_refs |= fn_type.as_ref().is_some_and(|it| it.read_ref_effect);
             }
         }
-        if current.is_some_and(|current| is_the_same(value.view(), current.view())) {
+        if let Some(current) = current.filter(|current| is_the_same(value.view(), current.view())) {
+            self.joins.stands_for(current, &value);
             return;
         }
         let widened_value =
             join_ref_access_types(&value, current.unwrap_or(&RefAccessType::None), &self.joins);
         if current.is_none() && widened_value == RefAccessType::None {
             // No change needed
-        } else if current.map_or(true, |c| c != &widened_value) {
+        } else if current.map_or(true, |c| !self.joins.are_equal(c, &widened_value)) {
             self.changed = true;
             let read_in = self.read_in[operand_id.0 as usize].get();
             self.read_before_change_in = self.read_before_change_in.max(read_in);
+        }
+        if let RefAccessType::RefValue {
+            ref_id: Some(SHARED),
+            ..
+        } = widened_value
+        {
+            self.joins.is_given_up.set(true);
         }
         self.data.insert(operand_id, widened_value);
     }
@@ -892,24 +998,59 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 // --- Main entry point ---
 
 pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
-    let mut ref_env = Env::new(env);
-    collect_temporaries_sidemap(func, &mut ref_env, &env.functions);
     let mut errors: Vec<CompilerDiagnostic> = Vec::new();
+    // The second time, which `Joins::is_given_up` asks for, as upstream.
+    for shares_new_ids in [true, false] {
+        let mut ref_env = Env::new(env, shares_new_ids);
+        collect_temporaries_sidemap(func, &mut ref_env, &env.functions);
+        errors.clear();
+        validate_no_ref_access_in_render_impl(
+            func,
+            &env.identifiers,
+            &env.types,
+            &env.functions,
+            &*env,
+            &mut ref_env,
+            &mut errors,
+        );
+        if !ref_env.joins.is_given_up.get() {
+            if !ref_env.joins.has_stack() {
+                env.ran_out_of_stack();
+            } else {
+                debug_assert!(is_as_upstream(func, env, &ref_env.joins, &errors));
+            }
+            break;
+        }
+    }
+    for diagnostic in errors {
+        env.record_diagnostic(diagnostic);
+    }
+}
+
+/// Whether upstream's ids find what `joins` found, as far as that takes few ids to tell.
+fn is_as_upstream(
+    func: &HirFunction,
+    env: &Environment,
+    joins: &Joins,
+    errors: &[CompilerDiagnostic],
+) -> bool {
+    if !joins.has_shared.get() {
+        return true;
+    }
+    let mut ref_env = Env::new(env, false);
+    ref_env.joins.most_ids = 1_000;
+    collect_temporaries_sidemap(func, &mut ref_env, &env.functions);
+    let mut expected: Vec<CompilerDiagnostic> = Vec::new();
     validate_no_ref_access_in_render_impl(
         func,
         &env.identifiers,
         &env.types,
         &env.functions,
-        &*env,
+        env,
         &mut ref_env,
-        &mut errors,
+        &mut expected,
     );
-    if !ref_env.joins.has_stack() {
-        env.ran_out_of_stack();
-    }
-    for diagnostic in errors {
-        env.record_diagnostic(diagnostic);
-    }
+    !ref_env.joins.goes_on() || format!("{expected:?}") == format!("{errors:?}")
 }
 
 fn collect_temporaries_sidemap(func: &HirFunction, env: &mut Env, functions: &[HirFunction]) {
@@ -991,6 +1132,9 @@ fn validate_no_ref_access_in_render_impl(
     for iteration in 0..10 {
         if iteration > 0 && !ref_env.has_changed() {
             break;
+        }
+        if ref_env.joins.is_given_up.get() {
+            return RefAccessType::None;
         }
         let round = ref_env.start_round();
         return_values.clear();
@@ -1087,6 +1231,9 @@ fn validate_no_ref_access_in_render_impl(
                             ref_env,
                             &mut inner_errors,
                         );
+                        if ref_env.joins.is_given_up.get() {
+                            return RefAccessType::None;
+                        }
                         let mut details = inner_errors.iter().flat_map(|it| &it.details);
                         let access = details.find_map(|it| match it {
                             CompilerDiagnosticDetail::Error {
@@ -1102,6 +1249,7 @@ fn validate_no_ref_access_in_render_impl(
                             (RefAccessType::None, true)
                         };
                         // Joined with what another round has left, the same again gives that.
+                        // No `stands_for`: what has an `access` returns `None` whatever the ids. The rest has none.
                         let is_known = matches!(
                             ref_env.peek(instr.lvalue.identifier),
                             Some(RefAccessType::Structure { fn_type: Some(known), .. })
@@ -1138,6 +1286,7 @@ fn validate_no_ref_access_in_render_impl(
                             return_type = (*fn_ty.return_type).clone();
                             if fn_ty.read_ref_effect {
                                 did_error = true;
+                                ref_env.joins.reports_access();
                                 errors.push(function_accesses_ref(callee.loc, fn_ty.access));
                             }
                         }
@@ -1283,11 +1432,15 @@ fn validate_no_ref_access_in_render_impl(
                             }
                             _ => {
                                 // Joined with what another round has left, the same again gives that.
-                                let is_known = matches!(
-                                    ref_env.peek(instr.lvalue.identifier),
-                                    Some(RefAccessType::Structure { value: Some(known), .. })
-                                        if is_the_same(known.view(), value.view())
-                                );
+                                let is_known = match ref_env.peek(instr.lvalue.identifier) {
+                                    Some(RefAccessType::Structure {
+                                        value: Some(known), ..
+                                    }) if is_the_same(known.view(), value.view()) => {
+                                        ref_env.joins.stands_for(&**known, &value);
+                                        true
+                                    }
+                                    _ => false,
+                                };
                                 if !is_known {
                                     ref_env.set(
                                         instr.lvalue.identifier,

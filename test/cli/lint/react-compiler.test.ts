@@ -70,6 +70,11 @@ const slow = isDebug || isASAN ? 120_000 : undefined;
 type Found = { code: string; labels: { span: { line: number; column: number } }[] };
 const locationsOf = (found: unknown[]) =>
   (found as Found[]).map(it => [it.code, it.labels[0].span.line, it.labels[0].span.column]).sort();
+/** Each diagnostic as its labels, which say where they are. */
+const labelsOf = (found: unknown[]) =>
+  (found as { labels: { label: string; span: { line: number; column: number } }[] }[])
+    .map(it => it.labels.map(({ label, span }) => `${span.line}:${span.column} ${label}`))
+    .sort();
 
 const memo = (params: string, values: string, listed: string) => `import { useMemo } from "react";
 
@@ -87,6 +92,134 @@ const unlisted: Files = {
   "some.jsx": memo("Zed, alpha, Beta, gamma", "gamma, Zed, alpha, Beta", "gamma, Beta"),
 };
 const missingIn = (text: string) => Array.from(text.matchAll(/Missing dependency `([^`]+)`/g), it => it[1]);
+
+// The compiler gives a ref a new identity at each join with another ref, and in each round where a prop is
+// destructured. It joined what holds such a ref once for each path to it, so these took a time that is a power of
+// their size. oxlint 1.87.0 and babel-plugin-react-compiler 1.0.0 still do.
+/** `v1` returns `v0`, and `v0` is then assigned what holds `v1`, so its type holds its own earlier type. */
+const cycleOverTwoRefs = (handlers: string, fields: string) => `import { useRef, useState } from "react";
+import { mutate } from "lib";
+
+export function Cycle(props) {
+  const [st] = useState(props.a);
+  const r1 = useRef(null);
+  const r2 = useRef(null);
+${handlers}  const w = () => () => [props.c ? r1 : r2];
+  let v0 = [st, st];
+  const v1 = () => v0;
+  const v2 = { k0: v1, k1: v0, kw: w${fields} };
+  const v3 = { k0: v2, k1: v1, k2: v0 };
+  if (props.b) v0 = [...v2, v1, v3];
+  if (props.c) v0 = [v3, v2, v0];
+  if (props.d) v0 = [v0, v3, v2];
+  return <div data-x={v0}>{st}</div>;
+}
+`;
+/** As it is, and with two functions in it that access different refs. */
+const cycles = {
+  "cycle.jsx": cycleOverTwoRefs("", ""),
+  "cycle-handlers.jsx": cycleOverTwoRefs(
+    "  const h1 = () => {\n    r1.current = 1;\n  };\n  const h2 = () => r2.current;\n",
+    ", h1, h2",
+  ),
+};
+/** Each `o` holds the one before it and a function that returns that one: 2 to the power of `n` paths to the first. */
+const pathsToARef = (params: string, first: string, ref: string, n: number) => `import { useRef } from "react";
+
+export function Paths(${params}) {
+  const r1 = useRef(null);
+  const r2 = useRef(null);
+  const o0 = ${first};
+  const f0 = () => o0;
+${Array.from({ length: n }, (_, k) => `  const o${k + 1} = [o${k}, f${k}];\n  const f${k + 1} = () => o${k + 1};`).join("\n")}
+  return <div ref={${ref}} data-x={o${n}}>{a}</div>;
+}
+`;
+/** Over one of two refs, and over a ref that is a prop. */
+const paths = (n: number) => ({
+  "paths.jsx": pathsToARef("{ a, c }", "[c ? r1 : r2]", "r1", n),
+  "paths-prop.jsx": pathsToARef("{ a, inputRef }", "[inputRef]", "inputRef", n),
+});
+/** A write to a ref behind a guard on it: a ref that is one of two, from a join of arrays, is not the ref it was. */
+const guarded = (name: string, body: string, handler = "") => `import { useRef } from "react";
+export function ${name}(p) {
+  const aRef = useRef(null);
+  const bRef = useRef(null);
+${body}
+  return <div ref={aRef}${handler} />;
+}
+`;
+const guardOnOneOfTwo = (n: number) => `const [x${n}Ref] = p.c ? [aRef] : [bRef];
+    const [y${n}Ref] = p.d ? [aRef] : [bRef];
+    if (x${n}Ref.current == null) y${n}Ref.current = p.v;`;
+const guards = {
+  "one-ref.jsx": guarded(
+    "OneRef",
+    `  const [xRef] = p.c ? [aRef] : [aRef];
+  if (xRef.current == null) {
+    xRef.current = p.v;
+  }`,
+  ),
+  "two-refs.jsx": guarded(
+    "TwoRefs",
+    `  const [xRef] = p.c ? [aRef] : [bRef];
+  if (xRef.current == null) {
+    xRef.current = p.v;
+  }`,
+  ),
+  "two-joins.jsx": guarded(
+    "TwoJoins",
+    `  const [xRef] = p.c ? [aRef] : [bRef];
+  const [yRef] = p.d ? [aRef] : [bRef];
+  if (xRef.current == null) {
+    yRef.current = p.v;
+  }`,
+  ),
+  "in-a-function.jsx": guarded(
+    "InAFunction",
+    `  const holder = p.c ? [aRef] : [bRef];
+  const init = () => {
+    const [xRef] = holder;
+    if (xRef.current == null) {
+      xRef.current = p.v;
+    }
+  };
+  init();`,
+  ),
+  "in-a-later-round.jsx": guarded(
+    "InALaterRound",
+    `  let holder = null;
+  for (let i = 0; i < p.n; i++) {
+    if (holder != null) {
+      if (holder[p.k].current == null) {
+        holder[p.k].current = p.v;
+      }
+    }
+    holder = p.c ? [aRef] : [bRef];
+  }`,
+  ),
+  // The compiler leaves the run in which such refs are one at the first `x1Ref.current`. If that run went on, it
+  // would not find what ends the other run in its first round, and each function would take its 10 rounds for each
+  // round of the one around it: 30 seconds.
+  "in-three-functions.jsx": guarded(
+    "InThreeFunctions",
+    `  const deep = () => {
+    ${guardOnOneOfTwo(1)}
+    return () => {
+    ${guardOnOneOfTwo(2)}
+    return () => {
+    ${guardOnOneOfTwo(3)}
+    let v0 = [p.a, p.a];
+    const v1 = () => v0;
+    const v2 = { k0: v1, k1: v0 };
+    if (p.b) v0 = [v2, v1];
+    return v0;
+    };
+    };
+  };`,
+    " onClick={deep}",
+  ),
+};
 
 describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.oxlint}`, () => {
   test(
@@ -344,6 +477,187 @@ ${chain}
     slow,
   );
 
+  // Each level joined two different refs again, which made a copy of all the levels below it, as deep as the chain is
+  // long: 3 GB for 10,000, and from 10,950 on, or from 2,000 in a debug build, it did not have the stack for it.
+  test(
+    "a chain of objects that each contain the previous one, starting from one of two refs, takes linear memory",
+    async () => {
+      const n = isDebug || isASAN ? 2000 : 12000;
+      const chain = Array.from({ length: n }, (_, k) => `  const o${k + 1} = { a: o${k} };`).join("\n");
+      const { diagnostics, exit, peak } = await report({
+        ".oxlintrc.json": rc(),
+        "chain.jsx": `import { useRef } from "react";
+
+export function Chain(props) {
+  const r1 = useRef(0);
+  const r2 = useRef(0);
+  const o0 = { a: props.c ? r1 : r2 };
+${chain}
+  return <div data-x={o${n}}>{props.a}</div>;
+}
+`,
+      });
+      expect(diagnostics).toEqual({});
+      expect(peak).toBeLessThan((isDebug || isASAN ? 1500 : 600) * 1024 * 1024);
+      expect(exit).toBe(0);
+    },
+    slow,
+  );
+
+  // oxlint 1.87.0 doesn't finish these within a minute.
+  test("a type that holds its own earlier type and one of two refs doesn't converge, and that's reported at once", async () => {
+    const { diagnostics, exit } = await report({ ".oxlintrc.json": rc(), ...cycles });
+    expect({
+      cycle: locationsOf(diagnostics["cycle.jsx"]),
+      handlers: locationsOf(diagnostics["cycle-handlers.jsx"]),
+    }).toEqual({
+      cycle: [["react(invariant)", 4, 17]],
+      handlers: [["react(invariant)", 4, 17]],
+    });
+    expect(exit).toBe(1);
+  });
+
+  // oxlint 1.87.0 takes 80 s for 20 of them over one of two refs, and twice that for each one more.
+  test("objects that each contain the previous one and a function that returns it, starting from a ref, are done at once", async () => {
+    const { diagnostics, exit } = await report({ ".oxlintrc.json": rc(), ...paths(isDebug || isASAN ? 64 : 128) });
+    expect(diagnostics).toEqual({});
+    expect(exit).toBe(0);
+  });
+
+  // As oxlint 1.87.0 reports each. The compiler gives one identity to the refs that come out of joins of what holds
+  // them, and what it then finds must be what it finds with an identity for each.
+  test("a guard on a ref that is one of two lets no write through, also in a function and in a later round", async () => {
+    const { diagnostics, exit } = await report({ ".oxlintrc.json": rc(), ...guards });
+    expect(Object.fromEntries(Object.entries(diagnostics).map(([path, found]) => [path, labelsOf(found)]))).toEqual({
+      "in-a-function.jsx": [["12:3 This function accesses a ref value", "8:9 The ref is accessed here"]],
+      "in-a-later-round.jsx": [["9:20 Cannot update ref value during render", "9:9 This value is a ref"]],
+      "in-three-functions.jsx": [["2:17 Ref type environment did not converge"]],
+      "two-joins.jsx": [["8:9 Cannot update ref value during render", "8:5 This value is a ref"]],
+      "two-refs.jsx": [
+        ["6:7 Cannot access ref value during render"],
+        ["7:9 Cannot update ref value during render", "7:5 This value is a ref"],
+      ],
+    });
+    expect(exit).toBe(1);
+  });
+
+  // The second label is where one of the functions accesses a ref. The compiler keeps one type for two that are the same
+  // but for that place, and which of them it keeps must not depend on how it joins the refs next to them.
+  test("a call of one of two functions that access refs has oxlint's second label, also next to joins of two refs", async () => {
+    const component = (body: string) => `import { useRef } from "react";
+export function Component(p) {
+  const ra = useRef(null);
+  const rb = useRef(null);
+  const rc = useRef(null);
+  const rd = useRef(null);
+  const f1 = () => { ra.current = 1; };
+  const f2 = () => rb.current;
+${body}
+  return <div />;
+}
+`;
+    const { diagnostics, exit } = await report({
+      ".oxlintrc.json": rc(),
+      // One of two arrays stands for their join.
+      "two-arrays.jsx": component(`  const k = p.q ? [ra] : [rb];
+  const j = [rc];
+  const o1 = [j, f1];
+  const o2 = [k, f2];
+  const o = p.e ? o1 : o2;
+  const [g] = o;
+  g();`),
+      "two-joins.jsx": component(`  const k = p.q ? [ra] : [rb];
+  const j = p.q ? [rc] : [rd];
+  const o1 = [j, f1];
+  const o2 = [k, f2];
+  const o = p.e ? o1 : o2;
+  const [g] = o;
+  g();`),
+      // What a variable has stands for what is stored in it.
+      "stored.jsx": component(`  const k = p.q ? [ra] : [rb];
+  const k2 = p.r ? [ra] : [rb];
+  const o = p.e ? f1 : k;
+  const s2 = p.z ? f2 : k2;
+  o.x = s2;
+  o();`),
+      // What an array had in the round before stands for what it has, in a function.
+      "in-a-loop.jsx": `import { useRef } from "react";
+export function Component(p) {
+  const ra = useRef(null);
+  const rb = useRef(null);
+  const rc = useRef(null);
+  const rd = useRef(null);
+  const k = p.q ? [ra] : [rb];
+  const k2 = p.r ? [rc] : [rd];
+  const f1 = () => { ra.current = 1; };
+  const w = () => {
+    let f2 = null;
+    let o = null;
+    for (let i = 0; i < p.n; i++) {
+      o = [k, k2, f2, f1];
+      f2 = () => rb.current;
+    }
+    return o;
+  };
+  const [g] = w();
+  g();
+  return <div />;
+}
+`,
+      // Two paths lead to the same two types, and only what is down one of them differs: `loud`.
+      "two-paths.jsx": `import { useRef } from "react";
+
+export function Comp(props) {
+  const ra = useRef(null);
+  const rb = useRef(null);
+  const k1 = () => [ra];
+  const k2 = () => [rb];
+  const loud = () => ra.current;
+  const o0 = [k1];
+  const f0 = () => o0;
+  const o1 = [o0, f0];
+  const f1 = () => o1;
+  const q = [k2];
+  const g = () => q;
+  const p = [k2, loud];
+  const pv = [p, g];
+  const qr = [q, g];
+  const gr = () => qr;
+  const o0b = [k1];
+  const f0b = () => o0b;
+  const o1b = [o0b, f0b];
+  const f1b = () => o1b;
+  const xb = [o1b, f1b];
+  const cap0 = () => xb;
+  let y = cap0;
+  const early = () => y;
+  let x = [o1, f1];
+  const cap = () => x;
+  x = [pv, gr];
+  y = cap;
+  const e1 = early();
+  const e2 = e1();
+  const [a] = e2;
+  const [b] = a;
+  const [c] = b;
+  c();
+  return <div>{props.a}</div>;
+}
+`,
+    });
+    expect(Object.fromEntries(Object.entries(diagnostics).map(([path, found]) => [path, labelsOf(found)]))).toEqual({
+      "in-a-loop.jsx": [["20:3 This function accesses a ref value", "15:18 The ref is accessed here"]],
+      "stored.jsx": [
+        ["13:4 Cannot update ref value during render", "13:3 This value is a ref"],
+        ["14:3 This function accesses a ref value", "8:20 The ref is accessed here"],
+      ],
+      "two-arrays.jsx": [["15:3 This function accesses a ref value", "7:24 The ref is accessed here"]],
+      "two-joins.jsx": [["15:3 This function accesses a ref value", "7:24 The ref is accessed here"]],
+      "two-paths.jsx": [["36:3 This function accesses a ref value", "8:22 The ref is accessed here"]],
+    });
+    expect(exit).toBe(1);
+  });
+
   // `bun lint`'s threads have a larger stack than usual, for code that can't check how much stack is left. The compiler
   // only uses as much as a normal thread has: 4 MB, which fits about 700 levels, or 18 MB on Windows. With the whole
   // stack it could go eight times as deep.
@@ -482,6 +796,28 @@ describe.concurrent(
       async () => {
         const { files, exitCode } = await messages(linted(expected.fixtures));
         expect(briefly(files)).toEqual(expected.eslint.fixtures);
+        expect(exitCode).toBe(1);
+      },
+      slow,
+    );
+
+    // The plugin has no rule for a type that doesn't converge, as in "cycle.jsx" and "in-three-functions.jsx".
+    test(
+      "types that hold their own earlier type, or the previous one twice, and one of two refs are done at once",
+      async () => {
+        const { files, exitCode } = await messages({ ...cycles, ...paths(isDebug || isASAN ? 64 : 128), ...guards });
+        expect(briefly(files)).toEqual({
+          "in-a-function.jsx": ["react-hooks/refs 12:3-12:7 Error: Cannot access refs during render"],
+          "in-a-later-round.jsx": [
+            "react-hooks/refs 8:11-8:30 Error: Cannot access refs during render",
+            "react-hooks/refs 9:9-9:28 Error: Cannot access refs during render",
+          ],
+          "two-joins.jsx": ["react-hooks/refs 8:5-8:17 Error: Cannot access refs during render"],
+          "two-refs.jsx": [
+            "react-hooks/refs 6:7-6:19 Error: Cannot access refs during render",
+            "react-hooks/refs 7:5-7:17 Error: Cannot access refs during render",
+          ],
+        });
         expect(exitCode).toBe(1);
       },
       slow,

@@ -269,6 +269,55 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
     timeout,
   );
 
+  // A configuration file that is a program runs in a child process: once per folder, not once per request, which
+  // would miss the editor's timeout for formatting on save.
+  test(
+    "evaluates a prettier.config.js once per generation, not per formatting request",
+    async () => {
+      using dir = tempDir("bun-fmt-lsp", {
+        "prettier.config.js": `require("node:fs").appendFileSync(require("node:path").join(__dirname, "evaluated.txt"), "x\n");
+module.exports = { semi: false };
+`,
+        "package.json": "{}",
+        "a.js": "a;\n",
+      });
+      const evaluations = () =>
+        existsSync(join(String(dir), "evaluated.txt"))
+          ? readFileSync(join(String(dir), "evaluated.txt"), "utf8")
+              .split("\n")
+              .filter(Boolean).length
+          : 0;
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.js");
+      open(client, path, "a;\n");
+      for (let request = 0; request < 5; request++) {
+        const formatted = await format(client, path);
+        expect(formatted.error).toBeUndefined();
+        expect(applyEdits("a;\n", formatted.result)).toBe("a\n");
+      }
+      expect(evaluations()).toBe(1);
+
+      // A change of the file is read again.
+      client.notify("workspace/didChangeWatchedFiles", {
+        changes: [{ uri: uriOf(String(dir), "prettier.config.js"), type: 2 }],
+      });
+      const again = await format(client, path);
+      expect(again.error).toBeUndefined();
+      expect(applyEdits("a;\n", again.result)).toBe("a\n");
+      expect(evaluations()).toBe(2);
+
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test(
     "formats a range as `bun fmt --range-start` does, and says so when a request is about no open document",
     async () => {

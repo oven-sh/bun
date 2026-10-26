@@ -19,7 +19,7 @@ mod session;
 mod text;
 
 use crate::cli::{Options, UsageError};
-use crate::fmt::Formatted;
+use crate::fmt::{Formatted, Prepared};
 use crate::paths;
 use crate::results::FileResult;
 use crate::run::{Environment, Fatal, Linted, Script, Stream};
@@ -577,7 +577,7 @@ impl<'s> Server<'s> {
             root,
             environment,
             no_engine,
-            format_options: None,
+            formatter: None,
             known: FxHashMap::default(),
             told: Vec::new(),
         };
@@ -589,10 +589,14 @@ impl<'s> Server<'s> {
             if let Some(Err(why)) = &options {
                 worker.show_error_once(Half::Lint, why);
             }
-            worker.format_options = match formats.then(|| self.format_options_of(root)) {
-                Some(Ok(options)) => Some(options),
+            let prepared = formats.then(|| {
+                let options = self.format_options_of(root)?;
+                Prepared::new(&options, environment)
+            });
+            worker.formatter = match prepared {
+                Some(Ok(prepared)) => Some(prepared),
                 Some(Err(why)) => {
-                    worker.show_error_once(Half::Format, &why);
+                    worker.show_format_failure(&why);
                     None
                 }
                 None => None,
@@ -640,9 +644,10 @@ struct Worker<'w, 's> {
     environment: &'w Environment<'w>,
     /// The engine, if it is one that refuses.
     no_engine: Option<&'w NoEngine>,
-    /// The flags of `bun fmt` in the root, read when formatting is turned on. `None`: formatting is off, or they could
-    /// not be read, which the user was told.
-    format_options: Option<crate::fmt::cli::Options>,
+    /// `bun fmt` in the root with its flags, configs and ignore files read, made when formatting is turned on. It lasts
+    /// as long as the worker: a generation, or until the settings change. `None`: formatting is off, or it could not
+    /// start, which the user was told.
+    formatter: Option<Prepared<'w>>,
     /// By URI.
     known: FxHashMap<Vec<u8>, Known>,
     /// What the user has been told, which is not said again. An error is kept with the name of its command: both
@@ -858,28 +863,25 @@ impl Worker<'_, '_> {
         actions
     }
 
+    /// [`Worker::show_error_once`] with what `bun fmt` printed when it could not start or format.
+    fn show_format_failure(&mut self, stderr: &[u8]) {
+        let why = stderr.trim_ascii_end();
+        let why = why.strip_prefix(b"error: ").unwrap_or(why);
+        self.show_error_once(Half::Format, why);
+    }
+
     /// The edits that format `document`. `None`: it cannot be formatted, or is not to be.
     fn format(&mut self, document: &Document, range: Option<Range>) -> Option<Vec<Json>> {
         let server = self.server;
-        let mut options = self.format_options.clone()?;
+        let formatter = self.formatter.as_ref()?;
         let places = server.places(document, LineBreaks::EcmaScript);
         let range =
             range.map(|(start, end)| (places.lines.offset(start), places.lines.offset(end)));
-        if let Some((start, end)) = range {
-            // Prettier counts code units of UTF-16.
-            let index = |offset: usize| {
-                strings::wtf8_len_utf16(&document.text[..offset])
-                    .to_string()
-                    .into_bytes()
-            };
-            options
-                .format
-                .retain(|it| !matches!(it.0, b"rangeStart" | b"rangeEnd"));
-            options.format.push((&b"rangeStart"[..], index(start)));
-            options.format.push((&b"rangeEnd"[..], index(end)));
-        }
-        options.stdin_filepath = Some(paths::to_native(document.path.clone()));
-        let formatted = crate::fmt::format_text(&options, self.environment, document.text.clone());
+        // Prettier counts code units of UTF-16.
+        let index = |offset: usize| strings::wtf8_len_utf16(&document.text[..offset]);
+        let units = range.map(|(start, end)| (index(start), index(end)));
+        let name = paths::to_native(document.path.clone());
+        let formatted = formatter.format(&name, document.text.clone(), units);
         self.say_if_refused();
         match formatted {
             Formatted::Text(text) => Some(places.edits_to(&text, range)),
@@ -889,9 +891,7 @@ impl Worker<'_, '_> {
                 None
             }
             Formatted::Failed { stderr } => {
-                let why = stderr.trim_ascii_end();
-                let why = why.strip_prefix(b"error: ").unwrap_or(why);
-                self.show_error_once(Half::Format, why);
+                self.show_format_failure(&stderr);
                 None
             }
         }

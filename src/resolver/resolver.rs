@@ -3355,17 +3355,18 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    /// `dir`, the key of `slot` in the listing cache, did not open. Returns false when
-    /// it has no listing to expire, see `RealFS::expire_unopened_listing`. Else each
-    /// other path to that listing loses its `DirInfo`, as in a bust. The caller holds
+    /// `dir`, the key of `slot` in the listing cache, did not open. True when a listing
+    /// that other paths share stays mapped under it, expired: see
+    /// `RealFS::expire_unopened_listing`. Each path to that listing loses its `DirInfo`,
+    /// as in a bust, unless the listing was stale already. The caller holds
     /// `entries_mutex`.
     fn expire_unopened_listing(&mut self, dir: &[u8], slot: allocators::Result) -> bool {
         // SAFETY: `rfs_ptr` points at the process-global RealFS singleton.
         let rfs = unsafe { &mut *self.rfs_ptr() };
-        let Some(listing) = rfs.expire_unopened_listing(dir, slot) else {
+        let Some(keys) = rfs.expire_unopened_listing(dir, slot) else {
             return false;
         };
-        for &key in listing.owners() {
+        for &key in keys {
             self.dir_cache_mut().remove_hash(key);
         }
         true
@@ -4552,16 +4553,16 @@ impl<'a> Resolver<'a> {
                             //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
                             //   ...
                             //
-                            // A directory that has a listing is tried again by each lookup
-                            // instead: nothing busts a path cached as not found when the
-                            // directory comes back.
+                            // A listing that other paths share stays mapped under this one,
+                            // expired: a bust of any of them unmaps the `dir_cache` mark
+                            // through it.
                             if !self.expire_unopened_listing(
                                 queue_top_unsafe_path,
                                 cached_dir_entry_result,
                             ) {
-                                self.dir_cache_mut().mark_not_found(queue_top.result);
                                 rfs!().entries.mark_not_found(cached_dir_entry_result);
                             }
+                            self.dir_cache_mut().mark_not_found(queue_top.result);
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
@@ -6185,7 +6186,14 @@ impl<'a> Resolver<'a> {
         &mut self,
         dir: &[u8],
     ) -> crate::CrateResult<bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>> {
-        if !self.dir_info_is_not_found(dir) && self.read_dir_info_ignore_error(dir).is_none() {
+        let not_found = self.dir_info_is_not_found(dir);
+        // A listing that other paths share stays mapped under `dir` while its directory
+        // does not open, so `rfs.entries` has no mark for `cached_listing` to trust. The
+        // one in `dir_cache` is trusted the same way: a read would open the directory.
+        if not_found && self.generation == Fs::GENERATION_BASE {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+        }
+        if !not_found && self.read_dir_info_ignore_error(dir).is_none() {
             self.forget_not_found(dir);
         }
         // SAFETY: `rfs_ptr()` is the process-global RealFS singleton.
@@ -6209,20 +6217,25 @@ impl<'a> Resolver<'a> {
     /// `dir_cache` and in `rfs.entries`. The walk records every error that way. With the
     /// `dir_cache` key, a walk to a path under `dir` would start below it and leave that
     /// path as not found too, which a bust of `dir` does not undo. Without the two, the
-    /// next read of `dir` opens it and keeps the error it gets.
+    /// next read of `dir` opens it and keeps the error it gets. A `dir` that the walk
+    /// left mapped to a listing other paths share has no mark in `rfs.entries`, and
+    /// keeps the one in `dir_cache`, which a bust of any of those paths unmaps.
     fn forget_not_found(&mut self, dir: &[u8]) {
-        if self.dir_info_is_not_found(dir) {
-            self.dir_cache_mut().remove(dir);
-        }
         // SAFETY: `rfs_ptr()` is the process-global RealFS singleton.
         let rfs = unsafe { &mut *self.rfs_ptr() };
-        let _entries_lock = rfs.entries_mutex.lock_guard();
-        if rfs
-            .entries
-            .get_or_put(dir)
-            .is_ok_and(|it| it.status == allocators::ItemStatus::NotFound)
         {
+            let _entries_lock = rfs.entries_mutex.lock_guard();
+            if !rfs
+                .entries
+                .get_or_put(dir)
+                .is_ok_and(|it| it.status == allocators::ItemStatus::NotFound)
+            {
+                return;
+            }
             rfs.entries.remove(dir);
+        }
+        if self.dir_info_is_not_found(dir) {
+            self.dir_cache_mut().remove(dir);
         }
     }
 

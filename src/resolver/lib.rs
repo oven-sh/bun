@@ -1042,10 +1042,10 @@ pub mod fs {
             Ok(dir)
         }
 
-        /// Answers a read of `dir` that failed. A directory with no listing is cached
-        /// under that one key, as not found or as the error. A listing that was being
-        /// read again (`in_place`) can have more keys, which a bust only reaches
-        /// through it, so it stays mapped and is expired instead.
+        /// Answers a read of `dir` that failed. It is cached under that one key, as not
+        /// found or as the error, which takes the place of a listing that was being read
+        /// again (`in_place`) and has no other key. A listing with more keys, which a bust
+        /// only reaches through it, stays mapped and is expired instead.
         fn read_directory_error(
             &mut self,
             dir: &[u8],
@@ -1058,8 +1058,12 @@ pub mod fs {
             });
             if let Some(listing) = in_place {
                 // SAFETY: BSSMap-owned `DirEntry`; `entries_mutex` is held.
-                Self::expire_listing(unsafe { &mut *listing });
-                return Ok(temp_entries_option_write(failed));
+                let listing = unsafe { &mut *listing };
+                if !listing.owners().is_empty() {
+                    Self::expire_listing(listing);
+                    return Ok(temp_entries_option_write(failed));
+                }
+                listing.data.clear();
             }
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -1072,24 +1076,26 @@ pub mod fs {
         }
 
         /// Leaves nothing of a directory that could not be read: no entry for its next
-        /// read to reuse, and no resolver that trusts the listing. Every key of it
-        /// misses, and the next read under any of them tries the directory again.
+        /// read to reuse, and no resolver that trusts the listing. It stays mapped under
+        /// each of its keys, so that a bust of one reaches the others.
         fn expire_listing(listing: &mut DirEntry) {
             listing.data.clear();
             listing.fd = Fd::INVALID;
             listing.generation = GENERATION_STALE;
         }
 
-        /// `dir`, the key of `slot`, did not open. Expires and returns its listing when
-        /// the listing's own directory does not open either: a lookup under any of its
-        /// keys then finds the directory once it is back, also when no bust names it.
-        /// `None` when `dir` has no listing, or is a second path to a directory that
-        /// still opens.
+        /// `dir`, the key of `slot`, did not open. Its listing is expired when it has
+        /// other keys and its own directory does not open either. It stays mapped under
+        /// `dir`, and the caller unmaps the `DirInfo` of the key hashes returned: each key
+        /// of the listing, or none when the listing was stale already and a bust or an
+        /// earlier failure took them. `None` when `dir` has no listing, is the one key of
+        /// its listing, or is a second path to a directory that still opens: the caller
+        /// then caches that key alone as not found.
         pub(crate) fn expire_unopened_listing(
             &mut self,
             dir: &[u8],
             slot: bun_alloc::Result,
-        ) -> Option<&DirEntry> {
+        ) -> Option<&[u64]> {
             debug_assert!(
                 self.entries_mutex.is_held_by_current_thread(),
                 "expire_unopened_listing: caller must hold entries_mutex",
@@ -1097,6 +1103,9 @@ pub mod fs {
             let Some(EntriesOption::Entries(listing)) = self.entries.at_index(slot.index) else {
                 return None;
             };
+            if listing.owners().is_empty() {
+                return None;
+            }
             let listing = std::ptr::from_mut::<DirEntry>(*listing);
             // SAFETY: BSSMap-owned `DirEntry`; `entries_mutex` is held.
             let own_dir =
@@ -1109,8 +1118,10 @@ pub mod fs {
             }
             // SAFETY: see above; the borrow taken from `at_index` has ended.
             let listing = unsafe { &mut *listing };
+            let was_fresh = listing.generation != GENERATION_STALE;
             Self::expire_listing(listing);
-            Some(listing)
+            let keys: &[u64] = if was_fresh { listing.owners() } else { &[] };
+            Some(keys)
         }
 
         /// Picks the `entries` slot of a directory. `walked` is the directory

@@ -5988,15 +5988,14 @@ pub mod bv2_impl {
                     //
                     // Actual empty files will contain a part exporting an empty object.
                     if part_list.len() != 0 {
-                        // Resolution can set `source_index` and leave the path as written (a plugin, or a
-                        // target already in the bundle): https://github.com/oven-sh/bun/issues/20877
-                        // The path of any other kind of target is printed, for example an asset URL.
+                        // Resolution through a plugin, or to a target already in the bundle, leaves the path as written: https://github.com/oven-sh/bun/issues/20877
                         for record in import_records.as_mut_slice() {
                             if !record.source_index.is_valid() {
                                 continue;
                             }
                             let resolved = record.source_index.get() as usize;
                             let loader = loaders[resolved];
+                            // An html file or a stylesheet prints the path of any other target, such as an asset URL.
                             if loader.is_javascript_like() || loader.is_css() {
                                 record.path = sources[resolved].path;
                             }

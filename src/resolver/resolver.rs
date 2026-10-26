@@ -3545,6 +3545,23 @@ impl<'a> Resolver<'a> {
                 .expect("unreachable");
         }
 
+        // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
+        // which gets overwritten on the next auto-install resolution. `dir_info_uncached` stores
+        // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
+        // pass an interned copy (backed by `DirnameStore`) instead. `DirEntry.dir` is one, but
+        // it has no separator at the end, and `DirInfo.abs_path` must end with one.
+        // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and
+        // outlives the resolver. Hoist the `&'static [u8] dir` read out so no `&EntriesOption`
+        // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
+        // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
+        let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
+        let abs_path: &'static [u8] = if dir_entries_dir.last() == Some(&SEP) {
+            dir_entries_dir
+        } else {
+            let parts: [&[u8]; 2] = [dir_entries_dir, SEP_STR.as_bytes()];
+            self.fs_ref().dirname_store.append_parts(&parts)?
+        };
+
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
         // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
@@ -3557,18 +3574,9 @@ impl<'a> Resolver<'a> {
         }
         .expect("unreachable");
 
-        // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
-        // which gets overwritten on the next auto-install resolution. `dir_info_uncached` stores
-        // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
-        // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
-        // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and
-        // outlives the resolver. Hoist the `&'static [u8] dir` read out so no `&EntriesOption`
-        // temporary is live when the raw `*mut` is passed below (avoids a needless Unique
-        // retag that would pop the shared tag mid-argument-list under Stacked Borrows).
-        let dir_entries_dir = unsafe { &*dir_entries_option }.entries().dir;
         self.dir_info_uncached(
             dir_info_ptr,
-            dir_entries_dir,
+            abs_path,
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
             dir_entries_option,
             dir_cache_info_result,
@@ -4609,9 +4617,9 @@ impl<'a> Resolver<'a> {
 
             // A listing that `read_directory` cached first names the directory with no separator at the end.
             let dir_path: &'static [u8] = if queue_top_safe_path.last() == Some(&SEP) {
-                // SAFETY: non-empty `safe_path` is always a dirname_store-backed
-                // `&'static [u8]` (set from `entries.dir` above); widen the
-                // `RawSlice`-tied borrow back to its true `'static` lifetime.
+                // SAFETY: a `safe_path` that is not empty is always a dirname_store-backed
+                // `&'static [u8]` (set from `entries.dir` above), and one that ends with `SEP`
+                // is not empty; widen the `RawSlice`-tied borrow back to its true `'static` lifetime.
                 unsafe { bun_ptr::detach_lifetime(queue_top_safe_path) }
             } else {
                 // ensure trailing slash

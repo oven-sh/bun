@@ -1444,6 +1444,55 @@ describe.concurrent("auto-install of a package whose tarball ships a node_module
   });
 });
 
+// The directory of an auto-installed package was cached under its path with no separator at the end,
+// so no file of the package matched a name in its `browser` map.
+test.concurrent("a browser build applies the browser map of a package that the process auto-installed", async () => {
+  const manifest = {
+    name: "browser-map",
+    version: "1.0.0",
+    main: "./index.js",
+    browser: { "./lib.js": "./lib.browser.js" },
+  };
+  const tarball = await new Bun.Archive({
+    "package/package.json": JSON.stringify(manifest),
+    "package/index.js": `module.exports = require("./lib.js");`,
+    "package/lib.js": `module.exports = "node lib";`,
+    "package/lib.browser.js": `module.exports = "browser lib";`,
+  }).bytes("gzip");
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/browser-map/-/browser-map-1.0.0.tgz") return new Response(tarball);
+      if (pathname !== "/browser-map") return new Response("not found", { status: 404 });
+      const dist = { tarball: `${server.url}browser-map/-/browser-map-1.0.0.tgz` };
+      return Response.json({
+        name: "browser-map",
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { ...manifest, dist } },
+      });
+    },
+  });
+  using dir = tempDir("autoinstall-browser-map", {
+    "index.js": `
+      (async () => {
+        console.log(require("browser-map"));
+        const entry = require.resolve("browser-map");
+        const result = await Bun.build({ entrypoints: [entry], target: "browser", throw: false });
+        const bundle = result.success ? await result.outputs[0].text() : result.logs.map(String).join("; ");
+        console.log(["node lib", "browser lib"].filter(text => bundle.includes(text)).join(", ") || bundle);
+      })();
+    `,
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\n`,
+  });
+
+  const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+  expect(stderr).toBe("");
+  expect(stdout).toBe("node lib\nbrowser lib\n");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("--install=fallback to install missing packages", async () => {
   using registry = fixtureRegistry();
   using dir = tempDir("autoinstall-fallback", {

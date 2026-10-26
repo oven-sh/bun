@@ -1068,8 +1068,7 @@ impl PublishCommand {
             "\nThis operation requires a one-time password.\nEnter OTP: ",
             b"",
         ) {
-            // A byte order mark in front of a piped OTP is the encoding signature of the writer. No OTP starts with one.
-            Ok(v) => Ok(strings::without_utf8_bom(&v).into()),
+            Ok(v) => Ok(v.into()),
             Err(crate::Error::Alloc(_)) => Err(AllocError),
             Err(e) => {
                 Output::err(e, "failed to read OTP input", ());
@@ -1451,7 +1450,11 @@ impl PublishCommand {
             pairs.push((b"content-type", b"application/json"));
         }
         pairs.push((b"npm-auth-type", npm_auth_type));
-        if let Some(otp) = maybe_otp {
+        if let Some(mut otp) = maybe_otp {
+            // A byte order mark is the encoding signature of the program that wrote the OTP, and PowerShell can write two. No OTP has one.
+            while let Some(rest) = otp.strip_prefix(&strings::BOM::UTF8_BYTES) {
+                otp = rest;
+            }
             pairs.push((b"npm-otp", otp));
         }
         pairs.push((b"npm-command", b"publish"));

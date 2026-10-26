@@ -548,7 +548,12 @@ describe.concurrent("otp", () => {
     30_000,
   );
 
-  test("a byte order mark in front of a piped OTP is not part of the OTP", async () => {
+  // EF BB BF is the encoding signature of the program that wrote the OTP. PowerShell can write two of them.
+  test.each([
+    { from: "a pipe", args: [], stdin: "\uFEFF424242\n", asked: true },
+    { from: "a pipe, behind two marks", args: [], stdin: "\uFEFF\uFEFF424242\n", asked: true },
+    { from: "--otp", args: ["--otp", "\uFEFF424242"], stdin: "", asked: false },
+  ])("a byte order mark in front of an OTP is not part of the OTP (from $from)", async ({ args, stdin, asked }) => {
     const otp = "424242";
     using mock = mockRegistry((req, recorded) => {
       if (req.method === "PUT" && recorded.otp === otp) {
@@ -563,20 +568,20 @@ describe.concurrent("otp", () => {
     });
 
     await using proc = spawn({
-      cmd: [bunExe(), "publish"],
+      cmd: [bunExe(), "publish", ...args],
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
-      // EF BB BF is the encoding signature of the program that wrote stdin, for example PowerShell.
-      stdin: Buffer.from("\uFEFF" + otp + "\n"),
+      stdin: Buffer.from(stdin),
       env,
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(err).toBe("");
-    expect(out).toEndWith("\nThis operation requires a one-time password.\nEnter OTP: \n + otp-pkg-mark@1.0.0\n");
+    const question = asked ? "\nThis operation requires a one-time password.\nEnter OTP: " : "";
+    expect(out).toEndWith(question + "\n + otp-pkg-mark@1.0.0\n");
     expect(mock.requests).toEqual([
-      request("PUT", "/otp-pkg-mark"),
+      ...(asked ? [request("PUT", "/otp-pkg-mark")] : []),
       request("PUT", "/otp-pkg-mark", { authType: "legacy", otp }),
     ]);
     expect(exitCode).toBe(0);

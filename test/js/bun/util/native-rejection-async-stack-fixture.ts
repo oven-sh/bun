@@ -1,6 +1,6 @@
 // For each way of consuming a native rejection below, prints the names of the
-// error's `at async` frames: before and after process.argv[2] takes JSC off its
-// promise fast paths, each with and without an AsyncLocalStorage context.
+// error's `at async` frames, with and without an AsyncLocalStorage context.
+// process.argv[2] names what takes JSC off its promise fast paths first.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
@@ -11,27 +11,33 @@ const missing = "/nonexistent-path/does-not-exist.txt";
 // Windows a read that rejects does not keep the process alive (#39787).
 const native = () => Bun.file(missing).stat();
 
-// Each of these fires a promise watchpoint of the realm, for good. From then on
-// JSC resolves a promise with another promise through then(resolve, reject), and
-// after the freeze then() also keeps its result in a capability record.
+// Each of these but the first fires a promise watchpoint of the realm, for good.
+// From then on JSC resolves a promise with another promise through
+// then(resolve, reject), or then() keeps its result in a capability record, or
+// an await calls then().
 const triggers: Record<string, () => void> = {
-  "defining Object.prototype.then"() {
+  "with nothing changed"() {},
+  "after defining Object.prototype.then"() {
     Object.defineProperty(Object.prototype, "then", { configurable: true, get() {} });
     delete (Object.prototype as any).then;
   },
-  "replacing Promise.prototype.then"() {
+  "after replacing Promise.prototype.then"() {
     const then = Promise.prototype.then;
     Promise.prototype.then = function (onFulfilled, onRejected) {
       return then.call(this, onFulfilled, onRejected);
     } as typeof then;
   },
-  "freezing Promise.prototype"() {
+  "after freezing Promise.prototype"() {
     Object.freeze(Promise.prototype);
   },
+  "after deleting Promise.prototype.constructor"() {
+    delete (Promise.prototype as any).constructor;
+  },
 };
-const leaveFastPaths = triggers[process.argv[2]];
+triggers[process.argv[2]]();
 
 class MyPromise<T> extends Promise<T> {}
+const never = new Promise<never>(() => {});
 
 // fs.promises.readFile is an async function that returns the native promise.
 async function fsPromises() {
@@ -94,55 +100,37 @@ async function otherRealmResolve() {
   await OtherRealmPromise.resolve(native());
 }
 
-// The rejection goes to the promise that `reject` belongs to. These await it.
+// Both functions of one promise, as JSC itself passes them to then().
 async function thenResolveReject() {
   const { promise, resolve, reject } = Promise.withResolvers();
   native().then(resolve, reject);
   await promise;
 }
-async function catchReject() {
-  const { promise, reject } = Promise.withResolvers();
-  native().catch(reject);
-  await promise;
-}
 
-// These await what then() and catch() returned. Only a callback sees the error.
+// What waits for the promise that then() returned comes first, as on the fast
+// paths. Node goes to the promise of `resolve`: no frame for the first of these
+// two, and receiver() for the second.
 async function thenResolveRejectResult() {
   const { promise, resolve, reject } = Promise.withResolvers();
   const seen = promise.then(undefined, error => error);
   await native().then(resolve, reject);
   return seen;
 }
-async function catchRejectResult() {
-  const { promise, reject } = Promise.withResolvers();
-  const seen = promise.then(undefined, error => error);
-  await native().catch(reject);
-  return seen;
-}
-// As above. A long then() chain follows the promise that `reject` belongs to.
-async function catchRejectResultLongChain() {
-  const { promise, reject } = Promise.withResolvers();
-  let tail = promise;
-  for (let i = 0; i < 40; i++) tail = tail.then(value => value);
-  const seen = tail.then(undefined, error => error);
-  await native().catch(reject);
-  return seen;
-}
-// As above. A chain of reject functions follows the promise that `reject` belongs to.
-async function catchRejectResultManyTargets() {
-  let { promise, reject } = Promise.withResolvers();
-  const first = reject;
-  for (let i = 0; i < 10; i++) {
-    const next = Promise.withResolvers();
-    promise.catch(next.reject);
-    ({ promise, reject } = next);
+async function bothAwaited() {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  async function starter() {
+    await native().then(resolve, reject);
   }
-  const seen = promise.then(undefined, error => error);
-  await native().catch(first);
+  async function receiver() {
+    await promise;
+  }
+  const seen = receiver().then(undefined, error => error);
+  await starter();
   return seen;
 }
 
-// worker() awaits a promise that its own failure rejects. The chain is a cycle.
+// worker() awaits a promise that its own failure settles. The chain is a cycle,
+// and the trace has worker() once.
 async function failFastWorker() {
   const { promise: aborted, reject: abort } = Promise.withResolvers();
   const seen = aborted.then(undefined, error => error);
@@ -152,33 +140,115 @@ async function failFastWorker() {
   await worker().catch(abort);
   return seen;
 }
-
-// The rejection passes through a chain of reject functions. Only the last promise is awaited.
-async function rejectFunctionChain() {
-  let { promise, reject } = Promise.withResolvers();
-  const first = reject;
-  for (let i = 0; i < 10; i++) {
-    const next = Promise.withResolvers();
-    promise.catch(next.reject);
-    ({ promise, reject } = next);
-  }
-  native().catch(first);
-  await promise;
-}
-
-// worker() is in a cycle of then() links that the walk can only enter through a
-// reject function. The trace has worker() once. It does not go around the cycle.
-async function cycleBehindRejectFunction() {
-  const { promise: aborted, reject: abort } = Promise.withResolvers();
-  const seen = aborted.then(undefined, error => error);
-  let derived: Promise<unknown>;
+async function cycleThroughThen() {
+  const rejected = native();
+  const seen = rejected.then(undefined, error => error);
+  let result: Promise<unknown>;
   async function worker() {
     await null;
-    await Promise.race([aborted, derived]);
+    await Promise.race([rejected, result]);
   }
-  derived = worker().then(value => value);
-  derived.catch(() => {});
-  native().catch(abort);
+  result = worker().then(value => value);
+  result.catch(() => {});
+  return seen;
+}
+async function cycleThroughResolveReject() {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const seen = promise.then(undefined, error => error);
+  async function worker() {
+    await Promise.race([native(), promise]);
+  }
+  worker().then(resolve, reject);
+  return seen;
+}
+
+// A reject function alone is no link to its promise, as in V8. then() calls it
+// only if the promise before it rejects.
+async function catchReject() {
+  const { promise, reject } = Promise.withResolvers();
+  native().catch(reject);
+  await promise;
+}
+// Here a handler took the rejection, so bystander() never gets it.
+async function handledBeforeRejectFunction() {
+  const { promise, reject } = Promise.withResolvers();
+  async function bystander() {
+    await promise;
+  }
+  bystander();
+  const seen = Promise.withResolvers();
+  native().catch(seen.resolve).catch(reject);
+  return seen.promise;
+}
+// then() has no reject handler here. The rejection goes on to the promise that
+// then() returned, where nothing handles it, and bystander() never gets it.
+async function thenResolveOnly() {
+  const { promise, resolve } = Promise.withResolvers();
+  async function bystander() {
+    await promise;
+  }
+  bystander();
+  const unhandled = Promise.withResolvers();
+  process.once("unhandledRejection", unhandled.resolve);
+  native().then(resolve);
+  return unhandled.promise;
+}
+
+// The pairs below were called: each resolved its promise with one that never
+// settles. A later call does nothing, so the rejection does not reach bystander().
+async function calledWithResolversPair() {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  resolve(never);
+  async function bystander() {
+    await promise;
+  }
+  bystander();
+  const rejected = native();
+  const seen = rejected.then(undefined, error => error);
+  rejected.then(resolve, reject);
+  return seen;
+}
+async function calledThenableJobPair() {
+  const called = Promise.withResolvers<[(value: unknown) => void, (reason: unknown) => void]>();
+  const promise = Promise.resolve({
+    then(resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
+      called.resolve([resolve, reject]);
+    },
+  });
+  const [resolve, reject] = await called.promise;
+  resolve(never);
+  async function bystander() {
+    await promise;
+  }
+  bystander();
+  const rejected = native();
+  const seen = rejected.then(undefined, error => error);
+  rejected.then(resolve, reject);
+  return seen;
+}
+async function calledAwaitPair() {
+  const called = Promise.withResolvers<[(value: unknown) => void, (reason: unknown) => void]>();
+  async function bystander() {
+    await {
+      then(resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
+        called.resolve([resolve, reject]);
+      },
+    };
+  }
+  bystander();
+  const [resolve, reject] = await called.promise;
+  resolve(never);
+  const rejected = native();
+  const seen = rejected.then(undefined, error => error);
+  rejected.then(resolve, reject);
+  return seen;
+}
+
+// The newest reaction is the one of Promise.all(), which the walk does not follow.
+async function promiseAllAfterThen() {
+  const rejected = native();
+  const seen = rejected.then(undefined, error => error);
+  Promise.all([rejected]).catch(() => {});
   return seen;
 }
 
@@ -194,14 +264,18 @@ const shapes = [
   otherRealmThen,
   otherRealmResolve,
   thenResolveReject,
-  catchReject,
   thenResolveRejectResult,
-  catchRejectResult,
-  catchRejectResultLongChain,
-  catchRejectResultManyTargets,
-  rejectFunctionChain,
+  bothAwaited,
   failFastWorker,
-  cycleBehindRejectFunction,
+  cycleThroughThen,
+  cycleThroughResolveReject,
+  catchReject,
+  handledBeforeRejectFunction,
+  thenResolveOnly,
+  calledWithResolversPair,
+  calledThenableJobPair,
+  calledAwaitPair,
+  promiseAllAfterThen,
 ];
 
 // The names of the leading `at async` frames, down to this helper.
@@ -227,15 +301,9 @@ async function collect() {
   return frames;
 }
 
-async function main() {
-  const storage = new AsyncLocalStorage();
-  const result: Record<string, Record<string, string[]>> = {};
-  result["before"] = await collect();
-  result["before, in AsyncLocalStorage.run()"] = await storage.run({}, collect);
-  leaveFastPaths();
-  result["after"] = await collect();
-  result["after, in AsyncLocalStorage.run()"] = await storage.run({}, collect);
-  console.log(JSON.stringify(result));
-}
-
-main();
+console.log(
+  JSON.stringify({
+    "outside AsyncLocalStorage.run()": await collect(),
+    "in AsyncLocalStorage.run()": await new AsyncLocalStorage().run({}, collect),
+  }),
+);

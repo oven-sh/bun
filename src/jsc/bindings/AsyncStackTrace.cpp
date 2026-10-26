@@ -18,6 +18,7 @@
 #include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/UnlinkedCodeBlock.h>
+#include <wtf/SmallSet.h>
 
 using namespace JSC;
 
@@ -27,9 +28,7 @@ using namespace JSC;
 // where there's no JS call stack, but the promise being rejected has an await
 // chain that tells us where the user's code is.
 //
-// This replicates the minimal chain-walking from JSC's private
-// Interpreter::getAsyncStackTrace for the common case (direct await). Promise
-// combinators (all/race/any) are not traced through — we stop at them.
+// This replicates the chain-walking from JSC's private Interpreter::getAsyncStackTrace. It stops at the fast-path reactions of Promise.all, allSettled and any.
 static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, WTF::Vector<JSC::StackFrame>& results, size_t maxStackSize)
 {
     if (!JSC::Options::useAsyncStackTrace() || !promise)
@@ -44,56 +43,6 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return *out != nullptr;
     };
 
-    // What an uncalled JSC promise reject function settles: the promise it rejects, or the await context it resumes.
-    auto rejectionTargetOf = [&](JSC::JSValue handler) -> JSC::JSValue {
-        using Field = JSC::JSFunctionWithFields::Field;
-        JSC::JSFunctionWithFields* function = nullptr;
-        if (!dynamicCastValue(handler, &function))
-            return {};
-        JSC::TaggedNativeFunction nativeFunction = function->nativeFunction();
-        // A call to either half of these two pairs clears its link to the other.
-        if (nativeFunction == JSC::toTagged(JSC::promiseResolvingFunctionReject))
-            return function->getField(Field::ResolvingOther).isCell() ? function->getField(Field::ResolvingPromise) : JSC::JSValue();
-        if (nativeFunction == JSC::toTagged(JSC::promiseResolvingFunctionRejectWithInternalMicrotask)) {
-            JSC::JSSlimPromiseReaction* awaitRecord = nullptr;
-            if (function->getField(Field::ResolvingWithInternalMicrotaskOther).isCell() && dynamicCastValue(function->getField(Field::ResolvingWithInternalMicrotaskContext), &awaitRecord))
-                return awaitRecord->handlerOrContext();
-            return {};
-        }
-        // A call to either half of this pair marks the promise.
-        if (nativeFunction == JSC::toTagged(JSC::promiseFirstResolvingFunctionReject)) {
-            JSC::JSPromise* target = nullptr;
-            if (dynamicCastValue(function->getField(Field::FirstResolvingPromise), &target) && !(target->flags() & JSC::JSPromise::isFirstResolvingFunctionCalledFlag))
-                return target;
-        }
-        return {};
-    };
-
-    // The reject handler that then() stored in a heap-allocated reaction.
-    auto rejectHandlerOf = [&](JSC::JSPromiseReaction* reaction) -> JSC::JSValue {
-        if (auto* full = dynamicDowncast<JSC::JSFullPromiseReaction>(reaction))
-            return full->onRejected();
-        auto* slim = dynamicDowncast<JSC::JSSlimPromiseReaction>(reaction);
-        if (slim && slim->internalMicrotask() == JSC::InternalMicrotask::None && !slim->isFulfillHandler())
-            return slim->handlerOrContext();
-        return {};
-    };
-
-    // The promise then() returned. A capability record holds it once promiseSpeciesWatchpointSet has fired.
-    auto derivedPromiseOf = [&](JSC::JSPromiseReaction* reaction) -> JSC::JSPromise* {
-        JSC::JSObject* promiseOrCapability = nullptr;
-        if (!dynamicCastValue(reaction->promise(), &promiseOrCapability))
-            return nullptr;
-        if (auto* derived = dynamicDowncast<JSC::JSPromise>(promiseOrCapability))
-            return derived;
-        // getDirect(vm, name) can allocate a property table. Nothing here may allocate.
-        JSC::PropertyOffset offset = promiseOrCapability->structure()->getConcurrently(vm.propertyNames->promise.impl());
-        JSC::JSPromise* derived = nullptr;
-        if (offset != JSC::invalidOffset)
-            dynamicCastValue(promiseOrCapability->getDirect(offset), &derived);
-        return derived;
-    };
-
     auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSAsyncFunctionGenerator* {
         JSC::InternalFieldTuple* tuple = nullptr;
         if (dynamicCastValue(context, &tuple))
@@ -102,6 +51,55 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         dynamicCastValue(context, &generator);
         return generator;
     };
+
+    // The promise that then() returned. Off the species fast path then() stores the record of createPromiseCapability() in its place.
+    auto derivedPromiseOf = [&](JSC::JSPromiseReaction* reaction) -> JSC::JSPromise* {
+        JSC::JSObject* promiseOrCapability = nullptr;
+        if (!dynamicCastValue(reaction->promise(), &promiseOrCapability))
+            return nullptr;
+        if (auto* derived = dynamicDowncast<JSC::JSPromise>(promiseOrCapability))
+            return derived;
+        JSC::Structure* structure = promiseOrCapability->structure();
+        JSC::JSGlobalObject* realm = structure->realm();
+        JSC::JSPromise* derived = nullptr;
+        if (realm && structure == realm->m_promiseCapabilityObjectStructure.getConcurrently())
+            dynamicCastValue(promiseOrCapability->getDirect(JSC::promiseCapabilityPromisePropertyOffset), &derived);
+        return derived;
+    };
+
+    // What then(resolve, reject) settles if `resolve` is an uncalled resolve function of JSC: its promise, or the async function whose await it resumes. V8's walk follows its own resolve function too.
+    auto settledByResolveFunction = [&](JSC::JSPromiseReaction* reaction) -> JSC::JSCell* {
+        using Field = JSC::JSFunctionWithFields::Field;
+        auto* full = dynamicDowncast<JSC::JSFullPromiseReaction>(reaction);
+        JSC::JSFunctionWithFields* resolve = nullptr;
+        JSC::JSObject* reject = nullptr;
+        if (!full || !dynamicCastValue(full->onFulfilled(), &resolve) || !dynamicCastValue(full->onRejected(), &reject))
+            return nullptr;
+        JSC::TaggedNativeFunction nativeFunction = resolve->nativeFunction();
+        // A call to either function of these two pairs clears its link to the other.
+        if (nativeFunction == JSC::toTagged(JSC::promiseResolvingFunctionResolve)) {
+            JSC::JSPromise* promise = nullptr;
+            if (resolve->getField(Field::ResolvingOther).isCell())
+                dynamicCastValue(resolve->getField(Field::ResolvingPromise), &promise);
+            return promise;
+        }
+        if (nativeFunction == JSC::toTagged(JSC::promiseResolvingFunctionResolveWithInternalMicrotask)) {
+            JSC::JSSlimPromiseReaction* awaitRecord = nullptr;
+            if (resolve->getField(Field::ResolvingWithInternalMicrotaskOther).isCell() && dynamicCastValue(resolve->getField(Field::ResolvingWithInternalMicrotaskContext), &awaitRecord))
+                return unwrapGeneratorFromContext(awaitRecord->handlerOrContext());
+            return nullptr;
+        }
+        // A call to either function of this pair marks the promise.
+        if (nativeFunction == JSC::toTagged(JSC::promiseFirstResolvingFunctionResolve)) {
+            JSC::JSPromise* promise = nullptr;
+            if (dynamicCastValue(resolve->getField(Field::FirstResolvingPromise), &promise) && !(promise->flags() & JSC::JSPromise::isFirstResolvingFunctionCalledFlag))
+                return promise;
+        }
+        return nullptr;
+    };
+
+    // The promises that the walk came to. It goes to none of them twice, so it ends in a cycle of awaits. 16 fit with no allocation: the default limit is 10 frames.
+    WTF::SmallSet<JSC::JSPromise*, WTF::PtrHashBase<JSC::JSPromise*, false>, WTF::HashTraits<JSC::JSPromise*>, 16> visited;
 
     // Walk reaction->context → generator. If context is not a generator (e.g.
     // thenable-chain from `return promise` without await inside an async
@@ -115,9 +113,9 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     //    payloadCell() and the handler in m_slot.
     //  - As a heap-allocated JSPromiseReaction list once a second handler is
     //    attached, headed at payloadCell().
-    auto walkReactions = [&](JSC::JSPromise* p, JSC::JSValue& rejectionTarget) -> JSC::JSAsyncFunctionGenerator* {
+    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSAsyncFunctionGenerator* {
         for (unsigned hops = 0; p && hops < 32; hops++) {
-            if (p->status() != JSC::JSPromise::Status::Pending)
+            if (p->status() != JSC::JSPromise::Status::Pending || !visited.add(p).isNewEntry)
                 return nullptr;
             switch (p->inlineReactionKind()) {
             case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
@@ -135,11 +133,8 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
                 }
                 return nullptr;
             }
-            case JSC::JSPromise::InlineReactionKind::RejectHandler:
-                if (!rejectionTarget)
-                    rejectionTarget = rejectionTargetOf(p->inlineHandlerHandler());
-                [[fallthrough]];
-            case JSC::JSPromise::InlineReactionKind::FulfillHandler: {
+            case JSC::JSPromise::InlineReactionKind::FulfillHandler:
+            case JSC::JSPromise::InlineReactionKind::RejectHandler: {
                 p = p->inlineHandlerResultPromise();
                 continue;
             }
@@ -153,32 +148,12 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
                 return generator;
             // No generator in context — follow the thenable chain to the
             // promise this reaction resolves/rejects.
-            if (!rejectionTarget)
-                rejectionTarget = rejectionTargetOf(rejectHandlerOf(reaction));
-            p = derivedPromiseOf(reaction);
-        }
-        return nullptr;
-    };
-
-    // The generators of `results`. 16 fit with no allocation: the default limit is 10 frames.
-    WTF::Vector<JSC::JSAsyncFunctionGenerator*, 16> visited;
-    bool passedRejectFunction = false;
-
-    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSAsyncFunctionGenerator* {
-        for (unsigned rejectFunctions = 0; p && rejectFunctions < 32; rejectFunctions++) {
-            JSC::JSValue rejectionTarget;
-            auto* generator = walkReactions(p, rejectionTarget);
-            // A walk that passed a reject function can close a cycle that the then() chain alone does not have, so it must not return to a generator of the trace.
-            if (generator && !(passedRejectFunction && visited.contains(generator)))
+            JSC::JSPromise* derived = derivedPromiseOf(reaction);
+            // Nothing waits for what then() returned when JSC made the call itself: it resolves a promise with another one, and awaits a thenable, through then(resolve, reject).
+            JSC::JSCell* settled = derived && (derived->hasInlineReaction() || derived->payloadCell()) ? nullptr : settledByResolveFunction(reaction);
+            if (auto* generator = dynamicDowncast<JSC::JSAsyncFunctionGenerator>(settled))
                 return generator;
-            if (!rejectionTarget)
-                return nullptr;
-            // Nothing awaits the then() chain. Off its promise fast paths JSC passes its own reject functions to then(), and the rejection goes to what they settle.
-            passedRejectFunction = true;
-            if (auto* awaiting = unwrapGeneratorFromContext(rejectionTarget))
-                return visited.contains(awaiting) ? nullptr : awaiting;
-            p = nullptr;
-            dynamicCastValue(rejectionTarget, &p);
+            p = settled ? dynamicDowncast<JSC::JSPromise>(settled) : derived;
         }
         return nullptr;
     };
@@ -217,14 +192,10 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         }
     };
 
-    JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
-    while (gen && results.size() < maxStackSize) {
-        appendFrame(gen);
-        visited.append(gen);
-        JSC::JSPromise* returnPromise = nullptr;
-        if (!dynamicCastValue(gen->context(), &returnPromise))
+    while (auto* generator = getAwaitingGenerator(promise)) {
+        appendFrame(generator);
+        if (results.size() >= maxStackSize || !dynamicCastValue(generator->context(), &promise))
             break;
-        gen = getAwaitingGenerator(returnPromise);
     }
 }
 

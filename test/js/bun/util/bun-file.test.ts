@@ -110,15 +110,17 @@ test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
   expect(caught.stack).toContain("at async caller");
 });
 
-// Runs in a child process: each trigger takes JSC off its promise fast paths for
+// Runs in a child process: each change takes JSC off its promise fast paths for
 // the rest of the process.
 test.concurrent.each([
-  "defining Object.prototype.then",
-  "replacing Promise.prototype.then",
-  "freezing Promise.prototype",
-])("native rejections keep their async stack after %s", async trigger => {
+  "with nothing changed",
+  "after defining Object.prototype.then",
+  "after replacing Promise.prototype.then",
+  "after freezing Promise.prototype",
+  "after deleting Promise.prototype.constructor",
+])("native rejections have their async stack %s", async state => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "native-rejection-async-stack-fixture.ts"), trigger],
+    cmd: [bunExe(), join(import.meta.dir, "native-rejection-async-stack-fixture.ts"), state],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -137,18 +139,23 @@ test.concurrent.each([
     "otherRealmThen",
     "otherRealmResolve",
     "thenResolveReject",
-    "catchReject",
     "thenResolveRejectResult",
-    "catchRejectResult",
-    "catchRejectResultLongChain",
-    "catchRejectResultManyTargets",
-    "rejectFunctionChain",
   ];
   const frames = {
     ...Object.fromEntries(shapes.map(shape => [shape, [shape, "asyncFramesOf"]])),
+    bothAwaited: ["starter", "bothAwaited", "asyncFramesOf"],
     // One frame for worker(), although the chain leads back to it.
     failFastWorker: ["worker", "failFastWorker", "asyncFramesOf"],
-    cycleBehindRejectFunction: ["worker"],
+    cycleThroughThen: ["worker"],
+    cycleThroughResolveReject: ["worker"],
+    // No frame for a function that the rejection does not go to, and none through a reject function alone.
+    catchReject: [],
+    handledBeforeRejectFunction: [],
+    thenResolveOnly: [],
+    calledWithResolversPair: [],
+    calledThenableJobPair: [],
+    calledAwaitPair: [],
+    promiseAllAfterThen: [],
   };
   // The raw stdout if it is not JSON, so that a crash shows what the fixture printed.
   let result: unknown = stdout;
@@ -156,14 +163,44 @@ test.concurrent.each([
     result = JSON.parse(stdout);
   } catch {}
   expect({ result, stderr, exitCode }).toEqual({
+    result: { "outside AsyncLocalStorage.run()": frames, "in AsyncLocalStorage.run()": frames },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Not concurrent: the runner kills the child of a test that times out only if the test runs alone.
+test("the async stack of a native rejection ends at a cycle of awaits", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "native-rejection-await-cycle-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // A child that never leaves the walk (the bug) is killed rather than left behind.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  let result: unknown = stdout;
+  try {
+    result = JSON.parse(stdout);
+  } catch {}
+  expect({ result, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     result: {
-      "before": frames,
-      "before, in AsyncLocalStorage.run()": frames,
-      "after": frames,
-      "after, in AsyncLocalStorage.run()": frames,
+      "Array.fromAsync() has no frame": ["caller"],
+      "a builtin awaits a race with its own promise": [],
+      "two functions await each other": ["inner", "first", "second"],
+      "a builtin awaits its own promise": [],
+      "a function awaits its own promise": ["selfAwait"],
+      "Error.stackTraceLimit = 2": ["level3", "level2"],
+      "Error.stackTraceLimit = Infinity, a function awaits its own promise": ["selfAwait"],
+      "Error.stackTraceLimit = Infinity, a function awaits a race with its then() result": ["worker"],
+      "a builtin awaits a race with its then() result, in a capability record": [],
     },
     stderr: "",
     exitCode: 0,
+    signalCode: null,
   });
 });
 

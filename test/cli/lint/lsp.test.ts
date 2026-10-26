@@ -751,6 +751,40 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // The lint with types builds a program, on a thread of its own: a request sent meanwhile is answered before it ends.
+  test(
+    "answers a formatting request while a document is linted with types",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "a.ts": "",
+      });
+      await using client = new Client([...command, "--type-check", "--type-aware"], String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.ts");
+      const text = 'export const a: number = "a"\n';
+      open(client, path, text);
+      const codes = (it: Message) => it.params.diagnostics.map((diagnostic: any) => diagnostic.code);
+      // Without types first: the program is being built once this is published.
+      expect(codes(await client.diagnostics(path))).toEqual([]);
+      const formatted = format(client, path);
+      const id = client.lastId;
+      expect(applyEdits(text, (await formatted).result)).toBe('export const a: number = "a";\n');
+      const typed = await client.diagnostics(path);
+      expect(codes(typed)).toEqual(["typescript/TS2322"]);
+      const order = client.received.map(it => (it.id === id ? "formatted" : it === typed ? "typed" : ""));
+      expect(order.filter(Boolean)).toEqual(["formatted", "typed"]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   test.each([
     ["--fix", "--fix"],
     ["--stdin", "--stdin"],

@@ -2,8 +2,9 @@
 //!
 //! The thread that reads the messages keeps the documents. Each workspace folder has a thread that lints and formats what is
 //! in it, with the folder as the working directory and its `bunfig.toml`: as `bun lint` does there. It keeps the
-//! configurations that it has read until one of their files changes. One more thread is for the documents that are in no
-//! folder: nothing of theirs is run.
+//! configurations that it has read until one of their files changes. While it lints, a second thread runs the rules that
+//! need types, which wait for a program to be built: a request never waits for that. One more thread is for the
+//! documents that are in no folder: nothing of theirs is run.
 //!
 //! Standard output carries the messages and nothing else: what the linter and the formatter have to say goes to the
 //! client as a message, or is an answer.
@@ -159,7 +160,16 @@ struct Document {
 enum Job {
     Lint {
         document: Arc<Document>,
+        /// The thread of the root lints with types itself only while its session has no second thread.
         with_types: bool,
+    },
+    /// What the second thread of a session found with types, for the thread of the root to publish.
+    Typed {
+        document: Arc<Document>,
+        /// [`Queue::generation`] of the session that found it.
+        generation: u64,
+        outcome: Result<Linted, Fatal>,
+        notes: Vec<(Weight, Vec<u8>)>,
     },
     /// `textDocument/codeAction`
     Actions {
@@ -181,6 +191,13 @@ struct Queue {
     /// What the client waits for goes first.
     requests: VecDeque<Job>,
     lints: VecDeque<Job>,
+    /// The documents to lint with types, which takes as long as building their program: the session's second thread
+    /// takes them while it has one, so that no request waits for them.
+    typed: VecDeque<Arc<Document>>,
+    /// The session whose second thread runs, by [`Queue::sessions`]. `None`: the thread of the root takes `typed`.
+    typed_thread: Option<u64>,
+    /// How many sessions the root has begun.
+    sessions: u64,
     /// It goes up when a configuration may have changed.
     generation: u64,
     is_closed: bool,
@@ -192,13 +209,14 @@ struct Root {
     path: Vec<u8>,
     is_folder: bool,
     queue: Guarded<Queue>,
+    /// For both threads of the root: each looks again at what is there for it.
     has_work: Condition,
 }
 
 impl Root {
     fn change(&self, change: impl FnOnce(&mut Queue)) {
         change(&mut self.queue.lock());
-        self.has_work.notify_one();
+        self.has_work.notify_all();
     }
 
     /// Waits for a job. With it: [`Queue::generation`]. `None`: there are no more.
@@ -209,8 +227,32 @@ impl Root {
                 return None;
             }
             let job = queue.requests.pop_front();
-            if let Some(job) = job.or_else(|| queue.lints.pop_front()) {
+            let job = job.or_else(|| queue.lints.pop_front()).or_else(|| {
+                if queue.typed_thread.is_some() {
+                    return None;
+                }
+                Some(Job::Lint {
+                    document: queue.typed.pop_front()?,
+                    with_types: true,
+                })
+            });
+            if let Some(job) = job {
                 return Some((job, queue.generation));
+            }
+            self.has_work.wait_guarded(&mut queue);
+        }
+    }
+
+    /// Waits for a document to lint with types, on the second thread of the session `run`. `None`: the session is
+    /// over.
+    fn take_typed(&self, run: u64) -> Option<Arc<Document>> {
+        let mut queue = self.queue.lock();
+        loop {
+            if queue.is_closed || queue.typed_thread != Some(run) {
+                return None;
+            }
+            if let Some(document) = queue.typed.pop_front() {
+                return Some(document);
             }
             self.has_work.wait_guarded(&mut queue);
         }
@@ -575,8 +617,8 @@ impl<'s> Server<'s> {
         let mut worker = Worker {
             server: self,
             root,
-            environment,
             no_engine,
+            generation,
             formatter: None,
             known: FxHashMap::default(),
             told: Vec::new(),
@@ -624,7 +666,12 @@ impl<'s> Server<'s> {
                     if let Some(refusal) = &refusal {
                         self.show_error(Half::Lint, refusal);
                     }
-                    all(refusal.is_none().then_some(session))
+                    match refusal {
+                        Some(_) => all(None),
+                        None => {
+                            self.with_typed_thread(root, session, generation, || all(Some(session)))
+                        }
+                    }
                 }),
                 _ => all(None),
             };
@@ -635,15 +682,78 @@ impl<'s> Server<'s> {
         }
         None
     }
+
+    /// Calls `then`, the work of the thread of `root` with `session`, while a second thread lints with types what it
+    /// queues in [`Queue::typed`]. The second thread ends when `then` returns. If it cannot be started, the first takes
+    /// the queue itself.
+    fn with_typed_thread<R>(
+        &self,
+        root: &Root,
+        session: &Session,
+        generation: u64,
+        then: impl FnOnce() -> R,
+    ) -> R {
+        fn is_sync<T: Sync>() {}
+        // The session is shared by both threads.
+        is_sync::<Session<'_>>();
+        let mut queue = root.queue.lock();
+        queue.sessions += 1;
+        let run = queue.sessions;
+        queue.typed_thread = Some(run);
+        drop(queue);
+        std::thread::scope(|scope| {
+            let thread = std::thread::Builder::new().stack_size(STACK);
+            let spawned = thread.spawn_scoped(scope, move || {
+                bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Bun LSP types"));
+                self.lint_typed(root, session, generation, run);
+            });
+            if spawned.is_err() {
+                root.change(|queue| queue.typed_thread = None);
+            }
+            let result = then();
+            root.change(|queue| queue.typed_thread = None);
+            result
+        })
+    }
+
+    /// What the second thread of the session `run` does: lints with types each document of [`Queue::typed`], and hands
+    /// what it finds to the thread of the root as a [`Job::Typed`], which keeps what is known of the documents and
+    /// what the user was told.
+    fn lint_typed(&self, root: &Root, session: &Session, generation: u64, run: u64) {
+        // The stack bounds of the recursion guard are set here, as for the thread of the root.
+        bun_core::Output::Source::configure_thread();
+        while let Some(document) = root.take_typed(run) {
+            if !self.is_latest(&document) {
+                continue;
+            }
+            let how = How {
+                with_types: true,
+                fixes: false,
+            };
+            let outcome = session.lint(&document.path, document.text.clone(), how);
+            let notes = session.notes();
+            root.change(|queue| {
+                if queue.typed_thread == Some(run) {
+                    queue.requests.push_back(Job::Typed {
+                        document,
+                        generation,
+                        outcome,
+                        notes,
+                    });
+                }
+            });
+        }
+    }
 }
 
 /// The thread of a [`Root`], while its configurations stay as they are.
 struct Worker<'w, 's> {
     server: &'w Server<'s>,
     root: &'w Root,
-    environment: &'w Environment<'w>,
     /// The engine, if it is one that refuses.
     no_engine: Option<&'w NoEngine>,
+    /// [`Queue::generation`] of the configurations.
+    generation: u64,
     /// `bun fmt` in the root with its flags, configs and ignore files read, made when formatting is turned on. It lasts
     /// as long as the worker: a generation, or until the settings change. `None`: formatting is off, or it could not
     /// start, which the user was told.
@@ -686,13 +796,23 @@ impl Worker<'_, '_> {
     /// Lints `document`. `None`: it cannot be, which the user is told. `files == 0` in the result: it is not one to
     /// lint, which the user is told if there is a reason, like ESLint being needed for it.
     fn lint(&mut self, session: &Session, document: &Document, how: How) -> Option<Linted> {
-        let server = self.server;
         let linted = session.lint(&document.path, document.text.clone(), how);
-        for (weight, line) in session.notes() {
+        self.tell_notes(session.notes());
+        self.say_if_refused();
+        self.outcome(linted)
+    }
+
+    /// Logs what a lint left to tell, once each.
+    fn tell_notes(&mut self, notes: Vec<(Weight, Vec<u8>)>) {
+        let server = self.server;
+        for (weight, line) in notes {
             let kind = if weight == Weight::Warning { 2 } else { 3 };
             self.tell_once(line, |line| server.tell("window/logMessage", kind, line));
         }
-        self.say_if_refused();
+    }
+
+    /// What a lint found. `None`: it failed, which the user is told.
+    fn outcome(&mut self, linted: Result<Linted, Fatal>) -> Option<Linted> {
         match linted {
             Ok(linted) => Some(linted),
             Err(Fatal(why)) => {
@@ -768,42 +888,23 @@ impl Worker<'_, '_> {
                     with_types,
                     fixes: false,
                 };
-                let Some(mut linted) = session.and_then(|it| self.lint(it, &document, how)) else {
-                    self.known.remove(&document.uri);
-                    return server.publish(&document, Vec::new());
-                };
-                if linted.files == 0 {
-                    // Not one to lint: the problems it had as one are taken back, once. A generation earlier it may
-                    // have been one, and its Worker's `known` is gone with it.
-                    let is_cleared =
-                        (self.known.get(&document.uri)).is_some_and(|it| it.messages.is_empty());
-                    self.note(&document, None);
-                    if !is_cleared {
-                        server.publish(&document, Vec::new());
-                    }
+                let linted = session.and_then(|it| self.lint(it, &document, how));
+                self.publish(session, document, with_types, linted);
+            }
+            Job::Typed {
+                document,
+                generation,
+                outcome,
+                notes,
+            } => {
+                self.tell_notes(notes);
+                self.say_if_refused();
+                // Found with the configurations of an earlier generation: this one lints the document again.
+                if generation != self.generation || !server.is_latest(&document) {
                     return;
                 }
-                let result = linted.results.pop();
-                // They take as long as it takes to check the program: when there is nothing else to do.
-                let lacks_types = !with_types
-                    && (session.zip(result.as_ref())).is_some_and(|(session, result)| {
-                        session.wants_types(&document.path, result)
-                    });
-                self.note(&document, result);
-                let known = self.known.get(&document.uri);
-                let breaks = known.map_or_else(Default::default, |it| it.line_breaks);
-                let places = server.places(&document, breaks);
-                let messages = known.map(|it| &it.messages[..]).unwrap_or_default();
-                let diagnostics = messages.iter().map(|it| places.diagnostic(it));
-                server.publish(&document, diagnostics.collect());
-                if lacks_types {
-                    self.root.change(|queue| {
-                        queue.lints.push_back(Job::Lint {
-                            document,
-                            with_types: true,
-                        });
-                    });
-                }
+                let linted = session.and_then(|_| self.outcome(outcome));
+                self.publish(session, document, true, linted);
             }
             Job::Actions {
                 id,
@@ -827,6 +928,48 @@ impl Worker<'_, '_> {
                     server.finish(&id, Ok(edits.map_or(Json::Null, Json::Array)));
                 }
             }
+        }
+    }
+
+    /// Publishes what a lint of `document` found: `linted`, or `None` if it could not be linted. Without types, a
+    /// document whose configuration asks for them is queued for a lint with them.
+    fn publish(
+        &mut self,
+        session: Option<&Session>,
+        document: Arc<Document>,
+        with_types: bool,
+        linted: Option<Linted>,
+    ) {
+        let server = self.server;
+        let Some(mut linted) = linted else {
+            self.known.remove(&document.uri);
+            return server.publish(&document, Vec::new());
+        };
+        if linted.files == 0 {
+            // Not one to lint: the problems it had as one are taken back, once. A generation earlier it may have been
+            // one, and its Worker's `known` is gone with it.
+            let is_cleared =
+                (self.known.get(&document.uri)).is_some_and(|it| it.messages.is_empty());
+            self.note(&document, None);
+            if !is_cleared {
+                server.publish(&document, Vec::new());
+            }
+            return;
+        }
+        let result = linted.results.pop();
+        // They take as long as it takes to check the program: on the second thread of the session.
+        let lacks_types = !with_types
+            && (session.zip(result.as_ref()))
+                .is_some_and(|(session, result)| session.wants_types(&document.path, result));
+        self.note(&document, result);
+        let known = self.known.get(&document.uri);
+        let breaks = known.map_or_else(Default::default, |it| it.line_breaks);
+        let places = server.places(&document, breaks);
+        let messages = known.map(|it| &it.messages[..]).unwrap_or_default();
+        let diagnostics = messages.iter().map(|it| places.diagnostic(it));
+        server.publish(&document, diagnostics.collect());
+        if lacks_types {
+            self.root.change(|queue| queue.typed.push_back(document));
         }
     }
 
@@ -972,6 +1115,7 @@ impl<'d> Desk<'d, '_, '_> {
             root.change(|queue| {
                 // One that is overtaken is not even begun.
                 queue.lints.retain(|it| !matches!(it, Job::Lint { document: other, .. } if other.uri == document.uri));
+                queue.typed.retain(|it| it.uri != document.uri);
                 queue.lints.push_back(Job::Lint {
                     document,
                     with_types: false,

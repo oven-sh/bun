@@ -193,7 +193,54 @@ const reflectStatics = {
   },
 };
 
+// `struct` / `shared struct` declarations in sources that `node:vm` compiles. JavaScriptCore does not know the syntax and
+// vm sources do not pass through Bun's transpiler, so the vm entry points (NodeVM.cpp) hand a source that might declare a
+// struct to `lowerStructSyntax` first. The lowered text calls `__structBase`, which the entry point installs in the target
+// realm (`structBase`).
+
+/** Text that starts a lowered source; the vm entry points look for it to know the target realm needs `__structBase`. */
+const loweredMarker = "/*bun:structs*/";
+
+// A declaration starts a statement: `struct Name`, `shared struct Name`, optionally after `export`.
+const structDeclaration = /(?:^|[\n\r;{}]|\*\/)[ \t]*(?:export[ \t]+)?(?:shared[ \t]+)?struct[ \t]+[\p{L}$_\\]/u;
+const runtimeImport = /^import[ \t]*\{[^}]*\}[ \t]*from[ \t]*["']bun:wrap["'];?[ \t]*\r?\n?/m;
+const functionBodyName = "__bunVmFunctionBody__";
+
+let transpiler: Bun.Transpiler | undefined;
+let structBaseHelper: unknown;
+
+/** The helper that lowered struct declarations call: the one the main realm's `bun:wrap` defines. */
+function structBase() {
+  return (structBaseHelper ??= $requireESM("bun:wrap").__structBase);
+}
+
+/**
+ * Returns `source` with its struct declarations lowered to plain classes, or `source` itself when it has none.
+ * `kind`: 0 a script, 1 the body of a function (`vm.compileFunction`), 2 a module. A declaration that is not valid
+ * throws a SyntaxError.
+ */
+function lowerStructSyntax(source: string, kind: number): string {
+  if (!structDeclaration.test(source)) return source;
+  transpiler ??= new Bun.Transpiler({ loader: "js", deadCodeElimination: false });
+  let lowered: string;
+  try {
+    // A function body is not a program (`return` is allowed in it), so it is transpiled inside a function.
+    lowered = transpiler.transformSync(kind === 1 ? `function ${functionBodyName}() {${source}\n}` : source);
+  } catch (error) {
+    const first = (error as { errors?: { message?: string }[] })?.errors?.[0] ?? (error as { message?: string });
+    throw new SyntaxError(first?.message ?? String(error));
+  }
+  lowered = lowered.replace(runtimeImport, "");
+  if (kind === 1) {
+    const start = lowered.indexOf("{", lowered.indexOf(functionBodyName));
+    lowered = lowered.slice(start + 1, lowered.lastIndexOf("}"));
+  }
+  return loweredMarker + lowered;
+}
+
 export default {
+  lowerStructSyntax,
+  structBase,
   Mutex,
   Condition,
   SharedArray,

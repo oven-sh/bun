@@ -75,8 +75,9 @@ public:
     bool isOxlint() const { return m_flags & 16; }
     // See `shortens_nodes` in src/lint/js_plugin/ast.rs.
     bool shortensNodes() const { return m_flags & 256; }
-    // There's no ESLint or oxlint config to match, so typescript-estree's nodes and tokens also get `start` and `end`.
-    bool hasNoForeignConfig() const { return m_flags & 512; }
+    // Every node, token and comment has `start` and `end`. Always with espree and oxlint. With typescript-estree's: there's no
+    // ESLint or oxlint config to match, so they get them too.
+    bool hasStartEnd() const { return m_flags & 512; }
 
     // The index where each line starts. The first is 0.
     const WTF::Vector<uint32_t>& lineStarts()

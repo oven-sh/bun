@@ -424,7 +424,7 @@ LintNodeState::LayoutKind LintNodeState::kindFor(const LintHost* host)
         return host->shortensNodes() ? OxlintJavaScript : Oxlint;
     if (host->isEspree())
         return Espree;
-    return host->hasNoForeignConfig() ? TypeScriptWithStartEnd : TypeScript;
+    return host->hasStartEnd() ? TypeScriptWithStartEnd : TypeScript;
 }
 
 JSString* LintNodeState::typeName(VM& vm, LintHost* host, uint8_t type)

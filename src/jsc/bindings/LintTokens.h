@@ -45,7 +45,7 @@ struct LintTokenShape {
         EspreeComment,
         TypeScriptToken,
         TypeScriptRegex,
-        // typescript-estree's with `start` and `end`: see `LintHost::hasNoForeignConfig`.
+        // typescript-estree's with `start` and `end`: see `LintHost::hasStartEnd`.
         TypeScriptTokenWithStartEnd,
         TypeScriptRegexWithStartEnd,
         OxlintToken,

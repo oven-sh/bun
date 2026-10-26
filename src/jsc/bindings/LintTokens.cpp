@@ -171,7 +171,7 @@ JSObject* createToken(JSGlobalObject* globalObject, LintHost* host, LintTokenLis
     LintTokenShape::Kind shapeKind;
     if (host->isOxlint())
         shapeKind = isComment ? LintTokenShape::OxlintComment : LintTokenShape::OxlintToken;
-    else if (!host->isEspree() && host->hasNoForeignConfig())
+    else if (!host->isEspree() && host->hasStartEnd())
         shapeKind = isRegex ? LintTokenShape::TypeScriptRegexWithStartEnd : LintTokenShape::TypeScriptTokenWithStartEnd;
     else if (!host->isEspree())
         shapeKind = isRegex ? LintTokenShape::TypeScriptRegex : LintTokenShape::TypeScriptToken;

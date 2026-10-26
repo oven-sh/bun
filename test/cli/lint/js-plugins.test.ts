@@ -3444,15 +3444,18 @@ describe.concurrent("AST nodes in JavaScript plugins", () => {
     async () => {
       const plugin = `const keys = it => Object.keys(it).join();
         const positions = it => [it.start, it.end, ...it.range].join();
+        const selected = new Set();
         export default { meta: { name: "probe" }, rules: { positions: { create: context => ({
-          Program(node) {
+          // Selectors are matched natively, with the same properties.
+          "VariableDeclaration[start=13][end>13]"(node) { selected.add(node); },
+          "Program:exit"(node) {
             const [line, block] = context.sourceCode.getAllComments();
             const tokens = context.sourceCode.getTokens(node);
             const regex = tokens.find(it => it.type === "RegularExpression");
             const [declaration] = node.body;
             const annotation = declaration.declarations[0].id.typeAnnotation;
             context.report({ node, message: JSON.stringify({
-              keys: keys(declaration), positions: positions(declaration),
+              selected: selected.has(declaration), keys: keys(declaration), positions: positions(declaration),
               annotationKeys: annotation ? keys(annotation) : null, annotationPositions: annotation ? positions(annotation) : null,
               lineKeys: keys(line), linePositions: positions(line), blockKeys: keys(block), blockPositions: positions(block),
               tokenKeys: keys(tokens[0]), tokenPositions: positions(tokens[0]),
@@ -3476,6 +3479,7 @@ describe.concurrent("AST nodes in JavaScript plugins", () => {
       );
       expect(said).toEqual({
         "index.ts": {
+          selected: true,
           keys: "type,declarations,declare,kind,start,end,range,loc,parent",
           positions: "13,50,13,50",
           annotationKeys: "type,loc,start,end,range,typeAnnotation,parent",
@@ -3491,6 +3495,7 @@ describe.concurrent("AST nodes in JavaScript plugins", () => {
           regex: "flags,pattern",
         },
         "index.js": {
+          selected: true,
           keys: "type,start,end,loc,range,declarations,kind,parent",
           positions: "13,42,13,42",
           annotationKeys: null,

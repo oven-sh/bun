@@ -31,9 +31,9 @@ function makeFor(node, type, range, fields) {
     return { column, line };
   };
   const loc = { end: at(range[1]), start: at(range[0]) };
-  const made = fileHasStartEnd
-    ? { type, ...fields, start: range[0], end: range[1], range, loc }
-    : { type, ...fields, range, loc };
+  // As laid out as `node`, which can be from an earlier file.
+  const made =
+    "start" in node ? { type, ...fields, start: range[0], end: range[1], range, loc } : { type, ...fields, range, loc };
   madeFor.set(node, made);
   return made;
 }

@@ -1686,6 +1686,24 @@ pub mod fs {
             index: bun_alloc::IndexType,
             generation: Generation,
         ) -> Option<&mut EntriesOption> {
+            self.entries_at_locked_impl(index, generation, false)
+        }
+
+        /// Reads the listing at `index` again in place, also when its generation is current.
+        pub(crate) fn reread_entries_at_locked(
+            &mut self,
+            index: bun_alloc::IndexType,
+            generation: Generation,
+        ) -> Option<&mut EntriesOption> {
+            self.entries_at_locked_impl(index, generation, true)
+        }
+
+        fn entries_at_locked_impl(
+            &mut self,
+            index: bun_alloc::IndexType,
+            generation: Generation,
+            reread: bool,
+        ) -> Option<&mut EntriesOption> {
             debug_assert!(
                 self.entries_mutex.is_held_by_current_thread(),
                 "entries_at_locked: caller must hold entries_mutex",
@@ -1696,7 +1714,7 @@ pub mod fs {
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                if existing.generation < generation {
+                if reread || existing.generation < generation {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };

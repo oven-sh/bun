@@ -507,7 +507,8 @@ it("reload() works with new dirs/files", () => {
 // until it opens or the resolver finds it, also when a router for other files walked the directory in
 // between. A failed resolve in the directory and another router's reload() bust it too. The second
 // Bun.build() reads a directory again with no bust, so no file is opened after it, not the one behind a
-// link either.
+// link either. Below a link, the walk into a directory that was made after its parent was listed reads the
+// parent again, also with no bust, so no file is opened after that either.
 // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
 it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer opens", async () => {
   using dir = tempDir("fsr-unreadable-route", {
@@ -517,6 +518,7 @@ it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer op
 
       const pages = path.join(import.meta.dir, "pages");
       const linked = path.join(import.meta.dir, "linked");
+      const belowLink = path.join(import.meta.dir, "site-by-link", "pages");
       const make = (dir = pages, fileExtensions = [".tsx"]) =>
         new Bun.FileSystemRouter({ dir, style: "nextjs", fileExtensions });
       const show = (step: string, router: () => Bun.FileSystemRouter) => {
@@ -566,6 +568,14 @@ it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer op
       fs.chmodSync(path.join(linked, "a.tsx"), 0o000);
       for (let i = 0; i < 2; i++) await Bun.build({ entrypoints: [path.join(linked, "index.tsx")] });
       show("made after Bun.build() read the directory again", () => make(linked));
+
+      show("made below a link", () => make(belowLink));
+      fs.chmodSync(path.join(belowLink, "a.tsx"), 0o000);
+      show("made again", () => make(belowLink));
+      fs.mkdirSync(path.join(belowLink, "later"));
+      fs.writeFileSync(path.join(belowLink, "later", "x.md"), "# x");
+      show("made for a directory made later", () => make(path.join(belowLink, "later"), [".md"]));
+      show("made after the walk into that directory", () => make(belowLink));
     `,
     "pages/index.tsx": "export default 1;\n",
     "pages/a.tsx": "export default 1;\n",
@@ -573,8 +583,11 @@ it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer op
     "pages/sub/b.tsx": "export default 1;\n",
     "linked/index.tsx": "export default 1;\n",
     "linked/a.tsx": "export default 1;\n",
+    "site/pages/index.tsx": "export default 1;\n",
+    "site/pages/a.tsx": "export default 1;\n",
   });
   fs.symlinkSync("a.tsx", path.join(String(dir), "linked/to-a.tsx"));
+  fs.symlinkSync("site", path.join(String(dir), "site-by-link"));
   using unprivileged = unprivilegedSpawnOptions(String(dir));
 
   await using proc = Bun.spawn({
@@ -608,6 +621,10 @@ it.serial.skipIf(isWindows)("reload() leaves out a route whose file no longer op
       "made once the file opens: / /a /sub/b",
       "made with a link to a.tsx: / /a /to-a",
       "made after Bun.build() read the directory again: / /a /to-a",
+      "made below a link: / /a",
+      "made again: / /a",
+      "made for a directory made later: /x",
+      "made after the walk into that directory: / /a",
     ],
     stderr: "",
     exitCode: 0,

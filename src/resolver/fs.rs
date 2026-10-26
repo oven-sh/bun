@@ -562,7 +562,7 @@ impl DirEntry {
 
     /// Replaces the listing with `fresh`, a new read of the same directory, and keeps its keys.
     pub(crate) fn refill(&mut self, mut fresh: DirEntry) {
-        // A bust made this read: a name whose `Entry` has a path gets a new `Entry` with none.
+        // Only a bust stamps a listing stale and keeps its entries: one with a path is replaced.
         if self.generation == crate::fs::GENERATION_STALE {
             for entry in fresh.data.values_mut() {
                 let kept: *mut Entry = *entry;

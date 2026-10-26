@@ -6423,12 +6423,9 @@ impl<'a> Resolver<'a> {
             && parent_entries.data.count() > 0
         {
             // SAFETY: `rfs_ptr` points at the process-global RealFS; `entries_mutex` held.
-            let slot = unsafe { &mut *rfs_ptr }.entries.at_index(parent.entries);
-            if let Some(Fs::file_system::real_fs::EntriesOption::Entries(listing)) = slot {
-                listing.generation = Fs::GENERATION_STALE;
-            }
-            lookup = parent
-                .get_entries_ref_locked(self.generation)
+            lookup = unsafe { &mut *rfs_ptr }
+                .reread_entries_at_locked(parent.entries, self.generation)
+                .and_then(|reread| reread.as_entries())
                 .and_then(|reread| reread.get(base));
         }
         let Some(lookup) = lookup else {

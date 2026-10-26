@@ -9,10 +9,13 @@ import { dirname, join, resolve } from "path";
 const isBun = typeof Bun !== "undefined";
 let test, expect;
 let childEnv = process.env;
+let childExe = process.execPath;
 
 if (isBun) {
   ({ test, expect } = await import("bun:test"));
-  ({ bunEnv: childEnv } = await import("harness"));
+  const harness = await import("harness");
+  childEnv = harness.bunEnv;
+  childExe = harness.bunExe();
 } else {
   // Node.js
   const { createRequire } = await import("module");
@@ -200,20 +203,22 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
       resolve(dir, "node_modules/resolve-test-pkg/index.js"),
     );
 
-    // Test with string (which is iterable but not an array)
-    expect(() => {
-      Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: "/some/path" });
-    }).toThrow();
+    // Node throws ERR_INVALID_ARG_VALUE here. Bun throws ERR_INVALID_ARG_TYPE.
+    const notAnArray = isBun ? "ERR_INVALID_ARG_TYPE" : "ERR_INVALID_ARG_VALUE";
+    const codeOf = paths => {
+      try {
+        return Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths });
+      } catch (error) {
+        return error.code;
+      }
+    };
 
-    // Test with Set (which is iterable but not an array)
-    expect(() => {
-      Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: new Set(["/some/path"]) });
-    }).toThrow();
-
-    // Test with object (not iterable)
-    expect(() => {
-      Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: { 0: "/some/path" } });
-    }).toThrow();
+    // A string and a Set are iterable but not arrays. The object is not iterable.
+    expect([codeOf("/some/path"), codeOf(new Set(["/some/path"])), codeOf({ 0: "/some/path" })]).toEqual([
+      notAnArray,
+      notAnArray,
+      notAnArray,
+    ]);
 
     // Node returns a builtin id before it reads `options.paths`.
     expect(Module._resolveFilename("path", fakeParent, false, { paths: "/some/path" })).toBe("path");
@@ -360,7 +365,7 @@ function resolveRowsInChild(order) {
       JSON.stringify(rows.map(([request, paths, , chdir]) => [request, paths, chdir])),
     );
     const { stdout, stderr, status } = spawnSync(
-      process.execPath,
+      childExe,
       isBun ? ["--no-install", "sub/probe.cjs", order] : ["sub/probe.cjs", order],
       { cwd: dir, env: childEnv, encoding: "utf8" },
     );
@@ -399,9 +404,10 @@ test("options.paths entries resolve the same in the reverse call order", () => {
 });
 
 if (isBun) {
+  // Runs `source` in a project that has the package `no-deps` only under plugins/node_modules.
   // Nothing above the project has a node_modules directory, so Bun's auto-install is on. The
-  // first entry is outside the project and misses. The second entry has the package.
-  test("options.paths: no entry installs a package before every entry was searched", async () => {
+  // registry answers 404 and records each request.
+  async function runInProject(args, source) {
     const requests = [];
     const registry = Bun.serve({
       port: 0,
@@ -410,48 +416,80 @@ if (isBun) {
         return new Response("not found", { status: 404 });
       },
     });
-    const { path: dir, cleanup } = createTempDir("resolve-paths-install-order", {
-      "a/b/project/plugins/node_modules/no-deps/index.js": "",
-      "a/b/project/bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
-      "a/b/project/index.cjs": `
-        const path = require("node:path");
-        const resolved = require.resolve("no-deps", { paths: ["../..", "./plugins"] });
-        console.log(path.relative(process.cwd(), resolved).split(path.sep).join("/"));
-        // On POSIX the first entry names a directory that does not exist. The search goes on
-        // above it, and a miss there installs nothing. "plugins" has a node_modules directory,
-        // so a miss there installs nothing either.
-        if (process.platform !== "win32") {
-          for (const paths of [["plugins\\\\"], ["plugins\\\\", "plugins"]]) {
-            try {
-              require.resolve("no-deps-2", { paths });
-            } catch (error) {
-              console.log(error.code);
-            }
-          }
-        }
-      `,
-    });
-
     try {
-      const proc = Bun.spawn({
-        cmd: [process.execPath, "index.cjs"],
-        cwd: join(dir, "a", "b", "project"),
-        env: { ...childEnv, BUN_INSTALL_CACHE_DIR: join(dir, "cache") },
-        stdout: "pipe",
-        stderr: "pipe",
+      const { path: dir, cleanup } = createTempDir("resolve-paths-install", {
+        "a/b/project/plugins/node_modules/no-deps/index.js": "",
+        "a/b/project/bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+        "a/b/project/index.cjs": `
+          const path = require("node:path");
+          const resolve = (request, paths) => {
+            try {
+              return path.relative(process.cwd(), require.resolve(request, { paths })).split(path.sep).join("/");
+            } catch (error) {
+              return error.code;
+            }
+          };
+          ${source}
+        `,
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, requests }).toEqual({
-        stdout:
-          "plugins/node_modules/no-deps/index.js\n" +
-          (process.platform === "win32" ? "" : "MODULE_NOT_FOUND\nMODULE_NOT_FOUND\n"),
-        stderr: "",
-        requests: [],
-      });
-      expect(exitCode).toBe(0);
+      try {
+        const proc = Bun.spawn({
+          cmd: [childExe, ...args, "index.cjs"],
+          cwd: join(dir, "a", "b", "project"),
+          env: { ...childEnv, BUN_INSTALL_CACHE_DIR: join(dir, "cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode, requests };
+      } finally {
+        cleanup();
+      }
     } finally {
       registry.stop(true);
-      cleanup();
     }
+  }
+
+  test("options.paths: no entry installs a package before every entry was searched", async () => {
+    // The first entry is outside the project and misses. The second entry has the package.
+    // On POSIX "plugins\\" names a directory that does not exist. The search goes on above it,
+    // and a miss there installs nothing. "plugins" has a node_modules directory, so a miss
+    // there installs nothing either.
+    const result = await runInProject(
+      [],
+      `
+        console.log(resolve("no-deps", ["../..", "./plugins"]));
+        if (process.platform !== "win32") {
+          console.log(resolve("no-deps-2", ["plugins\\\\"]));
+          console.log(resolve("no-deps-2", ["plugins\\\\", "plugins"]));
+        }
+      `,
+    );
+    expect(result).toEqual({
+      stdout:
+        "plugins/node_modules/no-deps/index.js\n" +
+        (process.platform === "win32" ? "" : "MODULE_NOT_FOUND\nMODULE_NOT_FOUND\n"),
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+  });
+
+  test("options.paths: --install=force does not read the node_modules of an entry", async () => {
+    const result = await runInProject(
+      ["--install=force"],
+      `
+        console.log(resolve("no-deps", ["./plugins"]));
+        console.log(resolve("no-deps", ["./plugins", "."]));
+      `,
+    );
+    // The registry has no such package, so both calls miss. A read of plugins/node_modules
+    // would find the local copy.
+    expect(result).toEqual({
+      stdout: "MODULE_NOT_FOUND\nMODULE_NOT_FOUND\n",
+      stderr: "",
+      exitCode: 0,
+      requests: ["/no-deps"],
+    });
   });
 }

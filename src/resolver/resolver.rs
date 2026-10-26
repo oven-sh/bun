@@ -2104,13 +2104,18 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
+        // `force` never reads node_modules, so it has no search that installs nothing.
+        let local_only = if global_cache == GlobalCache::force {
+            global_cache
+        } else {
+            GlobalCache::disable
+        };
         // With several entries, none installs a package before all of them were searched.
-        let passes: &[GlobalCache] =
-            if custom_paths.len() > 1 && global_cache != GlobalCache::disable {
-                &[GlobalCache::disable, global_cache]
-            } else {
-                &[global_cache]
-            };
+        let passes: &[GlobalCache] = if custom_paths.len() > 1 && local_only != global_cache {
+            &[local_only, global_cache]
+        } else {
+            &[global_cache]
+        };
         for (pass, &cache) in passes.iter().enumerate() {
             for custom_path in custom_paths {
                 let custom_utf8 = custom_path.to_utf8();
@@ -2123,7 +2128,7 @@ impl<'a> Resolver<'a> {
                     match self.custom_dir(entry, &mut buf) {
                         Some((dir, false)) => (dir, cache),
                         // Nothing below the cut was searched, so a miss there installs nothing.
-                        Some((dir, true)) if pass == 0 => (dir, GlobalCache::disable),
+                        Some((dir, true)) if pass == 0 => (dir, local_only),
                         _ => continue,
                     }
                 };

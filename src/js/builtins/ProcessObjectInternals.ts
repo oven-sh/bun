@@ -143,9 +143,9 @@ export function getStdinStream(
   function disown() {
     $debug("unref();");
 
-    // Without a reader of its own, process.stdin didn't start the source, and another reader may have by now.
+    // Another reader of Bun.stdin.stream() may hold the source by now. Once it has let go, nothing else stops the source.
+    if (reader || !native.locked) source?.setFlowing?.(false);
     if (reader) {
-      source?.setFlowing?.(false);
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();

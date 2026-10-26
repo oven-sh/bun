@@ -737,18 +737,61 @@ describe("the next reader of stdin after process.stdin lets go of it", () => {
     ).toEqual({ stdout: 'READY\n"two"\n', stderr: "", exitCode: 0, signalCode: null });
   });
 
-  test.each([
+  describe.each([
     ["the console iterator", "for await (const line of console) break;"],
     [
       "a reader of Bun.stdin.stream()",
       "const reader = Bun.stdin.stream().getReader(); await reader.read(); reader.releaseLock();",
     ],
-  ])("process.stdin.pause() after %s let go of stdin lets the process exit", async (_, first) => {
-    expect(await run(`${first} process.stdin.pause();`, [[null, "one\n"]], { end: false })).toEqual({
-      stdout: "",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
+  ])("process.stdin.pause() after %s let go of stdin", (_, first) => {
+    test("lets the process exit", async () => {
+      expect(await run(`${first} process.stdin.pause();`, [[null, "one\n"]], { end: false })).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    test.skipIf(isWindows)("leaves the rest of stdin to a child that inherits it", async () => {
+      const script = `
+        ${first}
+        process.stdin.pause();
+        process.on("message", message => {
+          if (message === "ping") return process.send("pong");
+          const cat = require("node:child_process").spawn("cat", [], { stdio: ["inherit", "pipe", "inherit"] });
+          let length = 0;
+          cat.stdout.on("data", chunk => (length += chunk.length));
+          cat.on("close", () => {
+            console.log(length);
+            process.disconnect();
+          });
+        });
+        process.send("paused");
+      `;
+      const paused = Promise.withResolvers<void>();
+      const pong = Promise.withResolvers<void>();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+        ipc: message => (message === "paused" ? paused : pong).resolve(),
+      });
+      proc.stdin.write("one\n");
+      proc.stdin.flush();
+      await paused.promise;
+      // It fits the kernel's buffer, and it has been there for a turn of the parent's loop when cat starts.
+      const rest = Buffer.alloc(40_000, "r");
+      proc.stdin.write(rest);
+      await proc.stdin.flush();
+      proc.send("ping");
+      await pong.promise;
+      proc.send("cat");
+      await proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${rest.length}\n`, stderr: "", exitCode: 0 });
     });
   });
 

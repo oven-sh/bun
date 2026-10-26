@@ -785,6 +785,13 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
         contentChanges: [{ text: 'debugger;\nexport const a: number = "b";\n' }],
       });
       expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      // A setting makes a new session, which refuses for the same reason: it is not said again.
+      client.notify("workspace/didChangeConfiguration", { settings: { bun: { format: { enable: false } } } });
+      client.notify("textDocument/didChange", {
+        textDocument: { uri: uriOf(path), version: 3 },
+        contentChanges: [{ text: 'debugger;\nexport const a: number = "c";\n' }],
+      });
+      expect((await client.diagnostics(path)).params.version).toBe(3);
       expect((await client.request("shutdown")).result).toBeNull();
       client.notify("exit");
       const { exitCode, garbage, rest } = await client.end();
@@ -802,26 +809,66 @@ describe.skipIf(!hasRunner).concurrent("bun lint --lsp", () => {
     timeout,
   );
 
+  // What `bun lint` refuses before it lints, the server refuses too.
+  test(
+    "refuses a wildcard rule of bunfig.toml next to another tool's config, as bun lint does",
+    async () => {
+      using dir = tempDir("bun-lint-lsp", {
+        ".oxlintrc.json": oxlintrc({ rules: { "no-debugger": "error" } }),
+        "bunfig.toml": '[lint.rules]\n"unicorn/*" = "off"\n',
+        "a.js": "",
+      });
+      await using client = new Client(command, String(dir));
+      expect((await initialize(client, [String(dir)])).error).toBeUndefined();
+      client.notify("initialized");
+      const path = join(String(dir), "a.js");
+      open(client, path, "debugger;\n");
+      expect((await client.diagnostics(path)).params.diagnostics).toEqual([]);
+      expect((await client.request("shutdown")).result).toBeNull();
+      client.notify("exit");
+      const { exitCode, garbage, rest } = await client.end();
+      expect([garbage, rest]).toEqual([[], ""]);
+      expect(client.received.filter(it => it.method === "window/showMessage")).toEqual([
+        expect.objectContaining({
+          params: {
+            type: 1,
+            message: expect.stringContaining(`bun lint: "unicorn/*" only works with Bun's own lint config`),
+          },
+        }),
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
   // The lint with types builds a program, on a thread of its own: a request sent meanwhile is answered before it ends.
+  // The program has a module of 40,000 lines to parse, so that it is still being built when the request arrives.
   test(
     "answers a formatting request while a document is linted with types",
     async () => {
+      const functions = Array.from(
+        { length: 40_000 },
+        (_, i) => `export function f${i}(x: number): number { return x + ${i}; }`,
+      );
       using dir = tempDir("bun-lint-lsp", {
         "tsconfig.json": `{ "compilerOptions": { "strict": true, "types": [] } }`,
+        "big.ts": functions.join("\n") + "\n",
         "a.ts": "",
       });
       await using client = new Client([...command, "--type-check", "--type-aware"], String(dir));
       expect((await initialize(client, [String(dir)])).error).toBeUndefined();
       client.notify("initialized");
       const path = join(String(dir), "a.ts");
-      const text = 'export const a: number = "a"\n';
+      const text = 'import { f0 } from "./big"\nexport const a: number = "a"\nf0(a)\n';
       open(client, path, text);
       const codes = (it: Message) => it.params.diagnostics.map((diagnostic: any) => diagnostic.code);
       // Without types first: the program is being built once this is published.
       expect(codes(await client.diagnostics(path))).toEqual([]);
       const formatted = format(client, path);
       const id = client.lastId;
-      expect(applyEdits(text, (await formatted).result)).toBe('export const a: number = "a";\n');
+      expect(applyEdits(text, (await formatted).result)).toBe(
+        'import { f0 } from "./big";\nexport const a: number = "a";\nf0(a);\n',
+      );
       const typed = await client.diagnostics(path);
       expect(codes(typed)).toEqual(["typescript/TS2322"]);
       const order = client.received.map(it => (it.id === id ? "formatted" : it === typed ? "typed" : ""));

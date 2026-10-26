@@ -27,7 +27,7 @@ use crate::run::{Environment, Fatal, Linted, Script, Stream};
 use answers::{Directives, FIX_ALL, Places, QUICK_FIX, wants};
 use bun_core::strings;
 use bun_lint::js_plugin::{Engine, Host, Vm, Work};
-use bun_lint::linter::LintMessage;
+use bun_lint::linter::{LintMessage, is_parse_error};
 use bun_lint::options::Json;
 use bun_lint::source::LineBreaks;
 use bun_sema::util::FxHashMap;
@@ -627,6 +627,8 @@ impl<'s> Server<'s> {
             told: Vec::new(),
         };
         let halves = |settings: Settings| (settings.lints, settings.formats);
+        // Shown once: the sessions that the settings make one after the other refuse for the same reason.
+        let mut refused = None;
         let mut next = Some(first);
         while let Some(first) = next.take() {
             let (lints, formats) = halves(*self.settings.lock());
@@ -667,8 +669,9 @@ impl<'s> Server<'s> {
                 Some(Ok(options)) => {
                     session::with_session(&options, environment, &js_plugins, |session| {
                         let refusal = session.refusal();
-                        if let Some(refusal) = &refusal {
-                            self.show_error(Half::Lint, refusal);
+                        if refusal.is_some() && refusal != refused {
+                            self.show_error(Half::Lint, refusal.as_deref().unwrap_or_default());
+                            refused.clone_from(&refusal);
                         }
                         match refusal {
                             Some(_) => all(None),
@@ -881,10 +884,10 @@ impl Worker<'_, '_> {
                 .lint_as(session, document, start, how)
                 .and_then(|mut it| it.results.pop());
             // A fix of a rule that needs types broke the text: those fixes are left out, as `bun lint --fix` leaves
-            // out the pass that broke it.
+            // out the pass that broke it. A fatal message that is no parse error was there before.
             let is_broken = fixed
                 .as_ref()
-                .is_some_and(|it| it.messages.iter().any(|it| it.is_fatal));
+                .is_some_and(|it| it.messages.iter().any(is_parse_error));
             let first = match first {
                 Some(_) if is_broken => {
                     fixed = (self.lint(session, document, how)).and_then(|mut it| it.results.pop());

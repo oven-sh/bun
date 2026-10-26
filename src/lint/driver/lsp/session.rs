@@ -94,11 +94,16 @@ pub(crate) fn with_session<R>(
 }
 
 impl Session<'_> {
-    /// Why nothing can be linted in the folder.
+    /// Why nothing can be linted in the folder: what `bun lint` there refuses before it lints.
     pub(crate) fn refusal(&self) -> Option<Vec<u8>> {
         let of_cwd = self.loader.for_directory(&self.environment.cwd).ok();
-        let refused = self.loader.refused();
-        let refused = refused.or_else(|| checks_types(self.options, of_cwd.as_deref()).err());
+        if let Some(refused) = self.loader.refused() {
+            return Some(refused.to_vec());
+        }
+        if let Some(Err(Fatal(why))) = of_cwd.as_ref().map(|it| self.loader.check_wildcards(it)) {
+            return Some(why);
+        }
+        let refused = checks_types(self.options, of_cwd.as_deref()).err();
         refused.map(<[u8]>::to_vec)
     }
 

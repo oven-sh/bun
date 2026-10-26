@@ -83,6 +83,8 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // The module becomes the main module when it starts to run (Module.runMain).
+    bool loadedAsMain { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -190,6 +192,9 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
 {
     return createCommonJSModule(globalObject, graph, specifierValue, source, false);
 }
+
+// `import.meta.main` is true in a module that Module.runMain() started. `key` is the registry key of the module.
+void putImportMetaMainOfRunMainModule(Zig::GlobalObject*, JSC::JSObject* importMeta, JSC::JSValue key);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

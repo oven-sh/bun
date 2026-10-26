@@ -1386,20 +1386,14 @@ interface ImportMeta {
   require: NodeJS.Require;
 
   /**
-   * `true` if the current file started the process
+   * `true` if the current file started the process, or if
+   * `Module.runMain()` from `node:module` started it
    *
    * @example
    * ```ts
    * if (import.meta.main) {
    *  console.log("I started the process!");
    * }
-   * ```
-   *
-   * @example
-   * ```ts
-   * console.log(
-   *   import.meta.main === (import.meta.path === Bun.main)
-   * )
    * ```
    */
   main: boolean;

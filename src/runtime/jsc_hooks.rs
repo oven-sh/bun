@@ -4238,6 +4238,11 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         }
     });
 
+    // SAFETY: per fn contract, `jsc_vm` is the live per-thread VM.
+    let started_by_run_main = unsafe { &*jsc_vm }
+        .run_main_modules
+        .is_loading(lr.specifier);
+
     // ── force_loader / require.extensions override ──────────────────────────
     if let Some(loader_type) = force_loader_type {
         // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
@@ -4320,6 +4325,8 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             && (has_loaded || is_in_preload)
             && concurrent_loader.is_java_script_like()
             && !lr.is_main
+            // On-thread: CommonJS scripts that `Module.runMain()` starts become the main module in call order.
+            && !started_by_run_main
             // Plugins make this complicated.
             // TODO: allow running concurrently when no onLoad handlers match a plugin.
             && !has_plugins
@@ -4406,7 +4413,11 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                 break 'loader Loader::Ts;
             }
             // For ESM, Bun treats unknown extensions as the file loader.
-            Loader::File
+            if started_by_run_main {
+                Loader::Tsx
+            } else {
+                Loader::File
+            }
         } else {
             // Unless it's potentially the main module — important so that
             // `bun run ./foo-i-have-no-extension` works.

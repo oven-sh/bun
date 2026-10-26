@@ -1031,9 +1031,7 @@ impl VirtualMachine {
         if p.is_null() { None } else { Some(p) }
     }
 
-    /// The signal handler path (unix only) reaches the main VM's loop through
-    /// this, on any thread. Not `event_loop`: that is the macro loop while a
-    /// macro runs, and nothing runs a signal that is queued there.
+    /// Signals queue here from any thread. `event_loop` is the macro loop while a macro runs, and no tick drains a signal there.
     #[cfg(unix)]
     pub(crate) fn main_thread_regular_loop() -> Option<*mut EventLoop> {
         let vm = Self::get_main_thread_vm()?;

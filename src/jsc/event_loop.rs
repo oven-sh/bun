@@ -695,9 +695,7 @@ impl EventLoop {
         }
     }
 
-    /// A signal that arrived while a macro ran is still on the ring, and its
-    /// wake-up ended the macro's poll, or no poll. Wake the loop again so that
-    /// the next tick drains the ring.
+    /// A macro's poll takes the wake-up of a signal that arrives while the macro runs, so wake the loop again for that signal.
     #[cfg(unix)]
     pub(crate) fn wake_for_pending_signal(&self) {
         if let Some(signal_handler) = self.signal_handler {

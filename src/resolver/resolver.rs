@@ -4344,7 +4344,11 @@ impl<'a> Resolver<'a> {
                         // directory, where the path does not lead once the link is replaced.
                         if listing_is_named(entries.dir, top) {
                             slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                            slot.fd = entries.fd;
+                            // A stale listing is read again below, and the read that
+                            // stored its fd left that one at the end of the directory.
+                            if entries.generation >= self.generation {
+                                slot.fd = entries.fd;
+                            }
                         }
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -4383,7 +4387,9 @@ impl<'a> Resolver<'a> {
                             let slot = unsafe { queue[i].assume_init_mut() };
                             if listing_is_named(entries.dir, top) {
                                 slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
-                                slot.fd = entries.fd;
+                                if entries.generation >= self.generation {
+                                    slot.fd = entries.fd;
+                                }
                             }
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {

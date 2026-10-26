@@ -18,7 +18,9 @@ namespace Bun {
 class JSEnvironmentVariableMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    // OverridesPut alone doesn't stop the DFG from turning a put into a direct store when it knows the structure. OverridesGetOwnPropertySlot does.
+    // The last flag keeps indexed properties in the sparse map, so every indexed store reaches putByIndex().
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
 
     static JSEnvironmentVariableMap* create(JSC::VM& vm, JSC::Structure* structure)
     {
@@ -53,7 +55,8 @@ private:
     }
 };
 
-JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
+// Returns null with an exception pending if it throws. On Windows, JS finishes building the map.
+JSC::JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
 // Setting TZ must make *existing* Date instances recompute local time. JSC's DateCache
 // reset only clears shared slots; live DateInstances keep their own cached fields

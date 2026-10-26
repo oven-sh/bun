@@ -1052,7 +1052,6 @@ macro_rules! flush_legacy_property {
             // Remove Firefox and IE from standard prefixes.
             prefix.remove(VendorPrefix::MOZ);
             prefix.remove(VendorPrefix::MS);
-            let _ = prefix;
         }
     }};
     // variant with only 2012
@@ -1070,7 +1069,6 @@ macro_rules! flush_legacy_property {
 
             prefix.remove(VendorPrefix::MOZ);
             prefix.remove(VendorPrefix::MS);
-            let _ = prefix;
         }
     }};
 }

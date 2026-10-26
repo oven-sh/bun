@@ -1,255 +1,207 @@
-import { file } from "bun";
 import { describe, expect, test } from "bun:test";
-import { rm } from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, githubTarball, tempDir, textLockfile } from "harness";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 
-// Each test uses its own BUN_INSTALL_CACHE_DIR inside the temp dir for full
-// isolation.  This avoids interfering with the global cache or other tests.
-function envWithCache(dir: string) {
-  return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+// GHSA-pfwx-36v6-832x: bun.lock records the sha512 of a GitHub dependency's tarball next
+// to its resolved commit, and an install that downloads the tarball again rejects
+// different bytes.
+//
+// `owner/repo#ref` is fetched from `${GITHUB_API_URL}/repos/owner/repo/tarball/ref`, so
+// each test serves the tarball built below from its own local server; nothing in this
+// file talks to api.github.com.
+
+const name = "gh-dep";
+const owner = "gh-owner";
+const repo = "gh-repo";
+const ref = "0badc0d";
+const spec = `${owner}/${repo}#${ref}`;
+// GitHub's tarballs unpack into `<owner>-<repo>-<short sha>`; bun records that directory
+// name in the lockfile as the resolved commit.
+const resolved = `${owner}-${repo}-${ref}`;
+const tarballPath = `/repos/${owner}/${repo}/tarball/${ref}`;
+
+// Pseudo-random bytes (xorshift32) so gzip cannot shrink them.
+function incompressible(bytes: number): Uint8Array {
+  const words = new Uint32Array(bytes / 4);
+  let x = 0x2545f491;
+  for (let i = 0; i < words.length; i++) {
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    words[i] = x;
+  }
+  return new Uint8Array(words.buffer);
 }
 
-describe.concurrent("GitHub tarball integrity", () => {
-  test("should store integrity hash in lockfile for GitHub dependencies", async () => {
-    using dir = tempDir("github-integrity", {
-      "package.json": JSON.stringify({
-        name: "test-github-integrity",
-        dependencies: {
-          "is-number": "jonschlinkert/is-number#98e8ff1",
-        },
-      }),
+const tarball = await githubTarball(resolved, {
+  "package.json": JSON.stringify({ name, version: "1.0.0" }),
+  "index.js": "module.exports = 1;\n",
+  // The HTTP client reads at most 512 KiB (LIBUS_RECV_BUFFER_LENGTH) per socket read, so a
+  // larger tarball always arrives in several chunks. That is what lets the streaming variant
+  // below commit to streaming extraction on every run instead of falling back to buffering
+  // when the whole body happens to arrive at once.
+  "filler.bin": incompressible(600 * 1024),
+});
+expect(tarball.length).toBeGreaterThan(512 * 1024);
+
+const integrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`;
+const wrongIntegrity = `sha512-${Buffer.alloc(64).toString("base64")}`;
+const lockedPackage = `${name}@github:${spec}`;
+
+function project(files: Record<string, string> = {}) {
+  return tempDir("github-integrity", {
+    "package.json": JSON.stringify({ name: "app", dependencies: { [name]: spec } }),
+    ...files,
+  });
+}
+
+function lockfileWith(entry: unknown[]) {
+  return textLockfile(1, {
+    workspaces: { "": { name: "app", dependencies: { [name]: spec } } },
+    packages: { [name]: entry },
+  });
+}
+
+async function lockedEntry(dir: string) {
+  const { packages } = Bun.JSONC.parse(await Bun.file(join(dir, "bun.lock")).text()) as {
+    packages: Record<string, unknown[]>;
+  };
+  return packages[name];
+}
+
+// Tarballs smaller than BUN_INSTALL_STREAMING_MIN_SIZE (2 MiB by default) are extracted
+// once the whole body has been buffered; larger ones are streamed into libarchive while
+// they download. The two extractors hash and verify the tarball independently, so every
+// test runs against both. `--verbose` output names the extractor that ran.
+const variants = [
+  { variant: "buffered", variantEnv: {}, extracted: `[${name}] Extract ` },
+  { variant: "streaming", variantEnv: { BUN_INSTALL_STREAMING_MIN_SIZE: "1" }, extracted: `[${name}] Streamed ` },
+];
+
+describe.each(variants)("GitHub tarball integrity ($variant extraction)", ({ variantEnv, extracted }) => {
+  function serveTarball(dir: string) {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { pathname } = new URL(request.url);
+        requests.push(pathname);
+        return pathname === tarballPath ? new Response(tarball) : new Response("Not Found", { status: 404 });
+      },
     });
+    return {
+      requests,
+      async install() {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--verbose"],
+          cwd: dir,
+          env: {
+            ...bunEnv,
+            ...variantEnv,
+            GITHUB_API_URL: server.url.origin,
+            BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"),
+          },
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { stderr, exitCode };
+      },
+      [Symbol.asyncDispose]: () => server.stop(),
+    };
+  }
 
-    const env = envWithCache(dir);
+  test.concurrent("stores the tarball's integrity in the lockfile", async () => {
+    using dir = project();
+    await using github = serveTarball(String(dir));
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
+    const { stderr, exitCode } = await github.install();
+    expect(stderr).toContain(extracted);
+    expect(stderr).not.toContain("error:");
     expect(stderr).toContain("Saved lockfile");
     expect(exitCode).toBe(0);
 
-    const lockfileContent = await file(join(String(dir), "bun.lock")).text();
-
-    // The lockfile should contain a sha512 integrity hash for the GitHub dependency
-    expect(lockfileContent).toContain("sha512-");
-    // The resolved commit hash should be present
-    expect(lockfileContent).toContain("jonschlinkert-is-number-98e8ff1");
-    // Verify the format: the integrity appears after the resolved commit hash
-    expect(lockfileContent).toMatch(/"jonschlinkert-is-number-98e8ff1",\s*"sha512-/);
+    expect(github.requests).toEqual([tarballPath]);
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved, integrity]);
+    expect(existsSync(join(String(dir), "node_modules", name, "index.js"))).toBeTrue();
   });
 
-  test("should verify integrity passes on re-install with matching hash", async () => {
-    using dir = tempDir("github-integrity-match", {
-      "package.json": JSON.stringify({
-        name: "test-github-integrity-match",
-        dependencies: {
-          "is-number": "jonschlinkert/is-number#98e8ff1",
-        },
-      }),
-    });
+  test.concurrent("re-downloading a tarball that matches the locked integrity succeeds", async () => {
+    using dir = project();
+    await using github = serveTarball(String(dir));
 
-    const env = envWithCache(dir);
+    const first = await github.install();
+    expect(first.stderr).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved, integrity]);
 
-    // First install to generate lockfile with correct integrity
-    await using proc1 = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
-    expect(stderr1).not.toContain("error:");
-    expect(exitCode1).toBe(0);
-
-    // Read the generated lockfile and extract the integrity hash adjacent to
-    // the GitHub resolved entry to avoid accidentally matching an npm hash.
-    const lockfileContent = await file(join(String(dir), "bun.lock")).text();
-    const integrityMatch = lockfileContent.match(/"jonschlinkert-is-number-98e8ff1",\s*"(sha512-[A-Za-z0-9+/]+=*)"/);
-    expect(integrityMatch).not.toBeNull();
-    const integrityHash = integrityMatch![1];
-
-    // Clear cache and node_modules, then re-install with the same lockfile
     await rm(join(String(dir), ".bun-cache"), { recursive: true, force: true });
     await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
 
-    await using proc2 = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const second = await github.install();
+    expect(second.stderr).toContain(extracted);
+    expect(second.stderr).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
 
-    const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
-
-    // Should succeed because the integrity matches
-    expect(stderr2).not.toContain("Integrity check failed");
-    expect(exitCode2).toBe(0);
-
-    // Lockfile should still contain the same integrity hash
-    const lockfileContent2 = await file(join(String(dir), "bun.lock")).text();
-    expect(lockfileContent2).toContain(integrityHash);
+    expect(github.requests).toEqual([tarballPath, tarballPath]);
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved, integrity]);
+    expect(existsSync(join(String(dir), "node_modules", name, "index.js"))).toBeTrue();
   });
 
-  test("should reject GitHub tarball when integrity check fails", async () => {
-    using dir = tempDir("github-integrity-reject", {
-      "package.json": JSON.stringify({
-        name: "test-github-integrity-reject",
-        dependencies: {
-          "is-number": "jonschlinkert/is-number#98e8ff1",
-        },
-      }),
-      // Pre-create a lockfile with an invalid integrity hash (valid base64, 64 zero bytes)
-      "bun.lock": JSON.stringify({
-        lockfileVersion: 1,
-        configVersion: 1,
-        workspaces: {
-          "": {
-            name: "test-github-integrity-reject",
-            dependencies: {
-              "is-number": "jonschlinkert/is-number#98e8ff1",
-            },
-          },
-        },
-        packages: {
-          "is-number": [
-            "is-number@github:jonschlinkert/is-number#98e8ff1",
-            {},
-            "jonschlinkert-is-number-98e8ff1",
-            "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
-          ],
-        },
-      }),
-    });
+  test.concurrent("rejects a tarball that does not match the locked integrity", async () => {
+    using dir = project({ "bun.lock": lockfileWith([lockedPackage, {}, resolved, wrongIntegrity]) });
+    await using github = serveTarball(String(dir));
 
-    // Fresh per-test cache ensures the tarball must be downloaded from the network
-    const env = envWithCache(dir);
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).toContain("Integrity check failed");
+    // Both extractors report the mismatch before they log which one ran, so unlike the
+    // other tests this one cannot check `extracted`; the download is shaped exactly like
+    // theirs, so it goes through the same extractor they prove is in use.
+    const { stderr, exitCode } = await github.install();
+    expect(stderr).toContain(`Integrity check failed for tarball: ${name}`);
     expect(exitCode).not.toBe(0);
+
+    expect(github.requests).toEqual([tarballPath]);
+    expect(existsSync(join(String(dir), "node_modules", name))).toBeFalse();
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved, wrongIntegrity]);
   });
 
-  test("should update lockfile with integrity when old format has none", async () => {
-    using dir = tempDir("github-integrity-upgrade", {
-      "package.json": JSON.stringify({
-        name: "test-github-integrity-upgrade",
-        dependencies: {
-          "is-number": "jonschlinkert/is-number#98e8ff1",
-        },
-      }),
-      // Pre-create a lockfile in the old format (no integrity hash)
-      "bun.lock": JSON.stringify({
-        lockfileVersion: 1,
-        configVersion: 1,
-        workspaces: {
-          "": {
-            name: "test-github-integrity-upgrade",
-            dependencies: {
-              "is-number": "jonschlinkert/is-number#98e8ff1",
-            },
-          },
-        },
-        packages: {
-          "is-number": ["is-number@github:jonschlinkert/is-number#98e8ff1", {}, "jonschlinkert-is-number-98e8ff1"],
-        },
-      }),
-    });
+  test.concurrent("adds the integrity to a lockfile written before it was recorded", async () => {
+    using dir = project({ "bun.lock": lockfileWith([lockedPackage, {}, resolved]) });
+    await using github = serveTarball(String(dir));
 
-    // Fresh per-test cache ensures the tarball must be downloaded
-    const env = envWithCache(dir);
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    // Should succeed without errors
-    expect(stderr).not.toContain("Integrity check failed");
+    const { stderr, exitCode } = await github.install();
+    expect(stderr).toContain(extracted);
     expect(stderr).not.toContain("error:");
-    // The lockfile should be re-saved with the new integrity hash
     expect(stderr).toContain("Saved lockfile");
     expect(exitCode).toBe(0);
 
-    // Verify the lockfile now contains the integrity hash
-    const lockfileContent = await file(join(String(dir), "bun.lock")).text();
-    expect(lockfileContent).toContain("sha512-");
-    expect(lockfileContent).toMatch(/"jonschlinkert-is-number-98e8ff1",\s*"sha512-/);
+    expect(github.requests).toEqual([tarballPath]);
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved, integrity]);
+    expect(existsSync(join(String(dir), "node_modules", name, "index.js"))).toBeTrue();
   });
 
-  test("should accept GitHub dependency from cache without re-downloading", async () => {
-    // Use a shared cache dir for both installs so the second is a true cache hit
-    using dir = tempDir("github-integrity-cached", {
-      "package.json": JSON.stringify({
-        name: "test-github-integrity-cached",
-        dependencies: {
-          "is-number": "jonschlinkert/is-number#98e8ff1",
-        },
-      }),
-    });
+  test.concurrent("installs from the cache without downloading when the lockfile has no integrity", async () => {
+    using dir = project();
+    await using github = serveTarball(String(dir));
 
-    const env = envWithCache(dir);
+    const first = await github.install();
+    expect(first.stderr).toContain(extracted);
+    expect(first.stderr).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
 
-    // First install warms the per-test cache
-    await using proc1 = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
-    expect(stderr1).not.toContain("error:");
-    expect(exitCode1).toBe(0);
-
-    // Remove node_modules but keep the cache
     await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+    const lockfile = join(String(dir), "bun.lock");
+    await Bun.write(lockfile, (await Bun.file(lockfile).text()).replace(`, "${integrity}"`, ""));
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved]);
 
-    // Strip the integrity from the lockfile to simulate an old-format lockfile
-    // that should still work when the cache already has the package
-    const lockfileContent = await file(join(String(dir), "bun.lock")).text();
-    const stripped = lockfileContent.replace(/,\s*"sha512-[^"]*"/, "");
-    await Bun.write(join(String(dir), "bun.lock"), stripped);
+    const second = await github.install();
+    expect(second.stderr).not.toContain(extracted);
+    expect(second.stderr).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
 
-    // Second install should hit the cache and succeed without re-downloading
-    await using proc2 = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
-
-    // Should succeed without integrity errors (package served from cache)
-    expect(stderr2).not.toContain("Integrity check failed");
-    expect(stderr2).not.toContain("error:");
-    expect(exitCode2).toBe(0);
+    expect(github.requests).toEqual([tarballPath]);
+    expect(existsSync(join(String(dir), "node_modules", name, "index.js"))).toBeTrue();
   });
 });

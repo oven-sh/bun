@@ -3029,8 +3029,6 @@ declare module "bun" {
        * identifier. The constructor throws a `TypeError` for a key or a
        * `name` such as `a-b`.
        *
-       * The `default` key takes a value, and not a pair.
-       *
        * @example
        * ```ts
        * const transpiler = new Bun.Transpiler({
@@ -3059,9 +3057,7 @@ declare module "bun" {
         | null
         | undefined
         | readonly [name: string, value: string | number | boolean | null | undefined]
-      > & {
-        default?: string | number | boolean | null | undefined;
-      };
+      >;
     };
     treeShaking?: boolean;
     trimUnusedImports?: boolean;

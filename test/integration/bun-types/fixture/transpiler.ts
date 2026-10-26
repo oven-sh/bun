@@ -10,7 +10,6 @@ expectType<ExportsReplace[string]>().is<
   | undefined
   | readonly [name: string, value: string | number | boolean | null | undefined]
 >();
-expectType<ExportsReplace["default"]>().is<string | number | boolean | null | undefined>();
 
 // The example in the JSDoc of `exports.replace`.
 {
@@ -109,21 +108,17 @@ new Bun.Transpiler({
   new Bun.Transpiler({ exports: { replace: inferredMap } });
 }
 
-// The `default` key takes a value, and not a pair.
+// The `default` key takes a value or a pair.
 {
   new Bun.Transpiler({ exports: { replace: { default: 60 } } });
   new Bun.Transpiler({ exports: { replace: { default: "bar", revalidate: 60 } } });
-
-  // @ts-expect-error - the default key takes a value, and not a pair
   new Bun.Transpiler({ exports: { replace: { default: ["__N_SSG", true] } } });
 
   const entry = ["__N_SSG", true] as const;
-  // @ts-expect-error - the default key takes a value, and not a pair
   new Bun.Transpiler({ exports: { replace: { default: entry } } });
 
   const replace: ExportsReplace = {};
   replace.default = 60;
-  // @ts-expect-error - the default key takes a value, and not a pair
   replace.default = ["__N_SSG", true];
 }
 

@@ -121,17 +121,13 @@ describe("bun lint reads the entities of JSX text", () => {
   test.each([
     ["no `;`", ""],
     ["one `;` at the end", ";"],
-  ])(
-    "in linear time when one line has many `&` and %s",
-    async (_, end) => {
-      const pieces = isSlowBuild ? 64_000 : 256_000;
-      const text = (piece: string) => `export const a = <p>${Buffer.alloc(piece.length * pieces, piece)}${end}</p>;\n`;
-      // In `&; x` each `&` has its `;` next to it, so that text takes the same path without the long searches.
-      using dir = tempDir("bun-lint-robustness", { ...config, "odd.tsx": text("& x "), "plain.tsx": text("&; x") });
-      const plain = await cpuTimeOf(dir, "plain.tsx");
-      // Windows measures CPU time in ticks of 1/64 s, so a short run can report 0.
-      expect((await cpuTimeOf(dir, "odd.tsx")) / Math.max(plain, isWindows ? 1e6 / 64 : 1)).toBeLessThan(8);
-    },
-    (seconds + 5) * 1000,
-  );
+  ])("in linear time when one line has many `&` and %s", async (_, end) => {
+    const pieces = isSlowBuild ? 64_000 : 256_000;
+    const text = (piece: string) => `export const a = <p>${Buffer.alloc(piece.length * pieces, piece)}${end}</p>;\n`;
+    // In `&; x` each `&` has its `;` next to it, so that text takes the same path without the long searches.
+    using dir = tempDir("bun-lint-robustness", { ...config, "odd.tsx": text("& x "), "plain.tsx": text("&; x") });
+    const plain = await cpuTimeOf(dir, "plain.tsx");
+    // Windows measures CPU time in ticks of 1/64 s, so a short run can report 0.
+    expect((await cpuTimeOf(dir, "odd.tsx")) / Math.max(plain, isWindows ? 1e6 / 64 : 1)).toBeLessThan(8);
+  });
 });

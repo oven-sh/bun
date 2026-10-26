@@ -782,22 +782,31 @@ function streamWaiter(name: string, stream: ReadableStream<Uint8Array>) {
   let output = "";
   let consumed = 0;
   let closed = false;
+  let readError: unknown;
   let more = Promise.withResolvers<void>();
   (async () => {
-    for await (const chunk of stream) {
-      output += decoder.decode(chunk, { stream: true });
+    try {
+      for await (const chunk of stream) {
+        output += decoder.decode(chunk, { stream: true });
+        more.resolve();
+        more = Promise.withResolvers<void>();
+      }
+    } catch (error) {
+      readError = error;
+    } finally {
+      closed = true;
       more.resolve();
-      more = Promise.withResolvers<void>();
     }
-    closed = true;
-    more.resolve();
   })();
   return {
     waitFor: async (needle: string) => {
       let at: number;
       while ((at = output.indexOf(needle, consumed)) === -1) {
         // The pipes survive the restart, so a closed one means the session ended.
-        if (closed) throw new Error(`${name} closed before ${JSON.stringify(needle)}: ${JSON.stringify(output)}`);
+        if (closed) {
+          const message = `${name} closed before ${JSON.stringify(needle)}: ${JSON.stringify(output)}`;
+          throw new Error(message, { cause: readError });
+        }
         await more.promise;
       }
       consumed = at + needle.length;
@@ -830,11 +839,19 @@ async function saveUntil(seen: Promise<void>, save: () => void) {
   await seen;
 }
 
-// A wait that goes on gives no signal. This polls four of its 100 ms intervals:
-// a start that restarts, or gives up, prints `Module not found` once more.
+// With colors on, a restart writes this to stderr before the new process starts.
+const clearScreen = "\x1b[2J\x1b[3J\x1b[H";
+const colorEnv: typeof bunEnv = { ...bunEnv, FORCE_COLOR: "1" };
+delete colorEnv.NO_COLOR;
+
+// A wait that goes on gives no signal. This polls four of its 100 ms intervals
+// for a restart. Spawn with `colorEnv`: the clear does not wait for the new process.
 async function staysInTheSameWait(stderr: ReturnType<typeof streamWaiter>) {
   for (const end = Date.now() + 400; Date.now() < end; await Bun.sleep(20)) {
-    expect(stderr.count("Module not found")).toBe(1);
+    expect({ restarts: stderr.count(clearScreen), errors: stderr.count("Module not found") }).toEqual({
+      restarts: 0,
+      errors: 1,
+    });
   }
 }
 
@@ -888,7 +905,7 @@ it.concurrent("--watch waits for an entry file that does not exist yet", async (
 it.concurrent("--watch waits for the index file of a directory that does not exist yet", async () => {
   using dir = tempDir("watch-first-start-dir-missing", {});
   const cwd = String(dir);
-  const { proc, stdout, stderr } = spawnWatch(["--watch", "./dist"], cwd);
+  const { proc, stdout, stderr } = spawnWatch(["--watch", "./dist"], cwd, colorEnv);
   await using _ = proc;
 
   await stderr.waitFor("Bun restarts when");
@@ -896,6 +913,10 @@ it.concurrent("--watch waits for the index file of a directory that does not exi
   await staysInTheSameWait(stderr);
   writeFileSync(join(cwd, "dist", "index.js"), entrySource("v0"));
   await stdout.waitFor("run v0");
+  expect({ restarts: stderr.count(clearScreen), errors: stderr.count("Module not found") }).toEqual({
+    restarts: 1,
+    errors: 1,
+  });
 });
 
 // The target names a directory, so entry.mjs beside it is not what it resolves
@@ -903,7 +924,7 @@ it.concurrent("--watch waits for the index file of a directory that does not exi
 it.concurrent("--watch does not restart for a file that the target does not resolve to", async () => {
   using dir = tempDir("watch-no-restart-loop", { "entry.mjs": entrySource("file") });
   const cwd = String(dir);
-  const { proc, stdout, stderr } = spawnWatch(["--watch", "./entry/."], cwd);
+  const { proc, stdout, stderr } = spawnWatch(["--watch", "./entry/."], cwd, colorEnv);
   await using _ = proc;
 
   await stderr.waitFor("Bun restarts when");
@@ -911,7 +932,10 @@ it.concurrent("--watch does not restart for a file that the target does not reso
   mkdirSync(join(cwd, "entry"));
   writeFileSync(join(cwd, "entry", "index.mjs"), entrySource("directory"));
   await stdout.waitFor("run directory");
-  expect(stderr.count("Module not found")).toBe(1);
+  expect({ restarts: stderr.count(clearScreen), errors: stderr.count("Module not found") }).toEqual({
+    restarts: 1,
+    errors: 1,
+  });
 });
 
 // The listing gives a link as a link. The wait follows it, as the resolver does.
@@ -953,14 +977,12 @@ it.concurrent.skipIf(isWindows)("--watch exits with code 0 on SIGINT while it wa
 it.concurrent("--watch clears the error of the failed start when the entry file is there", async () => {
   using dir = tempDir("watch-entry-missing-clear", {});
   const cwd = String(dir);
-  const env: typeof bunEnv = { ...bunEnv, FORCE_COLOR: "1" };
-  delete env.NO_COLOR;
-  const { proc, stdout, stderr } = spawnWatch(["--watch", "entry.mjs"], cwd, env);
+  const { proc, stdout, stderr } = spawnWatch(["--watch", "entry.mjs"], cwd, colorEnv);
   await using _ = proc;
 
   await stderr.waitFor("Bun restarts when");
   writeFileSync(join(cwd, "entry.mjs"), entrySource("v0"));
-  await stderr.waitFor("\x1b[2J\x1b[3J\x1b[H");
+  await stderr.waitFor(clearScreen);
   await stdout.waitFor("run v0");
 });
 
@@ -1011,6 +1033,29 @@ it.skipIf(isWindows)("--watch still exits when the directory of the entry file c
     stderr: `error: Module not found "./sub/entry"`,
     exitCode: 1,
   });
+});
+
+// The same while the start waits: the next start finds no entry file and exits.
+it.skipIf(isWindows)("--watch stops waiting when the directory of the entry file can no longer be listed", async () => {
+  using dir = tempDir("watch-unlistable-dir-later", { "sub/other.ts": "" });
+  const sub = join(String(dir), "sub");
+  using unprivileged = unprivilegedSpawnOptions(String(dir));
+  using _ = { [Symbol.dispose]: () => chmodSync(sub, 0o755) };
+  await using proc = spawn({
+    cmd: [bunExe(), "--watch", "./sub/entry"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    ...unprivileged,
+  });
+  const stderr = streamWaiter("stderr", proc.stderr);
+
+  await stderr.waitFor("Bun restarts when");
+  chmodSync(sub, 0o311);
+  await stderr.waitFor(`Module not found "./sub/entry"`);
+  expect(await proc.exited).toBe(1);
 });
 
 // Without a cwd Bun looks next to its own executable, where the entry never was.

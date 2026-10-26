@@ -256,15 +256,19 @@ test.concurrent.skipIf(!isPosix)(
       }
       throw new Error(`closed before ${JSON.stringify(needle)}: ${JSON.stringify(text)}`);
     };
-    const bunPid = Number((await readUntil(sh.stdout, "\n")).trim());
-    expect(bunPid).toBeGreaterThan(0);
-    await readUntil(sh.stderr, "Bun restarts when");
+    let bunPid = 0;
+    try {
+      bunPid = Number((await readUntil(sh.stdout, "\n")).trim());
+      expect(bunPid).toBeGreaterThan(0);
+      await readUntil(sh.stderr, "Bun restarts when");
 
-    process.kill(sh.pid!, "SIGKILL");
-    await sh.exited;
-    const died = await waitUntilDead(bunPid, 10000);
-    reap(bunPid);
-    expect(died).toBe(true);
+      process.kill(sh.pid!, "SIGKILL");
+      await sh.exited;
+      expect(await waitUntilDead(bunPid, 10000)).toBe(true);
+    } finally {
+      // Pid 0 is the process group of the test itself.
+      reap(...[sh.pid!, bunPid].filter(pid => pid > 0));
+    }
   },
 );
 

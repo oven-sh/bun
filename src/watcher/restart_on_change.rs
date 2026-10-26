@@ -63,10 +63,10 @@ impl Candidates {
         Ok(found)
     }
 
-    /// Whether the files differ from `before`. A directory gives its entries in no fixed order.
+    /// Whether the files differ from `before`, or can no longer be listed. A directory gives its entries in no fixed order.
     pub fn changed_since(&self, before: &[Found]) -> bool {
-        self.look().is_ok_and(|now| {
-            now.len() != before.len() || now.iter().any(|file| !before.contains(file))
+        !self.look().is_ok_and(|now| {
+            now.len() == before.len() && now.iter().all(|file| before.contains(file))
         })
     }
 }

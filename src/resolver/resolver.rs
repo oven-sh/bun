@@ -2069,29 +2069,32 @@ impl<'a> Resolver<'a> {
         rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
     }
 
-    /// Node's `path.resolve(entry)` for a relative `paths` entry, and whether it was cut short.
+    /// Node's `path.resolve(entry)` for a relative `paths` entry, and whether a miss there may install.
     fn custom_dir<'b>(&self, entry: &[u8], buf: &'b mut PathBuffer) -> Option<(&'b [u8], bool)> {
+        use ::bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+        let cwd = self.fs_ref().top_level_dir();
         #[cfg(windows)]
         let path: &'b [u8] = self.fs_ref().abs_buf_checked(&[entry], &mut buf[..])?;
         #[cfg(not(windows))]
         let path: &'b [u8] = {
             use ::bun_paths::resolve_path::{join_z_buf_checked, platform};
-            let cwd = self.fs_ref().top_level_dir();
             join_z_buf_checked::<platform::Posix>(&mut buf[..], &[cwd, entry])?.as_bytes()
         };
         // The cache reads a NUL as the end of a path and, on POSIX, a backslash as a separator.
         let misread: &[u8] = if cfg!(windows) { b"\0" } else { b"\\\0" };
-        let Some(first) = strings::index_of_any(path, misread) else {
-            return Some((path, false));
-        };
-        #[cfg(windows)]
-        let root_len = bun_paths::windows_filesystem_root(path).len();
-        #[cfg(not(windows))]
-        let root_len = 1;
-        let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
-        let cut = strings::last_index_of_any(&path[..first], separators)
-            .map_or(root_len, |separator| separator.max(root_len));
-        Some((&path[..cut], true))
+        if let Some(first) = strings::index_of_any(path, misread) {
+            #[cfg(windows)]
+            let root_len = bun_paths::windows_filesystem_root(path).len();
+            #[cfg(not(windows))]
+            let root_len = 1;
+            let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+            let cut = strings::last_index_of_any(&path[..first], separators)
+                .map_or(root_len, |separator| separator.max(root_len));
+            return Some((&path[..cut], false));
+        }
+        // A miss outside the cwd says nothing about the project, so it installs nothing.
+        let in_cwd = is_parent_or_equal(cwd, path) != ParentEqual::Unrelated;
+        Some((path, in_cwd))
     }
 
     /// Node's search of `Module._nodeModulePaths(entry)` per `paths` entry, for a bare request.
@@ -2104,38 +2107,26 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
-        // `force` never reads node_modules, so it has no search that installs nothing.
-        let local_only = if global_cache == GlobalCache::force {
-            global_cache
-        } else {
-            GlobalCache::disable
-        };
-        // With several entries, none installs a package before all of them were searched.
-        let passes: &[GlobalCache] = if custom_paths.len() > 1 && local_only != global_cache {
-            &[local_only, global_cache]
-        } else {
-            &[global_cache]
-        };
-        for (pass, &cache) in passes.iter().enumerate() {
-            for custom_path in custom_paths {
-                let custom_utf8 = custom_path.to_utf8();
-                let entry = custom_utf8.slice();
-                let mut buf;
-                let (dir, cache) = if bun_paths::is_absolute(entry) {
-                    (entry, cache)
-                } else {
-                    buf = bun_paths::path_buffer_pool::get();
-                    match self.custom_dir(entry, &mut buf) {
-                        Some((dir, false)) => (dir, cache),
-                        // Nothing below the cut was searched, so a miss there installs nothing.
-                        Some((dir, true)) if pass == 0 => (dir, local_only),
-                        _ => continue,
+        for custom_path in custom_paths {
+            let custom_utf8 = custom_path.to_utf8();
+            let entry = custom_utf8.slice();
+            let mut buf;
+            let (dir, cache) = if bun_paths::is_absolute(entry) {
+                (entry, global_cache)
+            } else {
+                buf = bun_paths::path_buffer_pool::get();
+                match self.custom_dir(entry, &mut buf) {
+                    Some((dir, true)) => (dir, global_cache),
+                    // `force` never reads node_modules, so it has no search that installs nothing.
+                    Some((dir, false)) if global_cache != GlobalCache::force => {
+                        (dir, GlobalCache::disable)
                     }
-                };
-                match self.check_package_path(dir, import_path, kind, cache) {
-                    ResultUnion::NotFound => {}
-                    found => return found,
+                    _ => continue,
                 }
+            };
+            match self.check_package_path(dir, import_path, kind, cache) {
+                ResultUnion::NotFound => {}
+                found => return found,
             }
         }
         ResultUnion::NotFound

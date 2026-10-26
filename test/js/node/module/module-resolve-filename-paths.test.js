@@ -404,9 +404,9 @@ test("options.paths entries resolve the same in the reverse call order", () => {
 });
 
 if (isBun) {
-  // Runs `source` in a project that has the package `no-deps` only under plugins/node_modules.
-  // Nothing above the project has a node_modules directory, so Bun's auto-install is on. The
-  // registry answers 404 and records each request.
+  // Runs `source` with `a/b/project` as the cwd. No directory from there up to the root has a
+  // node_modules directory, so Bun's auto-install is on. `a/b/modules` has one, so it is off there.
+  // The registry answers 404 and records each request.
   async function runInProject(args, source) {
     const requests = [];
     const registry = Bun.serve({
@@ -419,7 +419,7 @@ if (isBun) {
     try {
       const { path: dir, cleanup } = createTempDir("resolve-paths-install", {
         "a/b/project/plugins/node_modules/no-deps/index.js": "",
-        "a/b/project/bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+        "a/b/modules/node_modules/local-dep/index.js": "",
         "a/b/project/index.cjs": `
           const path = require("node:path");
           const resolve = (request, paths) => {
@@ -436,7 +436,7 @@ if (isBun) {
         const proc = Bun.spawn({
           cmd: [childExe, ...args, "index.cjs"],
           cwd: join(dir, "a", "b", "project"),
-          env: { ...childEnv, BUN_INSTALL_CACHE_DIR: join(dir, "cache") },
+          env: { ...childEnv, BUN_CONFIG_REGISTRY: registry.url.href, BUN_INSTALL_CACHE_DIR: join(dir, "cache") },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -450,28 +450,35 @@ if (isBun) {
     }
   }
 
-  test("options.paths: no entry installs a package before every entry was searched", async () => {
-    // The first entry is outside the project and misses. The second entry has the package.
-    // On POSIX "plugins\\" names a directory that does not exist. The search goes on above it,
-    // and a miss there installs nothing. "plugins" has a node_modules directory, so a miss
-    // there installs nothing either.
+  test("options.paths: only a relative entry in the cwd installs a package", async () => {
+    const isPosix = process.platform !== "win32";
     const result = await runInProject(
       [],
       `
+        // "../.." misses and is outside the cwd. "./plugins" has the package.
         console.log(resolve("no-deps", ["../..", "./plugins"]));
-        if (process.platform !== "win32") {
-          console.log(resolve("no-deps-2", ["plugins\\\\"]));
-          console.log(resolve("no-deps-2", ["plugins\\\\", "plugins"]));
-        }
+        // On POSIX "plugins\\\\" names a directory that does not exist, and the search goes on above it.
+        if (${isPosix}) console.log(resolve("no-deps-2", ["plugins\\\\"]), resolve("no-deps-2", ["plugins\\\\", "plugins"]));
+        // A project with a node_modules directory looks for an optional package that is absent.
+        process.chdir("../modules");
+        console.log(resolve("local-dep", ["."]), resolve("no-deps-3", ["../..", "."]));
+        // "../project-2" is next to the cwd, not in it.
+        process.chdir("../project");
+        console.log(resolve("no-deps-4", ["../project-2"]));
+        // An entry in the cwd is the same as its absolute form.
+        console.log(resolve("no-deps-5", ["."]), resolve("no-deps-6", [process.cwd()]));
       `,
     );
     expect(result).toEqual({
       stdout:
         "plugins/node_modules/no-deps/index.js\n" +
-        (process.platform === "win32" ? "" : "MODULE_NOT_FOUND\nMODULE_NOT_FOUND\n"),
+        (isPosix ? "MODULE_NOT_FOUND MODULE_NOT_FOUND\n" : "") +
+        "node_modules/local-dep/index.js MODULE_NOT_FOUND\n" +
+        "MODULE_NOT_FOUND\n" +
+        "MODULE_NOT_FOUND MODULE_NOT_FOUND\n",
       stderr: "",
       exitCode: 0,
-      requests: [],
+      requests: ["/no-deps-5", "/no-deps-6"],
     });
   });
 
@@ -481,12 +488,14 @@ if (isBun) {
       `
         console.log(resolve("no-deps", ["./plugins"]));
         console.log(resolve("no-deps", ["./plugins", "."]));
+        console.log(resolve("local-dep", ["../modules"]));
       `,
     );
-    // The registry has no such package, so both calls miss. A read of plugins/node_modules
-    // would find the local copy.
+    // The registry has no such package, so the calls miss. A read of plugins/node_modules or of
+    // ../modules/node_modules would find the local copy. "../modules" is outside the cwd, so it
+    // installs nothing.
     expect(result).toEqual({
-      stdout: "MODULE_NOT_FOUND\nMODULE_NOT_FOUND\n",
+      stdout: "MODULE_NOT_FOUND\nMODULE_NOT_FOUND\nMODULE_NOT_FOUND\n",
       stderr: "",
       exitCode: 0,
       requests: ["/no-deps"],

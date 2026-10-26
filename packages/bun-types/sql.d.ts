@@ -297,7 +297,8 @@ declare module "bun" {
        * });
        * ```
        */
-      checkServerIdentity?: (hostname: string, cert: import("node:tls").DetailedPeerCertificate) => Error | undefined;
+      checkServerIdentity?:
+        ((hostname: string, cert: import("node:tls").DetailedPeerCertificate) => Error | undefined) | undefined;
     }
 
     /**

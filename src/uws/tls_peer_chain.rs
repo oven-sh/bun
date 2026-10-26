@@ -82,7 +82,7 @@ impl PeerCertificateChain {
                 else {
                     break;
                 };
-                let issuer = sk_X509_value(sent, unused.swap_remove(position));
+                let issuer = sk_X509_value(sent, unused.remove(position));
                 X509_up_ref(issuer);
                 self.certs.push(issuer);
             }

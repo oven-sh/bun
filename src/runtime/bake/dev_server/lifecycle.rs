@@ -51,6 +51,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(vm_handle, options.vm.handle());
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
+        w!(reread_directories, false);
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());
         w!(
             server_register_update_callback,
@@ -571,6 +572,7 @@ impl Drop for DevServer {
                 server_register_update_callback: _,
                 bun_watcher: _,
                 directory_watchers: _,
+                reread_directories: _,
                 watcher_atomics: _,
                 testing_batch_events: _,
                 generation: _,

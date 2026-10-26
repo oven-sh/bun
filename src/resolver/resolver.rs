@@ -573,6 +573,13 @@ pub struct Resolver<'a> {
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 }
 
+/// A generation that is newer than the listings that every earlier build of the process read.
+pub fn next_generation() -> Generation {
+    static LAST: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    LAST.fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+        .saturating_add(1)
+}
+
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
 /// `Resolver::log` pointer on drop.
 pub struct ResolverLogScope {

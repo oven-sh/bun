@@ -1744,6 +1744,61 @@ devTest("barrel optimization: a barrel that was saved defers again in the next b
   },
 });
 
+// lib is in node_modules, which the dev server does not watch: no watcher event builds between the steps.
+const acBarrelWithDeferredC = {
+  ...abPackage("lib", `export { a } from './a'; export { c } from './c';`),
+  "node_modules/lib/a.js": `export const a = "EXPORT_A";`,
+  "node_modules/lib/c.js": `export const c = "EXPORT_C";`,
+};
+devTest("barrel optimization: a barrel that loads every export finds a file that moved while it was deferred", {
+  files: {
+    "first.html": emptyHtmlFile({ scripts: ["first.ts"] }),
+    "whole.html": emptyHtmlFile({ scripts: ["whole.ts"] }),
+    "other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+    "first.ts": `
+      import { a } from 'lib';
+      console.log(a);
+    `,
+    "whole.ts": `
+      import * as lib from 'lib';
+      console.log(Object.keys(lib));
+    `,
+    "other.ts": `
+      import { a } from 'lib';
+      console.log('other: ' + a);
+    `,
+    ...acBarrelWithDeferredC,
+  },
+  async test(dev) {
+    await build(dev, "/first");
+    fs.renameSync(dev.join("node_modules/lib/c.js"), dev.join("node_modules/lib/c.jsx"));
+    // This build still resolves './c' to c.js and fails to open it.
+    expect(await clientBundleMarks(dev, "/whole", abcMarks)).toEqual(["EXPORT_A"]);
+    expect(await clientBundleMarks(dev, "/other", abcMarks)).toEqual(["EXPORT_A", "EXPORT_C"]);
+  },
+});
+
+devTest("barrel optimization: server code finds a file that moved while the barrel deferred it", {
+  framework: minimalFramework,
+  files: {
+    "routes/first.ts": serverPage(`import { a } from 'lib';`, `'first: ' + a`),
+    "routes/whole.ts": serverPage(
+      `import * as lib from 'lib'; const read = (ns: any) => ns.c;`,
+      `'whole: ' + read(lib)`,
+    ),
+    "routes/other.ts": serverPage(`import { a } from 'lib';`, `'other: ' + a`),
+    ...acBarrelWithDeferredC,
+  },
+  async test(dev) {
+    await dev.fetch("/first").equals("first: EXPORT_A");
+    fs.renameSync(dev.join("node_modules/lib/c.js"), dev.join("node_modules/lib/c.jsx"));
+    // This build still resolves './c' to c.js and fails to open it.
+    expect((await dev.fetch("/whole")).status).toBe(500);
+    await dev.fetch("/other").equals("other: EXPORT_A");
+    await dev.fetch("/whole").equals("whole: EXPORT_C");
+  },
+});
+
 devTest("barrel optimization: a later build of server code keeps a request for every export", {
   framework: minimalFramework,
   files: {
@@ -2247,6 +2302,241 @@ devTest("recovers from importing a file in a directory that can't be opened", {
     });
 
     await c.expectMessage("value: 456");
+  },
+});
+
+// The dev server does not watch node_modules. The resolver lists c.js until a build reads the directory again.
+const libWithUnreadC = {
+  "node_modules/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+  "node_modules/lib/a.js": `export const a = "EXPORT_A";`,
+  "node_modules/lib/c.js": `export const c = "EXPORT_C";`,
+};
+const pageThatImportsLibA = {
+  "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+  "index.ts": `
+    import { a } from 'lib/a';
+    console.log(a);
+  `,
+  ...libWithUnreadC,
+};
+const importsLibC = (label: string, c = "lib/c", a = "lib/a") => `
+  import { a } from '${a}';
+  import { c } from '${c}';
+  console.log('SAVE_${label}', a, c);
+`;
+// A late watcher event can build again between the fetch of the page and the fetch of its script.
+async function libExportsInBundle(dev: Dev, label?: string) {
+  let code = await clientBundle(dev);
+  while (label && !code.includes("SAVE_" + label)) code = await clientBundle(dev);
+  return ["EXPORT_A", "EXPORT_C"].filter(mark => code.includes(mark));
+}
+// The first save resolves c from the old listing and fails to open it. The second reads the directory again.
+async function findsLibCAtTheSecondSave(dev: Dev, c = "lib/c", a = "lib/a") {
+  await dev.write("index.ts", importsLibC("first", c, a));
+  expect(await libExportsInBundle(dev, "first")).toEqual(["EXPORT_A"]);
+  await dev.write("index.ts", importsLibC("second", c, a));
+  expect(await libExportsInBundle(dev, "second")).toEqual(["EXPORT_A", "EXPORT_C"]);
+}
+
+devTest("finds a module that moved before any build read it", {
+  files: pageThatImportsLibA,
+  async test(dev) {
+    expect(await libExportsInBundle(dev)).toEqual(["EXPORT_A"]);
+    fs.renameSync(dev.join("node_modules/lib/c.js"), dev.join("node_modules/lib/c.jsx"));
+    await findsLibCAtTheSecondSave(dev);
+  },
+});
+
+devTest("finds a module that moved into a directory before any build read it", {
+  files: pageThatImportsLibA,
+  async test(dev) {
+    expect(await libExportsInBundle(dev)).toEqual(["EXPORT_A"]);
+    fs.mkdirSync(dev.join("node_modules/lib/c"));
+    fs.renameSync(dev.join("node_modules/lib/c.js"), dev.join("node_modules/lib/c/index.js"));
+    await findsLibCAtTheSecondSave(dev);
+  },
+});
+
+devTest("finds a module of the project that moved before any build read it", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { a } from './src/a';
+      console.log(a);
+    `,
+    "src/a.ts": `export const a = "EXPORT_A";`,
+    "src/c.ts": `export const c = "EXPORT_C";`,
+  },
+  async test(dev) {
+    expect(await libExportsInBundle(dev)).toEqual(["EXPORT_A"]);
+    fs.renameSync(dev.join("src/c.ts"), dev.join("src/c.tsx"));
+    await findsLibCAtTheSecondSave(dev, "./src/c", "./src/a");
+  },
+});
+
+// The resolver caches the listing of a linked package under node_modules/lib, not under its real path.
+devTest("finds a module of a symlinked package that moved before any build read it", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { a } from 'lib/a';
+      console.log(a);
+    `,
+    "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+    "packages/lib/a.js": `export const a = "EXPORT_A";`,
+    "packages/lib/c.js": `export const c = "EXPORT_C";`,
+    "node_modules/.keep": "",
+  },
+  async test(dev) {
+    fs.symlinkSync("../packages/lib", dev.join("node_modules/lib"));
+    expect(await libExportsInBundle(dev)).toEqual(["EXPORT_A"]);
+    fs.renameSync(dev.join("packages/lib/c.js"), dev.join("packages/lib/c.jsx"));
+    await findsLibCAtTheSecondSave(dev);
+  },
+});
+
+const routeThatReturns = (imports: string, value: string) => `
+  ${imports}
+  export default function (req, meta) {
+    return new Response(${value});
+  }
+`;
+devTest("server code finds a module that moved before any build read it", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": routeThatReturns(`import { a } from 'lib/a';`, `a`),
+    ...libWithUnreadC,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("EXPORT_A");
+    fs.renameSync(dev.join("node_modules/lib/c.js"), dev.join("node_modules/lib/c.jsx"));
+    const withC = (label: string) =>
+      routeThatReturns(`import { a } from 'lib/a'; import { c } from 'lib/c';`, `'${label} ' + a + ' ' + c`);
+    // This build resolves lib/c from the old listing and fails to open c.js.
+    await dev.write("routes/index.ts", withC("first"), { errors: null });
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("routes/index.ts", withC("second"));
+    await dev.fetch("/").equals("second EXPORT_A EXPORT_C");
+  },
+});
+
+// The save of side.ts is the build that reads its directories again. It does not read lib.
+devTest("finds a module that moved after a build that does not ask for it", {
+  files: {
+    ...pageThatImportsLibA,
+    "index.ts": `
+      import './side';
+      import { a } from 'lib/a';
+      console.log(a);
+    `,
+    "side.ts": `console.log("side 1");`,
+  },
+  async test(dev) {
+    expect(await libExportsInBundle(dev)).toEqual(["EXPORT_A"]);
+    fs.renameSync(dev.join("node_modules/lib/c.js"), dev.join("node_modules/lib/c.jsx"));
+    const importsSideAndC = (label: string) => `
+      import './side';
+      import { a } from 'lib/a';
+      import { c } from 'lib/c';
+      console.log('${label}', a, c);
+    `;
+    await dev.write("index.ts", importsSideAndC("first"));
+    expect(await libExportsInBundle(dev)).toEqual(["EXPORT_A"]);
+    await dev.write("side.ts", `console.log("side 2");`);
+    await dev.write("index.ts", importsSideAndC("second"));
+    expect(await libExportsInBundle(dev)).toEqual(["EXPORT_A", "EXPORT_C"]);
+  },
+});
+
+// The second save reads the directory while c.js is away, so the import does not resolve. Nothing
+// watches the directory of a bare specifier or of an alias. The third save reads it again.
+for (const [kind, specifier] of [
+  ["a bare specifier", "lib/c"],
+  ["a tsconfig alias", "@lib/c"],
+] as const) {
+  devTest(`finds a module that ${kind} names after it was away for two builds`, {
+    files: {
+      ...pageThatImportsLibA,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./node_modules/lib/*"] } } }),
+    },
+    async test(dev) {
+      expect(await libExportsInBundle(dev)).toEqual(["EXPORT_A"]);
+      const c = dev.read("node_modules/lib/c.js");
+      fs.rmSync(dev.join("node_modules/lib/c.js"));
+      await dev.write("index.ts", importsLibC("first", specifier));
+      expect(await libExportsInBundle(dev)).toEqual(["EXPORT_A"]);
+      await dev.write("index.ts", importsLibC("second", specifier), { errors: null });
+      expect((await dev.fetch("/")).status).toBe(500);
+      fs.writeFileSync(dev.join("node_modules/lib/c.js"), c);
+      await dev.write("index.ts", importsLibC("third", specifier));
+      expect(await libExportsInBundle(dev)).toEqual(["EXPORT_A", "EXPORT_C"]);
+    },
+  });
+}
+
+// page1 reaches the barrel through wrapper.js. The build of page2 fails to open the barrel and builds
+// each importer up to page1 again. It also fails to open c.js, which no build has read.
+devTest("reports an updated package to a page that imports a file beside its barrel", {
+  files: {
+    "page1.html": emptyHtmlFile({ scripts: ["page1.ts"] }),
+    "page2.html": emptyHtmlFile({ scripts: ["page2.ts"] }),
+    "page1.ts": `
+      import { w } from 'lib/wrapper.js';
+      console.log(w);
+    `,
+    "page2.ts": `
+      import { c } from 'lib/c';
+      import { a } from 'lib';
+      console.log(c, a);
+    `,
+    ...abPackage("lib", abBarrel),
+    "node_modules/lib/wrapper.js": `import { a } from './index.js'; export const w = 'W_' + a;`,
+    "node_modules/lib/c.js": `export const c = "C";`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/page1")).status).toBe(200);
+    // The new version of the package has c.jsx, and no barrel or wrapper.
+    fs.renameSync(dev.join("node_modules/lib/c.js"), dev.join("node_modules/lib/c.jsx"));
+    fs.rmSync(dev.join("node_modules/lib/index.js"));
+    fs.rmSync(dev.join("node_modules/lib/wrapper.js"));
+    expect((await dev.fetch("/page2")).status).toBe(500);
+    expect((await dev.fetch("/page1")).status).toBe(500);
+  },
+});
+
+// The save of page2 fails to open the barrel of lib, which a build has bundled. That does not make the next
+// build read its directories again: the build of page3 still asks for the removed files of lib2.
+devTest("a bundled file that is gone leaves the removed files of another package to be reported", {
+  files: {
+    "page1.html": emptyHtmlFile({ scripts: ["page1.ts"] }),
+    "page2.html": emptyHtmlFile({ scripts: ["page2.ts"] }),
+    "page3.html": emptyHtmlFile({ scripts: ["page3.ts"] }),
+    "page1.ts": `
+      import { w } from 'lib2/wrapper.js';
+      console.log(w);
+    `,
+    "page2.ts": `
+      import { a } from 'lib';
+      console.log(a);
+    `,
+    "page3.ts": `
+      import { a } from 'lib2';
+      console.log(a);
+    `,
+    ...abPackage("lib", abBarrel),
+    ...abPackage("lib2", abBarrel),
+    "node_modules/lib2/wrapper.js": `import { a } from './index.js'; export const w = 'W_' + a;`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/page1")).status).toBe(200);
+    expect((await dev.fetch("/page2")).status).toBe(200);
+    fs.rmSync(dev.join("node_modules/lib/index.js"));
+    fs.rmSync(dev.join("node_modules/lib2/index.js"));
+    fs.rmSync(dev.join("node_modules/lib2/wrapper.js"));
+    await dev.write("page2.ts", `import { a } from 'lib';\nconsole.log('again', a);`, { errors: null });
+    expect((await dev.fetch("/page3")).status).toBe(500);
+    expect((await dev.fetch("/page1")).status).toBe(500);
   },
 });
 

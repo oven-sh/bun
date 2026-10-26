@@ -65,6 +65,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             server_register_update_callback: _,
             bun_watcher: _,
             directory_watchers: _,
+            reread_directories: _,
             watcher_atomics: _,
             testing_batch_events: _,
             generation: _,
@@ -104,6 +105,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .magic
     //   .memory_visualizer_timer
     //   .plugin_state
+    //   .reread_directories
     //   .server_register_update_callback
     //   .server_fetch_function_callback
     //   .watcher_atomics

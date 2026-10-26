@@ -36,6 +36,10 @@ bun_bundler::link_impl_DevServerHandle! {
             (*this).put_or_overwrite_asset(path, blob, content_hash).map_err(Into::into)
         },
         track_resolution_failure(import_source, specifier, renderer, loader) => {
+            // Once a build has read its directories again, a miss can come from that newer listing.
+            if (*this).server_transpiler().resolver.generation != 0 {
+                (*this).reread_directories = true;
+            }
             (*this)
                 .directory_watchers
                 .track_resolution_failure(import_source, specifier, renderer, loader)

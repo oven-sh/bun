@@ -4177,7 +4177,8 @@ test("react-compiler memory does not grow with the square of the size of a compo
 });
 
 // Each default in a pattern is a join. EnterSSA made a phi at each join for each variable that is read after it, and
-// EliminateRedundantPhi took them out again: 1,000 defaults, half a million phis, 484 MB. Now 150 MB.
+// EliminateRedundantPhi took them out again: 1,000 defaults, half a million phis, 484 MB. Then it still made the
+// identifier of each of those phis: 3,000 defaults, 867 MB. Now 87 MB.
 // Not where the empty build takes 330 MB, which is more than either pattern does.
 test.skipIf(isDebug || isASAN)(
   "react-compiler memory does not grow with the square of the defaults in a pattern",
@@ -4192,7 +4193,7 @@ test.skipIf(isDebug || isASAN)(
   `;
     using dir = tempDir("react-compiler-defaults", {
       "empty.jsx": `export default function App() { return null; }`,
-      "whole.jsx": pattern(1000),
+      "whole.jsx": pattern(3000),
       // The peak of a process is never below that of the one that spawned it, and this one is small.
       "measure.js": `
       const peak = entry =>
@@ -4214,13 +4215,46 @@ test.skipIf(isDebug || isASAN)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const [empty, whole] = JSON.parse(stdout);
-    // 9 times. Else what is measured is not the pattern.
+    // 3 times. Else what is measured is not the pattern.
     expect(whole).toBeGreaterThan(empty * 2);
-    // 131 MB, and 499 MB without the fix. The ratio of two sizes tells the two apart by 1.4 times only.
+    // 62 MB, and 842 MB where a join that takes no phi still makes an identifier.
     expect(whole - empty).toBeLessThan(300 * 1024 * 1024);
     expect(exitCode).toBe(0);
   },
 );
+
+// At each join between a read and its definition EnterSSA made an identifier for a phi, and then left the phi out. The
+// children of an element are all read at its end, so each literal below is live across every ternary after it.
+test("react-compiler memory does not grow with the values that are live across a join", async () => {
+  // A debug build takes 3 seconds for the first component, which is why this test has a timeout.
+  const small = isDebug || isASAN;
+  const literals = small ? 3000 : 4000;
+  const ternary = "{props.a ? 1 : 2}";
+  const ternaries = Buffer.alloc(ternary.length * (literals / 10), ternary).toString();
+  const numbers = Array.from({ length: literals }, (_, i) => `{${i}}`).join("");
+  using dir = tempDir("react-compiler-live-across-joins", {
+    "across.jsx": `export default function App(props) { return <div>${numbers}${ternaries}</div>; }`,
+    "before.jsx": `export default function App(props) { return <div>${ternaries}${numbers}</div>; }`,
+  });
+
+  const peakMB = async (entry: string) => {
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+      env: withoutAsanQuarantine(bunEnv),
+      cwd: String(dir),
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+    return maxRSS / 1024 / 1024;
+  };
+
+  const [across, before] = await Promise.all([peakMB("across.jsx"), peakMB("before.jsx")]);
+  // The two components have the same children. Without the fix the first takes 79 MB more on a debug build and
+  // 209 MB more on a release build.
+  expect(across - before).toBeLessThan(small ? 40 : 100);
+}, 30_000);
 
 // InferTypes puts the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
 // from each other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.

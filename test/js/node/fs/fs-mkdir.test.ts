@@ -510,7 +510,7 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive with denied attributes (Window
     }
   }
 
-  it("existing directory: reports the access error instead of EEXIST", async () => {
+  it.concurrent("existing directory: reports the access error instead of EEXIST", async () => {
     using dir = tempDir("mkdir-denied", { "fixture.mjs": fixture });
     const root = String(dir);
     const a = path.join(root, "a");
@@ -525,7 +525,7 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive with denied attributes (Window
   // The first mkdir of a\b\c reports ENOENT because a\b is a file. The walk-up
   // mkdir of a\b reports EEXIST, and the probe of a\b fails. Node reports the
   // probe error with the requested path.
-  it("file at a parent component: reports the access error instead of ENOENT", async () => {
+  it.concurrent("file at a parent component: reports the access error instead of ENOENT", async () => {
     using dir = tempDir("mkdir-denied-parent", { "fixture.mjs": fixture, "a/b": "" });
     const root = String(dir);
     const a = path.join(root, "a");

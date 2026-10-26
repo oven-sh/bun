@@ -199,9 +199,173 @@ describe("what pull() returns", () => {
     });
   });
 
+  // The rule for a consumer that takes the whole body: the body ends when the promise resolves.
+  // A write that an event makes after that is not part of the body, as with an async pull().
+  test.each(callers.slice(1))("%s ends the body when the followed promise resolves", async (_, consume) => {
+    const bodies: Record<string, string> = {};
+    for (const [name, returns] of [
+      ["a promise that starts in then()", (wait: Work) => lazy(wait)],
+      ["an async pull()", (wait: Work) => wait()],
+    ] as const) {
+      const wroteLate = Promise.withResolvers<void>();
+      const { stream } = direct(c => {
+        c.write("early");
+        const resolved = Promise.withResolvers<void>();
+        resolved.promise.then(later).then(() => {
+          try {
+            c.write(" late");
+            c.close();
+          } catch {}
+          wroteLate.resolve();
+        });
+        return returns(async () => {
+          await later();
+          resolved.resolve();
+        });
+      });
+      bodies[name] = await consume(stream);
+      await wroteLate.promise;
+    }
+    expect(bodies).toEqual({ "a promise that starts in then()": "early", "an async pull()": "early" });
+  });
+
+  test("without pull(): a reader rejects, a buffer consumer rejects with its own message, a native sink gets an empty body", async () => {
+    const make = () => new ReadableStream({ type: "direct" } as any);
+    using dir = tempDir("direct-no-pull", {});
+    const file = join(String(dir), "out.txt");
+    await Bun.write(file, new Response(make()));
+    expect({
+      reader: await settle(make().getReader().read()),
+      buffer: await settle(readableStreamToBytes(make()) as Promise<unknown>),
+      sink: await Bun.file(file).text(),
+    }).toEqual({
+      reader: { err: "underlyingSource.pull is not a function" },
+      buffer: { err: "The 'pull' method of a direct ReadableStream's underlying source is not a function" },
+      sink: "",
+    });
+  });
+
+  test("pull() runs in the async context of the stream for a reader, and of the caller for the other two", async () => {
+    const als = new AsyncLocalStorage<string>();
+    const seen: unknown[] = [];
+    for (const [, consume] of callers) {
+      const { stream } = als.run("the stream", () =>
+        direct(c => {
+          seen.push(als.getStore());
+          c.write("a");
+          c.close();
+        }),
+      );
+      await als.run("the caller", () => consume(stream));
+    }
+    expect(seen).toEqual(["the stream", "the caller", "the caller"]);
+  });
+
+  // A follower for each result would be one more Promise for each read. The children run with the
+  // collector off, so a count is a number of allocations. JSC's watchpoint on Promise.prototype.then
+  // also ends in the last two realms, where then() is still the built-in function.
+  test.concurrent.each([
+    ["an untouched realm", ""],
+    ["a realm with a frozen Promise.prototype", "Object.freeze(Promise.prototype);"],
+    [
+      "a realm where Promise.prototype.then was replaced and put back",
+      "const then = Promise.prototype.then; Promise.prototype.then = function () {}; Promise.prototype.then = then;",
+    ],
+  ])("in %s a plain promise takes no follower, and a promise with its own then() is followed", async (_, setup) => {
+    const src = `
+      ${setup}
+      const { heapStats } = require("bun:jsc");
+      const READS = 1000;
+      const chunk = new Uint8Array(1);
+      const promises = () => heapStats().objectTypeCounts.Promise || 0;
+      const drain = async reader => { while (!(await reader.read()).done) {} };
+      const sources = {
+        directPull: () => {
+          let i = 0;
+          return new ReadableStream({
+            type: "direct",
+            async pull(c) {
+              await null;
+              if (i++ < READS) c.write(chunk);
+              else c.close();
+            },
+          });
+        },
+        generatorBody: () =>
+          new Response((async function* () { for (let i = 0; i < READS; i++) yield chunk; })()).body,
+        defaultPull: () => {
+          let i = 0;
+          return new ReadableStream(
+            {
+              async pull(c) {
+                await null;
+                if (i++ < READS) c.enqueue(chunk);
+                else c.close();
+              },
+            },
+            { highWaterMark: 0 },
+          );
+        },
+      };
+      const counts = {};
+      for (const [name, make] of Object.entries(sources)) {
+        await drain(make().getReader());
+        const before = promises();
+        await drain(make().getReader());
+        counts[name] = (promises() - before) / READS;
+      }
+      const counted = promises();
+      Bun.gc(true);
+      counts.collected = counted - promises();
+
+      class Counted extends Promise {
+        static calls = 0;
+        static get [Symbol.species]() { return Promise; }
+        then(onFulfilled, onRejected) {
+          Counted.calls++;
+          return super.then(onFulfilled, onRejected);
+        }
+      }
+      const followed = new ReadableStream({
+        type: "direct",
+        pull: c => new Counted(resolve => { c.write(chunk); c.close(); resolve(); }),
+      });
+      await drain(followed.getReader());
+      counts.thenCalls = Counted.calls;
+      console.log(JSON.stringify(counts));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: { ...bunEnv, BUN_JSC_useGC: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const counts = stdout ? JSON.parse(stdout) : {};
+    // For each read: the promise of read(), and for the two streams the promise of their async pull().
+    // A follower would add one to each. A count that is too high is shown as it is.
+    expect({
+      directPull: counts.directPull < 2.5 || counts.directPull,
+      generatorBody: counts.generatorBody < 1.5 || counts.generatorBody,
+      defaultPull: counts.defaultPull < 2.5 || counts.defaultPull,
+      collected: counts.collected,
+      thenCalls: counts.thenCalls,
+      stderr,
+      exitCode,
+    }).toEqual({
+      directPull: true,
+      generatorBody: true,
+      defaultPull: true,
+      collected: 0,
+      thenCalls: 1,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // The reactions go on the follower, so Bun does not read the returned promise itself. As on the
   // state path, that promise is still never reported as an unhandled rejection.
-  test("a promise that its own then() does not subscribe to is not reported when it rejects", async () => {
+  test.concurrent("a promise that its own then() does not subscribe to is not reported when it rejects", async () => {
     using dir = tempDir("direct-pull-unsubscribed", {});
     const src = `
       const reports = [];
@@ -266,123 +430,6 @@ describe("what pull() returns", () => {
       exitCode: 0,
     });
   });
-
-  // The rule for a consumer that takes the whole body: the body ends when the promise resolves.
-  // A write that an event makes after that is not part of the body, as with an async pull().
-  test.each(callers.slice(1))("%s ends the body when the followed promise resolves", async (_, consume) => {
-    const bodies: Record<string, string> = {};
-    for (const [name, returns] of [
-      ["a promise that starts in then()", (wait: Work) => lazy(wait)],
-      ["an async pull()", (wait: Work) => wait()],
-    ] as const) {
-      const wroteLate = Promise.withResolvers<void>();
-      const { stream } = direct(c => {
-        c.write("early");
-        const resolved = Promise.withResolvers<void>();
-        resolved.promise.then(later).then(() => {
-          try {
-            c.write(" late");
-            c.close();
-          } catch {}
-          wroteLate.resolve();
-        });
-        return returns(async () => {
-          await later();
-          resolved.resolve();
-        });
-      });
-      bodies[name] = await consume(stream);
-      await wroteLate.promise;
-    }
-    expect(bodies).toEqual({ "a promise that starts in then()": "early", "an async pull()": "early" });
-  });
-
-  test("without pull(): a reader rejects, a buffer consumer rejects with its own message, a native sink gets an empty body", async () => {
-    const make = () => new ReadableStream({ type: "direct" } as any);
-    using dir = tempDir("direct-no-pull", {});
-    const file = join(String(dir), "out.txt");
-    await Bun.write(file, new Response(make()));
-    expect({
-      reader: await settle(make().getReader().read()),
-      buffer: await settle(readableStreamToBytes(make()) as Promise<unknown>),
-      sink: await Bun.file(file).text(),
-    }).toEqual({
-      reader: { err: "underlyingSource.pull is not a function" },
-      buffer: { err: "The 'pull' method of a direct ReadableStream's underlying source is not a function" },
-      sink: "",
-    });
-  });
-
-  test("pull() runs in the async context of the stream for a reader, and of the caller for the other two", async () => {
-    const als = new AsyncLocalStorage<string>();
-    const seen: unknown[] = [];
-    for (const [, consume] of callers) {
-      const { stream } = als.run("the stream", () =>
-        direct(c => {
-          seen.push(als.getStore());
-          c.write("a");
-          c.close();
-        }),
-      );
-      await als.run("the caller", () => consume(stream));
-    }
-    expect(seen).toEqual(["the stream", "the caller", "the caller"]);
-  });
-
-  // A follower for each result would be one more Promise for each read. The child runs with the
-  // collector off, so a count is a number of allocations.
-  test("a plain promise is used as it is: no Promise is allocated for it", async () => {
-    const src = `
-      const { heapStats } = require("bun:jsc");
-      const READS = 4000;
-      const chunk = new Uint8Array(1);
-      const promises = () => heapStats().objectTypeCounts.Promise || 0;
-      const drain = async reader => { while (!(await reader.read()).done) {} };
-      const sources = {
-        directPull: () => {
-          let i = 0;
-          return new ReadableStream({
-            type: "direct",
-            async pull(c) {
-              await null;
-              if (i++ < READS) c.write(chunk);
-              else c.close();
-            },
-          });
-        },
-        generatorBody: () =>
-          new Response((async function* () { for (let i = 0; i < READS; i++) yield chunk; })()).body,
-      };
-      const counts = {};
-      for (const [name, make] of Object.entries(sources)) {
-        await drain(make().getReader());
-        const before = promises();
-        await drain(make().getReader());
-        counts[name] = (promises() - before) / READS;
-      }
-      const counted = promises();
-      Bun.gc(true);
-      counts.collected = counted - promises();
-      console.log(JSON.stringify(counts));
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", src],
-      env: { ...bunEnv, BUN_JSC_useGC: "0" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const counts = stdout ? JSON.parse(stdout) : {};
-    // For each read: the promise of read(), and for the direct stream the promise of its async pull().
-    // A follower would add one to each. A count that is too high is shown as it is.
-    expect({
-      directPull: counts.directPull < 2.5 || counts.directPull,
-      generatorBody: counts.generatorBody < 1.5 || counts.generatorBody,
-      collected: counts.collected,
-      stderr,
-      exitCode,
-    }).toEqual({ directPull: true, generatorBody: true, collected: 0, stderr: "", exitCode: 0 });
-  });
 });
 
 // A native sink that closes underneath the source (here: the HTTP client leaves) calls cancel(reason).
@@ -430,7 +477,7 @@ describe("what cancel() returns after the sink closed", () => {
     expect({ outcome, thenCalls: returned!.thenCalls }).toEqual({ outcome: "cleanup ran", thenCalls: 1 });
   });
 
-  test("a throw is an uncaught exception, and no rejection is reported", async () => {
+  test.concurrent("a throw is an uncaught exception, and no rejection is reported", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

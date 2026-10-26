@@ -164,7 +164,7 @@ JSC::JSPromise* promiseResolvedWith(JSC::JSGlobalObject*, JSC::JSValue); // user
 JSC::JSPromise* promiseResolvedWithFast(JSC::JSGlobalObject*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
 // promiseResolvedWithFast for a JSPromise cell: one whose `then` is not callable comes back as it is.
 JSC::JSPromise* promiseForReactionsSlow(JSC::JSGlobalObject*, JSC::JSPromise*); // userJS: yes — WebStreamsMisc.cpp
-// False for a plain promise of this realm with the built-in then().
+// False for a plain promise of this realm while JSC's watchpoint on Promise.prototype.then holds.
 ALWAYS_INLINE bool promiseMayNeedFollower(JSC::JSGlobalObject* globalObject, JSC::JSPromise* promise)
 {
     return promise->structure() != globalObject->promiseStructure() || !globalObject->promiseThenWatchpointSet().isStillValid();

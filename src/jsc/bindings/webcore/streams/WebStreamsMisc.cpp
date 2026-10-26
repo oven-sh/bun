@@ -18,6 +18,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSPromisePrototype.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/TypedArrayType.h>
 #include <cmath>
@@ -447,12 +448,29 @@ JSPromise* promiseResolvedWith(JSGlobalObject* globalObject, JSValue value)
     return promise;
 }
 
+// JSC's watchpoint on Promise.prototype.then also ends when the prototype is frozen or `then` is put back, so compare the function itself.
+static bool hasUnpatchedThen(JSPromise* promise)
+{
+    if (promise->isThenFastAndNonObservable()) [[likely]]
+        return true;
+    JSGlobalObject* realm = promise->globalObject();
+    if (promise->structure() != realm->promiseStructure())
+        return false;
+    auto& vm = getVM(realm);
+    JSObject* prototype = realm->promisePrototype();
+    unsigned attributes = 0;
+    PropertyOffset offset = prototype->getDirectOffset(vm, vm.propertyNames->then, attributes);
+    if (!isValidOffset(offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        return false;
+    return prototype->getDirect(offset) == realm->promiseProtoThenFunction();
+}
+
 JSPromise* promiseResolvedWithFast(JSGlobalObject* globalObject, JSValue value)
 {
     if (!value.isObject()) [[likely]]
         return nullptr;
     // A vanilla JSPromise with an unpatched .then takes internal reactions as it is; a subclass or a patched .then is adopted.
-    if (auto* promise = dynamicDowncast<JSC::JSPromise>(value); promise && promise->isThenFastAndNonObservable())
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(value); promise && hasUnpatchedThen(promise))
         return promise;
     return promiseResolvedWith(globalObject, value);
 }

@@ -409,7 +409,7 @@ describe("next() returns a promise with its own then()", () => {
 
   // The reactions go on the follower, so Bun does not read the returned promise itself. That
   // promise is still never reported as an unhandled rejection.
-  test("a promise that its own then() does not subscribe to is not reported when it rejects", async () => {
+  test.concurrent("a promise that its own then() does not subscribe to is not reported when it rejects", async () => {
     const src = `
       const reports = [];
       process.on("unhandledRejection", e => reports.push("unhandledRejection: " + e.message));
@@ -436,12 +436,14 @@ describe("next() returns a promise with its own then()", () => {
   // Once Promise.prototype.then is replaced, every plain promise has an observable then().
   // Bun follows the promises that next() returned through it. The promise that Bun makes for
   // each of its own pulls never reaches the replacement.
-  test("with Promise.prototype.then replaced, only the promises that next() returned reach the replacement", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.concurrent(
+    "with Promise.prototype.then replaced, only the promises that next() returned reach the replacement",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
         const macrotask = () => new Promise(resolve => setImmediate(resolve));
         const returned = new Set();
         const body = {
@@ -474,15 +476,16 @@ describe("next() returns a promise with its own then()", () => {
           callsOnOthers: receivers.filter(promise => !returned.has(promise)).length,
         }));
         `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, result: stdout && JSON.parse(stdout), exitCode }).toEqual({
-      stderr: "",
-      result: { text: "chunk0chunk1", returned: 3, callsOnReturned: 3, callsOnOthers: 0 },
-      exitCode: 0,
-    });
-  });
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, result: stdout && JSON.parse(stdout), exitCode }).toEqual({
+        stderr: "",
+        result: { text: "chunk0chunk1", returned: 3, callsOnReturned: 3, callsOnOthers: 0 },
+        exitCode: 0,
+      });
+    },
+  );
 });

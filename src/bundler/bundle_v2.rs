@@ -3848,7 +3848,7 @@ pub mod bv2_impl {
             target: options::Target,
         ) -> Option<IndexInt> {
             let path = resolved.path_const()?;
-            self.path_to_source_index_map(target).get_path(path)
+            self.path_to_source_index_map(target).get(path.text)
         }
 
         /// `bun build --app`: key `id` of the `EntryPointMap` is the file at `source_index`.

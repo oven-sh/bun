@@ -6,15 +6,18 @@
  *
  * This file uses node:test/node:assert so the identical file also runs under `node --test`,
  * which is where the expected values (including the exact error messages) come from. It cannot
- * import from "harness" for the same reason, so it manages its own temporary directory.
+ * import from "harness" for the same reason, so it manages its own temporary directory and
+ * spawns `process.execPath`.
  */
 import assert from "node:assert";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
-import { parseArgs, type ParseArgsConfig } from "node:util";
+import { parseArgs, promisify, type ParseArgsConfig } from "node:util";
+
+const execFileP = promisify(execFile);
 
 const options: ParseArgsConfig["options"] = {
   a: { type: "boolean", short: "a" },
@@ -42,18 +45,19 @@ function codeUnits(str: string) {
 }
 
 describe("util.parseArgs: raw name of an option inside a short option group", () => {
-  const rows: [args: string[], rawName: string][] = [
-    [["-axb"], "-x"],
-    [["-xa"], "-x"],
-    [["-ax"], "-x"],
-    [["-axfVAL"], "-x"],
-    [["-a=5"], "-="],
-    [["-a1"], "-1"],
-    [["-a\u00e9"], "-\u00e9"],
-    [["-a\u4e2d"], "-\u4e2d"],
-    [["-ax\u4e2d"], "-x"],
+  // args, the raw name of the unknown option, and the raw name of each option token.
+  const rows: [args: string[], rawName: string, rawNames: string[]][] = [
+    [["-axb"], "-x", ["-a", "-x", "-b"]],
+    [["-xa"], "-x", ["-x", "-a"]],
+    [["-ax"], "-x", ["-a", "-x"]],
+    [["-axfVAL"], "-x", ["-a", "-x", "-f"]],
+    [["-a=5"], "-=", ["-a", "-=", "-5"]],
+    [["-a1"], "-1", ["-a", "-1"]],
+    [["-a\u00e9"], "-\u00e9", ["-a", "-\u00e9"]],
+    [["-a\u4e2d"], "-\u4e2d", ["-a", "-\u4e2d"]],
+    [["-ax\u4e2d"], "-x", ["-a", "-x", "-\u4e2d"]],
   ];
-  for (const [args, rawName] of rows) {
+  for (const [args, rawName, rawNames] of rows) {
     test(`unknown option in ${JSON.stringify(args)} is named ${JSON.stringify(rawName)}`, () => {
       assert.deepStrictEqual(thrown({ args, options }), {
         name: "TypeError",
@@ -65,7 +69,10 @@ describe("util.parseArgs: raw name of an option inside a short option group", ()
         code: "ERR_PARSE_ARGS_UNKNOWN_OPTION",
         message: `Unknown option '${rawName}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- ${JSON.stringify(rawName)}`,
       });
-      assert.ok(optionTokens({ args, options, strict: false }).some(token => token.rawName === rawName));
+      assert.deepStrictEqual(
+        optionTokens({ args, options, strict: false }).map(token => token.rawName),
+        rawNames,
+      );
     });
   }
 
@@ -80,7 +87,7 @@ describe("util.parseArgs: raw name of an option inside a short option group", ()
     });
   });
 
-  test("unknown option in a group taken from process.argv", () => {
+  test("unknown option in a group taken from process.argv", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "parse-args-short-group-"));
     try {
       const script = path.join(dir, "script.mjs");
@@ -94,13 +101,12 @@ try {
 }
 `,
       );
-      const { stdout, status } = spawnSync(process.execPath, [script, "-axb"], { encoding: "utf8" });
-      assert.deepStrictEqual(
-        { stdout: stdout.trim(), status },
-        {
-          stdout: JSON.stringify({ code: "ERR_PARSE_ARGS_UNKNOWN_OPTION", message: "Unknown option '-x'" }),
-          status: 0,
-        },
+      const { stdout } = await execFileP(process.execPath, [script, "-axb"], {
+        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+      });
+      assert.strictEqual(
+        stdout.trim(),
+        JSON.stringify({ code: "ERR_PARSE_ARGS_UNKNOWN_OPTION", message: "Unknown option '-x'" }),
       );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

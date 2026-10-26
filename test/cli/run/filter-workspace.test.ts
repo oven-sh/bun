@@ -12,7 +12,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
 import { join } from "path";
@@ -1190,6 +1190,89 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
       expect(await installedMembers(String(dir))).toEqual(members);
     },
   );
+});
+
+// The walk that finds the packages of `bun run --filter` and `--workspaces` opens each directory
+// that a "workspaces" entry names. A symlink that doesn't open is not a package, as for
+// `bun install`. A directory that doesn't open ends the run.
+describe.concurrent('a "workspaces" entry whose directory does not open', () => {
+  function fixture(workspaces: string[]) {
+    return tempDir("filter-workspace-open", {
+      "package.json": JSON.stringify({ name: "ws", workspaces }),
+      "packages/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        scripts: { present: "echo ran:packages/lib" },
+      }),
+    });
+  }
+
+  async function run(cwd: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--workspaces", "present"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ran: [...stdout.matchAll(/ran:(\S+)/g)].map(m => m[1]).sort(), stderr, exitCode };
+  }
+
+  const ranLib = { ran: ["packages/lib"], stderr: "", exitCode: 0 };
+
+  // A junction needs no privilege on Windows, and its target does not have to exist.
+  test.each([["broken/*"], ["broken"]])("a symlink to nothing is skipped for %j", async entry => {
+    using dir = fixture([entry, "packages/*"]);
+    symlinkSync(join(String(dir), "nowhere"), join(String(dir), "broken"), "junction");
+
+    expect(await run(String(dir))).toEqual(ranLib);
+  });
+
+  test.skipIf(isWindows)("a symlink to itself is skipped", async () => {
+    using dir = fixture(["loop/*", "packages/*"]);
+    symlinkSync("loop", join(String(dir), "loop"));
+
+    expect(await run(String(dir))).toEqual(ranLib);
+    await runBunInstall(bunEnv, String(dir));
+    expect(Object.values<string>(parseLockfile(String(dir)).workspace_paths)).toEqual(["packages/lib"]);
+  });
+
+  test("bun install skips the same symlink to nothing", async () => {
+    using dir = fixture(["broken/*", "packages/*"]);
+    symlinkSync(join(String(dir), "nowhere"), join(String(dir), "broken"), "junction");
+
+    await runBunInstall(bunEnv, String(dir));
+    expect(Object.values<string>(parseLockfile(String(dir)).workspace_paths)).toEqual(["packages/lib"]);
+  });
+
+  test("an absolute path without glob syntax is a package, and is skipped if it is missing", async () => {
+    using dir = tempDir("filter-workspace-absolute", {
+      "packages/lib/package.json": JSON.stringify({ name: "lib", scripts: { present: "echo ran:packages/lib" } }),
+      "elsewhere/package.json": JSON.stringify({ name: "elsewhere", scripts: { present: "echo ran:elsewhere" } }),
+    });
+    // The absolute paths exist only once the directory does.
+    const workspaces = ["packages/lib", join(String(dir), "elsewhere"), join(String(dir), "missing")];
+    await Bun.write(join(String(dir), "package.json"), JSON.stringify({ name: "ws", workspaces }));
+
+    expect(await run(String(dir))).toEqual({ ran: ["elsewhere", "packages/lib"], stderr: "", exitCode: 0 });
+  });
+
+  // root reads any directory.
+  test.skipIf(isWindows || process.getuid?.() === 0)("a directory that cannot be read ends the run", async () => {
+    using dir = fixture(["packages/*"]);
+    const secret = join(String(dir), "packages", "secret");
+    mkdirSync(secret);
+    chmodSync(secret, 0o000);
+    try {
+      const { ran, stderr, exitCode } = await run(String(dir));
+      expect(stderr).toContain("error: EACCES");
+      expect(stderr).toContain("packages/secret");
+      expect({ ran, exitCode }).toEqual({ ran: [], exitCode: 1 });
+    } finally {
+      chmodSync(secret, 0o755);
+    }
+  });
 });
 
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script

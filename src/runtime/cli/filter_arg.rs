@@ -320,6 +320,12 @@ impl SelectedPackages {
     }
 }
 
+/// A directory of a "workspaces" entry doesn't open. That ends the run, as it ends `bun install`.
+fn exit_on_walk_error(err: &bun_sys::Error) -> ! {
+    Output::err_generic("{}", (err,));
+    Global::exit(1);
+}
+
 // Heap-allocated so the walker keeps its address while the `PackageFilterIterator` moves. Held as
 // a `NonNull` rather than a `Box` because moving a `Box` asserts unique access, which the
 // `GlobWalkerIterator` borrowing the walker would violate.
@@ -374,7 +380,7 @@ impl<'a> PackageFilterIterator<'a> {
             true,
             true,
             false,
-            true,
+            false,
             true,
             Some(glob_ignore_fn),
         )??));
@@ -383,7 +389,9 @@ impl<'a> PackageFilterIterator<'a> {
         // afterwards), so this is the only access to the walker while the erased borrow is live.
         let mut iter: GlobWalkerIterator =
             glob::walk::Iterator::new(unsafe { &mut *walker.0.as_ptr() });
-        iter.init()??;
+        if let Err(err) = iter.init()? {
+            exit_on_walk_error(&err);
+        }
         Ok(ActiveWalk {
             iter,
             _walker: walker,
@@ -420,6 +428,14 @@ impl<'a> PackageFilterIterator<'a> {
                 Ok(None) => {
                     self.active = None;
                     self.pattern_idx += 1;
+                }
+                // The walker also reports a path that's too long for it as a failed `open`. That
+                // one package is skipped.
+                Err(err)
+                    if err.syscall == bun_sys::Tag::open
+                        && err.get_errno() != bun_sys::E::ENAMETOOLONG =>
+                {
+                    exit_on_walk_error(&err)
                 }
                 Err(err) => bun_core::pretty_errorln!("Error: {}", err),
             }

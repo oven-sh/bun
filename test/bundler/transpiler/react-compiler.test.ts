@@ -4347,6 +4347,200 @@ test("react-compiler time does not grow with the cube of a chain of functions", 
   expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(isDebug || isASAN ? 4 : 8);
 });
 
+// A function that nothing is known of may keep each of its arguments in each other one. For a call of it,
+// InferMutationAliasingEffects gives one Capture for each two operands, and InferMutationAliasingRanges had a link
+// for each in the lists of both. Each operand is a mutation, and the walk from each read all the links: n operands
+// took the cube of n. One call with 1,000 arrays took 12 seconds, and so did a handler that passes 1,000 state
+// values on. The effects are still the square of n.
+// Not with ASAN alone: such a build takes seconds for a call that is long enough to tell a square from a cube.
+describe.skipIf(isASAN && !isDebug)("react-compiler time does not grow with the cube of the operands of a call", () => {
+  const each = (n: number, of: (i: number) => string, separator = " ") =>
+    Array.from({ length: n }, (_, i) => of(i)).join(separator);
+  const shapes: Record<string, (n: number) => string> = {
+    "arrays": n => `
+      export function App({ v }) {
+        ${each(n, i => `const w${i} = [v];`)}
+        link(${each(n, i => `w${i}`, ", ")});
+        return <div v={v} />;
+      }
+    `,
+    // In a function expression they are context values, which may alias each other, and each is a walk more.
+    "state values in a handler": n => `
+      export function App({ v }) {
+        ${each(n, i => `const [w${i}] = useState(v);`)}
+        const on = () => link(${each(n, i => `w${i}`, ", ")});
+        return <form onSubmit={on} />;
+      }
+    `,
+    // A walk that comes to the first operand from another one does not go on to the two arrays that it can be.
+    "arrays, and one of two arrays": n => `
+      export function App({ v }) {
+        link(v ? [v] : [1], ${each(n - 1, () => "[v]", ", ")});
+        return <div v={v} />;
+      }
+    `,
+    // The walk from a write goes to what the array is kept in, and not back from there.
+    "arrays that are written to after it": n => `
+      export function App({ v }) {
+        ${each(n, i => `const w${i} = [v];`)}
+        link(${each(n, i => `w${i}`, ", ")});
+        ${each(n, i => `w${i}.x = 1;`)}
+        return <div v={v} />;
+      }
+    `,
+  };
+  // A debug build takes half a second to start, which is more than a small component takes: it has the time of
+  // the passes alone.
+  const [small, large] = isDebug ? [60, 240] : [250, 750];
+
+  for (const [name, source] of Object.entries(shapes)) {
+    test(name, async () => {
+      const file = (n: number) => `import { useState } from "react";\nimport { link } from "lib";\n${source(n)}`;
+      using dir = tempDir("react-compiler-operands", { "small.jsx": file(small), "large.jsx": file(large) });
+
+      const time = async (entry: string) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+          env: isDebug ? { ...bunEnv, BUN_REACT_COMPILER_TIMING: "1" } : bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const passes = /([\d.]+)ms total\n$/.exec(stderr);
+        if (isDebug) expect(stderr).toContain("ms total");
+        else expect(stderr).toBe("");
+        expect(stdout).toContain("react/compiler-runtime");
+        expect(exitCode).toBe(0);
+        return passes ? Number(passes[1]) : Number(proc.resourceUsage()!.cpuTime.total);
+      };
+
+      // A debug build, 4 times the operands: 5 to 8, and 19 to 29 without the fix.
+      // A release build, 3 times the operands: 7 to 11, which is a square's, and 31 to 37.
+      expect((await time("large.jsx")) / (await time("small.jsx"))).toBeLessThan(isDebug ? 12 : 18);
+    });
+  }
+});
+
+// A build that has assertions makes each walk twice where the operands of a call are a group: with the group and
+// without it, in a copy of the graph. It compares the nodes that the two come to. These are the forms of such a
+// call. They are built with the groups that a function has, with every group that it can have, and with none.
+test.skipIf(!isDebug && !isASAN)(
+  "react-compiler gives a call the same output with its operands as a group and without",
+  async () => {
+    const forms = (count: number, suffix: string): Record<string, string> => {
+      const each = (of: (i: number) => string, separator = " ") =>
+        Array.from({ length: count }, (_, i) => of(i)).join(separator);
+      const all = each(i => `w${i}`, ", ");
+      const arrays = each(i => `const w${i} = [v];`);
+      const components: Record<string, string> = {};
+      const component = (name: string, body: string, result = "<div v={v} />") => {
+        components[name + suffix] = `
+          export function ${name}${suffix}(props) {
+            const v = props.v;
+            ${body}
+            return ${result};
+          }
+        `;
+      };
+      component("Call", `${arrays} link(${all});`);
+      component(
+        "HandlerOfState",
+        `${each(i => `const [w${i}] = useState(v);`)} const on = () => link(${all});`,
+        "<div onClick={on} />",
+      );
+      // The effects of a closure are destination by destination, where it is called.
+      component("ClosureTwice", `${arrays} const run = () => { link(${all}); }; run(); run(); one(w0);`);
+      component("Written", `${arrays} link(${all}); ${each(i => `w${i}.x = 1;`)}`);
+      component("OneOfTwo", `${arrays} link(v ? [v] : [1], ${all});`);
+      component("CallOfMethod", `${arrays} const box = make(v); box.m(${all});`);
+      component("Construct", `${arrays} new K(${all});`);
+      // A spread operand has an edge to itself.
+      component("Spread", `${arrays} link(...w0, ${all});`);
+      // The callee is two operands, with the same edges twice.
+      component("Callee", `${arrays} const f = make(v); f(${all});`);
+      component("Result", `${arrays} const r = link(${all}); r.x = w0; one(r);`, "<div r={r} />");
+      component("Handler", `${arrays} const on = () => link(${all});`, "<div onClick={on} />");
+      component("Closure", `${arrays} const run = () => { link(${all}); }; run();`);
+      component(
+        "ClosureOfParameters",
+        `${arrays} const run = (${each(i => `a${i}`, ", ")}) => { link(${each(i => `a${i}`, ", ")}); }; run(${all});`,
+      );
+      component("PassedOn", `${arrays} link(${all}); ${each(i => `one(w${i});`)}`);
+      component("Twice", `${arrays} link(${all}); link(${all});`);
+      component("OneOfTwoLocals", `${arrays} let w = w0; if (v) { w = w1; } link(w, ${all}); w.x = 1;`);
+      component("Held", `${arrays} w1.k = w0; const both = [w2, w3]; link(${all}, both);`);
+      component("InLoop", `${arrays} for (const item of props.items) { link(item, ${all}); }`);
+      component("Frozen", `${each(i => `const w${i} = props.p${i};`)} link(${all});`);
+      component("Mixed", `const [s] = useState(v); ${arrays} link(v, s, props.p, 1, () => v, make(v), ${all});`);
+      // One destination: it has nothing in common with another.
+      component("Literal", `${arrays} const list = [${all}]; one(list);`, "<div list={list} />");
+      // Each function has an error, which a walk that comes to the function records.
+      component(
+        "Errors",
+        `const [s] = useState(v); ${arrays}
+         link(() => { K.c = 3; }, w0, () => { s.b = 2; }, w1, () => { props.a = 1; }, ${all});`,
+      );
+      return components;
+    };
+    // The operands of a call are a group from 32 on: the first five forms have 33 too.
+    const { Errors, ...components } = {
+      ...forms(10, ""),
+      ...Object.fromEntries(Object.entries(forms(33, "OfMany")).slice(0, 5)),
+    };
+    const imports = `import { useState } from "react";\nimport { link, one, make, K } from "lib";\n`;
+    using dir = tempDir("react-compiler-groups", {
+      "components.jsx": imports + Object.values(components).join("\n"),
+      // A file that has an error has no output.
+      "errors.jsx": imports + Errors,
+      "build.js": `
+        const build = name =>
+          Bun.build({
+            entrypoints: [import.meta.dir + "/" + name + ".jsx"],
+            target: "browser",
+            external: ["*"],
+            reactCompiler: true,
+            reactCompilerParseTestPragmas: true,
+            throw: false,
+          });
+        const [components, errors] = await Promise.all([build("components"), build("errors")]);
+        console.log(
+          JSON.stringify({
+            output: await components.outputs[0].text(),
+            logs: [...components.logs, ...errors.logs].map(log => log.level + ": " + log.message),
+          }),
+        );
+      `,
+    });
+
+    const build = async (runs?: number) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.js"],
+        env: runs === undefined ? bunEnv : { ...bunEnv, BUN_REACT_COMPILER_GROUP_RUNS: String(runs) },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout) as { output: string; logs: string[] };
+    };
+    // Two edges of a node are a run, and then as many as no node has.
+    const [asIs, withEach, withNone] = await Promise.all([build(), build(2), build(1_000_000)]);
+
+    expect(asIs).toEqual(withNone);
+    expect(withEach).toEqual(withNone);
+    // Each component is compiled, and the errors are in the order of the walks that found them.
+    expect(withNone.output.match(/\b_c\(\d+\)/g)).toHaveLength(Object.keys(components).length);
+    expect(withNone.logs.join("\n").match(/Modifying [^.]+/g)).toEqual([
+      "Modifying a value returned from 'useState()', which should not be modified directly",
+      "Modifying component props or hook arguments is not allowed",
+      "Modifying a variable defined outside a component or hook is not allowed",
+    ]);
+  },
+);
+
 // ValidateExhaustiveDependencies gives each phi the dependencies of its
 // operands. TS keeps them in a `Set`. The port appended clones to a `Vec`, so a
 // phi held one copy of a dependency for each path that reaches it. Each `if`

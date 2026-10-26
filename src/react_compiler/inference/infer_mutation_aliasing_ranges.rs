@@ -14,7 +14,7 @@
 //!   vars, aliasing between params/context-vars/return-value)
 //! - The legacy `Effect` to store on each Place
 
-use crate::collections::{FxHashSet as HashSet, IdBitSet, IdMap};
+use crate::collections::{FxHashMap, FxHashSet as HashSet, IdBitSet, IdMap};
 
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
@@ -48,6 +48,30 @@ enum EdgeKind {
     Capture,
     Alias,
     MaybeAlias,
+    /// Not in upstream, like the four below. Such a link is in the place of a stretch of links:
+    /// those from one node to the destinations of a [`Group`], or to one node from its sources.
+    /// `Link::node` is the group, and `Link::index` is that of the first link of the stretch.
+    ///
+    /// In `edges` of a mutable source: a `Capture` to each mutable destination, and a `MaybeAlias`
+    /// to each other one.
+    DestinationsOfMutable,
+    /// In `edges` of a context source: a `MaybeAlias` to each destination.
+    DestinationsOfContext,
+    /// In `captures` of a mutable destination: the mutable sources.
+    MutableSources,
+    /// In `maybe_aliases` of a mutable destination: the context sources.
+    ContextSources,
+    /// In `maybe_aliases` of a context destination: all sources.
+    Sources,
+}
+
+impl EdgeKind {
+    fn is_group(self) -> bool {
+        !matches!(
+            self,
+            EdgeKind::Capture | EdgeKind::Alias | EdgeKind::MaybeAlias
+        )
+    }
 }
 
 /// The lists of a node that hold where its value comes from. Each has a node once, with the index
@@ -110,10 +134,137 @@ impl List {
         }
         self.last = at;
     }
+
+    /// The items with where each is in `links`. A later item is further on in `links`.
+    fn positions(self, links: &[Link]) -> impl Iterator<Item = (u32, &Link)> {
+        let mut at = self.first;
+        std::iter::from_fn(move || {
+            let link = links.get(at as usize)?;
+            let here = at;
+            at = link.next;
+            Some((here, link))
+        })
+    }
+
+    /// The items that are at `from..=to` of `links`, as a list of their own.
+    fn stretch(self, links: &[Link], from: u32, to: u32) -> Option<List> {
+        let mut within = self
+            .positions(links)
+            .map(|(at, _)| at)
+            .skip_while(|&at| at < from)
+            .take_while(|&at| at <= to);
+        let first = within.next()?;
+        let last = within.last().unwrap_or(first);
+        Some(List { first, last })
+    }
+
+    /// The items of a list that `stretch` gave: in `links`, its last item has others after it.
+    fn iter_stretch(self, links: &[Link]) -> impl Iterator<Item = &Link> {
+        let mut at = self.first;
+        std::iter::from_fn(move || {
+            let link = links.get(at as usize)?;
+            at = if at == self.last {
+                List::NONE
+            } else {
+                link.next
+            };
+            Some(link)
+        })
+    }
+}
+
+/// Not in upstream. A call of a function that nothing is known of has an edge from each operand to
+/// each other one, and a call of a closure has an edge for each two of the variables that the
+/// closure keeps. A walk that comes to one of `n` such nodes comes to all, and reads the `n` links
+/// of each. So the graph has the nodes of such a call once, and a list has one link in the place of
+/// its links to them or from them: see [`EdgeKind::DestinationsOfMutable`]. A walk comes to the
+/// same nodes, with the same entries, in the same order.
+///
+/// Each source has an edge to each destination but itself: a `Capture` where both are mutable, and
+/// a `MaybeAlias` where one is a context value.
+#[derive(Debug, Clone, Copy)]
+struct Group {
+    /// Whether the edges are source by source, as a call has them. Else they are destination by
+    /// destination, as the effects of a closure are.
+    by_source: bool,
+    destinations: Members,
+    sources: Members,
+    mutable_sources: Members,
+    context_sources: Members,
+}
+
+impl Group {
+    /// How many edges of one node are a run: see `AliasingState::group_operands`. A walk reads the
+    /// links of fewer nodes sooner than it goes through a group of them.
+    const SHORTEST_RUN: usize = 32;
+
+    /// Whether each walk is made without the group too: see `AliasingState::is_as_without_groups`.
+    #[cfg(debug_assertions)]
+    fn is_compared(&self) -> bool {
+        self.destinations.len.max(self.sources.len) <= 64
+    }
+}
+
+/// A stretch of `AliasingState::members`.
+#[derive(Debug, Clone, Copy)]
+struct Members {
+    start: u32,
+    len: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Member {
+    node: NodeAt,
+    /// On the side that the edges of the group are in the order of (`Group::by_source`): the index
+    /// of the first edge of this node. A walk sees the edges of the nodes whose first edge is
+    /// before its own index: the edges of a node follow one another, so no walk is between them.
+    index: u32,
+    is_mutable: bool,
+}
+
+/// Which members of a group a walk has come to, for every [`Cursor`] of that walk. A group has
+/// `Arrived::PER_GROUP` of them: one for each sequence of members and each kind of mutation that a
+/// walk comes to those members with.
+#[derive(Debug, Clone, Default)]
+struct Arrived {
+    walk: u32,
+    /// For each count of members from the first: that count less the members at its end that the
+    /// walk has come to, as far as a cursor has found them.
+    left: Vec<u32>,
+}
+
+impl Arrived {
+    const PER_GROUP: usize = 6;
+
+    /// How many of the first `count` members are left.
+    fn left(&mut self, count: u32) -> u32 {
+        let mut left = count;
+        while self.left[left as usize] != left {
+            left = self.left[left as usize];
+        }
+        let mut at = count;
+        while at != left {
+            at = std::mem::replace(&mut self.left[at as usize], left);
+        }
+        left
+    }
+}
+
+/// Where a walk is in the members that a link of a group is in the place of. It is on the stack of
+/// the walk where the entries of those members would be, and gives them one at a time from the last
+/// to the first: the order in which a walk takes entries off. It passes over a member that the walk
+/// has come to, whose entry would do nothing when its turn comes.
+#[derive(Debug, Clone, Copy)]
+struct Cursor {
+    group: u32,
+    kind: EdgeKind,
+    /// How many members, from the first, it has yet to give.
+    left: u32,
 }
 
 /// A table by identifier. A function expression has a few stretches of the identifiers of its
 /// component, so there are only the pages that were written to.
+#[cfg_attr(debug_assertions, derive(Clone))]
 struct ByIdentifier<T> {
     /// Which of the pages in `entries` it is, counted from one. Zero: none.
     pages: Vec<u32>,
@@ -190,13 +341,16 @@ struct Node {
     arrival: u32,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Direction {
     Backwards,
     Forwards,
+    /// Not to a node: to the members of a group that a walk has yet to go to. `QueueEntry::place`
+    /// is the [`Cursor`], and the rest is that of the entry whose node has the link of the group.
+    Members,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct QueueEntry {
     place: NodeAt,
     transitive: bool,
@@ -204,6 +358,109 @@ struct QueueEntry {
     kind: MutationKind,
 }
 
+// A function that has no group gives nothing for them: the link and the entry of a group are of
+// the types that all have.
+const _: () = assert!(size_of::<Link>() == 16 && size_of::<QueueEntry>() == 8);
+
+/// An edge as `AliasingState::group_operands` reads it: a link of `Node::edges`, and the node that
+/// has it.
+struct Edge {
+    /// Where the link is in `links`.
+    at: u32,
+    from: NodeAt,
+    into: NodeAt,
+    index: u32,
+    kind: EdgeKind,
+}
+
+/// The edges `first..=last` of those that `AliasingState::group_operands` reads: all from `node`,
+/// or all to it.
+struct Run {
+    first: usize,
+    last: usize,
+    node: NodeAt,
+}
+
+impl Run {
+    /// The runs of the edges that are in none.
+    fn all(edges: &[Edge], is_in_run: &mut [bool], shortest: usize, by_source: bool) -> Vec<Run> {
+        let node_of = |edge: &Edge| if by_source { edge.from } else { edge.into };
+        let is_in_a_group =
+            |edge: &Edge| matches!(edge.kind, EdgeKind::Capture | EdgeKind::MaybeAlias);
+        let mut runs = Vec::new();
+        let mut first = 0;
+        while let Some(edge) = edges.get(first) {
+            let mut last = first;
+            if is_in_a_group(edge) && !is_in_run[first] {
+                while edges.get(last + 1).is_some_and(|next| {
+                    is_in_a_group(next)
+                        && !is_in_run[last + 1]
+                        && next.index == edges[last].index + 1
+                        && node_of(next) == node_of(edge)
+                }) {
+                    last += 1;
+                }
+                if last - first + 1 >= shortest {
+                    is_in_run[first..=last].fill(true);
+                    runs.push(Run {
+                        first,
+                        last,
+                        node: node_of(edge),
+                    });
+                }
+            }
+            first = last + 1;
+        }
+        runs
+    }
+
+    /// The edges of the run but those from its node to itself: a walk at a node does not go to it.
+    fn other_edges<'a>(
+        &self,
+        edges: &'a [Edge],
+    ) -> impl Iterator<Item = &'a Edge> + Clone + use<'a> {
+        (edges[self.first..=self.last].iter()).filter(|edge| edge.from != edge.into)
+    }
+
+    /// The other ends of those edges.
+    fn others<'a>(
+        &self,
+        edges: &'a [Edge],
+        by_source: bool,
+    ) -> impl Iterator<Item = NodeAt> + Clone + use<'a> {
+        self.other_edges(edges)
+            .map(move |edge| if by_source { edge.into } else { edge.from })
+    }
+
+    /// The sequence that the other ends of this run and of `next` are, but that each run is without
+    /// its own node.
+    fn merged(&self, next: &Run, edges: &[Edge], by_source: bool) -> Option<Vec<NodeAt>> {
+        let mut mine = self.others(edges, by_source).peekable();
+        let mut theirs = next.others(edges, by_source).peekable();
+        let mut merged = Vec::new();
+        loop {
+            match (mine.peek().copied(), theirs.peek().copied()) {
+                (None, None) => return Some(merged),
+                (Some(a), Some(b)) if a == b => {
+                    merged.push(a);
+                    mine.next();
+                    theirs.next();
+                }
+                (_, Some(b)) if b == self.node => {
+                    merged.push(b);
+                    theirs.next();
+                }
+                (Some(a), _) if a == next.node => {
+                    merged.push(a);
+                    mine.next();
+                }
+                _ => return None,
+            }
+        }
+    }
+}
+
+#[cfg_attr(debug_assertions, derive(Clone))]
 struct AliasingState {
     nodes: Vec<Node>,
     /// Where the node of an identifier is, counted from one. Zero: nowhere.
@@ -218,6 +475,17 @@ struct AliasingState {
     /// however it came to the node: there is no phi, and each edge is still in the lists of both
     /// its ends.
     is_symmetric: bool,
+    /// None in most functions: see [`Group`].
+    groups: Vec<Group>,
+    members: Vec<Member>,
+    arrived: Vec<Arrived>,
+    cursors: Vec<Cursor>,
+    /// The state as it was before it had groups: see `is_as_without_groups`.
+    #[cfg(debug_assertions)]
+    without_groups: Option<Box<AliasingState>>,
+    /// The entries of the nodes that the walk in hand came to, in the two states that are compared.
+    #[cfg(debug_assertions)]
+    visits: Option<Vec<QueueEntry>>,
 }
 
 impl AliasingState {
@@ -231,6 +499,14 @@ impl AliasingState {
             walks: 0,
             queue: Vec::new(),
             is_symmetric: true,
+            groups: Vec::new(),
+            members: Vec::new(),
+            arrived: Vec::new(),
+            cursors: Vec::new(),
+            #[cfg(debug_assertions)]
+            without_groups: None,
+            #[cfg(debug_assertions)]
+            visits: None,
         }
     }
 
@@ -360,6 +636,319 @@ impl AliasingState {
             .is_some_and(|node| node.local.is_some() || node.transitive.is_some())
     }
 
+    /// Whether a node has `count` or more nodes in the lists that can have the link of a group.
+    fn has_list_of(&self, count: usize) -> bool {
+        self.nodes.iter().any(|node| {
+            let incoming = node
+                .captures
+                .iter(&self.links)
+                .chain(node.maybe_aliases.iter(&self.links));
+            incoming.take(count).count() == count
+        })
+    }
+
+    /// Not in upstream: see [`Group`]. Finds the groups in the links as they are once every edge
+    /// is in, and puts one link in the place of each stretch of links that is the members of a
+    /// group in their order. A list whose links are not that stays as it is.
+    ///
+    /// A run is `shortest` or more `Capture` and `MaybeAlias` edges that follow one another, in
+    /// `links` and by index, and are all from one node or all to one node. Runs that follow one
+    /// another are a group if their other ends are one sequence of nodes, but that each run is
+    /// without its own node.
+    #[cold]
+    fn group_operands(&mut self, shortest: usize) {
+        #[cfg(debug_assertions)]
+        let without_groups = self.clone();
+        let mut from_of: Vec<NodeAt> = vec![List::NONE; self.links.len()];
+        for (from, node) in self.nodes.iter().enumerate() {
+            for (at, _) in node.edges.positions(&self.links) {
+                from_of[at as usize] = from as NodeAt;
+            }
+        }
+        let edges: Vec<Edge> = (from_of.iter().zip(&self.links).enumerate())
+            .filter(|&(_, (&from, _))| from != List::NONE)
+            .map(|(at, (&from, link))| Edge {
+                at: at as u32,
+                from,
+                into: link.node,
+                index: link.index,
+                kind: link.kind,
+            })
+            .collect();
+        drop(from_of);
+
+        let mut is_in_run = vec![false; edges.len()];
+        for by_source in [true, false] {
+            let runs = Run::all(&edges, &mut is_in_run, shortest, by_source);
+            let mut at = 0;
+            while let Some(first) = runs.get(at) {
+                // The runs of one group, and the sequence that their other ends are.
+                let start = at;
+                let mut members: Option<Vec<NodeAt>> = None;
+                at += 1;
+                while let Some(run) = runs.get(at) {
+                    let is_of_group = run.first == runs[at - 1].last + 1
+                        && match &members {
+                            None if run.node == first.node => run
+                                .others(&edges, by_source)
+                                .eq(first.others(&edges, by_source)),
+                            None => {
+                                members = first.merged(run, &edges, by_source);
+                                members.is_some()
+                            }
+                            Some(members) => run
+                                .others(&edges, by_source)
+                                .eq(members.iter().copied().filter(|&member| member != run.node)),
+                        };
+                    if !is_of_group {
+                        break;
+                    }
+                    at += 1;
+                }
+                // The runs of one node have nothing in common with those of another.
+                if let Some(members) = members {
+                    self.group(&edges, &runs[start..at], &members, by_source);
+                }
+            }
+        }
+
+        // Without its groups, a walk over many members is long.
+        #[cfg(debug_assertions)]
+        if !self.groups.is_empty() && self.groups.iter().all(Group::is_compared) {
+            self.visits = Some(Vec::new());
+            self.without_groups = Some(Box::new(AliasingState {
+                visits: Some(Vec::new()),
+                ..without_groups
+            }));
+        }
+    }
+
+    /// A build with assertions makes each walk of a state that has groups a second time, in the
+    /// state as it was before. Whether `walk`, which makes it there, came to the same nodes with
+    /// the same entries in the same order: what a walk writes follows from that.
+    #[cfg(debug_assertions)]
+    fn is_as_without_groups(&mut self, walk: impl FnOnce(&mut AliasingState)) -> bool {
+        let Some(state) = &mut self.without_groups else {
+            return true;
+        };
+        walk(state);
+        state.visits.replace(Vec::new()) == self.visits.replace(Vec::new())
+    }
+
+    /// Makes a group of `runs`, whose other ends are `members`, and gives the lists its links.
+    fn group(&mut self, edges: &[Edge], runs: &[Run], members: &[NodeAt], by_source: bool) {
+        // A run has a `Capture` only if its node is mutable, and only for the members that are.
+        let mut run_is_mutable = vec![false; runs.len()];
+        let mut member_is_mutable = vec![false; members.len()];
+        for (run, run_is_mutable) in runs.iter().zip(&mut run_is_mutable) {
+            let mut kinds = run.other_edges(edges).map(|edge| edge.kind);
+            for (&member, member_is_mutable) in members.iter().zip(&mut member_is_mutable) {
+                if member != run.node && kinds.next() == Some(EdgeKind::Capture) {
+                    *run_is_mutable = true;
+                    *member_is_mutable = true;
+                }
+            }
+        }
+        let is_capture_where_both_are_mutable =
+            (runs.iter().zip(&run_is_mutable)).all(|(run, &run_is_mutable)| {
+                let mut kinds = run.other_edges(edges).map(|edge| edge.kind);
+                (members.iter().zip(&member_is_mutable)).all(|(&member, &member_is_mutable)| {
+                    let is_capture = run_is_mutable && member_is_mutable;
+                    member == run.node
+                        || kinds
+                            .next()
+                            .is_some_and(|kind| (kind == EdgeKind::Capture) == is_capture)
+                })
+            });
+        if !is_capture_where_both_are_mutable {
+            return;
+        }
+        // A destination is there twice if it is two operands of a call. A source is there once.
+        let mut is_mutable_of: FxHashMap<NodeAt, bool> = FxHashMap::default();
+        for (&member, &is_mutable) in members.iter().zip(&member_is_mutable) {
+            if (is_mutable_of.insert(member, is_mutable))
+                .is_some_and(|before| !by_source || before != is_mutable)
+            {
+                return;
+            }
+        }
+
+        let of_members =
+            (members.iter().zip(&member_is_mutable)).map(|(&node, &is_mutable)| Member {
+                node,
+                index: 0,
+                is_mutable,
+            });
+        let of_runs = (runs.iter().zip(&run_is_mutable)).map(|(run, &is_mutable)| Member {
+            node: run.node,
+            index: edges[run.first].index,
+            is_mutable,
+        });
+        let (destinations, sources): (Vec<Member>, Vec<Member>) = if by_source {
+            // A source that has two runs is two operands of a call. The lists of the destinations
+            // have it from its first run.
+            let mut sources: HashSet<NodeAt> = HashSet::default();
+            let of_runs = of_runs.filter(|source| sources.insert(source.node));
+            (of_members.collect(), of_runs.collect())
+        } else {
+            (of_runs.collect(), of_members.collect())
+        };
+        let is_mutable = |source: &Member| source.is_mutable;
+        let is_context = |source: &Member| !source.is_mutable;
+        let group = Group {
+            by_source,
+            destinations: self.add_members(destinations.iter().copied()),
+            sources: self.add_members(sources.iter().copied()),
+            mutable_sources: self.add_members(sources.iter().copied().filter(is_mutable)),
+            context_sources: self.add_members(sources.iter().copied().filter(is_context)),
+        };
+        let at = self.groups.len() as u32;
+        self.groups.push(group);
+        self.arrived
+            .resize_with(self.groups.len() * Arrived::PER_GROUP, Arrived::default);
+
+        // In `links`, an edge is the link of its source, and then that of its destination if the
+        // list had none from that source.
+        let (Some(first), Some(last)) = (runs.first(), runs.last()) else {
+            return;
+        };
+        let (first, last) = (edges[first.first].at, edges[last.last].at);
+        let edges_kind = |is_mutable: bool| match is_mutable {
+            true => EdgeKind::DestinationsOfMutable,
+            false => EdgeKind::DestinationsOfContext,
+        };
+        if by_source {
+            for (run, &is_mutable) in runs.iter().zip(&run_is_mutable) {
+                let (first, last) = (edges[run.first].at, edges[run.last].at);
+                let edges_of_node = self.nodes[run.node as usize].edges;
+                if let Some(stretch) = edges_of_node.stretch(&self.links, first, last) {
+                    debug_assert!(
+                        stretch.iter_stretch(&self.links).count() == run.last - run.first + 1
+                    );
+                    self.put_link(run.node, None, stretch, at, edges_kind(is_mutable));
+                }
+            }
+            for destination in &destinations {
+                if is_mutable_of.remove(&destination.node).is_some() {
+                    self.group_incoming(destination, first, last + 1, at, &group);
+                }
+            }
+        } else {
+            for (run, destination) in runs.iter().zip(&destinations) {
+                let (first, last) = (edges[run.first].at, edges[run.last].at);
+                self.group_incoming(destination, first, last + 1, at, &group);
+            }
+            for source in &sources {
+                let edges_of_node = self.nodes[source.node as usize].edges;
+                let Some(stretch) = edges_of_node.stretch(&self.links, first, last) else {
+                    continue;
+                };
+                // A walk stops at the first edge that it does not see. So that it is one to another
+                // node, the source has none to itself here.
+                let mut found = (stretch.iter_stretch(&self.links))
+                    .map(|link| (link.node, link.kind))
+                    .peekable();
+                let expected = (destinations.iter())
+                    .filter(|destination| destination.node != source.node)
+                    .map(
+                        |destination| match source.is_mutable && destination.is_mutable {
+                            true => (destination.node, EdgeKind::Capture),
+                            false => (destination.node, EdgeKind::MaybeAlias),
+                        },
+                    );
+                if found.peek().is_some() && found.eq(expected) {
+                    self.put_link(
+                        source.node,
+                        None,
+                        stretch,
+                        at,
+                        edges_kind(source.is_mutable),
+                    );
+                }
+            }
+        }
+    }
+
+    fn add_members(&mut self, members: impl Iterator<Item = Member>) -> Members {
+        let start = self.members.len() as u32;
+        self.members.extend(members);
+        let len = self.members.len() as u32 - start;
+        Members { start, len }
+    }
+
+    /// Gives the lists of a destination of `group`, which is group `at`, the links of the sources,
+    /// where what a list has at `first..=last` of `links` is those sources in their order.
+    fn group_incoming(
+        &mut self,
+        destination: &Member,
+        first: u32,
+        last: u32,
+        at: u32,
+        group: &Group,
+    ) {
+        for which in [Incoming::Captures, Incoming::MaybeAliases] {
+            let node = &self.nodes[destination.node as usize];
+            let (list, sources, kind) = match (which, destination.is_mutable) {
+                (Incoming::Captures, true) => (
+                    node.captures,
+                    group.mutable_sources,
+                    EdgeKind::MutableSources,
+                ),
+                (Incoming::Captures, false) => continue,
+                (_, true) => (
+                    node.maybe_aliases,
+                    group.context_sources,
+                    EdgeKind::ContextSources,
+                ),
+                (_, false) => (node.maybe_aliases, group.sources, EdgeKind::Sources),
+            };
+            let Some(stretch) = list.stretch(&self.links, first, last) else {
+                continue;
+            };
+            // A source that the list had before has no link here: the stretch is not the sources.
+            let mut found = (stretch.iter_stretch(&self.links))
+                .filter(|link| link.kind.is_group() || link.node != destination.node)
+                .map(|link| (link.node, link.kind.is_group()))
+                .peekable();
+            let expected = self.members[sources.start as usize..][..sources.len as usize]
+                .iter()
+                .filter(|source| source.node != destination.node)
+                .map(|source| (source.node, false));
+            if found.peek().is_some() && found.eq(expected) {
+                self.put_link(destination.node, Some(which), stretch, at, kind);
+            }
+        }
+    }
+
+    /// Puts one link of `group` in the place of `stretch`, which is of the list `which` of `node`,
+    /// or of its edges.
+    fn put_link(
+        &mut self,
+        node: NodeAt,
+        which: Option<Incoming>,
+        stretch: List,
+        group: u32,
+        kind: EdgeKind,
+    ) {
+        let next = self.links[stretch.last as usize].next;
+        let link = &mut self.links[stretch.first as usize];
+        *link = Link {
+            index: link.index,
+            node: group,
+            kind,
+            next,
+        };
+        let node = &mut self.nodes[node as usize];
+        let list = match which {
+            None => &mut node.edges,
+            Some(Incoming::Captures) => &mut node.captures,
+            Some(_) => &mut node.maybe_aliases,
+        };
+        if list.last == stretch.last {
+            list.last = stretch.first;
+        }
+    }
+
     /// What `Node::arrival` is not less than if the walk at hand has come to the node with this kind
     /// or a stronger one.
     #[inline]
@@ -368,6 +957,23 @@ impl AliasingState {
     }
 
     fn render(&mut self, index: u32, start: IdentifierId, env: &mut Environment) {
+        if self.groups.is_empty() {
+            return self.render_in::<false>(index, start, Some(env));
+        }
+        self.render_in::<true>(index, start, Some(env));
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            self.is_as_without_groups(|state| state.render_in::<false>(index, start, None))
+        );
+    }
+
+    /// With `GROUPS`, a list can have the link of a group. Without `env`, it records no error.
+    fn render_in<const GROUPS: bool>(
+        &mut self,
+        index: u32,
+        start: IdentifierId,
+        mut env: Option<&mut Environment>,
+    ) {
         let Some(start) = self.at(start) else {
             return;
         };
@@ -380,17 +986,33 @@ impl AliasingState {
                 continue;
             }
             node.arrival = arrival;
+            #[cfg(debug_assertions)]
+            if let Some(visits) = &mut self.visits {
+                visits.push(QueueEntry {
+                    place: current,
+                    transitive: false,
+                    direction: Direction::Backwards,
+                    kind: MutationKind::Definite,
+                });
+            }
             if node.transitive.is_some() || node.local.is_some() {
                 continue;
             }
-            match node.value {
-                NodeValue::Missing => continue,
-                NodeValue::Function { function_id } => append_function_errors(env, function_id),
-                NodeValue::Object | NodeValue::Phi => {}
+            match (&node.value, &mut env) {
+                (NodeValue::Missing, _) => continue,
+                (NodeValue::Function { function_id }, Some(env)) => {
+                    append_function_errors(env, *function_id)
+                }
+                _ => {}
             }
             for list in [node.created_from, node.aliases, node.captures] {
                 for link in list.iter(&self.links) {
                     if link.index >= index {
+                        continue;
+                    }
+                    if GROUPS && link.kind.is_group() {
+                        let (seen, _) = members_at(&self.groups, &self.members, link, index);
+                        queue.extend(seen.iter().map(|member| member.node));
                         continue;
                     }
                     queue.push(link.node);
@@ -411,6 +1033,62 @@ impl AliasingState {
         env: &mut Environment,
         should_record_errors: bool,
     ) {
+        if self.groups.is_empty() {
+            return self.mutate_in::<false>(
+                index,
+                start,
+                end,
+                transitive,
+                start_kind,
+                loc,
+                reason,
+                env,
+                should_record_errors,
+            );
+        }
+        #[cfg(debug_assertions)]
+        let same_reason = reason.clone();
+        self.mutate_in::<true>(
+            index,
+            start,
+            end,
+            transitive,
+            start_kind,
+            loc,
+            reason,
+            env,
+            should_record_errors,
+        );
+        // A walk comes to the same nodes whatever it writes: this one writes no range, no error.
+        #[cfg(debug_assertions)]
+        debug_assert!(self.is_as_without_groups(|state| {
+            state.mutate_in::<false>(
+                index,
+                start,
+                None,
+                transitive,
+                start_kind,
+                loc,
+                same_reason,
+                env,
+                false,
+            )
+        }));
+    }
+
+    /// With `GROUPS`, a list can have the link of a group: see [`Cursor`]. Else none is read.
+    fn mutate_in<const GROUPS: bool>(
+        &mut self,
+        index: u32,
+        start: IdentifierId,
+        end: Option<EvaluationOrder>,
+        transitive: bool,
+        start_kind: MutationKind,
+        loc: Option<SourceLocation>,
+        reason: Option<MutationReason>,
+        env: &mut Environment,
+        should_record_errors: bool,
+    ) {
         let Some(start) = self.at(start) else {
             return;
         };
@@ -422,8 +1100,17 @@ impl AliasingState {
             direction: Direction::Backwards,
             kind: start_kind,
         });
+        if GROUPS {
+            self.cursors.clear();
+        }
 
-        while let Some(entry) = queue.pop() {
+        while let Some(mut entry) = queue.pop() {
+            if GROUPS && entry.direction == Direction::Members {
+                match self.next_member(&mut queue, entry) {
+                    Some(member) => entry = member,
+                    None => continue,
+                }
+            }
             let arrival = self.arrival(entry.kind);
             let conditional_arrival = self.arrival(MutationKind::Conditional);
             let node = &mut self.nodes[entry.place as usize];
@@ -431,6 +1118,10 @@ impl AliasingState {
                 continue;
             }
             node.arrival = arrival;
+            #[cfg(debug_assertions)]
+            if let Some(visits) = &mut self.visits {
+                visits.push(entry);
+            }
 
             if node.mutation_reason.is_none() {
                 node.mutation_reason = reason.clone();
@@ -476,16 +1167,43 @@ impl AliasingState {
             } = *node;
             // A node that the walk has come to with the kind is passed over when its turn comes.
             let nodes = &self.nodes;
-            let mut push = |entry: QueueEntry, arrival: u32| {
+            let push = |queue: &mut Vec<QueueEntry>, entry: QueueEntry, arrival: u32| {
                 if nodes[entry.place as usize].arrival < arrival {
                     queue.push(entry);
                 }
+            };
+            // The members that the link of a group is in the place of, where the entries of its
+            // links would be. Gives whether the walk sees each link: the node has none to itself.
+            let (groups, members, cursors) = (&self.groups, &self.members, &mut self.cursors);
+            let mut push_members = |queue: &mut Vec<QueueEntry>, link: &Link| {
+                let (seen, others) = members_at(groups, members, link, index);
+                if !seen.is_empty() {
+                    queue.push(QueueEntry {
+                        place: cursors.len() as u32,
+                        transitive: entry.transitive,
+                        direction: Direction::Members,
+                        kind: entry.kind,
+                    });
+                    cursors.push(Cursor {
+                        group: link.node,
+                        kind: link.kind,
+                        left: seen.len() as u32,
+                    });
+                }
+                others.iter().all(|member| member.node == entry.place)
             };
 
             // Forward edges: Capture a -> b, Alias a -> b: mutate(a) => mutate(b)
             for edge in edges.iter(&self.links) {
                 if edge.index >= index {
                     break;
+                }
+                if GROUPS && edge.kind.is_group() {
+                    // The first link that the walk does not see ends the list.
+                    if !push_members(&mut queue, edge) {
+                        break;
+                    }
+                    continue;
                 }
                 // MaybeAlias edges downgrade to conditional mutation
                 let (kind, arrival) = if edge.kind == EdgeKind::MaybeAlias {
@@ -494,6 +1212,7 @@ impl AliasingState {
                     (entry.kind, arrival)
                 };
                 push(
+                    &mut queue,
                     QueueEntry {
                         place: edge.node,
                         transitive: entry.transitive,
@@ -509,6 +1228,7 @@ impl AliasingState {
                     continue;
                 }
                 push(
+                    &mut queue,
                     QueueEntry {
                         place: alias.node,
                         transitive: true,
@@ -526,6 +1246,7 @@ impl AliasingState {
                         continue;
                     }
                     push(
+                        &mut queue,
                         QueueEntry {
                             place: alias.node,
                             transitive: entry.transitive,
@@ -540,7 +1261,12 @@ impl AliasingState {
                     if alias.index >= index {
                         continue;
                     }
+                    if GROUPS && alias.kind.is_group() {
+                        push_members(&mut queue, alias);
+                        continue;
+                    }
                     push(
+                        &mut queue,
                         QueueEntry {
                             place: alias.node,
                             transitive: entry.transitive,
@@ -558,7 +1284,12 @@ impl AliasingState {
                     if capture.index >= index {
                         continue;
                     }
+                    if GROUPS && capture.kind.is_group() {
+                        push_members(&mut queue, capture);
+                        continue;
+                    }
                     push(
+                        &mut queue,
                         QueueEntry {
                             place: capture.node,
                             transitive: entry.transitive,
@@ -572,6 +1303,90 @@ impl AliasingState {
         }
         self.queue = queue;
     }
+
+    /// The entry of the last member that the cursor at `at` has yet to give and that the walk has
+    /// not come to with the kind of that entry. The cursor goes back on the stack, below that
+    /// entry, if it has more to give.
+    fn next_member(&mut self, queue: &mut Vec<QueueEntry>, at: QueueEntry) -> Option<QueueEntry> {
+        let cursor = &mut self.cursors[at.place as usize];
+        let group = &self.groups[cursor.group as usize];
+        let is_definite = at.kind == MutationKind::Definite;
+        // Which `Arrived` of the group: one for each kind that a walk comes to the members with.
+        let (members, which, direction) = match cursor.kind {
+            EdgeKind::DestinationsOfMutable => (
+                group.destinations,
+                usize::from(is_definite),
+                Direction::Forwards,
+            ),
+            EdgeKind::DestinationsOfContext => (group.destinations, 0, Direction::Forwards),
+            EdgeKind::MutableSources => (
+                group.mutable_sources,
+                2 + usize::from(is_definite),
+                Direction::Backwards,
+            ),
+            EdgeKind::ContextSources => (group.context_sources, 4, Direction::Backwards),
+            _ => (group.sources, 5, Direction::Backwards),
+        };
+        let arrived = &mut self.arrived[cursor.group as usize * Arrived::PER_GROUP + which];
+        if arrived.walk != self.walks {
+            arrived.walk = self.walks;
+            arrived.left.clear();
+            arrived.left.extend(0..=members.len);
+        }
+        let members = &self.members[members.start as usize..][..members.len as usize];
+        loop {
+            let left = arrived.left(cursor.left);
+            cursor.left = left.checked_sub(1)?;
+            let member = members[cursor.left as usize];
+            // As the link that this is in the place of: a `MaybeAlias` does not keep the kind.
+            let kind = match cursor.kind {
+                EdgeKind::MutableSources => at.kind,
+                EdgeKind::DestinationsOfMutable if member.is_mutable => at.kind,
+                _ => MutationKind::Conditional,
+            };
+            // `Self::arrival` of the kind.
+            if self.nodes[member.node as usize].arrival >= (self.walks << 2 | kind as u32) {
+                arrived.left[left as usize] = left - 1;
+                continue;
+            }
+            if cursor.left > 0 {
+                queue.push(at);
+            }
+            return Some(QueueEntry {
+                place: member.node,
+                transitive: at.transitive,
+                direction,
+                kind,
+            });
+        }
+    }
+}
+
+/// The members that `link`, which is of a group, is in the place of links to or from: those whose
+/// link a walk at `index` sees, and the others.
+fn members_at<'a>(
+    groups: &[Group],
+    members: &'a [Member],
+    link: &Link,
+    index: u32,
+) -> (&'a [Member], &'a [Member]) {
+    let group = &groups[link.node as usize];
+    let (of_link, is_in_order) = match link.kind {
+        EdgeKind::DestinationsOfMutable | EdgeKind::DestinationsOfContext => {
+            (group.destinations, !group.by_source)
+        }
+        EdgeKind::MutableSources => (group.mutable_sources, group.by_source),
+        EdgeKind::ContextSources => (group.context_sources, group.by_source),
+        _ => (group.sources, group.by_source),
+    };
+    let all = &members[of_link.start as usize..][..of_link.len as usize];
+    // Where the links are not in the order of these members, they follow one another, and the walk
+    // sees all of them or the first is past its index.
+    let seen = match is_in_order {
+        true => all.partition_point(|member| member.index < index),
+        false => all.len(),
+    };
+    all.split_at(seen)
 }
 
 /// The legacy effect of each place of the instruction at hand.
@@ -612,6 +1427,24 @@ fn start_range_at(ident: &mut Identifier, eval_order: EvaluationOrder) {
         ident.mutable_range.end =
             EvaluationOrder((eval_order.0 + 1).max(ident.mutable_range.end.0));
     }
+}
+
+/// `BUN_REACT_COMPILER_GROUP_RUNS=2`: a function has each group that it can have, for the tests
+/// of the compiler to go through them, and a number that no run is as long as: it has none. The
+/// builds that read it make each walk of a group without it too, and compare.
+#[cfg(debug_assertions)]
+#[allow(clippy::disallowed_methods)]
+fn shortest_run_of_a_test() -> Option<usize> {
+    static SHORTEST_RUN: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    *SHORTEST_RUN.get_or_init(|| {
+        let runs = std::env::var_os("BUN_REACT_COMPILER_GROUP_RUNS")?;
+        runs.to_str()?.parse().ok()
+    })
+}
+#[cfg(not(debug_assertions))]
+#[inline(always)]
+fn shortest_run_of_a_test() -> Option<usize> {
+    None
 }
 
 // =============================================================================
@@ -873,6 +1706,15 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                 }
             }
         }
+    }
+
+    // Not in upstream: see `Group`. Each node of a group has a long list with the other nodes.
+    let shortest_run = shortest_run_of_a_test();
+    let is_with_groups = shortest_run.is_some()
+        || (state.long_lists.len() >= Group::SHORTEST_RUN * (Group::SHORTEST_RUN - 1)
+            && state.has_list_of(Group::SHORTEST_RUN - 1));
+    if is_with_groups {
+        state.group_operands(shortest_run.unwrap_or(Group::SHORTEST_RUN));
     }
 
     // Process mutations

@@ -22,8 +22,8 @@
 // [bound-convention] — FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET. The shared function is
 //   NEVER called directly; it is wrapped per use-site in
 //   `JSC::JSBoundFunction::create(vm, global, target, jsUndefined(), {contextCell}, ...)`
-//   and STORED ON an object we do not control (the native source handle, the JSSink
-//   controller). `boundFunctionCall` PREPENDS the bound args, so the target receives
+//   and STORED ON an object we do not control (the native source handle).
+//   `boundFunctionCall` PREPENDS the bound args, so the target receives
 //        handler(contextCell, ...callArgs)              // context at argument(0)
 //   — the OPPOSITE position.
 //
@@ -76,6 +76,7 @@ namespace WebCore {
 //   Tee: context = the JSStreamTeeState, except onByteTeeReaderClosedRejected whose context
 //     is an InternalFieldTuple{teeState, thisReader}.
 //   The two *Microtask entries are the tee chunk-steps "queue a microtask" jobs.
+//   onTextDecodeCancelDeferred: context = an InternalFieldTuple{source reader, result promise}.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V) \
     V(onFromIterablePullFulfilled)                             \
     V(onFromIterableCancelFulfilled)                           \
@@ -83,21 +84,27 @@ namespace WebCore {
     V(onDefaultTeeReaderClosedRejected)                        \
     V(onByteTeeReadChunkMicrotask)                             \
     V(onByteTeeReadIntoChunkMicrotask)                         \
-    V(onByteTeeReaderClosedRejected)
+    V(onByteTeeReaderClosedRejected)                           \
+    V(onTeeCancelDeferred)                                     \
+    V(onTextDecodeCancelDeferred)
+
+// owner: JSReadRequest.cpp. context = the JSReadRequest / JSReadIntoRequest whose steps run again.
+#define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_READ_REQUEST(V) \
+    V(onReadRequestCloseStepsDeferred)                        \
+    V(onReadRequestErrorStepsDeferred)                        \
+    V(onReadIntoRequestCloseStepsDeferred)
 
 // owner: BunAsyncIterableSource.cpp. context = the JSAsyncIteratorSourceOperation, EXCEPT
-// onAsyncIterableSourceErrorRethrow / onAsyncIterableSourceErrorSwallowed, whose context is
-// an InternalFieldTuple{op, originalError} (registered on iter.throw()'s settlement), and
-// onAsyncIterableSourceCancelRejected, whose context is the reason cancel() threw into the iterator.
+// onAsyncIterableSourceErrorRethrow, whose context is
+// an InternalFieldTuple{op, originalError} (registered on the error tail's iter.return() settlement).
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERABLE_SOURCE(V) \
     V(onAsyncIterableSourceNextFulfilled)                              \
+    V(onAsyncIterableSourceNextRejected)                               \
     V(onAsyncIterableSourceFlushFulfilled)                             \
     V(onAsyncIterableSourceErrored)                                    \
     V(onAsyncIterableSourceEndFulfilled)                               \
     V(onAsyncIterableSourceCleanupSettled)                             \
-    V(onAsyncIterableSourceErrorRethrow)                               \
-    V(onAsyncIterableSourceErrorSwallowed)                             \
-    V(onAsyncIterableSourceCancelRejected)
+    V(onAsyncIterableSourceErrorRethrow)
 
 // owner: JSReadableStreamAsyncIterator.cpp. context = the JSReadableStreamAsyncIterator,
 // EXCEPT onAsyncIteratorReturnAfterOngoingSettled and onAsyncIteratorCancelFulfilled, whose
@@ -235,6 +242,7 @@ namespace WebCore {
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_DEFAULT_CONTROLLER(V) \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_BYTE_CONTROLLER(V)    \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V)         \
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_READ_REQUEST(V)          \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERATOR(V)        \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_ASYNC_ITERABLE_SOURCE(V) \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_PIPE(V)                  \

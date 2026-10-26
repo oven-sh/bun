@@ -28,14 +28,14 @@ const options = {
   },
 };
 
-const { promise, resolve, reject } = Promise.withResolvers();
+const { promise, resolve, reject } = Promise.withResolvers<Buffer[]>();
 
 // Create the request
 const req = http.request(options, res => {
   if (res.statusCode !== 200) {
     reject(new Error("Body should be chunked"));
   }
-  const chunks = [];
+  const chunks: Buffer[] = [];
   // Collect the response data
   res.on("data", chunk => {
     chunks.push(chunk);

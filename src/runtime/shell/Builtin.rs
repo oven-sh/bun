@@ -17,7 +17,7 @@ use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::Yield;
 
-pub struct Builtin {
+pub(crate) struct Builtin {
     pub(crate) kind: Kind,
     /// argv[1..] as NUL-terminated strings (argv[0] is the builtin name).
     /// Points into the Cmd's `args` storage.
@@ -78,7 +78,7 @@ macro_rules! shell_builtins {
         pub enum Kind { $( $UV, )* $( $IV, )* $( $BV, )* }
 
         /// Per-builtin state.
-        pub enum Impl {
+        pub(crate) enum Impl {
             $( $UV, )*
             $( $IV(crate::shell::builtins::$i_mod::$IT), )*
             // Heavy builtins boxed to keep `Node` small.
@@ -140,7 +140,7 @@ macro_rules! shell_builtins {
             }
 
             /// Hoisted dispatch: start the builtin's state machine.
-            pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+            pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
                 // Match on a copied Kind, then
                 // call the per-builtin `start(interp, cmd)`. Each builtin reaches its
                 // own state via `Builtin::of_mut(interp, cmd).impl_`.
@@ -152,7 +152,7 @@ macro_rules! shell_builtins {
             }
 
             /// Hoisted dispatch for the `onIOWriterChunk` callback.
-            pub fn on_io_writer_chunk(
+            pub(crate) fn on_io_writer_chunk(
                 interp: &Interpreter,
                 cmd: NodeId,
                 written: usize,
@@ -219,7 +219,7 @@ impl Kind {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum IoKind {
+pub(crate) enum IoKind {
     Stdout,
     Stderr,
 }
@@ -237,7 +237,7 @@ pub enum IoKind {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// One output stream of a builtin (stdout or stderr).
-pub enum BuiltinIO {
+pub(crate) enum BuiltinIO {
     /// Async writer (real fd). `needs_io()` returns Some.
     Fd(OutFd),
     /// Captured pipe — writes go to the shell env's `_buffered_{stdout,stderr}`.
@@ -255,16 +255,16 @@ pub enum BuiltinIO {
 }
 
 /// Input stream of a builtin.
-pub enum BuiltinInput {
+pub(crate) enum BuiltinInput {
     Fd(Arc<IOReader>),
-    ArrayBuf { buf: PinnedArrayBuffer, i: u32 },
+    ArrayBuf { buf: PinnedArrayBuffer },
     Blob(Arc<BuiltinBlob>),
     Ignore,
 }
 
 /// Refcounted wrapper around a `webcore.Blob`. `Arc` provides the refcount;
 /// `Drop` runs `Blob::deinit`.
-pub struct BuiltinBlob {
+pub(crate) struct BuiltinBlob {
     pub(crate) blob: crate::webcore::Blob,
 }
 // `BuiltinBlob` is auto-`Send + Sync`: its sole field is `webcore::Blob`,
@@ -350,11 +350,10 @@ impl BuiltinIO {
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
-                // `len = buf.len` stays usize so `i + len > byte_len` is
-                // computed at usize width and cannot overflow; only the
-                // stored cursor is u32.
+                // JS can resize the buffer between chunks.
+                let dst_all = arraybuf.live_slice_mut();
                 let idx = *i as usize;
-                let total = arraybuf.byte_len;
+                let total = dst_all.len();
                 if idx >= total {
                     return Err(bun_sys::Error::from_code(
                         bun_sys::E::ENOSPC,
@@ -362,7 +361,7 @@ impl BuiltinIO {
                     ));
                 }
                 let write_len = (total - idx).min(buf.len());
-                let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
+                let dst = &mut dst_all[idx..idx + write_len];
                 dst.copy_from_slice(&buf[..write_len]);
                 *i = i.saturating_add(write_len as u32);
                 Ok(write_len)
@@ -603,34 +602,7 @@ impl Builtin {
                                 ),
                             ));
                         }
-                        Ok(f) => {
-                            #[cfg(windows)]
-                            {
-                                use bun_sys::FdExt as _;
-                                match f.make_lib_uv_owned_for_syscall(
-                                    bun_sys::Tag::open,
-                                    bun_sys::ErrorCase::CloseOnFail,
-                                ) {
-                                    Err(e) => {
-                                        let sys = e.to_shell_system_error();
-                                        return Some(Self::cmd_write_failing_error(
-                                            interp,
-                                            cmd,
-                                            format_args!(
-                                                "bun: {}: {}",
-                                                bstr::BStr::new(sys.message.byte_slice()),
-                                                bstr::BStr::new(path.as_bytes()),
-                                            ),
-                                        ));
-                                    }
-                                    Ok(f2) => f2,
-                                }
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                f
-                            }
-                        }
+                        Ok(f) => f,
                     }
                 };
 
@@ -677,13 +649,9 @@ impl Builtin {
             }
             Some(ast::Redirect::JsBuf(jsbuf)) => {
                 // ── JS object redirect (`> ${arraybuf}` / `> ${blob}`).
-                let idx = jsbuf.idx as usize;
                 // Safe accessor — single `unsafe` deref lives in
                 // `Interpreter::global_this_ref`.
-                let Some(global) = interp
-                    .global_this_ref()
-                    .filter(|_| idx < interp.jsobjs.len())
-                else {
+                let Some(global) = interp.global_this_ref() else {
                     interp.throw(crate::shell::ShellErr::Custom(
                         b"Invalid JS object reference in shell"
                             .to_vec()
@@ -691,7 +659,9 @@ impl Builtin {
                     ));
                     return Some(Yield::Failed(cmd));
                 };
-                let jsval = interp.jsobjs[idx];
+                let Ok(jsval) = interp.jsobj(global, jsbuf.idx) else {
+                    return Some(Yield::Failed(cmd));
+                };
 
                 if jsval.js_type().is_array_buffer_like() {
                     // Each slot gets its own pin + GC root; `None` has thrown OOM.
@@ -707,7 +677,7 @@ impl Builtin {
                         let Some(buf) = root() else {
                             return Some(Yield::Failed(cmd));
                         };
-                        me.stdin = BuiltinInput::ArrayBuf { buf, i: 0 };
+                        me.stdin = BuiltinInput::ArrayBuf { buf };
                     }
                     if redirect.stdout() {
                         let Some(buf) = root() else {
@@ -910,7 +880,7 @@ impl Builtin {
 
     /// Shell exec env of the owning Cmd.
     #[inline]
-    pub fn shell<'a>(
+    pub(crate) fn shell<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,
     ) -> &'a crate::shell::interpreter::ShellExecEnv {

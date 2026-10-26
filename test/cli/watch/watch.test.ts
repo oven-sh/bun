@@ -3,9 +3,11 @@ import { spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   realpathSync,
   renameSync,
@@ -13,7 +15,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 let watchee: Subprocess;
 
@@ -57,7 +59,7 @@ for (const dir of ["dir", "©️"]) {
         stdin: "ignore",
       });
 
-      for await (const line of watchee.stdout) {
+      for await (const line of watchee.stdout as ReadableStream<Uint8Array>) {
         if (i == 10) break;
         var str = new TextDecoder().decode(line);
         expect(str).toContain(`${i} ${cwd}`);
@@ -78,7 +80,7 @@ afterEach(async () => {
   if (watchee) {
     watchee.kill("SIGKILL");
     await watchee.exited;
-    watchee = undefined;
+    watchee = undefined!;
   }
 });
 
@@ -115,7 +117,7 @@ setInterval(() => {}, 1000);
       // buffer, so no start can be missed. Lines are reassembled across chunk
       // boundaries before matching.
       let buffered = "";
-      for await (const chunk of watchee.stdout) {
+      for await (const chunk of watchee.stdout as ReadableStream<Uint8Array>) {
         buffered += decoder.decode(chunk);
         let newline;
         while ((newline = buffered.indexOf("\n")) !== -1) {
@@ -196,29 +198,59 @@ for (;;) spawnThreadsForTesting(1000, fd, 2);
   30000,
 );
 
-// Watcher::start() must propagate a failed thread spawn as an Err through its
-// Result return instead of aborting inside start() with `.expect()`. An
-// LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux
-// immediately before start()) and fails the very next pthread_create.
+// The two tests below build an LD_PRELOAD shim around the libc calls that Watcher::init() and
+// start() make on Linux. NO_CORE_C disables core files, which CI's runner would flag as a crash.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+const NO_CORE_C = /* c */ `
+#include <sys/resource.h>
+__attribute__((constructor)) static void no_core(void) {
+  struct rlimit rl = {0, 0};
+  setrlimit(RLIMIT_CORE, &rl);
+}
+`;
+
+async function compileShim(dir: string): Promise<string> {
+  const shimPath = join(dir, "shim.so");
+  await using ccProc = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(dir, "shim.c"), "-ldl", "-lpthread"],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+  return shimPath;
+}
+
+async function runWatcheeWithShim(dir: string, shimPath: string, args: string[]) {
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    // --debug-crash-handler-use-trace-string skips the debug build's slow
+    // backtrace symbolication so an aborting child exits promptly.
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", ...args],
+    cwd: dir,
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+
+// Watcher::start() must propagate a failed thread spawn as an Err through its
+// Result return instead of aborting inside start() with `.expect()`. The shim
+// arms on inotify_init1 (which Watcher::init() calls on Linux immediately
+// before start()) and fails the very next pthread_create.
 it.skipIf(!isLinux || !cc)("propagates FileWatcher thread spawn failure instead of panicking in start()", async () => {
   const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
-#include <sys/resource.h>
-
+${NO_CORE_C}
 static int (*real_inotify_init1)(int);
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
 static volatile int armed = 0;
-
-/* The child is expected to abort; suppress the core file so CI's runner does
- * not flag it as a crash. RLIMIT_CORE survives execvp. */
-__attribute__((constructor)) static void no_core(void) {
-  struct rlimit rl = {0, 0};
-  setrlimit(RLIMIT_CORE, &rl);
-}
 
 int inotify_init1(int flags) {
   if (!real_inotify_init1) real_inotify_init1 = dlsym(RTLD_NEXT, "inotify_init1");
@@ -240,27 +272,8 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
     "shim.c": SHIM_C,
     "watchee.js": "console.log('unreachable');\n",
   });
-  const shimPath = join(String(dir), "shim.so");
-  await using ccProc = Bun.spawn({
-    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
-
-  const existing = bunEnv.LD_PRELOAD;
-  await using proc = Bun.spawn({
-    // --debug-crash-handler-use-trace-string skips the debug build's slow
-    // backtrace symbolication so the child exits promptly.
-    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
-    cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const shimPath = await compileShim(String(dir));
+  const { stdout, stderr, exitCode } = await runWatcheeWithShim(String(dir), shimPath, ["--watch", "watchee.js"]);
 
   // The .expect("spawn FileWatcher thread") panic inside start() must be gone;
   // the error now reaches the caller, which reports it by errno name.
@@ -268,6 +281,94 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(stderr).toContain("Failed to start File Watcher: EAGAIN");
   expect(stdout).not.toContain("unreachable");
   expect(exitCode).not.toBe(0);
+});
+
+// EMFILE means the user is out of inotify instances or the process is out of file descriptors.
+it.skipIf(!isLinux || !cc)("prints an error and exits with code 1 when inotify_init1 fails", async () => {
+  using dir = tempDir("watch-init-fail", {
+    "shim.c": /* c */ `
+#include <errno.h>
+${NO_CORE_C}
+int inotify_init1(int flags) {
+  (void)flags;
+  errno = EMFILE;
+  return -1;
+}
+`,
+    "watchee.js": "console.log('unreachable');\n",
+  });
+  const shimPath = await compileShim(String(dir));
+  expect(await runWatcheeWithShim(String(dir), shimPath, ["--watch", "watchee.js"])).toEqual({
+    stdout: "",
+    stderr: "error: Failed to enable File Watcher: EMFILE\n",
+    exitCode: 1,
+    signalCode: null,
+  });
+});
+
+it.skipIf(isWindows)("--watch reports an error when its executable was deleted", async () => {
+  using dir = tempDir("watch-exe-removed", {
+    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  const exe = join(String(dir), basename(bunExe()));
+  copyFileSync(bunExe(), exe);
+  const proc = spawn({
+    // The flag skips a debug build's slow crash symbolication.
+    cmd: [exe, "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
+    cwd: join(String(dir), "app"),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  watchee = proc;
+  const stderr = proc.stderr.text();
+
+  const { waitFor, release } = stdoutWaiter(proc);
+  await waitFor("iter first");
+  release();
+
+  rmSync(exe);
+  await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
+
+  expect(await stderr).toContain(`error: Failed to reload "${exe}`);
+  expect(await stderr).toContain(`ENOENT (execve)`);
+  expect(await proc.exited).toBe(1);
+});
+
+// On Windows, the first --watch process acts as a manager that restarts the script in a child process on every change.
+it.skipIf(!isWindows)("--watch reports an error when its executable was renamed", async () => {
+  // Windows can keep the renamed executable mapped briefly after the manager exits, so ignore a failed delete.
+  const dir = tempDir("watch-exe-renamed", {
+    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  try {
+    const exe = join(String(dir), basename(bunExe()));
+    copyFileSync(bunExe(), exe);
+    await using proc = spawn({
+      cmd: [exe, "--watch", "entry.js"],
+      cwd: join(String(dir), "app"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stderr = proc.stderr.text();
+
+    const { waitFor, release } = stdoutWaiter(proc);
+    await waitFor("iter first");
+    release();
+
+    renameSync(exe, exe + ".renamed");
+    await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
+
+    expect((await stderr).replaceAll("\r\n", "\n")).toBe(`error: Failed to start "${exe}": ENOENT (CreateProcessW)\n`);
+    expect(await proc.exited).toBe(1);
+  } finally {
+    try {
+      rmSync(String(dir), { recursive: true, force: true });
+    } catch {}
+  }
 });
 
 // A script that registers a SIGTERM handler and then spins in synchronous
@@ -369,7 +470,7 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
     `,
   });
 
-  const env = { ...bunEnv, FORCE_COLOR: "1" };
+  const env: typeof bunEnv = { ...bunEnv, FORCE_COLOR: "1" };
   delete env.NO_COLOR;
   // stderr is piped, not inherited: the clear sequence below would otherwise
   // wipe the terminal running the test suite.
@@ -476,27 +577,35 @@ it.skipIf(isWindows)(
   30000,
 );
 
-// Paths of the files and directories a process holds open. Linux reads
-// /proc, macOS asks lsof (the kernel has no per-process fd listing there).
-function openPaths(pid: number): string[] {
+// The files and directories a process holds open, as (fd, path) pairs. Linux
+// reads /proc, macOS asks lsof (the kernel has no per-process fd listing
+// there). lsof also lists the cwd, the executable and mapped libraries under
+// the fd names "cwd", "txt" and "mem"; a numbered fd is a real descriptor.
+function openFds(pid: number): { fd: string; path: string }[] {
   if (isLinux) {
     const fdDir = `/proc/${pid}/fd`;
     return readdirSync(fdDir).flatMap(fd => {
       // The process is live, so an fd listed a moment ago can be closed by
       // the time it is read. A closed fd is not a held path.
       try {
-        return [readlinkSync(join(fdDir, fd))];
+        return [{ fd, path: readlinkSync(join(fdDir, fd)) }];
       } catch {
         return [];
       }
     });
   }
-  const out = Bun.spawnSync({ cmd: ["lsof", "-Fn", "-p", String(pid)], stdout: "pipe", stderr: "ignore" });
-  return out.stdout
-    .toString()
-    .split("\n")
-    .filter(line => line.startsWith("n/"))
-    .map(line => line.slice(1));
+  const out = Bun.spawnSync({ cmd: ["lsof", "-Ffn", "-p", String(pid)], stdout: "pipe", stderr: "ignore" });
+  const fds: { fd: string; path: string }[] = [];
+  let fd = "";
+  for (const line of out.stdout.toString().split("\n")) {
+    if (line.startsWith("f")) fd = line.slice(1);
+    else if (line.startsWith("n/")) fds.push({ fd, path: line.slice(1) });
+  }
+  return fds;
+}
+
+function openPaths(pid: number): string[] {
+  return openFds(pid).map(e => e.path);
 }
 
 // Watch mode used to make the resolver keep every directory and symlink
@@ -562,6 +671,96 @@ test("ready", () => console.log("ready", x, y));
     },
   );
 }
+
+// A --watch reload is an execve of the same binary. Linux marks every fd
+// close-on-exec with close_range() first, macOS has no such sweep, so an fd
+// the watcher opened without O_CLOEXEC survives into the new image and the
+// watcher opens another one: one leaked directory fd per reload (#42700).
+const watchCloexecFiles = {
+  "dep.ts": `export const x = 1;`,
+  "main.ts": `import { x } from "./dep";\nconsole.log("started", x);\nsetInterval(() => {}, 1e6);\n`,
+};
+
+// The numbered fds of `pid` under `cwd`, keyed by the path relative to it
+// ("/" is the directory itself). The watcher thread registers the entrypoint,
+// its import and their directory after the script starts, so this polls until
+// all three are open.
+async function watchedFds(pid: number, cwd: string): Promise<Map<string, string[]>> {
+  for (;;) {
+    const watched = new Map<string, string[]>();
+    for (const { fd, path } of openFds(pid)) {
+      if (!/^\d+$/.test(fd)) continue;
+      if (path !== cwd && !path.startsWith(cwd + "/")) continue;
+      const rel = path.slice(cwd.length) || "/";
+      watched.set(rel, [...(watched.get(rel) ?? []), fd]);
+    }
+    if (watched.size >= 3) return watched;
+    await Bun.sleep(10);
+  }
+}
+
+// The leak as the issue reports it: the count of fds on the project directory
+// after two reloads must equal the count after the first start.
+it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
+  "--watch reload does not leak the watched directory fd",
+  async () => {
+    using dir = tempDir("watch-cloexec-reload", watchCloexecFiles);
+    const cwd = realpathSync(String(dir));
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const out = stdoutWaiter(watchee);
+    await out.waitFor("started 1");
+    const before = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
+
+    for (let i = 2; i <= 3; i++) {
+      await Bun.write(join(cwd, "dep.ts"), `export const x = ${i};`);
+      await out.waitFor(`started ${i}`);
+    }
+    const after = (await watchedFds(watchee.pid, cwd)).get("/")!.length;
+    out.release();
+
+    expect(before).toBe(1);
+    expect(after).toBe(before);
+  },
+);
+
+// The flag itself. Linux hides the leak behind its close_range() sweep, so
+// this reads O_CLOEXEC from /proc for every fd the watcher holds instead of
+// counting fds across reloads.
+it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXEC", async () => {
+  using dir = tempDir("watch-cloexec", watchCloexecFiles);
+  const cwd = realpathSync(String(dir));
+  watchee = spawn({
+    cwd,
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const out = stdoutWaiter(watchee);
+  await out.waitFor("started 1");
+  const watched = await watchedFds(watchee.pid, cwd);
+  out.release();
+
+  const O_CLOEXEC = 0o2000000;
+  const flagsOf = (fds: string[]) =>
+    fds.map(fd => {
+      const fdinfo = readFileSync(`/proc/${watchee.pid}/fdinfo/${fd}`, "utf8");
+      return parseInt(/flags:\s*(\d+)/.exec(fdinfo)![1], 8) & O_CLOEXEC;
+    });
+  expect(Object.fromEntries([...watched].sort().map(([rel, fds]) => [rel, flagsOf(fds)]))).toEqual({
+    "/": [O_CLOEXEC],
+    "/dep.ts": [O_CLOEXEC],
+    "/main.ts": [O_CLOEXEC],
+  });
+});
 
 // A --watch start that fails before the VM exists (bunfig.toml does not parse,
 // the entry file is missing) has no file watcher, so it has to wait for the

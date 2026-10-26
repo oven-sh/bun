@@ -5,7 +5,7 @@
 # An entry does ONE thing: it removes the file from the run on every platform
 # the modifier matches. The runner parses the expectation kind (FAIL / SKIP /
 # CRASH / FLAKY / LEAK / TIMEOUT) but never reads it — see getRelevantTests in
-# scripts/runner.node.mjs. They are all the same thing, and there is no
+# scripts/runner.node.ts. They are all the same thing, and there is no
 # "run it and expect failure" mode.
 #
 # So: quarantining ONE broken case here silently deletes the whole file's
@@ -35,3 +35,8 @@
 # only hold on the distributing model. Passes on macOS and Windows.
 # (Verified still failing on every Linux lane, build 87834.)
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
+
+# `bun lint` is a command in canary builds only (IS_ENABLED in
+# src/runtime/cli/lint_command.rs), so nothing in this directory can run on a
+# release build. Remove when a release has `bun lint`.
+[ STABLE ] test/cli/lint/ [ SKIP ] # a release build has no `bun lint`

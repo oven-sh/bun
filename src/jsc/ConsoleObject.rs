@@ -884,15 +884,14 @@ impl<'a> TablePrinter<'a> {
         });
 
         // special case for Map: create the special "Key" column at index 1
+        // a Map's rows fill only "Key" and "Values", so "properties" adds no column
         if self.jstype.is_map() {
             columns.push(Column {
                 name: BunString::static_("Key"),
                 width: 1,
             });
-        }
-
-        // if the "properties" arg was provided, pre-populate the columns
-        if !self.properties.is_undefined() {
+        } else if !self.properties.is_undefined() {
+            // if the "properties" arg was provided, pre-populate the columns
             let mut properties_iter = jsc::JSArrayIterator::init(self.properties, global_object)?;
             while let Some(value) = properties_iter.next()? {
                 columns.push(Column {

@@ -7,7 +7,7 @@ mod intrinsic_operation;
 mod number_questions;
 mod written_operands;
 
-use bun_sema::bind::Parent;
+use bun_sema::bind::{Binding, Parent};
 use bun_sema::hir::{Call, ExprId, ExprKind, IdList};
 use smallvec::SmallVec;
 
@@ -131,7 +131,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(Resolved::Builtin(_) | Resolved::DynamicGlobal(_)) | None => {}
         }
         if let Some(text) = builtins.evaluated_text(call) {
-            return self.lower_evaluated_text_call(call, text, exit);
+            return self.lower_evaluated_text_call(call, text, exit, evaluation.tail);
         }
         if let Some(value) = self.try_lower_call(call, site) {
             return value;
@@ -141,13 +141,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut callee = self.lower_callee(site.callee, exit, expected);
         callee.function = self.leave_chain_if_nullish(site, callee.function, exit);
         let arguments = self.lower_arguments(site.args);
-        self.emit_call_expression(call, callee, arguments, evaluation.tail)
+        let tail = match self.file.makes_array_in_caller(site) {
+            true => Tail::No,
+            false => evaluation.tail,
+        };
+        self.emit_call_expression(call, callee, arguments, tail)
     }
 
-    pub(in crate::lower) fn lower_new(&mut self, expression: ExprId) -> ValueId {
+    pub(in crate::lower) fn lower_new(&mut self, expression: ExprId, tail: Tail<'_>) -> ValueId {
         let builtins = self.file.builtins;
         if let Some(text) = builtins.evaluated_text(expression) {
-            return self.lower_evaluated_text_call(expression, text, None);
+            return self.lower_evaluated_text_call(expression, text, None, tail);
         }
         let site = call_site(self.file, expression);
         if let Some(value) = self.try_lower_new(expression, site) {
@@ -156,6 +160,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let function = self.lower_expression(site.callee);
         let callee = Callee::without_key(function, None, self.file.find_callee_name(site.callee));
         let arguments = self.lower_arguments(site.args);
+        if self.file.is_tail_call(expression, tail) {
+            return self.emit_call_expression(expression, callee, arguments, tail);
+        }
         self.file
             .record_construction_by_library(expression, site.callee);
         let value = self.emit_new_expression(expression, callee, arguments);
@@ -347,10 +354,10 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
-    // A native error constructor does the same with and without `new`, and Bun's transpiler prints the call, so a stack trace shows the position of a call.
+    // A native error constructor and `Function` do the same with and without `new`, and Bun's transpiler prints the call. So a stack trace shows the position of a call, and in tail position the caller leaves the stack.
     fn is_printed_as_call(&self, callee: ExprId) -> bool {
         let inner = self.skip_type_syntax(callee);
-        if !matches!(self.hir[inner].kind, ExprKind::Ident(_)) {
+        if !self.is_free_name(inner) {
             return false;
         }
         matches!(
@@ -365,8 +372,33 @@ impl FileLowering<'_, '_, '_, '_> {
                     | BuiltinId::EvalError
                     | BuiltinId::URIError
                     | BuiltinId::AggregateError
+                    | BuiltinId::Function
             )
         )
+    }
+
+    fn is_tail_call(&self, construction: ExprId, tail: Tail<'_>) -> bool {
+        matches!(tail, Tail::Yes { .. })
+            && self.is_printed_as_call(call_site(self, construction).callee)
+    }
+
+    fn is_free_name(&self, expression: ExprId) -> bool {
+        matches!(self.hir[expression].kind, ExprKind::Ident(_))
+            && self.bound.binding(expression) == Binding::Free
+    }
+
+    // The bytecode of `Array()` and `Array(length)` makes the array without a call, so the caller stays on the stack.
+    fn makes_array_in_caller(&self, site: Call) -> bool {
+        let inner = self.skip_type_syntax(site.callee);
+        let is_array = matches!(
+            self.builtins.of_expr(inner),
+            Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) if path.id == BuiltinId::Array
+        );
+        let arguments: SmallVec<[ExprId; 4]> = self.hir.ids(site.args).collect();
+        is_array
+            && self.is_free_name(inner)
+            && arguments.len() <= 1
+            && !intrinsic::has_spread(self.hir, &arguments)
     }
 
     fn find_callee_by_signature(&mut self, call: ExprId, inner: ExprId) -> Option<BuiltinId> {

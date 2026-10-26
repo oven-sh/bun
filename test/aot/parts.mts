@@ -452,7 +452,7 @@ export const rows: Row[] = [
   ...["bun", "elysia", "express", "fastify", "hono", "node"].map(
     (name): Row => [`aot/servers/features-of-${name}`, 0, "./servers/one-server", "testServers", ["features", name]],
   ),
-  ...["bun", "elysia", "express", "fastify", "hono", "koa", "node"].map(
+  ...["bun", "elysia", "express", "fastify", "hono", "koa", "node", "tanstack", "typescript"].map(
     (name): Row => [`aot/servers/budgets-of-${name}`, 0, "./servers/one-server", "testServers", ["budgets", name]],
   ),
   [

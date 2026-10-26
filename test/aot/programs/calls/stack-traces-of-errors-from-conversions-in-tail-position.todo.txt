@@ -1,1 +1,0 @@
-Eight lines differ: where a function ends in a call of a built-in function and the conversion of an operand throws (Number(Symbol()), Object.keys(null), Math.max(Symbol(), 1), "a".concat(Symbol())), plain Bun drops the caller's frame from the error's stack trace as for any tail call, and the executable keeps it. The errors are the same.

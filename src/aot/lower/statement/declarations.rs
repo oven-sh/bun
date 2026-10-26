@@ -5,7 +5,7 @@ use bun_sema::hir::{
 };
 
 use crate::ir::generated::TypeSiteKind;
-use crate::lower::expression::{Evaluation, Tail};
+use crate::lower::expression::{Evaluation, Tail, TailCast};
 use crate::lower::member::PropertyName;
 use crate::lower::pattern::PatternOrigin;
 use crate::lower::{FileLowering, FunctionLowering, control, scope};
@@ -59,8 +59,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let binding = bound.initialized_binding(decl.pat);
                 let key = self.file.function_name_key(binding, name);
                 let is_returned = matches!(self.returned_declaration, Some((returned, _)) if returned == declaration);
-                let tail = match is_returned && control::allows_tail_call(self) {
-                    true => Tail::Yes { casts: None },
+                let is_tail = is_returned && control::allows_tail_call(self);
+                let is_annotated = decl.ty.is_some() && self.file.is_checked();
+                let annotation = (is_tail && is_annotated).then(|| TailCast {
+                    position: self
+                        .file
+                        .annotation_position(decl.ty, TypeSiteKind::Variable),
+                    outer: None,
+                });
+                let tail = match is_tail {
+                    true => Tail::Yes {
+                        casts: annotation.as_ref(),
+                    },
                     false => Tail::No,
                 };
                 let evaluation = Evaluation {

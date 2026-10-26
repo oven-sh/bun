@@ -184,7 +184,7 @@ test.concurrent(
   return n;
 }
 function forward(value: any) {
-  const taken = take(value); return taken;
+  const taken = take(value); return taken === null ? null : taken;
 }
 const values: any[] = [true, "text", () => 1, Symbol(), 1n, [], new Map(), new Set(), new Date(0), /x/];
 for (const value of values) forward(value);

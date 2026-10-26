@@ -3,6 +3,7 @@ use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, UnOp};
 use smallvec::{SmallVec, smallvec};
 
+use crate::ir::generated::LimitId;
 use crate::lower::FunctionLowering;
 
 // An operand of `+`, as Bun's transpiler prints it and JSC's parser reads it.
@@ -45,15 +46,16 @@ pub(super) enum SumOperator {
 
 pub(super) type SumOperators = SmallVec<[SumOperator; 8]>;
 
-// A sum in more parentheses than this counts as an operand nothing is known about.
-const MAX_DEPTH_OF_SUMS: u32 = 32;
-
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn classify_printed_operand(&mut self, operand: ExprId, depth: u32) -> PrintedOperand {
         let hir = self.file.hir;
         let printed = self.file.skip_unprinted_syntax(operand);
         match hir[printed].kind {
-            ExprKind::Binary { op: BinOp::Add, .. } if depth == MAX_DEPTH_OF_SUMS => {
+            // A sum in more parentheses than code can be nested counts as an operand nothing is known about.
+            ExprKind::Binary { op: BinOp::Add, .. }
+                if u64::from(depth) >= self.file.inputs.limits.get(LimitId::MaxNestingDepth)
+                    || self.file.queries.is_stack_low() =>
+            {
                 return PrintedOperand::Other;
             }
             ExprKind::Binary { op: BinOp::Add, .. } => {
@@ -143,7 +145,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> Option<SumOperators> {
         let is_sum = |&(op, _): &(BinOp, ExprId)| op == BinOp::Add;
         let is_added_to_target = is_sum(&spine[0]) && self.is_added_to_target(expression);
-        if !is_added_to_target && !spine.windows(2).any(|pair| pair.iter().all(is_sum)) {
+        let has_two_sums_in_a_row = spine
+            .iter()
+            .zip(spine.iter().skip(1))
+            .any(|(outer, inner)| is_sum(outer) && is_sum(inner));
+        if !is_added_to_target && !has_two_sums_in_a_row {
             return None;
         }
         let mut operators: SumOperators = smallvec![SumOperator::Separate; spine.len()];

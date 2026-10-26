@@ -258,14 +258,15 @@ describe.skipIf(!supported)("bun run --aot", () => {
       {
         "entry.ts": `
           import * as Self from "./entry.ts";
-          const seen: unknown[] = [(Self as any).__esModule];
+          const self: any = Self;
+          const seen: unknown[] = [self.__esModule];
           for (const value of [true, false, 1, undefined, "yes", null]) {
-            (Self as any).__esModule = value;
-            seen.push((Self as any).__esModule);
+            self.__esModule = value;
+            seen.push(self.__esModule);
           }
           console.log(seen.join(), "__esModule" in Self, Object.getOwnPropertyNames(Self).join());
-          console.log(require("./entry.ts") === Self, (Self as any).__esModule);
-          for (const change of [() => ((Self as any).a = 2), () => delete (Self as any).a, () => ((Self as any).nothing = 2)]) {
+          console.log(require("./entry.ts") === Self, self.__esModule);
+          for (const change of [() => (self.a = 2), () => delete self.a, () => (self.nothing = 2)]) {
             try {
               console.log(change());
             } catch (error: any) {
@@ -279,6 +280,33 @@ describe.skipIf(!supported)("bun run --aot", () => {
     );
     expect(stdout).toStartWith(",true,,true,,true, true a\ntrue true\nTypeError: ");
   });
+
+  test.concurrent(
+    "assigning to or deleting a member of `import * as` is a build error, as in bun build --compile",
+    async () => {
+      using dir = tempDir("run-aot", {
+        "entry.ts": [
+          `import * as Self from "./entry.ts";`,
+          `(Self as any).__esModule = true;`,
+          `(Self as any).a = 2;`,
+          `delete (Self as any).a;`,
+          `(Self as any).nothing = 2;`,
+          `console.log("ran");`,
+          `export let a = 1;`,
+        ].join("\n"),
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), true, "entry.ts", { builds: false });
+      expect(stdout).toBe("");
+      const errors = [...stderr.matchAll(/^error: (TS\d+): .*\r?\n +at .*entry\.ts:(\d+:\d+)\r?$/gm)];
+      expect(errors.map(([, code, place]) => `${code} at ${place}`)).toEqual([
+        "TS2540 at 2:15",
+        "TS2540 at 3:15",
+        "TS2704 at 4:22",
+        "TS2540 at 5:15",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test.concurrent("process.argv, process.execPath and Bun.main", async () => {
     const { stdout } = await expectSameAsBunRun(

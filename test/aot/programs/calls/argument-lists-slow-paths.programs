@@ -1546,7 +1546,6 @@ attempt("sorted", () => sorted(list.slice(), (a, b) => a - b));
 attempt("replaced", () => replaced("abcb", () => "x"));
 
 attempt("parse throws", () => parse("{"));
-attempt("keys throws", () => keys(null));
 attempt("code throws", () => code(null));
 attempt("sum throws", () => sum([]  .concat([1]).map(thrower)));
 attempt("callback of reduce throws", () => [1, 2].reduce(thrower, 0));

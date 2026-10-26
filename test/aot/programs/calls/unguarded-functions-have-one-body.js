@@ -1,8 +1,8 @@
 // A function that reads `arguments` is compiled into its general entry. Its body for direct calls is compiled as well only where a call may
 // test for a closure of it and enter that body: a value that is expected to hold such a closure and is only stored, handed on or returned
-// asks for nothing.
+// asks for nothing. Where every call is known to reach the function and nobody else gets hold of a closure of it, the body for direct calls is the only one.
 // IR= 1 sumOfAll String string="marker of sumOfAll"
-// IR= 2 sumTested String string="marker of sumTested"
+// IR= 1 sumTested String string="marker of sumTested"
 function makeSumOfAll(scale) {
     return function sumOfAll() {
         var total = 0;

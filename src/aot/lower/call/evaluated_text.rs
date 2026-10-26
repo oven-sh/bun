@@ -12,6 +12,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         call: ExprId,
         text: &EvaluatedText,
         exit: Option<BlockId>,
+        tail: Tail<'_>,
     ) -> ValueId {
         let hir = self.file.hir;
         let (ExprKind::Call(site) | ExprKind::New(site)) = hir[call].kind else {
@@ -29,7 +30,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let arguments = self.lower_arguments(site.args);
         let Some(function) = self.file.evaluated_function(call) else {
-            return self.emit_ordinary(call, is_construct, callee, arguments);
+            return self.emit_ordinary(call, is_construct, callee, arguments, tail);
         };
         let compiled = self.file.reference_function(FunctionKey::Source(function));
 
@@ -58,7 +59,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(join);
 
         self.continue_in(differs);
-        let ordinary = self.emit_ordinary(call, is_construct, other_callee, arguments);
+        let ordinary = self.emit_ordinary(call, is_construct, other_callee, arguments, Tail::No);
         self.builder.write_variable(result, ordinary);
         self.jump(join);
 
@@ -72,11 +73,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         is_construct: bool,
         callee: Callee,
         arguments: Arguments,
+        tail: Tail<'_>,
     ) -> ValueId {
-        if is_construct {
+        if is_construct && !self.file.is_tail_call(call, tail) {
             self.emit_new_expression(call, callee, arguments)
         } else {
-            self.emit_call_expression(call, callee, arguments, Tail::No)
+            self.emit_call_expression(call, callee, arguments, tail)
         }
     }
 }

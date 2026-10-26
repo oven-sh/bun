@@ -943,12 +943,16 @@ group("a member of Bun while Bun is in hands that nobody follows", () => {
     expect(await usesColor(text)).toBe(true);
   });
 
+  // What comes out of those hands may be Bun.
   test.each([
     ["what came back out of those hands", `console.log(typeof unknown(Bun).color);`],
-    ["another object", `console.log(unknown({ color: () => 1 }).color());`],
-    ["Bun, by a computed key", `console.log(typeof Bun[process.argv[9]]);`],
-  ])("is not used where its name is read off %s", async (_, text) => {
-    expect(await usesColor(text)).toBe(false);
+    ["another object that came out of them", `console.log(unknown({ color: () => 1 }).color());`],
+  ])("is used where its name is read off %s", async (_, text) => {
+    expect(await usesColor(text)).toBe(true);
+  });
+
+  test("is not used where Bun is read by a computed key", async () => {
+    expect(await usesColor(`console.log(typeof Bun[process.argv[9]]);`)).toBe(false);
   });
 
   test.todo("is used where the program names it on Bun, which it reached by a promise that a built-in made: (await Promise.resolve(Bun)).color()");

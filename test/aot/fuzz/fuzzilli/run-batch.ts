@@ -88,7 +88,19 @@ async function spawn(stage: string, cmd: string[], cwd: string, env: Record<stri
 function layOut(folder: string, texts: string[], extension: string, inGroup: number) {
   rmSync(folder, { recursive: true, force: true });
   mkdirSync(join(folder, "programs"), { recursive: true });
-  texts.forEach((text, index) => writeFileSync(join(folder, "programs", index + extension), text, "latin1"));
+  texts.forEach((text, index) => {
+    // Behind a line "// @filename: ./<name>" stands a file that the program imports by that name. The name is a hash of the file, so programs can share one.
+    const [program, ...others] = text.split(/^\/\/ @filename: \.\/(\S+)\n/m);
+    // A guard, `try { .. } catch (e) {}`, would hide the message of a documented difference. It goes to stderr, which isn't compared.
+    const caught = extension.endsWith("ts") ? "(e as any)" : "e";
+    writeFileSync(
+      join(folder, "programs", index + extension),
+      program.replace(/\} catch \(e\) \{\}$/gm, `} catch (e) { console.error(String(${caught}?.message)); }`),
+      "latin1",
+    );
+    for (let other = 0; other < others.length; other += 2)
+      writeFileSync(join(folder, "programs", others[other]), others[other + 1], "latin1");
+  });
   for (let first = 0; first < texts.length; first += inGroup) {
     const rows = texts
       .slice(first, first + inGroup)
@@ -131,10 +143,13 @@ async function build(
     if (header.includes("read-only in a compiled executable")) writesToBuiltins.add(Number(index));
   }
   if (ran.exitCode === 0 && existsSync(join(folder, "batch"))) return { refused: new Set<number>(), writesToBuiltins };
-  const [reason, ...named] =
-    /internal compiler error.*?(?:programs[\\/](\d+)\.[a-z]+\b.*)?$|Stopped while compiling.*?(?:programs[\\/](\d+)\.[a-z]+\b.*)?$/m.exec(
-      ran.stderr,
-    ) ?? [];
+  // Of several such lines, the first that names a program.
+  const stops = [
+    ...ran.stderr.matchAll(
+      /internal compiler error.*?(?:programs[\\/](\d+)\.[a-z]+\b.*)?$|Stopped while compiling.*?(?:programs[\\/](\d+)\.[a-z]+\b.*)?$/gm,
+    ),
+  ];
+  const [reason, ...named] = stops.find(([, ...named]) => named.some(index => index !== undefined)) ?? stops[0] ?? [];
   if (!ran.signal && reason === undefined && refused.size) return { refused, writesToBuiltins };
   const culprit = named.find(index => index !== undefined);
   return {
@@ -219,6 +234,9 @@ const documentedNames = [
   ".raw",
 ];
 
+/** `Reflect.setPrototypeOf()` of a built-in object returns false in an executable, and `Object.setPrototypeOf()` throws. */
+const setsThePrototypeOfABuiltIn = /\bsetPrototypeOf\([A-Z]/;
+
 // What `bun run` says when it refuses a file that the compiler builds.
 const refusalsOfBunRun = [
   "is a constant",
@@ -240,6 +258,7 @@ const removeDetailsOfErrors = (output: string) =>
         .replace(/Error: .*/, "Error")
         .replace(/\[(\w*Function): [^\]]*\]/g, "[$1]")
         .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/g, "<a time>")
+        .replace(/\b\d{1,2} [A-Z][a-z]{2} \d\d:\d\d:\d\d\b/g, "<a time>")
         .replace(
           /\b[A-Z][a-z]{2},? (?:[A-Z][a-z]{2} \d\d|\d\d [A-Z][a-z]{2}) \d{4} \d\d:\d\d:\d\d GMT\S*(?: \([^)]*\))?/g,
           "<a time>",
@@ -248,10 +267,47 @@ const removeDetailsOfErrors = (output: string) =>
     .join("\n");
 const agree = (a: Ended, b: Ended) =>
   a.end === b.end && removeDetailsOfErrors(a.stdout) === removeDetailsOfErrors(b.stdout);
-/** The text of a function is a key or a part of a string, and the two runs break its lines differently. */
-const agreeButForSpaces = (a: Ended, b: Ended) =>
-  a.end === b.end &&
-  removeDetailsOfErrors(a.stdout).replace(/\\n|\s/g, "") === removeDetailsOfErrors(b.stdout).replace(/\\n|\s/g, "");
+/** The text of a function is a key or a part of a string, and the two runs differ in where its lines break and in parentheses that change nothing. */
+const withoutLayout = (output: string) => removeDetailsOfErrors(output).replace(/\\n|[\s()]/g, "");
+const agreeButForLayout = (a: Ended, b: Ended) =>
+  a.end === b.end && withoutLayout(a.stdout) === withoutLayout(b.stdout);
+/**
+ * Whether an object literal or a class in `text` has two getters, or two setters, of one name. Where that key stands among the others differs then.
+ * A generated program has one member a line, indented by its depth.
+ */
+function definesAnAccessorTwice(text: string) {
+  const bodies: { indent: number; accessors: Set<string> }[] = [];
+  for (const line of text.split("\n")) {
+    const indent = line.search(/\S/);
+    if (indent < 0) continue;
+    while (bodies.length && bodies.at(-1)!.indent > indent) bodies.pop();
+    const accessor = /^\s*((?:static )?[gs]et (?:[\w$#]+|"[^"]*"))\(/.exec(line)?.[1];
+    if (!accessor) continue;
+    if (bodies.at(-1)?.indent !== indent) bodies.push({ indent, accessors: new Set() });
+    if (bodies.at(-1)!.accessors.has(accessor)) return true;
+    bodies.at(-1)!.accessors.add(accessor);
+  }
+  return false;
+}
+const opensAFunctionOrAClass =
+  /\bfunction\b|\bclass\b|^\s*static \{$|^\s*(?!(?:if|for|while|switch|catch|with)\b)(?:(?:static|async|get|set)\s+)*\*?\s*(?:[\w$#]+|"[^"]*"|\[.*\])\s*\(.*\{$/;
+/** Whether `text` reads `this` outside every function and class. In a module that is `undefined` in an executable and `null` under `bun run`. */
+function readsThisOfTheModule(text: string) {
+  const blocks: { indent: number; hasItsOwnThis: boolean }[] = [];
+  for (const line of text.split("\n")) {
+    const indent = line.search(/\S/);
+    if (indent < 0) continue;
+    while (blocks.length && blocks.at(-1)!.indent >= indent) blocks.pop();
+    if (/\bthis\b/.test(line) && !blocks.some(block => block.hasItsOwnThis) && !opensAFunctionOrAClass.test(line))
+      return true;
+    if (line.endsWith("{")) blocks.push({ indent, hasItsOwnThis: opensAFunctionOrAClass.test(line) });
+  }
+  return false;
+}
+const withNullAsUndefined = (output: string) =>
+  removeDetailsOfErrors(output)
+    .replace(/\[Object: null prototype\] /g, "")
+    .replace(/\bnull\b/g, "undefined");
 const isLimit = ({ end }: Ended) => end === "time" || end === "memory";
 const classOfError = ({ stderr }: Ended) => /\b\w*Error\b/.exec(stderr)?.[0];
 
@@ -347,6 +403,20 @@ async function printsTheDepthOfTheStack(folder: string, extension: string) {
   return outputs[0] !== outputs[1];
 }
 
+/** Whether the executable stopped at a name that `bun run` doesn't know either. `bun run` removes an unused read of some names. */
+async function stoppedAtANameThatDoesNotExist(folder: string, { stderr }: Ended) {
+  const name = /ReferenceError: ([\w$]+) is not defined/.exec(stderr)?.[1];
+  if (!name) return false;
+  writeFileSync(join(folder, "name.js"), `console.log(typeof ${name});`);
+  return (await spawn("name", [bun, "run", "./name.js"], folder, plainEnv, 30)).stdout === "undefined\n";
+}
+
+/** Whether `bun run` stopped at an object literal that nothing uses, because one of its computed keys is a symbol. */
+function stoppedAtAnUnusedLiteral(text: string, { stderr }: Ended) {
+  const line = /Cannot convert a symbol to a string\n\s+at .*programs[\\/]\d+\.[a-z]+:(\d+):/.exec(stderr)?.[1];
+  return line !== undefined && /^\s*\(\{/.test(text.split("\n")[Number(line) - 1] ?? "");
+}
+
 /** Waits until it has `count` programs. A rename decides which of several processes gets a file. */
 async function takePrograms(): Promise<string[]> {
   const claimed = join(work, `claimed-${process.pid}`);
@@ -415,7 +485,8 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
     run("compiled", [join(folder, "batch")], folder, extension, groupSize, indexes, limit);
   const runPlain = (indexes: number[], limit: number) =>
     run("plain", [bun, "run", "./" + runner], folder, extension, groupSize, indexes, limit, plainEnv);
-  const [compiled, plain] = [await runCompiled(all, milliseconds), await runPlain(all, milliseconds)];
+  // Both wait more than they compute, so they run at once. The pair that decides runs one after the other.
+  const [compiled, plain] = await Promise.all([runCompiled(all, milliseconds), runPlain(all, milliseconds)]);
   const differing = all.filter(index => !agree(compiled.get(index)!, plain.get(index)!));
   add("same", all.length - differing.length);
 
@@ -451,6 +522,10 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
               : documentedMessages.some(says) ||
                   (!isLimit(second) && referenceAgain.stderr.includes("Maximum call stack size exceeded")) ||
                   documentedNames.some(name => texts[index].includes(name)) ||
+                  setsThePrototypeOfABuiltIn.test(texts[index]) ||
+                  (second.end === referenceAgain.end &&
+                    withNullAsUndefined(second.stdout) === withNullAsUndefined(referenceAgain.stdout) &&
+                    readsThisOfTheModule(texts[index])) ||
                   writesToBuiltins.has(index)
                 ? "documented difference"
                 : referenceAgain.stdout === "" &&
@@ -458,19 +533,26 @@ for (let batch = 0; batches === 0 || batch < batches; batch++) {
                   ? "bun run refuses the file"
                   : inOrdinary && agree(second, inOrdinary) && classOfError(second) === classOfError(inOrdinary)
                     ? "as an executable without --aot"
-                    : showsFunctionText || agreeButForSpaces(second, referenceAgain)
+                    : showsFunctionText || agreeButForLayout(second, referenceAgain)
                       ? "function text"
-                      : isLimit(second)
-                        ? "limit"
-                        : second.end !== referenceAgain.end
-                          ? "exit-code"
-                          : "stdout";
+                      : second.end === referenceAgain.end && definesAnAccessorTwice(texts[index])
+                        ? "an accessor defined twice"
+                        : isLimit(second)
+                          ? "limit"
+                          : second.end !== referenceAgain.end
+                            ? "exit-code"
+                            : "stdout";
     // A build warns about the first write to a built-in that it meets, so the build of a group names one program of several.
     if (["limit", "exit-code", "stdout"].includes(kind)) {
       const alone = join(work, `alone-${process.pid}`);
       layOut(alone, [texts[index]], extension, 1);
       if ((await build(alone, 1, extension, 1)).writesToBuiltins.size) kind = "documented difference";
       else if (await printsTheDepthOfTheStack(alone, extension)) kind = "documented difference";
+      else if (
+        stoppedAtAnUnusedLiteral(texts[index], referenceAgain) ||
+        (!referenceAgain.stderr.includes("ReferenceError") && (await stoppedAtANameThatDoesNotExist(alone, second)))
+      )
+        kind = "documented difference";
       rmSync(alone, { recursive: true, force: true });
     }
     add(kind);

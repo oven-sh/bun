@@ -293,7 +293,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 Chain::No => self.lower_call(expression, Evaluation::at_tail(evaluation.tail)),
                 Chain::Start | Chain::Continue => self.lower_call(expression, evaluation),
             },
-            ExprKind::New(_) => self.lower_new(expression),
+            ExprKind::New(_) => self.lower_new(expression, evaluation.tail),
             ExprKind::Unary { op, .. } => match op {
                 UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
                     assignment::lower_update(self, expression, ResultUsage::Value)

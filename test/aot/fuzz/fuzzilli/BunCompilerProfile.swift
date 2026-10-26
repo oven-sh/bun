@@ -68,7 +68,7 @@ let bunCompilerProfile = Profile(
         ("fuzzilli('FUZZILLI_CRASH', 0)", .shouldCrash)
     ],
 
-    additionalCodeGenerators: bunCodeGenerators,
+    additionalCodeGenerators: bunCodeGenerators + (TypeScriptSettings.fromEnvironment == nil ? [] : typeScriptCodeGenerators),
 
     additionalProgramTemplates: WeightedList<ProgramTemplate>([]),
 
@@ -90,5 +90,9 @@ let bunCompilerProfile = Profile(
 
     additionalOptionsBags: [],
 
-    optionalPostProcessor: nil
+    optionalPostProcessor: PostProcessors(
+        all: ([
+            GuardsOutsideFunctions.share == nil ? nil : GuardsOutsideFunctions(),
+            TypeScriptSettings.fromEnvironment == nil ? nil : TypeScriptSeeds(),
+        ] as [FuzzingPostProcessor?]).compactMap { $0 })
 )

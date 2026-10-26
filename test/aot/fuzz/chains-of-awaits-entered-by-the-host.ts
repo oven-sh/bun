@@ -134,13 +134,7 @@ function write(random: Random, typed: boolean, withModules: boolean): Files {
           ]),
     );
   }
-  // The stack is asked for functions named level..: what it calls an arrow function is not the matter here.
-  const name = (level: number) =>
-    kinds[level] === "method"
-      ? `holder${level}.level${level}`
-      : kinds[level] === "arrow"
-        ? `arrow${level}`
-        : `level${level}`;
+  const name = (level: number) => (kinds[level] === "method" ? `holder${level}.level${level}` : `level${level}`);
   const letters = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
   const parameterList = (level: number) =>
     ({
@@ -230,7 +224,7 @@ function write(random: Random, typed: boolean, withModules: boolean): Files {
     functions.push(
       {
         declaration: () => `async function level${level}(${list})${promise} { ${body} }`,
-        arrow: () => `const arrow${level} = async (${list})${promise} => { ${body} };`,
+        arrow: () => `const level${level} = async (${list})${promise} => { ${body} };`,
         method: () => `const holder${level} = { async level${level}(${list})${promise} { ${body} } };`,
         // The value that the generator returns is the value of its first step.
         generator: () =>

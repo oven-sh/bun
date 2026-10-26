@@ -125,6 +125,18 @@ describe.skipIf(!isGlibc || isASAN || !cc)("a build that the system refuses memo
     expect(compiled.stderr.toString()).toBe("");
   });
 
+  test("a small program builds within 4 GB of address space", async () => {
+    const executable = join(cwd, "within-a-limit");
+    const build = [bunExe(), "build", "--compile", "--aot", "program.ts", "--outfile", executable];
+    expect(await run(["sh", "-c", 'ulimit -v 4194304 && exec "$0" "$@"', ...build], bunEnv)).toEqual({
+      stdout: expect.any(String),
+      errors: [],
+      exitCode: 0,
+      signal: null,
+    });
+    expect((await run([executable], bunEnv)).stdout).toBe("it runs\n");
+  }, 120_000);
+
   test("a refused mapping ends the build with an error", async () => {
     expect(await buildWithEachCallRefused("mmap")).toEqual([outOfMemory, "it runs\n"]);
   }, 300_000);

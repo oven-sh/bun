@@ -14,14 +14,14 @@ a caught error: collected, 152
 three sets of closures: kept, 152
 across an await: collected, 288
 made after an await: collected, 288
-helpers that are only called, across an await: collected, 136
-helpers that are only called, across a yield: collected, 136
+helpers that are only called, across an await: kept, 136
+helpers that are only called, across a yield: kept, 136
 forty variables: collected, 4800
 a callback of an array method: 16 of 48, 136
 methods of one object: collected, 136
 a callback that counts before an await: collected, 1192
 an executor before an await: collected, 632
 an async arrow called at once: collected, 632
-helpers that call each other, across an await: collected, 152
+helpers that call each other, across an await: kept, 152
 read by the closure that stays: kept, 648
 12848

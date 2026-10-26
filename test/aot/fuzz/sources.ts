@@ -79,6 +79,8 @@
 //   values-that-end-before-a-suspension-beside-values-that-cross-it async functions, generators and async generators hold up to 520 values at once: some are last read before a suspension, others behind it, in a later turn of a loop, in a catch, in a finally, or when the caller throws in or returns (values-that-end-before-a-suspension-beside-values-that-cross-it.ts)
 //   tail-calls-between-the-program-and-functions-made-from-text a ring of strict functions, some in the program, some made from text at run time, some behind a Proxy without an apply trap, call one another in tail position in ten forms with fewer, as many or more arguments than the callee names, a hundred thousand times (tail-calls-between-the-program-and-functions-made-from-text.ts)
 //   int32-fields-read-under-keys-as-operands fields declared int32 are read with brackets under a key that is one of a few names, a symbol, an enum member, an element of a list of names or a parameter, as operands of operators and built-in functions; the objects come out of JSON.parse and may hold what is no int32 (int32-fields-read-under-keys-as-operands.ts)
+//   values-of-another-kind-through-type-parameters a value that is not what the type argument says goes in through `any`, passes through the type parameter by one of seventy roads, is kept in a place whose type says otherwise, a variable that closures share above all, and is used there in up to forty ways (values-of-another-kind-through-type-parameters.ts)
+//   values-of-another-kind-behind-a-test a value that is not what the type says reaches a place of a primitive type through `any`, a switch, a comparison, typeof, instanceof, `in`, its truth, `?.` or `??` looks at it there, and what stands behind the test uses it in up to forty ways (values-of-another-kind-behind-a-test.ts)
 //   arguments-made-for-a-call-whose-callee-may-return-early a caller makes a rest array, an object literal or an array literal for a call; the callee tests something first and may return, throw or call on before it keeps, changes, returns, spreads, captures or compares that argument
 //   functions-handed-to-async-functions-and-used-around-their-awaits a caller hands a closure or a bound function over its own locals to an async function, which calls, keeps, stores, captures, passes on or returns it before and behind its awaits; the caller returns first, the stack is written over and a collection runs before the async function goes on (functions-handed-to-async-functions-and-used-around-their-awaits.ts)
 //   functions-that-return-before-they-touch-what-the-caller-made a function takes a rest parameter, or a parameter for which its callers write an object or a list, and may return, throw or go on before it touches it; what stands in front of the first use has effects, what the caller writes has effects too, and the switch that decides turns while the program runs (functions-that-return-before-they-touch-what-the-caller-made.ts)
@@ -713,6 +715,8 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
     "a-full-heap-is-let-go-and-built-ins-make-things",
     "static-fields-hold-values-outside-their-declared-types",
     "int32-fields-read-under-keys-as-operands",
+    "values-of-another-kind-through-type-parameters",
+    "values-of-another-kind-behind-a-test",
   ])
     if (existsSync(join(import.meta.dir, name + ".ts")))
       sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);

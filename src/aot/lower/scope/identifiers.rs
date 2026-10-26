@@ -157,7 +157,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 if let Some(builtin) = self.file.find_locked_global(identifier) {
                     return self.emit_locked_builtin(builtin);
                 }
-                self.set_position(self.file.name_position(identifier));
+                // A report names a built-in where it is written.
+                if self.file.builtins.of_expr(identifier).is_none() {
+                    self.set_position(self.file.name_position(identifier));
+                }
                 let value = self.read_binding(binding, name, read);
                 self.expect_resolved_path(identifier, value)
             }

@@ -1,3 +1,27 @@
+diff --git a/Sources/Fuzzilli/Base/ProgramBuilder.swift b/Sources/Fuzzilli/Base/ProgramBuilder.swift
+index 0eb33e1a..28973437 100644
+--- a/Sources/Fuzzilli/Base/ProgramBuilder.swift
++++ b/Sources/Fuzzilli/Base/ProgramBuilder.swift
+@@ -928,6 +928,9 @@ public class ProgramBuilder {
+                 // 5. Fallback: creating an object and adding properties directly
+                 {
+                     func useMethodToProduce(_ method: (group: String, method: String)) -> Variable {
++                        // The call at the end makes a variable. Counting it now ends a chain of groups that only each other's members make.
++                        self.argumentGenerationVariableBudget.top -= 1
++                        defer { self.argumentGenerationVariableBudget.top += 1 }
+                         let group = self.fuzzer.environment.type(ofGroup: method.group)
+                         let obj = self.generateTypeInternal(group)
+                         let sig = chooseUniform(
+@@ -961,6 +964,9 @@ public class ProgramBuilder {
+                                 return self.construct(prop, withArgs: args)
+                             }
+                         }
++                        // The call at the end makes a variable. Counting it now ends a chain of groups that only each other's members make.
++                        self.argumentGenerationVariableBudget.top -= 1
++                        defer { self.argumentGenerationVariableBudget.top += 1 }
+                         let group = self.fuzzer.environment.type(ofGroup: property.group)
+                         let obj = self.generateTypeInternal(group)
+                         let prop = self.getProperty(property.property, of: obj)
 diff --git a/Sources/Fuzzilli/Fuzzer.swift b/Sources/Fuzzilli/Fuzzer.swift
 index e1f7924b..f3b8a6ba 100644
 --- a/Sources/Fuzzilli/Fuzzer.swift
@@ -30,17 +54,17 @@ index 4b5b8e9e..b8f52ed2 100644
 diff --git a/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift b/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift
 --- a/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift
 +++ b/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift
-@@ -98,6 +98,10 @@
+@@ -97,6 +97,10 @@
+ 
      // Mapping from the Variable which holds the module (output of EndBundleModule) to the module name.
      private var moduleNames: [Variable: String] = [:]
- 
++
 +    // What makes the program TypeScript, and the instruction that is being lifted.
 +    private var typeScript: TypeScriptPlan? = nil
 +    private var indexOfCurrentInstruction = 0
-+
+ 
      public init(
          prefix: String = "",
-         suffix: String = "",
 @@ -186,6 +190,8 @@
              includeLineNumbers: options.contains(.includeLineNumbers),
              alwaysEmitVariables: alwaysEmitVariables,
@@ -87,27 +111,97 @@ diff --git a/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift b/Sources/Fuzzilli/
              }
              var nextExpressionToFetch = 0
              func input(_ i: Int) -> Expression {
-@@ -561,7 +575,7 @@
+@@ -514,12 +528,14 @@
+             case .beginObjectLiteralGetter(let op):
+                 assert(instr.numInnerOutputs == 1)
+                 let PROPERTY = quoteIdentifierIfNeeded(op.propertyName)
+-                currentObjectLiteral.beginMethod("get \(PROPERTY)() {", &w)
++                currentObjectLiteral.beginMethod(
++                    "get \(PROPERTY)(\(typeScript?.returnMarker(at: instr.index) ?? "")) {", &w)
+                 bindVariableToThis(instr.innerOutput(0))
+ 
+             case .beginObjectLiteralComputedGetter:
+                 let PROPERTY = input(0)
+-                currentObjectLiteral.beginMethod("get [\(PROPERTY)]() {", &w)
++                currentObjectLiteral.beginMethod(
++                    "get [\(PROPERTY)](\(typeScript?.returnMarker(at: instr.index) ?? "")) {", &w)
+                 bindVariableToThis(instr.innerOutput(0))
+ 
+             case .beginObjectLiteralSetter(let op):
+@@ -561,14 +577,14 @@
                      w.assign(ObjectLiteral.new(code), to: instr.output)
                  } else {
                      let LET = w.declarationKeyword(for: instr.output)
 -                    let V = w.declare(instr.output)
+-                    w.emit("\(LET) \(V) = {")
 +                    let V = w.declare(instr.output) + (typeScript?.annotation(for: instr.output) ?? "")
-                     w.emit("\(LET) \(V) = {")
++                    w.emit("\(LET) \(V) = \(typeScript?.prefix(producing: instr.output) ?? ""){")
                      w.enterNewBlock()
                      for field in literal.fields {
-@@ -601,7 +615,9 @@
+                         w.emitBlock("\(field),")
+                     }
+                     w.leaveCurrentBlock()
+-                    w.emit("};")
++                    w.emit("}\(typeScript?.suffix(producing: instr.output) ?? "");")
+                 }
+ 
+             case .beginClassDefinition(let op):
+@@ -581,7 +597,9 @@
+                 } else {
+                     // The name of the class is set to the uppercased variable name. This ensures that the heuristics used by the JavaScriptExploreLifting code to detect constructors works correctly (see shouldTreatAsConstructor).
+                     let NAME = w.declare(instr.output, as: "C\(instr.output.number)")
+-                    w.emit("class \(NAME)\(EXTENDS) {")
++                    let TYPES = typeScript?.typeParameters(ofClass: instr.output) ?? ""
++                    let IMPLEMENTS = typeScript?.implementsClause(ofClass: instr.output) ?? ""
++                    w.emit("class \(NAME)\(TYPES)\(EXTENDS)\(IMPLEMENTS) {")
+                 }
+                 w.enterNewBlock()
+ 
+@@ -601,8 +619,11 @@
                  w.emit("}")
  
              case .classAddProperty(let op):
 -                let PROPERTY = quoteIdentifierIfNeeded(op.propertyName)
+-                let staticStr = op.isStatic ? "static " : ""
 +                let PROPERTY =
 +                    quoteIdentifierIfNeeded(op.propertyName)
 +                    + (typeScript?.fieldAnnotation(at: instr.index) ?? "")
-                 let staticStr = op.isStatic ? "static " : ""
++                let staticStr =
++                    (typeScript?.fieldModifiers(at: instr.index) ?? "") + (op.isStatic ? "static " : "")
                  if op.hasValue {
                      let VALUE = input(0)
-@@ -2200,7 +2216,7 @@
+                     w.emit("\(staticStr)\(PROPERTY) = \(VALUE);")
+@@ -672,14 +693,16 @@
+             case .beginClassGetter(let op):
+                 let PROPERTY = quoteIdentifierIfNeeded(op.propertyName)
+                 let staticStr = op.isStatic ? "static " : ""
+-                w.emit("\(staticStr)get \(PROPERTY)() {")
++                w.emit(
++                    "\(staticStr)get \(PROPERTY)(\(typeScript?.returnMarker(at: instr.index) ?? "")) {")
+                 w.enterNewBlock()
+                 bindVariableToThis(instr.innerOutput(0))
+ 
+             case .beginClassComputedGetter(let op):
+                 let PROPERTY = input(0)
+                 let staticStr = op.isStatic ? "static " : ""
+-                w.emit("\(staticStr)get [\(PROPERTY)]() {")
++                w.emit(
++                    "\(staticStr)get [\(PROPERTY)](\(typeScript?.returnMarker(at: instr.index) ?? "")) {")
+                 w.enterNewBlock()
+                 bindVariableToThis(instr.innerOutput(0))
+ 
+@@ -1289,7 +1312,9 @@
+                 break
+ 
+             case .callSuperConstructor:
+-                let EXPR = CallExpression.new() + "super(" + liftCallArguments(inputs) + ")"
++                let MARKER = typeScript?.returnMarker(at: instr.index) ?? ""
++                let EXPR =
++                    CallExpression.new() + "super(" + liftCallArguments(inputs) + MARKER + ")"
+                 w.emit("\(EXPR);")
+ 
+             case .callSuperMethod(let op):
+@@ -2200,7 +2225,7 @@
              w.emitComment(footer)
          }
  
@@ -116,7 +210,7 @@ diff --git a/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift b/Sources/Fuzzilli/
      }
  
      // Signal that the following code needs to be lifted into a single expression.
-@@ -2303,11 +2319,12 @@
+@@ -2303,11 +2328,14 @@
          let iter = Ref(variables.makeIterator())
          var paramList = [String]()
          for (i, defaultValue) in actualDefaultValues.enumerated() {
@@ -126,11 +220,13 @@ diff --git a/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift b/Sources/Fuzzilli/
                  p = liftParameterDestructuringPattern(dp, iterator: iter)
              } else {
                  p = iter.val.next()!
-+                p += typeScript?.parameterAnnotation(for: p, hasDefaultValue: defaultValue != nil) ?? ""
++                p =
++                    (typeScript?.parameterModifiers(for: p) ?? "") + p
++                    + (typeScript?.parameterAnnotation(for: p, hasDefaultValue: defaultValue != nil) ?? "")
              }
  
              if parameters.hasRestParameter && i == parameters.count - 1 {
-@@ -2324,6 +2341,7 @@
+@@ -2324,6 +2352,7 @@
              "Mismatch between mapped inner outputs and destructuring pattern bindings"
          )
          return paramList.joined(separator: ", ")
@@ -138,16 +234,16 @@ diff --git a/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift b/Sources/Fuzzilli/
      }
  
      private func liftFunctionDefinitionBegin(
-@@ -2589,6 +2607,8 @@
- 
+@@ -2590,6 +2619,8 @@
          // Forces the writer to also emit variables for unused expressions.
          let alwaysEmitVariables: Bool
-+
-+        var typeScript: TypeScriptPlan? = nil
  
++        var typeScript: TypeScriptPlan? = nil
++
          /// Code can be emitted into a temporary buffer instead of into the final script. This is mainly useful for inlining entire blocks.
          /// The typical way to use this would be to call pushTemporaryOutputBuffer() when handling a BeginXYZBlock, then calling
-@@ -2647,6 +2667,8 @@
+         /// popTemporaryOutputBuffer() when handling the corresponding EndXYZBlock and then either inlining the block's body
+@@ -2647,6 +2678,8 @@
          /// If the expression can be inlined, it will be associated with the variable and returned at its use. If the expression cannot be inlined,
          /// the expression will be emitted either as part of a variable definition or as an expression statement (if the value isn't subsequently used).
          mutating func assign(_ expr: Expression, to v: Variable, allowInlining: Bool = true) {
@@ -156,7 +252,7 @@ diff --git a/Sources/Fuzzilli/Lifting/JavaScriptLifter.swift b/Sources/Fuzzilli/
              if let V = expressions[v] {
                  // In some situations, for example in the case of guarded operations that require a try-catch around them,
                  // the output variable is declared up-front and so we lift to a variable assignment.
-@@ -2669,7 +2691,7 @@
+@@ -2669,7 +2702,7 @@
                      emit("\(expr);")
                  } else {
                      let LET = declarationKeyword(for: v)

@@ -114,7 +114,6 @@ calls-fast-paths/builtins-passed-to-helpers	// IR= 1 composed TypeTest v[0-9]+ t
 calls-fast-paths/builtins-passed-to-helpers	// IR= 1 composed TypeTest v[0-9]+ testedType=builtin\(Object\)
 calls-fast-paths/call-known	// IR+ TypeTest v[0-9]+ testedType=Function\^
 calls-fast-paths/callbacks-whose-variables-lie-in-the-frame-of-their-maker	// ENTRY-SIZE< addsToSum 24 16
-calls-fast-paths/callbacks-whose-variables-lie-in-the-frame-of-their-maker	// ENTRY-SIZE< scaled 24 16
 calls-fast-paths/callees-that-a-loop-does-not-change	// CALLS+ Array$map ResolveCallValue3
 calls-fast-paths/callees-that-a-loop-does-not-change	// CALLS+ Array$some ResolveCallValue3
 calls-fast-paths/callees-that-a-loop-does-not-change	// CALLS- Array$map [^e]CallValue3

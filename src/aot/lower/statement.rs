@@ -254,7 +254,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 VarKind::Let | VarKind::Const
             )
             && decl.init.is_some()
-            && decl.ty.is_none()
             && !decl.flags.intersects(Flags::AMBIENT | Flags::EXPORT);
         let Binding::Symbol(symbol) = bound.initialized_binding(decl.pat) else {
             return None;
@@ -289,6 +288,12 @@ impl FileLowering<'_, '_, '_, '_> {
                 StmtKind::Return(value)
                     if value.is_some() && self.reads_variable(value, symbol) =>
                 {
+                    // The transpiler counts the uses in the statements behind the `return` too, which nothing here has counted.
+                    let mut later = (index + 1..statements.len)
+                        .map(|later| hir.id_at(statements, later as usize));
+                    if later.any(|later| self.decisions().is_dead_stmt(later)) {
+                        return (None, index);
+                    }
                     return (Some((first, hir[statement].start)), index);
                 }
                 StmtKind::Var(declarations) if declarations.len() == 1 => {

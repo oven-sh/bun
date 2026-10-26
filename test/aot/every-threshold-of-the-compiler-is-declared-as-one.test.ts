@@ -70,7 +70,6 @@ const plainConstants: Record<string, number> = {
   "runtime/AOTCallSiteCache.h": 1,
   "runtime/AOTCompactTable.h": 5,
   "runtime/AOTErrorMessages.cpp": 1,
-  "runtime/AOTInstance.cpp": 1,
   "runtime/AOTInstanceLayout.h": 1,
   "runtime/AOTInterpreterSlowPaths.h": 1,
   "runtime/AOTJSONScanner.h": 5,

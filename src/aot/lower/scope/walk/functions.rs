@@ -1,6 +1,6 @@
 use bun_sema::bind::{CodeUnit, Decl, EvalScope, FnOwner, ScopeId, ScopeKind};
 use bun_sema::check::aot::FunctionRef;
-use bun_sema::hir::{FnBody, FnId, FnKind, StmtId};
+use bun_sema::hir::{Flags, FnBody, FnId, FnKind, StmtId};
 
 use super::{Context, EvalUse, Initialization, PatternRole, Task, WalkedFunctionId, Walker};
 use crate::ir::{ClassSlot, FunctionKey};
@@ -38,6 +38,12 @@ impl Walker<'_, '_> {
     fn push_function(&mut self, function: FnId, id: WalkedFunctionId) {
         let context = self.enter_unit(id, self.bound.fns[function.idx()].scope);
         self.push_task(Task::MarkCreated(id), context);
+        // A function that can be suspended holds its receiver until it ends.
+        let flags = self.hir[function].flags;
+        let can_be_suspended = flags.intersects(Flags::ASYNC | Flags::GENERATOR);
+        if can_be_suspended && self.hir.runtime_function_kind(function) != FnKind::Arrow {
+            self.use_this(context);
+        }
         self.push_function_code(function, context);
     }
 

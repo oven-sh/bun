@@ -1,4 +1,4 @@
-// Which calls are tail calls, as deep recursion and stack traces show. The initializer of a `let` or `const` that is used once, by the `return` right behind it, stands in tail position, with or without the types. A function that returns a new Error stays in the trace, which plain Bun drops.
+// Which calls are tail calls, as deep recursion and stack traces show. The initializer of a `let` or `const` that is used once, by the `return` right behind it, stands in tail position, with or without the types. So does a native error that a function makes and returns.
 
 declare const console: any;
 function attempt(n: string, f: () => unknown): void { try { console.log(n + ": " + JSON.stringify(f())); } catch (e: any) { console.log(n + ": throws " + e.constructor.name); } }

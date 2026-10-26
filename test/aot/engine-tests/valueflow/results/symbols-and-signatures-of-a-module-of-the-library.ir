@@ -63,7 +63,7 @@ function f2 name="setState" module=m1 role=Library parameters=[{type=anything}, 
     Return v1
 }
 # CHECK-LABEL: function f2 name="setState"
-# CHECK: parameters=[{type=L0}, {type=1}] results=[{type=1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# CHECK: parameters=[{type=L0}, {type=1}] results=[{type=1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK: : symbol("kState")@m1:100 = GetModuleVariable variable=g0
 # NAMED-LABEL: function f2 name="setState"
 # NAMED-NOT: ElemSet

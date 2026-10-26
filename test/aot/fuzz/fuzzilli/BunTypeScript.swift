@@ -28,6 +28,8 @@ struct TypeScriptSettings {
     var declared = 50
     /// How often a whole number is an `int32`.
     var int32 = 10
+    /// How often the declarations in front of a program are in files of their own.
+    var files = 0
     /// Added to what is computed from a program to seed its choices.
     var seed: UInt64 = 0
 
@@ -58,12 +60,26 @@ struct TypeScriptSettings {
             case "generic": settings.generic = value
             case "declared": settings.declared = value
             case "int32": settings.int32 = value
+            case "files": settings.files = value
             case "seed": settings.seed = UInt64(value)
             default: fatalError("BUN_FUZZILLI_TYPES: unknown setting \(part)")
             }
         }
         return settings
     }()
+}
+
+private func mix(_ a: UInt64, _ b: UInt64) -> UInt64 {
+    var z = (a ^ (b &* 0x9E37_79B9_7F4A_7C15)) &+ 0x9E37_79B9_7F4A_7C15
+    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+    return z ^ (z >> 31)
+}
+
+private func mix<Bytes: Sequence>(_ a: UInt64, _ bytes: Bytes) -> UInt64 where Bytes.Element == UInt8 {
+    var hash = a ^ 0xCBF2_9CE4_8422_2325
+    for byte in bytes { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01B3 }
+    return mix(hash, 0)
 }
 
 /// The same program always gets the same choices, so a finding can be reproduced and reduced.
@@ -113,6 +129,10 @@ indirect enum TypeScriptType: Hashable {
     case classOf(String)
     /// Another spelling of a type, such as `Same<O3>`.
     case alias(String, TypeScriptType)
+    /// A union of literals, as it is written, and the primitive that they all are.
+    case literals(String, TypeScriptType)
+    /// An object of the library, such as `Math`.
+    case library(String)
 
     var text: String {
         switch self {
@@ -137,7 +157,8 @@ indirect enum TypeScriptType: Hashable {
         case .function(let parameters, let result):
             return "(\(parameters.map(\.text).joined(separator: ", "))) => \(result.text)"
         case .classOf(let name): return "typeof \(name)"
-        case .alias(let text, _): return text
+        case .alias(let text, _), .literals(let text, _): return text
+        case .library(let name): return "typeof \(name)"
         }
     }
 
@@ -149,7 +170,7 @@ indirect enum TypeScriptType: Hashable {
 
     private var bracketed: String {
         switch self {
-        case .union, .function, .readonlyArray, .classOf, .alias: return "(\(text))"
+        case .union, .function, .readonlyArray, .classOf, .alias, .literals, .library: return "(\(text))"
         default: return text
         }
     }
@@ -159,7 +180,21 @@ indirect enum TypeScriptType: Hashable {
         return [self]
     }
 
-    var isNumber: Bool { self == .number || self == .int32 }
+    var isNumber: Bool {
+        if case .literals(_, let base) = self { return base.isNumber }
+        return plain == .number || plain == .int32
+    }
+    var isLiterals: Bool {
+        if case .literals = self { return true }
+        return false
+    }
+    /// Whether a literal that isn't one of an enum's members is refused here.
+    var mentionsEnumeration: Bool {
+        arms.contains {
+            if case .alias("Numbers", _) = $0 { return true }
+            return false
+        }
+    }
     var isNullish: Bool { self == .undefined || self == .null || self == .void }
 
     static func union(of types: [TypeScriptType]) -> TypeScriptType {
@@ -218,6 +253,10 @@ final class TypeScriptPlan {
         case nonNull
         case satisfies(TypeScriptType)
         case helper(String, TypeScriptType)
+        /// Through a generic function that gives its argument the type.
+        case through(String, TypeScriptType)
+        case wholeNumber
+        case asConstant
         case parsed(TypeScriptType)
         case replaced(String)
         case ignoredLine
@@ -232,6 +271,7 @@ final class TypeScriptPlan {
     private let environment: JavaScriptEnvironment
     private var choices: ChoiceGenerator
     private var acceptance = Acceptance.casts
+    private var hasSeveralFiles = false
 
     // What Fuzzilli's typer says.
     private var inferred = [Variable: ILType]()
@@ -251,7 +291,8 @@ final class TypeScriptPlan {
     private var declarationsThatCannotBeStoredTo = Set<Variable>()
     private var ignoredHeads = Set<Int>()
     private var enumMembers = [String: String]()
-    private var basesWithMembers = [String]()
+    private var textMembers = [String: String]()
+    private var enumsAreConstant: Bool { seedOfProgram % 2 == 0 }
     private var genericHeads = [Int: String]()
     private var reassigned = Set<Variable>()
 
@@ -288,16 +329,13 @@ final class TypeScriptPlan {
         self.code = code
         self.environment = environment
         self.settings = settings
-        var hash: UInt64 = 0xCBF2_9CE4_8422_2325 &+ settings.seed
-        for instr in code {
-            for byte in instr.op.name.utf8 { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01B3 }
-            for input in instr.inputs { hash = (hash ^ UInt64(input.number)) &* 0x100_0000_01B3 }
-        }
-        self.choices = ChoiceGenerator(state: hash)
+        self.choices = ChoiceGenerator(state: 0)
         for instr in code {
             for v in instr.inputs where instr.reassigns(v) { reassigned.insert(v) }
             for v in instr.allOutputs { indexOfDefinition[v] = instr.index }
         }
+        findPlaces()
+        choices = ChoiceGenerator(state: mix(seedOfProgram, 1))
 
         switch choices.weighted([
             100 - settings.uncheckedFile - settings.everyLineIgnored, settings.everyLineIgnored, settings.uncheckedFile,
@@ -306,12 +344,86 @@ final class TypeScriptPlan {
         case 2: acceptance = .uncheckedFile
         default: acceptance = .casts
         }
+        hasSeveralFiles = choices.percent(settings.files)
 
         inferTypes(usingArguments: false)
         inferTypes(usingArguments: true)
         declareTypes()
         follow()
     }
+
+    // MARK: Where a choice is made
+
+    /// A string that starts like this seeds the choices that are made behind it in its block.
+    static let seedPrefix = "types "
+
+    static func seed(in instr: Instruction) -> UInt64? {
+        guard case .loadString(let op) = instr.op.opcode, op.value.hasPrefix(seedPrefix) else { return nil }
+        return mix(0, op.value.utf8)
+    }
+
+    private var seedOfProgram: UInt64 = 0
+    private var seeds = [UInt64]()
+    private var places = [UInt64]()
+    private var placeOfVariable = [Variable: UInt64]()
+
+    /// Gives every instruction a number that is computed from the instruction, from what it uses and, where it starts
+    /// or ends a block, from one instruction of the block. The choices at an instruction are drawn from that number,
+    /// so they stay as they are when other parts of the program are removed, added or renumbered.
+    private func findPlaces() {
+        var contents = [UInt64](repeating: 0, count: code.count)
+        var leastInside = [UInt64](repeating: .max, count: code.count)
+        var leastBefore = [UInt64](repeating: .max, count: code.count)
+        var open = [Int]()
+        var firstSeed: UInt64? = nil
+        var everything: UInt64 = 0
+        for instr in code {
+            let seed = Self.seed(in: instr)
+            if firstSeed == nil { firstSeed = seed }
+            var content = mix(0, instr.op.name.utf8)
+            if !instr.isInternal {
+                var written = instr.asProtobuf()
+                written.inouts = []
+                content = mix(content, (try? written.serializedData()) ?? Data())
+            }
+            contents[instr.index] = content
+            everything = mix(everything, content)
+            for input in instr.inputs { everything = mix(everything, UInt64(input.number)) }
+            if instr.isBlockEnd, let begin = open.popLast() {
+                leastBefore[instr.index] = leastInside[begin]
+                if let parent = open.last { leastInside[parent] = min(leastInside[parent], leastInside[begin]) }
+            }
+            if !instr.isNop, seed == nil, let block = open.last { leastInside[block] = min(leastInside[block], content) }
+            if instr.isBlockStart { open.append(instr.index) }
+        }
+
+        seedOfProgram = mix(settings.seed, firstSeed ?? everything)
+        var scopes = [seedOfProgram]
+        for instr in code {
+            if instr.isBlockEnd, scopes.count > 1 { scopes.removeLast() }
+            if let seed = Self.seed(in: instr) { scopes[scopes.count - 1] = mix(settings.seed, seed) }
+            seeds.append(scopes[scopes.count - 1])
+            if instr.isBlockStart { scopes.append(scopes[scopes.count - 1]) }
+            var place = mix(contents[instr.index], instr.isBlockStart ? leastInside[instr.index] : leastBefore[instr.index])
+            for input in instr.inputs { place = mix(place, placeOfVariable[input] ?? 0) }
+            places.append(place)
+            for (i, v) in instr.allOutputs.enumerated() { placeOfVariable[v] = mix(place, UInt64(i + 1)) }
+        }
+    }
+
+    /// Starts the choices of an instruction.
+    private func choose(at index: Int, for purpose: UInt64 = 0) {
+        choices = ChoiceGenerator(state: mix(mix(seeds[index], places[index]), purpose))
+    }
+
+    /// One of the declared types. Which one it is doesn't change when others are removed.
+    private func pickNamedType(where isCandidate: (String) -> Bool = { _ in true }) -> String? {
+        let salt = choices.next()
+        return interfaceOrder.filter(isCandidate).max { mix(salt, placeOfName[$0] ?? 0) < mix(salt, placeOfName[$1] ?? 0) }
+    }
+
+    private var placeOfName = [String: UInt64]()
+    private var siteOfGroup = [String: Int]()
 
     // MARK: What Fuzzilli's typer says
 
@@ -375,7 +487,10 @@ final class TypeScriptPlan {
             case .beginClassConstructor:
                 if let current = classes.last { constructorOfClass[current] = instr.index }
             case .classAddProperty(let op):
-                if let current = classes.last, !op.isStatic { fieldsOfClass[current, default: []].insert(op.propertyName) }
+                if let current = classes.last, !op.isStatic {
+                    fieldsOfClass[current, default: []].insert(op.propertyName)
+                    if op.hasValue { fieldsWithValues[current, default: []].insert(op.propertyName) }
+                }
             case .beginClassMethod(let op):
                 if let current = classes.last, !op.isStatic { methodsOfClass[current, default: [:]][op.methodName] = instr.index }
             case .endClassDefinition:
@@ -386,6 +501,7 @@ final class TypeScriptPlan {
                     !classesInBlocks.contains(current)
                 {
                     classOfGroup[group] = current
+                    siteOfGroup[group] = indexOfDefinition[current] ?? instr.index
                     nameOfGroup[group] = "C\(current.number)"
                     groupTypes[group] = instance
                     for (name, begin) in methodsOfClass[current] ?? [:] {
@@ -397,6 +513,7 @@ final class TypeScriptPlan {
                 let type = typer.type(of: instr.output)
                 if let group = type.group, group.hasPrefix("_fuzz_Object") {
                     nameOfGroup[group] = "O\(instr.output.number)"
+                    siteOfGroup[group] = instr.index
                     groupTypes[group] = type
                     memberTypes[group] = readMembers(of: type, with: typer)
                 }
@@ -409,6 +526,10 @@ final class TypeScriptPlan {
                 noteCall(of: subroutineOfFunction[instr.input(0)], with: instr.inputs.dropFirst())
             case .construct:
                 noteCall(of: constructorOfClass[instr.input(0)], with: instr.inputs.dropFirst())
+            case .callSuperConstructor:
+                if let current = classes.last, let head = definition(of: current), head.numInputs > 0 {
+                    noteCall(of: constructorOfClass[head.input(0)], with: instr.inputs[...])
+                }
             case .callMethod(let op):
                 if let group = typer.type(of: instr.input(0)).group, let owner = classOfGroup[group] {
                     noteCall(of: methodsOfClass[owner]?[op.methodName], with: instr.inputs.dropFirst())
@@ -552,8 +673,6 @@ final class TypeScriptPlan {
         [.absent, .right, .wider, .wrong][choices.weighted([settings.absent, settings.right, settings.wider, settings.wrong])]
     }
 
-    private var namedTypes: [String] { interfaceOrder }
-
     private func widen(_ type: TypeScriptType) -> TypeScriptType {
         var candidates: [TypeScriptType] = [
             .any, .unknown, .union(of: [type, .undefined]), .union(of: [type, .null]),
@@ -574,16 +693,19 @@ final class TypeScriptPlan {
             candidates += [.readonlyArray(element), .array(.union(of: [element, .string])), .array(.any), .array(.unknown)]
         }
         if type == .int32 { candidates.append(.number) }
-        if let other = namedTypes.randomElement(using: &choices) { candidates.append(.union(of: [type, .named(other)])) }
+        if type == .number { candidates += [.alias("Numbers", .number), .alias("Numbers", .number)] }
+        if let other = pickNamedType() { candidates.append(.union(of: [type, .named(other)])) }
         return choices.pick(candidates)
     }
 
     private func falsify(_ type: TypeScriptType) -> TypeScriptType {
+        func isWrong(_ candidate: TypeScriptType) -> Bool { !assignable(candidate, to: type) && !assignable(type, to: candidate) }
+        let named = pickNamedType { isWrong(.named($0)) }
+        if choices.percent(50), let named { return .named(named) }
         var candidates: [TypeScriptType] = [.number, .string, .boolean, .bigint, .array(.number), .array(.string)]
-        for name in namedTypes { candidates += [.named(name), .named(name)] }
         if case .array(let element) = type { candidates += [.array(falsify(element)), .tuple([element]), .tuple([element, .string])] }
         if type.arms.contains(where: \.isNullish) { candidates += [type.withoutNullish, type.withoutNullish] }
-        candidates.removeAll { assignable($0, to: type) || assignable(type, to: $0) }
+        candidates.removeAll { !isWrong($0) }
         guard !candidates.isEmpty else { return type == .number ? .string : .number }
         return choices.pick(candidates)
     }
@@ -594,7 +716,19 @@ final class TypeScriptPlan {
         case .absent: return nil
         case .right: return right
         case .wider: return widen(right)
-        case .wrong: return falsify(right)
+        case .wrong:
+            let isNarrow = choices.percent(25)
+            return isNarrow ? narrow(right) ?? falsify(right) : falsify(right)
+        }
+    }
+
+    /// A few of the values of a primitive.
+    private func narrow(_ type: TypeScriptType) -> TypeScriptType? {
+        switch type {
+        case .number: return .literals(choices.pick(["0 | 1", "1 | 2 | 3", "-1 | 0 | 1", "1 | 2 | 4 | 8", "0.5 | 1.5", "4294967296 | -4294967296"]), .number)
+        case .string: return .literals(choices.pick(["\"a\" | \"b\"", "\"\"", "\"number\" | \"string\" | \"object\"", "`a${string}`"]), .string)
+        case .boolean: return .literals(choices.pick(["true", "false"]), .boolean)
+        default: return nil
         }
     }
 
@@ -605,11 +739,15 @@ final class TypeScriptPlan {
         if source == target || target == .any || target == .unknown || source == .any { return source != .untracked }
         switch (source, target) {
         case (.untracked, _), (_, .untracked), (.unknown, _): return false
+        case (.literals(_, let base), _): return !aliasedTarget.mentionsEnumeration && assignable(base, to: target)
+        case (.library, .object): return true
         case (.union(let arms), _): return arms.allSatisfy { assignable($0, to: target) }
         case (_, .union(let arms)): return arms.contains { assignable(source, to: $0) }
         case (.int32, .number), (.undefined, .void): return true
         case (.named(let name), .named):
             return baseOf[name].map { assignable(.named($0), to: target) } ?? false
+        case (.named(let name), .object) where name.hasPrefix("T") && name.dropFirst().allSatisfy(\.isNumber):
+            return false
         case (.named, .object), (.array, .object), (.generic, .object), (.tuple, .object), (.function, .object),
             (.classOf, .object), (.readonlyArray, .object):
             return true
@@ -628,9 +766,17 @@ final class TypeScriptPlan {
     private func member(_ name: String, of type: TypeScriptType) -> Member? {
         switch type.plain {
         case .named(let owner):
-            return members[owner]?[name] ?? baseOf[owner].flatMap { member(name, of: .named($0)) }
+            if let member = members[owner]?[name] ?? baseOf[owner].flatMap({ member(name, of: .named($0)) }) { return member }
+            if Self.typedArrays[owner] != nil, ["length", "byteLength", "byteOffset"].contains(name) {
+                return Member(type: .number, isReadonly: true)
+            }
+            return indexed.contains(owner) && methods[owner]?[name] == nil ? Member(type: .any) : nil
         case .string, .array, .readonlyArray, .tuple:
             return name == "length" ? Member(type: .number, isReadonly: true) : nil
+        case .generic("Map", _), .generic("Set", _):
+            return name == "size" ? Member(type: .number, isReadonly: true) : nil
+        case .library(let owner):
+            return Self.libraryConstants["\(owner).\(name)"].map { Member(type: $0, isReadonly: true) }
         default:
             return nil
         }
@@ -643,18 +789,42 @@ final class TypeScriptPlan {
 
     // MARK: The declared types
 
+    /// How an object type is written. All of them mean the same members.
+    private enum Spelling: CaseIterable { case interface, alias, mapped, picked, omitted, withDefault }
+    private enum BaseSpelling: CaseIterable { case interface, genericInterface, intersection }
+
+    private var spellings = [String: Spelling]()
+    private var baseSpellings = [String: BaseSpelling]()
+    private var declarationOrder = [String]()
+    private var genericFields = [String: String]()
+    private var fieldModifiers = [Int: String]()
+    private var parameterModifiers = [String: String]()
+    private var implementsClauses = [Variable: String]()
+    /// The object types that have `[key: string]: any`.
+    private var indexed = Set<String>()
+    private var namesWithWholeNumbers = Set<String>()
+    private var fieldsWithValues = [Variable: Set<String>]()
+
     private func declareTypes() {
         let groups = nameOfGroup.keys.sorted { (nameOfGroup[$0]!.count, nameOfGroup[$0]!) < (nameOfGroup[$1]!.count, nameOfGroup[$1]!) }
-        for group in groups { interfaceOrder.append(nameOfGroup[group]!) }
+        for group in groups {
+            let site = siteOfGroup[group]!
+            interfaceOrder.append(nameOfGroup[group]!)
+            placeOfName[nameOfGroup[group]!] = mix(seeds[site], places[site])
+        }
+        findBaseClasses()
         for group in groups {
             let name = nameOfGroup[group]!
+            let place = placeOfName[name]!
+            func choose(for member: String) { choices = ChoiceGenerator(state: mix(place, member.utf8)) }
             var table = [String: Member]()
             var fields: Set<String>? = nil
             if let owner = classOfGroup[group] {
                 fields = fieldsOfClass[owner] ?? []
-                if case .beginClassDefinition(let op) = definition(of: owner)?.op.opcode, op.hasSuperclass { fields = [] }
+                if case .beginClassDefinition(let op) = definition(of: owner)?.op.opcode, op.hasSuperclass, baseOf[name] == nil { fields = [] }
             }
             for (property, type) in memberTypes[group] ?? [] where fields?.contains(property) ?? true {
+                choose(for: property)
                 var member = Member(type: translate(type))
                 if let later = propertiesStoredLater[group]?[property] { member.type = .union(of: [member.type, translate(later)]) }
                 switch chooseTruth() {
@@ -664,24 +834,157 @@ final class TypeScriptPlan {
                 }
                 member.isOptional = propertiesDeleted[group]?.contains(property) ?? false
                 member.isReadonly = propertiesStoredLater[group]?[property] == nil && choices.percent(15)
+                let canBeWhole = classOfGroup[group].map { fieldsWithValues[$0]?.contains(property) ?? false } ?? true
+                if choices.percent(settings.int32), member.type == .number, canBeWhole, !member.isOptional, acceptance == .casts {
+                    member.type = .int32
+                    namesWithWholeNumbers.insert(name)
+                }
                 table[property] = member
             }
-            if classOfGroup[group] == nil {
-                for (property, type) in (propertiesStoredLater[group] ?? [:]).sorted(by: { $0.key < $1.key }) where table[property] == nil {
-                    table[property] = Member(type: translate(type), isOptional: true)
+            guard classOfGroup[group] == nil else {
+                members[name] = table
+                // One field can have the type of a type parameter of the class, whose default is the field's type.
+                choose(for: " type parameter")
+                if choices.percent(settings.generic), acceptance == .casts,
+                    let field = table.keys.sorted().first(where: { !table[$0]!.type.text.contains(name) && table[$0]!.type != .int32 })
+                {
+                    genericFields[name] = field
                 }
+                continue
             }
-            if classOfGroup[group] == nil, choices.percent(15) {
-                table["neverStored"] = Member(type: choices.pick([.number, .string, .array(.number), .named(name)]), isOptional: true)
+
+            for (property, type) in (propertiesStoredLater[group] ?? [:]).sorted(by: { $0.key < $1.key }) where table[property] == nil {
+                table[property] = Member(type: translate(type), isOptional: true)
             }
-            if classOfGroup[group] == nil, table.count >= 2, choices.percent(30) {
-                let inherited = table.keys.sorted().prefix(1 + choices.below(table.count - 1))
-                members["\(name)Base"] = table.filter { inherited.contains($0.key) }
-                table = table.filter { !inherited.contains($0.key) }
-                baseOf[name] = "\(name)Base"
-                basesWithMembers.append(name)
+            let methodNames = groupTypes[group]?.methods ?? []
+            for method in methodNames where table[method] == nil {
+                methods[name, default: [:]][method] = Callable(
+                    parameters: [.init(name: "values", type: .array(.any), isRest: true)], result: .any)
             }
+            // Members that the literal doesn't have. Other code can store them.
+            for extra in ["a", "b", "c", "next", "value", "neverStored"] where table[extra] == nil && !methodNames.contains(extra) {
+                choose(for: "optional \(extra)")
+                guard choices.percent(7) else { continue }
+                let own = TypeScriptType.named(name)
+                let other = pickNamedType().map(TypeScriptType.named) ?? own
+                table[extra] = Member(
+                    type: choices.pick([own, own, other, .union(of: [own, .null]), .array(own), .number, .string, .function([], own)]),
+                    isOptional: true)
+            }
+
+            choose(for: " spelling")
+            let isIndexed = choices.percent(10)
+            let hasBase = choices.percent(35) && !isIndexed
+            let hasRoot = choices.percent(30)
+            spellings[name] = isIndexed ? .interface : choices.pick(Spelling.allCases + [.interface, .interface])
+            if isIndexed { indexed.insert(name) }
+            baseSpellings[name] = choices.pick(BaseSpelling.allCases)
+            func split(_ whole: [String: Member], _ salt: UInt64) -> (inherited: [String: Member], own: [String: Member]) {
+                let inherited = whole.filter { mix(mix(place, salt), $0.key.utf8) % 2 == 0 }
+                return (inherited, whole.filter { inherited[$0.key] == nil })
+            }
+            if hasBase, case let (inherited, own) = split(table, 2), !inherited.isEmpty {
+                let base = "\(name)Base"
+                table = own
+                baseOf[name] = base
+                members[base] = inherited
+                if hasRoot, case let (oldest, rest) = split(inherited, 3), !oldest.isEmpty {
+                    baseOf[base] = "\(name)Root"
+                    members["\(name)Root"] = oldest
+                    members[base] = rest
+                    declarationOrder.append("\(name)Root")
+                }
+                declarationOrder.append(base)
+            }
+            declarationOrder.append(name)
             members[name] = table
+        }
+        for name in declarationOrder where placeOfName[name] == nil {
+            placeOfName[name] = mix(0, name.utf8)
+            interfaceOrder.append(name)
+        }
+    }
+
+    /// The classes that can name their base class as it is: the base is a class that the plan follows, and a
+    /// constructor starts with the call of the base's.
+    private func findBaseClasses() {
+        for (group, owner) in classOfGroup.sorted(by: { $0.value.number < $1.value.number }) {
+            guard let begin = indexOfDefinition[owner], case .beginClassDefinition(let op) = code[begin].op.opcode, op.hasSuperclass,
+                let name = nameOfGroup[group]
+            else { continue }
+            let base = code[begin].input(0)
+            guard !reassigned.contains(base), classOfGroup.values.contains(base), let baseHead = definition(of: base),
+                baseHead.numInputs == 0 || baseOf["C\(base.number)"] != nil
+            else { continue }
+            if let constructor = constructorOfClass[base], let head = code[constructor].op as? BeginAnySubroutine,
+                !head.parameters.destructuringParameters.isEmpty
+            {
+                continue
+            }
+            if let constructor = constructorOfClass[owner] {
+                guard let first = code[(constructor + 1)...].first(where: { !$0.isNop }), first.op is CallSuperConstructor,
+                    !first.inputs.contains(code[constructor].innerOutput(0))
+                else { continue }
+            }
+            baseOf[name] = "C\(base.number)"
+        }
+    }
+
+    private func write(_ table: [String: Member], replacing replaced: [String: String] = [:]) -> [String] {
+        table.sorted(by: { $0.key < $1.key }).map { key, member in
+            "    \(member.isReadonly ? "readonly " : "")\(propertyKey(key))\(member.isOptional ? "?" : ""): \(replaced[key] ?? member.type.text);"
+        }
+    }
+
+    /// The declaration of an object type.
+    private func declaration(of name: String) -> String {
+        let table = members[name] ?? [:]
+        var fields = write(table)
+        fields += (methods[name] ?? [:]).keys.sorted().map { "    \(propertyKey($0))(...values: any[]): any;" }
+        if indexed.contains(name) { fields.append("    [key: string]: any;") }
+        let body = "{\n\(fields.joined(separator: "\n"))\n}"
+        let owner = name.hasSuffix("Base") ? String(name.dropLast(4)) : name
+        /// The members whose types become type parameters.
+        func parameters(of table: [String: Member]) -> [String] {
+            table.keys.sorted().filter { table[$0]!.type.text.range(of: "O[0-9]", options: .regularExpression) == nil }.prefix(3).map { $0 }
+        }
+
+        if name.hasSuffix("Base"), baseSpellings[owner] == .genericInterface, baseOf[name] == nil {
+            let generic = parameters(of: table)
+            guard !generic.isEmpty else { return "interface \(name) \(body)" }
+            let head = generic.enumerated().map { "T\($0.offset) = \(table[$0.element]!.type.text)" }.joined(separator: ", ")
+            let replaced = Dictionary(uniqueKeysWithValues: generic.enumerated().map { ($0.element, "T\($0.offset)") })
+            return "interface \(name)<\(head)> {\n\(write(table, replacing: replaced).joined(separator: "\n"))\n}"
+        }
+        if let base = baseOf[name] {
+            switch baseSpellings[name] {
+            case .intersection?:
+                return "type \(name) = \(base) & \(body);"
+            case .genericInterface? where baseOf[base] == nil:
+                let inherited = members[base] ?? [:]
+                let arguments = parameters(of: inherited).map { inherited[$0]!.type.text }
+                return "interface \(name) extends \(base)\(arguments.isEmpty ? "" : "<\(arguments.joined(separator: ", "))>") \(body)"
+            default:
+                return "interface \(name) extends \(base) \(body)"
+            }
+        }
+        let keys = (Array(table.keys) + Array((methods[name] ?? [:]).keys)).sorted().map { Int($0) == nil ? "\"\($0)\"" : $0 }.joined(separator: " | ")
+        let larger = "{\n\((fields + ["    leftOut: string;"]).joined(separator: "\n"))\n}"
+        switch spellings[name] {
+        case .alias?:
+            return "type \(name) = \(body);"
+        case .mapped?:
+            return "interface \(name)Shape \(body)\ntype \(name) = { [K in keyof \(name)Shape]: \(name)Shape[K] };"
+        case .picked? where !keys.isEmpty:
+            return "interface \(name)All \(larger)\ntype \(name) = Pick<\(name)All, \(keys)>;"
+        case .omitted?:
+            return "interface \(name)All \(larger)\ntype \(name) = Omit<\(name)All, \"leftOut\">;"
+        case .withDefault?:
+            guard let first = parameters(of: table).first else { fallthrough }
+            let rest = write(table, replacing: [first: "T"]) + fields.dropFirst(table.count)
+            return "interface \(name)<T = \(table[first]!.type.text)> {\n\(rest.joined(separator: "\n"))\n}"
+        default:
+            return "interface \(name) \(body)"
         }
     }
 
@@ -700,9 +1003,12 @@ final class TypeScriptPlan {
     private func follow() {
         var codeStringDepth = 0
         var classNames = [String?]()
-        var subroutines = [(begin: Int, result: TypeScriptType?)]()
+        var subroutines = [OpenSubroutine]()
         var openClasses = [Variable]()
-        var derivedClasses = [Bool]()
+        /// Whether the checker knows what `super` has in each of the open classes.
+        var checkedBases = [Bool]()
+        /// The type that the checker takes each of the open object literals for.
+        var openLiterals = [String?]()
 
         for instr in code {
             if instr.op is EndCodeString { codeStringDepth -= 1 }
@@ -710,6 +1016,7 @@ final class TypeScriptPlan {
             if codeStringDepth > 0 { continue }
 
             let index = instr.index
+            choose(at: index)
             func convert(_ i: Int, _ conversion: Conversion) { inputConversions[index, default: [:]][i] = conversion }
             func canConvert(_ i: Int) -> Bool { !instr.reassigns(instr.input(i)) && !isLabel(instr.input(i)) }
             /// Makes the checker accept the instruction whatever its inputs are. Returns whether it does so by ignoring the line.
@@ -717,7 +1024,22 @@ final class TypeScriptPlan {
             func giveUp(from first: Int = 0) -> Bool {
                 let convertible = (first..<instr.numInputs).filter(canConvert)
                 let namesBuiltin = instr.numInputs > 0 && code[indexOfDefinition[instr.input(0)] ?? 0].op is CreateNamedVariable
-                if let i = convertible.first, !instr.isBlock, choices.percent(settings.ignoredLine * (namesBuiltin ? 2 : 1)) {
+                // Ignoring a line doesn't take away what the build asks of an `int32`.
+                let storesWholeNumbers = instr.inputs.contains {
+                    func takesWholeNumbers(_ callable: Callable) -> Bool { callable.parameters.contains { $0.type == .int32 } }
+                    switch type(of: $0).plain {
+                    case .named(let name):
+                        if namesWithWholeNumbers.contains(name) || (methods[name] ?? [:]).values.contains(where: takesWholeNumbers) { return true }
+                    case .classOf(let name):
+                        if constructors[name].map(takesWholeNumbers) ?? false { return true }
+                    default:
+                        break
+                    }
+                    return callables[$0].map(takesWholeNumbers) ?? false
+                }
+                if let i = convertible.first, !instr.isBlock, choices.percent(settings.ignoredLine * (namesBuiltin ? 2 : 1)),
+                    !storesWholeNumbers
+                {
                     convert(i, .ignoredLine)
                     return true
                 }
@@ -729,10 +1051,39 @@ final class TypeScriptPlan {
                 for (i, v) in instr.inputs.enumerated() where acceptance == .casts && (unknownNames.contains(v) || openClasses.contains(v)) {
                     convert(i, .ignoredLine)
                 }
+                // A store to a member of a literal is written with a variable for the literal.
+                if instr.op is SetProperty || instr.op is UpdateProperty, isWrittenAsLiteral(instr.input(0)) { pinned.insert(instr.input(0)) }
+                // The result of a guarded operation is declared in front of it, without a value.
+                if instr.isGuarded {
+                    for v in instr.outputs where annotations[v] == nil { declared[v] = .untracked }
+                }
+                // Fuzzilli writes `this` for the receiver of an outer function too, where it means the inner one's.
+                for (i, v) in instr.inputs.enumerated() where acceptance == .casts {
+                    if let owner = indexOfDefinition[v], code[owner].op is BeginAnySubroutine, code[owner].numInnerOutputs > 0,
+                        code[owner].innerOutput(0) == v, !(code[owner].op is BeginAnyFunction), owner != subroutines.last?.begin,
+                        inputConversions[index]?[i] == nil
+                    {
+                        convert(i, .toAny)
+                    }
+                }
             }
             /// Makes an input fit a position of the given type.
             func pass(_ i: Int, into target: TypeScriptType) {
-                if !assignable(type(of: instr.input(i)), to: target) { convert(i, .toAny) }
+                if target == .int32 {
+                    if !isSmallWholeNumber(instr.input(i)) { convert(i, .wholeNumber) }
+                } else if !assignable(type(of: instr.input(i)), to: target)
+                    || (target.mentionsEnumeration && isWrittenAsNumber(instr.input(i)))
+                {
+                    convert(i, .toAny)
+                }
+            }
+            /// Writes an array as a constant now and then.
+            func makeConstant() -> Bool {
+                guard !reassigned.contains(instr.output), choices.percent(8) else { return false }
+                outputConversions[instr.output] = .asConstant
+                pinned.insert(instr.output)
+                declared[instr.output] = .untracked
+                return true
             }
             func passArguments(_ callable: Callable, from first: Int) -> Bool {
                 let count = instr.numInputs - first
@@ -743,7 +1094,6 @@ final class TypeScriptPlan {
                     let parameter = callable.parameters[min(i, callable.parameters.count - 1)]
                     var target = parameter.type
                     if parameter.isRest, case .array(let element) = target { target = element }
-                    if target == .int32, !isSmallWholeNumber(instr.input(first + i)) { return false }
                     if i == callable.genericPosition {
                         // The checker infers the type argument from the argument.
                         if callable.isBounded || type(of: instr.input(first + i)) == .untracked { convert(first + i, .toAny) }
@@ -754,7 +1104,7 @@ final class TypeScriptPlan {
                 }
                 return true
             }
-            func inputIsLiteral(_ i: Int) -> Bool { literals.contains(instr.input(i)) }
+            func inputIsLiteral(_ i: Int) -> Bool { literals.contains(instr.input(i)) || isWrittenAsLiteral(instr.input(i)) }
             /// A condition that the checker can see through is an error.
             func passCondition(_ i: Int) {
                 switch type(of: instr.input(i)) {
@@ -765,21 +1115,30 @@ final class TypeScriptPlan {
             }
 
             if acceptance != .casts {
-                produceWithoutChecking(instr, &classNames, &subroutines)
+                produceWithoutChecking(instr, &classNames)
                 continue
             }
 
             switch instr.op.opcode {
             case .loadInteger(let op):
-                if !reassigned.contains(instr.output), op.value.magnitude < 1 << 31, choices.percent(10) {
+                if !reassigned.contains(instr.output), op.value.magnitude < 1 << 29, choices.percent(12) {
                     let name = "N\(op.value < 0 ? "_" : "")\(op.value.magnitude)"
-                    enumMembers[name] = "\(op.value)"
+                    let n = op.value
+                    var spellings = ["\(n)", "\(n)", "\(n - 1) + 1", "\(n) | 0", "~~\(n)", "-(\(-n))", "\(n * 2) >> 1", "\(n) * 1"]
+                    if !enumsAreConstant { spellings += ["\"x\".length + \(n - 1)", "Math.trunc(\(n))", "[\(n)][0]"] }
+                    enumMembers[name] = choices.pick(spellings)
                     outputConversions[instr.output] = .replaced("Numbers.\(name)")
                 }
                 produce(instr.output, .number, isLiteral: true)
             case .loadFloat:
                 produce(instr.output, .number, isLiteral: true)
-            case .loadString:
+            case .loadString(let op):
+                if !reassigned.contains(instr.output), (1...12).contains(op.value.count), choices.percent(12),
+                    op.value.utf8.allSatisfy({ ($0 >= 97 && $0 <= 122) || ($0 >= 65 && $0 <= 90) })
+                {
+                    textMembers["T_\(op.value)"] = "\"\(op.value)\""
+                    outputConversions[instr.output] = .replaced("Texts.T_\(op.value)")
+                }
                 produce(instr.output, .string, isLiteral: true)
             case .loadBoolean:
                 produce(instr.output, .boolean, isLiteral: true)
@@ -795,8 +1154,9 @@ final class TypeScriptPlan {
                 outputConversions[instr.output] = .ignoredLine
 
             case .createIntArray, .createFloatArray:
-                produce(instr.output, .array(.number))
+                if !makeConstant() { produce(instr.output, .array(.number)) }
             case .createArray:
+                if makeConstant() { break }
                 let elements = instr.inputs.map { type(of: $0) == .int32 ? .number : type(of: $0) }
                 if (1...4).contains(elements.count), !elements.contains(.untracked), !reassigned.contains(instr.output), choices.percent(25) {
                     annotations[instr.output] = .tuple(elements)
@@ -845,7 +1205,7 @@ final class TypeScriptPlan {
                 let (a, b) = (type(of: instr.input(0)), type(of: instr.input(1)))
                 let isOrdering = [.lessThan, .lessThanOrEqual, .greaterThan, .greaterThanOrEqual].contains(op.op)
                 let sameKind = (a.isNumber && b.isNumber) || (a == .string && b == .string) || (a == .bigint && b == .bigint)
-                if !sameKind || (!isOrdering && (inputIsLiteral(0) || inputIsLiteral(1))) {
+                if !sameKind || (!isOrdering && (inputIsLiteral(0) || inputIsLiteral(1) || a.isLiterals || b.isLiterals)) {
                     convert(0, .toAny)
                     convert(1, .toAny)
                 }
@@ -862,9 +1222,7 @@ final class TypeScriptPlan {
                 }
 
             case .setProperty(let op):
-                if let member = member(op.propertyName, of: type(of: instr.input(0))), !member.isReadonly, !member.isMethod,
-                    member.type != .int32
-                {
+                if let member = member(op.propertyName, of: type(of: instr.input(0))), !member.isReadonly, !member.isMethod {
                     pass(1, into: member.type)
                 } else {
                     giveUp()
@@ -891,6 +1249,10 @@ final class TypeScriptPlan {
             case .callFunction(let op):
                 if !op.isCallOptional, let callable = callables[instr.input(0)], passArguments(callable, from: 1) {
                     produce(instr.output, callable.returnsTypeParameter ? .untracked : callable.result)
+                } else if !op.isCallOptional, case .library(let name) = type(of: instr.input(0)), let callable = Self.libraryFunctions[name],
+                    passArguments(callable, from: 1)
+                {
+                    produce(instr.output, callable.result)
                 } else {
                     produce(instr.output, .untracked, onIgnoredLine: giveUp())
                 }
@@ -899,7 +1261,22 @@ final class TypeScriptPlan {
                 if case .classOf(let name) = type(of: instr.input(0)), let callable = constructors[name],
                     passArguments(callable, from: 1)
                 {
+                    if let field = genericFields[name], let member = members[name]?[field], choices.percent(50) {
+                        convert(0, .replaced("\(name)<\(member.type.text)>"))
+                    }
                     produce(instr.output, .named(name))
+                } else if case .library(let name) = type(of: instr.input(0)), let callable = Self.libraryFunctions["new.\(name)"],
+                    passArguments(callable, from: 1)
+                {
+                    produce(instr.output, callable.result)
+                } else if case .library(let name) = type(of: instr.input(0)), name == "Map" || name == "Set", instr.numInputs == 1 {
+                    func argument() -> TypeScriptType {
+                        let named = pickNamedType().map(TypeScriptType.named) ?? .object
+                        return choices.pick([.any, .string, .number, .number, named, .union(of: [.string, .number])])
+                    }
+                    let made = TypeScriptType.generic(name, name == "Map" ? [argument(), argument()] : [argument()])
+                    convert(0, .replaced(made.text))
+                    produce(instr.output, made)
                 } else {
                     produce(instr.output, .untracked, onIgnoredLine: giveUp())
                 }
@@ -918,8 +1295,12 @@ final class TypeScriptPlan {
                 }
 
             case .getComputedProperty(let op):
-                if !op.isReceiverOptional, type(of: instr.input(1)).isNumber, let element = elementType(of: type(of: instr.input(0))) {
+                if !op.isReceiverOptional, type(of: instr.input(1)).isNumber, let element = indexedType(of: type(of: instr.input(0))) {
                     produce(instr.output, element)
+                } else if !op.isReceiverOptional, type(of: instr.input(1)) == .string, case .named(let name) = type(of: instr.input(0)).plain,
+                    indexed.contains(name)
+                {
+                    produce(instr.output, .any)
                 } else {
                     produce(instr.output, .untracked, onIgnoredLine: giveUp())
                 }
@@ -927,6 +1308,12 @@ final class TypeScriptPlan {
             case .setComputedProperty:
                 if type(of: instr.input(1)).isNumber, case .array(let element) = type(of: instr.input(0)).plain {
                     pass(2, into: element)
+                } else if type(of: instr.input(1)).isNumber, case .named(let name) = type(of: instr.input(0)).plain,
+                    let element = Self.typedArrays[name]
+                {
+                    pass(2, into: element)
+                } else if type(of: instr.input(1)) == .string, case .named(let name) = type(of: instr.input(0)).plain, indexed.contains(name) {
+                    break
                 } else {
                     giveUp()
                 }
@@ -950,7 +1337,9 @@ final class TypeScriptPlan {
 
             case .createNamedVariable(let op):
                 if op.declarationMode == .global { convert(0, .ignoredLine) } else if op.hasInitialValue { convert(0, .toAny) }
-                declared[instr.output] = .untracked
+                let isFollowed =
+                    op.declarationMode == .none && Self.followedLibrary.contains(op.variableName) && !reassigned.contains(instr.output)
+                declared[instr.output] = isFollowed ? .library(op.variableName) : .untracked
 
             case .update(let op):
                 let (a, b) = (type(of: instr.input(0)), type(of: instr.input(1)))
@@ -965,22 +1354,48 @@ final class TypeScriptPlan {
 
             case .return(let op):
                 guard op.hasReturnValue else { break }
-                if let result = subroutines.last?.result { pass(0, into: result) }
+                if let head = subroutines.last.map({ code[$0.begin].op }),
+                    head is BeginClassConstructor || head is BeginClassSetter || head is BeginClassComputedSetter
+                        || head is BeginObjectLiteralSetter || head is BeginObjectLiteralComputedSetter || head is BeginClassPrivateSetter
+                {
+                    convert(0, .ignoredLine)
+                } else if let result = subroutines.last?.result {
+                    pass(0, into: result)
+                }
 
-            case .beginIf, .beginWhileLoopBody, .endDoWhileLoop:
+            case .yield(let op):
+                if op.hasArgument, let yielded = subroutines.last?.yielded { pass(0, into: yielded) }
+                declared[instr.output] = .any
+
+            case .await:
+                if case .generic("Promise", let arguments) = type(of: instr.input(0)).plain {
+                    produce(instr.output, arguments[0])
+                } else {
+                    produce(instr.output, .untracked)
+                }
+
+            case .beginWhileLoopBody, .endDoWhileLoop:
+                // What stands in front of the condition is separated from it by commas.
+                if instr.numInputs > 0 { convert(0, .ignoredLine) }
+
+            case .beginIf:
                 if instr.numInputs > 0 { passCondition(0) }
+
+            case .loadNewTarget:
+                declared[instr.output] = .untracked
+                outputConversions[instr.output] = .ignoredLine
 
             case .ternaryOperation:
                 passCondition(0)
                 produce(instr.output, .untracked)
 
             case .beginObjectLiteral:
-                break
+                openLiterals.append(planLiteral(endingAt: end(ofBlockAt: index)))
 
             case .endClassDefinition:
                 classNames.removeLast()
                 openClasses.removeLast()
-                derivedClasses.removeLast()
+                checkedBases.removeLast()
 
             case .classAddComputedProperty:
                 convert(0, .ignoredLine)
@@ -988,84 +1403,137 @@ final class TypeScriptPlan {
             case .getSuperProperty, .getComputedSuperProperty, .callSuperMethod:
                 giveUp()
                 declared[instr.output] = .untracked
-                if derivedClasses.last == false { outputConversions[instr.output] = .ignoredLine }
+                if checkedBases.last == true { outputConversions[instr.output] = .ignoredLine }
 
             case .setSuperProperty, .setComputedSuperProperty, .updateSuperProperty:
-                if derivedClasses.last == false { convert(0, .ignoredLine) } else { giveUp() }
+                if checkedBases.last == true { convert(0, .ignoredLine) } else { giveUp() }
+
+            case .callSuperConstructor:
+                if let name = classNames.last ?? nil, let base = baseOf[name], let callable = constructors[base],
+                    passArguments(callable, from: 0)
+                {
+                    break
+                }
+                giveUp()
+                ignoredHeads.insert(index)
 
             case .objectLiteralAddProperty(let op):
                 let end = enclosingLiteral(of: index)
                 if end >= 0, repeatedKeys(ofLiteralEndingAt: end).contains(op.propertyName) {
                     convert(0, .ignoredLine)
-                } else if end >= 0, let group = inferred[code[end].output]?.group, let name = nameOfGroup[group],
-                    let member = members[name]?[op.propertyName]
-                {
-                    if member.type == .int32, !inputIsLiteral(0) { convert(0, .toAny) } else { pass(0, into: member.type) }
-                } else {
-                    convert(0, .toAny)
+                } else if let name = openLiterals.last ?? nil {
+                    if let member = member(op.propertyName, of: .named(name)) {
+                        pass(0, into: member.type)
+                    } else {
+                        convert(0, .ignoredLine)
+                    }
                 }
+
+            case .objectLiteralAddElement, .objectLiteralSetPrototype:
+                if (openLiterals.last ?? nil) != nil { convert(0, .ignoredLine) } else { giveUp() }
+
+            case .objectLiteralAddComputedProperty, .objectLiteralCopyProperties:
+                for i in 0..<instr.numInputs { convert(i, .toAny) }
 
             case .endObjectLiteral:
-                if let group = inferred[instr.output]?.group, let name = nameOfGroup[group],
-                    !literalsWithMoreThanProperties.contains(index), repeatedKeys(ofLiteralEndingAt: index).isEmpty
-                {
-                    annotations[instr.output] = .named(name)
-                    pinned.insert(instr.output)
-                    declared[instr.output] = .named(name)
-                } else {
-                    declared[instr.output] = .untracked
-                }
+                openLiterals.removeLast()
+
+            case .beginObjectLiteralMethod, .beginObjectLiteralComputedMethod, .beginObjectLiteralGetter,
+                .beginObjectLiteralComputedGetter, .beginObjectLiteralSetter, .beginObjectLiteralComputedSetter:
+                giveUp()
+                ignoredHeads.insert(index)
+                _ = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), returns: returns(of: instr.op))
+                declared[instr.innerOutput(0)] = (openLiterals.last ?? nil).map(TypeScriptType.named) ?? .untracked
+                let isGetter = instr.op is BeginObjectLiteralGetter || instr.op is BeginObjectLiteralComputedGetter
+                subroutines.append(
+                    OpenSubroutine(begin: index, result: bodyResults[index] ?? (isGetter ? .untracked : nil), yielded: yieldAnnotations[index]))
+
+            case .beginClassGetter, .beginClassComputedGetter:
+                giveUp()
+                ignoredHeads.insert(index)
+                _ = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), returns: .value)
+                var isStatic = true
+                if case .beginClassGetter(let op) = instr.op.opcode { isStatic = op.isStatic }
+                let owner = (classNames.last ?? nil).flatMap { genericFields[$0] == nil ? $0 : nil }
+                declared[instr.innerOutput(0)] = isStatic ? .untracked : owner.map(TypeScriptType.named) ?? .untracked
+                subroutines.append(OpenSubroutine(begin: index, result: bodyResults[index] ?? .untracked))
 
             case .beginClassDefinition(let op):
-                if op.hasSuperclass { convert(0, .toAny) }
-                let name = op.isExpression || op.hasSuperclass ? nil : "C\(instr.output.number)"
-                classNames.append(nameOfGroup.values.contains("C\(instr.output.number)") ? name : nil)
+                let ownName = "C\(instr.output.number)"
+                let isFollowed = !op.isExpression && nameOfGroup.values.contains(ownName) && (!op.hasSuperclass || baseOf[ownName] != nil)
+                classNames.append(isFollowed ? ownName : nil)
                 openClasses.append(instr.output)
-                derivedClasses.append(op.hasSuperclass)
-                markRepeatedMembers(ofClassAt: index)
-                declared[instr.output] = (classNames.last ?? nil).map(TypeScriptType.classOf) ?? .untracked
-                if let name = classNames.last ?? nil { prepareClass(name, instr.output) }
+                checkedBases.append(!op.hasSuperclass || isFollowed)
+                markRepeatedMembers(ofClassAt: index, named: ownName)
+                if op.hasSuperclass {
+                    if !isFollowed {
+                        convert(0, .toAny)
+                    } else if markInheritedMembers(ofClassAt: index, named: ownName) {
+                        convert(0, .ignoredLine)
+                    }
+                }
+                declared[instr.output] = isFollowed ? .classOf(ownName) : .untracked
+                if isFollowed { prepareClass(ownName, instr.output) }
+                let ownMembers = Set((memberSites[ownName] ?? [:]).keys.map { String($0.drop(while: { $0 != " " }).dropFirst()) })
+                let implemented = pickNamedType { candidate in
+                    candidate.hasPrefix("O") && !ownMembers.contains { member($0, of: .named(candidate)) != nil || method($0, of: candidate) != nil }
+                }
+                if choices.percent(10), !op.isExpression, let implemented {
+                    implementsClauses[instr.output] = " \(Self.ignoredLineMarker)implements \(implemented)"
+                }
 
             case .classAddProperty(let op):
                 if !op.isStatic, let name = classNames.last ?? nil, let member = members[name]?[op.propertyName] {
-                    let mark = op.hasValue ? (member.isOptional ? "?" : "") : (member.isOptional ? "?" : "!")
-                    fieldAnnotations[index, default: ""] += "\(mark): \(member.type.text)"
-                    if op.hasValue {
-                        if member.type == .int32, !inputIsLiteral(0) { convert(0, .toAny) } else { pass(0, into: member.type) }
+                    var mark = op.hasValue ? (member.isOptional ? "?" : "") : (member.isOptional ? "?" : "!")
+                    if !op.hasValue, choices.percent(25) {
+                        fieldModifiers[index] = "declare "
+                        if mark == "!" { mark = "" }
+                    } else if choices.percent(25) {
+                        fieldModifiers[index] = member.isReadonly ? "readonly " : "public "
                     }
+                    let isGeneric = genericFields[name] == op.propertyName
+                    fieldAnnotations[index, default: ""] += "\(mark): \(isGeneric ? "T" : member.type.text)"
+                    if op.hasValue { pass(0, into: isGeneric ? .untracked : member.type) }
                 } else if op.hasValue {
                     convert(0, .toAny)
                 }
 
-            case .beginPlainFunction, .beginArrowFunction:
-                let callable = beginSubroutine(instr, parameters: instr.innerOutputs, canReturn: true)
+            case .beginPlainFunction, .beginArrowFunction, .beginGeneratorFunction, .beginAsyncFunction,
+                .beginAsyncArrowFunction, .beginAsyncGeneratorFunction:
+                giveUp()
+                let callable = beginSubroutine(instr, parameters: instr.innerOutputs, returns: returns(of: instr.op))
                 callables[instr.output] = callable
                 declared[instr.output] =
                     callable.isTracked && callable.genericPosition == nil ? .function(callable.parameters, callable.result) : .untracked
-                subroutines.append((index, returnAnnotations[index]))
+                subroutines.append(OpenSubroutine(begin: index, result: bodyResults[index], yielded: yieldAnnotations[index]))
 
             case .beginClassConstructor:
-                let callable = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), canReturn: false)
+                giveUp()
+                if (classNames.last ?? nil) == nil { ignoredHeads.insert(index) }
+                let callable = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), returns: .nothing)
                 if let name = classNames.last ?? nil {
+                    for parameter in callable.parameters where callable.isTracked && !parameter.isRest && choices.percent(15) {
+                        parameterModifiers[parameter.name] = choices.pick(["public ", "readonly ", "private ", "protected "])
+                    }
                     constructors[name] = callable
-                    declared[instr.innerOutput(0)] = .named(name)
+                    declared[instr.innerOutput(0)] = genericFields[name] == nil ? .named(name) : .untracked
                 }
-                subroutines.append((index, nil))
+                subroutines.append(OpenSubroutine(begin: index))
 
             case .beginClassMethod(let op):
-                let plain = !op.isGenerator && !op.isAsync
-                let callable = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), canReturn: plain)
+                giveUp()
+                let callable = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), returns: returns(of: op))
                 if let name = classNames.last ?? nil, !op.isStatic {
-                    if plain, !callable.returnsTypeParameter { methods[name, default: [:]][op.methodName] = callable }
-                    declared[instr.innerOutput(0)] = .named(name)
+                    if !callable.returnsTypeParameter { methods[name, default: [:]][op.methodName] = callable }
+                    declared[instr.innerOutput(0)] = genericFields[name] == nil ? .named(name) : .untracked
                 }
-                subroutines.append((index, returnAnnotations[index]))
+                subroutines.append(OpenSubroutine(begin: index, result: bodyResults[index], yielded: yieldAnnotations[index]))
 
             default:
                 if instr.op is BeginAnySubroutine {
-                    subroutines.append((index, nil))
+                    subroutines.append(OpenSubroutine(begin: index))
+                    if instr.op is BeginClassComputedMethod || instr.op is BeginClassComputedSetter { ignoredHeads.insert(index) }
                     if instr.op is BeginConstructor { declarationsThatCannotBeStoredTo.insert(instr.output) }
-                    if instr.op is BeginObjectLiteralMethod || instr.op is BeginObjectLiteralSetter { ignoredHeads.insert(index) }
                 } else if instr.op is EndAnySubroutine {
                     subroutines.removeLast()
                     break
@@ -1076,12 +1544,189 @@ final class TypeScriptPlan {
         }
     }
 
+    /// What `v[i]` gives.
+    private func indexedType(of type: TypeScriptType) -> TypeScriptType? {
+        if case .generic = type.plain { return nil }
+        return elementType(of: type)
+    }
+
+    /// What a loop over the value gives.
     private func elementType(of type: TypeScriptType) -> TypeScriptType? {
         switch type.plain {
         case .array(let element), .readonlyArray(let element): return element
+        case .generic("Generator", let arguments), .generic("Set", let arguments): return arguments[0]
+        case .generic("Map", let arguments): return .tuple(arguments)
+        case .named(let name): return Self.typedArrays[name]
         default: return nil
         }
     }
+
+    /// Decides how an object literal is declared. Returns the type that the checker takes it for while it reads the members.
+    private func planLiteral(endingAt end: Int) -> String? {
+        let v = code[end].output
+        declared[v] = .untracked
+        guard let group = inferred[v]?.group, let name = nameOfGroup[group], repeatedKeys(ofLiteralEndingAt: end).isEmpty else { return nil }
+        choose(at: end, for: 1)
+        let right = TypeScriptType.named(name)
+        let isDeclared = !literalsWithMoreThanProperties.contains(end) || choices.percent(60)
+        let truth = chooseTruth()
+        let form = choices.below(10)
+        guard isDeclared else { return nil }
+        func annotate(_ type: TypeScriptType) {
+            annotations[v] = type
+            declared[v] = type
+        }
+        pinned.insert(v)
+        // What an accessor gives is compared with the member where the literal starts.
+        defer {
+            if literalsWithMoreThanProperties.contains(end) {
+                if outputConversions[v] == nil { outputConversions[v] = .ignoredLine } else { literalsOnIgnoredLines.insert(v) }
+            }
+        }
+        switch truth {
+        case .absent:
+            if form < 3, !reassigned.contains(v) { outputConversions[v] = .asConstant }
+            return nil
+        case .right:
+            switch form {
+            case 0:
+                outputConversions[v] = .satisfies(right)
+            case 1:
+                outputConversions[v] = through(right)
+                declared[v] = right
+            case 2:
+                outputConversions[v] = .satisfies(right)
+                annotate(right)
+            default:
+                annotate(right)
+            }
+        case .wider:
+            outputConversions[v] = through(right)
+            annotate(widen(right))
+        case .wrong:
+            let wrong = falsify(right)
+            if case .named(let other) = wrong, namesWithWholeNumbers.contains(other) { return nil }
+            outputConversions[v] = form < 5 ? .toAny : .throughUnknown(wrong)
+            annotate(wrong)
+            return nil
+        }
+        return name
+    }
+
+    private var literalsOnIgnoredLines = Set<Variable>()
+
+    private func through(_ type: TypeScriptType) -> Conversion {
+        let helper = choices.pick(Self.detours.filter { !$0.hasSuffix("Predicate") })
+        helpers.insert(helper)
+        return .through(helper, type)
+    }
+
+    private struct OpenSubroutine {
+        var begin: Int
+        /// What `return` and `yield` have to fit, where the function says so.
+        var result: TypeScriptType? = nil
+        var yielded: TypeScriptType? = nil
+    }
+
+    /// What a call of a function gives.
+    private enum Returns { case nothing, value, promise, generator, asyncGenerator }
+
+    private func returns(of op: Operation) -> Returns {
+        func returns(_ isAsync: Bool, _ isGenerator: Bool) -> Returns {
+            isAsync ? (isGenerator ? .asyncGenerator : .promise) : (isGenerator ? .generator : .value)
+        }
+        switch op.opcode {
+        case .beginAsyncFunction, .beginAsyncArrowFunction: return .promise
+        case .beginGeneratorFunction: return .generator
+        case .beginAsyncGeneratorFunction: return .asyncGenerator
+        case .beginClassMethod(let op): return returns(op.isAsync, op.isGenerator)
+        case .beginObjectLiteralMethod(let op): return returns(op.isAsync, op.isGenerator)
+        case .beginObjectLiteralComputedMethod(let op): return returns(op.isAsync, op.isGenerator)
+        case .beginObjectLiteralSetter, .beginObjectLiteralComputedSetter: return .nothing
+        default: return .value
+        }
+    }
+
+    private var bodyResults = [Int: TypeScriptType]()
+    private var yieldAnnotations = [Int: TypeScriptType]()
+
+    /// What the instructions of one kind in a function's own body are given.
+    private func typeOfInputs(in begin: Int, where isWanted: (Instruction) -> Bool) -> TypeScriptType {
+        var nested = 0
+        var types = [TypeScriptType]()
+        for i in (begin + 1)..<end(ofBlockAt: begin) {
+            if code[i].op is EndAnySubroutine { nested -= 1 }
+            if nested == 0, code[i].numInputs > 0, isWanted(code[i]) { types.append(rightType(of: code[i].input(0))) }
+            if code[i].op is BeginAnySubroutine { nested += 1 }
+        }
+        return types.count > 4 ? .any : .union(of: types)
+    }
+
+    private static let typedArrays: [String: TypeScriptType] = [
+        "Uint8Array": .number, "Int8Array": .number, "Uint16Array": .number, "Int16Array": .number, "Uint32Array": .number,
+        "Int32Array": .number, "Float32Array": .number, "Float64Array": .number, "Uint8ClampedArray": .number,
+        "BigInt64Array": .bigint, "BigUint64Array": .bigint,
+    ]
+
+    private static let libraryConstants: [String: TypeScriptType] = {
+        var table = [String: TypeScriptType]()
+        for name in ["PI", "E", "LN2", "LN10", "LOG2E", "LOG10E", "SQRT2", "SQRT1_2"] { table["Math.\(name)"] = .number }
+        for name in ["MAX_SAFE_INTEGER", "MIN_SAFE_INTEGER", "MAX_VALUE", "MIN_VALUE", "EPSILON", "NaN", "POSITIVE_INFINITY", "NEGATIVE_INFINITY"] {
+            table["Number.\(name)"] = .number
+        }
+        return table
+    }()
+
+    /// The functions of the library that the plan follows: `Math.abs`, `parseInt`, and `new.Date` for the constructor.
+    private static let libraryFunctions: [String: Callable] = {
+        var table = [String: Callable]()
+        func add(_ names: String, _ required: [TypeScriptType], _ result: TypeScriptType, optional: [TypeScriptType] = [], rest: TypeScriptType? = nil) {
+            var parameters = required.map { TypeScriptParameter(name: "p", type: $0) }
+            parameters += optional.map { TypeScriptParameter(name: "p", type: $0, isOptional: true) }
+            if let rest { parameters.append(TypeScriptParameter(name: "p", type: .array(rest), isRest: true)) }
+            for name in names.split(separator: " ") { table[String(name)] = Callable(parameters: parameters, result: result) }
+        }
+        add(
+            "Math.abs Math.floor Math.ceil Math.round Math.trunc Math.sign Math.sqrt Math.cbrt Math.exp Math.log Math.log2 Math.log10 "
+                + "Math.sin Math.cos Math.tan Math.atan Math.fround Math.clz32 Math.expm1 Math.log1p Math.sinh Math.cosh Math.tanh",
+            [.number], .number)
+        add("Math.pow Math.atan2 Math.imul", [.number, .number], .number)
+        add("Math.max Math.min Math.hypot", [], .number, rest: .number)
+        add("Math.random Date.now", [], .number)
+        add("Number.isInteger Number.isFinite Number.isNaN Number.isSafeInteger Array.isArray", [.unknown], .boolean)
+        add("Number.parseFloat parseFloat", [.string], .number)
+        add("Number.parseInt parseInt", [.string], .number, optional: [.number])
+        add("isNaN isFinite", [.number], .boolean)
+        add("Number", [], .number, optional: [.any])
+        add("String", [], .string, optional: [.any])
+        add("Boolean", [], .boolean, optional: [.any])
+        add("String.fromCharCode String.fromCodePoint", [], .string, rest: .number)
+        add("Object.keys Object.getOwnPropertyNames", [.object], .array(.string))
+        add("Object.values", [.object], .array(.any))
+        add("Object.is", [.any, .any], .boolean)
+        add("Object.isFrozen Object.isSealed Object.isExtensible", [.any], .boolean)
+        add("Object.getPrototypeOf", [.any], .any)
+        add("JSON.stringify", [.any], .string)
+        add("JSON.parse", [.string], .any)
+        add("Symbol.for", [.string], .symbol)
+        add("Symbol", [], .symbol, optional: [.union([.string, .number])])
+        add("BigInt.asIntN BigInt.asUintN", [.number, .bigint], .bigint)
+        add("Reflect.ownKeys", [.object], .array(.union([.string, .symbol])))
+        add("Reflect.has", [.object, .union([.string, .number, .symbol])], .boolean)
+        add("new.Date", [], .named("Date"), optional: [.union([.number, .string])])
+        add("new.ArrayBuffer", [.number], .named("ArrayBuffer"))
+        for name in ["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError"] {
+            add("new.\(name) \(name)", [], .named(name), optional: [.string])
+        }
+        for name in typedArrays.keys { add("new.\(name)", [], .named(name), optional: [.number]) }
+        return table
+    }()
+
+    private static let followedLibrary: Set<String> = Set(
+        libraryFunctions.keys.map { key in
+            let parts = key.split(separator: ".")
+            return String(parts[0] == "new" ? parts[1] : parts[0])
+        } + ["Map", "Set"])
 
     /// The methods of arrays, strings and numbers that the plan follows.
     private func libraryMethod(_ name: String, of receiver: TypeScriptType) -> Callable? {
@@ -1134,14 +1779,55 @@ final class TypeScriptPlan {
             case "toString", "toFixed": return callable([optionalIndex], .string)
             default: return nil
             }
+        case .library(let owner):
+            return Self.libraryFunctions["\(owner).\(name)"]
+        case .generic("Map", let arguments):
+            let key: (TypeScriptType, optional: Bool, rest: Bool) = (arguments[0], false, false)
+            switch name {
+            case "get": return callable([key], .union(of: [arguments[1], .undefined]))
+            case "set": return callable([key, (arguments[1], false, false)], receiver.plain)
+            case "has", "delete": return callable([key], .boolean)
+            case "clear": return callable([], .void)
+            default: return nil
+            }
+        case .generic("Set", let arguments):
+            let one: (TypeScriptType, optional: Bool, rest: Bool) = (arguments[0], false, false)
+            switch name {
+            case "add": return callable([one], receiver.plain)
+            case "has", "delete": return callable([one], .boolean)
+            case "clear": return callable([], .void)
+            default: return nil
+            }
+        case .named(let owner):
+            guard let element = Self.typedArrays[owner] else { return nil }
+            let one: (TypeScriptType, optional: Bool, rest: Bool) = (element, false, false)
+            switch name {
+            case "fill": return callable([one, optionalIndex, optionalIndex], receiver.plain)
+            case "at": return callable([index], .union(of: [element, .undefined]))
+            case "includes": return callable([one], .boolean)
+            case "indexOf", "lastIndexOf": return callable([one], .number)
+            case "join": return callable([(.string, true, false)], .string)
+            case "reverse", "sort": return callable([], receiver.plain)
+            default: return nil
+            }
         default:
             return nil
         }
     }
 
+    private func isWrittenAsLiteral(_ v: Variable) -> Bool {
+        guard annotations[v] == nil, let op = definition(of: v)?.op else { return false }
+        return op is LoadInteger || op is LoadFloat || op is LoadString || op is LoadBoolean || op is LoadBigInt
+    }
+
+    private func isWrittenAsNumber(_ v: Variable) -> Bool {
+        guard annotations[v] == nil, let op = definition(of: v)?.op else { return false }
+        return op is LoadInteger || op is LoadFloat
+    }
+
     private func isSmallWholeNumber(_ v: Variable) -> Bool {
         if type(of: v) == .int32 { return true }
-        guard literals.contains(v), case .loadInteger(let op) = definition(of: v)?.op.opcode else { return false }
+        guard literals.contains(v), outputConversions[v] == nil, case .loadInteger(let op) = definition(of: v)?.op.opcode else { return false }
         return op.value >= -0x8000_0000 && op.value <= 0x7FFF_FFFF
     }
 
@@ -1175,8 +1861,9 @@ final class TypeScriptPlan {
     }
 
     /// Two members of a class with one name are an error at each of them.
-    private func markRepeatedMembers(ofClassAt begin: Int) {
+    private func markRepeatedMembers(ofClassAt begin: Int, named name: String) {
         var first = [String: Int]()
+        defer { memberSites[name] = first }
         var depth = 0
         for i in (begin + 1)..<end(ofBlockAt: begin) {
             if code[i].isBlockEnd { depth -= 1 }
@@ -1202,13 +1889,35 @@ final class TypeScriptPlan {
         }
     }
 
+    private var memberSites = [String: [String: Int]]()
+
+    /// A member that a base class has too has to fit the one of the base. Returns whether that goes for a static one.
+    private func markInheritedMembers(ofClassAt begin: Int, named name: String) -> Bool {
+        var inherited = Set<String>()
+        var base = baseOf[name]
+        while let current = base {
+            inherited.formUnion((memberSites[current] ?? [:]).keys)
+            base = baseOf[current]
+        }
+        var hasStatic = false
+        for (key, member) in memberSites[name] ?? [:] where inherited.contains(key) && !key.hasPrefix("#") {
+            if key.hasPrefix("true ") { hasStatic = true }
+            if code[member].op is ClassAddProperty { fieldAnnotations[member] = Self.ignoredLineMarker } else { ignoredHeads.insert(member) }
+        }
+        return hasStatic
+    }
+
     /// A method can be called before the checker, or this plan, reaches its body.
     private func prepareClass(_ name: String, _ v: Variable) {
-        if constructorOfClass[v] == nil { constructors[name] = Callable(parameters: [], result: .named(name)) }
+        guard constructorOfClass[v] == nil else { return }
+        var inherited = baseOf[name].flatMap { constructors[$0] } ?? Callable(parameters: [], result: .named(name))
+        inherited.result = .named(name)
+        constructors[name] = inherited
     }
 
     /// Chooses the annotations of a function's parameters and of what it returns.
-    private func beginSubroutine(_ instr: Instruction, parameters: ArraySlice<Variable>, canReturn: Bool) -> Callable {
+    private func beginSubroutine(_ instr: Instruction, parameters: ArraySlice<Variable>, returns: Returns) -> Callable {
+        let canReturn = returns != .nothing
         guard let op = instr.op as? BeginAnySubroutine else { fatalError("Not the start of a function") }
         var callable = Callable(parameters: [], result: .untracked)
         let isSimple = op.parameters.destructuringParameters.isEmpty
@@ -1217,7 +1926,7 @@ final class TypeScriptPlan {
         // One parameter can have the type of a type parameter, which the function can also return.
         let typeParameter = TypeScriptType.named("T\(instr.index)")
         let genericPosition =
-            acceptance == .casts && canReturn && isSimple && !parameters.isEmpty && choices.percent(settings.generic)
+            acceptance == .casts && canReturn && isSimple && !parameters.isEmpty && choices.percent(settings.generic + 15)
             ? choices.below(parameters.count) : -1
         for (i, v) in parameters.enumerated() {
             let name = "a\(v.number)"
@@ -1231,7 +1940,7 @@ final class TypeScriptPlan {
             if isRest, !isArray(right) { right = .array(.any) }
             var annotation = chooseAnnotation(for: right)
             if isRest, let chosen = annotation, !isArray(chosen) { annotation = .array(chosen) }
-            if annotation == .number, !reassigned.contains(v), choices.percent(settings.int32) { annotation = .int32 }
+            if annotation == .number, !reassigned.contains(v), choices.percent(settings.int32), acceptance == .casts { annotation = .int32 }
             if i == genericPosition, !isRest, !reassigned.contains(v) {
                 annotation = typeParameter
                 let bound = choices.pick(["", "", " extends unknown", " = \(right.text)", " extends \(widen(right).text)"])
@@ -1251,13 +1960,27 @@ final class TypeScriptPlan {
                 .init(name: name, type: annotation ?? (isRest ? .array(.any) : .any), isOptional: optional, isRest: isRest))
         }
         if canReturn {
-            let right = resultTypes[instr.index].map { translate($0) } ?? .any
+            let right =
+                returns == .value && resultTypes[instr.index] != nil
+                ? translate(resultTypes[instr.index]!) : typeOfInputs(in: instr.index) { $0.op is Return }
             if var annotation = callable.genericPosition != nil && choices.percent(60) ? typeParameter : chooseAnnotation(for: right) {
                 callable.returnsTypeParameter = annotation == typeParameter
                 if !endsWithReturn(instr.index) { annotation = .union(of: [annotation, .undefined]) }
                 if !containsReturn(instr.index) {
                     annotation = .void
                     callable.returnsTypeParameter = false
+                }
+                if annotation == .number, choices.percent(settings.int32), acceptance == .casts { annotation = .int32 }
+                bodyResults[instr.index] = annotation
+                switch returns {
+                case .nothing, .value:
+                    break
+                case .promise:
+                    annotation = .generic("Promise", [annotation])
+                case .generator, .asyncGenerator:
+                    let yielded = chooseAnnotation(for: typeOfInputs(in: instr.index) { $0.op is Yield }) ?? .any
+                    yieldAnnotations[instr.index] = yielded
+                    annotation = .generic(returns == .generator ? "Generator" : "AsyncGenerator", [yielded, annotation, .any])
                 }
                 returnAnnotations[instr.index] = annotation
                 callable.result = annotation
@@ -1322,7 +2045,7 @@ final class TypeScriptPlan {
         annotations[v] = annotation
         pinned.insert(v)
         declared[v] = annotation
-        let fits = onIgnoredLine || assignable(actual, to: annotation)
+        let fits = onIgnoredLine || (assignable(actual, to: annotation) && !(isLiteral && annotation.mentionsEnumeration))
         if choices.percent(settings.generic) {
             outputConversions[v] = detour(to: annotation)
         } else if !fits, actual.arms.contains(where: \.isNullish), assignable(actual.withoutNullish, to: annotation) {
@@ -1346,15 +2069,22 @@ final class TypeScriptPlan {
 
     /// In a file that isn't checked, or where every line's errors are ignored, everything is annotated from Fuzzilli's types.
     private func produceWithoutChecking(
-        _ instr: Instruction, _ classNames: inout [String?], _ subroutines: inout [(begin: Int, result: TypeScriptType?)]
+        _ instr: Instruction, _ classNames: inout [String?]
     ) {
         switch instr.op.opcode {
-        case .beginPlainFunction, .beginArrowFunction:
-            _ = beginSubroutine(instr, parameters: instr.innerOutputs, canReturn: true)
+        case .beginPlainFunction, .beginArrowFunction, .beginGeneratorFunction, .beginAsyncFunction, .beginAsyncArrowFunction,
+            .beginAsyncGeneratorFunction:
+            _ = beginSubroutine(instr, parameters: instr.innerOutputs, returns: returns(of: instr.op))
         case .beginClassConstructor:
-            _ = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), canReturn: false)
-        case .beginClassMethod(let op):
-            _ = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), canReturn: !op.isGenerator && !op.isAsync)
+            _ = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), returns: .nothing)
+        case .beginClassMethod, .beginObjectLiteralMethod, .beginObjectLiteralComputedMethod, .beginObjectLiteralGetter,
+            .beginObjectLiteralComputedGetter, .beginObjectLiteralSetter, .beginObjectLiteralComputedSetter, .beginClassGetter,
+            .beginClassComputedGetter:
+            _ = beginSubroutine(instr, parameters: instr.innerOutputs.dropFirst(), returns: returns(of: instr.op))
+        case .beginObjectLiteral:
+            _ = planLiteral(endingAt: end(ofBlockAt: instr.index))
+        case .endObjectLiteral:
+            break
         case .beginClassDefinition(let op):
             classNames.append(op.isExpression ? nil : "C\(instr.output.number)")
         case .endClassDefinition:
@@ -1395,13 +2125,52 @@ final class TypeScriptPlan {
         case .nonNull: text = "\(e)!"
         case .satisfies(let type): text = "(\(e) satisfies \(type.text))"
         case .helper(let name, let type): text = "\(name)<\(type.text)>(\(e) as any)"
+        case .through(let name, let type): text = "\(name)<\(type.text)>(\(expression.text))"
+        case .wholeNumber: text = "((\(e) as any) | 0)"
+        case .asConstant: text = "(\(e) as const)"
         case .parsed(let type): text = "(JSON.parse(writeAsText(\(expression.text))) as \(type.text))"
         case .replaced(let replacement): return Expression(type: Identifier, text: replacement, numSubexpressions: 0)
         case .ignoredLine:
-            text = expression.type === Identifier ? "\(Self.ignoredLineMarker)\(e)" : "(\(Self.ignoredLineMarker)\(expression.text))"
+            text =
+                expression.type === Identifier
+                ? "\(Self.ignoredLineMarker)\(e)"
+                : "(\(Self.ignoredLineMarker)\(expression.text)\(expression.characteristic == .pure ? "" : " as any"))"
         }
         let type = expression.characteristic == .pure ? Identifier : EffectfulBracketedExpression
         return Expression(type: type, text: text, numSubexpressions: 0)
+    }
+
+    /// What stands in front of the opening bracket of an object literal that takes several lines.
+    func prefix(producing v: Variable) -> String {
+        let marker = literalsOnIgnoredLines.contains(v) ? Self.ignoredLineMarker : ""
+        switch outputConversions[v] {
+        case .through(let name, let type)?: return "\(marker)\(name)<\(type.text)>("
+        case .ignoredLine?: return Self.ignoredLineMarker
+        default: return marker
+        }
+    }
+
+    /// What stands behind the closing bracket of an object literal that takes several lines.
+    func suffix(producing v: Variable) -> String {
+        switch outputConversions[v] {
+        case .through?: return ")"
+        case .asConstant?: return " as const"
+        case .toAny?: return " as any"
+        case .to(let type)?: return " as \(type.text)"
+        case .throughUnknown(let type)?: return " as unknown as \(type.text)"
+        case .satisfies(let type)?: return " satisfies \(type.text)"
+        default: return ""
+        }
+    }
+
+    func fieldModifiers(at index: Int) -> String { fieldModifiers[index] ?? "" }
+    func parameterModifiers(for name: String) -> String { parameterModifiers[name] ?? "" }
+    func implementsClause(ofClass v: Variable) -> String { implementsClauses[v] ?? "" }
+
+    /// What follows the name of a class where it is declared.
+    func typeParameters(ofClass v: Variable) -> String {
+        guard let field = genericFields["C\(v.number)"], let member = members["C\(v.number)"]?[field] else { return "" }
+        return "<T = \(member.type.text)>"
     }
 
     func isPinned(_ v: Variable) -> Bool { pinned.contains(v) }
@@ -1427,7 +2196,10 @@ final class TypeScriptPlan {
     private static let detours = [
         "pass", "passThroughBox", "passThroughMap", "passThroughCallback", "passThroughKey", "passThroughList",
         "passThroughDefault", "passThroughSwitch", "passThroughPredicate", "passThroughFalsePredicate", "passThroughOverload",
-        "passThroughPromiseType",
+        "passThroughPromiseType", "passThroughFilter", "passThroughReduce", "passThroughFind", "passThroughFlatMap", "passThroughFrom",
+        "passThroughForEach", "passThroughSort", "passThroughSet", "passThroughRest", "passThroughPattern", "passThroughClosure",
+        "passThroughGenerator", "passThroughAccessor", "passThroughRecord", "passThroughOptional", "passThroughTernary",
+        "passThroughNamespace",
     ]
 
     private static let helperDeclarations: [String: String] = [
@@ -1485,6 +2257,87 @@ final class TypeScriptPlan {
             }
             """,
         "pass": "function pass<T>(value: T): T { return value; }",
+        "passThroughNamespace": """
+            namespace Passing {
+                export let count = 0;
+                export function through<T>(value: T): T {
+                    count++;
+                    return value;
+                }
+            }
+            function passThroughNamespace<T>(value: T): T { return Passing.through<T>(value); }
+            """,
+        "passThroughFilter": "function passThroughFilter<T>(value: T): T { return [value].filter((element: T): boolean => true)[0]; }",
+        "passThroughReduce": "function passThroughReduce<T>(value: T): T { return [value].reduce((held: T, element: T): T => element, value); }",
+        "passThroughFind": "function passThroughFind<T>(value: T): T { return [value].find((element: T): boolean => true) as T; }",
+        "passThroughFlatMap": "function passThroughFlatMap<T>(value: T): T { return [value].flatMap((element: T): T[] => [element])[0]; }",
+        "passThroughFrom": "function passThroughFrom<T>(value: T): T { return Array.from([value], (element: T): T => element)[0]; }",
+        "passThroughForEach": """
+            function passThroughForEach<T>(value: T): T {
+                let held: T = value;
+                [value].forEach((element: T): void => { held = element; });
+                return held;
+            }
+            """,
+        "passThroughSort": "function passThroughSort<T>(value: T): T { return [value, value].sort((first: T, second: T): number => 0)[1]; }",
+        "passThroughSet": """
+            function passThroughSet<T>(value: T): T {
+                for (const element of new Set<T>([value])) return element;
+                return value;
+            }
+            """,
+        "passThroughRest": "function passThroughRest<T>(value: T): T { return ((...values: T[]): T => values[0])(...[value]); }",
+        "passThroughPattern": """
+            function passThroughPattern<T>(value: T): T {
+                const { held }: { held: T } = { held: value };
+                const [first]: [T] = [held];
+                return first;
+            }
+            """,
+        "passThroughClosure": """
+            function passThroughClosure<T>(value: T): T {
+                let held: T = value;
+                const read = (): T => held;
+                const write = (next: T): void => { held = next; };
+                write(read());
+                return read();
+            }
+            """,
+        "passThroughGenerator": """
+            function* yieldOnce<T>(value: T): Generator<T, void, unknown> { yield value; }
+            function passThroughGenerator<T>(value: T): T {
+                for (const element of yieldOnce<T>(value)) return element;
+                return value;
+            }
+            """,
+        "passThroughAccessor": """
+            class Holder<T> {
+                #held: T;
+                constructor(held: T) { this.#held = held; }
+                get value(): T { return this.#held; }
+                set value(next: T) { this.#held = next; }
+            }
+            function passThroughAccessor<T>(value: T): T {
+                const holder = new Holder<T>(value);
+                holder.value = holder.value;
+                return holder.value;
+            }
+            """,
+        "passThroughRecord": """
+            function passThroughRecord<T>(value: T): T {
+                const record: Record<string, T> = {};
+                record.key = value;
+                return record["key"];
+            }
+            """,
+        "passThroughOptional": """
+            function passThroughOptional<T>(value: T): T {
+                const holder: { held?: T } = {};
+                holder.held = value;
+                return holder.held as T;
+            }
+            """,
+        "passThroughTernary": "function passThroughTernary<T>(value: T): T { return typeof value === \"object\" ? value : value; }",
         "passThroughBox": """
             class Box<T> {
                 constructor(public value: T) {}
@@ -1541,9 +2394,25 @@ final class TypeScriptPlan {
         }
         var body = [String]()
         var openClassExpressions = [Substring]()
+        /// The name that a declaration over several lines at the top level declares.
+        var openDeclaration: String? = nil
         lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         for var line in lines {
             let indentation = line.prefix(while: { $0 == " " })
+            // A program that ends early has printed what it had until then.
+            defer {
+                var finished: String? = nil
+                if let name = Self.nameDeclared(by: line) {
+                    if line.hasSuffix(";") { finished = name } else { openDeclaration = name }
+                } else if indentation.isEmpty, line.hasPrefix("}"), let name = openDeclaration {
+                    finished = name
+                    openDeclaration = nil
+                }
+                if let finished {
+                    if acceptance == .everyLineIgnored { body.append("// @ts-ignore") }
+                    body.append("printValue(\"\(finished)\", \(finished));")
+                }
+            }
             // Fuzzilli ends a class expression without a semicolon, and a bracket at the start of the next line would call it.
             if line.hasSuffix("{"), line.contains(" = class {") || line.contains(" = class extends ") {
                 openClassExpressions.append(indentation)
@@ -1564,42 +2433,97 @@ final class TypeScriptPlan {
             }
         }
 
-        var head = [String]()
-        if acceptance == .uncheckedFile { head.append("// @ts-nocheck") }
-        if usesInt32 || text.contains(": int32") { head.append("import type { int32 } from \"bun\";") }
-        head.append("const printValue = console.log;")
         if helpers.contains("passThroughList") { helpers.insert("Same") }
-        for helper in helpers.sorted() { head.append(Self.helperDeclarations[helper]!) }
-        if !enumMembers.isEmpty {
-            let list = enumMembers.sorted(by: { $0.key < $1.key }).map { "    \($0.key) = \($0.value)," }
-            head.append("\(enumMembers.count % 2 == 0 ? "const " : "")enum Numbers {\n\(list.joined(separator: "\n"))\n}")
+        var library = helpers.sorted().map { Self.helperDeclarations[$0]! }
+        let declarations = declarationOrder.map(declaration(of:))
+        if enumMembers.isEmpty, (body + declarations).contains(where: { $0.contains("Numbers") }) { enumMembers["N0"] = "0" }
+        for (name, members) in [("Numbers", enumMembers), ("Texts", textMembers)] where !members.isEmpty {
+            let list = members.sorted(by: { $0.key < $1.key }).map { "    \($0.key) = \($0.value)," }
+            library.append("\(enumsAreConstant ? "const " : "")enum \(name) {\n\(list.joined(separator: "\n"))\n}")
         }
-        for name in interfaceOrder.flatMap({ basesWithMembers.contains($0) ? ["\($0)Base", $0] : [$0] }) where name.hasPrefix("O") {
-            let fields = (members[name] ?? [:]).sorted(by: { $0.key < $1.key }).map { key, member in
-                "    \(member.isReadonly ? "readonly " : "")\(propertyKey(key))\(member.isOptional ? "?" : ""): \(member.type.text);"
+
+        let firstLines = acceptance == .uncheckedFile ? ["// @ts-nocheck"] : []
+        func importOfInt32(for lines: [String]) -> [String] {
+            lines.contains(where: { $0.contains("int32") }) ? ["import type { int32 } from \"bun\";"] : []
+        }
+        var head = firstLines + importOfInt32(for: usesInt32 ? ["int32"] : body + declarations)
+        var otherFiles = ""
+        if hasSeveralFiles {
+            let classes = nameOfGroup.values.filter { $0.hasPrefix("C") }
+            let typesCanMove = !declarations.contains { declaration in classes.contains { declaration.contains($0) } }
+            var imports = [String]()
+            if !library.isEmpty {
+                let made = makeFile(named: "library", firstLines + importOfInt32(for: library), library)
+                imports.append(made.import)
+                otherFiles += made.file
             }
-            let base = baseOf[name].map { " extends \($0)" } ?? ""
-            if base.isEmpty, !basesWithMembers.contains(String(name.dropLast(4))), name.utf8.reduce(0, { $0 + Int($1) }) % 3 == 0 {
-                head.append("type \(name) = {\n\(fields.joined(separator: "\n"))\n};")
-            } else {
-                head.append("interface \(name)\(base) {\n\(fields.joined(separator: "\n"))\n}")
+            if typesCanMove, !declarations.isEmpty {
+                let made = makeFile(named: "types", firstLines + importOfInt32(for: declarations) + imports, declarations)
+                imports.append(made.import)
+                otherFiles += made.file
             }
+            head += imports
+            head.append("const printValue = console.log;")
+            if !typesCanMove { head += declarations }
+        } else {
+            head.append("const printValue = console.log;")
+            head += library + declarations
         }
 
         var tail = [String]()
         var printed = Set<String>()
         for line in lines {
-            for keyword in ["const ", "let ", "var ", "class ", "function ", "function* ", "async function ", "async function* "]
-            where line.hasPrefix(keyword) {
-                let name = String(line.dropFirst(keyword.count).prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }))
-                if !name.isEmpty, printed.insert(name).inserted {
-                    if acceptance == .everyLineIgnored { tail.append("// @ts-ignore") }
-                    tail.append("printValue(\"\(name)\", \(name));")
-                }
+            if let name = Self.nameDeclared(by: line), printed.insert(name).inserted {
+                if acceptance == .everyLineIgnored { tail.append("// @ts-ignore") }
+                tail.append("printValue(\"\(name)\", \(name));")
             }
         }
         tail.append("export {};")
-        return (head + body + tail).joined(separator: "\n") + "\n"
+        return (head + body + tail).joined(separator: "\n") + "\n" + otherFiles
+    }
+
+    /// The name that a line at the top level declares.
+    private static func nameDeclared(by line: Substring) -> String? {
+        for keyword in ["const ", "let ", "var ", "class ", "function ", "function* ", "async function ", "async function* "]
+        where line.hasPrefix(keyword) {
+            let name = String(line.dropFirst(keyword.count).prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }))
+            return name.isEmpty ? nil : name
+        }
+        return nil
+    }
+
+    /// Writes declarations as a file of their own, behind a line with its name, and the import of everything in it.
+    private func makeFile(named name: String, _ firstLines: [String], _ declarations: [String]) -> (file: String, import: String) {
+        var values = [String]()
+        var types = [String]()
+        var lines = firstLines
+        for line in declarations.flatMap({ $0.split(separator: "\n", omittingEmptySubsequences: false) }) {
+            guard let keyword = ["function* ", "function ", "class ", "const enum ", "enum ", "namespace ", "type ", "interface "].first(where: { line.hasPrefix($0) })
+            else {
+                lines.append(String(line))
+                continue
+            }
+            lines.append("export \(line)")
+            let declared = String(line.dropFirst(keyword.count).prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" }))
+            if keyword == "type " || keyword == "interface " {
+                if !types.contains(declared) { types.append(declared) }
+            } else if !values.contains(declared) {
+                values.append(declared)
+            }
+        }
+        lines.append("export {};")
+        let content = lines.joined(separator: "\n") + "\n"
+        let path = "./\(name)-\(String(mix(0, content.utf8), radix: 36)).ts"
+        let statement: String
+        if seedOfProgram % 3 == 0 || values.isEmpty || types.isEmpty {
+            statement = [
+                values.isEmpty ? nil : "import { \(values.joined(separator: ", ")) } from \"\(path)\";",
+                types.isEmpty ? nil : "import type { \(types.joined(separator: ", ")) } from \"\(path)\";",
+            ].compactMap { $0 }.joined(separator: "\n")
+        } else {
+            statement = "import { \((values + types.map { "type \($0)" }).joined(separator: ", ")) } from \"\(path)\";"
+        }
+        return ("// @filename: \(path)\n\(content)", statement)
     }
 
     private func propertyKey(_ name: String) -> String {
@@ -1611,8 +2535,205 @@ extension ILType {
     fileprivate var orAnything: ILType { self == .nothing ? .jsAnything : self }
 }
 
-extension Array {
-    fileprivate func randomElement(using choices: inout ChoiceGenerator) -> Element? {
-        isEmpty ? nil : self[choices.below(count)]
+// MARK: Programs that are refused whatever their types are
+
+/// Throws for a program that stores to a built-in or to a member of one, that names a private member outside the class
+/// that declares it or declares one twice, that calls `super()` in a class without a base class, or that has a regular
+/// expression with the flag `v`, whose patterns Fuzzilli doesn't write.
+func rejectProgramThatCannotBuild(_ program: Program, in environment: JavaScriptEnvironment) throws {
+    var builtins = Set<Variable>()
+    var privateNames = [Set<String>]()
+    var classesHaveBases = [Bool]()
+    func use(_ name: String) throws {
+        guard privateNames.contains(where: { $0.contains(name) }) else {
+            throw InternalError.postProcessRejection("a private name outside its class")
+        }
+    }
+    for instr in program.code {
+        for v in instr.inputs where builtins.contains(v) && instr.reassigns(v) {
+            throw InternalError.postProcessRejection("a store to a built-in")
+        }
+        switch instr.op.opcode {
+        case .setProperty, .updateProperty, .setElement, .updateElement, .setComputedProperty, .updateComputedProperty:
+            if builtins.contains(instr.input(0)) { throw InternalError.postProcessRejection("a store to a member of a built-in") }
+        case .callSuperConstructor:
+            if classesHaveBases.last != true { throw InternalError.postProcessRejection("super() without a base class") }
+        case .loadRegExp(let op):
+            if op.flags.contains(.unicodeSets) { throw InternalError.postProcessRejection("a regular expression with the flag v") }
+        case .createNamedVariable(let op):
+            if op.declarationMode == .none, environment.builtins.contains(op.variableName) { builtins.insert(instr.output) }
+        case .beginClassDefinition(let op):
+            classesHaveBases.append(op.hasSuperclass)
+            var names = Set<String>()
+            var accessors = Set<String>()
+            var depth = 0
+            for member in program.code[(instr.index + 1)...] {
+                if member.isBlockEnd {
+                    if depth == 0 { break }
+                    depth -= 1
+                }
+                if depth == 0 {
+                    var name: String? = nil
+                    switch member.op.opcode {
+                    case .classAddPrivateProperty(let op): name = op.propertyName
+                    case .beginClassPrivateMethod(let op): name = op.methodName
+                    case .beginClassPrivateGetter(let op): accessors.insert(op.propertyName)
+                    case .beginClassPrivateSetter(let op): accessors.insert(op.propertyName)
+                    default: break
+                    }
+                    if let name, !names.insert(name).inserted { throw InternalError.postProcessRejection("a private name declared twice") }
+                }
+                if member.isBlockStart { depth += 1 }
+            }
+            privateNames.append(names.union(accessors))
+        case .endClassDefinition:
+            privateNames.removeLast()
+            classesHaveBases.removeLast()
+        case .getPrivateProperty(let op): try use(op.propertyName)
+        case .setPrivateProperty(let op): try use(op.propertyName)
+        case .updatePrivateProperty(let op): try use(op.propertyName)
+        case .callPrivateMethod(let op): try use(op.methodName)
+        default:
+            break
+        }
     }
 }
+
+// MARK: The seed of a program's types
+
+/// Puts the string that seeds a program's types at its start. A program that has one keeps it, and with it the types of
+/// everything that a mutation left as it was. Now and then the types of a part of the program are drawn again.
+struct TypeScriptSeeds: FuzzingPostProcessor {
+    func process(_ program: Program, for fuzzer: Fuzzer) throws -> Program {
+        try rejectProgramThatCannotBuild(program, in: fuzzer.environment)
+        let seeds = program.code.filter { TypeScriptPlan.seed(in: $0) != nil }.map(\.index)
+        guard seeds.isEmpty || probability(0.15) else { return program }
+        func makeSeed() -> String { "\(TypeScriptPlan.seedPrefix)\(UInt32.random(in: 0...UInt32.max))" }
+        let replaced = seeds.count >= 4 || (!seeds.isEmpty && probability(0.3)) ? chooseUniform(from: seeds) : -1
+        var position = seeds.isEmpty ? 0 : (replaced >= 0 ? Int.max : Int.random(in: 0..<program.size))
+
+        let b = fuzzer.makeBuilder(forMutating: program)
+        b.adopting {
+            for instr in program.code {
+                if instr.index >= position, b.context.contains(.javascript) {
+                    b.loadString(makeSeed())
+                    position = Int.max
+                }
+                if instr.index == replaced {
+                    b.adopt(Instruction(LoadString(value: makeSeed()), inouts: instr.inouts))
+                } else {
+                    b.adopt(instr)
+                }
+            }
+        }
+        let result = b.finalize()
+        result.contributors = program.contributors
+        result.comments = program.comments
+        return result
+    }
+}
+
+// MARK: Shapes of programs
+
+private func twoPropertyNames(_ b: ProgramBuilder) -> (String, String) {
+    let first = b.randomCustomPropertyName()
+    let second = b.randomCustomPropertyName()
+    return (first, second == first ? "\(first)2" : second)
+}
+
+/// Generators for programs in which much depends on the declared types.
+let typeScriptCodeGenerators: [(CodeGenerator, Int)] = [
+    (CodeGenerator("ObjectThatHoldsItselfGenerator") { b in
+        let handOn = b.buildPlainFunction(with: .parameters(n: 1)) { b.doReturn($0[0]) }
+        let key = b.randomJsVariable()
+        let (stored, read) = twoPropertyNames(b)
+        let object = b.buildObjectLiteral { literal in
+            literal.addProperty(stored, as: b.randomJsVariable())
+            literal.addGetter(for: read) { this in
+                b.setProperty(stored, of: this, to: this)
+                b.build(n: 2)
+                b.doReturn(b.callFunction(handOn, withArgs: [this]))
+            }
+            literal.addComputedGetter(for: key) { this in b.doReturn(b.callFunction(handOn, withArgs: [this])) }
+            literal.addMethod(b.randomCustomMethodName(), with: .parameters(n: 1)) { arguments in
+                b.setProperty(stored, of: arguments[0], to: arguments[1])
+                b.doReturn(arguments[0])
+            }
+        }
+        b.getProperty(stored, of: b.getProperty(read, of: object))
+        b.getComputedProperty(key, of: object)
+    }, 8),
+
+    (CodeGenerator("CapturedVariableOfManyTypesGenerator") { b in
+        let (name, _) = twoPropertyNames(b)
+        let held = b.dup(b.buildObjectLiteral { $0.addProperty(name, as: b.randomJsVariable()) })
+        let list = b.createArray(with: [])
+        let read = b.buildArrowFunction(with: .parameters(n: 0)) { _ in b.doReturn(held) }
+        let values = [
+            b.loadInt(Int64.random(in: -3...300)), b.loadString(b.randomCustomPropertyName()), b.createArray(with: [held]),
+            b.buildObjectLiteral { $0.addProperty(b.randomCustomPropertyName(), as: list) }, b.randomJsVariable(),
+        ]
+        b.buildRepeatLoop(n: Int.random(in: 2...20)) {
+            b.reassign(variable: held, value: chooseUniform(from: values))
+            b.updateComputedProperty(held, of: list, with: b.loadInt(1), using: chooseUniform(from: [.Add, .Exp, .NullCoalesce, .Mul]))
+            let isObject = b.compare(b.typeof(held), with: b.loadString("object"), using: .strictEqual)
+            b.ternary(isObject, b.loadString("object"), held)
+            b.reassign(variable: held, value: chooseUniform(from: values))
+            b.callFunction(read)
+        }
+    }, 8),
+
+    (CodeGenerator("VariableComparedWithAnObjectGenerator") { b in
+        let object = b.buildObjectLiteral { $0.addProperty(b.randomCustomPropertyName(), as: b.randomJsVariable()) }
+        let list = b.createArray(with: [object])
+        let table = b.buildObjectLiteral { _ in }
+        let held = b.dup(chooseUniform(from: [b.loadInt(Int64.random(in: -3...300)), b.loadString(b.randomCustomPropertyName()), b.loadBool(true)]))
+        b.buildRepeatLoop(n: Int.random(in: 2...10)) {
+            b.reassign(variable: held, value: chooseUniform(from: [object, list, b.randomJsVariable()]))
+            let isSame = b.compare(held, with: object, using: chooseUniform(from: [.strictEqual, .strictNotEqual]))
+            b.buildIf(isSame) { b.setComputedProperty(held, of: table, to: held) }
+            b.getComputedProperty(held, of: table)
+            b.updateComputedProperty(held, of: table, with: b.loadInt(1), using: chooseUniform(from: [.Add, .Mul, .NullCoalesce]))
+        }
+    }, 8),
+
+    (CodeGenerator("ClassWithBaseClassGenerator") { b in
+        let (inherited, own) = twoPropertyNames(b)
+        let method = b.randomCustomMethodName()
+        let base = b.buildClassDefinition { definition in
+            definition.addInstanceProperty(inherited, value: b.randomJsVariable())
+            definition.addConstructor(with: .parameters(n: 1)) { b.setProperty(inherited, of: $0[0], to: $0[1]) }
+            definition.addInstanceMethod(method, with: .parameters(n: 1)) { arguments in
+                b.build(n: 2)
+                b.doReturn(b.getProperty(inherited, of: arguments[0]))
+            }
+        }
+        let derived = b.buildClassDefinition(withSuperclass: base) { definition in
+            definition.addInstanceProperty(own, value: b.randomJsVariable())
+            definition.addConstructor(with: .parameters(n: 2)) { arguments in
+                b.callSuperConstructor(withArgs: [arguments[1]])
+                b.setProperty(own, of: arguments[0], to: arguments[2])
+            }
+            if probability(0.5) {
+                definition.addInstanceMethod(method, with: .parameters(n: 1)) { b.doReturn(b.callSuperMethod(method, withArgs: [$0[1]])) }
+            }
+            definition.addInstanceGetter(for: "\(own)Read") { this in b.doReturn(b.getProperty(inherited, of: this)) }
+        }
+        for constructor in [derived, base, derived] {
+            let instance = b.construct(constructor, withArgs: b.randomJsVariables(n: 2))
+            b.callMethod(method, on: instance, withArgs: [b.randomJsVariable()])
+            b.setProperty(inherited, of: instance, to: b.randomJsVariable())
+        }
+    }, 8),
+
+    (CodeGenerator("WholeNumbersInOperatorsGenerator") { b in
+        let n = b.loadInt(chooseUniform(from: [-5, -1, 0, 1, 2, 7, 255, 65536, 536870911, -536870911]))
+        let m = b.loadInt(chooseUniform(from: [0, 1, 2, 3, 31, 32]))
+        b.binary(m, n, with: chooseUniform(from: BinaryOperator.allCases))
+        b.unary(chooseUniform(from: [.Minus, .BitwiseNot, .Plus, .LogicalNot]), n)
+        b.createTemplateString(from: ["", "", ""], interpolating: [n, m])
+        let object = b.buildObjectLiteral { $0.addComputedProperty(n, as: m) }
+        b.getComputedProperty(n, of: object)
+        b.getComputedProperty(m, of: b.createArray(with: [n, m, n]))
+    }, 8),
+]

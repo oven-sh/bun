@@ -1,8 +1,0 @@
-through a const: 0
-through a let: 0
-through a const in an arrow: 0
-through a const in a method: 0
-frames: a const three times: "k_leaf,k_report"
-frames: deep: "k_deep,k_report"
-captureStackTrace: cut at the outer one: ""
-captureStackTrace: cut at the inner one: "k_top"

@@ -33,6 +33,29 @@ if (Bun.isMainThread) {
 }
 `;
 
+// Each Worker starts once the one before it has answered.
+const startsWorkersOneByOne = `const count = Number(process.argv[2]);
+if (Bun.isMainThread) {
+  let started = 0;
+  let refused = 0;
+  for (let i = 0; i < count; i++) {
+    try {
+      const worker = new Worker(new URL(import.meta.url));
+      await new Promise(resolve => (worker.onmessage = resolve));
+      started++;
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      refused++;
+    }
+  }
+  console.log("started", started, "refused", refused);
+  process.exit(0);
+} else {
+  setInterval(() => {}, 1000);
+  postMessage(1);
+}
+`;
+
 const startsNodeWorkers = `import { isMainThread, parentPort, Worker } from "node:worker_threads";
 if (isMainThread) {
   let started = 0;
@@ -151,9 +174,9 @@ describe.concurrent("Workers of a compiled program within a limit on the address
     [64, 2 * GB],
     [128, 2 * GB],
   ])(
-    "of %d within %d kB some start and the constructor throws for the rest",
+    "of %d started one by one within %d kB some start and the constructor throws for the rest",
     async (count, limit) => {
-      const { stdout, stderr, exitCode } = await runWithin(limit, startsWorkers, String(count));
+      const { stdout, stderr, exitCode } = await runWithin(limit, startsWorkersOneByOne, String(count));
       const [, started, refused] = /^started (\d+) refused (\d+)\n$/.exec(stdout) ?? [];
       expect({ stdout, stderr, exitCode, all: Number(started) + Number(refused), many: Number(started) >= 16 }).toEqual(
         {

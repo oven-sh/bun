@@ -1192,6 +1192,7 @@ impl Run<'_> {
             Ok(checks_types) => checks_types,
             Err(why) => return self.fail(why),
         };
+        let config_wants_types = cwd_config.as_ref().and_then(|it| it.wants_types);
         if options.rules {
             let (out, registry) = (&mut self.out.stdout, linter.registry());
             let colors = options.color.unwrap_or(environment.stdout.colors);

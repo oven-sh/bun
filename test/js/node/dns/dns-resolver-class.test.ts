@@ -132,7 +132,7 @@ describe.skipIf(isWindows)("a nameserver that nothing listens on", () => {
         e => e.code,
       );
     const name = "refused.example.test";
-    expect(
+    expect<string[]>(
       await Promise.all([
         outcome(resolver.resolve6(name)),
         outcome(resolver.resolveAny(name)),

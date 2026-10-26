@@ -374,6 +374,8 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     }
     if (!ok) return nullptr;
 
+    // Before create(): see Transport::reserveView.
+    uint32_t viewId = t.reserveView();
     auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());
     JSWebView* view = create(structure, zig, WTF::move(impl));
     view->m_backend = WebViewBackend::Chrome;
@@ -382,7 +384,8 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     // One Weak per view, stored in Transport::m_views. All CDP routing
     // dereferences through this — m_pending and m_sessions hold just the
     // viewId, not their own Weaks. Mirrors WebKit's HostClient::viewsById.
-    view->m_viewId = t.registerView(view);
+    view->m_viewId = viewId;
+    t.bindView(viewId, view);
     // Target.createTarget deferred to first navigate() — keeps the constructor
     // synchronous and the attach chain owned by the navigate promise (which
     // resolves on Page.loadEventFired, so one await covers the whole sequence).

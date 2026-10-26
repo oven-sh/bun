@@ -1,5 +1,5 @@
 // What happens to a Chrome-backend operation that is still waiting when
-// the browser goes away (or, for the last mock cases, just the view's own
+// the browser goes away (or, for two of the mock cases, just the view's own
 // page). The interesting case is a navigation-shaped op (navigate / reload
 // / goBack): once Chrome has answered its command the backend only
 // remembers it through the promise slot on the view, waiting for
@@ -9,14 +9,19 @@
 // Most tests here drive the backend from a mock CDP endpoint (a Bun.serve
 // WebSocket speaking just enough of the protocol), so they run without a
 // browser and can leave a navigation committed-but-never-loaded exactly.
-// The last test repeats the scenario against a real Chrome in pipe mode.
+// One test repeats the scenario against a real Chrome in pipe mode.
+//
+// The tests at the end are about the connection itself: a view that is
+// being constructed keeps it while the garbage collector destroys the last
+// other view.
 //
 // Every test runs in a subprocess: the CDP transport is a process-wide
 // singleton, so each scenario needs a fresh one, and killing the browser
 // would break any other test sharing it.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 const mockCDP = /* js */ `
   function startMockCDP() {
@@ -25,6 +30,9 @@ const mockCDP = /* js */ `
     let loads = 0;
     let lastUrl = "about:blank";
     const mock = {
+      // Connections the endpoint accepted, and how many of them have closed.
+      connections: 0,
+      closes: 0,
       // While true, a committed navigation is followed by Page.loadEventFired
       // so the op resolves. Scenarios turn it off to leave a navigation
       // committed but never loaded.
@@ -52,6 +60,10 @@ const mockCDP = /* js */ `
       websocket: {
         open(ws) {
           sock = ws;
+          mock.connections++;
+        },
+        close() {
+          mock.closes++;
         },
         message(ws, raw) {
           const { id, method, params = {}, sessionId } = JSON.parse(String(raw));
@@ -89,22 +101,19 @@ const mockCDP = /* js */ `
       },
     });
     mock.stop = () => server.stop(true);
-    mock.newView = () =>
-      new Bun.WebView({
-        backend: { type: "chrome", url: "ws://127.0.0.1:" + server.port + "/devtools/browser/mock" },
-        width: 100,
-        height: 100,
-      });
+    mock.port = server.port;
+    mock.url = "ws://127.0.0.1:" + server.port + "/devtools/browser/mock";
+    mock.newView = () => new Bun.WebView({ backend: { type: "chrome", url: mock.url }, width: 100, height: 100 });
     return mock;
   }
 `;
 
 // Runs a scenario after the mock definitions in a fresh bun process and
 // returns the JSON it printed.
-async function runScenario(body: string): Promise<unknown> {
+async function runScenario(body: string, env: Record<string, string> = {}): Promise<unknown> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", mockCDP + body],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -290,5 +299,112 @@ const chromeInstalled =
     const died = expect.stringMatching(/^rejected: Chrome (killed by signal \d+|process closed the pipe|exited)$/);
     expect(JSON.parse(stdout)).toEqual({ loadingBefore: true, unanswered: died, navigate: died, loadingAfter: false });
     expect(exitCode, stderr).toBe(0);
+  },
+);
+
+// The garbage collector destroys a view that nothing closed, and the last such view takes the
+// connection with it. Here that happens inside the constructor of the next view, after the constructor
+// found the connection up. The next view has to keep it.
+//
+// The collection has to run inside the allocation of the new view. The child runs with
+// BUN_JSC_useConcurrentGC=0 and BUN_JSC_useGenerationalGC=0, so every collection is a full one that runs
+// whole at the allocation that starts it.
+// - `width` is the first option the constructor reads. fullGC() there leaves every free list empty, so
+//   the allocation of the view takes the slow path, where a requested collection runs.
+// - `dataStore` is the last option. Its getter drops the view and requests a collection.
+// JSC destroys one of the first 8 cells of a type at the end of the collection, and a later cell when
+// its block is next allocated from. Both are inside the allocation of the new view. A view that died
+// before the constructor looked at the connection shows as a second connection.
+function constructDuringCollection({
+  setup = "",
+  backend = `{ type: "chrome", url: mock.url }`,
+  options = "",
+  use = `const navigate = await view.navigate("http://mock/kept").then(() => "resolved", e => "rejected: " + e.message);`,
+}) {
+  return `
+    import { fullGC } from "bun:jsc";
+    const mock = startMockCDP();
+    ${setup}
+    // The only open view. Nothing closes it.
+    const holder = { dropped: new Bun.WebView({ backend: ${backend}, width: 100, height: 100 }) };
+    // Made before the await: a WeakRef keeps its target alive until the job that made it ends.
+    const ref = new WeakRef(holder.dropped);
+    await holder.dropped.navigate("http://mock/dropped");
+    // From a task of the event loop, not from the continuation of the await. That one runs under the
+    // socket read that delivered the reply, whose unwritten locals can still hold the view's address,
+    // and the collector scans the stack conservatively.
+    await new Promise(resolve => setImmediate(resolve));
+
+    const view = new Bun.WebView({
+      backend: ${backend},
+      get width() {
+        fullGC();
+        return 100;
+      },
+      height: 100,
+      ${options}
+      get dataStore() {
+        holder.dropped = undefined;
+        Bun.gc(false);
+      },
+    });
+    const collected = ref.deref() === undefined;
+    ${use}
+    console.log(JSON.stringify({ collected, navigate, url: view.url, connections: mock.connections, closes: mock.closes }));
+    mock.stop();
+  `;
+}
+const keptConnection = { collected: true, navigate: "resolved", url: "http://mock/kept", connections: 1, closes: 0 };
+const wholeCollections = { BUN_JSC_useConcurrentGC: "0", BUN_JSC_useGenerationalGC: "0" };
+
+test.concurrent.each([
+  ["a ws:// url", {}],
+  [
+    "a ws:// url, after 20 other views",
+    // Closed views take the cells that are destroyed with their collection, so the dropped view is in a
+    // block. On globalThis: a binding that nothing reads after an await is dead across it.
+    {
+      setup: `globalThis.held = Array.from({ length: 20 }, () => { const view = mock.newView(); view.close(); return view; });`,
+    },
+  ],
+  [
+    "a ws:// url and a url to load",
+    {
+      options: `url: "http://mock/kept",`,
+      // The constructor starts this navigation, and no promise for it reaches the script.
+      use: `const navigate = view.loading ? await new Promise(resolve => (view.onNavigated = () => resolve("resolved"))) : "not started";`,
+    },
+  ],
+])(
+  "a view constructed with %s keeps the connection when the last other view is collected inside the constructor",
+  async (_, parts) => {
+    expect(await runScenario(constructDuringCollection(parts), wholeCollections)).toEqual(keptConnection);
+  },
+);
+
+// backend: "chrome" with no url looks for a running browser: it reads a DevToolsActivePort file under
+// the home directory (LOCALAPPDATA on Windows). These tests point that at a directory of their own, and
+// the scenario writes the file for its mock. Other platforms have no such lookup.
+const devToolsActivePort = isWindows
+  ? "Google\\Chrome\\User Data\\DevToolsActivePort"
+  : isMacOS
+    ? "Library/Application Support/Google/Chrome/DevToolsActivePort"
+    : isLinux
+      ? ".config/google-chrome/DevToolsActivePort"
+      : undefined;
+const autoDetectEnv = (home: string) => ({
+  HOME: home,
+  LOCALAPPDATA: home,
+  DEVTOOLS_ACTIVE_PORT: join(home, devToolsActivePort!),
+});
+const advertiseMock = `await Bun.write(process.env.DEVTOOLS_ACTIVE_PORT, mock.port + "\\n/devtools/browser/mock\\n");`;
+
+test.concurrent.skipIf(!devToolsActivePort)(
+  "a view of an auto-detected browser keeps the connection when the last other view is collected inside the constructor",
+  async () => {
+    using home = tempDir("webview-auto-detect", {});
+    const scenario = constructDuringCollection({ setup: advertiseMock, backend: `"chrome"` });
+    const env = { ...wholeCollections, ...autoDetectEnv(String(home)) };
+    expect(await runScenario(scenario, env)).toEqual(keptConnection);
   },
 );

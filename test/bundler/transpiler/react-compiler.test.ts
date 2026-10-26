@@ -4120,7 +4120,7 @@ describe("bundler", () => {
   });
 
   // An inlined env value is the bytes of the environment, and `process.env` has the text that `TextDecoder` reads
-  // from them. Constant propagation folds `.length` to the length of that text.
+  // from them. Constant propagation folds `.length` to the length of that text, and `===` compares that text.
   itBundled("react-compiler/LengthOfAnEnvValueThatIsNotUtf8", {
     files: {
       "/entry.ts": /* ts */ `
@@ -4143,6 +4143,11 @@ describe("bundler", () => {
         export function E_Text() {
           return <div>{String(process.env.PUB_E.length)}</div>;
         }
+        export function F_OtherBytesThatAreTheSameText() {
+          let one = process.env.PUB_F;
+          let other = process.env.PUB_G;
+          return <div>{String(one === other)}</div>;
+        }
       `,
       "/.env": Buffer.concat([
         Buffer.from("PUB_A="),
@@ -4153,7 +4158,11 @@ describe("bundler", () => {
         Buffer.from([0xf0, 0x9f, 0x98]),
         Buffer.from("z\nPUB_D="),
         Buffer.from([0xed, 0xa0]),
-        Buffer.from("q\nPUB_E=é😀\n"),
+        Buffer.from("q\nPUB_E=é😀\nPUB_F=x"),
+        Buffer.from([0xe9]),
+        Buffer.from("y\nPUB_G=x"),
+        Buffer.from([0xe8]),
+        Buffer.from("y\n"),
       ]),
       "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
       "/node_modules/react/index.js": ``,
@@ -4165,7 +4174,7 @@ describe("bundler", () => {
     minifySyntax: true,
     backend: "cli",
     target: "browser",
-    run: { stdout: "3 8 2 3 3" },
+    run: { stdout: "3 8 2 3 3 true" },
   });
 });
 

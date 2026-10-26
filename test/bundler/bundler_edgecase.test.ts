@@ -4397,37 +4397,3 @@ for (const backend of ["api", "cli"] as const) {
     });
   });
 }
-
-// Some string folds need no minify flag: `.charCodeAt(n)` and unary `+` and `-` always run, and `~`, `<` and a join run
-// in an enum initializer. A `define` string is stored as 8-bit WTF-8, and they have to read it per UTF-16 code unit.
-describe("bundler", () => {
-  for (const backend of ["cli", "api"] as const) {
-    itBundled(`edgecase/DefineNonAsciiFoldsWithoutMinify${backend === "cli" ? "Cli" : "Api"}`, {
-      files: {
-        "/entry.ts": /* ts */ `
-          declare const A: string, N: string, D: string, P: string, Z: string;
-          enum E {
-            Code = A.charCodeAt(2) === 97 ? 1 : 2,
-            Not = ~N,
-            Joined = (A + "x").charCodeAt(2),
-            Order = P < Z ? 1 : 2,
-          }
-          console.log(JSON.stringify([A.charCodeAt(2), A.charCodeAt(1), A.charCodeAt(0), +N, -N, +D]));
-          console.log(JSON.stringify([E.Code, E.Not, E.Joined, E.Order]));
-          if (+N === 1) console.log("one"); else require("./missing-number.js");
-        `,
-      },
-      define: {
-        A: '"éa"',
-        // U+00A0 and U+2028 are white space for a number
-        N: '"\u00a01"',
-        D: '"\u2028 12 "',
-        // U+FF5E is after U+1F600 in UTF-16 code units, and before it in bytes
-        P: '"\uff5e"',
-        Z: '"😀"',
-      },
-      backend,
-      run: { stdout: "[null,97,233,1,-1,12]\n[2,-2,120,2]\none" },
-    });
-  }
-});

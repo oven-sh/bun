@@ -2098,6 +2098,58 @@ devTest("a load of a page binds a package with main and module by the files that
     });
   },
 });
+// A hot update gives an open page the stylesheets of the files that the page runs.
+devTest("an open page keeps the stylesheets of its files when its route starts or stops to bind a package to main", {
+  files: {
+    "node_modules/dual/package.json": JSON.stringify({
+      name: "dual",
+      version: "1.0.0",
+      main: "main.js",
+      module: "esm.js",
+    }),
+    "node_modules/dual/esm.js": `import "./module.css"; export const kind = "module";`,
+    "node_modules/dual/module.css": `.module { color: red; }`,
+    "node_modules/dual/main.js": `import "./main.css"; export const kind = "main";`,
+    "node_modules/dual/main.css": `.main { color: blue; }`,
+    "index.html": emptyHtmlFile({ scripts: ["index.js"] }),
+    "index.js": `
+      import { kind } from "dual";
+      import "./other.js";
+      console.log("kind = " + kind);
+      import.meta.hot.accept();
+    `,
+    "other.js": `
+      console.log("other: no require");
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("other: no require", "kind = module");
+    await c.style(".module").color.expect.toBe("red");
+    await c.style(".main").notFound();
+
+    // The page runs the "module" file until its next load, and now the "main" file too.
+    await dev.write("other.js", `console.log("other: required = " + require("dual").kind); import.meta.hot.accept();`);
+    await c.expectMessage("other: required = main");
+    await c.style(".module").color.expect.toBe("red");
+    await c.style(".main").color.expect.toBe("#00f");
+    await c.hardReload();
+    await c.expectMessage("other: required = main", "kind = main");
+    await c.style(".module").notFound();
+    await c.style(".main").color.expect.toBe("#00f");
+
+    // The page runs the "main" file until its next load, and not the "module" file.
+    await dev.write("other.js", `console.log("other: no require"); import.meta.hot.accept();`);
+    await c.expectMessage("other: no require");
+    await c.style(".module").notFound();
+    await c.style(".main").color.expect.toBe("#00f");
+    await c.hardReload();
+    await c.expectMessage("other: no require", "kind = module");
+    await c.style(".module").color.expect.toBe("red");
+    await c.style(".main").notFound();
+  },
+});
 devTest("a route stops to bind a package to main when the file that requires it is deleted", {
   files: {
     ...mainAndModule(),

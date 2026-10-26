@@ -42,6 +42,12 @@ pub(crate) struct Html {
     /// handlers take their own ref per in-flight response, so the route may
     /// outlive this handle.
     pub(crate) cached_response: Option<RefPtr<StaticRoute>>,
+    /// `GraphTraceState::forwards` of the client bundle that was built last.
+    /// The pages of the route that are open have it as `config.forwards`.
+    pub(crate) forwards: Vec<(
+        incremental_graph::ClientFileIndex,
+        incremental_graph::ClientFileIndex,
+    )>,
 }
 
 pub(crate) enum Data {

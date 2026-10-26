@@ -963,10 +963,10 @@ pub(super) fn finalize_bundle(
             if had_adjusted_edges {
                 ctx.gts.clear();
                 dev.client_graph.current_css_files.clear();
-                // SAFETY: `trace_all_route_imports` does not mutate `route_bundles`;
+                // SAFETY: `trace_open_page_imports` does not mutate `route_bundles`;
                 // shared, call-scoped reborrow.
                 let route_bundle_ref = unsafe { &*route_bundle };
-                dev.trace_all_route_imports(route_bundle_ref, ctx.gts, TraceImportGoal::FindCss)?;
+                dev.trace_open_page_imports(route_bundle_ref, ctx.gts, TraceImportGoal::FindCss)?;
                 let css_ids = &dev.client_graph.current_css_files;
 
                 w_int!(i32, i32::try_from(css_ids.len()).expect("int cast"));

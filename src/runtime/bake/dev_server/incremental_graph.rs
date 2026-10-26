@@ -285,11 +285,11 @@ struct TempLookup {
 }
 
 /// See `IncrementalGraph::trace_mark`.
+#[derive(Copy, Clone)]
 pub(crate) struct TraceMark {
     css_files: usize,
     chunk_parts: usize,
     chunk_len: usize,
-    failures: usize,
 }
 
 /// See `IncrementalGraph::pairs`.
@@ -1403,14 +1403,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             css_files: self.current_css_files.len(),
             chunk_parts: self.current_chunk_parts.len(),
             chunk_len: self.current_chunk_len,
-            failures: gts.failures.len(),
         }
     }
 
-    /// Undoes each write of `trace_imports` since `mark`.
+    /// Undoes each write of `trace_imports` since `mark`. The walk was not
+    /// one for `TraceImportGoal::FindErrors`: it put nothing in `gts.failures`.
     pub(crate) fn rewind_trace(&mut self, gts: &mut GraphTraceState, mark: TraceMark) {
+        debug_assert!(gts.failures.is_empty());
         gts.client_bits.unmanaged.set_all(false);
-        gts.failures.truncate(mark.failures);
         self.current_css_files.truncate(mark.css_files);
         self.current_chunk_parts.truncate(mark.chunk_parts);
         self.current_chunk_len = mark.chunk_len;

@@ -22,6 +22,28 @@ impl DevServer {
 }
 
 impl DevServer {
+    /// Walks the files that the open pages of a route run. For an html route
+    /// they are the files that the graph now reaches with the forwards of
+    /// the route's last client bundle: a page keeps its forwards until its
+    /// next load.
+    pub(super) fn trace_open_page_imports(
+        &mut self,
+        route_bundle: &RouteBundle,
+        gts: &mut GraphTraceState,
+        goal: TraceImportGoal,
+    ) -> crate::Result<()> {
+        match &route_bundle.data {
+            route_bundle::Data::Framework(_) => {
+                self.trace_all_route_imports(route_bundle, gts, goal)
+            }
+            route_bundle::Data::Html(html) => {
+                gts.forwards.extend_from_slice(&html.forwards);
+                self.client_graph
+                    .trace_imports(html.bundled_file, gts, goal)
+            }
+        }
+    }
+
     pub(super) fn trace_all_route_imports(
         &mut self,
         route_bundle: &RouteBundle,

@@ -643,12 +643,16 @@ pub fn set_process_title(title: &[u8]) {
             let title: &[u8] = if title.is_empty() { b" " } else { title };
             if room > 0 {
                 let n = title.len().min(room);
+                // `ps` can read the block while it is being written, so NUL
+                // the reserved tail before the title overwrites the old
+                // terminators: every intermediate state keeps `argc` NULs.
                 // SAFETY: `os_argv_title_span` returns the writable kernel argv
                 // region of `cap` bytes; `argv()` reads owned copies, so nothing
-                // else in the process aliases it.
+                // else in the process aliases it. `n <= room < cap`.
                 unsafe {
+                    core::ptr::write_bytes(ptr.add(room), 0, cap - room);
                     core::ptr::copy_nonoverlapping(title.as_ptr(), ptr, n);
-                    core::ptr::write_bytes(ptr.add(n), 0, cap - n);
+                    core::ptr::write_bytes(ptr.add(n), 0, room - n);
                 }
             }
         }

@@ -3068,8 +3068,7 @@ pub(crate) mod args {
         ) -> JsResult<Self> {
             let old_path = PathLike::from_js_required(ctx, old_path, parsing, "oldPath")?;
             // `Drop for PathLike` runs on early return.
-            let new_path =
-                PathLike::from_js_required(ctx, new_path, parsing, "newPath")?;
+            let new_path = PathLike::from_js_required(ctx, new_path, parsing, "newPath")?;
             Ok(Link { old_path, new_path })
         }
     }

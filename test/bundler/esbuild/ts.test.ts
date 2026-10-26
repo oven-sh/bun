@@ -303,7 +303,6 @@ describe("bundler", () => {
     // goal for this test is there is no error. we dont really care about the output
   });
   itBundled("ts/ExportMissingES6", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -315,6 +314,163 @@ describe("bundler", () => {
     },
     run: {
       stdout: `{}`,
+    },
+  });
+  itBundled("ts/ExportMissingES6FromPackage", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { useState } from './barrel'
+        import * as ns from './barrel'
+        console.log(typeof useState, JSON.stringify(Object.keys(ns)))
+      `,
+      "/barrel.ts": /* ts */ `
+        export { ReactNode, useState } from 'zzz'
+        import { ReactElement, useRef } from 'zzz'
+        export { ReactElement, useRef }
+      `,
+      "/node_modules/zzz/package.json": `{ "name": "zzz", "type": "module" }`,
+      "/node_modules/zzz/index.js": /* js */ `
+        export function useState() { return 1 }
+        export function useRef() { return 2 }
+      `,
+    },
+    run: {
+      stdout: `function ["useRef","useState"]`,
+    },
+  });
+  itBundled("ts/ExportMissingES6EntryPoint", {
+    files: {
+      "/entry.tsx": `export {nope, yep} from './bar'`,
+      "/bar.js": `export const yep = 123`,
+    },
+    format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import * as ns from './out.js'
+        console.log(JSON.stringify(ns))
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: `{"yep":123}`,
+    },
+  });
+  // In a chain, each re-export resolves on its own. Only the last one here is missing, and it is in a TypeScript file.
+  itBundled("ts/ExportMissingES6ThroughTSFile", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './foo'
+        console.log(JSON.stringify(ns))
+      `,
+      "/foo.js": `export {nope, yep} from './mid'`,
+      "/mid.ts": `export {nope, yep} from './bar'`,
+      "/bar.js": `export const yep = 123`,
+    },
+    run: {
+      stdout: `{"yep":123}`,
+    },
+  });
+  // A TypeScript file earlier in the chain changes nothing: the missing re-export is from JavaScript to JavaScript.
+  itBundled("ts/ExportMissingES6ThroughJSFile", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './foo'
+        console.log(JSON.stringify(ns))
+      `,
+      "/foo.ts": `export {nope, yep} from './mid'`,
+      "/mid.js": `export {nope, yep} from './bar'`,
+      "/bar.js": `export const yep = 123`,
+    },
+    bundleErrors: {
+      "/mid.js": [`No matching export in "bar.js" for import "nope"`],
+    },
+  });
+  // The loader that a plugin returns is the loader of the file.
+  itBundled("ts/ExportMissingES6PluginLoaderTS", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './foo.magic'
+        console.log(JSON.stringify(ns))
+      `,
+      "/foo.magic": `export {nope, yep} from './bar'`,
+      "/bar.js": `export const yep = 123`,
+    },
+    plugins(builder) {
+      builder.onLoad({ filter: /\.magic$/ }, async args => ({
+        contents: await Bun.file(args.path).text(),
+        loader: "ts",
+      }));
+    },
+    run: {
+      stdout: `{"yep":123}`,
+    },
+  });
+  // esbuild reports `No matching export in "bar.ts"` here. In Bun a TypeScript target is a reason to drop the name too.
+  itBundled("ts/ExportMissingES6InJSFile", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as ns from './foo'
+        console.log(JSON.stringify(ns))
+      `,
+      "/foo.js": `export {nope} from './bar'`,
+      "/bar.ts": `export const yep = 123`,
+    },
+    run: {
+      stdout: `{}`,
+    },
+  });
+  // That keeps this layout building: bun-plugin-svelte strips the types of a `.svelte.ts` file and returns it as
+  // JavaScript, and the re-export of the interface is still there.
+  itBundled("ts/ExportMissingES6PluginLoaderJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './foo'
+        console.log(JSON.stringify(ns))
+      `,
+      "/foo.ts": `export {Nope, yep} from './bar'`,
+      "/bar.ts": /* ts */ `
+        export interface Nope {}
+        export const yep = 123
+      `,
+    },
+    plugins(builder) {
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      builder.onLoad({ filter: /foo\.ts$/ }, async args => ({
+        contents: await transpiler.transform(await Bun.file(args.path).text()),
+        loader: "js",
+      }));
+    },
+    run: {
+      stdout: `{"yep":123}`,
+    },
+  });
+  // The browser polyfill of node:net has no `createServer`, and the builtin has one. That is not a type.
+  itBundled("ts/ExportMissingES6BrowserPolyfill", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { createServer } from './barrel'
+        createServer(() => {})
+      `,
+      "/barrel.ts": `export { createServer } from 'node:net'`,
+    },
+    target: "browser",
+    bundleErrors: {
+      "/barrel.ts": [`Browser polyfill for module "node:net" doesn't have a matching export named "createServer"`],
+    },
+  });
+  // The bundle reads `exports_foo.nope` and never declares `exports_foo`: ReferenceError. esbuild 0.25.1 does the same.
+  itBundled("ts/ExportMissingES6NamespaceRead", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './foo'
+        console.log(typeof ns.nope, ns.yep)
+      `,
+      "/foo.ts": `export {nope, yep} from './bar'`,
+      "/bar.ts": `export const yep = 123`,
+    },
+    run: {
+      stdout: `undefined 123`,
     },
   });
   itBundled("ts/ImportMissingFile", {

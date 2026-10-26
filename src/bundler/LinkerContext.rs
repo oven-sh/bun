@@ -3864,14 +3864,28 @@ impl<'a> LinkerContext<'a> {
             };
         }
 
-        // Missing re-exports in TypeScript files are indistinguishable from types
-        let other_loader = self.parse_graph().input_files.items_loader()[other_id as usize];
-        if is_exported && other_loader.is_typescript() {
-            return ImportTrackerIterator {
-                value: Default::default(),
-                status: ImportTrackerStatus::ProbablyTypescriptType,
-                ..Default::default()
-            };
+        if is_exported {
+            // Missing re-exports in TypeScript files are indistinguishable from types.
+            // esbuild asks this of the file that holds the re-export. The target counts
+            // too: a plugin that strips types one file at a time returns the holder as
+            // JavaScript, and the holder still names the types of a TypeScript target.
+            let input_files = &self.parse_graph().input_files;
+            let loaders = input_files.items_loader();
+            let can_be_type =
+                loaders[id as usize].is_typescript() || loaders[other_id as usize].is_typescript();
+            // The node builtin behind a browser polyfill can export the name as a
+            // value. `NoMatch` reports that, with a note about the build target.
+            let is_polyfill = input_files.items_source()[other_id as usize]
+                .path
+                .text
+                .starts_with(NodeFallbackModules::IMPORT_PATH);
+            if can_be_type && !is_polyfill {
+                return ImportTrackerIterator {
+                    value: Default::default(),
+                    status: ImportTrackerStatus::ProbablyTypescriptType,
+                    ..Default::default()
+                };
+            }
         }
 
         ImportTrackerIterator {

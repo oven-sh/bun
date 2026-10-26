@@ -867,6 +867,31 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
+    // Read once, here: `--cwd` and `load_config` need the mode that these select before the rest is parsed.
+    let (hot_flag, watch_flag) = match cmd {
+        CommandTag::AutoCommand
+        | CommandTag::RunCommand
+        | CommandTag::TestCommand
+        | CommandTag::RunAsNodeCommand => (args.flag(b"--hot"), args.flag(b"--watch")),
+        CommandTag::BuildCommand => (false, args.flag(b"--watch")),
+        _ => (false, false),
+    };
+    let restarts_process = if hot_flag {
+        // `watch_instead_of_hot_for_check` makes this the restarting mode later.
+        cmd != CommandTag::RunAsNodeCommand && args.flag(b"--check")
+    } else {
+        watch_flag
+    };
+    if restarts_process {
+        // In this mode a bunfig.toml that does not parse waits for a save.
+        ctx.debug.hot_reload = HotReload::Watch;
+        // Before `--cwd` below: a restart runs this argv again from here.
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if let Ok(cwd) = bun_core::getcwd(&mut buf) {
+            bun_core::set_reload_cwd(cwd);
+        }
+    }
+
     // ── --cwd ────────────────────────────────────────────────────────────────
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
@@ -961,26 +986,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
-
-    // Read once, here: `load_config` needs the mode that these select before the rest is parsed.
-    let (hot_flag, watch_flag) = match cmd {
-        CommandTag::AutoCommand
-        | CommandTag::RunCommand
-        | CommandTag::TestCommand
-        | CommandTag::RunAsNodeCommand => (args.flag(b"--hot"), args.flag(b"--watch")),
-        CommandTag::BuildCommand => (false, args.flag(b"--watch")),
-        _ => (false, false),
-    };
-    let restarts_process = if hot_flag {
-        // `watch_instead_of_hot_for_check` makes this the restarting mode later.
-        cmd != CommandTag::RunAsNodeCommand && args.flag(b"--check")
-    } else {
-        watch_flag
-    };
-    if restarts_process {
-        // In this mode a bunfig.toml that does not parse waits for a save.
-        ctx.debug.hot_reload = HotReload::Watch;
-    }
 
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;

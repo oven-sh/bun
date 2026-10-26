@@ -4258,6 +4258,18 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
         && !RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get())
 }
 
+static RELOAD_CWD: Once<ZBox> = Once::new();
+
+/// The directory bun was started in. A `--watch` restart runs from it again.
+pub fn set_reload_cwd(cwd: &ZStr) {
+    let _ = RELOAD_CWD.set(ZBox::from_bytes(cwd.as_bytes()));
+}
+
+#[inline]
+pub fn reload_cwd() -> Option<&'static ZStr> {
+    RELOAD_CWD.get().map(ZBox::as_zstr)
+}
+
 /// Terminate the current OS thread without unwinding.
 /// POSIX `pthread_exit`; Windows `ExitThread`. Called from worker `shutdown()`.
 pub(crate) fn exit_thread() -> ! {
@@ -4411,6 +4423,11 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 
         // we must clone selfExePath in case argv[0] was not an absolute path
         let exec_path = self_exe_path().expect("unreachable");
+
+        if let Some(cwd) = RELOAD_CWD.get() {
+            // Best effort: if that directory is gone, restart from here.
+            let _ = libc::chdir(cwd.as_ptr());
+        }
 
         libc::execve(
             exec_path.as_ptr(),

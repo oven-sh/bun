@@ -2625,36 +2625,11 @@ impl RunCommand {
             bstr::BStr::new(target_name),
             bstr::BStr::new(fs_top_level_dir),
         );
-        // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
-        // for this one resolve.
-        let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
-            let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
-            this_transpiler.resolver.opts.preserve_symlinks =
-                ctx.runtime_options.preserve_symlinks_main
-                    || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                        .get()
-                        .unwrap_or(false);
-            // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
-            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
-            let resolved = match this_transpiler.resolver.resolve(
-                top_level_dir,
-                target_name,
-                bun_ast::ImportKind::EntryPointRun,
-            ) {
-                ok @ Ok(_) => ok,
-                Err(_) => {
-                    // Retry with explicit `./` prefix.
-                    let prefixed: Vec<u8> = [b"./".as_slice(), target_name].concat();
-                    this_transpiler.resolver.resolve(
-                        top_level_dir,
-                        &prefixed,
-                        bun_ast::ImportKind::EntryPointRun,
-                    )
-                }
-            };
-            this_transpiler.resolver.opts.preserve_symlinks = saved_preserve;
-            resolved
-        };
+        let resolution = Self::resolve_entry(
+            this_transpiler,
+            ctx.runtime_options.preserve_symlinks_main,
+            target_name,
+        );
         // (path, loader) — captured if the resolve hit a real file whose
         // loader Bun cannot execute (e.g. `.css`); used by the `log_errors`
         // tail to print "Cannot run … / Bun cannot run {loader} files".
@@ -2866,8 +2841,8 @@ impl RunCommand {
                     );
                     if ctx.debug.hot_reload == cli::command::HotReload::Watch {
                         Self::wait_for_entry_file(
-                            &this_transpiler.resolver,
-                            fs_top_level_dir,
+                            this_transpiler,
+                            ctx.runtime_options.preserve_symlinks_main,
                             target_name,
                         );
                     }
@@ -2892,13 +2867,49 @@ impl RunCommand {
         Ok(false)
     }
 
+    /// Resolves `target` as the entry point of a run.
+    fn resolve_entry(
+        this_transpiler: &mut Transpiler<'static>,
+        preserve_symlinks_main: bool,
+        target: &[u8],
+    ) -> ::core::result::Result<bun_resolver::Result, bun_resolver::Error> {
+        // Honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN for this one resolve.
+        let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
+        this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks_main
+            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                .get()
+                .unwrap_or(false);
+        // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
+        let resolved = match this_transpiler.resolver.resolve(
+            top_level_dir,
+            target,
+            bun_ast::ImportKind::EntryPointRun,
+        ) {
+            ok @ Ok(_) => ok,
+            Err(_) => {
+                // Retry with explicit `./` prefix.
+                let prefixed: Vec<u8> = [b"./".as_slice(), target].concat();
+                this_transpiler.resolver.resolve(
+                    top_level_dir,
+                    &prefixed,
+                    bun_ast::ImportKind::EntryPointRun,
+                )
+            }
+        };
+        this_transpiler.resolver.opts.preserve_symlinks = saved_preserve;
+        resolved
+    }
+
     /// Under --watch, waits until a file that `target` can resolve to exists, then restarts the process.
     fn wait_for_entry_file(
-        resolver: &bun_resolver::Resolver<'_>,
-        top_level_dir: &[u8],
+        this_transpiler: &mut Transpiler<'static>,
+        preserve_symlinks_main: bool,
         target: &[u8],
     ) {
         use bun_core::{FileKind, ZBox};
+        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
         let mut buf = bun_paths::path_buffer_pool::get();
         // With the start directory gone, `top_level_dir` is a fallback where the entry never was.
         if !paths::is_absolute(target) && bun_core::getcwd(&mut buf).is_err() {
@@ -2910,28 +2921,36 @@ impl RunCommand {
             return;
         };
         let path = ZBox::from_bytes(path);
+        let is_directory =
+            || restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory);
         // A directory runs through its package.json, and nothing on disk shows when that starts to resolve.
-        if restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory) {
+        if bun_resolver::Resolver::import_path_names_directory(target) || is_directory() {
             return;
         }
         let Some(dir) = paths::dirname(path.as_bytes()) else {
             return;
         };
         let mut names: Vec<Box<[u8]>> = Vec::new();
-        resolver.for_each_entry_file_candidate(path.as_bytes(), |file| {
-            names.push(paths::basename(file).into())
-        });
-        let has_entry_file = || restart_on_change::dir_has_file(dir, &names);
-        // The resolver cannot list that directory either, so no save ends a wait there.
-        if has_entry_file()
-            .is_err_and(|err| !matches!(err.get_errno(), sys::E::ENOENT | sys::E::ENOTDIR))
-        {
-            return;
+        this_transpiler
+            .resolver
+            .for_each_entry_file_candidate(path.as_bytes(), |file| {
+                names.push(paths::basename(file).into())
+            });
+        // A directory that is there and cannot be listed counts as found: the resolver cannot list it either.
+        let cannot_list =
+            |err: sys::Error| !matches!(err.get_errno(), sys::E::ENOENT | sys::E::ENOTDIR);
+        let found = || {
+            is_directory()
+                || restart_on_change::dir_has_file(dir, &names).unwrap_or_else(cannot_list)
+        };
+        if found() {
+            // The file came back during this start, or it is not what failed: the resolver tells which.
+            this_transpiler.resolver.bust_dir_cache(dir);
+            if Self::resolve_entry(this_transpiler, preserve_symlinks_main, target).is_err() {
+                return;
+            }
         }
-        restart_on_change::restart_when(path.as_bytes(), || {
-            restart_on_change::kind_of(path.as_zstr()) == Some(FileKind::Directory)
-                || has_entry_file().unwrap_or(false)
-        });
+        restart_on_change::restart_when(path.as_bytes(), found);
     }
 
     /// Whether a target that was not found names a module (a path, a JS-like extension), not a script.

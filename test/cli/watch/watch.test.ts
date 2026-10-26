@@ -869,6 +869,7 @@ it.concurrent("--watch waits for an entry file that does not exist yet", async (
 describe.each([
   ["nope", `error: Script not found "nope"`],
   [".", `error: Module not found "."`],
+  ["./src/", `error: Module not found "./src/"`],
 ])("--watch %s", (target, error) => {
   it.concurrent("still exits when the target does not name a file", async () => {
     using dir = tempDir("watch-not-a-file", {
@@ -1025,3 +1026,57 @@ it.concurrent("bun build --watch waits for a bunfig.toml that does not parse whe
   await built(`"v1"`);
   await saveUntil(built(`"v2"`), () => writeFileSync(join(cwd, "entry.mjs"), `console.log("v2");\n`));
 });
+
+const cwdEntrySource = (then = "") =>
+  `import { basename } from "node:path";\nimport { dep } from "./dep.mjs";\nconsole.log("run", dep, "in", basename(process.cwd()));\n${then}setInterval(() => {}, 1 << 30);\n`;
+
+// A restart runs the same command again, so it has to start where the first start did (#19163).
+// If it does not, the entry file is looked for, and waited for, in another directory.
+it.concurrent("--watch restarts in the start directory after the script calls process.chdir()", async () => {
+  using dir = tempDir("watch-restart-chdir", {
+    "sub/.keep": "",
+    "dep.mjs": depSource("v0"),
+    "entry.mjs": cwdEntrySource(`process.chdir("sub");\n`),
+  });
+  const cwd = String(dir);
+  const { proc, stdout } = spawnWatch(["--watch", "entry.mjs"], cwd);
+  await using _ = proc;
+
+  await stdout.waitFor(`run v0 in ${basename(cwd)}\n`);
+  // The second restart must not start in the "sub" of the first.
+  for (const version of ["v1", "v2"]) {
+    await saveUntil(stdout.waitFor(`run ${version} in ${basename(cwd)}\n`), () =>
+      writeFileSync(join(cwd, "dep.mjs"), depSource(version)),
+    );
+  }
+});
+
+it.concurrent("--watch restarts in the directory of a relative --cwd", async () => {
+  using dir = tempDir("watch-restart-relative-cwd", { "w/dep.mjs": depSource("v0"), "w/entry.mjs": cwdEntrySource() });
+  const cwd = join(String(dir), "w");
+  const { proc, stdout } = spawnWatch(["--watch", "--cwd", "w", "entry.mjs"], String(dir));
+  await using _ = proc;
+
+  await stdout.waitFor("run v0 in w\n");
+  await saveUntil(stdout.waitFor("run v1 in w\n"), () => writeFileSync(join(cwd, "dep.mjs"), depSource("v1")));
+});
+
+// `bun test` finds its test files from the cwd on each start. On Windows the process that
+// starts the next one runs no test, so its cwd cannot move.
+it.concurrent.skipIf(isWindows)(
+  "bun test --watch runs the tests of the start directory after a test calls process.chdir()",
+  async () => {
+    using dir = tempDir("watch-restart-test-chdir", {
+      // Ends the session: these are not the tests of the start directory.
+      "other/other.test.ts": `import { test } from "bun:test";\ntest("other", () => process.exit(1));\n`,
+      "project/dep.mjs": depSource("v0"),
+      "project/a.test.ts": `import { test } from "bun:test";\nimport { dep } from "./dep.mjs";\ntest("project", () => {\n  console.log("ran project", dep);\n  process.chdir("../other");\n});\n`,
+    });
+    const cwd = join(String(dir), "project");
+    const { proc, stdout } = spawnWatch(["test", "--watch"], cwd);
+    await using _ = proc;
+
+    await stdout.waitFor("ran project v0");
+    await saveUntil(stdout.waitFor("ran project v1"), () => writeFileSync(join(cwd, "dep.mjs"), depSource("v1")));
+  },
+);

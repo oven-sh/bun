@@ -548,14 +548,19 @@ describe("bun", () => {
           "bun r": ["reinstall", "remove", "repl", "run"],
           "bun te": ["test", "test:unit"],
         };
+        // Every flag, subcommand, script and file. `--hot` is a candidate too, and it is also the
+        // previous word. That must not hide the scripts.
+        const everything = "bun --watch --hot ";
         // bash's default COMP_WORDBREAKS has ':' and '=', so readline makes them words of their own.
-        const replies = await offered(String(dir), Object.keys(expected), line =>
+        const replies = await offered(String(dir), [...Object.keys(expected), everything], line =>
           bash(
             line,
             line.split(" ").flatMap(word => (word === "" ? [""] : word.split(/([:=])/).filter(Boolean))),
             defaultWordbreaks,
           ),
         );
+        expect(replies[everything]).toEqual(expect.arrayContaining(["--hot", "run", "build:release", "src/"]));
+        delete replies[everything];
         expect(replies).toEqual(expected);
       });
 

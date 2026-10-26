@@ -36,6 +36,7 @@ _read_scripts_in_package_json() {
     local return_package_json
     local line=0;
     local working_dir="${PWD}";
+    local package_json_compreply=();
 
     for ((; line < ${#words[@]}; line+=1)); do
         [[ "${words[${line}]}" == "--cwd" ]] && {
@@ -48,7 +49,6 @@ _read_scripts_in_package_json() {
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
 
     [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
-        local package_json_compreply;
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%%\}*}";
         scripts="${scripts//[\"\']/}";
@@ -60,12 +60,13 @@ _read_scripts_in_package_json() {
     }
 
     # when a script is passed as an option, do not show other scripts as part of the completion anymore
-    local re_prev_script="(^| )${prev}($| )";
-    [[
-        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${words[2]}" )
-    ]] && {
+    local script_name prev_is_script="";
+    for script_name in "${package_json_compreply[@]}"; do
+        [[ "${script_name}" == "${prev}" ]] && { prev_is_script=1; break; };
+    done
+    [[ -n "${prev_is_script}" && -n "${words[2]}" ]] && {
         local filtered_reply=();
-        local reply_word script_name keep;
+        local reply_word keep;
         for reply_word in "${COMPREPLY[@]}"; do
             keep=1;
             for script_name in "${package_json_compreply[@]}"; do

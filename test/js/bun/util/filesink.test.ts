@@ -534,6 +534,72 @@ it("close() does not leak the native FileSink", async () => {
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
+// A sink never closes a descriptor that the caller opened. The sink keeps itself alive
+// while a write is in flight, and only the close of its writer releases that ref. On
+// Windows the writer did not report a close for such a descriptor.
+describe.each([
+  [
+    "Bun.write(Bun.file(fd), new Response(stream))",
+    async (fd: number) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue("abc");
+          controller.enqueue("def");
+          controller.close();
+        },
+      });
+      expect(await Bun.write(Bun.file(fd), new Response(stream))).toBe(6);
+    },
+  ],
+  [
+    "Bun.write(Bun.file(fd), Bun.file(path).stream())",
+    async (fd: number, dir: string) => {
+      const source = join(dir, "source.txt");
+      fs.writeFileSync(source, "abcdef");
+      expect(await Bun.write(Bun.file(fd), Bun.file(source).stream())).toBe(6);
+    },
+  ],
+  [
+    "Bun.file(fd).writer()",
+    async (fd: number) => {
+      const writer = Bun.file(fd).writer();
+      await writer.write("abcdef");
+      await writer.end();
+    },
+  ],
+])("%s on a descriptor the caller opened", (_, write) => {
+  it("does not leak the native FileSink and leaves the descriptor open", async () => {
+    const dir = tmpdirSync();
+    async function once(i: number) {
+      const file = join(dir, `borrowed-${i}.txt`);
+      const fd = fs.openSync(file, "w+");
+      try {
+        await write(fd, dir);
+        // Throws EBADF if the sink closed the caller's descriptor.
+        expect(fs.fstatSync(fd).size).toBe(6);
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect(fs.readFileSync(file, "utf8")).toBe("abcdef");
+    }
+
+    await once(0);
+    Bun.gc(true);
+    const baseline = fileSinkInternals.liveCount();
+    const iterations = 8;
+    for (let i = 1; i <= iterations; i++) {
+      await once(i);
+    }
+    for (let i = 0; i < 50; i++) {
+      Bun.gc(true);
+      if (fileSinkInternals.liveCount() <= baseline) break;
+      await Bun.sleep(10);
+    }
+    // Unfixed, every iteration leaks one.
+    expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+  });
+});
+
 // Now that __doClose runs finalize(), finalize() must not tear down state an
 // in-flight write still needs: clearing `pending` here would drop the
 // backpressure promise's Strong before on_write can settle it.
@@ -1359,12 +1425,19 @@ describe("a pipe piped into a FileSink settles the promise with nothing else ali
     withTheLastChunk: `Bun.stdin.slice(0, ${line.length}).stream()`,
   };
 
-  function fixture(dest: string, input: string, countBeforeExit: boolean) {
+  // `open` is whether `stat` is still an open descriptor when the process exits.
+  function fixture(dest: string, input: string, { countBeforeExit = false, stat = undefined as number | undefined }) {
     return `
       let settled = "pending";
       let beforeExit = ${countBeforeExit ? 0 : undefined};
       if (beforeExit === 0) process.on("beforeExit", () => { beforeExit++; });
-      process.on("exit", code => console.error(JSON.stringify({ settled, code, beforeExit })));
+      function isOpen(fd) {
+        if (fd === undefined) return undefined;
+        try { require("node:fs").fstatSync(fd); return true; } catch { return false; }
+      }
+      process.on("exit", code => {
+        console.error(JSON.stringify({ settled, code, beforeExit, open: isOpen(${stat}) }));
+      });
       Bun.write(${dest}, ${input}).then(
         n => { settled = "resolved " + n; },
         e => { settled = "rejected " + e.message; },
@@ -1401,7 +1474,7 @@ describe("a pipe piped into a FileSink settles the promise with nothing else ali
     using dir = tempDir("filesink-piped-pipe", {});
     const path = join(String(dir), "written.txt");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture(dests[dest], inputs[input], countBeforeExit), path],
+      cmd: [bunExe(), "-e", fixture(dests[dest], inputs[input], { countBeforeExit }), path],
       env: bunEnv,
       stdin: "pipe",
       stdout: "pipe",
@@ -1421,9 +1494,52 @@ describe("a pipe piped into a FileSink settles the promise with nothing else ali
     return { written, stderr: stderr.text, exitCode };
   }
 
-  const settled = (n: number, beforeExit?: number) => ({
+  // As `watch`, for a stream of node:child_process. `closed` settles once the child is gone.
+  function collect(stream: Readable, closed: Promise<unknown>) {
+    const collected = { text: "", has };
+    let gone = false;
+    let wake = () => {};
+    stream.on("data", chunk => {
+      collected.text += chunk;
+      wake();
+    });
+    closed.then(() => {
+      gone = true;
+      wake();
+    });
+    async function has(text: string) {
+      while (!collected.text.includes(text)) {
+        if (gone) return false;
+        await new Promise<void>(resolve => (wake = resolve));
+      }
+      return true;
+    }
+    return collected;
+  }
+
+  // The destination is the fixture's descriptor 3, a pipe that the test reads. `Bun.spawn`
+  // gives a child no pipe past its stdio, so this child comes from node:child_process.
+  async function runIntoPipe(input: keyof typeof inputs) {
+    const options: SpawnOptions = { stdio: ["pipe", "pipe", "pipe", "pipe"], env: bunEnv as NodeJS.ProcessEnv };
+    const child = spawn(bunExe(), ["-e", fixture("Bun.file(3)", inputs[input], { stat: 3 })], options);
+    const { promise: closed, resolve, reject } = Promise.withResolvers<number | null>();
+    child.on("close", resolve);
+    child.on("error", reject);
+    // A fixture that is gone has closed its end of the pipe. What it printed is compared below.
+    child.stdin!.on("error", () => {});
+    const stderr = collect(child.stderr!, closed);
+    const pipe = collect(child.stdio[3] as Readable, closed);
+    await stderr.has("wired\n");
+    child.stdin!.write(line);
+    if (input === "alone") await pipe.has(line);
+    child.stdin!.end();
+    const exitCode = await closed;
+    return { written: pipe.text, stderr: stderr.text, exitCode };
+  }
+
+  const settled = (n: number, { beforeExit, open }: { beforeExit?: number; open?: boolean } = {}) => ({
     written: line.slice(0, n),
-    stderr: "wired\n" + JSON.stringify({ settled: `resolved ${n}`, code: 0, beforeExit }) + "\n",
+    stderr: "wired\n" + JSON.stringify({ settled: `resolved ${n}`, code: 0, beforeExit, open }) + "\n",
     exitCode: 0,
   });
 
@@ -1448,7 +1564,15 @@ describe("a pipe piped into a FileSink settles the promise with nothing else ali
   // With a listener the reaction runs on unfixed code too: the listener's own checkpoint
   // runs it. The loop must come to its exit once all the same.
   it.concurrent("'beforeExit' is emitted once, and the promise has settled", async () => {
-    expect(await run({ countBeforeExit: true })).toEqual(settled(line.length, 1));
+    expect(await run({ countBeforeExit: true })).toEqual(settled(line.length, { beforeExit: 1 }));
+  });
+
+  // The sink must leave a pipe that it was given open, too.
+  it.concurrent.each([
+    ["the end arrives alone", "alone"],
+    ["the end arrives with the last chunk", "withTheLastChunk"],
+  ] as const)("into a pipe the sink does not own: %s", async (_, input) => {
+    expect(await runIntoPipe(input)).toEqual(settled(line.length, { open: true }));
   });
 });
 

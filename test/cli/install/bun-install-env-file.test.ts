@@ -79,11 +79,32 @@ const runInstall = (extraArgs: string[], extraEnv: Record<string, string> = {}) 
 
 describe("bun install .env loading (#12011)", () => {
   test.concurrent("--env-file loads the requested file for bunfig $VAR substitution", async () => {
-    const { auth, stderr } = await runInstall(["--env-file", ".env.custom"]);
+    const { auth, stderr } = await runInstall(["--env-file", ".env.custom", "--verbose"]);
     expect(auth.length).toBeGreaterThan(0);
     expect(auth[0]).toBe("Bearer CUSTOM");
     expect(stderr).toContain(".env.custom");
     expect(stderr).not.toContain(".env.production");
+  });
+
+  // https://github.com/oven-sh/bun/issues/47006
+  // The `[Nms] ".env"` line is a timing trace. Install prints it only with --verbose, as it does
+  // for its other timing traces. The file is still loaded.
+  test.concurrent("the loaded file is not printed by default", async () => {
+    const { auth, stderr } = await runInstall([]);
+    expect(auth[0]).toBe("Bearer PROD");
+    expect(stderr).not.toContain('".env');
+  });
+
+  test.concurrent("the loaded file is not printed with --silent", async () => {
+    const { auth, stderr } = await runInstall(["--silent"]);
+    expect(auth[0]).toBe("Bearer PROD");
+    expect(stderr).not.toContain('".env');
+  });
+
+  test.concurrent("the loaded file is printed with --verbose", async () => {
+    const { auth, stderr } = await runInstall(["--verbose"]);
+    expect(auth[0]).toBe("Bearer PROD");
+    expect(stderr).toContain('".env.production"');
   });
 
   test.concurrent("--env-file=PATH form works", async () => {
@@ -268,7 +289,7 @@ async function probeLifecycleEnv(extraArgs: string[]): Promise<{ seen: string; s
 
 describe("bun install .env loading and lifecycle scripts (#31450)", () => {
   test.concurrent("by default the postinstall script sees the loaded .env* values", async () => {
-    const { seen, stderr, exitCode } = await probeLifecycleEnv([]);
+    const { seen, stderr, exitCode } = await probeLifecycleEnv(["--verbose"]);
     expect(seen).toBe("from-dotenv-production");
     // The loader's banner quotes each file it loaded; the echoed postinstall
     // command line also mentions `process.env`, hence matching on the quote.
@@ -284,7 +305,7 @@ describe("bun install .env loading and lifecycle scripts (#31450)", () => {
   });
 
   test.concurrent("--no-env-file together with --env-file still loads the explicit file", async () => {
-    const { seen, stderr, exitCode } = await probeLifecycleEnv(["--no-env-file", "--env-file", ".env.custom"]);
+    const { seen, stderr, exitCode } = await probeLifecycleEnv(["--no-env-file", "--env-file", ".env.custom", "--verbose"]);
     expect(seen).toBe("from-custom");
     expect(stderr).toContain('".env.custom"');
     expect(stderr).not.toContain('".env.production"');

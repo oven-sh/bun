@@ -1,8 +1,19 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
+  bunEnv,
+  bunExe,
+  isBroken,
+  isLinux,
+  isMacOS,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+  unprivilegedSpawnOptions,
+} from "harness";
+import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -812,11 +823,13 @@ async function saveUntil(seen: Promise<void>, save: () => void) {
 const entrySource = (version: string) => `console.log("run ${version}");\nsetInterval(() => {}, 1 << 30);\n`;
 
 // An editor that saves by rename leaves the entry file away for a moment (#8520).
-// The resolver also runs "./entry" and "main.js" from entry.mjs and main.ts.
+// The resolver also runs "./entry" and "main.js" from entry.mjs and main.ts, and
+// it ignores letter case in the file name, on every file system.
 describe.each([
   ["entry.mjs", "entry.mjs"],
   ["./entry", "entry.mjs"],
   ["main.js", "main.ts"],
+  ["Entry.mjs", "entry.mjs"],
 ])("--watch %s", (target, file) => {
   it.concurrent("waits for an entry file that is missing when the process restarts", async () => {
     using dir = tempDir("watch-restart-entry-missing", { [file]: entrySource("v0") });
@@ -871,6 +884,33 @@ describe.each([
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({ stdout: "", stderr: error, exitCode: 1 });
+  });
+});
+
+// The resolver lists a directory to find a file in it. It finds none in a
+// directory that can only be searched, and no save changes that.
+// Serial: `unprivilegedSpawnOptions` can change the modes of the directories above.
+it.skipIf(isWindows)("--watch still exits when the directory of the entry file cannot be listed", async () => {
+  using dir = tempDir("watch-unlistable-dir", { "sub/entry.ts": entrySource("v0") });
+  const sub = join(String(dir), "sub");
+  using unprivileged = unprivilegedSpawnOptions(String(dir));
+  // The temporary directory is removed after this: that needs the listing again.
+  using _ = { [Symbol.dispose]: () => chmodSync(sub, 0o755) };
+  chmodSync(sub, 0o311);
+  await using proc = spawn({
+    cmd: [bunExe(), "--watch", "./sub/entry"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    ...unprivileged,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: "",
+    stderr: `error: Module not found "./sub/entry"`,
+    exitCode: 1,
   });
 });
 

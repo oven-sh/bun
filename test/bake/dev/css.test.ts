@@ -810,6 +810,85 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+// A page with its script between its stylesheets. It links the first stylesheet again at the end.
+const pageWithStylesheets = (first: string, second: string, last: string) => `
+  <!DOCTYPE html>
+  <html>
+    <head>
+      <link rel="stylesheet" href="${first}.css">
+      <link rel="stylesheet" href="${second}.css">
+      <script type="module" src="index.ts"></script>
+      <link rel="stylesheet" href="${last}.css">
+      <link rel="stylesheet" href="${first}.css">
+    </head>
+    <body></body>
+  </html>
+`;
+// The cascade breaks ties by stylesheet order. `bun build` concatenates these
+// files in the same order: depth first, each file at its first reference.
+devTest("html route links its stylesheets in source order", {
+  files: {
+    "index.html": pageWithStylesheets("one", "two", "seven"),
+    "index.ts": `
+      import "./three.css";
+      import "./dep.ts";
+      import "./six.css";
+      import "./four.css";
+      import "./one.css";
+    `,
+    "dep.ts": `
+      import "./four.css";
+      import "./five.css";
+      import "./three.css";
+    `,
+    ...Object.fromEntries(
+      ["one", "two", "three", "four", "five", "six", "seven", "eight"].map(name => [
+        `${name}.css`,
+        `.${name} { color: red; }`,
+      ]),
+    ),
+  },
+  async test(dev) {
+    // Each stylesheet has one rule. The class of that rule names the file.
+    const linked = async () => {
+      const html = await dev.fetch("/").text();
+      const hrefs = Array.from(html.matchAll(/<link rel="stylesheet" href="(\/_bun\/asset\/[^"]+)">/g), m => m[1]);
+      return Promise.all(hrefs.map(async href => (await dev.fetch(href).text()).match(/\.(\w+) \{/)?.[1]));
+    };
+    expect(await linked()).toEqual(["one", "two", "three", "four", "five", "six", "seven"]);
+
+    // A rebuild links again the imports that a file already had.
+    await dev.writeNoChanges("index.html");
+    await dev.writeNoChanges("index.ts");
+    expect(await linked()).toEqual(["one", "two", "three", "four", "five", "six", "seven"]);
+
+    // A swap adds no import and removes none.
+    await dev.write("index.html", pageWithStylesheets("seven", "one", "two"));
+    expect(await linked()).toEqual(["seven", "one", "three", "four", "five", "six", "two"]);
+    await dev.write(
+      "index.ts",
+      `
+        import "./six.css";
+        import "./dep.ts";
+        import "./three.css";
+        import "./four.css";
+        import "./one.css";
+      `,
+    );
+    expect(await linked()).toEqual(["seven", "one", "six", "four", "five", "three", "two"]);
+
+    // A new import between two old imports, and imports that are removed.
+    await dev.write(
+      "index.ts",
+      `
+        import "./six.css";
+        import "./eight.css";
+        import "./three.css";
+      `,
+    );
+    expect(await linked()).toEqual(["seven", "one", "six", "eight", "three", "two"]);
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

@@ -1927,6 +1927,8 @@ describe("css tests", () => {
       },
     );
 
+    // lightningcss merges these four. `url()` values compare by import record, so two equal ones
+    // look different, and prefixed properties with different values must stay apart.
     prefix_test(
       `
       .foo {
@@ -1938,6 +1940,9 @@ describe("css tests", () => {
     `,
       `
       .foo {
+        -webkit-border-image: url("foo.png") 60;
+        -moz-border-image: url("foo.png") 60;
+        -o-border-image: url("foo.png") 60;
         border-image: url("foo.png") 60;
       }
     `,
@@ -1946,9 +1951,7 @@ describe("css tests", () => {
       },
     );
 
-    // The next four are skipped: lightningcss prints the legacy direction keyword
-    // (`top,`) in generated -webkit-/-moz-linear-gradient() fallbacks since
-    // parcel-bundler/lightningcss#936, which bun's port does not have yet.
+    // lightningcss prints the default direction as the legacy `top` keyword here (parcel-bundler/lightningcss#936).
     prefix_test(
       `
       .foo {
@@ -1958,7 +1961,7 @@ describe("css tests", () => {
       `
       .foo {
         -webkit-border-image: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff)) 60;
-        -webkit-border-image: -webkit-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        -webkit-border-image: -webkit-linear-gradient(#ff0f0e, #7773ff) 60;
         border-image: linear-gradient(#ff0f0e, #7773ff) 60;
         border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
       }
@@ -1966,7 +1969,6 @@ describe("css tests", () => {
       {
         chrome: 8 << 16,
       },
-      true,
     );
 
     prefix_test(
@@ -1978,8 +1980,8 @@ describe("css tests", () => {
       `
       .foo {
         -webkit-border-image: -webkit-gradient(linear, 0 0, 0 100%, from(#ff0f0e), to(#7773ff)) 60;
-        -webkit-border-image: -webkit-linear-gradient(top, #ff0f0e, #7773ff) 60;
-        -moz-border-image: -moz-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        -webkit-border-image: -webkit-linear-gradient(#ff0f0e, #7773ff) 60;
+        -moz-border-image: -moz-linear-gradient(#ff0f0e, #7773ff) 60;
         border-image: linear-gradient(#ff0f0e, #7773ff) 60;
         border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
       }
@@ -1988,7 +1990,6 @@ describe("css tests", () => {
         chrome: 8 << 16,
         firefox: 4 << 16,
       },
-      true,
     );
 
     prefix_test(
@@ -1999,8 +2000,8 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        border-image: -webkit-linear-gradient(top, #ff0f0e, #7773ff) 60;
-        border-image: -moz-linear-gradient(top, #ff0f0e, #7773ff) 60;
+        border-image: -webkit-linear-gradient(#ff0f0e, #7773ff) 60;
+        border-image: -moz-linear-gradient(#ff0f0e, #7773ff) 60;
         border-image: linear-gradient(#ff0f0e, #7773ff) 60;
         border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 60;
       }
@@ -2009,7 +2010,6 @@ describe("css tests", () => {
         chrome: 15 << 16,
         firefox: 15 << 16,
       },
-      true,
     );
 
     prefix_test(
@@ -2020,7 +2020,7 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        border-image-source: -webkit-linear-gradient(top, #ff0f0e, #7773ff);
+        border-image-source: -webkit-linear-gradient(#ff0f0e, #7773ff);
         border-image-source: linear-gradient(#ff0f0e, #7773ff);
         border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
       }
@@ -2028,7 +2028,6 @@ describe("css tests", () => {
       {
         chrome: 15 << 16,
       },
-      true,
     );
 
     prefix_test(
@@ -2220,6 +2219,890 @@ describe("css tests", () => {
       {
         chrome: 95 << 16,
       },
+    );
+
+    // A `border` built from later longhands must not land behind a kept fallback, which it resets.
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+        border-top: 2px solid red;
+        border-right: 2px solid red;
+        border-bottom: 2px solid red;
+        border-left: 1px dotted blue;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+        border-left: 1px dotted #00f;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+        border-width: 1px 2px 3px 4px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-style: solid;
+        border-color: red;
+        border-width: 1px 2px 3px 4px;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+        border-block: 2px solid red;
+        border-inline: 3px dashed blue;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+        border-inline: 3px dashed #00f;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+        border-block-start-color: blue;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+        border-block-start-color: #00f;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    // On a second pass the longhands are between the pair, so `border` can lead.
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    // The same for a `border-image` that is written at once: `var()`, a keyword, or a prefixed value.
+    cssTest(
+      `
+      .foo {
+        border-image: var(--img);
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--img);
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image-source: var(--src);
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-image-source: var(--src);
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-image: url(a.png) 30;
+        border-image-slice: 2;
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: url("a.png") 30;
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+        border-image-slice: 2;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: inherit;
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-image: inherit;
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: var(--img);
+        border-width: 3px;
+        border-style: dashed;
+        border-color: blue;
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: var(--img);
+        border-style: dashed;
+        border-width: 3px;
+        border-color: #00f;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .bar {
+        border: 1px solid red;
+      }
+
+      .foo {
+        border-image: var(--img);
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .bar {
+        border: 1px solid red;
+      }
+
+      .foo {
+        border-image: var(--img);
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    // A complete `border-image` that every target reads makes the reset harmless.
+    cssTest(
+      `
+      .foo {
+        border-image: linear-gradient(red, blue) 1;
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, #00f) 1;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: var(--img);
+        border-image: linear-gradient(red, blue) 1;
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--img);
+        border: 2px solid red;
+        border-image: linear-gradient(red, #00f) 1;
+      }
+    `,
+    );
+
+    // An unparsed `border` stays behind the `border-image` in front of it, and no built `border` follows it.
+    cssTest(
+      `
+      .foo {
+        border-image: url(a.png) 30;
+        border: var(--b);
+      }
+    `,
+      `
+      .foo {
+        border-image: url("a.png") 30;
+        border: var(--b);
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: url(a.png) 30;
+        border: inherit;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("a.png") 30;
+        border: inherit;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: url(a.png) 30;
+        border: 2px solid notacolor;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("a.png") 30;
+        border: 2px solid notacolor;
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border: var(--b);
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border: var(--b);
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: linear-gradient(red, blue) 1;
+      }
+
+      .foo {
+        border: var(--b);
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, #00f) 1;
+        border: var(--b);
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: inherit;
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border: inherit;
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    // A source `border` behind a written `border-image` keeps its reset when the four sides differ.
+    cssTest(
+      `
+      .foo {
+        border-image: var(--img);
+        border: 1px solid red;
+        border-top: 2px dashed blue;
+        border-right: 3px dotted green;
+        border-bottom: 4px double white;
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--img);
+        border: 2px dashed #00f;
+        border-bottom: 4px double #fff;
+        border-left: 1px solid red;
+        border-right: 3px dotted green;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px solid red;
+        border-top: 2px dashed blue;
+        border-right: 3px dotted green;
+        border-bottom: 4px double white;
+      }
+    `,
+      `
+      .foo {
+        border-top: 2px dashed #00f;
+        border-bottom: 4px double #fff;
+        border-left: 1px solid red;
+        border-right: 3px dotted green;
+      }
+    `,
+    );
+
+    // A declaration behind a kept fallback stays apart from a value that some targets skip.
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+        border-image-slice: 2;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+        border-image-slice: 2;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+        border-image-slice: 2;
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+        border-image-slice: 2;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: var(--img);
+        border-image-repeat: round;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--img);
+        border-image-repeat: round;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    // It joins a value that every target reads.
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+        border-image: linear-gradient(green, yellow) 3;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green) 1;
+        border-image: linear-gradient(green, #ff0) 3;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: var(--img);
+        border-image-slice: 2;
+        border-image-slice: 2;
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--img);
+        border-image-slice: 2;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: var(--img);
+        border-image: linear-gradient(red, blue) 1;
+        border-image-slice: 2;
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--img);
+        border-image: linear-gradient(red, #00f) 2;
+      }
+    `,
+    );
+
+    // Two values that not every target reads: the first one gets the generated fallbacks, as in lightningcss.
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(oklch(70% 0.2 30), oklch(50% 0.2 300)) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(#ff614d, #773ac1) 1;
+        border-image: linear-gradient(lab(63.3267% 61.5741 45.4137), lab(38.5245% 47.42 -61.5911)) 1;
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    // A vendor prefix is read by one engine only, so prefixed values and properties stay apart.
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, blue) 1;
+        border-image: -moz-linear-gradient(red, blue) 1;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, #00f) 1;
+        border-image: -moz-linear-gradient(red, #00f) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: linear-gradient(red, blue) 1;
+        border-image: -moz-linear-gradient(red, blue) 1;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, #00f) 1;
+        border-image: -moz-linear-gradient(red, #00f) 1;
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: -webkit-linear-gradient(red, blue) 1;
+        border-image: linear-gradient(red, blue) 1;
+      }
+    `,
+      `
+      .foo {
+        border-image: -webkit-linear-gradient(red, #00f) 1;
+        border-image: linear-gradient(red, #00f) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: -moz-linear-gradient(red, blue) 1;
+        border-image-slice: 2;
+      }
+    `,
+      `
+      .foo {
+        border-image: -moz-linear-gradient(red, #00f) 1;
+        border-image-slice: 2;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-image: url(a.png) 30;
+        -moz-border-image: url(b.png) 30;
+        -o-border-image: url(c.png) 30;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: url("a.png") 30;
+        -moz-border-image: url("b.png") 30;
+        -o-border-image: url("c.png") 30;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, blue) 1;
+        -webkit-border-image: linear-gradient(red, blue) 1;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, #00f) 1;
+        -webkit-border-image: linear-gradient(red, #00f) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image-width: 2;
+        -webkit-border-image: url(a.png) 30;
+      }
+    `,
+      `
+      .foo {
+        border-image-width: 2;
+        -webkit-border-image: url("a.png") 30;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, blue) 1;
+        -webkit-border-image: linear-gradient(green, yellow) 1;
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, #00f) 1;
+        -webkit-border-image: linear-gradient(green, #ff0) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-border-image: linear-gradient(red, blue) 1;
+        -moz-border-image: linear-gradient(red, blue) 1;
+        border-image: linear-gradient(red, blue) 1;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, #00f) 1;
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    // A rule with no `border-image` prints `border` as before.
+    cssTest(
+      `
+      .foo {
+        border: 1px solid red;
+      }
+
+      .bar {
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border: 1px solid red;
+      }
+
+      .bar {
+        border: 2px solid red;
+      }
+    `,
+    );
+
+    // A `border` built in another declaration list still resets the image: merged rules, other rules, `!important`, nesting.
+    cssTestTodo(
+      `
+      .foo {
+        border-image: linear-gradient(red, blue) 1;
+      }
+
+      .foo {
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, #00f) 1;
+      }
+    `,
+    );
+
+    cssTestTodo(
+      `
+      .foo {
+        border-image: linear-gradient(red, blue) 30;
+      }
+
+      #bar.foo {
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, #00f) 30;
+      }
+
+      #bar.foo {
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    cssTestTodo(
+      `
+      .foo {
+        border-image: var(--img);
+        border-width: 2px !important;
+        border-style: solid !important;
+        border-color: red !important;
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--img);
+        border-style: solid !important;
+        border-width: 2px !important;
+        border-color: red !important;
+      }
+    `,
+    );
+
+    cssTestTodo(
+      `
+      border-image:var(--img);.bar & {
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--img);
+      }
+
+      .bar .foo {
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    // An all-initial `border-image` prints an empty value. A built `border` used to cover that.
+    cssTestTodo(
+      `
+      .foo {
+        border-image: var(--img);
+        border-image: none;
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--img);
+        border-image: none;
+      }
+    `,
     );
   });
 

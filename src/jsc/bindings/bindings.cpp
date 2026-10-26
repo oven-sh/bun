@@ -2736,11 +2736,14 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSONObject(const EncodedSlice* strPtr, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
-    // Zig::toString() is null for an empty slice, and JSONParseWithException throws nothing for null.
-    auto str = strPtr->len ? Zig::toString(*strPtr) : emptyString();
+    BunStringTag failure = BunStringTag::Dead;
+    // Zig::tryToString() is null for an empty slice, and JSONParseWithException throws nothing for null.
+    auto str = strPtr->len ? Zig::tryToString(*strPtr, failure) : emptyString();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     if (str.isNull()) {
+        if (failure == BunStringTag::OutOfMemory)
+            return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, globalObject);
         // isNull() will be true for strings which are too long, and when an allocation fails.
         // So we need to check the length is plausibly due to a long string.
         if (strPtr->len > Bun__stringSyntheticAllocationLimit || strPtr->len > WTF::String::MaxLength) {
@@ -6265,13 +6268,14 @@ extern "C" void DOMFormData__toQueryString(
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
+    BunStringTag failure = BunStringTag::Dead;
     // don't need to copy the string because it internally does.
-    auto str = toString(*arg1);
-    // toString() in helpers.h returns an empty string when the input exceeds
-    // String::MaxLength or Bun's synthetic allocation limit. This is the only
-    // condition under which toString() returns empty for non-empty input.
+    auto str = Zig::tryToString(*arg1, failure);
+    // It is empty for a non-empty input that is too long (String::MaxLength, or Bun's synthetic allocation limit) or that could not be copied.
     if (str.isEmpty() && arg1->len > 0) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        if (failure == BunStringTag::OutOfMemory)
+            return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, globalObject);
         return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
     }
     auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), str);

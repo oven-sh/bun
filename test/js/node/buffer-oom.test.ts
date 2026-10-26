@@ -12,6 +12,8 @@ const allocationFailed = {
   code: "ERR_MEMORY_ALLOCATION_FAILED",
   message: "Failed to allocate memory",
 };
+// What JSC throws for a string that it cannot make. The callers that threw it before they had the error above still do.
+const outOfMemory = { name: "RangeError", message: "Out of memory" };
 
 // Runs `script` in a child whose allocations fail above a cap (`env` sets the
 // cap up, or the command that `wrap` puts in front of the child's). The script
@@ -51,6 +53,35 @@ async function resultsUnderCap(
   expect(exitCode).toBe(0);
   return JSON.parse(results!);
 }
+
+// `length` bytes: `prefix`, then "a".
+const bytesOf = (length: number, prefix: number[] = []) => {
+  const bytes = Buffer.alloc(length, "a");
+  bytes.set(prefix);
+  return bytes;
+};
+// The first bytes of an input that is not ASCII ("é"), and of one that is not UTF-8.
+const notASCII = [0xc3, 0xa9];
+const illFormed = [0xff];
+// For a child: one input of `length` bytes of each kind, and `join`, which makes one buffer of strings and buffers.
+const inputsOf = (length: number) => `
+  const bytesOf = ${bytesOf};
+  const inputs = {
+    "ASCII": bytesOf(${length}),
+    "not ASCII": bytesOf(${length}, ${JSON.stringify(notASCII)}),
+    "ill-formed": bytesOf(${length}, ${JSON.stringify(illFormed)}),
+  };
+  const join = (...parts) => Buffer.concat(parts.map(part => Buffer.from(part)));
+`;
+// For a child: a Response with a multipart body of one part, and one with a URL-encoded body.
+const formDataSource = `
+  const multipart = (...part) =>
+    new Response(join("--x\\r\\ncontent-disposition: form-data; ", ...part, "\\r\\n--x--\\r\\n"), {
+      headers: { "content-type": "multipart/form-data; boundary=x" },
+    });
+  const urlEncoded = value =>
+    new Response(join("a=", value), { headers: { "content-type": "application/x-www-form-urlencoded" } });
+`;
 
 // Writes `chunk` to a TextDecoderStream and reads what comes out. The writer
 // closes after the write, so a stream that drops the chunk ends the read too.
@@ -122,6 +153,221 @@ describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as a 
       "process.env.BIG again": allocationFailed,
       "$.braces": allocationFailed,
       "$.braces({a,b})": 76,
+    });
+  });
+
+  // Bytes that Rust tags as UTF-8 went to a WTF converter that ends the
+  // process when an allocation fails. For ASCII bytes it makes an 8-bit string.
+  // For other bytes it makes a buffer of two bytes for each one, and then a
+  // 16-bit string. `prompt` tags every line as UTF-8, and each of the first
+  // three lines is over the cap in one of those three requests.
+  test("prompt", async () => {
+    const results = await resultsUnderCap(
+      { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * MiB) },
+      `
+      for (const label of ["8-bit string", "buffer", "16-bit string", "ill-formed"]) await run(label, () => prompt());
+      // Under the cap, so the string is created.
+      results["short line"] = prompt();
+      `,
+      {
+        stdin: new Blob([
+          bytesOf(5 * MiB),
+          "\n",
+          // 2.8 MiB of UTF-8, so a buffer of 5.6 MiB.
+          Buffer.alloc(2 * 1_400_000, "é"),
+          "\n",
+          // The buffer is 4 bytes under the cap. The string has one unit less, and a header.
+          bytesOf(2 * MiB - 2, notASCII),
+          "\n",
+          bytesOf(5 * MiB, illFormed),
+          "\né\n",
+        ]),
+      },
+    );
+    expect(results).toEqual({
+      "8-bit string": allocationFailed,
+      "buffer": allocationFailed,
+      "16-bit string": allocationFailed,
+      "ill-formed": allocationFailed,
+      "short line": "é",
+    });
+  });
+
+  // These copies throw the error that the Latin-1 and UTF-16 copies throw. A
+  // multipart part and a URL-encoded body are tagged as UTF-8 also when they
+  // are ASCII.
+  test("process.env, $.braces, FormData and Response.json with bytes that are not ASCII", async () => {
+    using dir = tempDir("buffer-oom-utf8", {
+      ".env": Buffer.concat([
+        Buffer.from("NOT_ASCII="),
+        bytesOf(5 * MiB, notASCII),
+        Buffer.from("\nILL_FORMED="),
+        bytesOf(5 * MiB, illFormed),
+        Buffer.from("\n"),
+      ]),
+    });
+    const results = await resultsUnderCap(
+      { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * MiB) },
+      `
+      import { $ } from "bun";
+      ${inputsOf(5 * MiB)}
+      await run("process.env.NOT_ASCII", () => process.env.NOT_ASCII);
+      // The failed read is not cached as the value.
+      await run("process.env.NOT_ASCII again", () => process.env.NOT_ASCII);
+      await run("process.env.ILL_FORMED", () => process.env.ILL_FORMED);
+      await run("{ ...process.env }", () => ({ ...process.env }));
+      // The token list of "é" and 512 KiB of "a," is about 5 MiB of JSON.
+      await run("$.braces", () => $.braces("{é," + Buffer.alloc(${MiB / 2}, "a,").toString() + "a}", { tokenize: true }));
+      ${formDataSource}
+      for (const [kind, value] of Object.entries(inputs)) {
+        await run("multipart value, " + kind, async () => (await multipart('name="a"\\r\\n\\r\\n', value).formData()).get("a"));
+        await run("URL-encoded value, " + kind, async () => (await urlEncoded(value).formData()).get("a"));
+      }
+      await run("multipart name", async () =>
+        [...(await multipart('name="', inputs["not ASCII"], '"\\r\\n\\r\\nv').formData()).keys()][0]);
+      await run("multipart file name", async () =>
+        (await multipart('name="a"; filename="', inputs["not ASCII"], '"\\r\\n\\r\\nv').formData()).get("a").name);
+      await run("FormData.from", async () =>
+        FormData.from(await multipart('name="a"\\r\\n\\r\\n', inputs["ASCII"]).bytes(), "x").get("a"));
+      await run("Response.json", () => new Response(join('"', inputs["not ASCII"], '"')).json());
+      // Under the cap, so the strings are created.
+      results["short values"] = [
+        (await multipart('name="a"\\r\\n\\r\\n', "é").formData()).get("a"),
+        (await urlEncoded("é").formData()).get("a"),
+        await new Response('"é"').json(),
+      ];
+      `,
+      { cwd: String(dir) },
+    );
+    expect(results).toEqual({
+      "process.env.NOT_ASCII": allocationFailed,
+      "process.env.NOT_ASCII again": allocationFailed,
+      "process.env.ILL_FORMED": allocationFailed,
+      "{ ...process.env }": allocationFailed,
+      "$.braces": allocationFailed,
+      "multipart value, ASCII": allocationFailed,
+      "URL-encoded value, ASCII": allocationFailed,
+      "multipart value, not ASCII": allocationFailed,
+      "URL-encoded value, not ASCII": allocationFailed,
+      "multipart value, ill-formed": allocationFailed,
+      "URL-encoded value, ill-formed": allocationFailed,
+      "multipart name": allocationFailed,
+      "multipart file name": allocationFailed,
+      "FormData.from": allocationFailed,
+      "Response.json": allocationFailed,
+      "short values": ["é", "é", "é"],
+    });
+  });
+
+  // These callers of the same converter already throw for a conversion that
+  // gives no string. Until now, only 2^30 bytes or more reached that error.
+  test("Bun.JSONL, the text of a stream, Bun.CookieMap, CString and the message of an error", async () => {
+    const results = await resultsUnderCap(
+      { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * MiB) },
+      `
+      import { CString, ptr } from "bun:ffi";
+      import { decodeURIComponentSIMD } from "bun:internal-for-testing";
+      import { expect } from "bun:test";
+      ${inputsOf(5 * MiB)}
+      const streamOf = chunk => new ReadableStream({ start(controller) { controller.enqueue(chunk); controller.close(); } });
+      for (const [kind, value] of Object.entries(inputs)) {
+        await run("Response.text of a stream, " + kind, () => new Response(streamOf(value)).text());
+        await run("Bun.readableStreamToText, " + kind, () => Bun.readableStreamToText(streamOf(value)));
+      }
+      for (const kind of ["not ASCII", "ill-formed"]) {
+        const line = join('"', inputs[kind], '"\\n');
+        await run("Bun.JSONL.parse, " + kind, () => Bun.JSONL.parse(line));
+        await run("Bun.JSONL.parseChunk, " + kind, () => Bun.JSONL.parseChunk(line));
+      }
+      // With no "%", the input is copied.
+      await run("decodeURIComponentSIMD, ASCII", () => decodeURIComponentSIMD(inputs["ASCII"]));
+      await run("decodeURIComponentSIMD, not ASCII", () => decodeURIComponentSIMD(inputs["not ASCII"]));
+      // With one, it makes a buffer as long as the input, and converts what is not ASCII around the "%".
+      await run("decodeURIComponentSIMD with %41, buffer", () => decodeURIComponentSIMD(join("%41", inputs["ASCII"])));
+      await run("decodeURIComponentSIMD with %41, conversion", () =>
+        decodeURIComponentSIMD(join("%41", inputs["not ASCII"].subarray(0, ${3 * MiB}))));
+      // The value of a cookie is decoded only when the header has a "%" in it: 2.6 MiB of UTF-8, so a buffer of 5.2 MiB.
+      const cookie = "a=%41" + Buffer.alloc(1_300_000, "é", "latin1").toString("latin1");
+      await run("Bun.CookieMap", () => new Bun.CookieMap(cookie).get("a"));
+      // A CString of valid UTF-8 does not take this converter.
+      const terminated = join(inputs["ill-formed"], "\\0");
+      await run("CString", () => new CString(ptr(terminated)).toString());
+      // Rust formats the message of this error as UTF-8: 3 MiB of it. The error is made with another message.
+      const message = Buffer.alloc(${3 * MiB}, "é").toString();
+      await run("expect", () => expect(1, message).toBe(2));
+      // Under the cap, so the strings are created.
+      results["short values"] = [
+        Bun.JSONL.parse(Buffer.from('"é"\\n'))[0],
+        await Bun.readableStreamToText(streamOf(Buffer.from("é"))),
+        decodeURIComponentSIMD(Buffer.from("%41é")),
+        new Bun.CookieMap("a=%41é").get("a"),
+        new CString(ptr(Buffer.from([0xff, 0]))).toString(),
+      ];
+      `,
+    );
+    expect(results).toEqual({
+      "Response.text of a stream, ASCII": outOfMemory,
+      "Bun.readableStreamToText, ASCII": outOfMemory,
+      "Response.text of a stream, not ASCII": outOfMemory,
+      "Bun.readableStreamToText, not ASCII": outOfMemory,
+      "Response.text of a stream, ill-formed": outOfMemory,
+      "Bun.readableStreamToText, ill-formed": outOfMemory,
+      "Bun.JSONL.parse, not ASCII": outOfMemory,
+      "Bun.JSONL.parseChunk, not ASCII": outOfMemory,
+      "Bun.JSONL.parse, ill-formed": outOfMemory,
+      "Bun.JSONL.parseChunk, ill-formed": outOfMemory,
+      "decodeURIComponentSIMD, ASCII": outOfMemory,
+      "decodeURIComponentSIMD, not ASCII": outOfMemory,
+      "decodeURIComponentSIMD with %41, buffer": outOfMemory,
+      "decodeURIComponentSIMD with %41, conversion": outOfMemory,
+      "Bun.CookieMap": outOfMemory,
+      "CString": outOfMemory,
+      "expect": { name: "Error", message: "Failed to allocate memory for the error message" },
+      "short values": ["é", "é", "Aé", "Aé", "\ufffd"],
+    });
+  });
+
+  // A parameter of a route is decoded as the value of a cookie is. The server
+  // takes a request line this long only with a higher limit. The client is a
+  // socket, because a URL string of 5 MiB is over the cap.
+  test("a parameter of a Bun.serve route", async () => {
+    const results = await resultsUnderCap(
+      {
+        ...bunEnv,
+        BUN_JSC_maxSingleAllocationSize: String(4 * MiB),
+        BUN_OPTIONS: `--max-http-header-size=${8 * MiB}`,
+      },
+      `
+      import net from "node:net";
+      ${inputsOf(5 * MiB)}
+      using server = Bun.serve({
+        port: 0,
+        routes: { "/:id": request => new Response(String(request.params.id.length)) },
+        error: error => new Response(error.name + ": " + error.message, { status: 500 }),
+      });
+      // The status and the body of the response.
+      const get = path =>
+        new Promise((resolve, reject) => {
+          const chunks = [];
+          const socket = net.connect(server.port, "127.0.0.1", () =>
+            socket.end(join("GET /", path, " HTTP/1.1\\r\\nhost: x\\r\\nconnection: close\\r\\n\\r\\n")));
+          socket.on("data", chunk => chunks.push(chunk));
+          socket.on("error", reject);
+          socket.on("close", () => {
+            const response = Buffer.concat(chunks).toString();
+            resolve(response.slice(9, 12) + " " + response.slice(response.indexOf("\\r\\n\\r\\n") + 4));
+          });
+        });
+      results["ASCII"] = await get(inputs["ASCII"]);
+      results["not ASCII"] = await get(inputs["not ASCII"]);
+      // Under the cap, so the string is created.
+      results["short"] = await get("%41é");
+      `,
+    );
+    expect(results).toEqual({
+      "ASCII": "500 RangeError: Out of memory",
+      "not ASCII": "500 RangeError: Out of memory",
+      "short": "200 2",
     });
   });
 });
@@ -239,6 +485,68 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
       "32 MiB decode": 32 * MiB,
     });
   });
+
+  // Bytes that are tagged as UTF-8 are copied by a converter that ended the
+  // process when an allocation failed. It makes an 8-bit string of ASCII bytes:
+  // the mapped file is longer than the cap. For other bytes it makes a buffer
+  // of two bytes for each one, and then a 16-bit string: 24 MiB are under the
+  // cap and their buffer is not.
+  test("UTF-8 bytes: prompt, process.env, FormData, Response.json, Bun.JSONL and the text of a stream", async () => {
+    const head = '--x\r\ncontent-disposition: form-data; name="a"\r\n\r\n';
+    using dir = tempDir("buffer-oom-utf8", {
+      ".env": Buffer.concat([Buffer.from("NOT_ASCII="), bytesOf(24 * MiB, notASCII), Buffer.from("\n")]),
+      "multipart.txt": Buffer.concat([Buffer.from(head), bytesOf(48 * MiB), Buffer.from("\r\n--x--\r\n")]),
+    });
+    const results = await resultsUnderCap(
+      { ...env, Malloc: "1" },
+      `
+      import { CString, ptr } from "bun:ffi";
+      ${inputsOf(24 * MiB)}
+      ${formDataSource}
+      const streamOf = chunk => new ReadableStream({ start(controller) { controller.enqueue(chunk); controller.close(); } });
+      const notASCII = inputs["not ASCII"];
+      await run("prompt", () => prompt());
+      await run("process.env.NOT_ASCII", () => process.env.NOT_ASCII);
+      await run("multipart value", async () => (await multipart('name="a"\\r\\n\\r\\n', notASCII).formData()).get("a"));
+      await run("URL-encoded value", async () => (await urlEncoded(notASCII).formData()).get("a"));
+      await run("Response.json", () => new Response(join('"', notASCII, '"')).json());
+      await run("Bun.JSONL.parse", () => Bun.JSONL.parse(join('"', notASCII, '"\\n')));
+      await run("Response.text of a stream", () => new Response(streamOf(notASCII)).text());
+      await run("Bun.readableStreamToText", () => Bun.readableStreamToText(streamOf(notASCII)));
+      await run("Bun.readableStreamToText, ill-formed", () => Bun.readableStreamToText(streamOf(inputs["ill-formed"])));
+      // The buffer is 8 bytes under the cap. The string has one unit less, and a header.
+      await run("Bun.readableStreamToText, 16-bit string", () =>
+        Bun.readableStreamToText(streamOf(notASCII.subarray(0, ${20 * MiB - 4}))));
+      // A CString of valid UTF-8 does not take this converter.
+      const terminated = join(inputs["ill-formed"], "\\0");
+      await run("CString", () => new CString(ptr(terminated)).toString());
+
+      const mapped = Bun.mmap("multipart.txt");
+      const ascii = mapped.subarray(${head.length}, ${head.length + 48 * MiB});
+      await run("FormData.from, ASCII", () => FormData.from(mapped, "x").get("a"));
+      await run("Bun.readableStreamToText, ASCII", () => Bun.readableStreamToText(streamOf(ascii)));
+      // Under the cap, so the string is created.
+      results["24 MiB of ASCII"] = (await Bun.readableStreamToText(streamOf(inputs["ASCII"]))).length;
+      `,
+      { cwd: String(dir), stdin: new Blob([bytesOf(24 * MiB, notASCII), "\n"]) },
+    );
+    expect(results).toEqual({
+      "prompt": allocationFailed,
+      "process.env.NOT_ASCII": allocationFailed,
+      "multipart value": allocationFailed,
+      "URL-encoded value": allocationFailed,
+      "Response.json": allocationFailed,
+      "Bun.JSONL.parse": outOfMemory,
+      "Response.text of a stream": outOfMemory,
+      "Bun.readableStreamToText": outOfMemory,
+      "Bun.readableStreamToText, ill-formed": outOfMemory,
+      "Bun.readableStreamToText, 16-bit string": outOfMemory,
+      "CString": outOfMemory,
+      "FormData.from, ASCII": allocationFailed,
+      "Bun.readableStreamToText, ASCII": outOfMemory,
+      "24 MiB of ASCII": 24 * MiB,
+    });
+  });
 });
 
 // A release build has neither cap, but an address-space limit makes its
@@ -246,35 +554,74 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
 // left, so the string, which is as long, cannot fit beside it. Nothing writes
 // to the input, so it costs no memory. An ASAN build cannot start under the
 // limit.
+const underAddressSpaceLimit = (script: string) =>
+  resultsUnderCap(
+    // One glibc arena, so that a thread that starts does not reserve another 64 MiB.
+    { ...bunEnv, MALLOC_ARENA_MAX: "1" },
+    `
+    import { readFileSync } from "node:fs";
+    const limit = Number(/Max address space\\s+(\\d+)/.exec(readFileSync("/proc/self/limits", "utf8"))[1]);
+    const used = Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))[1]) * 1024;
+    const input = new Uint8Array(Math.floor(((limit - used) * 0.6) / ${MiB}) * ${MiB});
+    // Takes what is left in blocks of that size, until none fits.
+    const hold = [];
+    try {
+      for (;;) hold.push(new Uint8Array(input.length));
+    } catch {}
+    ${script}
+    `,
+    { wrap: ["/bin/sh", "-c", `ulimit -v ${1024 * 1024} && exec "$0" "$@"`] },
+  );
+
 test.skipIf(isASAN || !isLinux)(
   "TextDecoder.decode of ASCII and Bun.unsafe.arrayBufferToString under an address-space limit",
   async () => {
-    const results = await resultsUnderCap(
-      // One glibc arena, so that a thread that starts does not reserve another 64 MiB.
-      { ...bunEnv, MALLOC_ARENA_MAX: "1" },
-      `
-      import { readFileSync } from "node:fs";
-      const limit = Number(/Max address space\\s+(\\d+)/.exec(readFileSync("/proc/self/limits", "utf8"))[1]);
-      const used = Number(/VmSize:\\s+(\\d+) kB/.exec(readFileSync("/proc/self/status", "utf8"))[1]) * 1024;
-      const input = new Uint8Array(Math.floor(((limit - used) * 0.6) / ${MiB}) * ${MiB});
-      // Takes what is left in blocks of that size, until none fits.
-      const hold = [];
-      try {
-        for (;;) hold.push(new Uint8Array(input.length));
-      } catch {}
+    const results = await underAddressSpaceLimit(`
       await run("decode(utf-8)", () => new TextDecoder().decode(input));
       await run("decode(latin1)", () => new TextDecoder("latin1").decode(input));
       await run("arrayBufferToString", () => Bun.unsafe.arrayBufferToString(input));
       // Fits in what is left, so the string is created.
       results["1 MiB decode"] = new TextDecoder().decode(input.subarray(0, ${MiB})).length;
-      `,
-      { wrap: ["/bin/sh", "-c", `ulimit -v ${1024 * 1024} && exec "$0" "$@"`] },
-    );
+    `);
     expect(results).toEqual({
       "decode(utf-8)": allocationFailed,
       "decode(latin1)": allocationFailed,
       "arrayBufferToString": allocationFailed,
       "1 MiB decode": MiB,
+    });
+  },
+);
+
+// These read the input where it is and copy it into a string, and that copy
+// ended the process at 0xBBADBEEF. The input is a multipart body with one
+// value of NUL bytes, which are ASCII, so the copy is an 8-bit string. With one
+// byte that is not ASCII, the copy starts with a buffer of twice the size.
+test.skipIf(isASAN || !isLinux)(
+  "FormData.from, Bun.JSONL.parse and the text of a stream under an address-space limit",
+  async () => {
+    const results = await underAddressSpaceLimit(`
+      const head = Buffer.from('--x\\r\\ncontent-disposition: form-data; name="a"\\r\\n\\r\\n');
+      const tail = Buffer.from("\\r\\n--x--\\r\\n");
+      input.set(head);
+      input.set(tail, input.length - tail.length);
+      const value = input.subarray(head.length, input.length - tail.length);
+      const streamOf = chunk => new ReadableStream({ start(controller) { controller.enqueue(chunk); controller.close(); } });
+      for (const kind of ["ASCII", "not ASCII"]) {
+        await run("FormData.from, " + kind, () => FormData.from(input, "x").get("a"));
+        await run("Bun.readableStreamToText, " + kind, () => Bun.readableStreamToText(streamOf(value)));
+        value.set(${JSON.stringify(notASCII)});
+      }
+      await run("Bun.JSONL.parse, not ASCII", () => Bun.JSONL.parse(value));
+      // Fits in what is left, so the string is created.
+      results["1 MiB"] = (await Bun.readableStreamToText(streamOf(value.subarray(0, ${MiB})))).length;
+    `);
+    expect(results).toEqual({
+      "FormData.from, ASCII": allocationFailed,
+      "Bun.readableStreamToText, ASCII": outOfMemory,
+      "FormData.from, not ASCII": allocationFailed,
+      "Bun.readableStreamToText, not ASCII": outOfMemory,
+      "Bun.JSONL.parse, not ASCII": outOfMemory,
+      "1 MiB": MiB - 1,
     });
   },
 );

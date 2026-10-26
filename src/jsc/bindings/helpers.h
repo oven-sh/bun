@@ -72,19 +72,11 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     EncodedSlice__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
-static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes);
-
+// `Bun::tryConvertUTF8ToString` without the reason: null when the string is too long or its allocation fails.
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
-    // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
-    // (it sizes an intermediate Vector<char16_t> by byte count).
-    if (WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[likely]]
-        return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
-
-    const char* data = reinterpret_cast<const char*>(bytes.data());
-    if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]]
-        return {};
-    return tryConvertValidUTF8ToString(bytes);
+    BunStringTag failure = BunStringTag::Dead;
+    return Bun::tryConvertUTF8ToString(bytes, failure);
 }
 
 // `bytes` must be valid UTF-8. Returns null if the allocation fails or the result exceeds the max string length.
@@ -111,6 +103,8 @@ static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> by
     return WTF::String(WTF::move(impl));
 }
 
+static WTF::String toStringCopyOfUTF8(EncodedSlice str);
+
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
 static const WTF::String toString(EncodedSlice str)
 {
@@ -119,19 +113,7 @@ static const WTF::String toString(EncodedSlice str)
     }
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
         ASSERT_WITH_MESSAGE(!isTaggedExternalPtr(str.ptr), "UTF8 and external ptr are mutually exclusive. The external will never be freed.");
-        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
-        // For valid UTF-8, the number of UTF-16 code units is <= the number of UTF-8 bytes
-        // (ASCII is 1:1; other code points use multiple UTF-8 bytes per UTF-16 code unit).
-        // We only need to compute the actual UTF-16 length when the byte length exceeds the limit.
-        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
-        if (str.len > maxLength) [[unlikely]] {
-            // UTF-8 byte length != UTF-16 length, so use simdutf to calculate the actual UTF-16 length.
-            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
-            if (utf16Length > maxLength) {
-                return {};
-            }
-        }
-        return convertUTF8ToString(std::span { untag(str.ptr), str.len });
+        return toStringCopyOfUTF8(str);
     }
 
     if (isTaggedExternalPtr(str.ptr)) [[unlikely]] {
@@ -192,26 +174,21 @@ static BunStringTag uninitializedStringFailureTag(size_t length)
     return WTF::StringImpl::isValidLength<CharacterType>(length) ? BunStringTag::OutOfMemory : BunStringTag::Dead;
 }
 
-// A copy of the non-empty `str`, or null with `failure` set. UTF-8 under 2^30 bytes still aborts in WTF when its allocation fails.
-static WTF::String tryToStringCopy(EncodedSlice str, BunStringTag& failure)
+// A copy of the non-empty `str`, or null with `failure` set. Inline, so that `toStringCopy` has its own Latin-1 and UTF-16 arms.
+ALWAYS_INLINE static WTF::String tryToStringCopyInline(EncodedSlice str, BunStringTag& failure)
 {
     ASSERT(str.len && str.ptr);
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
-        const char* data = reinterpret_cast<const char*>(untag(str.ptr));
         // Check if the resulting UTF-16 string could possibly exceed the maximum length.
         size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
         if (str.len > maxLength) [[unlikely]] {
-            size_t utf16Length = simdutf::utf16_length_from_utf8(data, str.len);
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
             if (utf16Length > maxLength) {
                 failure = BunStringTag::Dead;
                 return {};
             }
         }
-        WTF::String converted = convertUTF8ToString(std::span { untag(str.ptr), str.len });
-        // The length fits, so either the allocation failed or the bytes are ill-formed and too many for the replacing conversion.
-        if (converted.isNull()) [[unlikely]]
-            failure = simdutf::validate_utf8(data, str.len) ? BunStringTag::OutOfMemory : BunStringTag::Dead;
-        return converted;
+        return Bun::tryConvertUTF8ToString(std::span { untag(str.ptr), str.len }, failure);
     }
 
     // `setSyntheticAllocationLimitForTesting` lowers it.
@@ -241,14 +218,39 @@ static WTF::String tryToStringCopy(EncodedSlice str, BunStringTag& failure)
     }
 }
 
+static WTF::String tryToStringCopy(EncodedSlice str, BunStringTag& failure)
+{
+    return tryToStringCopyInline(str, failure);
+}
+
+// `toString` for a caller that reports a failed allocation: `failure` is OutOfMemory where the copy of UTF-8 bytes had one.
+static WTF::String tryToString(EncodedSlice str, BunStringTag& failure)
+{
+    if (isTaggedUTF8Ptr(str.ptr) && str.len) [[unlikely]]
+        return tryToStringCopy(str, failure);
+    return toString(str);
+}
+
+// The UTF-8 arm of `toString` and `toStringCopy`. WTF's converter ended the process when an allocation for less than 2^30 bytes failed, so their callers never got a null string for that.
+static WTF::String toStringCopyOfUTF8(EncodedSlice str)
+{
+    BunStringTag failure = BunStringTag::Dead;
+    WTF::String copy = tryToStringCopy(str, failure);
+    if (failure == BunStringTag::OutOfMemory && WTF::isValidCapacityForVector<char16_t>(str.len)) [[unlikely]]
+        Bun__outOfMemory();
+    return copy;
+}
+
 // For a caller with no way to report a refused copy: the null string stands for it, as it does for an empty `str`.
 static WTF::String toStringCopy(EncodedSlice str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
     }
+    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]]
+        return toStringCopyOfUTF8(str);
     BunStringTag failure = BunStringTag::Dead;
-    return tryToStringCopy(str, failure);
+    return tryToStringCopyInline(str, failure);
 }
 
 static void appendToBuilder(EncodedSlice str, WTF::StringBuilder& builder)
@@ -266,6 +268,10 @@ static void appendToBuilder(EncodedSlice str, WTF::StringBuilder& builder)
             }
         }
         WTF::String converted = convertUTF8ToString(std::span { untag(str.ptr), str.len });
+        if (converted.isNull()) [[unlikely]] {
+            builder.didOverflow();
+            return;
+        }
         builder.append(converted);
         return;
     }

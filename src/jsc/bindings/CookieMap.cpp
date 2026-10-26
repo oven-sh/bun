@@ -128,6 +128,8 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     if (!utf8View) [[unlikely]]
                         return Exception { OutOfMemoryError };
                     value = Bun::decodeURIComponentSIMD(utf8View->bytes());
+                    if (value.isNull()) [[unlikely]]
+                        return Exception { OutOfMemoryError };
                 } else {
                     value = valueView.toString();
                 }

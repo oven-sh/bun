@@ -101,9 +101,9 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
     }
 
     std::span bytes { reinterpret_cast<const unsigned char*>(ptr), length };
-    // convertUTF8ToString crashes if the allocation fails, so only use it for small or invalid input.
-    constexpr size_t minFallibleLength = 64 * 1024;
-    auto str = length >= minFallibleLength && simdutf::validate_utf8(ptr, length)
+    // Both report a failed allocation. simdutf is the faster one for long valid input.
+    constexpr size_t minSimdutfLength = 64 * 1024;
+    auto str = length >= minSimdutfLength && simdutf::validate_utf8(ptr, length)
         ? Zig::tryConvertValidUTF8ToString(bytes)
         : Zig::convertUTF8ToString(bytes);
     if (str.isNull()) [[unlikely]] {
@@ -170,19 +170,23 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transfer
 
 // `message` for an Error built from a BunString: a WTF-backed string shares
 // its impl, a static one is atomized, a borrowed EncodedSlice is copied.
-static WTF::String errorMessage(const BunString* str)
+static WTF::String errorMessage(const BunString* str, BunStringTag& failure)
 {
-    if (str->tag == BunStringTag::EncodedSlice)
-        return Zig::toStringCopy(str->impl.encoded);
+    if (str->tag == BunStringTag::EncodedSlice && str->impl.encoded.len && str->impl.encoded.ptr)
+        return Zig::tryToStringCopy(str->impl.encoded, failure);
     return str->toWTFString(BunString::ZeroCopy);
 }
 
 extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, JSC::JSGlobalObject* globalObject, BunErrorKind kind)
 {
-    WTF::String message = errorMessage(str);
+    BunStringTag failure = BunStringTag::Dead;
+    WTF::String message = errorMessage(str, failure);
     // Callers throw, reject with, or set properties on the result, so always return an error object.
-    if (message.isNull() && (str->tag == BunStringTag::Dead || !str->isEmpty())) [[unlikely]]
-        message = "The error message exceeds the maximum string length"_s;
+    if (message.isNull() && (str->tag == BunStringTag::Dead || !str->isEmpty())) [[unlikely]] {
+        message = failure == BunStringTag::OutOfMemory
+            ? "Failed to allocate memory for the error message"_s
+            : "The error message exceeds the maximum string length"_s;
+    }
     JSC::ErrorType type = JSC::ErrorType::Error;
     switch (kind) {
     case BunErrorKind::Error:
@@ -205,6 +209,57 @@ extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, 
 }
 
 namespace Bun {
+
+WTF::String tryConvertUTF8ToString(std::span<const unsigned char> bytes, BunStringTag& failure)
+{
+    if (!bytes.data())
+        return {};
+    if (bytes.empty())
+        return emptyString();
+
+    // The scratch buffer below has one char16_t for each byte, and a Vector does not hold 2^30 of them.
+    if (!WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[unlikely]] {
+        const char* data = reinterpret_cast<const char*>(bytes.data());
+        if (!simdutf::validate_utf8(data, bytes.size())) {
+            failure = BunStringTag::Dead;
+            return {};
+        }
+        WTF::String converted = Zig::tryConvertValidUTF8ToString(bytes);
+        if (converted.isNull())
+            failure = simdutf::utf16_length_from_utf8(data, bytes.size()) > WTF::String::MaxLength ? BunStringTag::Dead : BunStringTag::OutOfMemory;
+        return converted;
+    }
+
+    if (WTF::charactersAreAllASCII(bytes)) {
+        std::span<Latin1Character> characters;
+        auto impl = WTF::StringImpl::tryCreateUninitialized(bytes.size(), characters);
+        if (!impl) [[unlikely]] {
+            failure = BunStringTag::OutOfMemory;
+            return {};
+        }
+        WTF::StringImpl::copyCharacters(characters, byteCast<Latin1Character>(bytes));
+        return impl.releaseNonNull();
+    }
+
+    WTF::Vector<char16_t, 1024> buffer;
+    if (!buffer.tryGrow(bytes.size())) [[unlikely]] {
+        failure = BunStringTag::OutOfMemory;
+        return {};
+    }
+    auto result = WTF::Unicode::convertReplacingInvalidSequences(byteCast<char8_t>(bytes), buffer.mutableSpan());
+    std::span<const char16_t> converted = result.buffer;
+    // Each sequence, well-formed or not, gives at most one UTF-16 unit for each of its bytes.
+    RELEASE_ASSERT(result.code == WTF::Unicode::ConversionResultCode::Success);
+    RELEASE_ASSERT(converted.size() <= bytes.size());
+    std::span<char16_t> characters;
+    auto impl = WTF::StringImpl::tryCreateUninitialized(converted.size(), characters);
+    if (!impl) [[unlikely]] {
+        failure = BunStringTag::OutOfMemory;
+        return {};
+    }
+    WTF::StringImpl::copyCharacters(characters, converted);
+    return impl.releaseNonNull();
+}
 
 // nullptr, with nothing thrown, when the copy is refused: `failure` is then Dead (too long) or OutOfMemory.
 static JSC::JSString* tryToJS(JSC::VM& vm, EncodedSlice slice, BunStringTag& failure)
@@ -495,9 +550,10 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
-    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(bytes), length });
+    BunStringTag failure = BunStringTag::Dead;
+    auto str = Bun::tryConvertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(bytes), length }, failure);
     if (str.isNull()) [[unlikely]] {
-        return { .tag = BunStringTag::Dead };
+        return { .tag = failure };
     }
     auto impl = str.releaseImpl();
     return Bun::toString(impl.leakRef());

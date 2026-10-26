@@ -29,7 +29,12 @@ ALWAYS_INLINE static void appendLiteralRun(StringBuilder& result, std::span<cons
         result.append(chars);
         return;
     }
-    result.append(Zig::convertUTF8ToString(bytes));
+    String run = Zig::convertUTF8ToString(bytes);
+    if (run.isNull()) [[unlikely]] {
+        result.didOverflow();
+        return;
+    }
+    result.append(run);
 }
 
 WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
@@ -62,15 +67,21 @@ WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
         cursor++;
     }
 
-    if (inputIsASCII)
-        return String(lchar);
+    if (inputIsASCII) {
+        std::span<Latin1Character> characters;
+        auto impl = StringImpl::tryCreateUninitialized(lchar.size(), characters);
+        if (!impl) [[unlikely]]
+            return {};
+        StringImpl::copyCharacters(characters, lchar);
+        return impl.releaseNonNull();
+    }
     return Zig::convertUTF8ToString(input);
 
 slow_path:
     while (cursor < end && *cursor != '%') {
         cursor++;
     }
-    StringBuilder result;
+    StringBuilder result(OverflowPolicy::RecordOverflow);
     result.reserveCapacity(input.size());
     appendLiteralRun(result, input.first(static_cast<size_t>(cursor - input.data())), inputIsASCII);
 
@@ -282,6 +293,8 @@ slow_path:
         }
     }
 
+    if (result.hasOverflowed()) [[unlikely]]
+        return {};
     return result.toString();
 }
 
@@ -291,6 +304,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject 
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue input = callFrame->argument(0);
+    WTF::String output;
     if (input.isString()) {
         auto string = input.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -298,16 +312,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject 
         // decodeURIComponentSIMD consumes UTF-8 bytes, like the ServerRouteList and CookieMap callers.
         auto utf8View = UTF8View::tryCreate(globalObject, scope, string);
         RETURN_IF_EXCEPTION(scope, {});
-        auto&& output = decodeURIComponentSIMD(utf8View->bytes());
-        return JSC::JSValue::encode(JSC::jsString(vm, output));
+        output = decodeURIComponentSIMD(utf8View->bytes());
+    } else {
+        JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(input);
+        if (!view) {
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+        output = decodeURIComponentSIMD(view->span());
     }
-
-    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(input);
-    if (!view) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
+    if (output.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
-    auto span = view->span();
-    auto&& output = decodeURIComponentSIMD(span);
-    return JSC::JSValue::encode(JSC::jsString(vm, output));
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::move(output)));
 }
 }

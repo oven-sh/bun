@@ -19,7 +19,7 @@ extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
     bun_core::output::panic(format_args!("{}", bstr::BStr::new(bytes)));
 }
 
-/// Out-of-memory entry point for C callers (bun-usockets) that cannot
+/// Out-of-memory entry point for C and C++ callers (bun-usockets, `helpers.h`) that cannot
 /// propagate an allocation failure. Same crash report as `handle_oom`.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__outOfMemory() -> ! {

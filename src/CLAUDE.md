@@ -155,8 +155,8 @@ borrowed `EncodedSlice` copies), `EncodedSlice::utf8(bytes).to_error_instance(gl
 (plus `to_syntax_error_instance`) for raw UTF-8 bytes (copied).
 `EncodedSlice::…(bytes).to_js(global)?` is for bytes already validated as
 ASCII where a rescan is unwanted (`EncodedSlice::latin1(bytes).to_js(global)?`).
-It throws when the string is too long or cannot be allocated (UTF-8 bytes
-under 2^30 still end the process there). Carry that error out of the frame:
+It throws when the string is too long or cannot be allocated. Carry that
+error out of the frame:
 `?` where the frame returns `JsResult`; `throws: true` on a bindgen getter; a
 lazy-property callback can return `JsResult<JSValue>`; a host getter or an
 `extern "C"` initialiser returns `.to_js(global).or_pending_exception()`; a

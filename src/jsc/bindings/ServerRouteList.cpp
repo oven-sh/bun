@@ -198,6 +198,7 @@ Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalO
 template<typename Req>
 JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, Req* req)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Ensure that the object doesn't get GC'd before we've had a chance to initialize it.
     MarkedArgumentBuffer args;
@@ -210,7 +211,12 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
         auto param = req->getParameter(static_cast<unsigned short>(i));
         if (!param.empty()) {
             const std::span<const uint8_t> paramBytes(reinterpret_cast<const uint8_t*>(param.data()), param.size());
-            args.append(jsString(vm, decodeURIComponentSIMD(paramBytes)));
+            WTF::String decoded = decodeURIComponentSIMD(paramBytes);
+            if (decoded.isNull()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return nullptr;
+            }
+            args.append(jsString(vm, WTF::move(decoded)));
         } else {
             args.append(jsEmptyString(vm));
         }
@@ -242,6 +248,7 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
     auto* structure = globalObject->m_JSBunRequestStructure.get(globalObject);
 
     auto* params = paramsObjectForRoute(vm, globalObject, index, req);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSBunRequest* request = JSBunRequest::create(vm, structure, requestPtr, params);
     RETURN_IF_EXCEPTION(scope, {});

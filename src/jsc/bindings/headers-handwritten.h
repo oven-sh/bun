@@ -214,6 +214,7 @@ inline constexpr ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 
 extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
+extern "C" void __attribute((__noreturn__)) Bun__outOfMemory();
 
 typedef struct ZigStackFramePosition {
     int32_t line_zero_based;
@@ -346,6 +347,8 @@ extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, Bun
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
 
 namespace Bun {
+// `WTF::String::fromUTF8ReplacingInvalidSequences` that gives null with `failure` set (Dead or OutOfMemory) where that ends the process.
+WTF::String tryConvertUTF8ToString(std::span<const unsigned char>, BunStringTag& failure);
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
 // A JSString with a copy of the bytes. Throws and returns nullptr where `Zig::tryToStringCopy` refuses the copy.
 JSC::JSString* toJS(JSC::JSGlobalObject*, EncodedSlice);

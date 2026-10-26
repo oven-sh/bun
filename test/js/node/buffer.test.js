@@ -5348,16 +5348,23 @@ describe("transcode allocation limits", () => {
 
   // `BUN_JSC_maxSingleAllocationSize` exists in debug WTF only. It makes every fallible WTF allocation
   // above the cap return null and every infallible one assert. A 3 MiB source decodes to a 6 MiB
-  // UTF-16 copy, and a 10 MiB ucs2 source to a 10 MiB one.
+  // UTF-16 copy, and a 10 MiB ucs2 source to a 10 MiB one. A utf8 source that is not ASCII is decoded
+  // through a buffer of 6 MiB, and that ended the process.
   it.skipIf(!isDebug)("throws when the UTF-16 copy of the source cannot be allocated", async () => {
     const result = await runCases(
       `
       const bytes = Buffer.alloc(${3 * 1024 ** 2}, 97);
       const units = Buffer.alloc(${10 * 1024 ** 2}, 97);
+      const notASCII = Buffer.from(bytes);
+      notASCII.set([0xc3, 0xa9]);
+      const illFormed = Buffer.from(bytes);
+      illFormed[0] = 0xff;
       const cases = {
         "latin1 to utf8": () => transcode(bytes, "latin1", "utf8"),
         "ascii to utf8": () => transcode(bytes, "ascii", "utf8"),
         "utf8 to latin1": () => transcode(bytes, "utf8", "latin1"),
+        "utf8 that is not ASCII to latin1": () => transcode(notASCII, "utf8", "latin1"),
+        "ill-formed utf8 to latin1": () => transcode(illFormed, "utf8", "latin1"),
         "ucs2 to latin1": () => transcode(units, "ucs2", "latin1"),
         "ucs2 to utf8": () => transcode(units, "ucs2", "utf8"),
         // Under the cap, so the copy is made.
@@ -5371,6 +5378,8 @@ describe("transcode allocation limits", () => {
         "latin1 to utf8: RangeError: Out of memory",
         "ascii to utf8: RangeError: Out of memory",
         "utf8 to latin1: RangeError: Out of memory",
+        "utf8 that is not ASCII to latin1: RangeError: Out of memory",
+        "ill-formed utf8 to latin1: RangeError: Out of memory",
         "ucs2 to latin1: RangeError: Out of memory",
         "ucs2 to utf8: RangeError: Out of memory",
         '1 MiB of utf8 to latin1: {"length":1048576,"head":[97,97,97,97],"tail":[97,97,97,97]}',

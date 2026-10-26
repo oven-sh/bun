@@ -87,9 +87,7 @@ enum class SerializationErrorMode { NonThrowing,
     Throwing };
 enum class SerializationContext { Default,
     WorkerPostMessage,
-    WindowPostMessage,
-    // A worker's uncaught error on its way to the parent's 'error' event: Error fields that cannot be read are left out.
-    WorkerErrorReport };
+    WindowPostMessage };
 enum class SerializationForStorage : bool { No,
     Yes };
 enum class SerializationForCrossProcessTransfer : bool { No,

@@ -4457,8 +4457,23 @@ impl<'a> Resolver<'a> {
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             queue_slice_len -= 1;
 
+            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
+            // `put`; resolver mutex held.
+            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) });
+
+            // A real path the parent's entry has is opened once, for the walk and for its listing.
+            let by_real_path = match parent_dir_ptr {
+                Some(parent) if !queue_top.fd.is_valid() && !self.opts.preserve_symlinks => {
+                    self.open_by_real_path(parent, queue_top_unsafe_path)
+                }
+                _ => None,
+            };
+
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
+            } else if let Some((fd, _)) = &by_real_path {
+                *fd
             } else {
                 'open_dir: {
                     // This saves us N copies of .toPosixPath
@@ -4628,19 +4643,18 @@ impl<'a> Resolver<'a> {
                 &safe_path[dir_path_i..end]
             };
 
-            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
-            // `put`; resolver mutex held.
-            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
-                .map(|p| unsafe { DirInfoRef::from_raw(p) });
-
             let (mut real_dir, read_link): (&'static [u8], bool) = match parent_dir_ptr {
                 Some(parent) if !self.opts.preserve_symlinks => {
                     self.real_dir_from_parent(parent, dir_path, open_dir)
                 }
                 _ => (b"", false),
             };
-            // Opened here, before the link to it was read, `open_dir` is the real directory.
-            let opened_real = read_link && !queue_top.fd.is_valid() && open_dir.is_valid();
+            // Opened by that path, or before the link to it was read, `open_dir` is on `real_dir`.
+            let opened_real = match &by_real_path {
+                Some((_, real)) => real.as_slice() == real_dir,
+                None => read_link && !queue_top.fd.is_valid() && open_dir.is_valid(),
+            };
+            debug_assert!(by_real_path.is_none() || opened_real);
             // A real path that does not open is one the link no longer leads to.
             if !real_dir.is_empty()
                 && !rfs!().read_real_listing(
@@ -6338,6 +6352,49 @@ impl<'a> Resolver<'a> {
         }
         Self::entry_abs_path(entry, entry.base())?;
         Self::entry_file_path(entry).filter(|kept| *kept == fd_path)
+    }
+
+    /// The directory walked as `path`, opened by its real path, and that path: only where the
+    /// parent's entry gives the real path with no stat, and no listing is under it yet.
+    fn open_by_real_path(&mut self, parent: DirInfoRef, path: &[u8]) -> Option<(FD, Vec<u8>)> {
+        let mut base = bun_paths::basename(path);
+        if base.len() > 1 && base[base.len() - 1] == SEP {
+            base = &base[0..base.len() - 1];
+        }
+
+        // The caller holds `entries_mutex`, which is non-recursive.
+        let entry = parent
+            .get_entries_ref_locked(self.generation)?
+            .get(base)?
+            .entry();
+        if entry.need_stat.load(core::sync::atomic::Ordering::Acquire) {
+            return None;
+        }
+        let cache = entry.cache();
+        if cache.kind != Fs::file_system::EntryKind::Dir {
+            return None;
+        }
+        let mut real: &[u8] = cache.symlink.as_bytes();
+        if real.is_empty() {
+            if parent.abs_real_path.is_empty() {
+                return None;
+            }
+            real = self.fs_ref().abs_buf_checked(
+                &[parent.abs_real_path, base],
+                bufs!(dir_info_uncached_filename),
+            )?;
+        }
+        // SAFETY: `rfs_ptr` points at the process-global RealFS; `entries_mutex` held.
+        let listing = unsafe { &mut *self.rfs_ptr() }.entries.get(real);
+        if matches!(
+            listing,
+            Some(Fs::file_system::real_fs::EntriesOption::Entries(_))
+        ) {
+            return None;
+        }
+        let opened = bun_sys::open_dir_for_iteration(FD::cwd(), real);
+        bun_core::scoped_log!(crate::fs_full::Fs, "open({})", bstr::BStr::new(real));
+        Some((opened.ok()?, real.to_vec()))
     }
 
     /// The real path of the directory walked as `path`; empty if that is `path` itself, or unknown.

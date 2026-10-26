@@ -1192,7 +1192,7 @@ pub mod fs {
             }
         }
 
-        /// Read by path, or from `opened`: the fd a walk opened before it read the link to `real`.
+        /// Read by path, or from `opened`: the fd of a walk that opened `real`, or the link to it.
         pub(crate) fn read_real_listing(
             &mut self,
             real: &[u8],

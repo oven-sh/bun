@@ -39,6 +39,7 @@
 #include "VectorSizeLimit.h"
 #include "Worker.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -471,7 +472,9 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
     auto& vm = JSC::getVM(&workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+    // Only a thrown Error is read field by field, as in node's error_serdes.js. An Error inside a thrown value is cloned strictly.
+    auto context = dynamicDowncast<JSC::ErrorInstance>(value) ? SerializationContext::WorkerErrorReport : SerializationContext::Default;
+    auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing, context);
     CLEAR_IF_EXCEPTION(scope);
     if (!serialized)
         return false;

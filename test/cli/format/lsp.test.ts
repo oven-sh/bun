@@ -275,7 +275,7 @@ exports.format = async (text, options) => text.replace(/ +/g, " ");
     "evaluates a prettier.config.js once per generation, not per formatting request",
     async () => {
       using dir = tempDir("bun-fmt-lsp", {
-        "prettier.config.js": `require("node:fs").appendFileSync(require("node:path").join(__dirname, "evaluated.txt"), "x\n");
+        "prettier.config.js": `require("node:fs").appendFileSync(require("node:path").join(__dirname, "evaluated.txt"), "x\\n");
 module.exports = { semi: false };
 `,
         "package.json": "{}",

@@ -4129,7 +4129,9 @@ describe("bundler", () => {
 test.skipIf(!isDebug && !isASAN)(
   "react-compiler ValidateUseMemo time does not grow with the square of the number of useMemo calls",
   async () => {
-    const calls = 3000;
+    // Without the fix the ratio below grows with the number of calls, and
+    // optimized code needs twice as many of them as a debug build.
+    const calls = isDebug ? 3000 : 6000;
     const perComponent = 20;
     const call = "{useMemo(() => 1, [])}";
     const source = (components: number, callsEach: number) =>
@@ -4167,10 +4169,10 @@ test.skipIf(!isDebug && !isASAN)(
 
     // Both builds hold the same calls, so a linear pass takes about as long in
     // one as in the other: the ratio is 0.5 with the fix. Without it the pass
-    // takes 7 times as long in the large component on a debug build. The times
-    // are wall time. Other load on the machine only adds to a time, so the best
-    // time of up to five rounds counts, and the two builds of a round run
-    // together.
+    // takes 7 times as long in the large component on a debug build, and 5 to 7
+    // times on an ASAN build. The times are wall time. Other load on the machine
+    // only adds to a time, so the best time of up to five rounds counts, and the
+    // two builds of a round run together.
     let control = Infinity;
     let large = Infinity;
     for (let round = 0; round < 5; round++) {

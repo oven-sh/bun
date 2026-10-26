@@ -108,3 +108,65 @@ test("writer.write() with a sync sink does not allocate a wrapper promise per ch
     exitCode: 0,
   });
 });
+
+// The fast path replaced a promise reaction, which runs in the AsyncLocalStorage store that was current when it
+// was registered. The queued handler does the same: the sink write() or source pull() that it starts reads that
+// store. The store rides in the microtask entry itself. So an active store adds no Promise, and no
+// InternalFieldTuple (the cell that a promise reaction allocates to carry the store).
+describe.each(["sink write()", "default pull()", "bytes pull()"] as const)(
+  "sync fast path inside AsyncLocalStorage.run(): %s",
+  kind => {
+    test("every call reads the store and no cell is added per chunk", async () => {
+      const src = `
+      const { heapStats } = require("bun:jsc");
+      const { AsyncLocalStorage } = require("node:async_hooks");
+      const als = new AsyncLocalStorage();
+      const OPS = 2000;
+      let withoutStore = 0;
+      const called = () => { if (als.getStore() !== "store") withoutStore++; };
+      // Two operations are outstanding at a time: the stream starts the second one when the first completes.
+      async function drain() {
+        ${
+          kind === "sink write()"
+            ? `const writer = new WritableStream({ write: called }).getWriter();
+               const loop = async () => { for (let i = 0; i < OPS; i += 2) { const a = writer.write(i), b = writer.write(i + 1); await a; await b; } };`
+            : `let pulled = 0;
+               const reader = new ReadableStream({
+                 ${kind === "bytes pull()" ? 'type: "bytes",' : ""}
+                 pull(c) { called(); if (pulled++ < OPS) c.enqueue(new Uint8Array(1)); else c.close(); },
+               }, { highWaterMark: 0 }).getReader();
+               const loop = async () => { for (;;) { const a = reader.read(), b = reader.read(); if ((await a).done || (await b).done) break; } };`
+        }
+        // The stream was made outside the store. Let start() settle, so that the first call runs in the caller's frame.
+        await new Promise(resolve => setImmediate(resolve));
+        await als.run("store", loop);
+      }
+      const cells = () => { const counts = heapStats().objectTypeCounts; return [counts.Promise || 0, counts.InternalFieldTuple || 0]; };
+      await drain();
+      Bun.gc(true);
+      withoutStore = 0;
+      const before = cells();
+      await drain();
+      const after = cells();
+      console.log(JSON.stringify({ withoutStore, promises: after[0] - before[0], tuples: after[1] - before[1], ops: OPS }));
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { withoutStore, promises, tuples, ops } = JSON.parse(stdout.trim());
+      // One promise per operation is the caller's own (write() / read()). A promise reaction would add a tuple per chunk.
+      expect({
+        withoutStore,
+        promisesBelowThreshold: promises < ops * 1.5,
+        noTuplePerChunk: tuples < ops * 0.5,
+        stderr,
+        exitCode,
+      }).toEqual({
+        withoutStore: 0,
+        promisesBelowThreshold: true,
+        noTuplePerChunk: true,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  },
+);

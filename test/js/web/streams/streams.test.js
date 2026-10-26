@@ -20,6 +20,7 @@ import {
   tmpdirSync,
 } from "harness";
 import { mkfifo } from "mkfifo";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
@@ -385,6 +386,21 @@ describe("a deep chain of natively linked streams doesn't overflow the stack", (
     console.log(JSON.stringify({ pulls, done }));
   `;
 
+  // The same read, made inside AsyncLocalStorage.run(). The chain continues the read from a queued job when the
+  // stack is deep: the source's pull() still reads the store of the read.
+  const readInStoreScript = ({ type, link }, readerOptions, view) => `
+    const storage = new (require("node:async_hooks").AsyncLocalStorage)();
+    let store;
+    let stream = new ReadableStream(
+      { type: ${JSON.stringify(type)}, pull(c) { store = storage.getStore(); c.close(); c.byobRequest?.respond(0); } },
+      { highWaterMark: 0 },
+    );
+    for (let i = 0; i < ${depth}; i++) { ${link("")} }
+    ${settle}
+    const { done } = await storage.run("reader", () => stream.getReader(${readerOptions}).read(${view}));
+    console.log(JSON.stringify({ store, done }));
+  `;
+
   const cases = [];
   for (const [name, kind] of Object.entries(kinds)) {
     const ends = kind.link === tee ? 5 : 1;
@@ -423,6 +439,24 @@ describe("a deep chain of natively linked streams doesn't overflow the stack", (
       `Response.textStream() ${depth} deep when the end is read`,
       readScript(kinds["Response.textStream()"], "", ""),
       pulled,
+    ],
+  );
+  const pulledInStore = { store: "reader", done: true };
+  cases.push(
+    [
+      `tee() of a byte stream ${depth} deep when the end is read inside AsyncLocalStorage.run()`,
+      readInStoreScript(kinds["tee() of a byte stream"], "", ""),
+      pulledInStore,
+    ],
+    [
+      `tee() of a byte stream ${depth} deep when the end is read into a view inside AsyncLocalStorage.run()`,
+      readInStoreScript(kinds["tee() of a byte stream"], `{ mode: "byob" }`, "new Uint8Array(4)"),
+      pulledInStore,
+    ],
+    [
+      `Response.textStream() ${depth} deep when the end is read inside AsyncLocalStorage.run()`,
+      readInStoreScript(kinds["Response.textStream()"], "", ""),
+      pulledInStore,
     ],
   );
 
@@ -3985,6 +4019,209 @@ it("pipeTo writes an already-dequeued chunk when the signal aborts mid-drain", a
   );
   // Node 26 agrees byte-for-byte: every dequeued chunk is written before the abort finishes.
   expect({ outcome, written }).toEqual({ outcome: "rejected:stop", written: ["a", "b", "c"] });
+});
+
+// A pipe starts its shutdown from the reactions that pipeTo() put on the closed promises of its reader and writer,
+// as the WHATWG reference implementation does. It does not start it in the frame of the code that ends the source.
+describe("pipeTo() starts its shutdown from its own reactions", () => {
+  // Lets the start() of both streams settle, so that the pipe waits in a read and the sink can close at once.
+  const started = () => new Promise(resolve => setImmediate(resolve));
+
+  // The source has ended, but the pipe has not seen it yet: the signal's abort algorithm runs first.
+  it.each([
+    ["close()", controller => controller.close()],
+    ["error()", controller => controller.error(new TypeError("source error"))],
+  ])("%s of the source and abort() of the signal in the same turn reject with the AbortError", async (_, end) => {
+    const abortController = new AbortController();
+    const calls = [];
+    let controller;
+    const source = new ReadableStream({ start: c => void (controller = c) });
+    const sink = new WritableStream({ close: () => void calls.push("close"), abort: () => void calls.push("abort") });
+    await started();
+    const outcome = source.pipeTo(sink, { signal: abortController.signal }).then(
+      () => "fulfilled",
+      error => "rejected:" + error.name,
+    );
+    end(controller);
+    abortController.abort();
+    // Node.js 20, 22, 24 and 26 give the same. Chrome 153 calls close() for close(), and rejects with the source's
+    // error for error().
+    expect({ outcome: await outcome, calls }).toEqual({ outcome: "rejected:AbortError", calls: ["abort"] });
+  });
+
+  // The pipe has not started its shutdown yet, so it has called nothing on the sink when the destination errors.
+  it.each([
+    ["close()", controller => controller.close(), "rejected:destination error"],
+    ["error()", controller => controller.error(new Error("source error")), "rejected:source error"],
+  ])("%s of the source, then error() of the destination one microtask later", async (_, end, expected) => {
+    const calls = [];
+    let controller, sinkController;
+    const source = new ReadableStream({ start: c => void (controller = c) });
+    const sink = new WritableStream({
+      start: c => void (sinkController = c),
+      close: () => void calls.push("close"),
+      abort: () => void calls.push("abort"),
+    });
+    await started();
+    const outcome = source.pipeTo(sink).then(
+      () => "fulfilled",
+      error => "rejected:" + error.message,
+    );
+    end(controller);
+    await Promise.resolve();
+    sinkController.error(new Error("destination error"));
+    // Node.js 20, 22, 24 and 26 give the same. Chrome 153 calls close() and fulfils for close(), and calls abort()
+    // for error().
+    expect({ outcome: await outcome, calls }).toEqual({ outcome: expected, calls: [] });
+  });
+
+  // The stores that every Node.js release gives are in
+  // test/js/node/async_hooks/async-context/async-context-webstreams-pipeto.js. Here are the cases where Node.js
+  // releases differ (26.12 ends the sink in the store of the code that ended the source), or that use a Bun API.
+  describe("so the sink ends in the AsyncLocalStorage store of the pipeTo() call", () => {
+    // A body that sends its next piece only after took() ran for the piece before, and that ends only after the
+    // last piece was taken. So it never arrives whole, and its end arrives alone.
+    function bodyInPieces() {
+      let took = () => {};
+      let sent = 0;
+      const body = new ReadableStream({
+        async pull(controller) {
+          if (sent === 3) return controller.close();
+          const taken = new Promise(resolve => (took = resolve));
+          controller.enqueue(new TextEncoder().encode("piece " + sent++));
+          await taken;
+        },
+      });
+      return { body, took: () => took() };
+    }
+    // The number of chunks is not the point: folds a run of equal entries into one.
+    const foldRuns = seen => seen.filter((entry, i) => entry !== seen[i - 1]);
+
+    it.each([
+      ["close() outside any store", "close:pipe"],
+      ["close() in another store", "close:pipe"],
+      ["error() outside any store", "abort:pipe"],
+      ["error() in another store", "abort:pipe"],
+    ])("when the source ends by %s", async (how, expected) => {
+      const storage = new AsyncLocalStorage();
+      const seen = [];
+      let controller;
+      const source = new ReadableStream({ start: c => void (controller = c) });
+      const sink = new WritableStream({
+        close: () => void seen.push("close:" + storage.getStore()),
+        abort: () => void seen.push("abort:" + storage.getStore()),
+      });
+      await started();
+      const piped = storage.run("pipe", () => source.pipeTo(sink)).catch(() => {});
+      const end = () => (how.startsWith("close") ? controller.close() : controller.error(new Error("source error")));
+      if (how.endsWith("another store")) storage.run("other", end);
+      else end();
+      await piped;
+      expect(seen).toEqual([expected]);
+    });
+
+    // A ReadableStream calls pull() in the store it was made in, and the chunk that pull() enqueues is written in
+    // that store. Node.js reads the store of the pipeTo() call in all three callbacks.
+    it("also when the source was made in another store, which its pull() and the sink's write() keep", async () => {
+      const storage = new AsyncLocalStorage();
+      const seen = new Set();
+      let pulls = 0;
+      const source = storage.run(
+        "made",
+        () =>
+          new ReadableStream(
+            {
+              pull(controller) {
+                seen.add("pull:" + storage.getStore());
+                if (pulls++ < 3) controller.enqueue(pulls);
+                else controller.close();
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+      );
+      const sink = new WritableStream({
+        write: () => void seen.add("write:" + storage.getStore()),
+        close: () => void seen.add("close:" + storage.getStore()),
+      });
+      await started();
+      await storage.run("piped", () => source.pipeTo(sink));
+      expect([...seen]).toEqual(["pull:made", "write:made", "close:piped"]);
+    });
+
+    it("for each branch of a tee() of a fetch body", async () => {
+      const pieces = bodyInPieces();
+      using server = Bun.serve({ port: 0, fetch: () => new Response(pieces.body) });
+      const storage = new AsyncLocalStorage();
+      const seen = [];
+      const response = await fetch(server.url);
+      await storage.run("u1", async () => {
+        const [a, b] = response.body.tee();
+        const sinkA = new WritableStream({
+          write: pieces.took,
+          close: () => void seen.push("a:" + storage.getStore()),
+        });
+        const sinkB = new WritableStream({ close: () => void seen.push("b:" + storage.getStore()) });
+        await Promise.all([a.pipeTo(sinkA), storage.run("u2", () => b.pipeTo(sinkB))]);
+      });
+      expect(seen.sort()).toEqual(["a:u1", "b:u2"]);
+    });
+
+    it("for the request body of Bun.serve", async () => {
+      const pieces = bodyInPieces();
+      const storage = new AsyncLocalStorage();
+      using server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          const seen = [];
+          const sink = new WritableStream({
+            write() {
+              seen.push("write:" + storage.getStore());
+              pieces.took();
+            },
+            close: () => void seen.push("close:" + storage.getStore()),
+          });
+          await storage.run("u1", () => request.body.pipeTo(sink));
+          return Response.json(foldRuns(seen));
+        },
+      });
+      const response = await fetch(server.url, { method: "POST", body: pieces.body, duplex: "half" });
+      expect(await response.json()).toEqual(["write:u1", "close:u1"]);
+    });
+
+    it("for the stdout of Bun.spawn()", async () => {
+      const storage = new AsyncLocalStorage();
+      const seen = [];
+      // The child writes its second piece, and then exits, only after the sink took the piece before.
+      await using child = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.stdout.write("a");
+           let taken = 0;
+           process.stdin.on("data", () => {
+             if (++taken === 1) process.stdout.write("b");
+             else process.exit(0);
+           });`,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const sink = new WritableStream({
+        write() {
+          seen.push("write:" + storage.getStore());
+          child.stdin.write("taken");
+          child.stdin.flush();
+        },
+        close: () => void seen.push("close:" + storage.getStore()),
+      });
+      await storage.run("u1", () => child.stdout.pipeTo(sink));
+      expect(foldRuns(seen)).toEqual(["write:u1", "close:u1"]);
+      expect(await child.exited).toBe(0);
+    });
+  });
 });
 
 // When a Bun native sink (spawn stdin, Bun.serve response body) consumes a TransformStream's

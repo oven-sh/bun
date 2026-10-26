@@ -35,7 +35,6 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/MicrotaskQueue.h>
 #include <wtf/Locker.h>
 
 namespace Bun {
@@ -100,24 +99,13 @@ static JSReadableStreamReaderBase* teeReader(JSStreamTeeState* teeState)
     return uncheckedDowncast<WebCore::JSReadableStreamDefaultReader>(cell);
 }
 
-// [reaction-convention] deferral: runs handler(value, context) as its own microtask,
-// carrying the current async context, without allocating a promise.
-static void queueReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
-{
-    JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    if (asyncContext.isEmpty())
-        asyncContext = jsUndefined();
-    QueuedTask task { nullptr, InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, handler, asyncContext, value, context };
-    vm.queueMicrotask(WTF::move(task));
-}
-
 // "Let startPromise be a promise resolved with startResult. Upon fulfillment / rejection of
 // startPromise, ...". A non-object startResult cannot be a thenable, so no promise is needed.
 static void reactToStartResult(JSC::VM& vm, JSGlobalObject* globalObject, JSValue startResult, JSFunction* onFulfilled, JSFunction* onRejected, JSCell* context)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!startResult.isObject()) {
-        queueReactionJob(vm, globalObject, onFulfilled, startResult, context);
+        queueStreamsMicrotask(globalObject, onFulfilled, startResult, context);
         return;
     }
     auto* startPromise = promiseResolvedWith(globalObject, startResult);
@@ -1033,7 +1021,7 @@ JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStr
         // The caller clears algorithmContext once this returns, so pass the reader to the job.
         auto* result = JSPromise::create(vm, globalObject->promiseStructure());
         auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), reader, result);
-        queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onTextDecodeCancelDeferred(), reason, context);
+        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onTextDecodeCancelDeferred(), reason, context);
         return result;
     }
     auto* result = readableStreamReaderGenericCancel(globalObject, reader, reason);
@@ -1173,7 +1161,7 @@ JSPromise* defaultTeeCancelAlgorithm(JSGlobalObject* globalObject, JSStreamTeeSt
         JSArray* compositeReason = constructArrayPair(globalObject, teeState->reason1(), teeState->reason2());
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (teeState->stream()->m_state == ReadableStreamState::Readable && streamLinkMustDefer(vm)) [[unlikely]] {
-            queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onTeeCancelDeferred(), compositeReason, teeState);
+            queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onTeeCancelDeferred(), compositeReason, teeState);
             return teeState->cancelPromise();
         }
         auto* cancelResult = readableStreamCancel(globalObject, teeState->stream(), compositeReason);

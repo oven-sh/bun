@@ -1,4 +1,5 @@
 #include "config.h"
+#include <JavaScriptCore/AsyncContextSwapScope.h>
 #include <JavaScriptCore/Microtask.h>
 #include <JavaScriptCore/MicrotaskQueue.h>
 #include "WebStreamsInternals.h"
@@ -166,11 +167,12 @@ bool isNonNegativeNumber(JSValue value)
     return number >= 0;
 }
 
-// Queues handler(value, contextCell) — the reaction-convention argument order.
 void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
 {
-    QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context };
-    globalObject->vm().queueMicrotask(WTF::move(task));
+    auto& vm = getVM(globalObject);
+    // The job kind with a slot for the async context: a handler can call user code (the next sink write(), a re-run pull()).
+    QueuedTask task { nullptr, InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, handler, AsyncContextSwapScope::current(vm, globalObject), value, context };
+    vm.queueMicrotask(WTF::move(task));
 }
 
 bool streamLinkMustDefer(JSC::VM& vm)

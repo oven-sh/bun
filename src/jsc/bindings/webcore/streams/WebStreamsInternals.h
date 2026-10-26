@@ -362,6 +362,8 @@ void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefau
 // against unset branch slots). Callers skip a terminal branch.
 JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
+// The promise-less [reaction-convention] deferral: handler(value, context) runs as its own microtask under the async
+// context current at this call, as a reaction registered now would.
 void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
 // True if a chain of tees or text streams has used too much stack for the next link. The link then continues from a microtask.
 bool streamLinkMustDefer(JSC::VM&); // userJS: no (pure) — WebStreamsMisc.cpp
@@ -593,8 +595,7 @@ void nativeCodecAbandon(JSC::JSGlobalObject*, JSTransformStream*); // userJS: no
 void startPipeToOperation(JSC::JSGlobalObject*, JSStreamPipeToOperation*); // userJS: yes — JSStreamPipeToOperation.cpp
 // The PipeTo read request's steps. JSReadRequest.cpp's kind switch dispatches into the cell here.
 void pipeToReadRequestChunkSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*, JSC::JSValue chunk); // userJS: yes — JSStreamPipeToOperation.cpp
-void pipeToReadRequestCloseSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*); // userJS: yes — JSStreamPipeToOperation.cpp
-void pipeToReadRequestErrorSteps(JSC::JSGlobalObject*, JSStreamPipeToOperation*, JSC::JSValue error); // userJS: yes — JSStreamPipeToOperation.cpp
+void pipeToReadRequestCloseOrErrorSteps(JSStreamPipeToOperation*); // userJS: no — JSStreamPipeToOperation.cpp
 
 // JSReadableStreamAsyncIterator.cpp — its methods are on the cell; nothing is cross-file.
 

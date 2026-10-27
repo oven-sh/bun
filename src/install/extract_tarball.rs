@@ -9,13 +9,13 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
+use bun_archive::{ArchiveAppender, ExtractOptions};
 use bun_install::install::{self as Install, DependencyID, ExtractData};
 use bun_install::integrity::Integrity;
 use bun_install::npm::{self as Npm};
 use bun_install::package_manager_real::PackageManager;
 use bun_install::package_manager_real::directories;
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
-use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 
 use crate::cache_publish::{self, StagedEntry};
@@ -31,11 +31,12 @@ pub struct ExtractTarball {
     /// story as `cache_dir`).
     pub(crate) temp_dir: Fd,
     pub(crate) dependency_id: DependencyID,
-    /// `PackageManager::skips_verify`, which the cache lookup goes by as well.
+    /// The value of `PackageManager::skips_verify`, which the cache lookup also uses.
     pub(crate) skip_verify: bool, // = false
     pub(crate) in_trusted_dependencies: bool,
     pub(crate) integrity: Integrity, // = Integrity::default()
-    /// This run cannot pin the row (`pins_tarballs`): `url` names the cache entry.
+    /// This run can't pin the dependency (see `pins_tarballs`), so the cache entry is named after
+    /// `url`.
     pub(crate) stays_unpinned: bool,
     pub(crate) url: StringOrTinyString,
     /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,
@@ -69,7 +70,8 @@ impl ExtractTarball {
         Ok(result)
     }
 
-    /// Settled before extracting: a `file:` / URL tarball's cache entry is named after it.
+    /// Determined before extracting, because the cache entry of a `file:` or URL tarball is named
+    /// after it.
     pub(crate) fn lockfile_integrity(&self, compute: impl FnOnce() -> Integrity) -> Integrity {
         match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
@@ -289,7 +291,7 @@ impl ExtractTarball {
                 }
             };
 
-            use bun_libarchive::Archiver;
+            use bun_archive::Archiver;
             let mut zlib_pool = Npm::Registry::BodyPool::get();
             zlib_pool.reset();
             // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
@@ -300,7 +302,7 @@ impl ExtractTarball {
                 0
             };
 
-            // libarchive gunzips on the fly (`BufferReadStream::open_read`),
+            // `extract_to_dir` gunzips on the fly,
             // so hand it the compressed bytes and never buffer the full tar.
             // Small tarballs still try libdeflate first for speed; the gzip
             // ISIZE trailer (size mod 2^32) is only trusted when small.
@@ -326,7 +328,11 @@ impl ExtractTarball {
                                 &mut zlib_pool.list,
                                 libdeflate::Encoding::Gzip,
                             );
-                            if result.status == libdeflate::Status::Success {
+                            // libdeflate only reads the first gzip member, so a tarball with more
+                            // than one member is left to `extract_to_dir`.
+                            if result.status == libdeflate::Status::Success
+                                && result.read == tgz_bytes.len()
+                            {
                                 decompressed_in_memory = true;
                             }
                         }
@@ -509,7 +515,7 @@ impl ExtractTarball {
                             format_args!(
                                 "Refusing to install \"{}\": tarball root directory \"{}\" is not a valid folder name",
                                 bun_fmt::for_terminal(bstr::BStr::new(name)),
-                                bun_fmt::s(resolved),
+                                bun_fmt::escape_control_chars(resolved),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);
@@ -529,7 +535,8 @@ impl ExtractTarball {
                     } else {
                         *integrity
                     };
-                    // Says which bytes a copy in node_modules is of: `PackageInstall::verify`.
+                    // Records which bytes a copy in node_modules came from. See
+                    // `PackageInstall::verify`.
                     let tag_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
                         &mut bufs.json_path_buf.0,
                         &[tmpname.as_bytes(), b".bun-tag"],
@@ -572,7 +579,8 @@ impl ExtractTarball {
                     bun_sys::make_path::make_path(cache_dir, &folder_name[..scope_len as usize]);
             }
 
-            // Read in staging: a package.json that fails the install must not become a cache hit.
+            // Read it in the staging folder, so that a package.json that fails the install never
+            // becomes a cache hit.
             let needs_json = match self.resolution.tag {
                 // TODO remove extracted files not matching any globs under "files"
                 ResolutionTag::Github

@@ -818,6 +818,8 @@ pub(crate) struct Elf64_Shdr {
     pub sh_entsize: u64,
 }
 
+bun_core::impl_pod!(Elf64_Ehdr, Elf64_Phdr, Elf64_Shdr);
+
 // --- byte helpers ---
 
 #[inline]

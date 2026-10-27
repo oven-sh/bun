@@ -33,9 +33,9 @@ impl Rule for NoReactChildren {
             return;
         };
         let is_children = match object.tag() {
-            // `Children.map(..)`, where `Children` is what `react` exports under this name
+            // `Children.map(..)`, where `Children` is the import of `react`'s export with that name
             ExprTag::Ident => is_import_symbol(object, "react", "Children"),
-            // `React.Children.map(..)`, where `React` is anything that is imported from `react`
+            // `React.Children.map(..)`, where `React` is anything imported from `react`
             ExprTag::Dot | ExprTag::Index => {
                 !object.is_chain_root()
                     && static_property_name(object).is_some_and(|name| name.is("Children"))

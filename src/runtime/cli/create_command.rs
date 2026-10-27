@@ -4,6 +4,7 @@ use std::io::Write as _;
 
 use crate::api::bun_process::Status;
 use crate::api::bun_process::sync as spawn_sync;
+use bun_archive::{Archiver, archiver};
 use bun_clap as clap;
 use bun_core::Progress::{Node as ProgressNode, Progress};
 use bun_core::{Global, Output, pretty_error, pretty_errorln};
@@ -11,7 +12,6 @@ use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
-use bun_libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
 use bun_paths::{OSPathSlice, PathBuffer};
 use bun_resolver::fs;
@@ -51,7 +51,7 @@ const SKIP_FILES: &[&OSPathSlice] = &[
     bun_core::w!(".git"),
 ];
 
-const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b".git/"];
+const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".git/"];
 
 /// Runs one `bun-create` task like a package.json script. A non-zero exit ends the process.
 fn exec_task(
@@ -128,6 +128,7 @@ impl Drop for RefreshOnDrop {
 
 struct CreateOptions {
     skip_install: bool,
+    ignore_scripts: bool,
     overwrite: bool,
     skip_git: bool,
     skip_package_json: bool,
@@ -142,10 +143,18 @@ impl CreateOptions {
             clap::param!("-h, --help                     Print this menu"),
             clap::param!("--force                        Overwrite existing files"),
             clap::param!("--no-install                   Don't install node_modules"),
-            clap::param!("--no-git                       Don't create a git repository"),
+            clap::param!("--ignore-scripts               Don't run tasks or lifecycle scripts"),
+            clap::param!("--no-git                      Don't create a git repository"),
             clap::param!("--verbose                      Too many logs"),
             clap::param!("--no-package-json              Disable package.json transforms"),
             clap::param!("--open                         On finish, start bun & open in-browser"),
+            clap::param!(
+                "--use-system-ca                Use the system's trusted certificate authorities"
+            ),
+            clap::param!(
+                "--use-openssl-ca               Use OpenSSL's default CA store instead of the bundled one"
+            ),
+            clap::param!("--use-bundled-ca               Use bundled CA store"),
             clap::param!("<POS>...                       "),
         ];
         let mut diag = clap::Diagnostic::default();
@@ -164,6 +173,8 @@ impl CreateOptions {
             }
         };
 
+        Global::set_ca_store_from_flags(|flag| args.flag(flag));
+
         let mut positionals = args.positionals().to_vec();
         if !positionals.is_empty() && (positionals[0] == b"c" || positionals[0] == b"create") {
             positionals.remove(0);
@@ -175,6 +186,7 @@ impl CreateOptions {
             verbose: args.flag(b"--verbose") || Output::is_verbose(),
             open: args.flag(b"--open"),
             skip_install: args.flag(b"--no-install"),
+            ignore_scripts: args.flag(b"--ignore-scripts"),
             skip_git: args.flag(b"--no-git"),
             overwrite: args.flag(b"--force"),
         })
@@ -317,11 +329,11 @@ fn exit_with_conflicts<'a>(destination: &[u8], paths: impl Iterator<Item = &'a [
         if strings::ends_with(path, bun_paths::SEP_STR.as_bytes()) {
             pretty_error!(
                 "<r>  <blue>{}<r>",
-                bstr::BStr::new(&path[0..path.len().max(1) - 1]),
+                bun_core::fmt::escape_control_chars(&path[0..path.len().max(1) - 1]),
             );
             pretty_errorln!("{}", bun_paths::SEP_STR);
         } else {
-            pretty_errorln!("<r>  {}", bstr::BStr::new(path));
+            pretty_errorln!("<r>  {}", bun_core::fmt::escape_control_chars(path));
         }
     }
 
@@ -370,7 +382,7 @@ impl CreateCommand {
                 .dirname_store
                 .append_slice(bun_paths::resolve_path::join_abs::<
                     bun_paths::platform::Loose,
-                >(filesystem.top_level_dir, dirname))?;
+                >(filesystem.top_level_dir(), dirname))?;
 
         let mut progress = Progress {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
@@ -399,14 +411,17 @@ impl CreateCommand {
         let mut package_json_file: Option<bun_sys::File> = None;
 
         // What the destination already holds is the user's, not the template's.
-        let (had_gitignore, had_npmignore, had_git) = match bun_sys::Dir::open(destination) {
-            Ok(dir) => (
-                bun_sys::exists_at(&dir, bun_core::zstr!("gitignore")),
-                bun_sys::exists_at(&dir, bun_core::zstr!(".npmignore")),
-                bun_sys::exists_at_type(dir.fd(), bun_core::zstr!(".git")).is_ok(),
-            ),
-            Err(_) => (false, false, false),
-        };
+        let (had_gitignore, had_dot_gitignore, had_npmignore, had_git) =
+            match bun_sys::Dir::open(destination) {
+                Ok(dir) => (
+                    bun_sys::exists_at(&dir, bun_core::zstr!("gitignore")),
+                    bun_sys::exists_at(&dir, bun_core::zstr!(".gitignore")),
+                    bun_sys::exists_at(&dir, bun_core::zstr!(".npmignore")),
+                    bun_sys::exists_at_type(dir.fd(), bun_core::zstr!(".git")).is_ok(),
+                ),
+                Err(_) => (false, false, false, false),
+            };
+        let mut template_has_dot_gitignore = false;
 
         if example_tag != ExampleTag::LocalFolder && create_options.verbose {
             pretty_errorln!("Downloading as {}\n", <&'static str>::from(example_tag),);
@@ -534,8 +549,8 @@ impl CreateCommand {
                     struct OverwriteListAppender {
                         buf: Vec<u8>,
                     }
-                    impl bun_libarchive::ArchiveAppender for OverwriteListAppender {
-                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_libarchive::Error> {
+                    impl bun_archive::ArchiveAppender for OverwriteListAppender {
+                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_archive::Error> {
                             self.buf.clear();
                             self.buf.extend_from_slice(path);
                             Ok(&self.buf)
@@ -547,6 +562,7 @@ impl CreateCommand {
                         &mut archive_context,
                         &mut OverwriteListAppender { buf: Vec::new() },
                         &mut |path: &[u8]| {
+                            template_has_dot_gitignore |= path == b".gitignore";
                             leaves_destination(destination, path, create_options.overwrite)
                         },
                     )?;
@@ -617,7 +633,7 @@ impl CreateCommand {
                     progress.refresh();
 
                     pretty_errorln!(
-                        "<r><red>error<r>: the destination <b>{}<r> is inside the template <b>{}<r>",
+                        "<r><red>error<r>: destination <b>{}<r> is inside template <b>{}<r>",
                         bstr::BStr::new(destination),
                         bstr::BStr::new(abs_template_path),
                     );
@@ -653,23 +669,27 @@ impl CreateCommand {
                 #[cfg(windows)]
                 let mut destination_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
-                let dst_without_trailing_slash: &[u8] =
-                    strings::without_trailing_slash(destination);
+                let destination_len = strings::convert_utf8_to_utf16_in_buffer(
+                    destination_buf.as_mut_slice(),
+                    strings::without_trailing_slash(destination),
+                )
+                .len();
                 #[cfg(windows)]
                 {
-                    strings::copy_u8_into_u16(&mut destination_buf, dst_without_trailing_slash);
-                    destination_buf[dst_without_trailing_slash.len()] = bun_paths::SEP as u16;
+                    destination_buf[destination_len] = bun_paths::SEP as u16;
                 }
 
                 #[cfg(windows)]
                 let mut template_path_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
-                let src_without_trailing_slash: &[u8] =
-                    strings::without_trailing_slash(abs_template_path);
+                let template_path_len = strings::convert_utf8_to_utf16_in_buffer(
+                    template_path_buf.as_mut_slice(),
+                    strings::without_trailing_slash(abs_template_path),
+                )
+                .len();
                 #[cfg(windows)]
                 {
-                    strings::copy_u8_into_u16(&mut template_path_buf, src_without_trailing_slash);
-                    template_path_buf[src_without_trailing_slash.len()] = bun_paths::SEP as u16;
+                    template_path_buf[template_path_len] = bun_paths::SEP as u16;
                 }
 
                 let mut walker_ = bun_sys::walker_skippable::walk(
@@ -684,15 +704,17 @@ impl CreateCommand {
                     node,
                     &mut progress,
                     #[cfg(windows)]
-                    (dst_without_trailing_slash.len() + 1),
+                    (destination_len + 1),
                     #[cfg(windows)]
                     &mut destination_buf,
                     #[cfg(windows)]
-                    (src_without_trailing_slash.len() + 1),
+                    (template_path_len + 1),
                     #[cfg(windows)]
                     &mut template_path_buf,
                 )?;
 
+                template_has_dot_gitignore =
+                    bun_sys::exists_at(&template_dir, bun_core::zstr!(".gitignore"));
                 if bun_sys::exists_at(&template_dir, bun_core::zstr!("package.json")) {
                     package_json_file = destination_dir
                         .open_file(b"package.json", bun_sys::O::RDWR, 0)
@@ -781,20 +803,31 @@ impl CreateCommand {
 
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
-            if !had_gitignore
-                && let Err(err) = bun_sys::renameat(
+            if !had_gitignore {
+                // The template's `gitignore` does not replace a `.gitignore` that the template also
+                // ships. It only replaces the user's existing `.gitignore` with `--force`.
+                let replaces_the_users =
+                    create_options.overwrite && had_dot_gitignore && !template_has_dot_gitignore;
+                if !replaces_the_users
+                    && matches!(
+                        bun_sys::exists_at_type(parent_dir.fd(), bun_core::zstr!(".gitignore")),
+                        Ok(bun_sys::ExistsAtType::File)
+                    )
+                {
+                    let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
+                } else if let Err(err) = bun_sys::renameat(
                     &parent_dir,
                     bun_core::zstr!("gitignore"),
                     &parent_dir,
                     bun_core::zstr!(".gitignore"),
-                )
-                && err.get_errno() != bun_sys::E::ENOENT
-            {
-                pretty_errorln!(
-                    "<r><red>{}<r>: renaming gitignore to .gitignore",
-                    bstr::BStr::new(err.name()),
-                );
-                Global::exit(1);
+                ) && err.get_errno() != bun_sys::E::ENOENT
+                {
+                    pretty_errorln!(
+                        "<r><red>{}<r>: renaming gitignore to .gitignore",
+                        bstr::BStr::new(err.name()),
+                    );
+                    Global::exit(1);
+                }
             }
             if !had_npmignore {
                 let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
@@ -909,7 +942,7 @@ impl CreateCommand {
                                         if create_options.verbose {
                                             bun_core::pretty_errorln!(
                                                 "<r><d>[package.json] Pruned unnecessary script: {}<r>",
-                                                bstr::BStr::new(script),
+                                                bun_core::fmt::escape_control_chars(script),
                                             );
                                         }
                                         continue;
@@ -1020,8 +1053,19 @@ impl CreateCommand {
             bun_core::pretty_errorln!("Has dependencies? {}", has_dependencies as u8,);
         }
 
+        // Settings that make `bun install` skip scripts in the current directory also apply to the
+        // template's tasks and to the install in the new project.
+        let ignore_scripts = create_options.ignore_scripts
+            || (!create_options.skip_install
+                && bun_install::package_manager::config_ignores_scripts(
+                    ctx,
+                    env_loader,
+                    filesystem.top_level_dir(),
+                )?);
+
         // `--no-install` skips the tasks too. No dependencies skips only `bun install`.
         let run_tasks = !create_options.skip_install
+            && !ignore_scripts
             && !(preinstall_tasks.is_empty() && postinstall_tasks.is_empty());
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
@@ -1052,9 +1096,16 @@ impl CreateCommand {
 
         if let Some(bun_exe) = bun_exe {
             let start_time = bun_core::time::nano_timestamp();
-            let install_args: &[&[u8]] = &[bun_exe, b"install"];
+            let mut install_args: Vec<&[u8]> = vec![bun_exe, b"install"];
+            if ignore_scripts {
+                install_args.push(b"--ignore-scripts");
+            }
+            install_args.extend(Global::ca_store_flag().map(|flag| flag.as_bytes()));
             Output::flush();
-            bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d> install");
+            bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d>");
+            for arg in &install_args[1..] {
+                bun_core::pretty!(" {}", bstr::BStr::new(arg));
+            }
             bun_core::pretty!("<r>\n");
             Output::flush();
 
@@ -1087,7 +1138,7 @@ impl CreateCommand {
             let status = process??.status;
             if !status.is_ok() {
                 pretty_errorln!(
-                    "<r><red>error<r><d>:<r> <b>bun install<r> failed in {} ({})\n<blue>note<r><d>:<r> the template files were written; run <b>bun install<r> in that directory once the error is fixed",
+                    "<r><red>error<r><d>:<r> <b>bun install<r> failed in {} ({})\n<blue>note<r><d>:<r> template files were written. run <b>bun install<r> there once the error is fixed",
                     bun_core::fmt::quote(destination),
                     status,
                 );
@@ -1151,17 +1202,17 @@ impl CreateCommand {
         }
 
         let rel_destination =
-            bun_paths::resolve_path::relative(filesystem.top_level_dir, destination);
+            bun_paths::resolve_path::relative(filesystem.top_level_dir(), destination);
         if rel_destination.is_empty() {
             bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>{}<r>\n\n",
-                bstr::BStr::new(start_command),
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(start_command)),
             );
         } else {
             bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>cd {}<r>\n  <b><cyan>{}<r>\n\n",
                 bstr::BStr::new(rel_destination),
-                bstr::BStr::new(start_command),
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(start_command)),
             );
         }
 
@@ -1214,12 +1265,21 @@ impl CreateCommand {
 
         // SAFETY: single-threaded CLI access to module-level static path buffer
         let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        // Returns the length of the NUL-terminated path in `buf`, or `None` if it is too long.
+        let join = |parts: &[&[u8]], buf: &mut PathBuffer| {
+            bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+                bun_paths::resolve_path::platform::Loose,
+            >(filesystem.top_level_dir(), &mut buf[..], parts)
+            .map(|path| path.as_bytes().len())
+        };
         let template: &[u8] = 'brk: {
             let positional = positionals[0];
 
-            let parts = [filesystem.top_level_dir, positional];
-            let len = filesystem.abs_buf(&parts, home_dir_buf).len();
-            home_dir_buf[len] = 0;
+            let parts = [filesystem.top_level_dir(), positional];
+            let Some(len) = join(&parts, home_dir_buf) else {
+                pretty_errorln!("<r><red>error<r>: template name too long");
+                Global::exit(1);
+            };
             let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
             if !bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes())
                 && matches!(
@@ -1257,12 +1317,13 @@ impl CreateCommand {
             let home_dir = env_loader.map.get(b"HOME");
             let template_dirs: [Option<Vec<&[u8]>>; 3] = [
                 create_dir.map(|dir| vec![dir, positional]),
-                Some(vec![filesystem.top_level_dir, BUN_CREATE_DIR, positional]),
+                Some(vec![filesystem.top_level_dir(), BUN_CREATE_DIR, positional]),
                 home_dir.map(|dir| vec![dir, BUN_CREATE_DIR, positional]),
             ];
             for parts in template_dirs.iter().flatten() {
-                let len = filesystem.abs_buf(parts, home_dir_buf).len();
-                home_dir_buf[len] = 0;
+                let Some(len) = join(parts, home_dir_buf) else {
+                    continue;
+                };
                 let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
                 if !bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes())
                     && bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
@@ -1523,15 +1584,15 @@ impl Example {
             if !example.description.is_empty() {
                 bun_core::pretty!(
                     "  <r># {}<r>\n  <b>bun create <cyan>{}<r><b> {}<r>\n<d>  \n\n",
-                    bstr::BStr::new(example.description),
-                    bstr::BStr::new(example.name),
-                    bstr::BStr::new(app_name),
+                    bun_core::fmt::escape_control_chars(example.description),
+                    bun_core::fmt::escape_control_chars(example.name),
+                    bun_core::fmt::escape_control_chars(app_name),
                 );
             } else {
                 bun_core::pretty!(
                     "  <r><b>bun create <cyan>{}<r><b> {}<r>\n\n",
-                    bstr::BStr::new(example.name),
-                    bstr::BStr::new(app_name),
+                    bun_core::fmt::escape_control_chars(example.name),
+                    bun_core::fmt::escape_control_chars(app_name),
                 );
             }
         }
@@ -1554,7 +1615,7 @@ impl Example {
         let home_dir = env_loader.map.get(bun_core::env_var::HOME.key());
         let folders: [Option<bun_sys::Dir>; 3] = [
             create_dir.map(|dir| vec![dir]),
-            Some(vec![filesystem.top_level_dir, BUN_CREATE_DIR]),
+            Some(vec![filesystem.top_level_dir(), BUN_CREATE_DIR]),
             home_dir.map(|dir| vec![dir, BUN_CREATE_DIR]),
         ]
         .map(|parts| -> Option<bun_sys::Dir> {
@@ -1665,8 +1726,7 @@ impl Example {
         }
 
         let http_proxy = env_loader.get_http_proxy_for(&api_url);
-        let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(8192)?);
+        let mut mutable = MutableString::default();
 
         // ensure very stable memory address
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
@@ -1676,12 +1736,13 @@ impl Example {
             headers_buf,
             b"",
             http_proxy,
+            HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        let response = async_http.send_sync(mutable)?;
+        let response = async_http.send_sync(&mut mutable)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::GitHubRepositoryNotFound),
@@ -1700,7 +1761,7 @@ impl Example {
             if !content_type.is_empty() {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: Unexpected content type from GitHub: {}",
-                    bstr::BStr::new(content_type),
+                    bun_core::fmt::escape_control_chars(content_type),
                 );
             } else {
                 bun_core::pretty_errorln!(
@@ -1720,7 +1781,7 @@ impl Example {
             Global::crash();
         }
 
-        Ok(mutable.clone()?)
+        Ok(mutable)
     }
 
     pub(crate) fn fetch(
@@ -1735,8 +1796,7 @@ impl Example {
 
         // SAFETY: single-threaded CLI access to static buffer.
         let url_buf = unsafe { &mut *NPM_REGISTRY_URL_BUF.get() };
-        let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
+        let mut mutable = MutableString::default();
 
         let api_url = URL::parse({
             let mut cursor: &mut [u8] = &mut url_buf[..];
@@ -1759,22 +1819,21 @@ impl Example {
             .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
             .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
 
-        // ensure very stable memory address
-        let async_http: &mut HTTP::AsyncHTTP =
-            crate::cli::cli_arena().alloc(HTTP::AsyncHTTP::init_sync(
-                HTTP::Method::GET,
-                // SAFETY: single-threaded CLI access to static URL_ (set just above)
-                unsafe { (*URL_.get()).clone() }.unwrap(),
-                Default::default(),
-                b"",
-                b"",
-                http_proxy,
-                HTTP::FetchRedirect::Follow,
-            ));
+        let mut async_http = HTTP::AsyncHTTP::init_sync(
+            HTTP::Method::GET,
+            // SAFETY: single-threaded CLI access to static URL_ (set just above)
+            unsafe { (*URL_.get()).clone() }.unwrap(),
+            Default::default(),
+            b"",
+            b"",
+            http_proxy,
+            HTTP::ProxySettings::from_env(env_loader),
+            HTTP::FetchRedirect::Follow,
+        );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        let mut response = async_http.send_sync(mutable)?;
+        let mut response = async_http.send_sync(&mut mutable)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::ExampleNotFound),
@@ -1842,13 +1901,14 @@ impl Example {
             .get_http_proxy_for(&parsed_tarball_url)
             .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
 
-        *async_http = HTTP::AsyncHTTP::init_sync(
+        async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             parsed_tarball_url,
             Default::default(),
             b"",
             b"",
             http_proxy,
+            HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
@@ -1856,7 +1916,7 @@ impl Example {
 
         refresher.maybe_refresh();
 
-        response = async_http.send_sync(mutable)?;
+        response = async_http.send_sync(&mut mutable)?;
 
         refresher.maybe_refresh();
 
@@ -1872,7 +1932,7 @@ impl Example {
 
         refresher.refresh();
 
-        Ok(mutable.clone()?)
+        Ok(mutable)
     }
 
     pub(crate) fn fetch_all(
@@ -1883,8 +1943,13 @@ impl Example {
         let url = URL::parse(Self::EXAMPLES_URL);
         let http_proxy = env_loader.get_http_proxy_for(&url);
 
+        // Never freed because the returned `Example` names borrow from the body.
         let mutable: &'static mut MutableString =
-            crate::cli::cli_arena().alloc(MutableString::init(2048)?);
+            crate::cli::cli_arena().alloc(MutableString::default());
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<MutableString>(mutable).cast(),
+            core::mem::size_of::<MutableString>(),
+        );
 
         let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
@@ -1893,6 +1958,7 @@ impl Example {
             b"",
             b"",
             http_proxy,
+            HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -1922,7 +1988,7 @@ impl Example {
             bun_core::pretty_errorln!(
                 "<r><red>{} {}<r> fetching examples :( ",
                 response.status_code(),
-                bstr::BStr::new(mutable.list.as_slice()),
+                bun_core::fmt::escape_control_chars_multiline(mutable.list.as_slice()),
             );
             Global::exit(1);
         }
@@ -2091,12 +2157,12 @@ impl GitHandler {
                 if spawn(&[b"var", b"GIT_COMMITTER_IDENT"], Ignore)?.is_ok() {
                     pretty_error!(
                         "{}{}",
-                        bstr::BStr::new(&commit.stdout),
-                        bstr::BStr::new(&commit.stderr),
+                        bun_core::fmt::escape_control_chars_multiline(&commit.stdout),
+                        bun_core::fmt::escape_control_chars_multiline(&commit.stderr),
                     );
                 } else {
                     bun_core::pretty_errorln!(
-                        "<r><blue>note<r><d>:<r> git has no <b>user.name<r> and <b>user.email<r>, so the files are staged but not committed",
+                        "<r><blue>note<r><d>:<r> git has no <b>user.name<r> and <b>user.email<r>, files staged but not committed",
                     );
                 }
             }

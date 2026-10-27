@@ -200,7 +200,7 @@ describe("--lockfile-only and lockfile migration under --frozen-lockfile, --dry-
   });
 
   const frozenNote = (name: string) =>
-    `note: the lockfile is frozen, so the migration from ${name} was not written to bun.lock; run 'bun install' and commit the result`;
+    `note: lockfile is frozen, migration from ${name} not written to bun.lock; run 'bun install' and commit the result`;
 
   it.concurrent.each(migrations)(
     "--frozen-lockfile --lockfile-only migrates %s in memory and does not write bun.lock",
@@ -210,7 +210,7 @@ describe("--lockfile-only and lockfile migration under --frozen-lockfile, --dry-
 
       const { stdout, stderr, exitCode } = await run(dir, "--frozen-lockfile", "--lockfile-only");
       expect(stderr).toContain(`migrated lockfile from ${name}`);
-      expect(stderr).toContain(frozenNote(name));
+      expect(stderr).not.toContain(frozenNote(name));
       expect(stdout + stderr).not.toContain("Saved");
       expect(existsSync(lock(dir))).toBe(false);
       expect(existsSync(join(dir, "node_modules"))).toBe(false);
@@ -224,7 +224,7 @@ describe("--lockfile-only and lockfile migration under --frozen-lockfile, --dry-
       using tmp = tempDir("frozen-migrate", { ...project, [name]: contents });
       const dir = String(tmp);
 
-      const { stdout, stderr, exitCode } = await run(dir, "--frozen-lockfile");
+      const { stdout, stderr, exitCode } = await run(dir, "--frozen-lockfile", "--verbose");
       expect(stderr).toContain(`migrated lockfile from ${name}`);
       expect(stderr).toContain(frozenNote(name));
       expect(stdout + stderr).not.toContain("Saved");
@@ -428,7 +428,7 @@ describe.concurrent("--lockfile-only fails on a logged error", () => {
     });
 
     const { stdout, stderr, exitCode } = await lockfileOnly(String(dir));
-    expect(stderr).toContain('error: Invalid dependency name ".."');
+    expect(stderr).toContain('error: invalid dependency name ".."');
     expect(stderr).not.toContain("Saved lockfile");
     expect(stdout).not.toContain("Saved bun.lock");
     expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);

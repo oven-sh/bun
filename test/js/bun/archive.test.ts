@@ -153,6 +153,19 @@ function paxSparseEntry(name: string, realSize: number, chunks: SparseChunk[]): 
 
 describe("Bun.Archive", () => {
   describe("new Archive()", () => {
+    test("reads new.target.prototype before it looks for the realm of new.target", () => {
+      const { proxy, revoke } = Proxy.revocable(function () {}, {});
+      revoke();
+      const keys: PropertyKey[] = [];
+      const newTarget = new Proxy(proxy, {
+        get(target, key) {
+          keys.push(key);
+        },
+      });
+      expect(() => Reflect.construct(Bun.Archive, [{}], newTarget)).toThrow(TypeError);
+      expect(keys).toEqual(["prototype"]);
+    });
+
     test("creates archive from object with string values", async () => {
       const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
@@ -667,7 +680,7 @@ describe("Bun.Archive", () => {
     });
 
     test("extracts entries whose mode field has bits above the permission bits", async () => {
-      // libarchive hands back whatever the header's mode field encoded, and a
+      // The tar reader hands back whatever the header's mode field encoded, and a
       // base-256 field can encode far more than the 12 mode bits. Only the
       // permission bits may reach mkdirat()/openat(); the rest are dropped.
       const high = 1n << 31n;
@@ -744,9 +757,51 @@ describe("Bun.Archive", () => {
       expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
       expect(readlinkSync(linkPath)).toBe("index.js");
     });
+
+    // `tar --acls` stores these. GNU tar and node-tar take the permissions from the header.
+    describe("ACL records", () => {
+      const withAcl = (acl: string, mode: string, typeflag = "0", name = "run.sh") => {
+        const body = ` SCHILY.acl.access=${acl}\n`;
+        let length = body.length + 1;
+        while (String(length).length + body.length !== length) length++;
+        const records = Buffer.from(`${length}${body}`);
+        return Buffer.concat([
+          ustarHeader("PaxHeaders/0", records.length, "x"),
+          records,
+          Buffer.alloc(512 - records.length),
+          ustarHeader(name, 0, typeflag, { mode: Buffer.from(mode + "\0") }),
+          Buffer.alloc(1024),
+        ]);
+      };
+
+      test.skipIf(isWindows)("do not change the permissions of a file", async () => {
+        using dir = tempDir("archive-acl-file", {});
+        await new Bun.Archive(withAcl("user::rw-,group::r--,other::r--", "0000755")).extract(String(dir));
+        expect(statSync(join(String(dir), "run.sh")).mode & 0o100).toBe(0o100);
+      });
+
+      test.skipIf(isWindows)("do not change the permissions of a directory", async () => {
+        using dir = tempDir("archive-acl-dir", {});
+        await new Bun.Archive(withAcl("user::---,group::---,other::---", "0000755", "5", "d/")).extract(String(dir));
+        expect(statSync(join(String(dir), "d")).mode & 0o700).toBe(0o700);
+      });
+    });
   });
 
   describe("corrupted archives", () => {
+    test("a damaged block between two files is skipped, and Bun.inspect counts what files() returns", async () => {
+      const archive = new Bun.Archive(
+        Buffer.concat([
+          ustarEntry("a", Buffer.from("a")),
+          Buffer.alloc(512, "junk"),
+          ustarEntry("b", Buffer.from("b")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      expect([...(await archive.files()).keys()]).toEqual(["a", "b"]);
+      expect(Bun.inspect(archive)).toContain("files: 2");
+    });
+
     test("throws when extracting corrupted archive data", async () => {
       // Create garbage data that's not a valid archive
       const corruptedData = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
@@ -811,7 +866,7 @@ describe("Bun.Archive", () => {
 
     test("files() does not leak entries when readData fails mid-stream", async () => {
       // Regression test: a tarball with two valid 64KB entries followed by a third
-      // entry whose header advertises 64KB but whose data is truncated. libarchive
+      // entry whose header advertises 64KB but whose data is truncated. The reader
       // successfully reads the first two entries (allocating path + data for each),
       // then readData() fails on the third. The already-collected entries must be
       // freed on that error path; previously they were leaked on every call.
@@ -886,6 +941,43 @@ describe("Bun.Archive", () => {
       expect(stderr).toBe("");
       expect(stdout).toContain("RSS growth:");
       expect(exitCode).toBe(0);
+    });
+
+    describe("every way to read a damaged archive rejects", () => {
+      const member = ustarEntry("a.bin", randomBytes(300_000));
+      const tar = Buffer.concat([member, ustarEntry("b.bin", randomBytes(300_000)), Buffer.alloc(1024)]);
+      // Level 0 stores the bytes as they are, so only the CRC32 in the trailer can tell that one changed.
+      const wrongCrc = Buffer.from(Bun.gzipSync(tar, { level: 0 }));
+      wrongCrc[5000] ^= 0xff;
+
+      test.concurrent.each([
+        ["a gzip CRC32 that does not match", wrongCrc],
+        ["a tar cut inside a file", tar.subarray(0, member.length + 512 + 1000)],
+        ["a tar cut inside a header", tar.subarray(0, member.length + 200)],
+      ])("%s", async (_, bytes) => {
+        using dir = tempDir("archive-damaged", {});
+        const archive = new Bun.Archive(bytes);
+        const settled = (promise: Promise<unknown>) =>
+          promise.then(
+            () => "resolved",
+            () => "rejected",
+          );
+        expect({
+          "extract()": await settled(archive.extract(join(String(dir), "all"))),
+          "extract() with a glob": await settled(archive.extract(join(String(dir), "glob"), { glob: "**" })),
+          "extract() with a glob that matches nothing": await settled(
+            archive.extract(join(String(dir), "none"), { glob: "nothing" }),
+          ),
+          "files()": await settled(archive.files()),
+          "files() with a glob": await settled(archive.files("a.bin")),
+        }).toEqual({
+          "extract()": "rejected",
+          "extract() with a glob": "rejected",
+          "extract() with a glob that matches nothing": "rejected",
+          "files()": "rejected",
+          "files() with a glob": "rejected",
+        });
+      });
     });
   });
 
@@ -1510,7 +1602,7 @@ describe("Bun.Archive", () => {
     });
 
     test.skipIf(isWindows)("files() keys an entry whose name is not even valid UTF-8", async () => {
-      // "foo\xff\xfe.txt": 0xFF and 0xFE are never valid UTF-8, so libarchive
+      // "foo\xff\xfe.txt": 0xFF and 0xFE are never valid UTF-8, so the reader
       // hands the raw header bytes back verbatim. They must not collapse onto
       // an empty Map key.
       const invalidUtf8Name = Buffer.from([0x66, 0x6f, 0x6f, 0xff, 0xfe, 0x2e, 0x74, 0x78, 0x74]);
@@ -1547,6 +1639,63 @@ describe("Bun.Archive", () => {
       expect(dataFile).toBeInstanceOf(File);
       expect(dataFile!.name).toBe("data.json");
       expect(await dataFile!.text()).toBe(JSON.stringify({ foo: "bar" }));
+    });
+
+    describe.each([
+      ["a tar", (tar: Buffer) => tar],
+      ["a tar.gz", (tar: Buffer) => Buffer.from(Bun.gzipSync(tar))],
+    ])("the files of %s", (_, wrap) => {
+      const a = Buffer.alloc(3000, "a");
+      const b = randomBytes(70_000);
+      const archive = () =>
+        new Bun.Archive(
+          wrap(Buffer.concat([ustarEntry("a", a), ustarEntry("empty", Buffer.alloc(0)), ustarEntry("b", b), end])),
+        );
+      const end = Buffer.alloc(1024);
+
+      test("can be read in every way a File can", async () => {
+        const files = await archive().files();
+        expect([...files].map(([name, file]) => [name, file.name, file.size])).toEqual([
+          ["a", "a", a.length],
+          ["empty", "empty", 0],
+          ["b", "b", b.length],
+        ]);
+        expect(await files.get("a")!.text()).toBe(a.toString());
+        expect(await files.get("empty")!.text()).toBe("");
+        expect(Buffer.from(await files.get("b")!.arrayBuffer())).toEqual(b);
+        expect(Buffer.from(await files.get("b")!.bytes())).toEqual(b);
+        expect(Buffer.from(await new Response(files.get("b")!.stream()).arrayBuffer())).toEqual(b);
+        expect(Buffer.from(await files.get("b")!.slice(10, 5000).arrayBuffer())).toEqual(b.subarray(10, 5000));
+        expect(Buffer.from(await new Blob([files.get("a")!, files.get("b")!]).arrayBuffer())).toEqual(
+          Buffer.concat([a, b]),
+        );
+      });
+
+      test("print like any other File", async () => {
+        const [whole, one] = [await archive().files(), await archive().files("a")];
+        const shown = (file: Blob) => Bun.inspect(file).replace(/\s+/g, " ");
+        expect(shown(whole.get("a")!)).toBe('File (3.0 KB) { name: "a" }');
+        expect(shown(one.get("a")!)).toBe(shown(whole.get("a")!));
+        expect(shown(whole.get("a")!.slice(1, 3))).toContain("offset: 1 ");
+      });
+
+      test("outlive the archive", async () => {
+        const files = await archive().files();
+        Bun.gc(true);
+        expect(Buffer.from(await files.get("b")!.arrayBuffer())).toEqual(b);
+      });
+
+      test("are the same whether one or all are asked for", async () => {
+        const [[name, file], ...rest] = await archive().files("a");
+        expect(rest).toEqual([]);
+        expect([name, await file.text()]).toEqual(["a", a.toString()]);
+      });
+
+      test("can be written to disk", async () => {
+        using dir = tempDir("archive-files-write", {});
+        await Bun.write(join(String(dir), "b"), (await archive().files()).get("b")!);
+        expect(readFileSync(join(String(dir), "b"))).toEqual(b);
+      });
     });
 
     test("returns empty Map for empty archive", async () => {
@@ -1748,6 +1897,27 @@ describe("Bun.Archive", () => {
       expect(files.size).toBe(1);
       expect(await files.get("test.txt")!.text()).toBe("GC test content");
     });
+
+    // As `tar --ignore-zeros`: `cat a.tar b.tar` is read as one archive.
+    test.each([1, 2, 20])("reads the entries behind %d zero blocks", async blocks => {
+      const archive = new Bun.Archive(
+        Buffer.concat([
+          ustarEntry("a.txt", Buffer.from("first")),
+          Buffer.alloc(blocks * 512),
+          ustarEntry("b.txt", Buffer.from("second")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      const files = await archive.files();
+      expect(await Promise.all([...files].map(async ([name, file]) => [name, await file.text()]))).toEqual([
+        ["a.txt", "first"],
+        ["b.txt", "second"],
+      ]);
+
+      using dir = tempDir("archive-zero-blocks", {});
+      expect(await archive.extract(String(dir))).toBe(2);
+      expect(readdirSync(String(dir)).sort()).toEqual(["a.txt", "b.txt"]);
+    });
   });
 
   describe("sparse files", () => {
@@ -1909,6 +2079,46 @@ describe("Bun.Archive", () => {
       // system, and NTFS, which rounds a chunk up to 64 KiB.
       const chunkCount = members.reduce((n, m) => n + m.chunks.length, 0);
       if (isLinux || isWindows) expect(allocated).toBeLessThan(chunkCount * 64 * 1024 + 1024 * 1024);
+    });
+
+    test("files() returns each member whole, as extract() writes it", async () => {
+      using dir = tempDir("sparse-members-files", {});
+      await new Bun.Archive(bytes).extract(String(dir));
+      const files = await new Bun.Archive(bytes).files();
+
+      const wrong: { name: string; length?: number }[] = [];
+      for (const { name, size, chunks } of members) {
+        const expected = Buffer.alloc(size, 0);
+        for (const c of chunks) c.data.copy(expected, c.offset);
+        const got = await files.get(name)?.bytes();
+        if (!got || !expected.equals(got) || !readFileSync(join(String(dir), name)).equals(got)) {
+          wrong.push({ name, length: got?.length });
+        }
+      }
+      expect(wrong).toEqual([]);
+    });
+
+    // Old tar writers repeat the size of the file in the header of a hard link, which has no body.
+    test("files() and extract() give a hard link whose header states a size no bytes", async () => {
+      const archive = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("a.txt", Buffer.from("AAAA")),
+          ustarHeader("link", 5000, "1"),
+          ustarEntry("z.txt", Buffer.from("ZZ")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      const sizes = [
+        ["a.txt", 4],
+        ["link", 0],
+        ["z.txt", 2],
+      ];
+      const files = await new Bun.Archive(archive).files();
+      expect([...files].map(([name, file]) => [name, file.size])).toEqual(sizes);
+
+      using dir = tempDir("archive-hard-link-size", {});
+      await new Bun.Archive(archive).extract(String(dir));
+      expect(sizes.map(([name]) => [name, statSync(join(String(dir), String(name))).size])).toEqual(sizes);
     });
 
     test("extract() does not size a file from a header that declares more than the archive holds", async () => {

@@ -15,6 +15,7 @@ use crate::lockfile_real::StringBuilder;
 use crate::lockfile_real::package::ResolverContext;
 use crate::npm;
 use crate::package_manager_real::PackageManager;
+use crate::package_manager_real::process_dependency_list::{ListedDependencies, OnlyDependencies};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 
 #[derive(Copy, Clone)]
@@ -62,11 +63,12 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
                 dot_slash_rel.as_slice()
             }
             Some(paths) => paths.rel,
-            // Too long to be a path; show it as written.
+            // It's too long to be a path, so show it as written.
             None => search_path,
         };
 
-        fmt::Display::fmt(&QuotedFormatter { text: rel }, f)
+        let quoted = QuotedFormatter { text: rel };
+        fmt::Display::fmt(&bun_core::fmt::EscapeControlChars(quoted), f)
     }
 }
 
@@ -82,7 +84,7 @@ pub(crate) enum Kind {
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Key {
     kind: Kind,
-    /// Of the normalized absolute `package.json` path kept in `Entry::abs_path`.
+    /// The hash of the normalized absolute `package.json` path that's kept in `Entry::abs_path`.
     abs_hash: u64,
 }
 
@@ -295,7 +297,7 @@ fn read_package_json_from_disk(
                     let _ = file.close();
                     read_result?;
                 }
-                // As in yarn, the directory of a `link:<path>` needs no package.json.
+                // Like in Yarn, the directory of a `link:<path>` doesn't need a package.json.
                 Err(err)
                     if resolver.tag == ResolutionTag::Symlink
                         && dependency::is_link_path(resolver.folder_path)
@@ -345,6 +347,37 @@ fn read_package_json_from_disk(
 pub enum GlobalOrRelative<'a> {
     Global(&'a [u8]),
     Relative(dependency::version::Tag),
+}
+
+/// Reads the dependencies in the package.json of a `file:` or `workspace:` folder. This doesn't
+/// resolve the folder. Errors in the file are reported when the folder is resolved.
+pub(crate) fn listed_dependencies(
+    tag: dependency::version::Tag,
+    non_normalized_path: &[u8],
+    manager: &mut PackageManager,
+) -> Option<ListedDependencies> {
+    let mut joined = bun_paths::path_buffer_pool::get();
+    let relative = GlobalOrRelative::Relative(tag);
+    let paths = normalize_package_json_path(relative, &mut joined, non_normalized_path)?;
+    let mut log = bun_ast::Log::init();
+    // `bun add` in a workspace edits the copy in this cache before it writes the file.
+    let entry = (manager.workspace_package_json_cache)
+        .get_with_path(&mut log, paths.abs.as_bytes(), Default::default())
+        .unwrap()
+        .ok()?;
+    let (source, json) = (entry.source.clone(), entry.root);
+    let mut listed = ListedDependencies::default();
+    // These features register no `npm:` alias, which would change how other rows are resolved.
+    let parsed = listed.package.parse_with_json(
+        &mut listed.lockfile,
+        manager,
+        &mut log,
+        &source,
+        json,
+        &mut OnlyDependencies,
+        Features::FOLDER,
+    );
+    parsed.ok().map(|()| listed)
 }
 
 pub(crate) fn get_or_put(

@@ -65,13 +65,17 @@ pub struct Summary {
     /// Set when this install replaced the tree of the other linker.
     pub(crate) old_modules: Option<crate::prune::OldModules>,
 
+    /// Set by the hoisted linker only. A copy of `tree::Builder::places`.
+    pub(crate) places: Vec<(u64, PackageID)>,
+
     pub(crate) offline_misses: OfflineMisses,
 }
 
-/// `--offline` only, one entry per folder. `report_offline_misses` judges them.
+/// Only used with `--offline`. Has one entry per folder. `report_offline_misses` decides which ones
+/// are errors.
 #[derive(Default)]
 pub(crate) struct OfflineMisses {
-    /// Neither installed nor in the cache.
+    /// Packages that are neither installed nor in the cache.
     pub(crate) missing: Vec<PackageID>,
     /// Already installed.
     pub(crate) in_place: Vec<PackageID>,
@@ -103,7 +107,8 @@ pub enum Method {
     /// - it reads each dir twice incase the first pass modifies it
     Copyfile,
 
-    /// One symlink per file: `--backend=symlink`, or a package that depends on itself (`file:.`).
+    /// Creates one symlink per file. Used for `--backend=symlink` and for a package that depends on
+    /// itself (`file:.`).
     Symlink,
 }
 
@@ -180,7 +185,8 @@ impl InstallResult {
         InstallResult::Failure(Failure::boxed(err, step))
     }
 
-    /// Prints what a backend, maybe on a thread of the pool, has to say beyond the failure itself.
+    /// Prints the details that a backend recorded in addition to the error itself. The backend may
+    /// have run on a thread pool thread.
     pub(crate) fn report(self) -> InstallResult {
         if let InstallResult::Failure(failure) = &self
             && !failure.file.is_empty()
@@ -188,7 +194,7 @@ impl InstallResult {
             bun_core::pretty_errorln!(
                 "<r><red>{}<r>: copying file {}",
                 failure.err.name(),
-                bstr::BStr::new(&failure.file)
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(&failure.file))
             );
         }
         self
@@ -216,20 +222,24 @@ impl Step {
     }
 }
 
-/// Whether, and under which names, an install links packages by way of a `StagingPath`.
+/// Controls whether an install links packages through a `StagingPath`, and how it names those
+/// folders.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Staging {
     Off,
-    /// This install has the project's lock: fixed names, which the next install clears.
+    /// This install holds the project's lock. It uses fixed names, which the next install cleans
+    /// up.
     Locked,
-    /// It has not: names of its own (the seed). What is left if it dies stays until `bun prune`.
+    /// This install doesn't hold the lock, so it uses unique names derived from this seed. If it's
+    /// killed, its leftovers stay until `bun prune`.
     Unlocked(u64),
 }
 
-/// `flock` on the root `node_modules`, which also stands for those of the workspaces.
+/// A `flock` on the root `node_modules`. It also covers the workspaces' `node_modules`.
 pub(crate) struct StagingLock {
     pub(crate) mode: Staging,
-    /// Another install has it. Otherwise `Unlocked` means no directory locks here (Windows, NFS).
+    /// True if another install holds the lock. If this is false and the install is `Unlocked`,
+    /// directories can't be locked here (Windows, NFS).
     pub(crate) is_busy: bool,
     _node_modules: Option<Dir>,
 }
@@ -272,7 +282,7 @@ impl core::fmt::Display for StagingPath<'_> {
         };
         let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
         let scope = &self.0[..name_start];
-        // A hash, because the name can be NAME_MAX long already.
+        // Use a hash, because the name itself may already be NAME_MAX bytes long.
         write!(
             f,
             "{}{}{:016x}",
@@ -290,7 +300,8 @@ pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) ->
         .map_err(|err| err.err)
 }
 
-// A hint, written on any thread: whoever reads the old value finds out for itself, so `Relaxed`.
+// Only a hint, and any thread can write it. A thread that reads a stale value just detects the
+// right method again, so `Relaxed` is enough.
 pub(crate) static SUPPORTED_METHOD: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
     Method::Clonefile as u8
 } else {
@@ -444,7 +455,7 @@ fn open_dir(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
         .map_err(Into::into)
 }
 
-/// `Dir::make_open_path` that does not follow a link at the last component.
+/// Like `Dir::make_open_path`, but doesn't follow a symlink at the last component.
 #[cfg(not(windows))]
 pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir> {
     let open = || {
@@ -455,7 +466,7 @@ pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir>
     };
     match open() {
         Err(err) if err.get_errno() == sys::E::ENOENT => {}
-        // What Linux and macOS say to a link.
+        // Linux and macOS return these errors for a symlink.
         Err(err) if matches!(err.get_errno(), sys::E::ENOTDIR | sys::E::ELOOP) => {
             crate::prune::remove_planted_link(base, sub_path)?;
         }
@@ -465,11 +476,16 @@ pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir>
     open()
 }
 
-/// Whether `dest` has the names and inodes of the folder `src` as it is now.
-fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
+/// Returns true if `dest` is still a hardlinked copy of `src`, which means both have the same entry
+/// names and inodes. `rel` is the path of `src` inside the `file:` folder.
+fn is_hardlinked_copy(root: &mut FolderRoot<'_>, rel: &mut Vec<u8>, src: &Dir, dest: &Dir) -> bool {
     const INO_LEN: usize = core::mem::size_of::<u64>();
-    // Each name followed by its inode number, 0 for a directory.
-    fn list(dir: &Dir) -> Option<Vec<Box<[u8]>>> {
+    // Lists each entry name followed by its inode number, or 0 for a directory. `folder` is `Some`
+    // when `dir` is in the source folder and `None` when it is in the copy.
+    fn list(
+        dir: &Dir,
+        mut folder: Option<(&mut FolderRoot<'_>, &mut Vec<u8>)>,
+    ) -> Option<Vec<Box<[u8]>>> {
         let mut entries: Vec<Box<[u8]>> = Vec::new();
         let mut iter = sys::iterate_dir(dir.fd());
         while let Some(entry) = iter.next().ok()? {
@@ -484,6 +500,30 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
                 EntryKind::Directory if name == b"node_modules" => continue,
                 EntryKind::Directory => 0,
                 EntryKind::Unknown => return None,
+                // For a symlink in the source folder, list what `lay_folder_links` creates for it
+                // in the copy, because that is what the copy is expected to contain.
+                EntryKind::SymLink if name != b"node_modules" => {
+                    let link = match &mut folder {
+                        Some((root, rel)) => {
+                            let root = root.get()?;
+                            let dir_len = rel.len();
+                            rel.extend_from_slice(name);
+                            let link = FolderLink::of(root, rel.as_slice(), dir_len, dir);
+                            rel.truncate(dir_len);
+                            link
+                        }
+                        None => FolderLink::Link(read_link(dir, name)?),
+                    };
+                    match link {
+                        FolderLink::Link(text) => {
+                            let link = [name, &b"/"[..], &text[..], &[0xff; INO_LEN][..]].concat();
+                            entries.push(link.into_boxed_slice());
+                            continue;
+                        }
+                        FolderLink::File(_, target) => target.st_ino,
+                        FolderLink::LeftOut(_) => continue,
+                    }
+                }
                 // The backends skip these.
                 _ => continue,
             };
@@ -493,7 +533,9 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
         Some(entries)
     }
 
-    let (Some(src_entries), Some(dest_entries)) = (list(src), list(dest)) else {
+    let (Some(src_entries), Some(dest_entries)) =
+        (list(src, Some((&mut *root, &mut *rel))), list(dest, None))
+    else {
         return false;
     };
     src_entries == dest_entries
@@ -507,7 +549,14 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
                 src.open_at_with(name, flags),
                 dest.open_at_with(name, flags),
             ) {
-                (Ok(src), Ok(dest)) => is_hardlinked_copy(&src, &dest),
+                (Ok(src), Ok(dest)) => {
+                    let dir_len = rel.len();
+                    rel.extend_from_slice(name);
+                    rel.push(b'/');
+                    let same = is_hardlinked_copy(root, rel, &src, &dest);
+                    rel.truncate(dir_len);
+                    same
+                }
                 _ => false,
             }
         })
@@ -517,10 +566,218 @@ pub(crate) fn is_linked_folder(src: &Dir, dest: &Dir) -> bool {
     let (Ok(dest_stat), Ok(src_stat)) = (sys::fstat(dest.fd()), sys::fstat(src.fd())) else {
         return false;
     };
-    // Inode numbers only compare on one device. The same directory is a link to the folder.
+    // Inode numbers are only comparable on the same device. If both are the same directory, `dest`
+    // is a link to the folder, not a copy of it.
     dest_stat.st_dev == src_stat.st_dev
         && dest_stat.st_ino != src_stat.st_ino
-        && is_hardlinked_copy(src, dest)
+        && is_hardlinked_copy(&mut FolderRoot(src, None), &mut Vec::new(), src, dest)
+}
+
+/// Real paths to compare a symlink's resolved target against. `top_level_dir` cannot be used for
+/// this because it may contain symlinks itself.
+struct RealPaths {
+    folder: Box<[u8]>,
+    project: Box<[u8]>,
+}
+
+/// The `RealPaths` of a `file:` folder. They are resolved when the first symlink is found, because
+/// most folders have no symlinks.
+struct FolderRoot<'a>(&'a Dir, Option<RealPaths>);
+
+impl FolderRoot<'_> {
+    fn get(&mut self) -> Option<&RealPaths> {
+        if self.1.is_none() {
+            let mut fd_path = path::path_buffer_pool::get();
+            let mut real = path::path_buffer_pool::get();
+            let fd_path = sys::get_fd_path_z(self.0.fd(), &mut fd_path).ok()?;
+            let folder = sys::realpath(fd_path, &mut real).ok()?.into();
+            let project = crate::lockfile_real::LinkedMembers::real_path_of(b".");
+            if project.is_empty() {
+                return None;
+            }
+            self.1 = Some(RealPaths { folder, project });
+        }
+        self.1.as_ref()
+    }
+}
+
+/// Recreates the symlinks of `folder` in `dest`, its installed copy, because the install backends
+/// skip them. Only call this for a folder that the user named. Returns a warning per omitted link.
+pub(crate) fn lay_folder_links(folder: &[u8], dest: &Dir) -> Vec<Box<[u8]>> {
+    let mut left_out: Vec<Box<[u8]>> = Vec::new();
+    if let Ok(src) = Dir::open(folder) {
+        let root = &mut FolderRoot(&src, None);
+        lay_links_below(root, &mut Vec::new(), &src, dest, &mut left_out);
+    }
+    crate::prune::sort_names(&mut left_out);
+    for link in &mut left_out {
+        *link = [&b"skipping link "[..], folder, &b"/"[..], &link[..]]
+            .concat()
+            .into_boxed_slice();
+    }
+    left_out
+}
+
+/// `rel` is the path of `src` inside the folder. It is either empty or ends with a slash.
+fn lay_links_below(
+    root: &mut FolderRoot<'_>,
+    rel: &mut Vec<u8>,
+    src: &Dir,
+    dest: &Dir,
+    left_out: &mut Vec<Box<[u8]>>,
+) {
+    let flags = sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW;
+    let dir_len = rel.len();
+    let mut iter = sys::iterate_dir(src.fd());
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        if name == b"node_modules" {
+            continue;
+        }
+        rel.truncate(dir_len);
+        rel.extend_from_slice(name);
+        match crate::prune::entry_kind(src, name, entry.kind) {
+            EntryKind::Directory => {
+                if let (Ok(src), Ok(dest)) = (
+                    src.open_at_with(name, flags),
+                    dest.open_at_with(name, flags),
+                ) {
+                    rel.push(b'/');
+                    lay_links_below(root, rel, &src, &dest, left_out);
+                }
+            }
+            EntryKind::SymLink => {
+                if let Some(root) = root.get()
+                    && let Err(why) = lay_link(root, rel.as_slice(), dir_len, src, dest)
+                {
+                    let text = [rel.as_slice(), &b": "[..], why.as_bytes()];
+                    left_out.push(text.concat().into_boxed_slice());
+                }
+            }
+            _ => {}
+        }
+    }
+    rel.truncate(dir_len);
+}
+
+/// Returns the part of `real` that follows the directory `root`, or `None` if `real` is not inside
+/// `root`. Both must be real paths.
+fn path_below<'a>(root: &[u8], real: &'a [u8]) -> Option<&'a [u8]> {
+    real.strip_prefix(strings::without_trailing_slash(root))
+        .filter(|rest| rest.first().is_none_or(|&c| c == path::SEP))
+}
+
+fn read_link(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
+    let mut text = path::path_buffer_pool::get();
+    let len = sys::readlinkat(dir, &bun_core::ZBox::from_bytes(name), &mut text[..]).ok()?;
+    (len < text.len()).then(|| Box::from(&text[..len]))
+}
+
+/// What a symlink in a `file:` folder becomes in the installed copy. A symlink in the copy never
+/// points outside the copy, and a file is only copied from the folder or the project.
+enum FolderLink {
+    /// A symlink with this target text.
+    Link(Box<[u8]>),
+    /// A hardlink to the file at this real path, or a copy of it.
+    File(bun_core::ZBox, Box<sys::Stat>),
+    LeftOut(&'static str),
+}
+
+impl FolderLink {
+    /// Decides what the symlink at `rel` in the folder becomes in the copy. `src` is the symlink's
+    /// parent directory, and `rel[dir_len..]` is its name there.
+    fn of(paths: &RealPaths, rel: &[u8], dir_len: usize, src: &Dir) -> FolderLink {
+        use path::resolve_path::{join_abs_string_buf_z_checked, platform};
+        const NOWHERE: FolderLink = FolderLink::LeftOut("target does not exist");
+        let root: &[u8] = &paths.folder;
+
+        let mut link_buf = path::path_buffer_pool::get();
+        let mut real_buf = path::path_buffer_pool::get();
+        let Some(link) =
+            join_abs_string_buf_z_checked::<platform::Auto>(root, &mut link_buf[..], &[rel])
+        else {
+            return NOWHERE;
+        };
+        let Ok(real) = sys::realpath(link, &mut real_buf) else {
+            return NOWHERE;
+        };
+        let real_z = bun_core::ZBox::from_bytes(real);
+        let Ok(target) = sys::stat(&real_z) else {
+            return NOWHERE;
+        };
+        // The install backends skip `node_modules`, so a target inside one is not in the copy.
+        let in_folder = path_below(root, real)
+            .is_some_and(|rest| !strings::split(rest, b"/").any(|part| part == b"node_modules"));
+
+        // A symlink is kept only if both its resolved target and its literal text stay in the
+        // folder. The text alone is not enough, because it can pass through another symlink.
+        if cfg!(not(windows))
+            && in_folder
+            && let Some(text) = read_link(src, &rel[dir_len..])
+            && !path::is_absolute(&text)
+            && !crate::bin::bin_target_escapes_package_dir(&[&rel[..dir_len], &text[..]].concat())
+        {
+            return FolderLink::Link(text);
+        }
+        if sys::kind_from_mode(target.st_mode as sys::Mode) != EntryKind::File {
+            return FolderLink::LeftOut(if cfg!(windows) {
+                "target is a directory"
+            } else {
+                "directory links must be relative and stay inside the folder"
+            });
+        }
+        if !in_folder && path_below(&paths.project, real).is_none() {
+            return FolderLink::LeftOut("target is outside the project");
+        }
+        FolderLink::File(real_z, Box::new(target))
+    }
+}
+
+fn lay_link(
+    root: &RealPaths,
+    rel: &[u8],
+    dir_len: usize,
+    src: &Dir,
+    dest: &Dir,
+) -> Result<(), &'static str> {
+    let name = &bun_core::ZBox::from_bytes(&rel[dir_len..]);
+    let _ = dest.delete_tree(name.as_bytes());
+    match FolderLink::of(root, rel, dir_len, src) {
+        FolderLink::Link(text) => sys::symlinkat(&bun_core::ZBox::from_bytes(&text), dest, name)
+            .map_err(|_| "failed to create link"),
+        FolderLink::File(real, target) => {
+            #[cfg(not(windows))]
+            {
+                if sys::linkat(Fd::cwd(), &real, dest, name).is_ok() {
+                    return Ok(());
+                }
+            }
+            #[cfg(windows)]
+            {
+                use path::resolve_path::{join_abs_string_buf_z_checked, platform};
+                let mut dir_buf = path::path_buffer_pool::get();
+                let mut to_buf = path::path_buffer_pool::get();
+                if let Ok(dir) = dest.get_fd_path(&mut dir_buf)
+                    && let Some(to) = join_abs_string_buf_z_checked::<platform::Auto>(
+                        dir,
+                        &mut to_buf[..],
+                        &[name.as_bytes()],
+                    )
+                    && sys::sys_uv::link(&real, to).is_ok()
+                {
+                    return Ok(());
+                }
+            }
+            sys::File::open(&real, sys::O::RDONLY | sys::O::CLOEXEC, 0)
+                .and_then(|from| {
+                    let to = dest.create_file_z(name, Default::default())?;
+                    let _ = sys::fchmod(to.handle(), target.st_mode as sys::Mode);
+                    sys::copy_file(from.handle(), to.handle())
+                })
+                .map_err(|_| "failed to copy target")
+        }
+        FolderLink::LeftOut(why) => Err(why),
+    }
 }
 
 // macOS clonefileat(2) — routed through the safe `sys::clonefileat` wrapper
@@ -799,7 +1056,7 @@ pub(crate) struct LinkJob {
     /// A package that is nested in two places has its dependencies, with the same ids, in two trees.
     pub(crate) tree_id: crate::lockfile::tree::Id,
     pub(crate) dependency_id: DependencyID,
-    /// The `node_modules` it goes into. Whoever made the batch keeps it open.
+    /// The `node_modules` to install into. The creator of the batch keeps it open.
     pub(crate) tree_dir: Fd,
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: bun_core::ZBox,
@@ -807,18 +1064,20 @@ pub(crate) struct LinkJob {
     /// See `PackageInstaller::copy_trees`.
     pub(crate) copy: bool,
     pub(crate) skip_delete: bool,
-    /// From the main thread: `fast_random` gives every thread the same numbers.
+    /// Generated on the main thread, because `fast_random` returns the same numbers on every
+    /// thread.
     pub(crate) random: u64,
     pub(crate) resolution_tag: resolution::Tag,
     pub(crate) result: std::sync::OnceLock<InstallResult>,
 }
 
-/// Linked at the same time: no destination is or is inside another's, and all are free.
+/// Jobs that are linked in parallel. No destination equals or contains another one, and nothing
+/// exists at any of them.
 pub(crate) struct LinkBatch {
     pub(crate) jobs: Vec<LinkJob>,
     pub(crate) staging: Staging,
     pub(crate) next: AtomicUsize,
-    /// The threads that are not done. The last one wakes the main thread.
+    /// The number of threads that are still running. The last one to finish wakes the main thread.
     pub(crate) remaining: AtomicUsize,
 }
 
@@ -829,7 +1088,8 @@ impl LinkBatch {
         } else {
             PackageInstall::supported_method()
         };
-        // Here and not before: a package is away for no longer than it takes to link it.
+        // Move the old package aside right before linking, so it's only missing for as long as
+        // linking takes.
         let tree_dir = Dir::borrow(&job.tree_dir);
         let old = if job.skip_delete {
             None
@@ -861,14 +1121,16 @@ impl LinkBatch {
 
     /// `run_tasks(until)` runs on this thread meanwhile; it is to return when `until` is 0.
     pub(crate) fn run(&self, run_tasks: &mut dyn FnMut(&AtomicUsize)) {
-        // The kernel lets one thread at a time into a `node_modules`: more threads are slower.
+        // The kernel only lets one thread at a time modify a `node_modules` directory, so more
+        // threads make it slower.
         const MAX_THREADS: usize = 8;
 
         if let [job] = self.jobs.as_slice() {
             return self.link(job);
         }
         let pool = &PackageManager::get().thread_pool;
-        // What is scheduled on a pool whose first worker the OS refuses never runs.
+        // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
+        // run.
         pool.warm(1);
         if !pool.has_workers() {
             return self.jobs.iter().for_each(|job| self.link(job));
@@ -887,7 +1149,8 @@ impl LinkBatch {
             },
             &mut vec![(); threads],
             || {
-                // The threads wait for the disk much of the time: with few of them this one is missed.
+                // The threads spend much of their time waiting on the disk, so when there are only
+                // a few of them, this thread links packages too.
                 if self.jobs.len() > threads {
                     while let Some(job) = self.next_job() {
                         self.link(job);
@@ -902,10 +1165,10 @@ impl LinkBatch {
 
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
-/// Holds the commit of a git package or the integrity of a tarball. Both linkers look for it.
+/// Contains a git package's commit or a tarball's integrity. Both linkers read it.
 pub(crate) const BUN_TAG: &[u8] = b".bun-tag";
 
-/// Whether an installed tarball's `.bun-tag` says it holds the bytes bun.lock pins.
+/// Returns true if an installed tarball's `.bun-tag` matches the integrity in bun.lock.
 pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verify: bool) -> bool {
     // A copy installed with `--no-verify` has an empty tag.
     strings::eql_long(integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]), tag, true)
@@ -990,7 +1253,9 @@ impl<'a> PackageInstall<'a> {
                 root_node_modules_dir,
             ),
             resolution::Tag::Root => self.verify_directory_exists(root_node_modules_dir),
-            resolution::Tag::Symlink => self.verify_link(root_node_modules_dir),
+            resolution::Tag::Symlink | resolution::Tag::Workspace => {
+                self.verify_link(root_node_modules_dir)
+            }
             resolution::Tag::Folder => {
                 let tree_id = self.node_modules.tree_id;
                 if self.lockfile.is_workspace_tree_id(tree_id)
@@ -1002,7 +1267,7 @@ impl<'a> PackageInstall<'a> {
                     self.verify_directory_exists(root_node_modules_dir)
                 }
             }
-            _ => self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag),
+            _ => self.verify_package_json_name_and_version(root_node_modules_dir),
         };
 
         verified
@@ -1028,7 +1293,8 @@ impl<'a> PackageInstall<'a> {
             .is_ok_and(|target| target.st_ino == linked.st_ino && target.st_dev == linked.st_dev)
     }
 
-    /// A folder changes without its lockfile row changing, so what is compared is the folder.
+    /// A folder's contents can change while its lockfile entry stays the same, so this compares the
+    /// folder itself.
     fn verify_folder(&self) -> bool {
         let Ok(node_modules) = Dir::open(&self.node_modules.path) else {
             return false;
@@ -1042,14 +1308,13 @@ impl<'a> PackageInstall<'a> {
         is_linked_folder(&src, &dest)
     }
 
-    fn get_installed_package_json_source(
+    fn read_installed_package_json<'m>(
         &mut self,
         root_node_modules_dir: &Dir,
-        mutable: &mut MutableString,
-        resolution_tag: resolution::Tag,
-    ) -> Option<bun_ast::Source> {
+        mutable: &'m mut MutableString,
+        until_eof: bool,
+    ) -> Option<&'m [u8]> {
         let mut total: usize = 0;
-        let mut read: usize;
         mutable.reset();
         mutable.expand_to_capacity();
 
@@ -1065,55 +1330,36 @@ impl<'a> PackageInstall<'a> {
             .ok()?;
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
-        read = package_json_file.read(&mut mutable.list[total..]).ok()?;
-        let mut remain = &mut mutable.list[total.min(read)..];
-        if read > 0 && remain.len() < 1024 {
-            mutable.grow_by(4096).ok()?;
-            mutable.expand_to_capacity();
-        }
-
-        while read > 0 {
-            total += read;
-
-            mutable.expand_to_capacity();
-            // Reshaped for borrowck — recompute remain after grow.
-            remain = &mut mutable.list[total..];
-
-            if remain.len() < 1024 {
+        loop {
+            if mutable.list.len() - total < 1024 {
                 mutable.grow_by(4096).ok()?;
+                mutable.expand_to_capacity();
             }
-            mutable.expand_to_capacity();
-            remain = &mut mutable.list[total..];
-
-            read = package_json_file.read(remain).ok()?;
+            let remain = &mut mutable.list[total..];
+            let read = package_json_file.read(remain).ok()?;
+            total += read;
+            if read == 0 || (!until_eof && read < remain.len()) {
+                break;
+            }
         }
 
-        // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
-        let minimum =
-            if resolution_tag == resolution::Tag::Workspace && self.package_version.is_empty() {
-                // workspaces aren't required to have a version
-                br#"{"name":""}"#.len() + self.package_name.len()
-            } else {
-                br#"{"name":"","version":""}"#.len()
-                    + self.package_name.len()
-                    + self.package_version.len()
-            };
-
-        if total < minimum {
-            return None;
-        }
-
-        Some(bun_ast::Source::init_path_string(
-            package_json_path.as_bytes(),
-            &mutable.list[0..total],
-        ))
+        Some(&mutable.list[0..total])
     }
 
-    fn verify_package_json_name_and_version(
+    fn verify_package_json_name_and_version(&mut self, root_node_modules_dir: &Dir) -> bool {
+        // The first attempt treats a short read as the end of the file, which saves a `read` call.
+        // A few file systems return short reads earlier and truncate the JSON, so retry until EOF.
+        self.verify_installed_package_json(root_node_modules_dir, false)
+            .or_else(|| self.verify_installed_package_json(root_node_modules_dir, true))
+            .unwrap_or(false)
+    }
+
+    /// Returns `None` if the bytes that were read are not a complete JSON document.
+    fn verify_installed_package_json(
         &mut self,
         root_node_modules_dir: &Dir,
-        resolution_tag: resolution::Tag,
-    ) -> bool {
+        until_eof: bool,
+    ) -> Option<bool> {
         let mut body_pool = Npm::Registry::BodyPool::get();
         let mutable: &mut MutableString = &mut body_pool;
 
@@ -1122,27 +1368,32 @@ impl<'a> PackageInstall<'a> {
         // Don't keep it open while we're parsing the JSON.
         // The longer the file stays open, the more likely it causes issues for
         // other processes on Windows.
-        let Some(source) =
-            self.get_installed_package_json_source(root_node_modules_dir, mutable, resolution_tag)
+        let Some(contents) =
+            self.read_installed_package_json(root_node_modules_dir, mutable, until_eof)
         else {
-            return false;
+            return Some(false);
         };
-        let source = &source;
+        let source = &bun_ast::Source::init_path_string("package.json", contents);
+
+        // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
+        let minimum = br#"{"name":"","version":""}"#.len()
+            + self.package_name.len()
+            + self.package_version.len();
+
+        if source.contents().len() < minimum {
+            return None;
+        }
 
         let mut log = bun_ast::Log::init();
 
         initialize_store();
 
         let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
-        if package_json_checker.parse().is_err() {
-            return false;
+        if package_json_checker.parse().is_err() || package_json_checker.has_errors() {
+            return None;
         }
-        if package_json_checker.has_errors() || !package_json_checker.has_found_name {
-            return false;
-        }
-        // workspaces aren't required to have a version
-        if !package_json_checker.has_found_version && resolution_tag != resolution::Tag::Workspace {
-            return false;
+        if !package_json_checker.has_found_name || !package_json_checker.has_found_version {
+            return Some(false);
         }
 
         let found_version = package_json_checker.found_version();
@@ -1170,17 +1421,19 @@ impl<'a> PackageInstall<'a> {
                 }
                 // If we didn't find any of these characters, there's no point in checking the version again.
                 // it will never match.
-                return false;
+                return Some(false);
             };
 
             if found_version[offset..] != *self.package_version {
-                return false;
+                return Some(false);
             }
         }
 
         // lastly, check the name.
-        package_json_checker.found_name()
-            == self.package_name.slice(&self.lockfile.buffers.string_bytes)
+        Some(
+            package_json_checker.found_name()
+                == self.package_name.slice(&self.lockfile.buffers.string_bytes),
+        )
     }
 }
 
@@ -1235,7 +1488,7 @@ impl PackageFiles<'_> {
                         let basename = ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
                         let clone =
                             || sys::clonefileat(entry.dir, basename, destination_dir_.fd(), path_);
-                        // What is there can be another version's file.
+                        // The existing file may belong to a different version.
                         let cloned = match clone() {
                             Err(e) if e.get_errno() == sys::Errno::EEXIST => {
                                 let _ = sys::unlinkat(destination_dir_, path_);
@@ -1255,7 +1508,7 @@ impl PackageFiles<'_> {
                                 sys::Errno::ENOENT => {
                                     return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
                                 }
-                                // a directory of that name, or another install made it again
+                                // It's a directory, or another install created it again.
                                 sys::Errno::EEXIST => {}
                                 sys::Errno::EACCES => {
                                     return Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES));
@@ -1277,7 +1530,7 @@ impl PackageFiles<'_> {
         };
         match copy(&subdir, &mut walker_) {
             Ok(()) => Ok(InstallResult::Success),
-            // `link_files_into` falls back to copyfile on this one.
+            // `link_files_into` falls back to copyfile for this error.
             Err(crate::Error::NotSupported) => Err(crate::Error::NotSupported),
             Err(err) => Ok(InstallResult::fail(err, Step::CopyingFiles)),
         }
@@ -1402,7 +1655,17 @@ impl PackageFiles<'_> {
             buf[i] = 0;
             let fullpath = bun_core::WStr::from_buf(&buf[..], i);
 
-            let _ = mkdir_recursive_os_path(fullpath);
+            if let Err(err) = sys::mkdir_w(fullpath) {
+                // Like `make_open_real_dir`, replace a symlink at the destination, never follow it.
+                if err.get_errno() == sys::E::EEXIST {
+                    let mut narrow = bun_paths::path_buffer_pool::get();
+                    let dest = strings::from_wpath(&mut narrow[..], &buf[..i - 1]);
+                    if let Err(err) = crate::prune::remove_planted_link(destbase, dest) {
+                        return Err(Failure::boxed(err.into(), Step::OpeningDestDir));
+                    }
+                }
+                let _ = mkdir_recursive_os_path(fullpath);
+            }
             let to_copy_buf_off = fullpath.len();
 
             // SAFETY: FFI — the walker's root is the open cache directory; buf2 is a
@@ -1608,7 +1871,8 @@ impl PackageFiles<'_> {
             let _ = destination_dir;
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
-            // Workers already run what was pushed: keep loop errors, always reach `queue.wait()`.
+            // Workers are already running the tasks that were pushed, so remember any loop error
+            // and always reach `queue.wait()`.
             #[cfg(windows)]
             let mut loop_err: Option<crate::Error> = None;
 
@@ -1674,7 +1938,7 @@ impl PackageFiles<'_> {
                         _ => continue,
                     }
 
-                    // One unit of each buffer is for the NUL.
+                    // One unit of each buffer is reserved for the NUL terminator.
                     if entry.path.len() >= head1.len() - to_copy_into1_offset
                         || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
@@ -1737,7 +2001,7 @@ impl PackageFiles<'_> {
 
         match result {
             Ok(()) => Ok(InstallResult::Success),
-            // `link_files_into` falls back to copyfile on this one.
+            // `link_files_into` falls back to copyfile for this error.
             #[cfg(not(windows))]
             Err(err @ crate::Error::NotSameFileSystem) => Err(err),
             Err(err) => Ok(InstallResult::fail(err, Step::CopyingFiles)),
@@ -1771,7 +2035,7 @@ impl PackageFiles<'_> {
                         )?;
                     }
                     EntryKind::File => {
-                        // One byte is for the NUL.
+                        // One byte is reserved for the NUL terminator.
                         if entry.path.len() >= head2.len() - to_copy_into2_offset {
                             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         }
@@ -1839,10 +2103,12 @@ impl PackageFiles<'_> {
     }
 }
 
-/// What `move_aside` names begin with. What is left of one if bun dies stays until `bun prune`.
+/// The prefix of the names that `move_aside` creates. If Bun is killed, these folders stay until
+/// `bun prune`.
 pub(crate) const MOVED_ASIDE_PREFIX: &str = ".old-";
 
-/// Renames `subpath`, if it is there, to a name in `destination_dir` made of `random`. On any thread.
+/// Renames `subpath`, if it exists, to a name in `destination_dir` that's derived from `random`.
+/// Can run on any thread.
 pub(crate) fn move_aside(
     destination_dir: &Dir,
     subpath: &ZStr,
@@ -1857,12 +2123,14 @@ pub(crate) fn move_aside(
     );
     match sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old) {
         Ok(()) => Some(old),
-        // overlayfs moves no directory of a lower layer. The new files must not join the old ones.
+        // overlayfs can't rename a directory from a lower layer. Delete it instead, so the new
+        // files don't mix with the old ones.
         Err(err) if err.get_errno() == sys::E::EXDEV => {
             let _ = destination_dir.delete_tree(subpath.as_bytes());
             None
         }
-        // It is not there, or it stays: what is in a mount point (EBUSY) is not bun's to delete.
+        // Either it doesn't exist or it has to stay. For example, the contents of a mount point
+        // (EBUSY) aren't Bun's to delete.
         Err(_) => None,
     }
 }
@@ -1876,14 +2144,16 @@ impl<'a> PackageInstall<'a> {
         ) else {
             return;
         };
-        // What is scheduled on a pool whose first worker the OS refuses never runs.
+        // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
+        // run.
         let pool = &PackageManager::get().thread_pool;
         pool.warm(1);
         if !pool.has_workers() {
             let _ = destination_dir.delete_tree(temp_path.as_bytes());
             return;
         }
-        // A large tree takes a while to delete. Under its random name another thread can do that.
+        // Deleting a large tree takes a while. Now that it has a random name, another thread can
+        // delete it.
         let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
             bun_fs::FileSystem::instance().top_level_dir(),
             &[&self.node_modules.path, temp_path.as_bytes()],
@@ -2032,7 +2302,7 @@ impl<'a> PackageInstall<'a> {
             }
 
             let res = strings::copy_utf16_into_utf8(&mut dest_buf[..], &wbuf[..i]);
-            let mut offset: usize = res.written as usize;
+            let mut offset: usize = res.written;
             if dest_buf[offset - 1] != bun_paths::SEP_WINDOWS {
                 dest_buf[offset] = bun_paths::SEP_WINDOWS;
                 offset += 1;
@@ -2141,7 +2411,7 @@ impl<'a> PackageInstall<'a> {
         resolution_tag: resolution::Tag,
     ) -> bool {
         match manager.get_preinstall_state(package_id) {
-            // no entry name until extraction records a tarball's integrity
+            // A tarball has no cache entry name until extraction records its integrity.
             _ if self.cache_dir_subpath.is_empty() => true,
             crate::PreinstallState::Done => false,
             _ => {
@@ -2240,7 +2510,8 @@ impl<'a> PackageInstall<'a> {
                     ),
                 ),
             ) {
-                // Not in the folder: as with a tarball that lacks what it bundles.
+                // Ignore the error if the folder doesn't have it, like for a tarball that's missing
+                // one of its bundled dependencies.
                 let _ = PackageInstall {
                     cache_dir_subpath: src,
                     destination_dir_subpath: dest,
@@ -2253,14 +2524,15 @@ impl<'a> PackageInstall<'a> {
 }
 
 impl PackageFiles<'_> {
-    /// Makes `staging` anew: under `Staging::Locked` an install that died may have left it.
+    /// Creates an empty `staging` folder. With `Staging::Locked`, an install that was killed may
+    /// have left one behind.
     fn make_staging_dir(
         destination_dir: &Dir,
         staging: &ZStr,
         method: Method,
         skip_delete: bool,
     ) -> sys::Maybe<()> {
-        // `init_install_dir` makes it, and the name is this install's own.
+        // `init_install_dir` creates it, and no other install uses this name.
         if cfg!(windows) {
             return Ok(());
         }
@@ -2286,7 +2558,7 @@ impl PackageFiles<'_> {
         sys::mkdirat(destination_dir, staging, 0o755)
     }
 
-    /// `owner` has the lockfile; a thread of the pool has none to give.
+    /// `owner` provides the lockfile. It's `None` on a thread pool thread.
     pub(crate) fn install(
         &mut self,
         staging_mode: Staging,
@@ -2352,7 +2624,8 @@ impl PackageFiles<'_> {
         method_: Method,
         resolution_tag: resolution::Tag,
     ) -> InstallResult {
-        // A folder is hard linked, not cloned (an edit shows); its file system is not the cache's.
+        // A folder is hardlinked instead of cloned, so that edits to it show up in the copy. It
+        // also may not be on the same file system as the cache.
         let is_folder = resolution_tag == resolution::Tag::Folder;
         let skip_dirs: &[&OSPathSlice] = if is_folder {
             &[bun_paths::os_path_literal!("node_modules")]
@@ -2416,7 +2689,7 @@ fn walk_install_dir_windows(
             _ => continue,
         }
 
-        // One unit of each buffer is for the NUL.
+        // One unit of each buffer is reserved for the NUL terminator.
         if entry.path.len() >= head1.len() - dest_offset
             || entry.path.len() >= head2.len() - src_offset
         {
@@ -2434,7 +2707,7 @@ fn walk_install_dir_windows(
         let src = bun_core::WStr::from_buf(head2, src_len);
 
         if entry.kind == EntryKind::File {
-            // Its directory came first.
+            // The walker returned its parent directory first, so that directory already exists.
             per_file(dest, src, entry.path.as_slice())?;
             continue;
         }

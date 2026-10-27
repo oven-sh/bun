@@ -1,4 +1,4 @@
-//! `bun pm fetch`: resolves like `bun install` and writes nothing but the cache.
+//! `bun pm fetch`: resolves like `bun install`, but only writes to the cache.
 
 use bun_core::{Output, ZBox};
 
@@ -21,7 +21,8 @@ pub struct Summary {
     pub already_cached: u32,
 }
 
-/// Failures are reported like `bun install`'s: in `manager.log` and `any_failed_to_install`.
+/// Failures are reported the same way as in `bun install`: in `manager.log` and
+/// `any_failed_to_install`.
 pub fn fetch(
     manager: &mut PackageManager,
     ctx: Command::Context,
@@ -35,6 +36,11 @@ pub fn fetch(
             | Do::SAVE_YARN_LOCK
             | Do::SUMMARY,
     );
+    // `--dry-run` must not modify the cache either.
+    let count_only = manager.options.dry_run;
+    if count_only {
+        manager.options.do_.remove(Do::PREFETCH_RESOLVED_TARBALLS);
+    }
     // The bun.lockb conversion and `--lockfile-only` write the lockfile without consulting `do_`.
     manager.options.dry_run = true;
     manager.options.lockfile_only = false;
@@ -45,10 +51,16 @@ pub fn fetch(
     if manager.any_failed_to_install {
         return Ok(Summary::default());
     }
-    download_pinned_packages(manager)
+    download_pinned_packages(manager, None, count_only)
 }
 
-fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summary> {
+/// With `only`, downloads just that package, which the caller already knows is not in the cache.
+/// With `count_only`, downloads nothing, and `fetched` counts what would have been downloaded.
+pub(crate) fn download_pinned_packages(
+    manager: &mut PackageManager,
+    only: Option<PackageID>,
+    count_only: bool,
+) -> crate::Result<Summary> {
     let log_level = manager.options.log_level;
     let (cpu, os, libc) = (
         manager.options.cpu,
@@ -59,7 +71,7 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
     let _ = manager.get_cache_directory();
     let _ = manager.get_temporary_directory();
 
-    // Enqueueing is keyed by dependency edge; prefer a required one so failures are errors.
+    // Enqueueing is keyed by dependency. Prefer a required one, so that failures are errors.
     let dep_ids: Vec<DependencyID> = {
         let dependencies = manager.lockfile.buffers.dependencies.as_slice();
         let mut index = vec![invalid_dependency_id; manager.lockfile.packages.len()];
@@ -85,6 +97,9 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
             continue;
         }
         let pkg_id = i as PackageID;
+        if only.is_some_and(|only| only != pkg_id) {
+            continue;
+        }
         let pkg = *manager.lockfile.packages.get(i);
         let resolution = pkg.resolution;
         let behavior = manager.lockfile.buffers.dependencies[dep_id as usize].behavior;
@@ -97,19 +112,31 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
 
         let mut name_and_version_hash: Option<u64> = None;
         let mut patchfile_hash: Option<u64> = None;
-        match manager.determine_preinstall_state(
-            &pkg,
-            behavior,
-            &mut name_and_version_hash,
-            &mut patchfile_hash,
-        ) {
+        let state = if only.is_some() {
+            // `determine_preinstall_state` would return `CalcPatchHash` for a patched package whose
+            // patch file has not been hashed yet, and the package would be skipped below.
+            PreinstallState::Extract
+        } else {
+            manager.determine_preinstall_state(
+                &pkg,
+                behavior,
+                &mut name_and_version_hash,
+                &mut patchfile_hash,
+            )
+        };
+        match state {
             PreinstallState::Extract => {}
-            // `ApplyPatch`: the unpatched tarball is cached, which is all this command promises.
+            // For `ApplyPatch`, the unpatched tarball is cached, which is all that this command
+            // promises.
             PreinstallState::Done | PreinstallState::ApplyPatch => {
                 summary.already_cached += 1;
                 continue;
             }
             _ => continue,
+        }
+        if count_only {
+            summary.fetched += 1;
+            continue;
         }
 
         let waiter = TaskCallbackContext::Dependency(dep_id);
@@ -132,8 +159,7 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
                 enqueue_tarball_for_download(manager, dep_id, pkg_id, url, waiter)
             }
             ResolutionTag::LocalTarball => {
-                enqueue_tarball_for_reading(manager, dep_id, pkg_id, alias, &resolution, waiter);
-                Ok(())
+                enqueue_tarball_for_reading(manager, dep_id, pkg_id, alias, &resolution, waiter)
             }
             ResolutionTag::Git => enqueue_git_for_checkout(
                 manager,
@@ -151,7 +177,8 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
         }
     }
 
-    // A `Dependency` callback would resolve its row again: `github:` downloads twice.
+    // A `Dependency` callback would resolve its dependency again, which would download a `github:`
+    // package twice.
     for waiters in manager.task_queue.values_mut() {
         waiters.retain(|waiter| matches!(waiter, TaskCallbackContext::GitCheckout { .. }));
     }
@@ -175,6 +202,6 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
         waited?;
     }
 
-    summary.fetched = manager.extracted_count;
+    summary.fetched += manager.extracted_count;
     Ok(summary)
 }

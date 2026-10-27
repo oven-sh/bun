@@ -4,13 +4,13 @@ use super::class::declared_key;
 use super::declared::Declares;
 use super::stmt::{ModifiersOf, Start};
 use super::{GrammarError, ListKind, Parser, ctx, oxc, take_span};
-use crate::Refusal;
+use crate::Rejection;
 use crate::lexer::Mark;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
-/// What the name of a member of a type says about the member. `name_token`: its first token.
+/// The flags a type member gets from its name. `name_token`: the name's first token.
 fn flags_of_type_member_name(name_token: T, name_kind: NameKind, key: PropKey) -> Flags {
     match name_kind {
         NameKind::StringLiteral => Flags::STRING_NAME,
@@ -32,14 +32,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         id
     }
 
-    /// A type that ends with the previous token.
+    /// Adds a type that ends with the previous token.
     #[inline(always)]
     pub(crate) fn finish_type(&mut self, kind: TypeNodeKind, pos: u32) -> TypeNodeId {
         let end = self.prev_end();
         self.add_type(kind, pos, end)
     }
 
-    /// A type that is the token, which is consumed.
+    /// Adds a type that consists of the current token, and consumes it.
     #[inline(always)]
     pub(crate) fn token_type(&mut self, kind: TypeNodeKind) -> TypeNodeId {
         let id = self.add_type(kind, self.lx.start, self.lx.end);
@@ -77,7 +77,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return TypeNodeId::NONE;
         }
         if self.token().is_identifier_or_keyword()
-            && let Some(word) = self.type_of_one_word()
+            && let Some(word) = self.single_word_type()
         {
             return word;
         }
@@ -87,10 +87,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         ty
     }
 
-    /// `parseType`, at a word after which the text says that no type goes on: most types are such.
-    /// `None`: it says no such thing, or the word is more than a name or the name of a type.
+    /// Fast path of `parseType` for a single word, when the next byte shows that the type can't
+    /// continue. Most types are like that. Returns `None` if the type might continue, or if the
+    /// word isn't a plain identifier or a keyword type.
     #[inline(never)]
-    fn type_of_one_word(&mut self) -> Option<TypeNodeId> {
+    fn single_word_type(&mut self) -> Option<TypeNodeId> {
         let follows = self.lx.first_byte_of_next();
         if !matches!(
             follows,
@@ -162,21 +163,21 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `lookAhead(isUnambiguouslyStartOfFunctionType)`
     fn is_at_parameters_of_function_type(&mut self) -> bool {
-        // A pattern after the `(` is parsed to get past it, with the types in it, and in them every
-        // `(` is asked about again, twice. An answer that took long is kept: otherwise each level of
-        // `({[a as ({[b as ..` takes three times as long as the one in it.
+        // A pattern after the `(` has to be parsed to get past it, including the types in it, and each `(` in those
+        // types asks this question again, twice. So an answer that took a long scan is cached. Otherwise each level of
+        // `({[a as ({[b as ..` takes three times as long as the level inside it.
         let at = (self.pos(), self.context);
-        let mut place = 0;
+        let mut insert_at = 0;
         if !self.function_type_starts.is_empty() {
-            // What is before a token that is read for good is not read again.
+            // Outside speculation, nothing before the current token is read again, so drop those entries.
             if self.speculations == 0 {
                 let read = self.function_type_starts.partition_point(|it| it.0 < at.0);
                 self.function_type_starts.drain(..read);
             }
-            let kept = &self.function_type_starts;
-            match kept.binary_search_by_key(&at, |it| (it.0, it.1)) {
-                Ok(known) => return kept.get(known).is_some_and(|it| it.2),
-                Err(free) => place = free,
+            let cache = &self.function_type_starts;
+            match cache.binary_search_by_key(&at, |it| (it.0, it.1)) {
+                Ok(known) => return cache.get(known).is_some_and(|it| it.2),
+                Err(free) => insert_at = free,
             }
         }
         let mut end = at.0;
@@ -185,10 +186,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             end = p.pos();
             answer
         });
-        // What was kept on the way is behind it.
+        // Entries cached during the lookahead sort after this one, so `insert_at` is still right.
         if end.saturating_sub(at.0) > 64 {
             self.function_type_starts
-                .insert(place, (at.0, at.1, answer));
+                .insert(insert_at, (at.0, at.1, answer));
         }
         answer
     }
@@ -231,7 +232,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `len(p.diagnostics)`. Only recovery has any.
+    /// `len(p.diagnostics)`. Without recovery there are none.
     #[inline]
     fn number_of_errors(&mut self) -> usize {
         match self.recovers() {
@@ -243,10 +244,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn count_errors(&mut self) -> usize {
-        // One of the scanner's that starts where the last error starts does not count.
-        self.take_errors_of_scanner();
-        let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
-        self.f.diagnostics.iter().filter(is_of_parser).count()
+        // A scanner error that starts where the last error starts is dropped, so it doesn't count.
+        self.take_scanner_errors();
+        let is_parse_error = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+        self.f.diagnostics.iter().filter(is_parse_error).count()
     }
 
     /// `parseFunctionOrConstructorType`
@@ -388,7 +389,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn function_type_without_parentheses(&mut self, operator: T) -> TypeNodeId {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return TypeNodeId::NONE;
         }
         let full = self.full_start();
@@ -508,7 +509,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     self.next();
                     if self.eat(T::CloseBracket) {
                         ty = self.finish_type(TypeNodeKind::Array(ty), start);
-                    } else if self.recovers() && !self.is_start_of_type(false) {
+                    } else if self.recovers() && !self.is_start_of_type() {
                         self.expected(T::CloseBracket);
                         ty = self.finish_type(TypeNodeKind::Array(ty), start);
                     } else {
@@ -521,13 +522,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 T::Question => {
                     let is_before_type = self.look_ahead(|p| {
                         p.next();
-                        p.is_start_of_type(false)
+                        p.is_start_of_type()
                     });
                     if is_before_type {
                         return ty;
                     }
-                    // A `JSDocNullableType`, which the checker reports unless it is an element of
-                    // a tuple: see `take_back_nullable_type`.
+                    // A `JSDocNullableType`, which the checker reports unless it's an element of a
+                    // tuple: see `unwrap_nullable_type`.
                     self.next();
                     self.f.rare_syntax |= rare::JSDOC_TYPE;
                     let kind = TypeNodeKind::JSDoc {
@@ -555,26 +556,25 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         ty
     }
 
-    /// `isStartOfType`
-    pub(crate) fn is_start_of_type(&mut self, is_in_parameter: bool) -> bool {
+    /// `isStartOfType(false)`
+    pub(crate) fn is_start_of_type(&mut self) -> bool {
         if self.token() != T::OpenParen {
-            return self.is_start_of_type_without_parenthesis(is_in_parameter);
+            return self.is_start_of_type_without_parenthesis(false);
         }
         // "Only consider '(' the start of a type if followed by ')', '...', an identifier, a
         // modifier, or something that starts a type."
-        // A loop over the parentheses that follow each other, where TypeScript recurses.
-        !is_in_parameter
-            && self.look_ahead(|p| {
-                loop {
-                    p.next();
-                    if p.token() == T::CloseParen || p.is_start_of_parameter() {
-                        return true;
-                    }
-                    if p.token() != T::OpenParen {
-                        return p.is_start_of_type_without_parenthesis(false);
-                    }
+        // TypeScript recurses on consecutive `(`. This loops instead.
+        self.look_ahead(|p| {
+            loop {
+                p.next();
+                if p.token() == T::CloseParen || p.is_start_of_parameter() {
+                    return true;
                 }
-            })
+                if p.token() != T::OpenParen {
+                    return p.is_start_of_type_without_parenthesis(false);
+                }
+            }
+        })
     }
 
     /// `isStartOfType`, at any token but a `(`.
@@ -618,7 +618,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             | T::TemplateHead => true,
             T::Function => !is_in_parameter,
             T::Minus => !is_in_parameter && matches!(self.peek(), T::Number | T::BigInt),
-            // Not even for oxc: `a as T ? await b : c`.
+            // `await` doesn't start a type here, not even for oxc: `a as T ? await b : c`.
             _ => self.is_identifier_in_context(),
         }
     }
@@ -652,16 +652,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             T::True => return self.token_type(TypeNodeKind::BoolLit(true)),
             T::False => return self.token_type(TypeNodeKind::BoolLit(false)),
             T::String => return self.token_type(TypeNodeKind::StringLit(self.lx.atom)),
-            // `parseLiteralExpression` does not scan it again: an invalid escape passes.
+            // `parseLiteralExpression` doesn't rescan it, so an invalid escape is accepted.
             T::NoSubstitutionTemplate => {
                 if self.lx.has_escape && self.reports_like_oxc() {
-                    self.piece_of_template_without_tag();
+                    self.untagged_template_piece();
                 }
                 return self.token_type(TypeNodeKind::StringLit(self.lx.atom));
             }
-            // It may be the keyword, which is an error.
+            // It may be meant as the keyword, which is an error.
             T::EscapedReservedWord => {
-                self.refuse(Refusal::EscapedKeyword);
+                self.reject(Rejection::EscapedKeyword);
                 return TypeNodeId::NONE;
             }
             T::Number => {
@@ -755,8 +755,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.token_type(TypeNodeKind::Keyword(keyword))
     }
 
-    /// `parseJSDocAllType`, `parseJSDocNullableType`, `parseJSDocNonNullableType`: the checker
-    /// reports them.
+    /// `parseJSDocAllType`, `parseJSDocNullableType`, `parseJSDocNonNullableType`. The checker reports them.
     #[cold]
     #[inline(never)]
     fn jsdoc_prefix_type(&mut self) -> TypeNodeId {
@@ -766,7 +765,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.lx.end = start + 1;
         }
         self.next();
-        // `parseJSDocUnknownOrNullableType` of TypeScript 5: a `?` by itself.
+        // TypeScript 5's `parseJSDocUnknownOrNullableType`: a `?` by itself.
         let is_unknown_type = token == T::Question
             && self.options.dialect.typescript_5
             && matches!(
@@ -864,8 +863,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         name
     }
 
-    /// The loop of `parseEntityName`: pushes the names after the first on the stack of names.
-    /// Whether it ends between the dot and the `<` of `A.<T>`.
+    /// `parseEntityName`'s loop: pushes the names after the first on `s.names`. Returns true if it
+    /// stopped between the dot and the `<` of `A.<T>`.
     #[inline]
     fn rest_of_entity_name(&mut self) -> bool {
         while self.token() == T::Dot {
@@ -887,13 +886,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         false
     }
 
-    /// `parseRightSideOfDot(allowIdentifierNames, !allowPrivateIdentifiers)`. `None`: at a `<`,
-    /// where `parseEntityName` does not call it.
+    /// `parseRightSideOfDot(allowIdentifierNames, !allowPrivateIdentifiers)`. Returns `None` at a
+    /// `<`, where `parseEntityName` doesn't call it.
     #[cold]
     #[inline(never)]
     fn name_after_dot_in_type(&mut self) -> Option<(Atom, u32)> {
         let token = self.token();
-        // Flow, whose `typeof a.b` is read here, has neither rule.
+        // Flow's `typeof a.b` is parsed here too, and Flow has neither this rule nor the next one.
         if token == T::LessThan && !self.is_flow() {
             return None;
         }
@@ -903,7 +902,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && !self.is_flow()
             && self.is_followed_by_word_on_same_line();
         if starts_something_else && !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
         }
         if is_word && !starts_something_else {
             if token != T::PrivateIdentifier {
@@ -925,7 +924,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         Some((known::empty, at))
     }
 
-    /// `scanTypeMemberStart`, at a modifier: whether the list of members goes on with the token.
+    /// `scanTypeMemberStart`, at a modifier. Returns true if the token continues the member list.
     fn scan_type_member_start(&mut self) -> bool {
         // "Eat up all modifiers, but hold on to the last one in case it is actually an identifier"
         while self.token().is_modifier() {
@@ -953,15 +952,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         list
     }
 
-    /// The last argument of `flag` is passed on the stack: not in the frame of `jsx_element`.
+    /// Out of line because `flag`'s last argument is passed on the stack, which would grow `jsx_element`'s frame.
     #[cold]
     #[inline(never)]
     fn flag_type_arguments(&mut self, at: (u32, u32), code: u32) {
         self.flag(DiagnosticKind::Grammar, code, at, &[]);
     }
 
-    /// After the expression of a heritage clause, or the name of a JSX element. `parseTypeArguments`
-    /// does not rescan a `<<`. Babel's does.
+    /// Call after a heritage clause's expression or a JSX element's name. `parseTypeArguments`
+    /// doesn't rescan a `<<`, but Babel's does.
     #[inline]
     pub(crate) fn is_at_type_arguments_of_heritage_element(&mut self) -> bool {
         if self.token() == T::LessThanLessThan && self.options.dialect.babel {
@@ -971,8 +970,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.token() == T::LessThan
     }
 
-    /// `parseTypeArguments`, at the `<`: the list, and what `checkGrammarTypeArguments` reports
-    /// about it where it is called.
+    /// `parseTypeArguments`, at the `<`. Returns the list, and what `checkGrammarTypeArguments`
+    /// reports about it in the places where TypeScript calls that.
     pub(crate) fn type_arguments_unchecked(
         &mut self,
     ) -> (IdList<TypeNodeId>, Option<GrammarError>) {
@@ -988,14 +987,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseDelimitedList(PCTypeArguments, parseType)`, after the `<` at `less_than`: pushes the
-    /// types on the stack of ids. "The list ends before any token that is neither a comma nor the
-    /// start of a type", so it can be empty (1099) and can end with a comma (1009).
+    /// types on `s.ids`. "The list ends before any token that is neither a comma nor the start of a
+    /// type", so it can be empty (1099) and can end with a comma (1009).
     pub(crate) fn type_argument_list(&mut self, less_than: u32) -> Option<GrammarError> {
         let base = self.s.ids.len();
         let lists = self.enter_list(ListKind::TypeArguments);
         let error = loop {
             if self.token() != T::Comma
-                && !self.is_start_of_type(false)
+                && !self.is_start_of_type()
                 && !self.is_name_in_type_for_oxc()
             {
                 break Some(match self.s.ids.len() == base {
@@ -1014,11 +1013,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         error
     }
 
-    /// `parseType` where `isStartOfType` is asked first, as `isListElement` does: for it a reserved
-    /// word starts no type, although it can be the name in a type reference.
+    /// `parseType` where TypeScript checks `isStartOfType` first, as `isListElement` does. For `isStartOfType` a
+    /// reserved word doesn't start a type, although it can be the name in a type reference.
     fn type_in_list(&mut self) -> TypeNodeId {
-        // With recovery `is_at_element` has asked, and a comma is an element whose type is missing.
-        if !self.recovers() && !self.is_start_of_type(false) && !self.is_name_in_type_for_oxc() {
+        // With recovery, `is_at_element` has already checked, and a comma is an element whose type is missing.
+        if !self.recovers() && !self.is_start_of_type() && !self.is_name_in_type_for_oxc() {
             self.fail();
             return TypeNodeId::NONE;
         }
@@ -1043,7 +1042,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.type_arguments_checked_if(is_checked)
     }
 
-    /// `parseTypeArguments`, at the `<`. `is_checked`: with `checkGrammarTypeArguments`.
+    /// `parseTypeArguments`, at the `<`. `is_checked`: also run `checkGrammarTypeArguments`.
     #[inline]
     fn type_arguments_checked_if(&mut self, is_checked: bool) -> IdList<TypeNodeId> {
         match is_checked {
@@ -1069,9 +1068,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return self.token() != T::OpenBrace && self.is_start_of_expression();
         }
         match self.token() {
-            // For oxc a class extends an expression, which this starts. Where names are listed it is the body.
+            // For oxc a class extends an expression, which `{` can start. In a clause that lists
+            // names, `{` is the body.
             T::OpenBrace if self.options.dialect.oxc => !self.has_context(ctx::TYPE),
-            // A name to oxc.
+            // oxc treats it as a name.
             T::Implements if self.options.dialect.oxc => true,
             // `isValidHeritageClauseObjectLiteral`: `{}` is the body unless something follows that
             // can follow an element.
@@ -1099,8 +1099,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseDelimitedList(PCHeritageClauseElement, ..)`, after `extends` or `implements`: calls
-    /// `element` for each, with its index. Returns their number, and the comma at the end of the
-    /// list if there is one.
+    /// `element` for each element, with its index. Returns the element count, and the range of the
+    /// trailing comma if there is one.
     pub(crate) fn heritage_elements(
         &mut self,
         mut element: impl FnMut(&mut Self, u32),
@@ -1117,7 +1117,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             comma = (self.token() == T::Comma).then_some((self.lx.start, self.lx.end));
             if self.has_failed()
                 || !self.eat(T::Comma)
-                    && !self.goes_on_without_comma(ListKind::HeritageClauseElement, full)
+                    && !self.continues_without_comma(ListKind::HeritageClauseElement, full)
             {
                 break;
             }
@@ -1130,29 +1130,29 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         (count, comma)
     }
 
-    /// `parseExpressionWithTypeArguments` in a clause whose elements are types: any of an interface,
-    /// `implements` of a class. `is_checked`: `checkTypeReferenceNode` gets to it.
-    /// `not_entity_name`: what it says about `A?.B`.
+    /// `parseExpressionWithTypeArguments` in a clause whose elements are types: any clause of an
+    /// interface, or a class's `implements`. `is_checked`: `checkTypeReferenceNode` reaches it.
+    /// `not_entity_name`: the code of the error about `A?.B`.
     pub(crate) fn heritage_type(&mut self, is_checked: bool, not_entity_name: u32) -> TypeNodeId {
         let before = self.lx.mark();
         let reference = match self.recovers() {
-            // What type arguments have built is taken back if the expression goes on after them.
+            // If the expression continues after the type arguments, the nodes they added are rolled back.
             true => self.try_parse(|p| p.heritage_entity_name(is_checked, not_entity_name)),
             false => self.heritage_entity_name(is_checked, not_entity_name),
         };
         match reference {
             Some(reference) => reference,
             None if self.has_failed() => TypeNodeId::NONE,
-            // An error of its parser.
+            // A syntax error in Flow's parser.
             None if self.is_flow() => {
-                self.refuse(Refusal::Reported);
+                self.reject(Rejection::Reported);
                 TypeNodeId::NONE
             }
             None => {
                 self.lx.reset(before);
                 if self.is_in_implements_for_oxc {
                     self.check_implemented_like_oxc();
-                    // It reads no regular expression there.
+                    // oxc doesn't scan a regular expression there.
                     if matches!(self.token(), T::Slash | T::SlashEquals) {
                         let start = self.pos();
                         self.next();
@@ -1164,8 +1164,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `heritage_type`, if `IsEntityNameExpression` is true of the expression. `None`: it is not,
-    /// and without recovery only tokens have been read.
+    /// `heritage_type` for an expression that satisfies `IsEntityNameExpression`. Returns `None` if
+    /// it doesn't. In that case, without recovery, only the lexer's position has changed.
     #[inline]
     fn heritage_entity_name(
         &mut self,
@@ -1186,7 +1186,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.s.names.push(first);
         let mut is_optional_chain = false;
         while matches!(self.token(), T::Dot | T::QuestionDot) {
-            // The name ends here for oxc.
+            // For oxc the name ends here.
             if self.token() == T::QuestionDot && self.is_in_implements_for_oxc {
                 self.s.names.truncate(base);
                 return None;
@@ -1204,7 +1204,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.s.names.push((self.lx.atom, self.lx.start));
             self.next_after_name();
         }
-        // `parseMemberExpressionRest` and `parseCallExpressionRest` go on.
+        // `parseMemberExpressionRest` and `parseCallExpressionRest` would continue the expression.
         if matches!(
             self.token(),
             T::OpenParen | T::OpenBracket | T::NoSubstitutionTemplate | T::TemplateHead
@@ -1237,7 +1237,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     | T::Exclamation
                     | T::NoSubstitutionTemplate
                     | T::TemplateHead
-            ) && self.goes_on_after_type_arguments()
+            ) && self.continues_after_type_arguments()
             {
                 return None;
             }
@@ -1245,27 +1245,27 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         Some(self.finish_type(TypeNodeKind::Ref { name, args }, start))
     }
 
-    /// Whether `parseLeftHandSideExpressionOrHigher` takes the type arguments before the token and
-    /// goes on with it (`canFollowTypeArgumentsInExpression`).
+    /// True if `parseLeftHandSideExpressionOrHigher` accepts the type arguments before the current
+    /// token and continues with that token (`canFollowTypeArgumentsInExpression`).
     #[cold]
     #[inline(never)]
-    fn goes_on_after_type_arguments(&mut self) -> bool {
+    fn continues_after_type_arguments(&mut self) -> bool {
         if !self.recovers() {
-            self.refuse(Refusal::Reported);
+            self.reject(Rejection::Reported);
             return false;
         }
         match self.token() {
             // In JavaScript no expression takes type arguments.
             _ if !self.has_type_arguments_in_expressions => false,
-            // It starts an expression, and only on the next line it goes on with this one.
+            // `[` starts an expression, so the type arguments are only accepted if it's on the next line.
             T::OpenBracket => self.newline_before(),
-            // On the next line it goes on with nothing.
+            // So does `!`, and on the next line it isn't a postfix operator.
             T::Exclamation => false,
             _ => true,
         }
     }
 
-    /// `parseParenthesizedType`, where the `)` is missing. oxc looks for no comma there.
+    /// `parseParenthesizedType`, where the `)` is missing. oxc doesn't expect a comma there.
     #[cold]
     #[inline(never)]
     fn unclosed_type_in_parentheses(&mut self) {
@@ -1275,14 +1275,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.expect(T::CloseParen);
     }
 
-    /// `yield` in a generator.
+    /// True at a `yield` in a generator.
     #[inline]
     fn is_at_yield_operator(&self) -> bool {
         self.token() == T::Yield && self.has_context(ctx::YIELD)
     }
 
-    /// An element of the `extends` clause of an interface as oxc reads it: a name with type arguments if the clause goes on or
-    /// ends after it, and else an expression.
+    /// Parses an element of an interface's `extends` clause the way oxc does: as a name with type
+    /// arguments if the clause continues or ends right after it, otherwise as an expression.
     #[cold]
     #[inline(never)]
     fn extended_like_oxc(&mut self, is_checked: bool) -> TypeNodeId {
@@ -1308,8 +1308,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.finish_type(TypeNodeKind::Heritage { expr, args }, start)
     }
 
-    /// `parseExpressionWithTypeArguments`, of an expression that is no entity name: the checker
-    /// reports it.
+    /// `parseExpressionWithTypeArguments`, for an expression that isn't an entity name. The checker reports it.
     #[cold]
     #[inline(never)]
     fn heritage_expression(&mut self, is_checked: bool) -> TypeNodeId {
@@ -1330,15 +1329,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && self.f.parens.last().is_none_or(|last| last.0 != expr)
         {
             self.pop_expr();
-            (expr, args) = (instantiated, type_args);
+            (expr, args) = (instantiated, self.f.list_at(type_args));
         } else if self.token() == T::LessThan {
             args = self.type_arguments_checked_if(is_checked);
         }
         self.finish_type(TypeNodeKind::Heritage { expr, args }, start)
     }
 
-    /// `checkGrammarExpressionWithTypeArguments`, after an element of a heritage clause whose first token is at
-    /// `first_token`: what it says about `import<T>`. Whoever has the clause says it, or something else.
+    /// `checkGrammarExpressionWithTypeArguments`, after a heritage clause element whose first token
+    /// is at `first_token`. Returns its error about `import<T>`. The caller reports that error or a
+    /// different one for the clause.
     #[inline(always)]
     pub(crate) fn import_with_type_arguments(
         &mut self,
@@ -1360,16 +1360,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if word != Some(&b"import"[..]) || self.lx.src.get(end as usize) == Some(&b'(') {
             return None;
         }
-        // The expression has said it, if the type arguments are its own.
+        // The expression parser already reported it if it consumed the type arguments itself.
         (self.f.diagnostics).retain(|it| it.code != 1326 || it.start != start);
         let ends_with_list = (self.prev_end() as usize).checked_sub(1);
         let ends_with_list = ends_with_list.and_then(|at| self.lx.src.get(at)) == Some(&b'>');
         ends_with_list.then_some(((start, self.prev_end()), 1326))
     }
 
-    /// `parseHeritageClauses` of an interface, with what `checkGrammarInterfaceDeclaration` reports
-    /// but for `implements`, which the checker finds in the text: the types of the first `extends`
-    /// clause, and those of the other clauses.
+    /// `parseHeritageClauses` for an interface, plus what `checkGrammarInterfaceDeclaration`
+    /// reports, except for `implements`, which the checker finds in the text. Returns the types of
+    /// the first `extends` clause and the types of the other clauses.
     fn interface_heritage(&mut self) -> (IdList<TypeNodeId>, IdList<TypeNodeId>) {
         let mut extends = IdList::EMPTY;
         let mut others: Vec<TypeNodeId> = Vec::new();
@@ -1414,7 +1414,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     false => p.heritage_type(is_first_extends, 2499),
                 };
                 let is_name = |it: &TypeNode| !matches!(it.kind, TypeNodeKind::Heritage { .. });
-                // oxc gives up after `#a` alone, and after `yield` where it wants an operand.
+                // oxc gives up after a bare `#a`, and after a `yield` that needs an operand.
                 let is_one_token = p.prev_end() == first_token.1;
                 let is_private_name =
                     p.lx.src.get(first_token.0 as usize) == Some(&b'#') && is_one_token;
@@ -1437,7 +1437,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             });
             self.is_in_interface_extends_for_oxc = false;
             self.is_in_implements_for_oxc = false;
-            // After the keyword and after a comma oxc wants an element. Only `extends` can end with a comma, before the body.
+            // oxc requires an element after the keyword and after a comma. Only `extends` can end
+            // with a comma, right before the body.
             if (comma.is_some() || count == 0) && self.is_for_oxc() {
                 match comma {
                     Some(comma) if is_extends && self.token() == T::OpenBrace => {
@@ -1451,7 +1452,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             match comma {
                 _ if !is_checked => {}
                 Some(comma) => self.flag(DiagnosticKind::Grammar, 1009, (comma.0, 0), &[]),
-                // oxc has given up.
+                // oxc has already given up.
                 None if count == 0 && self.token() != T::OpenBrace && self.is_for_oxc() => {}
                 None if count == 0 => {
                     let at = (keyword.1, keyword.1);
@@ -1473,7 +1474,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
         }
         self.leave_list(lists);
-        // oxc says it when it is through with the clauses.
+        // oxc reports these once it's through with the clauses.
         for keyword in implements {
             oxc::interface_implements(&mut self.f.diagnostics, keyword, self.lx.start);
         }
@@ -1496,7 +1497,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         };
         self.s.names.push(first);
         self.rest_of_entity_name();
-        // No atom of a name that is missing is looked at.
+        // Don't look up the atom of a missing name.
         if self.has_failed() {
             self.s.names.truncate(base);
             return TypeNodeId::NONE;
@@ -1505,18 +1506,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let mut expr = ExprId::NONE;
         for index in base..self.s.names.len() {
             let (name, pos) = self.s.names[index];
+            // No name here has an escape, so its length in the source is the length of its text.
+            let end = pos + self.lx.text_of(name).len() as u32;
             let kind = match expr.is_none() {
                 true if name == known::this => ExprKind::This,
                 true => ExprKind::Ident(name),
-                false => ExprKind::Dot {
-                    obj: expr,
-                    name,
-                    name_pos: pos,
-                    chain: Chain::No,
-                },
+                false => self.f.dot((expr, Chain::No), (name, pos), end),
             };
-            // The name ends where its text ends: no name here has an escape.
-            let end = pos + self.lx.text_of(name).len() as u32;
             expr = self.add_expr(kind, first.1, end);
         }
         for index in base..self.s.names.len() {
@@ -1588,7 +1584,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             self.s.names.truncate(base);
         }
-        // `checkImportType` does not look at the list.
+        // `checkImportType` doesn't check the list.
         let args = match argument.is_none() {
             true => self.type_arguments_of_type_reference(self.reports_like_oxc()),
             false => {
@@ -1607,8 +1603,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.finish_type(kind, start)
     }
 
-    /// The argument of `import(..)`, which starts at `before`, unless it is nothing but a string:
-    /// `getTypeFromImportTypeNode` reports it.
+    /// Parses the argument of `import(..)`, which starts at `before`. Returns `NONE` if it's just a
+    /// string. `getTypeFromImportTypeNode` reports anything else.
     #[cold]
     #[inline(never)]
     fn argument_of_import_type(&mut self, before: Mark) -> TypeNodeId {
@@ -1633,21 +1629,22 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let at = (start, self.prev_end());
         self.flag(DiagnosticKind::Checker, 1141, at, &[]);
-        // Where no type is, oxc has given up.
+        // If there's no type at all, oxc has already given up.
         if at.0 < at.1 && self.reports_like_oxc() {
             oxc::argument_of_import_type(&mut self.f.diagnostics, at);
         }
         argument
     }
 
-    /// The `args` of `import(argument)`: `checkImportType` looks at an argument that is no string.
-    /// The tree has no place for the type arguments, which the token can be the `<` of.
+    /// Returns the `args` of `import(argument)`. `checkImportType` checks an argument that isn't a
+    /// string, so it's stored there. That leaves no room for the type arguments, so they're parsed
+    /// (the current token may be their `<`) and dropped.
     #[cold]
     #[inline(never)]
     fn argument_in_place_of_type_arguments(&mut self, argument: TypeNodeId) -> IdList<TypeNodeId> {
         let before = self.checkpoint();
         self.type_arguments_of_type_reference(false);
-        self.forget_nodes(&before);
+        self.discard_nodes(&before);
         self.f.list(&[argument])
     }
 
@@ -1660,15 +1657,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let attributes = match self.token() {
             T::With => ImportAttributesToken::With,
             T::Assert => {
-                // An error of the native parser.
+                // A syntax error in the native parser, a grammar error in TypeScript 5.
                 let at = (self.pos(), 0);
                 match self.options.dialect.typescript_5 {
                     true => self.flag(DiagnosticKind::Grammar, 2880, at, &[]),
-                    false => self.error_and_go_on(2880, at, &[]),
+                    false => self.error_and_continue(2880, at),
                 }
                 ImportAttributesToken::Assert
             }
-            // The token stays, and `import_attributes` goes on at it.
+            // The token isn't consumed, and `import_attributes` continues at it.
             _ => {
                 self.error_at_token(1005, &[T::With.text()]);
                 ImportAttributesToken::With
@@ -1682,13 +1679,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         (mode, attributes)
     }
 
-    /// `parseIdentifierNameWithDiagnostic(Type_expected)` after `import(..).`, at no name.
+    /// `parseIdentifierNameWithDiagnostic(Type_expected)` after `import(..).`, at a token that isn't a name.
     #[cold]
     #[inline(never)]
     fn missing_qualifier_of_import_type(&mut self) {
         let at = self.full_start();
         self.missing_identifier(1110, 0);
-        // `NodeIsMissing(n.Qualifier)`: a missing name that none follows is no qualifier.
+        // `NodeIsMissing(n.Qualifier)`: a missing name with no name after it isn't a qualifier.
         if self.token() == T::Dot && self.peek() != T::LessThan {
             self.s.names.push((known::empty, at));
         }
@@ -1699,7 +1696,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let start = self.pos();
         // The first text, then each type and the text after it.
         let base = self.s.ids.len();
-        self.piece_of_template_without_tag();
+        self.untagged_template_piece();
         self.s.ids.push(self.lx.atom.0);
         self.next();
         loop {
@@ -1712,12 +1709,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 break;
             }
             self.lx.rescan_template_continuation();
-            self.piece_of_template_without_tag();
+            self.untagged_template_piece();
             self.s.ids.push(ty.0);
             self.s.ids.push(self.lx.atom.0);
-            let goes_on = self.token() == T::TemplateMiddle;
+            let has_more = self.token() == T::TemplateMiddle;
             self.next();
-            if !goes_on {
+            if !has_more {
                 break;
             }
         }
@@ -1744,7 +1741,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             let element = self.full_start();
             self.tuple_element();
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::TupleElementTypes, element)
+                && !self.continues_without_comma(ListKind::TupleElementTypes, element)
             {
                 break;
             }
@@ -1804,7 +1801,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // `parseTupleElementType`: a `JSDocNullableType` that is the whole type is an
             // optional element.
             element.ty = self.type_in_list();
-            if !has_dots && let Some(ty) = self.take_back_nullable_type(element.ty) {
+            if !has_dots && let Some(ty) = self.unwrap_nullable_type(element.ty) {
                 element.ty = ty;
                 element.optional = true;
             }
@@ -1814,9 +1811,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.s.tuple_elems.push(element);
     }
 
-    /// `T`, if `ty` is the `T?` that ends with the previous token. Its node is removed.
+    /// If `ty` is the `T?` that ends with the previous token, removes its node and returns `T`.
     #[inline]
-    fn take_back_nullable_type(&mut self, ty: TypeNodeId) -> Option<TypeNodeId> {
+    fn unwrap_nullable_type(&mut self, ty: TypeNodeId) -> Option<TypeNodeId> {
         if self.last_nullable_type != (ty, self.prev_end()) || ty.idx() + 1 != self.f.types.len() {
             return None;
         }
@@ -1847,8 +1844,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `checkNamedTupleMember`, of `name: ...T`, `name: T?` and `...name?: T`. The type starts at
-    /// `type_start`, with its dots.
+    /// `checkNamedTupleMember`, for `name: ...T`, `name: T?` and `...name?: T`. The type, including
+    /// its dots, starts at `type_start`.
     #[cold]
     #[inline(never)]
     fn check_named_tuple_member(
@@ -1862,7 +1859,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             element.member_type = TupleMemberType::Rest;
             self.flag(DiagnosticKind::Grammar, 5087, at, &[]);
             element.ty = self.rest_element_type(element.ty);
-        } else if let Some(operand) = self.take_back_nullable_type(element.ty) {
+        } else if let Some(operand) = self.unwrap_nullable_type(element.ty) {
             element.member_type = TupleMemberType::Optional;
             element.written = operand;
             self.flag(DiagnosticKind::Grammar, 5086, at, &[]);
@@ -1875,7 +1872,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if element.has_dots && element.optional {
             let at = (element.start, element.end);
             self.flag(DiagnosticKind::Grammar, 5085, at, &[]);
-            // `getTupleElementFlags`: it is optional.
+            // `getTupleElementFlags`: it counts as optional, not as rest.
             element.rest = false;
             element.ty = self.rest_element_type(element.ty);
         }
@@ -1956,7 +1953,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let ty = self.type_annotation();
         match self.options.dialect.oxc {
-            // It wants the `}`, after a `;` or not.
+            // oxc expects the `}` next, with or without a `;` first.
             true => _ = self.eat(T::Semicolon),
             false => self.semicolon(),
         }
@@ -1988,7 +1985,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.finish_type(TypeNodeKind::Mapped(mapped), start)
     }
 
-    /// The `parseList(PCTypeMembers, parseTypeMember)` of `parseMappedType`, and
+    /// `parseMappedType`'s `parseList(PCTypeMembers, parseTypeMember)`, plus
     /// `checkGrammarMappedType`.
     #[cold]
     #[inline(never)]
@@ -2080,8 +2077,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         })
     }
 
-    /// `checkGrammarIndexSignatureParameters`, up to the check of the type of the parameter.
-    /// `comma`: the one at the end of the list. `member`: from the start to the end of the signature.
+    /// `checkGrammarIndexSignatureParameters`, up to the check of the parameter's type. `comma`:
+    /// the trailing comma's position. `member`: the signature's range.
     fn check_index_signature_parameters(
         &mut self,
         params: Span<ParamId>,
@@ -2111,7 +2108,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         } else if first.pos != name {
             Some((name, 1018))
         } else if first.flags.contains(Flags::OPTIONAL) {
-            Some((self.question_of_parameter, 1019))
+            Some((self.parameter_question_pos, 1019))
         } else if first.default.is_some() {
             Some((name, 1020))
         } else if first.ty.is_none() {
@@ -2180,7 +2177,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// From the type parameters of a signature to its return type.
+    /// Parses a signature, from its type parameters to its return type.
     fn signature(
         &mut self,
         kind: FnKind,
@@ -2198,7 +2195,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let odd_parameters = self.odd_parameters;
         let (this_param, params) = self.parameters(0);
         let parameters = (odd_parameters, this_param);
-        self.note_parameters_of_accessor(kind, params);
+        self.note_odd_accessor_parameters(kind, params);
         // `shouldParseReturnType`: "This is easy to get backward, especially in type contexts, so
         // parse the type anyway"
         if self.token() == T::EqualsGreaterThan
@@ -2260,7 +2257,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         } else {
             let first_modifier = self.s.modifiers.len();
             if self.token().is_modifier() {
-                // With recovery `is_at_element` has asked.
+                // With recovery, `is_at_element` has already checked.
                 if !self.recovers() && !self.look_ahead(Self::scan_type_member_start) {
                     self.fail();
                 }
@@ -2297,12 +2294,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             let is_default = member.flags.contains(Flags::DEFAULT);
             let mut key = declared_key(key, name_token, is_default);
             // `getDeclarationName`: a private name outside a class declares nothing.
-            if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
+            if self.class_depth == 0 && matches!(key, PropKey::Private(_)) {
                 key = PropKey::None;
             }
             (member.key, member.name_pos) = (key, name_pos);
             member.flags |= flags_of_type_member_name(name_token, name_kind, key);
-            // `parseAccessorDeclaration` takes none.
+            // `parseAccessorDeclaration` doesn't accept a `?`.
             if member.kind == MemberKind::Property && self.eat(T::Question) {
                 member.flags |= Flags::OPTIONAL;
             }
@@ -2325,8 +2322,17 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 }
             } else {
                 member.ty = self.type_annotation();
-                // The checker reports it. `scanTypeMemberStart`: no member starts with `a =`.
-                if member.ty.is_some() || member.flags.contains(Flags::OPTIONAL) {
+                // The checker reports the initializer. In `scanTypeMemberStart`, `a =` doesn't start a member, but
+                // `[a] =` and `get =` do.
+                let starts_before_equals = match name_token {
+                    T::OpenBracket => true,
+                    T::Get | T::Set => member.modifiers.is_empty(),
+                    _ => false,
+                };
+                if member.ty.is_some()
+                    || member.flags.contains(Flags::OPTIONAL)
+                    || starts_before_equals
+                {
                     let saved = self.enter_context(0, ctx::TYPE);
                     member.init = self.optional_initializer();
                     self.context = saved;
@@ -2344,15 +2350,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         member
     }
 
-    /// At the `{` after the signature `func` of a member of a type. Whether it is an accessor,
-    /// which `parseAccessorDeclaration` gives a body: `checkGrammarAccessor` reports it.
+    /// At the `{` after a type member's signature `func`. Returns true for an accessor, whose body
+    /// `parseAccessorDeclaration` parses and `checkGrammarAccessor` reports.
     #[cold]
     #[inline(never)]
     fn body_in_type(&mut self, kind: MemberKind, func: FnId) -> bool {
         if !matches!(kind, MemberKind::Getter | MemberKind::Setter) {
             // `parseTypeMemberSemicolon` reports the `{`.
             if !self.recovers() {
-                self.refuse(Refusal::Reported);
+                self.reject(Rejection::Reported);
             }
             return false;
         }
@@ -2412,9 +2418,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         flags: Flags,
     ) -> StmtId {
         self.next();
-        // After `declare type` a line break is possible, and an error.
+        // A line break can only get here after `declare type`, and it's an error.
         if self.newline_before() {
-            self.error_and_go_on(1142, self.range_of_token(), &[]);
+            self.error_and_continue(1142, self.range_of_token());
         }
         if self.token() != T::Identifier && self.reports_like_oxc() {
             self.check_type_name_like_oxc(oxc::TypeName::TypeAlias);

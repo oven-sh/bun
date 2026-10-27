@@ -111,6 +111,7 @@ struct PatchedDepExternal {
     patchfile_hash_is_null: u8,
     patchfile_hash: u64,
 }
+bun_core::impl_any_bit_pattern!(PatchedDepExternal);
 
 const _: () = {
     assert!(size_of::<PatchedDepExternal>() == size_of::<PatchedDep>());
@@ -293,7 +294,8 @@ pub struct SerializerLoadResult {
     pub(crate) migrated_from_lockb_v2: bool,
 }
 
-/// Consumes the next 8 bytes if they are `tag`: a section older versions neither write nor read.
+/// Consumes the next 8 bytes if they're `tag`, which marks a section that older versions neither
+/// write nor read.
 fn next_section_is(stream: &mut Stream, total_buffer_size: u64, tag: u64) -> Result<bool, Error> {
     if total_buffer_size.saturating_sub(stream.pos as u64) <= 8 {
         return Ok(false);
@@ -601,7 +603,7 @@ pub(crate) fn load(
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "Invalid git dependency tag \"{}\" in bun.lockb",
-                        bstr::BStr::new(resolved)
+                        bun_core::fmt::escape_control_chars(resolved)
                     ),
                 );
                 return Err(crate::Error::InvalidLockfile);

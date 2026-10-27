@@ -74,7 +74,7 @@ bun prune --production --filter app
 - Detects whether `node_modules` was laid out by the hoisted or the isolated linker and prunes it as it is. If the folders hold both layouts (for example a tree left by a switch of linkers under Bun 1.4 or older), Bun uses the linker `bun install` would use. Pass `--linker` to choose.
 - Matches packages by name. If a package is at the wrong version, Bun leaves it for `bun install` to replace. Bun only removes a nested copy (`node_modules/a/node_modules/b`) once the correct version is installed above it; otherwise Bun keeps it and prints a warning.
 - Never removes workspace folders, `.bin` entries still in use, dot-directories like `.cache`, plain files, or anything outside `node_modules`.
-- Removes nothing and exits `1` if a workspace's `node_modules` or `node_modules/.bun` is a symlink. Remove the link and run `bun install` first.
+- Removes nothing and exits `1` if the `node_modules` of the project or of a workspace, or `node_modules/.bun`, is a symlink. Remove the link and run `bun install` first.
 - Removes what an interrupted `bun install` left behind (`.bun-tmp-*`) and the trees a switch of linkers set aside (`.old_modules-*`), unless an install is running.
 - Removes packages disabled for the current `os`/`cpu`/`libc`. Pass `--os`/`--cpu`/`--libc` to prune for another platform.
 - Works on a pruned monorepo checkout (e.g. `turbo prune` output) the same way `bun install --frozen-lockfile` does.

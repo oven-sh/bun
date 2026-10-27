@@ -6,6 +6,7 @@ use crate::jsc::{
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;
+use bun_core::strings::CodeUnits;
 use bun_node_path::{
     CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, CHAR_STR_DOT, PathCharCwd, PathParsed,
     basename_posix_t, basename_windows_t, dirname_posix_t, dirname_windows_t, extname_posix_t,
@@ -20,27 +21,19 @@ use bun_paths::MAX_PATH_BYTES;
 /// Create a JS string from a `[T]` slice (T = u8 | u16).
 ///
 /// In practice every JS entry point converts to a UTF-8 slice first and
-/// instantiates with `T = u8`, so the `u16` arm is never reached at runtime — but it must still
-/// type-check. Dispatch on `T::IS_U16` and route the cold u16 arm through
-/// a UTF-16 `BunString` clone + `to_js` so the generic body unifies.
+/// instantiates with `T = u8`, so the `u16` arm is never reached at runtime.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
-    if T::IS_U16 {
-        // T == u16 when IS_U16; bytemuck statically checks the layout.
-        let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
-        bun_core::String::clone_utf16(s16).into_js(global)
-    } else {
-        // T == u8 when !IS_U16; bytemuck statically checks the layout.
-        let s8: &[u8] = bytemuck::cast_slice::<T, u8>(s);
-        bun_string_jsc::create_utf8_for_js(global, s8)
+    match T::units(s) {
+        CodeUnits::U16(s) => bun_core::String::clone_utf16(s).into_js(global),
+        CodeUnits::U8(s) => bun_string_jsc::create_utf8_for_js(global, s),
     }
 }
 
 /// Pooled path scratch carved from the per-VM [`RarePathBuf`].
 ///
 /// JS is single-threaded, so re-using the lazily-allocated tier across calls is
-/// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) —
-/// or when `T = u16`, since the pool is byte-typed — we spill to a one-shot
+/// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) we spill to a one-shot
 /// zeroed heap slab instead (`T: Pod`, so the zero-fill is the cost of handing
 /// out a safe `&mut [T]`; consumers are write-before-read so the zeros are
 /// never observed).
@@ -55,17 +48,14 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
 
     #[inline]
     fn new(pool: &'a mut RarePathBuf, len: usize) -> Self {
-        if !T::IS_U16 && len <= Self::POOL_MAX {
-            // SAFETY-adjacent: `!IS_U16` ⇒ `T == u8`; `cast_slice_mut::<u8, u8>`
-            // is the bytemuck identity cast — never panics, no alignment hazard.
-            let bytes = &mut pool.get(len)[..len];
-            Self::Pooled(bytemuck::cast_slice_mut::<u8, T>(bytes))
-        } else {
-            // `T: Pod` ⇒ `T: Zeroable + Copy`. Spill is rare (u8 only when
-            // >128 KB) or path-sized (u16), so the zero-fill is negligible and
-            // buys a safe `&mut [T]` in `slice()`.
-            Self::Spill(vec![<T as bytemuck::Zeroable>::zeroed(); len].into_boxed_slice())
+        let bytes = len * size_of::<T>();
+        if bytes <= Self::POOL_MAX
+            && let Some(pooled) = bun_core::try_cast_slice_mut(&mut pool.get(bytes)[..bytes])
+        {
+            return Self::Pooled(pooled);
         }
+        // Spill is rare (over 128 KB), so the zero-fill is negligible.
+        Self::Spill(vec![T::default(); len].into_boxed_slice())
     }
 
     #[inline]
@@ -463,13 +453,23 @@ unsafe extern "C" fn Bun__Node__Path_joinWTF(
 ) -> bun_core::String {
     // SAFETY: caller passes a valid slice from C++.
     let rhs = unsafe { bun_core::ffi::slice(rhs_ptr, rhs_len) };
-    let mut buf = [0u8; path_size::<u8>()];
-    let mut buf2 = [0u8; path_size::<u8>()];
     let lhs = lhs.to_utf8();
+    let paths: [&[u8]; 2] = [lhs.slice(), rhs];
+    let buf_len = join_buf_len::<u8>(cfg!(windows), &paths);
+    let mut fixed = [0u8; path_size::<u8>() * 2];
+    let mut spill = Vec::new();
+    // Fall back to the heap when the joined path is too long for the stack buffer.
+    let scratch: &mut [u8] = if buf_len * 2 <= fixed.len() {
+        &mut fixed
+    } else {
+        spill.resize(buf_len * 2, 0);
+        &mut spill
+    };
+    let (buf, buf2) = scratch.split_at_mut(buf_len);
     #[cfg(windows)]
-    let joined = join_windows_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
+    let joined = join_windows_t::<u8>(&paths, buf, buf2);
     #[cfg(not(windows))]
-    let joined = join_posix_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
+    let joined = join_posix_t::<u8>(&paths, buf, buf2);
     bun_core::String::clone_utf8(joined)
 }
 

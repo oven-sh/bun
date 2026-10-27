@@ -24,6 +24,8 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
+  patches: ["patches/mimalloc/new-oom-hook.patch"],
+
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.
@@ -115,7 +117,12 @@ export const mimalloc: Dependency = {
       cflags.push(cfg.abi === "musl" ? "-ftls-model=local-dynamic" : "-ftls-model=initial-exec");
     }
 
-    if (override) cflags.push("-fno-builtin-malloc");
+    if (override) {
+      cflags.push("-fno-builtin-malloc");
+      // mimalloc also implements `operator new` here. See patches/mimalloc/new-oom-hook.patch.
+      // The value is a function name, and a `defines` entry would quote it.
+      cflags.push("-DMI_NEW_OOM=Bun__outOfMemory");
+    }
 
     // ─── Windows: silence the vendored-C-as-C++ warning flood ───
     // lang:"c++" means .c compiles as C++; clang-cl then complains about

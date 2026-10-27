@@ -59,7 +59,7 @@ impl Rule for PreferResponseStaticJson {
             let (data_span, stringify_call_span) = (data_expr.outer_span(), argument_expr.outer_span());
             fix.push(fixer.remove(Span::new(stringify_call_span.start, data_span.start)));
             fix.push(fixer.remove(Span::new(data_span.end, stringify_call_span.end)));
-            // `(Response)` could continue the line before.
+            // `(Response)` could continue the previous line.
             if !e.is_parenthesized()
                 && (callee.is_parenthesized() || callee.tag() != ExprTag::Ident)
                 && could_be_asi_hazard(e)

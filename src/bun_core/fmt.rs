@@ -248,21 +248,21 @@ pub struct RedactedNpmUrlFormatter<'a> {
 impl Display for RedactedNpmUrlFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut i: usize = 0;
-        let mut password = if strings::contains(self.url, b"://") {
-            strings::next_url_password(self.url, 0)
+        let mut userinfo = if strings::contains(self.url, b"://") {
+            strings::next_url_userinfo(self.url, 0)
         } else {
             // A registry configured without a scheme: refused, and echoed in the refusal.
             let authority = if self.url.starts_with(b"//") { 2 } else { 0 };
-            strings::find_authority_password(&self.url[authority..])
+            strings::find_authority_userinfo(&self.url[authority..])
                 .map(|(offset, len)| (authority + offset, len))
         };
         while i < self.url.len() {
-            if let Some((offset, len)) = password
+            if let Some((offset, len)) = userinfo
                 && i == offset
             {
-                splat_byte_all(f, b'*', len)?;
+                f.write_str("***")?;
                 i += len;
-                password = strings::next_url_password(self.url, i);
+                userinfo = strings::next_url_userinfo(self.url, i);
                 continue;
             }
 
@@ -288,7 +288,7 @@ impl Display for RedactedNpmUrlFormatter<'_> {
                 if b.is_ascii_hexdigit()
                     || b == b'n'
                     || b == b'N'
-                    || password.is_some_and(|(offset, _)| next == offset)
+                    || userinfo.is_some_and(|(offset, _)| next == offset)
                 {
                     break;
                 }
@@ -586,8 +586,8 @@ pub fn format_utf16_type(slice_: &[u16], writer: &mut impl fmt::Write) -> fmt::R
         if result.read == 0 || result.written == 0 {
             break;
         }
-        write_bytes(writer, &chunk[..result.written as usize])?;
-        slice = &slice[result.read as usize..];
+        write_bytes(writer, &chunk[..result.written])?;
+        slice = &slice[result.read..];
     }
     Ok(())
 }
@@ -608,7 +608,7 @@ pub(crate) fn format_utf16_type_with_path_options(
             break;
         }
 
-        let to_write = &chunk[..result.written as usize];
+        let to_write = &chunk[..result.written];
         if !opts.escape_backslashes && opts.path_sep == PathSep::Any {
             write_bytes(writer, to_write)?;
         } else {
@@ -625,7 +625,7 @@ pub(crate) fn format_utf16_type_with_path_options(
             }
             write_bytes(writer, ptr)?;
         }
-        slice = &slice[result.read as usize..];
+        slice = &slice[result.read..];
     }
     Ok(())
 }
@@ -1267,8 +1267,8 @@ pub fn format_latin1(slice_: &[u8], writer: &mut impl fmt::Write) -> fmt::Result
         if result.read == 0 || result.written == 0 {
             break;
         }
-        write_bytes(writer, &chunk[..result.written as usize])?;
-        slice = &slice[result.read as usize..];
+        write_bytes(writer, &chunk[..result.written])?;
+        slice = &slice[result.read..];
     }
 
     if !slice.is_empty() {
@@ -2248,7 +2248,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     continue 'outer;
                                 }
 
-                                if let Some((offset, len)) = strings::find_url_password(inner) {
+                                if let Some((offset, len)) = strings::find_url_userinfo(inner) {
                                     write!(
                                         writer,
                                         "{}\x1b[32m{}{}",
@@ -2990,26 +2990,18 @@ pub fn parse_hex_prefix(input: &[u8], max_digits: usize) -> (u32, usize) {
     (value, n)
 }
 
-/// Decode a `2 * size_of::<T>()`-char ASCII hex slice into `T` via native-endian
-/// byte reinterpretation — i.e. pairwise hex-decode then `from_ne_bytes`,
-/// **not** a big-endian numeric accumulator.
-/// `"0100000000000000"` → `1u64` on little-endian.
-///
-/// Returns `None` if `slice.len() != 2 * size_of::<T>()` or any byte is not
-/// `[0-9a-fA-F]`. `T` is capped at 16 bytes (u128) since stable Rust can't size
-/// a stack array by a generic without `generic_const_exprs`.
+/// Pairwise hex-decode of exactly 16 chars, then `from_ne_bytes`: `"0100000000000000"` is 1 on little-endian.
 #[inline]
-pub fn parse_hex_to_int<T: bytemuck::Pod>(slice: &[u8]) -> Option<T> {
-    let n = core::mem::size_of::<T>();
-    debug_assert!(n <= 16);
-    if slice.len() != n * 2 {
+pub fn parse_hex_to_u64(slice: &[u8]) -> Option<u64> {
+    let (pairs, []) = slice.as_chunks::<2>() else {
         return None;
+    };
+    let pairs: &[[u8; 2]; 8] = pairs.try_into().ok()?;
+    let mut bytes = [0u8; 8];
+    for (byte, &[hi, lo]) in bytes.iter_mut().zip(pairs) {
+        *byte = hex_pair_value(hi, lo)?;
     }
-    let mut buf = [0u8; 16];
-    for i in 0..n {
-        buf[i] = hex_pair_value(slice[i * 2], slice[i * 2 + 1])?;
-    }
-    Some(bytemuck::pod_read_unaligned(&buf[..n]))
+    Some(u64::from_ne_bytes(bytes))
 }
 
 /// Map the low 4 bits of `n` to a lowercase ASCII hex digit (`0-9`, `a-f`).
@@ -3132,23 +3124,6 @@ pub fn mac_address_lower(mac: [u8; 6]) -> [u8; 17] {
         i += 3;
     }
     out
-}
-
-/// `{:0N}` — zero-padded fixed-width decimal of a `u64` into `[u8; N]`.
-/// Decimal sibling of [`u64_hex_fixed`] / [`hex_byte_upper`]. Caller guarantees
-/// `val < 10^N`; excess high digits are silently dropped (debug-asserted).
-#[inline(always)]
-pub fn itoa_padded<const N: usize>(mut val: u64) -> [u8; N] {
-    debug_assert!(N == 0 || val < 10u64.saturating_pow(N as u32));
-    let mut buf = [b'0'; N];
-    let mut i = N;
-    while i > 0 {
-        i -= 1;
-        // val % 10 < 10 ⇒ cast never truncates.
-        buf[i] = b'0' + (val % 10) as u8;
-        val /= 10;
-    }
-    buf
 }
 
 /// `{:x}` — variable-width lower-hex of a u64 (no leading zeros; `0` → `"0"`),
@@ -3612,7 +3587,8 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
-/// Spells out C0/C1 controls and DEL so text somebody else authored cannot repaint our output.
+/// Escapes C0/C1 control characters, DEL, U+2028-U+202E (line separators, bidirectional overrides)
+/// and U+2066-U+2069 (bidirectional isolates), so that untrusted text cannot alter our output.
 pub struct EscapeControlChars<T>(pub T);
 
 /// [`EscapeControlChars`] that lets `\t`, `\n` and `\r\n` through (`bun pm view <pkg> readme`).
@@ -3640,10 +3616,25 @@ impl<T: Display> Display for EscapeControlCharsMultiline<T> {
 }
 
 /// `.1`: keep `\t`, `\n`, `\r\n`.
-struct EscapeControlCharsWriter<'a, 'f>(&'a mut Formatter<'f>, bool);
+pub(crate) struct EscapeControlCharsWriter<'a>(pub(crate) &'a mut dyn fmt::Write, pub(crate) bool);
 
-impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
+impl fmt::Write for EscapeControlCharsWriter<'_> {
+    /// `Raw` and `write_bytes` pass unvalidated bytes as a `str`, so `s` is validated here before
+    /// it is decoded. Invalid UTF-8 is written as U+FFFD.
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        s.as_bytes().utf8_chunks().try_for_each(|chunk| {
+            self.write_valid(chunk.valid())?;
+            if chunk.invalid().is_empty() {
+                Ok(())
+            } else {
+                self.0.write_char(char::REPLACEMENT_CHARACTER)
+            }
+        })
+    }
+}
+
+impl EscapeControlCharsWriter<'_> {
+    fn write_valid(&mut self, s: &str) -> fmt::Result {
         let Self(f, keep_line_breaks) = self;
         let mut start = 0;
         let mut next = 0;
@@ -3659,6 +3650,7 @@ impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
                 '\t' | '\n' => *keep_line_breaks,
                 '\r' => *keep_line_breaks && chars.next() == Some('\n'),
                 '\0'..='\x1f' | '\x7f' | '\u{80}'..='\u{9f}' => false,
+                '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => false,
                 _ => true,
             };
             if pass_through {
@@ -3693,6 +3685,38 @@ pub trait OutOfRangeValue {
 impl OutOfRangeValue for f64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", double(*self))
+    }
+    fn type_name() -> &'static str {
+        "f64"
+    }
+}
+/// A number as Node's `ERR_OUT_OF_RANGE` prints it: `-0`, and an integer beyond 2 ** 32 with `addNumericalSeparator`.
+pub struct NodeNumber(pub f64);
+impl Display for NodeNumber {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let Self(number) = *self;
+        if number == 0.0 && number.is_sign_negative() {
+            return f.write_str("-0");
+        }
+        let digits = double(number).to_string();
+        let sign = usize::from(number < 0.0);
+        let is_large = number.is_finite() && number.fract() == 0.0 && number.abs() > 4294967296.0;
+        let ungrouped = if is_large {
+            sign + (digits.len() - sign - 1) % 3 + 1
+        } else {
+            digits.len()
+        };
+        f.write_str(&digits[..ungrouped])?;
+        for group in digits.as_bytes()[ungrouped..].chunks(3) {
+            f.write_char('_')?;
+            write_bytes(f, group)?;
+        }
+        Ok(())
+    }
+}
+impl OutOfRangeValue for NodeNumber {
+    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, " Received {self}")
     }
     fn type_name() -> &'static str {
         "f64"

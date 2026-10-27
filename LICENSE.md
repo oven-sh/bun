@@ -22,7 +22,7 @@ Bun statically links these libraries:
 |---------|---------|
 | [`boringssl`](https://boringssl.googlesource.com/boringssl/) | [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE) |
 | [`brotli`](https://github.com/google/brotli) | MIT |
-| [`libarchive`](https://github.com/libarchive/libarchive) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
+| [`libarchive`](https://github.com/libarchive/libarchive) (not linked: `src/tar` is derived from parts of it) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
 | [`ls-hpack`](https://github.com/litespeedtech/ls-hpack) | MIT |
 | [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
@@ -73,6 +73,7 @@ Bun statically links these libraries:
 | `bun fmt` has ports of [`jest-docblock`](https://github.com/jestjs/jest/tree/main/packages/jest-docblock) and the crates [`sort-package-json`](https://crates.io/crates/sort-package-json) and [`oxc-toml`](https://crates.io/crates/oxc-toml) (a fork of taplo), and of parts of [`@babel/generator`](https://github.com/babel/babel), [`micromark`](https://github.com/micromark/micromark) and [`editorconfig-without-wasm`](https://github.com/fisker/editorconfig-core-js-without-wasm). Its character width tables are generated from [`emoji-regex`](https://github.com/mathiasbynens/emoji-regex), [`get-east-asian-width`](https://github.com/sindresorhus/get-east-asian-width) and [`narrow-emojis`](https://npmjs.com/package/narrow-emojis) | MIT |
 | Tailwind class sorting in `bun fmt` is a port of parts of [`prettier-plugin-tailwindcss`](https://github.com/tailwindlabs/prettier-plugin-tailwindcss) | MIT |
 | Svelte formatting in `bun fmt` is a port of [`prettier-plugin-svelte`](https://github.com/sveltejs/prettier-plugin-svelte) and of the template parser of [Svelte](https://github.com/sveltejs/svelte) | MIT |
+| With `prettier-plugin-packagejson` in a Prettier config, `bun fmt` sorts `package.json` with a port of the npm package [`sort-package-json`](https://github.com/keithamus/sort-package-json) and the list in [`git-hooks-list`](https://github.com/fisker/git-hooks-list) | MIT |
 
 The tests in `test/cli/lint/conformance` and `test/cli/format` include test cases from ESLint, typescript-eslint, the ESLint plugins above, oxc, tsgolint, Prettier and the two import sorting plugins. They are not part of the `bun` binary. Their licenses are next to them.
 

@@ -10,9 +10,12 @@ use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
 use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 
-// Length-checked: the walker opens each directory from its parent, so entry paths are unbounded.
+// Length-checked, because the walker opens each directory from its parent, so entry paths can be
+// arbitrarily long.
 type OsAbsPath = AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
-type OsPath = Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
+// `PathSeparators::ANY` appends the walker's paths unchanged. They already use the native
+// separator, and `AUTO` would rewrite a `\` that is part of a file name on POSIX.
+type OsPath = Path<OSPathChar, { Kind::ANY }, { PathSeparators::ANY }, { CheckLength::CHECK }>;
 
 pub(crate) struct Hardlinker {
     pub(crate) src: OsAbsPath,
@@ -33,7 +36,7 @@ impl Hardlinker {
     ) -> Result<Hardlinker, AllocError> {
         Ok(Hardlinker {
             src: src.into_checked(),
-            dest: dest.into_checked(),
+            dest: dest.into_sep::<{ PathSeparators::ANY }>().into_checked(),
             walker: {
                 let mut w = bun_sys::walker_skippable::walk(
                     folder_dir,
@@ -152,9 +155,11 @@ impl Hardlinker {
                                                 self.src.slice(),
                                                 Default::default()
                                             ),
-                                            bun_core::fmt::fmt_os_path(
-                                                destfile_path.as_slice(),
-                                                Default::default()
+                                            bun_core::fmt::EscapeControlChars(
+                                                bun_core::fmt::fmt_os_path(
+                                                    destfile_path.as_slice(),
+                                                    Default::default()
+                                                )
                                             ),
                                         );
                                     }
@@ -175,9 +180,11 @@ impl Hardlinker {
                                                 self.src.slice(),
                                                 Default::default()
                                             ),
-                                            bun_core::fmt::fmt_os_path(
-                                                destfile_path.as_slice(),
-                                                Default::default()
+                                            bun_core::fmt::EscapeControlChars(
+                                                bun_core::fmt::fmt_os_path(
+                                                    destfile_path.as_slice(),
+                                                    Default::default()
+                                                )
                                             ),
                                         );
                                     }

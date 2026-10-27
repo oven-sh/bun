@@ -29,13 +29,15 @@ type Map = StringArrayHashMap<Entry>;
 pub struct Entry {
     pub(crate) name: Box<[u8]>,
     pub(crate) version: Option<Box<[u8]>>,
-    pub(crate) name_loc: bun_ast::Loc,
     /// `"installConfig": { "hoistingLimits": "workspaces" }` — this workspace's
     /// node_modules must be self-contained (see `Lockfile::self_contained_workspaces`).
     pub(crate) hoisting_limits: bool,
     /// An `installConfig.hoistingLimits` value other than "workspaces" or "none", kept so
     /// the caller can warn about it (outside `process_names_array`'s log window).
     pub(crate) unsupported_hoisting_limits: Option<Box<[u8]>>,
+    /// Whether the glob walk followed a symlink to reach this workspace's folder. `None` means no
+    /// walk could tell, so the code that needs the answer has to check the disk.
+    pub(crate) is_behind_link: Option<bool>,
 }
 
 impl WorkspaceMap {
@@ -52,8 +54,8 @@ impl WorkspaceMap {
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
-                    "Skipping workspace \"{}\": its package.json has no \"name\", so its dependencies will not be installed",
-                    BStr::new(dir)
+                    "skipping workspace \"{}\": package.json has no \"name\"",
+                    bun_core::fmt::escape_control_chars(dir)
                 ),
             );
         }
@@ -170,15 +172,20 @@ pub(crate) enum MissingWorkspace<'a> {
     Error,
     Skip,
     SkipIfInLockfile(&'a Lockfile),
+    /// Like `Skip`, and also skips a workspace whose package.json is empty. `bun install` exits on
+    /// an empty package.json, but runtime auto-install must let the running program continue.
+    SkipEmptyToo,
 }
 
-/// `None`: no usable `"name"`, so nothing to link or resolve it by; skipped, as pnpm and npm do.
+/// Returns `None` if there's no usable `"name"`. Nothing could link to or resolve such a workspace,
+/// so it's skipped, like in pnpm and npm.
 fn process_workspace_name(
     workspace_names: &mut WorkspaceMap,
     json_cache: &mut WorkspacePackageJSONCache,
     abs_package_json_path: &[u8],
     dir: &[u8],
     log: &mut bun_ast::Log,
+    missing_workspace: MissingWorkspace<'_>,
 ) -> crate::Result<Option<Entry>> {
     let workspace_json = json_cache
         .get_with_path(
@@ -192,6 +199,9 @@ fn process_workspace_name(
         )
         .unwrap()?;
     if workspace_json.source.contents.is_empty() {
+        if matches!(missing_workspace, MissingWorkspace::SkipEmptyToo) {
+            return Ok(None);
+        }
         crate::package_manager_real::install_with_manager::exit_on_empty_package_json(
             abs_package_json_path,
         );
@@ -204,11 +214,10 @@ fn process_workspace_name(
     let name = match workspace_json.root.get(b"name") {
         Some(name_expr) => name_expr
             .as_string_cloned(&scratch)?
-            .filter(|name| !name.is_empty())
-            .map(|name| (name, name_expr.loc)),
+            .filter(|name| !name.is_empty()),
         None => None,
     };
-    let Some((name, name_loc)) = name else {
+    let Some(name) = name else {
         bun_output::scoped_log!(
             Lockfile,
             "processWorkspaceName({}) has no name, skipping",
@@ -241,7 +250,6 @@ fn process_workspace_name(
     };
     let entry = Entry {
         name: Box::<[u8]>::from(name),
-        name_loc,
         hoisting_limits: hoisting_limits.as_deref() == Some(b"workspaces".as_slice()),
         unsupported_hoisting_limits: match hoisting_limits {
             // "none" is yarn's default: no limit, which is how every workspace hoists
@@ -256,6 +264,7 @@ fn process_workspace_name(
             }
             break 'brk None;
         },
+        is_behind_link: None,
     };
     bun_output::scoped_log!(
         Lockfile,
@@ -286,7 +295,7 @@ fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
 }
 
 /// The absolute directory that the `workspaces` of `source` are relative to.
-pub(crate) fn package_json_dir(source: &bun_ast::Source) -> &[u8] {
+pub(crate) fn package_json_dir<'a>(source: &bun_ast::Source<'a>) -> &'a [u8] {
     let dir = keeping_root(source.path.name().dir, source.path.text);
     if dir.is_empty() {
         return bun_resolver::fs::FileSystem::instance().top_level_dir();
@@ -318,10 +327,10 @@ fn add_glob_error(
         Some(source),
         loc,
         "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r> ({} \"{}\")",
-        BStr::new(user_pattern),
+        bun_core::fmt::escape_control_chars(user_pattern),
         BStr::new(err.name()),
         <&'static str>::from(err.syscall),
-        BStr::new(failed_path),
+        bun_core::fmt::escape_control_chars(failed_path),
     );
     crate::Error::InstallFailed
 }
@@ -342,7 +351,8 @@ fn relative_workspace_path<'b>(
 }
 
 impl WorkspaceMap {
-    /// `"workspaces"`: an array, or an object with a `"packages"` array. Any other lists nothing.
+    /// `"workspaces"` is an array, or an object with a `"packages"` array. Any other value means no
+    /// workspaces.
     pub(crate) fn process_manifest(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
@@ -441,6 +451,7 @@ impl WorkspaceMap {
                         abs_package_json_path,
                         dir,
                         log,
+                        missing_workspace,
                     )
                     .map(|entry| (dir, entry))
                 }
@@ -452,7 +463,7 @@ impl WorkspaceMap {
                 Err(err) => {
                     if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                         let tolerated = match missing_workspace {
-                            MissingWorkspace::Skip => true,
+                            MissingWorkspace::Skip | MissingWorkspace::SkipEmptyToo => true,
                             MissingWorkspace::Error => false,
                             MissingWorkspace::SkipIfInLockfile(lockfile) => abs_package_json_path
                                 .is_some_and(|abs| {
@@ -477,7 +488,10 @@ impl WorkspaceMap {
                         let _ = log.add_error_fmt(
                             Some(source),
                             arr.item_loc(source, i),
-                            format_args!("Workspace not found \"{}\"", BStr::new(input_path)),
+                            format_args!(
+                                "Workspace not found \"{}\"",
+                                bun_core::fmt::escape_control_chars(input_path)
+                            ),
                         );
                     } else {
                         let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
@@ -488,7 +502,7 @@ impl WorkspaceMap {
                             format_args!(
                                 "{} reading package.json for workspace package \"{}\" from \"{}\"",
                                 err.name(),
-                                BStr::new(input_path),
+                                bun_core::fmt::escape_control_chars(input_path),
                                 BStr::new(&cwd_buf[..cwd_len]),
                             ),
                         );
@@ -561,6 +575,10 @@ impl WorkspaceMap {
                         }
                     };
                     let matched_path: &[u8] = &matched_path_owned;
+                    // The walk of an absolute pattern starts at its first wildcard, so it cannot
+                    // see symlinks in the part of the path before that.
+                    let is_behind_link =
+                        (!path::is_absolute(user_pattern)).then(|| iter.followed_link());
 
                     let entry_dir: &[u8] =
                         resolve_path::dirname::<path::platform::Auto>(matched_path);
@@ -587,7 +605,7 @@ impl WorkspaceMap {
                                 root_dir,
                                 workspace_dir_of(abs_package_json_path),
                             );
-                            // skip root package.json: `**`, or `../*` matching it again
+                            // Skip the root package.json, which `**` or `../*` can match again.
                             if dir.is_empty() {
                                 continue;
                             }
@@ -598,6 +616,7 @@ impl WorkspaceMap {
                                 abs_package_json_path,
                                 dir,
                                 log,
+                                missing_workspace,
                             )
                             .map(|entry| (dir, entry))
                         }
@@ -617,8 +636,8 @@ impl WorkspaceMap {
                                 format_args!(
                                     "{} reading package.json for workspace package \"{}\" from \"{}\"",
                                     err.name(),
-                                    BStr::new(entry_dir),
-                                    BStr::new(entry_base),
+                                    bun_core::fmt::escape_control_chars(entry_dir),
+                                    bun_core::fmt::escape_control_chars(entry_base),
                                 ),
                             );
                             continue;
@@ -631,7 +650,10 @@ impl WorkspaceMap {
                     workspace_names.insert(
                         string_builder.as_deref_mut(),
                         workspace_path,
-                        workspace_entry,
+                        Entry {
+                            is_behind_link,
+                            ..workspace_entry
+                        },
                     )?;
                 }
             }
@@ -650,6 +672,75 @@ impl WorkspaceMap {
 
         Ok(workspace_names.count() as u32)
     }
+
+    /// Returns true if [`Self::process_names_array`] would make `abs_dir` a workspace, given that
+    /// `abs_dir` has a named package.json. It never reads the disk, so `**` also matches through a
+    /// symlink.
+    pub(crate) fn lists(arr: NamesArray<'_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
+        let root_dir: &[u8] = package_json_dir(source);
+        let mut dir_buf = path::path_buffer_pool::get();
+        let dir = relative_workspace_path(&mut dir_buf.0, root_dir, abs_dir);
+        if dir.is_empty() {
+            return false;
+        }
+        let mut abs_buf = path::path_buffer_pool::get();
+        let mut rel_buf = path::path_buffer_pool::get();
+        let scratch = Arena::new();
+        let mut negated = NegatedWorkspaces::default();
+        let mut matched = false;
+        for i in 0..arr.len() {
+            let Some(input_path) = arr.item_str(i, &scratch) else {
+                return false;
+            };
+            if matches!(input_path, b"" | b"." | b"./" | b".\\") {
+                continue;
+            }
+            if glob::detect_glob_syntax(input_path) {
+                if !negated.take(input_path) {
+                    matched = matched || glob_lists(input_path, dir, abs_dir);
+                }
+                continue;
+            }
+            // A workspace listed by its exact path is a member even if a negated pattern matches.
+            if resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                root_dir,
+                &mut abs_buf.0[..],
+                &[input_path],
+            )
+            .is_some_and(|abs| relative_workspace_path(&mut rel_buf.0, root_dir, abs) == dir)
+            {
+                return true;
+            }
+        }
+        matched && !negated.excludes(dir)
+    }
+}
+
+/// Returns true if the glob `user_pattern` matches the package.json in `dir`. `abs_dir` is the
+/// absolute path of `dir`, which is what an absolute pattern is matched against.
+fn glob_lists(user_pattern: &[u8], dir: &[u8], abs_dir: &[u8]) -> bool {
+    let dir = if path::is_absolute(user_pattern) {
+        abs_dir
+    } else {
+        dir
+    };
+    if strings::split_any(dir, b"/\\").any(ignored_workspace_paths) {
+        return false;
+    }
+    let mut spill: Vec<u8> = Vec::new();
+    let mut pattern = resolve_path::join_spill::<path::platform::Auto>(
+        &mut spill,
+        &[user_pattern, b"package.json"],
+    )
+    .to_vec();
+    resolve_path::platform_to_posix_in_place::<u8>(&mut pattern);
+    glob::matcher::match_prepared::<{ cfg!(windows) }>(
+        &pattern,
+        &glob::matcher::Shape::of(&pattern),
+        &[dir, b"/package.json"].concat(),
+        glob::Dots::Hide,
+    )
+    .matches()
 }
 
 const IGNORED_PATHS: &[&[u8]] = &[b"node_modules", b".git", b"CMakeFiles"];

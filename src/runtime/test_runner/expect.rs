@@ -1392,6 +1392,9 @@ impl Expect {
                 js_promise::Status::Fulfilled => {}
                 js_promise::Status::Rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
+                    if let Some(runner) = Jest::runner() {
+                        runner.bun_test_root.on_before_print();
+                    }
                     // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
                     bun_test::print_error(VirtualMachine::get().as_mut(), global_this, result, None);
                     return Err(global_this.throw(format_args!(

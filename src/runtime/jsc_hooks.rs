@@ -1922,7 +1922,7 @@ unsafe fn retroactively_report_discovered_tests(
 // ════════════════════════════════════════════════════════════════════════════
 
 /// `Jest.runner.?.bun_test_root.onBeforePrint()` — flush the test reporter's
-/// line state before user `console.log` output interleaves with it.
+/// line state before the output of a console method interleaves with it.
 fn console_on_before_print() {
     if let Some(runner) = crate::test_runner::jest::Jest::runner() {
         runner.bun_test_root.on_before_print();

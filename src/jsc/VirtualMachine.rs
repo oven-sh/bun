@@ -2935,7 +2935,7 @@ pub struct RuntimeHooks {
     /// slot instead of the linker.
     pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
-    /// `console.log` calls this so the test reporter can flush its line state
+    /// the native console's printing methods, all but `clear`, call this so the test reporter can flush its line state
     /// before user output interleaves with it. No-op when `bun test` isn't
     /// running.
     pub console_on_before_print: fn(),

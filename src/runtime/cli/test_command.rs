@@ -1302,7 +1302,11 @@ impl CommandLineReporter {
                         let _ = bun_core::write_pretty!(writer, colors, "<r><red>.<r>");
                     }
                 }
-                reporter_ref.unwrap().last_printed_dot.set(true);
+                let reporter = reporter_ref.unwrap();
+                // The --parallel coordinator prints the dot and ends the line of dots.
+                if reporter.worker_ipc_file_idx.is_none() {
+                    reporter.last_printed_dot.set(true);
+                }
             } else if basic != bun_test::BasicResult::Fail
                 && reporter_ref.is_some_and(|r| r.reporters.only_failures)
             {

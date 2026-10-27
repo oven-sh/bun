@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -200,6 +200,7 @@ plugin({
 // This is to test that it works when imported from a separate file
 import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
+// @ts-expect-error resolved by package.json "module"
 import "../../third_party/svelte";
 import "./module-plugins";
 
@@ -275,7 +276,7 @@ describe("module", () => {
           loader: "object",
         }));
       },
-    });
+    } as Bun.BunPlugin);
 
     {
       const { there, hello } = require("my-virtual-module-sync");
@@ -292,7 +293,7 @@ describe("module", () => {
           loader: "object",
         }));
       },
-    });
+    } as Bun.BunPlugin);
 
     {
       // @ts-expect-error
@@ -301,6 +302,40 @@ describe("module", () => {
       expect(hello).toBeUndefined();
       expect(there).toBeUndefined();
     }
+  });
+
+  it("a bun: module that is not a builtin works with import and require()", async () => {
+    Bun.plugin({
+      name: "a bun: module that is not a builtin",
+      setup(builder) {
+        builder.module("bun:my-virtual-module", () => ({
+          exports: {
+            hello: "world",
+          },
+          loader: "object",
+        }));
+
+        builder.onResolve({ filter: /^my-resolved-module$/, namespace: "bun" }, ({ path }) => ({
+          path,
+          namespace: "my-resolved-namespace",
+        }));
+        builder.onLoad({ filter: /.*/, namespace: "my-resolved-namespace" }, ({ path }) => ({
+          exports: {
+            hello: path,
+          },
+          loader: "object",
+        }));
+      },
+    });
+
+    // @ts-expect-error
+    expect((await import("bun:my-virtual-module")).hello).toBe("world");
+    expect(require("bun:my-virtual-module").hello).toBe("world");
+    expect(require.resolve("bun:my-virtual-module")).toBe("bun:my-virtual-module");
+
+    // @ts-expect-error
+    expect((await import("bun:my-resolved-module")).hello).toBe("my-resolved-module");
+    expect(require("bun:my-resolved-module").hello).toBe("my-resolved-module");
   });
 });
 
@@ -722,13 +757,39 @@ it("require(...) with __esModule", () => {
 });
 
 it("import(...) with __esModule", async () => {
+  // @ts-expect-error
   const { default: mod } = await import("my-virtual-module-with-__esModule");
   expect(mod).toBe("world");
 });
 
 it("import(...) without __esModule", async () => {
+  // @ts-expect-error
   const { default: mod } = await import("my-virtual-module-with-default");
   expect(mod).toBe("world");
+});
+
+it("builder methods return the builder only when called as methods", () => {
+  plugin({
+    name: "builder receiver",
+    setup(builder) {
+      const options = { filter: /.*/, namespace: "builder-receiver" };
+      const virtualModule = () => ({ exports: {}, loader: "object" }) as const;
+      expect([
+        builder.onResolve(options, () => undefined),
+        builder.onLoad(options, () => undefined),
+        builder.module("builder-receiver-virtual-module", virtualModule),
+      ]).toEqual([builder, builder, builder]);
+
+      const { onResolve, onLoad, module: defineModule } = builder;
+      // JSC passes the scope object as the receiver of a call through a closed-over binding.
+      const bare = () => [
+        onResolve(options, () => undefined),
+        onLoad(options, () => undefined),
+        defineModule("builder-receiver-virtual-module-bare", virtualModule),
+      ];
+      expect(bare()).toEqual([undefined, undefined, undefined]);
+    },
+  });
 });
 
 it("recursion throws stack overflow", () => {
@@ -1043,6 +1104,71 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// A macro runs JS in the middle of transpiling. Afterwards, the printer reads the
+// module's names and strings from the source again.
+it.concurrent("transpiles the original typed array onLoad contents when a macro overwrites them", async () => {
+  using dir = tempDir("plugin-contents-macro", {
+    "macro.ts": `
+      export function clobber() {
+        globalThis.contents.fill(0x20);
+        globalThis.contents.buffer.transfer();
+        return "clobbered";
+      }
+    `,
+    "index.ts": `
+      import { plugin } from "bun";
+      import { join } from "node:path";
+
+      const source = new TextEncoder().encode(
+        "import { clobber } from " + JSON.stringify(join(import.meta.dir, "macro.ts")) + ' with { type: "macro" };\\n' +
+        "export const fromTheMacro = clobber();\\n" +
+        "export const afterTheMacro = 'after the macro';\\n",
+      );
+
+      // The view has its own ArrayBuffer so that transfer() detaches exactly these bytes.
+      function contents() {
+        globalThis.contents = new Uint8Array(new ArrayBuffer(source.length));
+        globalThis.contents.set(source);
+        return globalThis.contents;
+      }
+
+      plugin({
+        name: "typed array contents",
+        setup(build) {
+          build.onResolve({ filter: /.*/, namespace: "bytes" }, ({ path }) => ({ path, namespace: "bytes" }));
+          build.onLoad({ filter: /plain/, namespace: "bytes" }, () => ({ contents: contents(), loader: "ts" }));
+          build.onLoad({ filter: /promise/, namespace: "bytes" }, async () => ({ contents: contents(), loader: "ts" }));
+          build.module("bytes-module", () => ({ contents: contents(), loader: "ts" }));
+        },
+      });
+
+      const results = {};
+      for (const specifier of ["bytes:plain", "bytes:promise", "bytes-module"]) {
+        const { fromTheMacro, afterTheMacro } = await import(specifier);
+        results[specifier] = { fromTheMacro, afterTheMacro, byteLength: globalThis.contents.byteLength };
+      }
+      console.log(JSON.stringify(results));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const transpiled = { fromTheMacro: "clobbered", afterTheMacro: "after the macro", byteLength: 0 };
+  // Debug builds log each macro call to stdout first.
+  expect({ result: stdout.trim().split("\n").at(-1), stderr: stderr.trim(), exitCode }).toEqual({
+    result: JSON.stringify({ "bytes:plain": transpiled, "bytes:promise": transpiled, "bytes-module": transpiled }),
+    stderr: "",
+    exitCode: 0,
   });
 });
 
@@ -1650,5 +1776,237 @@ describe.concurrent("onResolve", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+describe.concurrent("object loader: keeps the exports object alive as long as its source", () => {
+  async function run(entry: string) {
+    using dir = tempDir("plugin-object-loader-source", {
+      "entry.ts": `
+        const exports = () => ({ exports: { v: 1, list: [1, 2, 3] }, loader: "object" });
+        Bun.plugin({ name: "virtual", setup(build) { build.module("virtual:x", exports); } });
+        ${entry}
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  // The in-flight import() builds a second module from the same source.
+  it("survives delete require.cache while an import() is in flight", async () => {
+    expect(
+      await run(`
+        const seen = new Set();
+        for (let round = 0; round < 10; round++) {
+          await import("virtual:x");
+          const inFlight = import("virtual:x");
+          delete require.cache["virtual:x"];
+          Bun.gc(true);
+          const others = Array.from({ length: 1000 }, (_, i) => ({ other: i, object: [i] }));
+          seen.add(JSON.stringify(await inFlight));
+          others.length = 0;
+        }
+        console.log([...seen].join("\\n"));
+      `),
+    ).toEqual({ stdout: `{"list":[1,2,3],"v":1}\n`, exitCode: 0 });
+  });
+
+  // The loader builds a module from only one of the two sources.
+  it("two concurrent import() calls don't leak protected objects", async () => {
+    expect(
+      await run(`
+        const { heapStats } = require("bun:jsc");
+        Bun.gc(true);
+        const before = heapStats().protectedObjectCount;
+        for (let round = 0; round < 20; round++) {
+          await Promise.all([import("virtual:x"), import("virtual:x")]);
+          delete require.cache["virtual:x"];
+        }
+        Bun.gc(true);
+        console.log("protected:", heapStats().protectedObjectCount - before);
+      `),
+    ).toEqual({ stdout: "protected: 0\n", exitCode: 0 });
+  });
+});
+
+describe("namespace validation", () => {
+  const neverMatches = /(?!)/;
+  const rejection = { name: "Error", message: "namespace can only contain letters, numbers, dashes, or underscores" };
+  const accepted = { onLoad: null, onResolve: null };
+  const rejected = { onLoad: rejection, onResolve: rejection };
+
+  function thrownBy(setup: (build: import("bun").PluginBuilder) => void) {
+    try {
+      plugin({ name: "namespace validation", setup });
+    } catch (error: any) {
+      return { name: error.name, message: error.message };
+    }
+    return null;
+  }
+
+  function register(namespace: string) {
+    return {
+      onLoad: thrownBy(build => build.onLoad({ filter: neverMatches, namespace }, () => ({ contents: "" }))),
+      onResolve: thrownBy(build => build.onResolve({ filter: neverMatches, namespace }, () => undefined)),
+    };
+  }
+
+  it.each([
+    ["abc-DEF_09", "accepted"],
+    ["@scope/pkg", "accepted"],
+    ["", "rejected"],
+    ["a b", "rejected"],
+    ["a.b", "rejected"],
+    ["a\0b", "rejected"],
+    ["héllo", "rejected"],
+    ["a😀b", "rejected"],
+  ])("%j is %s", (namespace, verdict) => {
+    expect(register(namespace)).toEqual(verdict === "accepted" ? accepted : rejected);
+  });
+
+  // Not concurrent because the child uses four busy threads.
+  it("validates correctly while four threads register plugins concurrently", async () => {
+    using dir = tempDir("plugin-namespace-threads", {
+      "entry.js": `
+        // Long enough that each thread spends most of its time in the namespace check.
+        const long = Buffer.alloc(16384, "a").toString();
+        const namespaces = ["abc", "abc-def", "a/b", "@scope/pkg", "A_Z-0/9", "x"].map(name => long + name);
+        const rejection = "namespace can only contain letters, numbers, dashes, or underscores";
+        const filter = /.*/;
+        const callback = () => undefined;
+
+        function registerPlugins(progress, thread) {
+          try {
+            Bun.plugin({
+              name: "thread " + thread,
+              setup(build) {
+                // Every thread runs until all four have done 20 rounds, so their work overlaps.
+                while (Math.min(...progress) < 20) {
+                  for (const namespace of namespaces) {
+                    build.onLoad({ filter, namespace }, callback);
+                    build.onResolve({ filter, namespace }, callback);
+                  }
+
+                  let message;
+                  try {
+                    build.onResolve({ filter, namespace: "not valid" }, callback);
+                  } catch (error) {
+                    message = error.message;
+                  }
+                  if (message !== rejection) {
+                    throw new Error("thread " + thread + ': "not valid" was not rejected: ' + message);
+                  }
+                  progress[thread]++;
+                }
+              },
+            });
+          } finally {
+            // A failed thread must not block the others.
+            progress[thread] = 2 ** 31 - 1;
+          }
+        }
+
+        if (Bun.isMainThread) {
+          function reply(worker, expected) {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            worker.onmessage = ({ data }) => (data === expected ? resolve() : reject(new Error(data)));
+            worker.onerror = event => reject(new Error(event.message));
+            return promise;
+          }
+
+          const workers = Array.from({ length: 3 }, () => new Worker(import.meta.url));
+          const progress = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * (workers.length + 1)));
+          await Promise.all(workers.map(worker => reply(worker, "ready")));
+          const finished = workers.map(worker => reply(worker, "done"));
+          workers.forEach((worker, index) => worker.postMessage({ progress, thread: index + 1 }));
+          registerPlugins(progress, 0);
+          await Promise.all(finished);
+          console.log("ok");
+        } else {
+          // { once: true } removes the listener, which lets the worker exit.
+          addEventListener(
+            "message",
+            ({ data: { progress, thread } }) => {
+              try {
+                registerPlugins(progress, thread);
+                postMessage("done");
+              } catch (error) {
+                postMessage(String(error));
+              }
+            },
+            { once: true },
+          );
+          postMessage("ready");
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// The module key's bytes are freed with the module, after a failed load or `delete require.cache[key]`.
+it.concurrent("the path passed to onLoad is still valid after the module is freed", async () => {
+  const source = `
+    const kept = { failed: [], failedInNamespace: [], deleted: [] };
+    Bun.plugin({
+      name: "keeps args.path",
+      setup(build) {
+        build.onResolve({ filter: /\\.(failed|deleted)$/ }, ({ path }) => ({ path }));
+        build.onLoad({ filter: /\\.failed$/ }, ({ path }) => { kept.failed.push(path); throw new Error("not loaded"); });
+        build.onLoad({ filter: /\\.deleted$/ }, ({ path }) => { kept.deleted.push(path); return { exports: {}, loader: "object" }; });
+        build.onResolve({ filter: /\\.failed-in-namespace$/ }, ({ path }) => ({ path, namespace: "kept" }));
+        build.onLoad({ filter: /.*/, namespace: "kept" }, ({ path }) => { kept.failedInNamespace.push(path); throw new Error("not loaded"); });
+      },
+    });
+    const key = (i, extension) => "/absent/a-path-that-is-long-enough-to-have-a-buffer-of-its-own/" + i + extension;
+    for (let i = 0; i < 50; i++) {
+      try { require(key(i, ".failed")); } catch {}
+      try { require(key(i, ".failed-in-namespace")); } catch {}
+      require(key(i, ".deleted"));
+      delete require.cache[key(i, ".deleted")];
+    }
+    Bun.gc(true);
+    const others = [];
+    for (let i = 0; i < 2000; i++) others.push("another string that is given the memory that was freed " + i);
+    Bun.gc(true);
+    const changed = (paths, extension) => paths.length + " kept, " + paths.filter((path, i) => path !== key(i, extension)).length + " changed";
+    console.log("failed: " + changed(kept.failed, ".failed"));
+    console.log("failed in a namespace: " + changed(kept.failedInNamespace, ".failed-in-namespace"));
+    console.log("deleted: " + changed(kept.deleted, ".deleted"));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: {
+      ...bunEnv,
+      // With the system allocator, ASAN reports a read of the freed bytes.
+      ...(isWindows ? {} : { Malloc: "1" }),
+      // symbolize=0: symbolizing a failure report is slower than the test timeout.
+      // detect_leaks=0: Malloc=1 exposes JSC's never-freed startup allocations to LSAN.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "failed: 50 kept, 0 changed\nfailed in a namespace: 50 kept, 0 changed\ndeleted: 50 kept, 0 changed\n",
+    stderr: "",
+    exitCode: 0,
   });
 });

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isIPv6, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
@@ -35,7 +35,7 @@ async function createServer(cert: TLSOptions, callback: (port: number) => Promis
       return new Response("Hello World");
     },
   });
-  await callback(server.port);
+  await callback(server.port!);
 }
 
 describe.concurrent("fetch-tls", () => {
@@ -69,11 +69,14 @@ describe.concurrent("fetch-tls", () => {
     // whose certificate the callback has not approved. So a redirect chain
     // yields one observation per hop, in order. The hostname handed to the
     // callback is the URL host of that hop: a request-level Host header is an
-    // HTTP field only and never becomes the TLS identity.
+    // HTTP field only and never becomes the TLS identity. The two hops use
+    // different URL hosts, and the Host header names neither, so the second
+    // observation proves the identity is re-derived from the redirect target
+    // rather than inherited from the first hop or taken from the header.
     const verifiedHostnames: string[] = [];
-    const res = await fetch(`https://127.0.0.1:${origin.port}/`, {
+    const res = await fetch(`https://localhost:${origin.port}/`, {
       keepalive: false,
-      headers: { Host: "localhost" },
+      headers: { Host: "other.example" },
       tls: {
         ca: validTls.cert,
         checkServerIdentity(hostname: string) {
@@ -84,7 +87,7 @@ describe.concurrent("fetch-tls", () => {
     });
     expect(await res.text()).toBe("from-target");
 
-    expect(verifiedHostnames).toEqual(["127.0.0.1", "127.0.0.1"]);
+    expect(verifiedHostnames).toEqual(["localhost", "127.0.0.1"]);
     // The redirect target must see a Host header derived from its own URL,
     // not the override that was supplied for the previous origin.
     expect(receivedHostHeaders).toEqual([`127.0.0.1:${target.port}`]);
@@ -347,7 +350,7 @@ describe.concurrent("fetch-tls", () => {
         expect(result?.size).toBeGreaterThan(0);
         expect(called).toBe(true);
       }
-      const promises = [];
+      const promises: Promise<void>[] = [];
       for (let i = 0; i < 5; i++) {
         promises.push(request());
       }
@@ -726,6 +729,24 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/44365
+  it("trusts a self-issued certificate without keyCertSign only when `ca` holds that very certificate", async () => {
+    const pem = (name: string) =>
+      readFileSync(join(import.meta.dir, "../../node/tls/fixtures/pinned-leaf", name), "utf8");
+    const attempt = (port: number, ca: string) =>
+      fetch(`https://localhost:${port}`, { keepalive: false, tls: { ca } }).then(
+        res => res.text(),
+        error => error.code,
+      );
+    await createServer({ key: pem("dev-key.pem"), cert: pem("dev-cert.pem") }, async port => {
+      expect(await attempt(port, pem("dev-cert.pem"))).toBe("Hello World");
+      expect(await attempt(port, pem("other-key-cert.pem"))).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    });
+    await createServer({ key: pem("expired-key.pem"), cert: pem("expired-cert.pem") }, async port => {
+      expect(await attempt(port, pem("expired-cert.pem"))).toBe("CERT_HAS_EXPIRED");
+    });
+  });
+
   it("fetch with invalid tls should throw", async () => {
     await createServer(CERT_EXPIRED, async port => {
       await Promise.all(
@@ -971,7 +992,7 @@ describe.concurrent("fetch-tls", () => {
     const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       const chunks: Buffer[] = [];
       receivedPerConnection.push(chunks);
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
         // Reply to any complete request so the control fetch below can
         // round-trip.
@@ -1037,7 +1058,7 @@ describe.concurrent("fetch-tls", () => {
     const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       const chunks: Buffer[] = [];
       receivedPerConnection.push(chunks);
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
         // Reply once the request headers have fully arrived.
         if (Buffer.concat(chunks).includes("\r\n\r\n")) {
@@ -1079,7 +1100,7 @@ describe.concurrent("fetch-tls", () => {
     let connections = 0;
     const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       const chunks: Buffer[] = [];
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
         if (Buffer.concat(chunks).includes("\r\n\r\n")) {
           chunks.length = 0;
@@ -1347,7 +1368,7 @@ describe.concurrent("fetch-tls", () => {
       socket => {
         secureConnections++;
         const chunks: Buffer[] = [];
-        socket.on("data", chunk => {
+        socket.on("data", (chunk: Buffer) => {
           chunks.push(chunk);
           if (Buffer.concat(chunks).includes("\r\n\r\n")) {
             socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
@@ -1424,7 +1445,7 @@ describe.concurrent("fetch-tls", () => {
     await createServer(CERT_EXPIRED, async port => {
       const url = `https://localhost:${port}`;
 
-      const promises = [];
+      const promises: Promise<number>[] = [];
       for (let i = 0; i < 2; i++) {
         const proc = Bun.spawn({
           env: {
@@ -1529,7 +1550,7 @@ describe.concurrent("fetch-tls", () => {
         }
         return new Response(body);
       },
-    });
+    } as Bun.Serve.Options<undefined>);
     const start = performance.now();
     const TIMEOUT = 200;
     const THRESHOLD = 150 * (isASAN ? 2 : 1); // ASAN can be very slow, so we need to increase the threshold for it
@@ -1540,7 +1561,7 @@ describe.concurrent("fetch-tls", () => {
         tls: { ca: validTls.cert },
       }).then(res => res.text());
       expect.unreachable();
-    } catch (e) {
+    } catch (e: any) {
       expect(e.name).toBe("TimeoutError");
     } finally {
       const total = performance.now() - start;
@@ -1563,7 +1584,7 @@ describe.concurrent("fetch-tls", () => {
     const proc = Bun.spawn({
       env: {
         ...bunEnv,
-        SERVER: server.url,
+        SERVER: server.url as any,
         NODE_EXTRA_CA_CERTS: cert_path,
       },
       stderr: "inherit",
@@ -1591,7 +1612,7 @@ describe.concurrent("fetch-tls", () => {
     const proc = Bun.spawn({
       env: {
         ...bunEnv,
-        SERVER: server.url,
+        SERVER: server.url as any,
         NODE_EXTRA_CA_CERTS: bundlePath,
       },
       stderr: "inherit",
@@ -1616,7 +1637,7 @@ describe.concurrent("fetch-tls", () => {
       const proc = Bun.spawn({
         env: {
           ...bunEnv,
-          SERVER: server.url,
+          SERVER: server.url as any,
           NODE_EXTRA_CA_CERTS: invalid,
         },
         stderr: "pipe",
@@ -1627,6 +1648,34 @@ describe.concurrent("fetch-tls", () => {
 
       expect(await proc.exited).toBe(1);
       expect(await proc.stderr.text()).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    }
+  });
+
+  // Windows drops what the client has yet to read when the reset arrives.
+  it.skipIf(isWindows)("reads a response that the server sent before it reset the upload", async () => {
+    const server = tls.createServer(validTls, socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        // destroy() with the body unread sends an RST, which fails the client's next send().
+        socket.pause();
+        socket.write("HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Length: 3\r\n\r\nbig", () =>
+          socket.destroy(),
+        );
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const body = Buffer.alloc(16 * 1024 * 1024, "x");
+      for (let i = 0; i < 5; i++) {
+        const response = await fetch(`https://127.0.0.1:${(server.address() as net.AddressInfo).port}/`, {
+          method: "POST",
+          body,
+          tls: { rejectUnauthorized: false },
+        });
+        expect({ status: response.status, text: await response.text() }).toEqual({ status: 413, text: "big" });
+      }
+    } finally {
+      server.close();
     }
   });
 
@@ -1649,7 +1698,7 @@ describe.concurrent("fetch-tls", () => {
       const proc = Bun.spawn({
         env: {
           ...bunEnv,
-          SERVER: server.url,
+          SERVER: server.url as any,
           NODE_EXTRA_CA_CERTS: invalid,
         },
         stderr: "pipe",
@@ -1661,7 +1710,59 @@ describe.concurrent("fetch-tls", () => {
       expect(await proc.exited).toBe(1);
       const stderr = await proc.stderr.text();
       expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
-      expect(stderr).toContain("ignoring extra certs");
+      expect(stderr).toContain("Warning: Ignoring extra certs from");
     }
   });
+
+  it("resolves a relative tls.caFile against the cwd at fetch() time", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: validTls,
+      fetch: () => new Response("OK", { headers: { Connection: "close" } }),
+    });
+    using dir = tempDir("fetch-tls-cafile-cwd", {
+      "trusts-server/ca.pem": validTls.cert,
+      "trusts-server/cwd/.keep": "",
+      "other-ca/ca.pem": expiredTls.cert,
+      "other-ca/cwd/.keep": "",
+    });
+    const script = `
+      const out = [];
+      for (const cwd of ["trusts-server/cwd", "other-ca/cwd", "trusts-server/cwd"]) {
+        process.chdir(process.env.DIR + "/" + cwd);
+        out.push(
+          await fetch(process.env.SERVER, { keepalive: false, tls: { caFile: "../ca.pem" } }).then(
+            res => res.text(),
+            err => err.code,
+          ),
+        );
+      }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, SERVER: `https://127.0.0.1:${server.port}`, DIR: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout ? JSON.parse(stdout) : stderr).toEqual(["OK", "DEPTH_ZERO_SELF_SIGNED_CERT", "OK"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+it("a server that ends the TLS handshake with close_notify and stays connected fails the request as a disconnect", async () => {
+  await using server = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => socket.write(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00])));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+  const outcome = await fetch(`https://127.0.0.1:${port}/`, { keepalive: false, proxy: false }).then(
+    response => `status ${response.status}`,
+    e => e.code,
+  );
+  expect(outcome).toBe("ECONNRESET");
 });

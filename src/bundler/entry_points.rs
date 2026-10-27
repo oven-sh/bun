@@ -10,7 +10,7 @@ use crate::Transpiler;
 use bun_js_parser as js_ast;
 
 // `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
-// (lifetime-erased `'static` slices) so `bun_ast::Source` field types line up;
+// so `bun_ast::Source` field types line up;
 // `FileSystem` is the real `bun_resolver::fs` singleton now that
 // `bun_resolver` is in this crate's dep set.
 pub mod Fs {
@@ -19,8 +19,8 @@ pub mod Fs {
 }
 
 #[derive(Default)]
-pub struct ClientEntryPoint {
-    pub(crate) source: bun_ast::Source,
+pub struct ClientEntryPoint<'a> {
+    pub(crate) source: bun_ast::Source<'a>,
 }
 
 #[derive(Default)]
@@ -128,11 +128,21 @@ impl ServerEntryPoint {
 // functions from C++. When that is resolved, we should remove this.
 #[derive(Default)]
 pub struct MacroEntryPoint {
-    pub(crate) code_buffer: Vec<u8>,
-    pub source: bun_ast::Source,
+    /// The label, then the code.
+    code_buffer: Vec<u8>,
+    label_len: usize,
 }
 
 impl MacroEntryPoint {
+    /// The `macro:` specifier the generated module is loaded as.
+    pub fn label(&self) -> &[u8] {
+        &self.code_buffer[..self.label_len]
+    }
+
+    pub fn code(&self) -> &[u8] {
+        &self.code_buffer[self.label_len..]
+    }
+
     pub fn generate_id(
         entry_path: &[u8],
         function_name: &[u8],
@@ -234,14 +244,7 @@ impl MacroEntryPoint {
             .expect("unreachable");
         }
 
-        // INVARIANT: self-referential — `macro_label`/`code` borrow
-        // `entry.code_buffer` and are stored into `entry.source` (lifetime erased
-        // via `IntoStr`), so `entry.code_buffer` must not be resized or dropped
-        // while `entry.source` is in use.
-        let (macro_label, code) = entry.code_buffer.split_at(label_len);
-        entry.source = bun_ast::Source::init_path_string(macro_label, code);
-        // `Path::init` already set `text = macro_label`; only override namespace.
-        entry.source.path.namespace = js_ast::Macro::NAMESPACE;
+        entry.label_len = label_len;
         Ok(())
     }
 }

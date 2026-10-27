@@ -325,7 +325,7 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   const compressed = await Bun.file(gzipped).arrayBuffer();
   var socketToClose!: Socket;
   let pending,
-    pendingChunks = [];
+    pendingChunks: any[] = [];
   const server = Bun.listen({
     // Explicit IPv4 loopback: "localhost" may bind only ::1 while fetch()
     // resolves it to 127.0.0.1, giving ConnectionRefused on some hosts.
@@ -354,7 +354,7 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
         var corked: any[] = [];
         var cork = true;
         let written = 0;
-        let pendingChunks = [];
+        let pendingChunks: any[] = [];
         async function write(chunk: any) {
           let defer = Promise.withResolvers();
 
@@ -778,7 +778,7 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
             }
             await new Promise(r => setImmediate(r));
           }
-          socket.end(chunked ? "0\r\n\r\n" : undefined);
+          socket.end(chunked ? "0\r\n\r\n" : (undefined as any));
         })().catch(() => socket.destroy());
       });
       await once(server.listen(0, "127.0.0.1"), "listening");

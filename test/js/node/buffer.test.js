@@ -956,10 +956,9 @@ for (let withOverridenBufferWrite of [false, true]) {
             for (const at of [0, 63, 70, 128]) {
               const text = b64.slice(0, at) + char + b64.slice(at);
               if (Buffer.from(text, encoding).toString("latin1") !== expected) decodedAsData.add(code);
-              const written = Buffer.alloc(99);
-              if (written.write(text, encoding) !== 96 || written.toString("latin1", 0, 96) !== expected) {
+              const written = Buffer.alloc(96);
+              if (written.write(text, encoding) !== 96 || written.toString("latin1") !== expected)
                 decodedAsData.add(code);
-              }
             }
             for (const count of [1, 2, 3, 64]) {
               if (Buffer.from(char.repeat(count) + noise.slice(count), encoding).length !== 0) decodedAsData.add(code);

@@ -1189,18 +1189,15 @@ impl FileSink {
         self.to_result(rc, accepted)
     }
 
-    pub(crate) fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
+    pub(crate) fn write_utf16(&self, text: &[u16]) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
-        let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
+        let rc = self.writer.with_mut(|w| w.write_utf16(text));
         if self.counting_stream_bytes() {
-            self.count_stream_bytes(
-                &rc,
-                bun_core::strings::element_length_utf16_into_utf8(data.slice16()),
-            );
+            self.count_stream_bytes(&rc, bun_core::strings::element_length_utf16_into_utf8(text));
         }
         let accepted = self.bytes_accepted(buffered_before, &rc);
         self.to_result(rc, accepted)

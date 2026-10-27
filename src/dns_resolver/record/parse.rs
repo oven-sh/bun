@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+
 use super::name::{self, Compression};
 use super::{
     Name, Naptr, OptionValue, Question, RData, Record, Rr, Sig, Soa, Svcb, class, flag, rcode,
@@ -55,13 +58,22 @@ impl<'a> RDataReader<'_, 'a> {
     /// `(id, length, value)` until the RDATA ends. A later value for an id replaces the earlier one in its place.
     fn options(&mut self) -> Result<Vec<OptionValue>> {
         let mut options: Vec<OptionValue> = Vec::new();
+        // One RDATA has room for 16,383 of them.
+        let mut places: BTreeMap<u16, usize> = BTreeMap::new();
         while self.left() != 0 {
             let id = self.reader.be16()?;
             let len = usize::from(self.reader.be16()?);
             let value = self.reader.bytes(len)?.to_vec();
-            match options.iter_mut().find(|option| option.id == id) {
-                Some(option) => option.value = value,
-                None => options.push(OptionValue { id, value }),
+            match places.entry(id) {
+                Entry::Vacant(place) => {
+                    place.insert(options.len());
+                    options.push(OptionValue { id, value });
+                }
+                Entry::Occupied(place) => {
+                    if let Some(option) = options.get_mut(*place.get()) {
+                        option.value = value;
+                    }
+                }
             }
         }
         Ok(options)

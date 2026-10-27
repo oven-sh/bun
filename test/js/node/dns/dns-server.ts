@@ -169,6 +169,9 @@ export async function dnsServer(handler: Handler): Promise<DnsServer> {
     udp.bind(0, "127.0.0.1");
     await once(udp, "listening");
     const { port } = udp.address();
+    let isClosed = false;
+    /** What went wrong with the UDP socket, for the test that owns the server to fail with. */
+    let failure: Error | undefined;
 
     const server: DnsServer = {
       port,
@@ -176,11 +179,13 @@ export async function dnsServer(handler: Handler): Promise<DnsServer> {
       queries,
       connections: 0,
       async [Symbol.asyncDispose]() {
+        isClosed = true;
         for (const socket of sockets) socket.destroy();
         const closed = [once(udp, "close"), once(tcp, "close")];
         udp.close();
         tcp.close();
         await Promise.all(closed);
+        if (failure) throw failure;
       },
     };
 
@@ -218,8 +223,26 @@ export async function dnsServer(handler: Handler): Promise<DnsServer> {
       throw error;
     }
 
+    // That a reply found its socket closed is reported on this one, on Linux: as an error event, or as the failure of
+    // the next reply, which is then not sent.
+    const isAboutAnEarlierReply = (error: Error) => (error as NodeJS.ErrnoException).code === "ECONNREFUSED";
+    udp.on("error", error => {
+      if (!isAboutAnEarlierReply(error)) failure ??= error;
+    });
+    const send = (reply: Buffer, from: dgram.RemoteInfo) =>
+      new Promise<void>(resolve => {
+        if (isClosed) return resolve();
+        udp.send(reply, from.port, from.address, error => {
+          if (error && !isClosed && isAboutAnEarlierReply(error)) return resolve(send(reply, from));
+          if (error && !isClosed) failure ??= error;
+          resolve();
+        });
+      });
+    let sent = Promise.resolve();
     udp.on("message", (message, from) => {
-      answer(message, "udp", from.address, reply => udp.send(reply, from.port, from.address));
+      answer(message, "udp", from.address, reply => {
+        sent = sent.then(() => send(reply, from));
+      });
     });
     return server;
   }

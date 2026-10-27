@@ -1,5 +1,9 @@
 //! Domain names on the wire (RFC 1035 sections 3.1 and 4.1.4).
 
+use std::collections::BTreeMap;
+
+use bun_core::strings;
+
 use super::Name;
 use crate::buf::{Reader, is_hostname_byte, is_print};
 use crate::{Error, Result};
@@ -160,26 +164,19 @@ fn split_labels(text: &[u8], charset: Charset) -> Result<Vec<Vec<u8>>> {
 /// The names a message has so far, for later names to point at.
 #[derive(Default)]
 pub(crate) struct Written {
-    names: Vec<(Name, usize)>,
+    names: BTreeMap<Name, usize>,
 }
 
 impl Written {
-    /// The longest name that `text` is or ends with at a label boundary; the last of equals. Case matters.
+    /// The length and place of the longest name that `text` is, or ends with after a dot, escaped or not. Case matters.
     fn longest_suffix_of(&self, text: &[u8]) -> Option<(usize, usize)> {
-        let mut best: Option<(usize, usize)> = None;
-        for (name, offset) in &self.names {
-            if best.is_some_and(|(len, _)| len > name.len()) {
-                continue;
+        let mut suffix = text;
+        loop {
+            if let Some(offset) = self.names.get(suffix) {
+                return Some((suffix.len(), *offset));
             }
-            let Some(prefix) = text.strip_suffix(name.as_slice()) else {
-                continue;
-            };
-            if !matches!(prefix.last(), None | Some(b'.')) {
-                continue;
-            }
-            best = Some((name.len(), *offset));
+            (_, suffix) = strings::split_once_char(suffix, b'.')?;
         }
-        best
     }
 }
 
@@ -225,7 +222,7 @@ pub(crate) fn write(
                 return Err(Error::EFORMERR);
             }
             if position <= MAX_POINTER_TARGET {
-                written.names.push((name.to_vec(), position));
+                written.names.insert(name.to_vec(), position);
             }
         }
     }

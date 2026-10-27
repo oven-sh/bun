@@ -2,6 +2,8 @@
 // routes, sockets and the clock are the script's. What a script and a log say is in src/dns_resolver/simulation.rs.
 import { dnsSimulate } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { a, aaaa, cname, encode, name, parse, RCODE, record, type Reply, TYPE, u16 } from "./dns-server";
 
 /** A word of a script that stands for these bytes. */
@@ -573,6 +575,25 @@ describe("timeouts and servers", () => {
     expect(query.id).toBe(it.sent(2).id);
   });
 
+  test("an answer with a cookie of an impossible length is ignored, and the last cookie in it counts", () => {
+    const cookie = (length: number) => Buffer.concat([u16(10, length), Buffer.alloc(length, 0xab)]);
+    const answer = (...options: Buffer[]) => ({
+      answers: [a("a.test", 60, "1.2.3.4")],
+      additional: [record("", 41, 0, Buffer.concat(options), 1232)],
+    });
+    const other = Buffer.concat([u16(3, 2), Buffer.from("id")]);
+    const it = new World(oneServer);
+    it.run("query A a.test");
+    for (const length of [1, 7, 41]) expect(it.reply(1, answer(cookie(length)))).toEqual([]);
+    expect(it.reply(1, answer(cookie(8), other, cookie(7)))).toEqual([]);
+    expect(it.reply(1, answer(cookie(7), other, cookie(8)))).toContain("done 0 name=a.test 1.2.3.4/60");
+    for (const length of [0, 8, 40]) {
+      const it = new World(oneServer);
+      it.run("query A a.test");
+      expect(it.reply(1, answer(cookie(length)))).toContain("done 0 name=a.test 1.2.3.4/60");
+    }
+  });
+
   test("`options rotate` starts with a server at random", () => {
     const conf = file(
       "/etc/resolv.conf",
@@ -785,6 +806,9 @@ describe("lookupService()", () => {
     "wrapped 65564/tcp",
     "nothing 29",
     "junk 30x/tcp",
+    "\0nul 31/tcp",
+    "ends 31/tcp\0",
+    "ended\0 34/tcp",
     `${Buffer.alloc(32, "x")} 32/tcp`,
     `${Buffer.alloc(33, "y")} 33/tcp`,
   ].join("\n");
@@ -794,7 +818,7 @@ describe("lookupService()", () => {
     expect(
       it
         .run(
-          ...[0, 1, 7, 80, 443, 22, 23, 24, 25, 26, 27, 28, 29, 30, 32, 33, 65535].map(
+          ...[0, 1, 7, 80, 443, 22, 23, 24, 25, 26, 27, 28, 29, 30, 32, 33, 65535, 31, 34].map(
             port => `nameinfo 10.1.1.1 ${port}`,
           ),
         )
@@ -818,15 +842,17 @@ describe("lookupService()", () => {
         "done 14 name=box.test service=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         "done 15 name=box.test service=%",
         "done 16 name=box.test service=65535",
+        "done 17 name=box.test service=ends",
+        "done 18 name=box.test service=34",
       ]
     `);
     it.run("nameinfo 10.9.9.9 80");
     expect(it.questions()).toEqual(["1 12 9.9.9.10.in-addr.arpa"]);
     expect(it.reply(1, { answers: [record("9.9.9.10.in-addr.arpa", TYPE.PTR, 60, name("far.test"))] })).toContain(
-      "done 17 name=far.test service=http",
+      "done 19 name=far.test service=http",
     );
     it.run("nameinfo 10.9.9.8 80");
-    expect(it.reply(2, { rcode: RCODE.NXDOMAIN })).toContain("done 18 error ENOTFOUND");
+    expect(it.reply(2, { rcode: RCODE.NXDOMAIN })).toContain("done 20 error ENOTFOUND");
   });
 });
 
@@ -873,5 +899,70 @@ describe("what is remembered", () => {
       it.reply(1, reply);
       expect(it.run("query A a.test")[0]).toBe("open 2 udp 10.0.0.1#53#0");
     }
+  });
+});
+
+// What c-ares 1.34.9, unmodified but for its random numbers, logged for the same scripts, with each call it makes of libc
+// answered from the same made-up world. The numbered scripts reach every line of the resolver that a script for Linux can.
+// The others each went differently here once, or still do because c-ares is wrong.
+describe("c-ares", () => {
+  /** What its driver says to whatever follows `shutdown`, and stops. */
+  const AFTER_THE_END = "! after the end\n";
+
+  /** A line that nothing understands after each command, so that `? @` in the log ends what the command did. */
+  const marked = (script: string) =>
+    script
+      .split("\n")
+      .filter(line => line !== "")
+      .flatMap(line => [line, "@"])
+      .join("\n") + "\n";
+
+  /**
+   * c-ares says what became of its sockets after everything else a call did, tells of states it only passes through, and
+   * closes in another order. So this is, for each command, every other line, then where each socket ended up if that is news.
+   */
+  function normalized(log: string): string[][] {
+    const known = new Map<string, string>();
+    return log
+      .split(AFTER_THE_END)[0]
+      .split("? @\n")
+      .map(part => {
+        const lines = part.split("\n").filter(line => line !== "");
+        const isAboutASocket = (line: string) => line.startsWith("watch ") || line.startsWith("close ");
+        const touched = new Map<string, string>();
+        for (const line of lines.filter(isAboutASocket)) {
+          const [what, socket, events] = line.split(" ");
+          touched.set(socket, what === "close" ? "closed" : events);
+        }
+        const news = [...touched].filter(([socket, state]) => known.get(socket) !== state).sort();
+        for (const [socket, state] of news) known.set(socket, state);
+        return [
+          ...lines.filter(line => !isAboutASocket(line)),
+          ...news.map(([socket, state]) => `${socket} is ${state}`),
+        ];
+      });
+  }
+
+  // `=== title`, the script, `---`, the log of c-ares and, where this resolver's is to be another, `+++` and that log.
+  const entries = readFileSync(join(import.meta.dir, "dns-simulation-c-ares.txt"), "utf8")
+    .split(/^=== /m)
+    .slice(1)
+    .map(entry => {
+      const [head, logs] = entry.split(/^---\n/m);
+      const [theirs, ours] = logs.split(/^\+\+\+\n/m);
+      const title = head.slice(0, head.indexOf("\n"));
+      return { title, script: marked(head.slice(title.length + 1)), theirs, ours };
+    });
+
+  test.each(entries.filter(entry => entry.ours === undefined))("did the same: $title", ({ script, theirs }) => {
+    const expected = normalized(theirs);
+    const log = normalized(dnsSimulate(script));
+    expect(theirs.includes(AFTER_THE_END) ? log.slice(0, expected.length) : log).toEqual(expected);
+  });
+
+  test.each(entries.filter(entry => entry.ours !== undefined))("$title", ({ script, theirs, ours }) => {
+    const log = dnsSimulate(script);
+    expect(log).toBe(ours!);
+    expect(normalized(log)).not.toEqual(normalized(theirs));
   });
 });

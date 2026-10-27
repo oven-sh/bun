@@ -85,8 +85,9 @@ fn strtoul(text: &[u8]) -> Option<(u32, &[u8])> {
 /// services(5), lines of `name port/protocol aliases...`, the way glibc's `getservbyport_r()` reads them.
 fn tcp_service_name(services: &[u8], port: u16) -> Option<&[u8]> {
     strings::split(services, b"\n").find_map(|line| {
-        let line = match strings::index_of_char_usize(line, b'#') {
-            Some(comment) => line.get(..comment)?,
+        // A line is a C string there.
+        let line = match strings::index_of_any(line, b"#\0") {
+            Some(end) => line.get(..end)?,
             None => line,
         };
         let (name, rest) = word(trim_start(line));

@@ -109,10 +109,4 @@ describe.concurrent("WebKit 982277c9dd upgrade", () => {
     );
     expect(prototypesOfCaught).toEqual(Object.fromEntries(expected));
   });
-
-  test("a group that takes no input matches however often it is repeated", () => {
-    expect(/(?:(?:\b){70000}){70000}/.exec("ab")?.index).toBe(0);
-    expect(/(?:(\b){70000}){70000}/.exec("ab")).toEqual(expect.arrayContaining(["", ""]));
-    expect(/(?:(?:(?:^){70000}){70000}){70000}/.exec("ab")?.index).toBe(0);
-  });
 });

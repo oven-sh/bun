@@ -34,9 +34,13 @@ JSC_DEFINE_HOST_FUNCTION(JSEventEmitterOnceWrapper::call, (JSGlobalObject * lexi
     wrapper->m_target.clear();
     wrapper->m_eventName.clear();
 
+    auto& impl = emitter->wrapped();
     // By value, as node does: the last registration of the wrapper, which is not always the one it was created for.
-    emitter->wrapped().removeListener(eventType, *wrapper);
+    impl.removeListener(eventType, *wrapper);
 
+    // The `this` of the emit loop, so that a rawListeners() read does not change it. removeAllListeners() leaves the emitter with none.
+    if (auto* current = impl.thisObject())
+        target = current;
     auto callData = JSC::getCallData(listener);
     ASSERT(callData.type != CallData::Type::None);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::call(lexicalGlobalObject, listener, callData, target ? JSValue(target) : jsUndefined(), ArgList(callFrame))));

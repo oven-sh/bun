@@ -1322,6 +1322,7 @@ describe("native EventEmitter", () => {
             configurable: true,
           });
           expect(Object.keys(wrapper)).toEqual(["listener"]);
+          expect(Object.getOwnPropertyNames(wrapper)).toEqual(["length", "name", "listener"]);
           // The emitter stores the wrapper, so every read returns the same one.
           expect(target.rawListeners(type)).toEqual([wrapper]);
           expect(target.listeners(type)).toEqual([handler]);
@@ -1444,20 +1445,48 @@ describe("native EventEmitter", () => {
           expect(target.rawListeners(byHandler)).toEqual([kept]);
         });
 
-        test.each(["removeListener", "removeAllListeners"] as const)(
-          "a wrapper that %s() removed before it fired still calls the handler one time",
-          remove => {
+        const removals: Array<[string, (type: string | symbol, wrapper: Wrapper) => void]> = [
+          ["removeListener(type, wrapper)", (type, wrapper) => target.removeListener(type, wrapper)],
+          ["removeAllListeners(type)", type => target.removeAllListeners(type)],
+        ];
+        // With no argument it also removes the listeners that the test runner has on `process`.
+        if (receiver !== "process") removals.push(["removeAllListeners()", () => target.removeAllListeners()]);
+
+        test.each(removals)(
+          "a wrapper that %s removed before it fired still calls the handler one time, on the emitter",
+          (_removal, remove) => {
             const type = newType();
-            let calls = 0;
-            target[method](type, () => calls++);
+            const calls: boolean[] = [];
+            target[method](type, function (this: unknown) {
+              calls.push(this === target);
+            });
             const wrapper: Wrapper = target.rawListeners(type)[0];
-            if (remove === "removeListener") target.removeListener(type, wrapper);
-            else target.removeAllListeners(type);
+            remove(type, wrapper);
             expect(target.listenerCount(type)).toBe(0);
 
             wrapper();
             wrapper();
-            expect(calls).toBe(1);
+            expect(calls).toEqual([true]);
+          },
+        );
+
+        // removeAllListeners() with no argument leaves the native emitter with no object to call listeners on.
+        test.skipIf(receiver === "process").each(readStates)(
+          "a listener that removeAllListeners() removes during the emit still runs on the emitter (%s)",
+          state => {
+            const type = newType();
+            const calls: boolean[] = [];
+            target[method](type, function (this: unknown) {
+              calls.push(this === target);
+            });
+            if (state === "read before the emit") target.rawListeners(type);
+            target.prependListener(type, () => {
+              if (state === "read during the emit") target.rawListeners(type);
+              target.removeAllListeners();
+            });
+
+            target.emit(type);
+            expect(calls).toEqual([true]);
           },
         );
 
@@ -1869,6 +1898,28 @@ describe("native EventEmitter", () => {
       shared.rawListeners("x")[0].call({});
       expect(self).toBe(registrant);
     });
+
+    // The native emitter calls every listener on the object that added or removed a listener last. The wrapper must
+    // do the same and not keep the object that the emitter had at the read.
+    test.each(["an emit", "a direct call"])(
+      "the handler runs on the object that called once() when that object adds a listener after the read (%s)",
+      how => {
+        const shared = makeShared();
+        shared.on("own", () => {});
+        const registrant = Object.create(shared);
+        let self: unknown;
+        registrant.once("x", function (this: unknown) {
+          self = this;
+        });
+        shared.on("other", () => {});
+        const wrapper: Wrapper = shared.rawListeners("x")[0];
+        registrant.on("later", () => {});
+
+        if (how === "an emit") shared.emit("x");
+        else wrapper.call({});
+        expect(self).toBe(registrant);
+      },
+    );
 
     // The native emitter holds the object that called once() weakly. Its emit then calls the listeners on undefined.
     test.skipIf(receiver === "node:events EventEmitter")(

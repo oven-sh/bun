@@ -16,7 +16,7 @@ public:
     using Base = JSC::JSFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    // `target` is the `this` of the listener. The wrapper removes itself from `eventName` of the emitter when it fires.
+    // The wrapper removes itself from `eventName` of the emitter when it fires. `target` is the `this` of the listener when the emitter has none.
     static JSEventEmitterOnceWrapper* create(JSC::VM&, JSDOMGlobalObject&, JSEventEmitter&, JSC::JSObject* target, JSC::JSValue eventName, JSC::JSObject& listener);
 
     DECLARE_INFO;

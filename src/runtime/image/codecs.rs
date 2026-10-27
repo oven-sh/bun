@@ -647,7 +647,7 @@ unsafe extern "C" {
     fn bun_image_cmyk_to_rgba8(buf: *mut u8, len: usize);
 }
 
-/// In-place inverted-CMYK (`bun_jpeg::PixelFormat::Cmyk` output) → opaque RGBA.
+/// In-place inverted-CMYK (what `bun_jpeg::Decoder::decode` gives for a 4-component JPEG) → opaque RGBA.
 pub(crate) fn cmyk_to_rgba(px: &mut [u8]) {
     // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
     unsafe { bun_image_cmyk_to_rgba8(px.as_mut_ptr(), px.len()) }

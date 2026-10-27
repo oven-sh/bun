@@ -46,35 +46,35 @@ impl DerivedTable {
         });
 
         let mut code: u32 = 0;
-        let mut p: usize = 0;
+        let mut first: usize = 0;
         let lengths = spec
             .bits
             .iter()
             .zip(table.maxcode.iter_mut().zip(table.valoffset.iter_mut()));
-        for (l, (&count, (maxcode, valoffset))) in lengths.enumerate().skip(1) {
+        for (length, (&count, (maxcode, valoffset))) in lengths.enumerate().skip(1) {
             let count = usize::from(count);
-            if p + count > 256 {
+            if first + count > 256 {
                 return Err(Error::BadHuffTable);
             }
             if count != 0 {
-                *valoffset = p as i32 - code as i32;
-                if l as u32 <= LOOKAHEAD {
+                *valoffset = first as i32 - code as i32;
+                if length as u32 <= LOOKAHEAD {
                     // Every byte that begins with one of these codes.
-                    let shift = LOOKAHEAD - l as u32;
-                    let symbols = spec.huffval.iter().skip(p).take(count);
+                    let shift = LOOKAHEAD - length as u32;
+                    let symbols = spec.huffval.iter().skip(first).take(count);
                     let entries = table.lookup.iter_mut().skip((code as usize) << shift);
                     for (entry, &symbol) in
                         entries.zip(symbols.flat_map(|s| core::iter::repeat_n(s, 1 << shift)))
                     {
-                        *entry = ((l as u16) << LOOKAHEAD) | u16::from(symbol);
+                        *entry = ((length as u16) << LOOKAHEAD) | u16::from(symbol);
                     }
                 }
                 code += count as u32;
-                p += count;
+                first += count;
                 *maxcode = code as i32 - 1;
             }
-            // No code is all ones, so one more than the last code still fits in `l` bits.
-            if code >= 1 << l {
+            // No code is all ones, so one more than the last code still fits in `length` bits.
+            if code >= 1 << length {
                 return Err(Error::BadHuffTable);
             }
             code <<= 1;
@@ -92,7 +92,7 @@ impl DerivedTable {
         if spec
             .huffval
             .iter()
-            .take(p)
+            .take(first)
             .any(|&symbol| symbol > max_symbol)
         {
             return Err(Error::BadHuffTable);
@@ -207,31 +207,31 @@ impl BitReader {
                 return self.decode_slow(input, table, 1);
             }
         }
-        let (nb, symbol) = self.lookup(table);
-        if nb <= LOOKAHEAD {
-            self.bits_left -= nb;
+        let (length, symbol) = self.lookup(table);
+        if length <= LOOKAHEAD {
+            self.bits_left -= length;
             symbol
         } else {
-            self.decode_slow(input, table, nb)
+            self.decode_slow(input, table, length)
         }
     }
 
     /// The code is known to have at least `min_bits` bits.
     #[inline(never)]
     fn decode_slow(&mut self, input: &mut Input, table: &DerivedTable, min_bits: u32) -> u8 {
-        let mut l = min_bits as usize;
+        let mut length = min_bits as usize;
         self.ensure(input, min_bits);
         let mut code = self.get(min_bits);
-        while table.maxcode.get(l).is_some_and(|&max| code > max) {
+        while table.maxcode.get(length).is_some_and(|&max| code > max) {
             code <<= 1;
             self.ensure(input, 1);
             code |= self.get(1);
-            l += 1;
+            length += 1;
         }
-        if l > 16 {
+        if length > 16 {
             return 0;
         }
-        let offset = table.valoffset.get(l).copied().unwrap_or(0);
+        let offset = table.valoffset.get(length).copied().unwrap_or(0);
         table
             .huffval
             .get((code + offset) as usize)
@@ -308,21 +308,21 @@ impl<'a> FastBitReader<'a> {
     #[inline(always)]
     pub(crate) fn decode(&mut self, table: &DerivedTable) -> u8 {
         self.fill();
-        let (nb, symbol) = self.bits.lookup(table);
-        if nb <= LOOKAHEAD {
-            self.bits.bits_left -= nb;
+        let (length, symbol) = self.bits.lookup(table);
+        if length <= LOOKAHEAD {
+            self.bits.bits_left -= length;
             return symbol;
         }
-        let mut l = nb as usize;
-        let mut code = self.bits.get(nb);
-        while table.maxcode.get(l).is_some_and(|&max| code > max) {
+        let mut code = self.bits.get(length);
+        let mut length = length as usize;
+        while table.maxcode.get(length).is_some_and(|&max| code > max) {
             code = (code << 1) | self.bits.get(1);
-            l += 1;
+            length += 1;
         }
-        if l > 16 {
+        if length > 16 {
             return 0;
         }
-        let offset = table.valoffset.get(l).copied().unwrap_or(0);
+        let offset = table.valoffset.get(length).copied().unwrap_or(0);
         table
             .huffval
             .get(((code + offset) & 0xff) as usize)

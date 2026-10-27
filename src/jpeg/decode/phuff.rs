@@ -229,12 +229,12 @@ impl PHuffDecoder {
 
     fn decode_dc_refine(&mut self, input: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
         // Made-up zeros change nothing, so running out of data needs no check.
-        let p1 = 1i16 << self.al;
+        let plus_one = 1i16 << self.al;
         for index in 0..self.blocks_in_mcu {
             self.bits.ensure(input, 1);
             if self.bits.get(1) != 0 {
                 let [dc, ..] = mcu.block(index).ok_or(Error::Internal)?;
-                *dc |= p1;
+                *dc |= plus_one;
             }
         }
         Ok(())
@@ -251,15 +251,21 @@ impl PHuffDecoder {
         let bits = &mut self.bits;
         let se = self.se;
         // 1 and -1 in the bit position being coded.
-        let p1 = 1i16 << self.al;
-        let m1 = -1i16 << self.al;
+        let plus_one = 1i16 << self.al;
+        let minus_one = -1i16 << self.al;
 
         /// A correction bit of 1 moves a coefficient that is already nonzero away from zero.
         #[inline(always)]
-        fn correct(bits: &mut BitReader, input: &mut Input, coef: &mut i16, p1: i16, m1: i16) {
+        fn correct(
+            bits: &mut BitReader,
+            input: &mut Input,
+            coef: &mut i16,
+            plus_one: i16,
+            minus_one: i16,
+        ) {
             bits.ensure(input, 1);
-            if bits.get(1) != 0 && *coef & p1 == 0 {
-                *coef = coef.wrapping_add(if *coef >= 0 { p1 } else { m1 });
+            if bits.get(1) != 0 && *coef & plus_one == 0 {
+                *coef = coef.wrapping_add(if *coef >= 0 { plus_one } else { minus_one });
             }
         }
 
@@ -273,7 +279,11 @@ impl PHuffDecoder {
                 if s != 0 {
                     // A coefficient that turns nonzero is 1 or -1, whatever `s` says.
                     bits.ensure(input, 1);
-                    value = if bits.get(1) != 0 { p1 } else { m1 };
+                    value = if bits.get(1) != 0 {
+                        plus_one
+                    } else {
+                        minus_one
+                    };
                 } else if r != 15 {
                     self.eobrun = 1 << r;
                     if r != 0 {
@@ -286,7 +296,7 @@ impl PHuffDecoder {
                 loop {
                     let coef = coef_at(block, k)?;
                     if *coef != 0 {
-                        correct(bits, input, coef, p1, m1);
+                        correct(bits, input, coef, plus_one, minus_one);
                     } else {
                         r -= 1;
                         if r < 0 {
@@ -310,7 +320,7 @@ impl PHuffDecoder {
             while k <= se {
                 let coef = coef_at(block, k)?;
                 if *coef != 0 {
-                    correct(bits, input, coef, p1, m1);
+                    correct(bits, input, coef, plus_one, minus_one);
                 }
                 k += 1;
             }

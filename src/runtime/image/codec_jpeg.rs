@@ -5,11 +5,16 @@ use bun_jpeg::{ColorSpace, Decoder, EncodeOptions};
 
 use super::codecs;
 
-fn decode_error(err: bun_jpeg::Error) -> codecs::Error {
+fn convert_error(err: bun_jpeg::Error, otherwise: codecs::Error) -> codecs::Error {
+    debug_assert!(err != bun_jpeg::Error::Internal);
     match err {
         bun_jpeg::Error::Alloc(oom) => oom.into(),
-        _ => codecs::Error::DecodeFailed,
+        _ => otherwise,
     }
+}
+
+fn decode_error(err: bun_jpeg::Error) -> codecs::Error {
+    convert_error(err, codecs::Error::DecodeFailed)
 }
 
 /// SOF dimensions. Reads up to the first scan and none of its data.
@@ -26,7 +31,7 @@ pub(crate) fn decode(
     let decoder = Decoder::new(bytes).map_err(decode_error)?;
     let (src_w, src_h) = (decoder.width(), decoder.height());
     codecs::guard(src_w, src_h, max_pixels)?;
-    // However high `max_pixels` is set.
+    // TurboJPEG's limit, an `int`, however high `max_pixels` is set.
     if u64::from(src_w) * u64::from(src_h) > i32::MAX as u64 {
         return Err(codecs::Error::DecodeFailed);
     }
@@ -87,7 +92,7 @@ pub(crate) fn decode(
 pub(crate) fn encode(
     rgba: &[u8],
     w: u32,
-    ht: u32,
+    h: u32,
     quality: u8,
     progressive: bool,
     icc_profile: Option<&[u8]>,
@@ -101,12 +106,8 @@ pub(crate) fn encode(
         // The source colour profile, as APP2/ICC_PROFILE markers. See #30197.
         icc_profile: icc_profile.filter(|profile| !profile.is_empty()),
     };
-    match bun_jpeg::encode(rgba, w, ht, &options) {
-        Ok(mut bytes) => {
-            bytes.shrink_to_fit();
-            Ok(codecs::Encoded::from_owned(bytes))
-        }
-        Err(bun_jpeg::Error::Alloc(oom)) => Err(oom.into()),
-        Err(_) => Err(codecs::Error::EncodeFailed),
-    }
+    let mut bytes = bun_jpeg::encode(rgba, w, h, &options)
+        .map_err(|err| convert_error(err, codecs::Error::EncodeFailed))?;
+    bytes.shrink_to_fit();
+    Ok(codecs::Encoded::from_owned(bytes))
 }

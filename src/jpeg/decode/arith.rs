@@ -54,10 +54,9 @@ impl Core {
         self.ct = -16;
     }
 
-    /// Decodes one binary decision with the statistics bin `st`: the state in the low 7 bits, the more probable symbol
-    /// on top.
+    /// Decodes one binary decision. `bin` has the state in the low 7 bits and the more probable symbol on top.
     #[inline]
-    fn decode(&mut self, input: &mut Input, st: &mut u8) -> bool {
+    fn decode(&mut self, input: &mut Input, bin: &mut u8) -> bool {
         while self.a < 0x8000 {
             self.ct -= 1;
             if self.ct < 0 {
@@ -90,8 +89,8 @@ impl Core {
             self.a <<= 1;
         }
 
-        let mut sv = *st;
-        let entry = ARITAB.get(usize::from(sv & 0x7f)).copied().unwrap_or(0);
+        let mut state = *bin;
+        let entry = ARITAB.get(usize::from(state & 0x7f)).copied().unwrap_or(0);
         let next_lps = entry as u8;
         let next_mps = (entry >> 8) as u8;
         let qe = i64::from(entry >> 16);
@@ -101,21 +100,21 @@ impl Core {
         if self.c >= temp {
             self.c -= temp;
             if self.a < qe {
-                *st = (sv & 0x80) ^ next_mps;
+                *bin = (state & 0x80) ^ next_mps;
             } else {
-                *st = (sv & 0x80) ^ next_lps;
-                sv ^= 0x80;
+                *bin = (state & 0x80) ^ next_lps;
+                state ^= 0x80;
             }
             self.a = qe;
         } else if self.a < 0x8000 {
             if self.a < qe {
-                *st = (sv & 0x80) ^ next_lps;
-                sv ^= 0x80;
+                *bin = (state & 0x80) ^ next_lps;
+                state ^= 0x80;
             } else {
-                *st = (sv & 0x80) ^ next_mps;
+                *bin = (state & 0x80) ^ next_mps;
             }
         }
-        sv >> 7 != 0
+        state >> 7 != 0
     }
 
     #[inline(always)]
@@ -123,29 +122,28 @@ impl Core {
         Ok(self.decode(input, stats.get_mut(bin).ok_or(Error::Internal)?))
     }
 
-    /// The rest of a nonzero value once its magnitude category `m` is known: the bits below the leading one come from
-    /// bin `bin`.
+    /// The rest of a nonzero value. `magnitude` is its leading one, and the bits below that come from `bin`.
     #[inline(always)]
     fn decode_magnitude(
         &mut self,
         input: &mut Input,
         stats: &mut [u8],
         bin: usize,
-        mut m: i32,
+        mut magnitude: i32,
         sign: bool,
     ) -> Result<i32> {
-        let mut v = m;
+        let mut value = magnitude;
         loop {
-            m >>= 1;
-            if m == 0 {
+            magnitude >>= 1;
+            if magnitude == 0 {
                 break;
             }
             if self.decode_at(input, stats, bin)? {
-                v |= m;
+                value |= magnitude;
             }
         }
-        v += 1;
-        Ok(if sign { -v } else { v })
+        value += 1;
+        Ok(if sign { -value } else { value })
     }
 
     /// Damaged data. Nothing more is decoded until the next restart or scan.
@@ -289,11 +287,11 @@ impl ArithDecoder {
         }
 
         if let Pass::DcRefine = self.pass {
-            let p1 = 1i16 << self.al;
+            let plus_one = 1i16 << self.al;
             for index in 0..self.blocks_in_mcu {
                 if self.core.decode(input, &mut self.fixed_bin) {
                     let [dc, ..] = mcu.block(index).ok_or(Error::Internal)?;
-                    *dc |= p1;
+                    *dc |= plus_one;
                 }
             }
             return Ok(());
@@ -352,35 +350,35 @@ impl ArithDecoder {
             .get_mut(usize::from(info.scan_component))
             .ok_or(Error::Internal)?;
 
-        let mut st = *context;
-        if !core.decode_at(input, stats, st)? {
+        let mut bin = *context;
+        if !core.decode_at(input, stats, bin)? {
             *context = 0;
         } else {
-            let sign = core.decode_at(input, stats, st + 1)?;
-            st += 2 + usize::from(sign);
-            let mut m = i32::from(core.decode_at(input, stats, st)?);
-            if m != 0 {
-                st = 20;
-                while core.decode_at(input, stats, st)? {
-                    m <<= 1;
-                    if m == 0x8000 {
+            let sign = core.decode_at(input, stats, bin + 1)?;
+            bin += 2 + usize::from(sign);
+            let mut magnitude = i32::from(core.decode_at(input, stats, bin)?);
+            if magnitude != 0 {
+                bin = 20;
+                while core.decode_at(input, stats, bin)? {
+                    magnitude <<= 1;
+                    if magnitude == 0x8000 {
                         core.fail();
                         return Ok(false);
                     }
-                    st += 1;
+                    bin += 1;
                 }
             }
             let small = (1i32 << self.dc_l.get(selector).ok_or(Error::Internal)?) >> 1;
             let large = (1i32 << self.dc_u.get(selector).ok_or(Error::Internal)?) >> 1;
-            *context = if m < small {
+            *context = if magnitude < small {
                 0
-            } else if m > large {
+            } else if magnitude > large {
                 12 + usize::from(sign) * 4
             } else {
                 4 + usize::from(sign) * 4
             };
-            let v = core.decode_magnitude(input, stats, st + 14, m, sign)?;
-            *last_dc = (*last_dc + v) & 0xffff;
+            let value = core.decode_magnitude(input, stats, bin + 14, magnitude, sign)?;
+            *last_dc = (*last_dc + value) & 0xffff;
         }
         let [dc, ..] = block;
         *dc = last_dc.wrapping_shl(self.al) as i16;
@@ -396,13 +394,13 @@ impl ArithDecoder {
 
         let mut k = self.ss;
         while k <= self.se {
-            let mut st = 3 * (k - 1);
-            if core.decode_at(input, stats, st)? {
+            let mut bin = 3 * (k - 1);
+            if core.decode_at(input, stats, bin)? {
                 // End of block.
                 break;
             }
-            while !core.decode_at(input, stats, st + 1)? {
-                st += 3;
+            while !core.decode_at(input, stats, bin + 1)? {
+                bin += 3;
                 k += 1;
                 if k > self.se {
                     core.fail();
@@ -410,22 +408,22 @@ impl ArithDecoder {
                 }
             }
             let sign = core.decode(input, &mut self.fixed_bin);
-            st += 2;
-            let mut m = i32::from(core.decode_at(input, stats, st)?);
-            if m != 0 && core.decode_at(input, stats, st)? {
-                m <<= 1;
-                st = if k <= kx { 189 } else { 217 };
-                while core.decode_at(input, stats, st)? {
-                    m <<= 1;
-                    if m == 0x8000 {
+            bin += 2;
+            let mut magnitude = i32::from(core.decode_at(input, stats, bin)?);
+            if magnitude != 0 && core.decode_at(input, stats, bin)? {
+                magnitude <<= 1;
+                bin = if k <= kx { 189 } else { 217 };
+                while core.decode_at(input, stats, bin)? {
+                    magnitude <<= 1;
+                    if magnitude == 0x8000 {
                         core.fail();
                         return Ok(false);
                     }
-                    st += 1;
+                    bin += 1;
                 }
             }
-            let v = core.decode_magnitude(input, stats, st + 14, m, sign)?;
-            *coef_at(block, k)? = v.wrapping_shl(self.al) as i16;
+            let value = core.decode_magnitude(input, stats, bin + 14, magnitude, sign)?;
+            *coef_at(block, k)? = value.wrapping_shl(self.al) as i16;
             k += 1;
         }
         Ok(true)
@@ -437,38 +435,38 @@ impl ArithDecoder {
             .ac_stats
             .get_mut(usize::from(selector))
             .ok_or(Error::Internal)?;
-        let p1 = 1i16 << self.al;
-        let m1 = -1i16 << self.al;
+        let plus_one = 1i16 << self.al;
+        let minus_one = -1i16 << self.al;
 
         // Where the block ended as of the previous stage.
-        let mut kex = self.se;
-        while kex > 0 && *coef_at(block, kex)? == 0 {
-            kex -= 1;
+        let mut last_nonzero = self.se;
+        while last_nonzero > 0 && *coef_at(block, last_nonzero)? == 0 {
+            last_nonzero -= 1;
         }
 
         let mut k = self.ss;
         while k <= self.se {
-            let mut st = 3 * (k - 1);
-            if k > kex && core.decode_at(input, stats, st)? {
+            let mut bin = 3 * (k - 1);
+            if k > last_nonzero && core.decode_at(input, stats, bin)? {
                 break;
             }
             loop {
                 let coef = coef_at(block, k)?;
                 if *coef != 0 {
-                    if core.decode_at(input, stats, st + 2)? {
-                        *coef = coef.wrapping_add(if *coef < 0 { m1 } else { p1 });
+                    if core.decode_at(input, stats, bin + 2)? {
+                        *coef = coef.wrapping_add(if *coef < 0 { minus_one } else { plus_one });
                     }
                     break;
                 }
-                if core.decode_at(input, stats, st + 1)? {
+                if core.decode_at(input, stats, bin + 1)? {
                     *coef = if core.decode(input, &mut self.fixed_bin) {
-                        m1
+                        minus_one
                     } else {
-                        p1
+                        plus_one
                     };
                     break;
                 }
-                st += 3;
+                bin += 3;
                 k += 1;
                 if k > self.se {
                     core.fail();

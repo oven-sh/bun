@@ -1,4 +1,4 @@
-/// Why a stream cannot be decoded or an image cannot be encoded. The messages are libjpeg's.
+/// Why a stream cannot be decoded or an image cannot be encoded. The messages are libjpeg's where it has one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     #[error("Empty input file")]

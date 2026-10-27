@@ -114,7 +114,9 @@ pub(crate) fn compress_to_slice(
     };
     let format = encoding(options.encoding);
     if let Some(first) = first {
-        _ = compressor.compress_to_vec(first, &mut Vec::new(), format);
+        let bound = Compressor::max_bytes_needed(first.len(), format);
+        let mut output = vec![HELD; options.room_for_first.unwrap_or(bound)];
+        _ = compressor.compress(first, &mut output, format);
     }
     let mut output = vec![HELD; options.room];
     let result = compressor.compress(input, &mut output, format);

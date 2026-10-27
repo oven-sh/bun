@@ -31,6 +31,8 @@ export const CompressToSliceOptions = b.dictionary({
   level: b.i32,
   encoding: Encoding.default("deflate"),
   room: b.usize,
+  /** Without it, `first` gets all the room it can need. */
+  roomForFirst: b.usize.optional,
 });
 
 export const CompressToVecOptions = b.dictionary({

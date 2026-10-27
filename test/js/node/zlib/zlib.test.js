@@ -210,6 +210,8 @@ describe("zlib", () => {
       inputs.alternating = Buffer.concat(
         Array.from({ length: 6 }, (_, i) => noise(6_000).map(byte => byte & (i % 2 ? 3 : 255))),
       );
+      // At levels 10 to 12 the first block ends 295 bytes before the input does, because they can hold no more matches.
+      inputs.fourSymbols = fourBytesEach(285_800, () => next() & 0x03030303);
       // No match for more than 65535 bytes, which libdeflate 0.6 could not count. From its test_litrunlen_overflow.c.
       inputs.noMatches = Buffer.alloc(2 * 250 * 251);
       for (let half = 0, i = 0; half < 2; half++)
@@ -346,6 +348,21 @@ describe("zlib", () => {
         "23423 1a84020412787af6",
         "23383 8f1dda6a79a46ed8",
         "23383 8f1dda6a79a46ed8",
+      ],
+      fourSymbols: [
+        "285825 df5664486f1e694e",
+        "88453 ea0c5b0ed3bd538e",
+        "86152 93965fe04d23b825",
+        "80163 b71b9458c2201fbe",
+        "78770 9ae07702f166a2a3",
+        "78769 65ef91af12d38e57",
+        "77987 1f8c57dc311a776c",
+        "77609 a2f7fb2f892d7a2e",
+        "77440 d03611d2d6e670f2",
+        "77434 63605562fd3edf75",
+        "78364 435aafc78f8ebe30",
+        "77217 95cb9af78b6e519d",
+        "77054 98aa56ac451a6536",
       ],
       noMatches: ["125510 fe85f174af38f0d4", "125309 dedf5d158bed37db", ...Array(11).fill("125279 85be301be4068581")],
     };
@@ -884,6 +901,16 @@ describe("zlib", () => {
               expect(internals.compressToSlice(input, { level, room: 50_000 }, first)).toEqual(alone);
             }
           }
+        }
+      });
+
+      it("a compressor keeps nothing of an input it had no room for", () => {
+        const level = 10;
+        const alone = sizeAndChecksum(deflateSync(inputs.fourSymbols, { library, level }));
+        // The room runs out after a block that ended before the position reached, so matches found are left over.
+        for (const roomForFirst of [7_000, 16_000, 20_000]) {
+          const options = { level, room: 100_000, roomForFirst };
+          expect(internals.compressToSlice(inputs.fourSymbols, options, inputs.alternating)).toEqual(alone);
         }
       });
 

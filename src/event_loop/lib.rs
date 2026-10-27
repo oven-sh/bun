@@ -54,7 +54,6 @@ bun_dispatch::link_interface! {
         fn auto_tick();
         fn auto_tick_active();
         fn global_object() -> *mut ();
-        fn bun_vm() -> *mut ();
         fn stdout() -> *mut ();
         fn stderr() -> *mut ();
         fn enter();

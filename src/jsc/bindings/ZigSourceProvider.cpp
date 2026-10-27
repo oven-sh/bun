@@ -56,7 +56,7 @@ void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
-extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
+extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, void* opaque_source_provider, const BunString* specifier);
 
 Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,

@@ -11,7 +11,7 @@ class DevServerSourceProvider;
 
 // Implemented on the Rust side to register the source provider.
 extern "C" void Bun__addDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, const BunString* specifier);
-extern "C" void Bun__removeDevServerSourceProvider(void* bun_vm, DevServerSourceProvider* opaque_source_provider, const BunString* specifier);
+extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, void* opaque_source_provider, const BunString* specifier);
 
 class DevServerSourceProvider final : public JSC::StringSourceProvider {
 public:
@@ -62,7 +62,7 @@ private:
     ~DevServerSourceProvider()
     {
         if (m_bunVM) {
-            Bun__removeDevServerSourceProvider(m_bunVM, this, &m_specifier);
+            Bun__removeSourceProviderSourceMap(m_bunVM, this, &m_specifier);
         }
     }
 

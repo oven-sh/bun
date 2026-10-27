@@ -9,7 +9,7 @@ namespace Bake {
 class SourceProvider;
 
 extern "C" void Bun__addBakeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
-extern "C" void Bun__removeBakeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
+extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, void* opaque_source_provider, const BunString* specifier);
 
 class SourceProvider final : public JSC::StringSourceProvider {
 public:
@@ -55,7 +55,7 @@ private:
     ~SourceProvider()
     {
         auto specifier = Bun::toString(sourceURL());
-        Bun__removeBakeSourceProviderSourceMap(m_bunVM, this, &specifier);
+        Bun__removeSourceProviderSourceMap(m_bunVM, this, &specifier);
     }
 
     void* m_bunVM;

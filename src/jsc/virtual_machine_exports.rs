@@ -248,8 +248,7 @@ pub fn get_verbose_fetch_value() -> i32 {
     }
 }
 
-// `Bun__{add,remove}BakeSourceProviderSourceMap` /
-// `Bun__{add,remove}DevServerSourceProvider` live in
+// `Bun__addBakeSourceProviderSourceMap` / `Bun__addDevServerSourceProvider` live in
 // `bun_runtime::bake::source_provider_exports` (their callers are bake's C++
 // source providers; LAYERING).
 
@@ -270,8 +269,8 @@ pub fn add_source_provider_source_map(
     );
 }
 
-/// `~SourceProvider` calls this, on whichever thread drops the last reference, so it takes no
-/// `&VirtualMachine`.
+/// The destructor of each of the three C++ source providers calls this, on whichever thread
+/// drops the last reference, so it takes no `&VirtualMachine`.
 ///
 /// # Safety
 /// `vm` is a live VM.

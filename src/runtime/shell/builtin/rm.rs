@@ -649,10 +649,6 @@ pub(crate) struct DirTask {
     pub(crate) work_task: WorkPoolTask,
 }
 
-// SAFETY: raw-pointer fields are only dereferenced on the threads that own
-// them (worker pool / main thread); the surrounding atomics + `err` mutex
-// provide the necessary synchronisation.
-unsafe impl Send for ShellRmTask {}
 // SAFETY: `task_manager` / `parent_task` point at heap allocations kept alive
 // by the `subtask_count` / `pending_main_callbacks` atomic protocol; non-atomic
 // fields are single-owner per the `need_to_wait` handoff (see

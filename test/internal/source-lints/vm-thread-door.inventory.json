@@ -205,8 +205,7 @@
   "src/runtime/shell/builtin/rm.rs": {
     "WorkPool::schedule*": 2,
     "unsafe impl Send": [
-      "DirTask",
-      "ShellRmTask"
+      "DirTask"
     ]
   },
   "src/runtime/shell/interpreter.rs": {

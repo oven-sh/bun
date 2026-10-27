@@ -148,22 +148,6 @@ pub(crate) fn add_bake_source_provider_source_map(
     );
 }
 
-/// `~SourceProvider` calls this, on whichever thread drops the last reference, so it takes no
-/// `&VirtualMachine`.
-///
-/// # Safety
-/// `vm` is a live VM.
-// HOST_EXPORT(Bun__removeBakeSourceProviderSourceMap, c)
-pub(crate) unsafe fn remove_bake_source_provider_source_map(
-    vm: *const VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    let slice = specifier.to_utf8();
-    // SAFETY: fn contract. Only the field is borrowed, and it is `Sync`.
-    unsafe { &(*vm).source_mappings }.remove_source_provider(opaque_source_provider, slice.slice());
-}
-
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)
 pub(crate) fn add_dev_server_source_provider(
     vm: &VirtualMachine,
@@ -179,20 +163,4 @@ pub(crate) fn add_dev_server_source_provider(
         ),
         slice.slice(),
     );
-}
-
-/// `~SourceProvider` calls this, on whichever thread drops the last reference, so it takes no
-/// `&VirtualMachine`.
-///
-/// # Safety
-/// `vm` is a live VM.
-// HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
-pub(crate) unsafe fn remove_dev_server_source_provider(
-    vm: *const VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    let slice = specifier.to_utf8();
-    // SAFETY: fn contract. Only the field is borrowed, and it is `Sync`.
-    unsafe { &(*vm).source_mappings }.remove_source_provider(opaque_source_provider, slice.slice());
 }

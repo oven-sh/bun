@@ -209,15 +209,10 @@ impl MacroContext {
         }
         let _flush_guard = Output::flush_guard();
 
-        // Borrowck: snapshot the small POD fields we need (`disabled`,
-        // `vm`) so the macro_entry borrow can be released.
-        let macro_disabled = macro_entry.value_ptr.disabled;
-        let macro_vm = macro_entry.value_ptr.vm;
         let macro_: *const Macro = macro_entry.value_ptr;
-        if macro_disabled {
+        let Some(vm) = macro_entry.value_ptr.vm else {
             return Ok(caller);
-        }
-        let vm = macro_vm.expect("Macro.vm accessed on disabled sentinel");
+        };
         // Enables macro mode now; disables on scope exit.
         let _mode_guard = MacroModeGuard::new(vm);
         vm.event_loop().ensure_waker();
@@ -377,12 +372,9 @@ fn __bun_macro_context_get_remap(
 // Macro
 // ══════════════════════════════════════════════════════════════════════════
 
-// `vm` is `Some` for every live macro and `None` only when `disabled == true`, which
-// is checked before any access (see `MacroContext::call`).
 pub struct Macro {
+    /// `None` for a macro that failed to load, which `MacroContext::call` checks first.
     pub(crate) vm: Option<&'static VirtualMachine>,
-
-    pub(crate) disabled: bool,
 }
 
 impl Default for Macro {
@@ -395,17 +387,11 @@ impl Macro {
     /// Sentinel stored in the `MacroMap` when `Macro::init` fails, so subsequent
     /// calls with the same hash short-circuit instead of retrying the load.
     fn disabled_sentinel() -> Self {
-        Macro {
-            vm: None,
-            disabled: true,
-        }
+        Macro { vm: None }
     }
 
-    /// Unwrap the VM handle. Only valid when `!self.disabled` — `MacroContext::call`
-    /// returns early on `disabled` before any `vm()` access.
     #[inline]
     pub(crate) fn vm(&self) -> &'static VirtualMachine {
-        debug_assert!(!self.disabled);
         self.vm.expect("Macro.vm accessed on disabled sentinel")
     }
 
@@ -474,10 +460,7 @@ impl Macro {
             return Err(crate::Error::MacroLoadError);
         }
 
-        Ok(Macro {
-            vm: Some(vm),
-            disabled: false,
-        })
+        Ok(Macro { vm: Some(vm) })
     }
 }
 

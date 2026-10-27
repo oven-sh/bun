@@ -1367,7 +1367,6 @@ bun_event_loop::link_impl_JsEventLoop! {
             .global
             .get()
             .map_or(core::ptr::null_mut(), |global| global.as_ptr().cast()),
-        bun_vm() => core::ptr::from_ref((*this).vm_ref()).cast_mut().cast(),
         stdout() => (*this).vm_ref().rare_data().stdout().cast(),
         stderr() => (*this).vm_ref().rare_data().stderr().cast(),
         enter() => (*this).enter(),

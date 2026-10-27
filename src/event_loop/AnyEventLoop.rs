@@ -71,12 +71,6 @@ impl AnyEventLoop {
         AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }
 
-    /// The `Js` variant for the loop `handle` names.
-    #[inline]
-    pub fn js(handle: JsEventLoop) -> AnyEventLoop {
-        AnyEventLoop::Js { owner: handle }
-    }
-
     /// Construct the `Js` variant for the current thread's JS event loop.
     /// Replaces `jsc::VirtualMachine::get().event_loop()` for tier-≤4 callers
     /// (e.g. `bun_install::PackageManager`).
@@ -312,14 +306,6 @@ impl EventLoopHandle {
         }
     }
 
-    /// Erased `*mut jsc::VirtualMachine` or null.
-    pub fn bun_vm(self) -> *mut () {
-        match self {
-            EventLoopHandle::Js { owner } => owner.bun_vm(),
-            EventLoopHandle::Mini(_) => core::ptr::null_mut(),
-        }
-    }
-
     pub fn enter(self) {
         if let EventLoopHandle::Js { owner } = self {
             owner.enter();
@@ -341,15 +327,6 @@ impl EventLoopHandle {
         EnteredEventLoop(self)
     }
 
-    /// Owning thread: the weak poster other threads use to deliver JS-loop
-    /// tasks to this handle's VM; `None` for a mini loop.
-    pub fn js_poster(&self) -> Option<JsPoster> {
-        match self {
-            EventLoopHandle::Js { owner } => Some(owner.js_poster()),
-            EventLoopHandle::Mini(_) => None,
-        }
-    }
-
     /// Owning thread: what other threads deliver tasks to this loop through.
     pub fn poster(&self) -> Poster {
         match self {
@@ -368,13 +345,6 @@ impl EventLoopHandle {
 
     #[inline]
     pub fn platform_event_loop(&self) -> &UwsLoop {
-        self.r#loop()
-    }
-
-    /// Alias for [`r#loop`](Self::r#loop) so callers spell `handle.loop_()`
-    /// without the raw-identifier escape.
-    #[inline]
-    pub fn loop_(&self) -> &UwsLoop {
         self.r#loop()
     }
 

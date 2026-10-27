@@ -155,7 +155,13 @@ mod _impl {
                 .init(pledged_src_size, dictionary);
             if let Err(err) = result {
                 self.emit_error(global, this_value, &err);
-                return Ok(false);
+                // Node's `THROW_ERR_ZLIB_INITIALIZATION_FAILED(env, err.message)`.
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
+                        format_args!("{}", bstr::BStr::new(err.msg)),
+                    )
+                    .throw());
             }
 
             let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {

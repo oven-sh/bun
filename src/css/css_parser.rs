@@ -880,7 +880,7 @@ pub enum AtRulePrelude<T> {
     Layer(SmallList<LayerName, 1>),
     Container {
         name: Option<ContainerName>,
-        condition: ContainerCondition,
+        condition: Option<ContainerCondition>,
     },
     StartingStyle,
     Nest(SelectorList),
@@ -1606,8 +1606,18 @@ mod rule_parsers {
                     b"container" => {
                         let container_name: Option<ContainerName> =
                             input.try_parse(css_rules::container::ContainerName::parse).ok();
-                        let condition: ContainerCondition =
-                            css_rules::container::ContainerCondition::parse(input)?;
+                        let condition: Option<ContainerCondition> =
+                            match input.try_parse(css_rules::container::ContainerCondition::parse) {
+                                Ok(condition) => Some(condition),
+                                Err(e) => {
+                                    // `@container sidebar {}`: the query is optional after a name.
+                                    if container_name.is_some() && input.is_exhausted() {
+                                        None
+                                    } else {
+                                        return Err(e);
+                                    }
+                                }
+                            };
                         break 'brk AtRulePrelude::Container { name: container_name, condition };
                     },
                     b"starting-style" => break 'brk AtRulePrelude::StartingStyle,

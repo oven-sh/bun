@@ -2,7 +2,7 @@ use crate as css;
 use crate::css_rules::{CssRuleList, Location};
 use crate::css_values::ident::CustomIdent;
 use crate::media_query::{self, MediaFeatureType, Operator, QueryCondition, QueryFeature, ToCss};
-use crate::properties::Property;
+use crate::properties::{Property, PropertyId};
 use crate::{PrintErr, Printer};
 
 /// A [`<container-name>`](https://drafts.csswg.org/css-contain-3/#typedef-container-name).
@@ -89,8 +89,11 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
 
 /// Represents a style query within a container condition.
 pub enum StyleQuery {
-    /// A style feature, implicitly parenthesized.
+    /// A property declaration (a name and a value), implicitly parenthesized.
     Feature(Box<Property>),
+
+    /// A property name without a value, implicitly parenthesized.
+    Property(PropertyId),
 
     /// A negation of a condition.
     Not(Box<StyleQuery>),
@@ -142,10 +145,25 @@ impl QueryCondition for StyleQuery {
     fn feature_to_css(f: &Property, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         f.to_css(dest, false)
     }
+    fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        let Self::Property(property_id) = self else {
+            unreachable!()
+        };
+        property_id.to_css(dest)
+    }
 
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
-        let property_id = crate::properties::PropertyId::parse(input)?;
-        input.expect_colon()?;
+        let property_id = PropertyId::parse(input)?;
+        if let Err(e) = input.expect_colon() {
+            // `style(--a)`: nothing follows the property name.
+            if matches!(
+                e.kind,
+                css::error::ParserErrorKind::basic(css::BasicParseErrorKind::end_of_input)
+            ) {
+                return Ok(StyleQuery::Property(property_id));
+            }
+            return Err(e);
+        }
         input.skip_whitespace();
         // The arena gets re-threaded as part of the crate-wide `'bump`
         // lifetime work (see css_parser.rs).
@@ -170,7 +188,7 @@ impl QueryCondition for StyleQuery {
         match self {
             StyleQuery::Not(_) => true,
             StyleQuery::Operation { operator, .. } => Some(*operator) != parent_operator,
-            StyleQuery::Feature(_) => true,
+            StyleQuery::Feature(_) | StyleQuery::Property(_) => true,
         }
     }
 }
@@ -181,6 +199,7 @@ impl StyleQuery {
         // the per-variant `DeepClone` derives land in `properties_generated.rs`.
         match self {
             Self::Feature(p) => Self::Feature(Box::new(super::dc::property(p, bump))),
+            Self::Property(property_id) => Self::Property(*property_id),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
             Self::Operation {
                 operator,
@@ -327,8 +346,8 @@ impl ContainerCondition {
 pub struct ContainerRule<R> {
     /// The name of the container.
     pub name: Option<ContainerName>,
-    /// The container condition.
-    pub(crate) condition: ContainerCondition,
+    /// The container condition. `None` when the rule has only a name.
+    pub(crate) condition: Option<ContainerCondition>,
     /// The rules within the `@container` rule.
     pub(crate) rules: CssRuleList<R>,
     /// The location of the rule in the source file.
@@ -343,14 +362,18 @@ impl<R> ContainerRule<R> {
         dest.write_str("@container ")?;
         if let Some(name) = &self.name {
             name.to_css(dest)?;
-            dest.write_char(b' ')?;
+            if self.condition.is_some() {
+                dest.write_char(b' ')?;
+            }
         }
 
-        // Don't downlevel range syntax in container queries.
-        let exclude = dest.targets.exclude;
-        dest.targets.exclude.insert(css::Features::MEDIA_QUERIES);
-        self.condition.to_css(dest)?;
-        dest.targets.exclude = exclude;
+        if let Some(condition) = &self.condition {
+            // Don't downlevel range syntax in container queries.
+            let exclude = dest.targets.exclude;
+            dest.targets.exclude.insert(css::Features::MEDIA_QUERIES);
+            condition.to_css(dest)?;
+            dest.targets.exclude = exclude;
+        }
 
         dest.block(|d| {
             d.newline()?;
@@ -366,7 +389,7 @@ impl<R> ContainerRule<R> {
     {
         Self {
             name: self.name.as_ref().map(|n| n.deep_clone(bump)),
-            condition: self.condition.deep_clone(bump),
+            condition: self.condition.as_ref().map(|c| c.deep_clone(bump)),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,
         }

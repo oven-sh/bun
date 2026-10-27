@@ -40,6 +40,11 @@ impl<'a> BitReader<'a> {
         (self.val >> (self.bit_pos & (LBITS - 1))) as u32
     }
 
+    /// No more bits than this are left to read.
+    pub(super) fn max_bits_left(&self) -> u64 {
+        (self.buf.len() - self.pos) as u64 * 8 + u64::from(LBITS)
+    }
+
     /// Whether a bit past the end was read.
     #[inline(always)]
     pub(super) fn is_end_of_stream(&self) -> bool {

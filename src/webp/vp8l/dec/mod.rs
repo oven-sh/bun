@@ -270,12 +270,17 @@ fn read_htree_groups(
     if color_cache_bits > 0 {
         alphabet_sizes[GREEN] += 1 << color_cache_bits;
     }
+    let num_meta_codes = mapping.map_or(num_htree_groups, <[_]>::len);
+    // A code takes at least 4 bits. Nothing is allocated for a stream that is too short for all of them.
+    if br.max_bits_left() < (4 * HUFFMAN_CODES_PER_META_CODE * num_meta_codes) as u64 {
+        return Err(Error::BitstreamError);
+    }
     let mut code_lengths = [0; MAX_CODE_LENGTHS_SIZE];
     let mut sorted = [0; MAX_CODE_LENGTHS_SIZE];
     let mut htree_groups = try_vec(HTreeGroup::default(), num_htree_groups)?;
     let mut tables = Vec::new();
 
-    for i in 0..mapping.map_or(num_htree_groups, <[_]>::len) {
+    for i in 0..num_meta_codes {
         let index = match mapping {
             None => Some(i),
             Some(mapping) => mapping.at(i)?.map(|index| index as usize),
@@ -351,7 +356,7 @@ fn read_metadata(
             num_htree_groups = num_htree_groups.max(*pixel as usize + 1);
         }
         // So that a small file cannot ask for a lot of memory, only the meta codes in use are kept if there are many.
-        if num_htree_groups > 1000 || num_htree_groups > xsize * ysize {
+        if num_htree_groups > 200 || num_htree_groups > huffman_image.len() {
             let mut used = try_vec(None, num_htree_groups)?;
             let mut num_used = 0;
             for pixel in &mut huffman_image {
@@ -362,6 +367,10 @@ fn read_metadata(
             }
             num_htree_groups = num_used as usize;
             mapping = Some(used);
+        }
+        if num_htree_groups == 1 {
+            huffman_image = Vec::new();
+            huffman_subsample_bits = 0;
         }
     }
     if br.eos {

@@ -348,31 +348,51 @@ describe.concurrent("a resolver and a local server", () => {
   });
 
   test.each([
-    ["NXDOMAIN", "ENOTFOUND"],
-    ["FORMERR", "EFORMERR"],
-    ["SERVFAIL", "ESERVFAIL"],
-    ["NOTIMP", "ENOTIMP"],
-    ["REFUSED", "EREFUSED"],
-  ] as const)("%s is %s", async (rcode, code) => {
+    ["NXDOMAIN", "ENOTFOUND", 4],
+    ["FORMERR", "EFORMERR", 2],
+    ["SERVFAIL", "ESERVFAIL", 3],
+    ["NOTIMP", "ENOTIMP", 5],
+    ["REFUSED", "EREFUSED", 6],
+  ] as const)("%s is %s", async (rcode, code, errno) => {
     await using server = await dnsServer(() => ({ rcode: RCODE[rcode] }));
-    expect(await failure(resolverFor(server, { tries: 2 }).resolve4("a.test"))).toEqual({
-      name: "Error",
+    await using other = await dnsServer(query => ({ answers: [a(query.name, 60, "1.2.3.4")] }));
+    expect(await failure(resolverFor([server, other]).resolve4("a.test"))).toEqual({
+      name: "DNSException",
       code,
-      errno: undefined,
+      errno,
       syscall: "queryA",
       hostname: "a.test",
       message: `queryA ${code} a.test`,
     });
-    // A server that could not answer is asked again. One that did answer is not.
-    expect(server.queries.length).toBe(rcode === "NXDOMAIN" || rcode === "FORMERR" ? 1 : 2);
+    // What a server says is the answer, whatever it says.
+    expect(server.queries.length).toBe(1);
+    expect(other.queries).toEqual([]);
   });
 
-  test("an answer without records of the type is ENODATA", async () => {
-    await using server = await dnsServer(query => ({ answers: [cname(query.name, 60, "other.test")] }));
+  test("an answer without records is ENOTFOUND", async () => {
+    await using server = await dnsServer(() => ({}));
     const resolver = resolverFor(server);
-    expect(await failure(resolver.resolve4("a.test"))).toMatchObject({ code: "ENODATA", syscall: "queryA" });
-    expect(await failure(resolver.resolveMx("a.test"))).toMatchObject({ code: "ENODATA", syscall: "queryMx" });
-    expect(await failure(resolver.resolveSoa("a.test"))).toMatchObject({ code: "ENODATA", syscall: "querySoa" });
+    const methods = ["4", "6", "Mx", "Soa", "Txt", "Ns", "Srv", "Naptr", "Caa", "Ptr", "Cname", "Any"] as const;
+    const failures = await Promise.all(methods.map(method => failure(resolver[`resolve${method}`]("a.test"))));
+    expect(failures.map(({ message }) => message)).toEqual([
+      "queryA ENOTFOUND a.test",
+      "queryAaaa ENOTFOUND a.test",
+      "queryMx ENOTFOUND a.test",
+      "querySoa ENOTFOUND a.test",
+      "queryTxt ENOTFOUND a.test",
+      "queryNs ENOTFOUND a.test",
+      "querySrv ENOTFOUND a.test",
+      "queryNaptr ENOTFOUND a.test",
+      "queryCaa ENOTFOUND a.test",
+      "queryPtr ENOTFOUND a.test",
+      "queryCname ENOTFOUND a.test",
+      "queryAny ENOTFOUND a.test",
+    ]);
+    expect(await failure(resolver.reverse("1.2.3.4"))).toMatchObject({
+      message: "getHostByAddr ENOTFOUND 1.2.3.4",
+      syscall: "getHostByAddr",
+      hostname: "1.2.3.4",
+    });
   });
 
   test("an address is found at the end of a chain of aliases", async () => {
@@ -453,10 +473,36 @@ describe.concurrent("a resolver and a local server", () => {
       "an address of 3 bytes",
       (query: Query) => encode(query, { answers: [record(query.name, 1, 60, Buffer.alloc(3))] }),
     ],
-  ])("a malformed reply: %s", async (_, reply) => {
+    ["no question", (query: Query) => Buffer.concat([u16(query.id, 0x8180, 0, 1, 0, 0), a(query.name, 60, "1.2.3.4")])],
+  ])("a malformed reply is EBADRESP once every try got one: %s", async (_, reply) => {
     await using server = await dnsServer(reply);
-    const result = await failure(resolverFor(server, { tries: 2, timeout: 100 }).resolve4("a.test"));
-    expect({ code: result.code, queries: server.queries.length }).toMatchSnapshot();
+    expect(await failure(resolverFor(server, { tries: 2 }).resolve4("a.test"))).toMatchObject({
+      code: "EBADRESP",
+      errno: 10,
+    });
+    expect(server.queries.length).toBe(2);
+  });
+
+  test("bytes after the last record are ignored", async () => {
+    await using server = await dnsServer(query =>
+      Buffer.concat([encode(query, { answers: [a(query.name, 60, "1.2.3.4")] }), Buffer.from("junk")]),
+    );
+    expect(await resolverFor(server).resolve4("a.test")).toEqual(["1.2.3.4"]);
+  });
+
+  test("only the answer section and the class IN count, and a ttl is at most 2^31 - 1", async () => {
+    await using server = await dnsServer(query => ({
+      answers: [
+        a(query.name, 0xffffffff, "1.2.3.4"),
+        record(query.name, TYPE.A, 60, Buffer.from([7, 7, 7, 7]), 3),
+        aaaa(query.name, 60, "20010db8000000000000000000000001"),
+      ],
+      authority: [a(query.name, 60, "8.8.8.8")],
+      additional: [a(query.name, 60, "8.8.4.4")],
+    }));
+    expect(await resolverFor(server).resolve4("a.test", { ttl: true })).toEqual([
+      { address: "1.2.3.4", ttl: 2147483647 },
+    ]);
   });
 
   test("a truncated reply is asked for again over TCP", async () => {
@@ -496,48 +542,34 @@ describe.concurrent("a resolver and a local server", () => {
     expect(server.connections).toBe(1);
   });
 
-  test("a server that hangs up on TCP", async () => {
+  test("a server that hangs up on TCP is asked again", async () => {
     await using server = await dnsServer(query => (query.transport === "udp" ? { truncated: true } : "hang up"));
-    const result = await failure(resolverFor(server, { tries: 2, timeout: 100 }).resolve4("a.test"));
-    expect({ code: result.code, sent: sent(server) }).toMatchInlineSnapshot(`
-      {
-        "code": "ECONNREFUSED",
-        "sent": [
-          "udp 1 a.test",
-          "tcp 1 a.test",
-          "tcp 1 a.test",
-        ],
-      }
-    `);
+    expect(await failure(resolverFor(server, { tries: 2 }).resolve4("a.test"))).toMatchObject({
+      code: "ECONNREFUSED",
+      errno: 11,
+    });
+    expect(sent(server)).toEqual(["udp 1 a.test", "tcp 1 a.test", "tcp 1 a.test"]);
+    expect(server.connections).toBe(2);
   });
 
   test("a server that never answers is asked `tries` times", async () => {
     await using server = await dnsServer(() => undefined);
-    expect(await failure(resolverFor(server, { timeout: 20, tries: 3 }).resolve4("a.test"))).toEqual({
-      name: "Error",
+    expect(await failure(resolverFor(server, { timeout: 1, tries: 2 }).resolve4("a.test"))).toEqual({
+      name: "DNSException",
       code: "ETIMEOUT",
-      errno: undefined,
+      errno: 12,
       syscall: "queryA",
       hostname: "a.test",
       message: "queryA ETIMEOUT a.test",
     });
-    expect(sent(server)).toEqual(["udp 1 a.test", "udp 1 a.test", "udp 1 a.test"]);
+    expect(sent(server)).toEqual(["udp 1 a.test", "udp 1 a.test"]);
   });
 
   test("the next server is asked when one does not answer", async () => {
     await using silent = await dnsServer(() => undefined);
     await using server = await dnsServer(query => ({ answers: [a(query.name, 60, "1.2.3.4")] }));
-    expect(await resolverFor([silent, server], { timeout: 20 }).resolve4("a.test")).toEqual(["1.2.3.4"]);
+    expect(await resolverFor([silent, server], { timeout: 1 }).resolve4("a.test")).toEqual(["1.2.3.4"]);
     expect(silent.queries.length).toBe(1);
-    expect(server.queries.length).toBe(1);
-  });
-
-  test("the next server is asked when one fails", async () => {
-    await using failing = await dnsServer(() => ({ rcode: RCODE.SERVFAIL }));
-    await using server = await dnsServer(query => ({ answers: [a(query.name, 60, "1.2.3.4")] }));
-    const resolver = resolverFor([failing, server]);
-    expect(await resolver.resolve4("a.test")).toEqual(["1.2.3.4"]);
-    expect(failing.queries.length).toBe(1);
     expect(server.queries.length).toBe(1);
   });
 
@@ -557,7 +589,7 @@ describe.concurrent("a resolver and a local server", () => {
       await using gone = await dnsServer(() => undefined);
       closed = gone;
     }
-    expect(await failure(resolverFor(closed).resolve4("a.test"))).toMatchObject({ code: "ECONNREFUSED" });
+    expect(await failure(resolverFor(closed).resolve4("a.test"))).toMatchObject({ code: "ECONNREFUSED", errno: 11 });
   });
 
   test("an answer is remembered for as long as it says", async () => {
@@ -611,7 +643,7 @@ describe.concurrent("a resolver and a local server", () => {
         resolver.resolve4("a.test", { ttl: true }),
         resolver.resolve6("a.test").catch(error => error.code),
       ]),
-    ).toEqual([["1.2.3.4"], [{ address: "1.2.3.4", ttl: 0 }], "ENODATA"]);
+    ).toEqual([["1.2.3.4"], [{ address: "1.2.3.4", ttl: 0 }], "ENOTFOUND"]);
     expect(sent(server).sort()).toEqual(["udp 1 a.test", "udp 28 a.test"]);
   });
 
@@ -724,13 +756,36 @@ describe.concurrent("a resolver and a local server", () => {
   test.each([
     ["a space", "a b.test"],
     ["an empty label", "a..test"],
+    ["a leading dot", ".a.test"],
     ["a label of 64 bytes", `${Buffer.alloc(64, "a")}.test`],
-    ["a name of 256 bytes", Array(64).fill("abc").join(".")],
-    ["a bad escape", "a\\"],
+    ["an escape of nothing", "a\\"],
+    ["a byte that is not ASCII", "\u00e9.test"],
   ])("a name that cannot be sent: %s", async (_, hostname) => {
     await using server = await dnsServer(() => ({}));
-    const { code, message } = await failure(resolverFor(server).resolve4(hostname));
-    expect({ code, message, queries: server.queries.length }).toMatchSnapshot();
+    expect(await failure(resolverFor(server).resolve4(hostname))).toEqual({
+      name: "DNSException",
+      code: "ENOTFOUND",
+      errno: 8,
+      syscall: "queryA",
+      hostname,
+      message: `queryA ENOTFOUND ${hostname}`,
+    });
+    expect(server.queries).toEqual([]);
+  });
+
+  test.each([
+    ["a.test.", ["a", "test"]],
+    [".", []],
+    ["_x._tcp.test", ["_x", "_tcp", "test"]],
+    ["a\\.b.test", ["a.b", "test"]],
+    ["a\\065.test", ["aA", "test"]],
+    [`${Buffer.alloc(63, "a")}.test`, [Buffer.alloc(63, "a").toString(), "test"]],
+  ])("%s is sent as its labels", async (hostname, labels) => {
+    await using server = await dnsServer(() => ({ answers: [a(QUESTION_NAME, 60, "1.2.3.4")] }));
+    expect(await resolverFor(server).resolve4(hostname)).toEqual(["1.2.3.4"]);
+    expect(server.queries.map(query => query.question.toString("hex"))).toEqual([
+      Buffer.concat([name(labels), u16(TYPE.A, 1)]).toString("hex"),
+    ]);
   });
 
   test("a name under .onion is never sent", async () => {

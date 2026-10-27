@@ -3,7 +3,9 @@
 use super::coef::{CoefBits, McuBlocks};
 use super::input::Input;
 use super::phuff::{update_progression, validate_progression};
-use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, NUM_ARITH_TABLES, coef_at};
+use super::{
+    Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, NUM_ARITH_TABLES, coef_at,
+};
 use crate::error::{Error, Result};
 
 /// Table D.2 of the standard. For each state of the probability estimation: Qe in the high 16 bits, then the next state
@@ -178,20 +180,10 @@ pub(crate) struct ArithDecoder {
     se: usize,
     al: u32,
     blocks_in_mcu: usize,
-    blocks: [BlockInfo; MAX_BLOCKS_IN_MCU],
-    /// The tables of the components of the scan.
-    scan_tables: [(u8, u8); MAX_COMPONENTS_IN_SCAN],
-    components_in_scan: usize,
+    blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
     dc_l: [u8; NUM_ARITH_TABLES],
     dc_u: [u8; NUM_ARITH_TABLES],
     ac_k: [u8; NUM_ARITH_TABLES],
-}
-
-#[derive(Default, Clone, Copy)]
-struct BlockInfo {
-    scan_component: u8,
-    dc_table: u8,
-    ac_table: u8,
 }
 
 impl ArithDecoder {
@@ -217,9 +209,7 @@ impl ArithDecoder {
             se: 0,
             al: 0,
             blocks_in_mcu: 0,
-            blocks: [BlockInfo::default(); MAX_BLOCKS_IN_MCU],
-            scan_tables: [(0, 0); MAX_COMPONENTS_IN_SCAN],
-            components_in_scan: 0,
+            blocks: [McuBlock::default(); MAX_BLOCKS_IN_MCU],
             dc_l: [0; NUM_ARITH_TABLES],
             dc_u: [0; NUM_ARITH_TABLES],
             ac_k: [0; NUM_ARITH_TABLES],
@@ -258,30 +248,8 @@ impl ArithDecoder {
             self.al = 0;
         }
 
-        self.components_in_scan = decoder.components_in_scan;
-        for (i, tables) in self
-            .scan_tables
-            .iter_mut()
-            .enumerate()
-            .take(decoder.components_in_scan)
-        {
-            let comp = decoder.scan_component(i)?;
-            *tables = (comp.dc_selector, comp.ac_selector);
-        }
         self.blocks_in_mcu = decoder.blocks_in_mcu;
-        for (info, &scan_component) in self
-            .blocks
-            .iter_mut()
-            .zip(decoder.mcu_membership.iter())
-            .take(decoder.blocks_in_mcu)
-        {
-            let comp = decoder.scan_component(usize::from(scan_component))?;
-            *info = BlockInfo {
-                scan_component,
-                dc_table: comp.dc_selector,
-                ac_table: comp.ac_selector,
-            };
-        }
+        self.blocks = decoder.mcu_blocks;
         self.dc_l = decoder.arith_dc_l;
         self.dc_u = decoder.arith_dc_u;
         self.ac_k = decoder.arith_ac_k;
@@ -295,11 +263,11 @@ impl ArithDecoder {
 
     fn reset_statistics(&mut self) {
         let (uses_dc, uses_ac) = (self.uses_dc(), self.uses_ac());
-        for &(dc, ac) in self.scan_tables.iter().take(self.components_in_scan) {
-            if uses_dc && let Some(stats) = self.dc_stats.get_mut(usize::from(dc)) {
+        for info in self.blocks.iter().take(self.blocks_in_mcu) {
+            if uses_dc && let Some(stats) = self.dc_stats.get_mut(usize::from(info.dc_selector)) {
                 *stats = [0; DC_STAT_BINS];
             }
-            if uses_ac && let Some(stats) = self.ac_stats.get_mut(usize::from(ac)) {
+            if uses_ac && let Some(stats) = self.ac_stats.get_mut(usize::from(info.ac_selector)) {
                 *stats = [0; AC_STAT_BINS];
             }
         }
@@ -343,19 +311,27 @@ impl ArithDecoder {
                         break;
                     }
                     if let Pass::Sequential = self.pass
-                        && !self.decode_ac(input, info.ac_table, block)?
+                        && !self.decode_ac(input, info.ac_selector, block)?
                     {
                         break;
                     }
                 }
             }
             Pass::AcFirst => {
-                let [(_, ac_table), ..] = self.scan_tables;
-                self.decode_ac(input, ac_table, mcu.block(0).ok_or(Error::Internal)?)?;
+                let [info, ..] = self.blocks;
+                self.decode_ac(
+                    input,
+                    info.ac_selector,
+                    mcu.block(0).ok_or(Error::Internal)?,
+                )?;
             }
             Pass::AcRefine => {
-                let [(_, ac_table), ..] = self.scan_tables;
-                self.refine_ac(input, ac_table, mcu.block(0).ok_or(Error::Internal)?)?;
+                let [info, ..] = self.blocks;
+                self.refine_ac(
+                    input,
+                    info.ac_selector,
+                    mcu.block(0).ok_or(Error::Internal)?,
+                )?;
             }
             Pass::DcRefine => {}
         }
@@ -363,9 +339,9 @@ impl ArithDecoder {
     }
 
     /// Returns false after an error in the data.
-    fn decode_dc(&mut self, input: &mut Input, info: BlockInfo, block: &mut Block) -> Result<bool> {
+    fn decode_dc(&mut self, input: &mut Input, info: McuBlock, block: &mut Block) -> Result<bool> {
         let core = &mut self.core;
-        let selector = usize::from(info.dc_table);
+        let selector = usize::from(info.dc_selector);
         let stats = self.dc_stats.get_mut(selector).ok_or(Error::Internal)?;
         let context = self
             .dc_context
@@ -412,9 +388,9 @@ impl ArithDecoder {
     }
 
     /// Returns false after an error in the data.
-    fn decode_ac(&mut self, input: &mut Input, ac_table: u8, block: &mut Block) -> Result<bool> {
+    fn decode_ac(&mut self, input: &mut Input, selector: u8, block: &mut Block) -> Result<bool> {
         let core = &mut self.core;
-        let selector = usize::from(ac_table);
+        let selector = usize::from(selector);
         let stats = self.ac_stats.get_mut(selector).ok_or(Error::Internal)?;
         let kx = usize::from(*self.ac_k.get(selector).ok_or(Error::Internal)?);
 
@@ -455,11 +431,11 @@ impl ArithDecoder {
         Ok(true)
     }
 
-    fn refine_ac(&mut self, input: &mut Input, ac_table: u8, block: &mut Block) -> Result<()> {
+    fn refine_ac(&mut self, input: &mut Input, selector: u8, block: &mut Block) -> Result<()> {
         let core = &mut self.core;
         let stats = self
             .ac_stats
-            .get_mut(usize::from(ac_table))
+            .get_mut(usize::from(selector))
             .ok_or(Error::Internal)?;
         let p1 = 1i16 << self.al;
         let m1 = -1i16 << self.al;

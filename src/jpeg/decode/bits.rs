@@ -5,6 +5,7 @@
 //! outside, because reading never goes past a marker and whatever is between the last used bit and the marker is
 //! dropped.
 
+use super::NUM_HUFF_TABLES;
 use super::input::Input;
 use crate::error::{Error, Result};
 use crate::tables::HuffSpec;
@@ -98,6 +99,31 @@ impl DerivedTable {
         }
         Ok(table)
     }
+}
+
+pub(crate) type DerivedTables = [Option<Box<DerivedTable>>; NUM_HUFF_TABLES];
+
+/// Derives the table that `selector` picks among `specs`, for `table` to find in `tables`.
+pub(crate) fn derive(
+    specs: &[Option<Box<HuffSpec>>; NUM_HUFF_TABLES],
+    selector: u8,
+    kind: TableKind,
+    tables: &mut DerivedTables,
+) -> Result<()> {
+    let spec = specs.get(usize::from(selector)).and_then(Option::as_deref);
+    let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(selector))?, kind)?;
+    *tables
+        .get_mut(usize::from(selector))
+        .ok_or(Error::Internal)? = Some(table);
+    Ok(())
+}
+
+#[inline(always)]
+pub(crate) fn table(tables: &DerivedTables, selector: u8) -> Result<&DerivedTable> {
+    tables
+        .get(usize::from(selector))
+        .and_then(Option::as_deref)
+        .ok_or(Error::Internal)
 }
 
 /// `x` is `s` bits read after a symbol `s`: the upper half of their range stands for itself, the lower half for the

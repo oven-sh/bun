@@ -231,7 +231,6 @@ impl CoefController {
         planes: &mut [Plane],
     ) -> Result<()> {
         let last_mcu_col = decoder.mcus_per_row - 1;
-        let last_imcu_row = decoder.total_imcu_rows - 1;
 
         for yoffset in 0..decoder.mcu_rows_in_imcu_row(self.input_imcu_row)? {
             for mcu_col_num in 0..=last_mcu_col {
@@ -245,7 +244,7 @@ impl CoefController {
                 let mut index = 0;
                 for i in 0..decoder.components_in_scan {
                     let ci = decoder.scan_component_index(i)?;
-                    let comp = decoder.comp(ci)?;
+                    let comp = decoder.component(ci)?;
                     let (Some(idct), Some(plane)) = (idcts.get(ci), planes.get_mut(ci)) else {
                         return Err(Error::Internal);
                     };
@@ -257,9 +256,7 @@ impl CoefController {
                     };
                     let start_col = mcu_col_num as usize * comp.mcu_width as usize * size;
                     for yindex in 0..comp.mcu_height {
-                        if self.input_imcu_row < last_imcu_row
-                            || yoffset + yindex < comp.last_row_height
-                        {
+                        if yoffset + yindex < decoder.rows_in_imcu_row(comp, self.input_imcu_row) {
                             let y = (yoffset + yindex) as usize * size;
                             let blocks = self
                                 .mcu_buffer
@@ -292,7 +289,7 @@ impl CoefController {
                     let mut at = mcu.at.iter_mut();
                     for i in 0..decoder.components_in_scan {
                         let ci = decoder.scan_component_index(i)?;
-                        let comp = decoder.comp(ci)?;
+                        let comp = decoder.component(ci)?;
                         let blocks_per_row =
                             mcu.arrays.get(ci).ok_or(Error::Internal)?.blocks_per_row;
                         let start_col = (mcu_col_num * comp.mcu_width) as usize;
@@ -362,7 +359,6 @@ impl CoefController {
         idcts: &[Idct],
         planes: &mut [Plane],
     ) -> Result<()> {
-        let last_imcu_row = decoder.total_imcu_rows - 1;
         let components = decoder
             .components
             .iter()
@@ -370,11 +366,7 @@ impl CoefController {
             .zip(idcts)
             .zip(planes.iter_mut());
         for (ci, (((comp, array), idct), plane)) in components.enumerate() {
-            let block_rows = if output_imcu_row < last_imcu_row {
-                comp.v_samp
-            } else {
-                comp.last_row_height
-            };
+            let block_rows = decoder.rows_in_imcu_row(comp, output_imcu_row);
             let size = comp.dct_scaled_size as usize;
             let first_row = (output_imcu_row * comp.v_samp) as usize;
             let width = comp.width_in_blocks as usize;

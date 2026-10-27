@@ -1,11 +1,9 @@
 //! Marker segments (jdmarker.c) and the ICC profile they carry (jdicc.c).
 
-use super::{
-    Component, Decoder, MAX_COMPONENTS_IN_SCAN, NUM_ARITH_TABLES, NUM_HUFF_TABLES, NUM_QUANT_TABLES,
-};
+use super::{Component, Decoder, MAX_COMPONENTS_IN_SCAN, NUM_ARITH_TABLES};
 use crate::error::{Error, Result, try_vec_with_capacity};
 use crate::markers::*;
-use crate::tables::{HuffSpec, NATURAL_ORDER};
+use crate::tables::{HuffSpec, natural_order};
 use std::borrow::Cow;
 
 /// How much of an APP0 or APP14 segment is looked at.
@@ -99,12 +97,12 @@ impl Decoder<'_> {
         self.components.clear();
         for _ in 0..num_components {
             let id = self.input.byte();
-            let c = self.input.byte();
+            let sampling = self.input.byte();
             let quant_selector = self.input.byte();
             self.components.push(Component {
                 id,
-                h_samp: u32::from(c >> 4),
-                v_samp: u32::from(c & 15),
+                h_samp: u32::from(sampling >> 4),
+                v_samp: u32::from(sampling & 15),
                 quant_selector,
                 ..Component::default()
             });
@@ -118,25 +116,25 @@ impl Decoder<'_> {
             return Err(Error::SosNoSof);
         }
         let length = usize::from(self.input.u16());
-        let n = usize::from(self.input.byte());
-        if length != n * 2 + 6 || n < 1 || n > MAX_COMPONENTS_IN_SCAN {
+        let count = usize::from(self.input.byte());
+        if length != count * 2 + 6 || count < 1 || count > MAX_COMPONENTS_IN_SCAN {
             return Err(Error::BadLength);
         }
-        self.components_in_scan = n;
+        self.components_in_scan = count;
         self.scan_components = [None; MAX_COMPONENTS_IN_SCAN];
 
-        for i in 0..n {
-            let cc = self.input.byte();
-            let c = self.input.byte();
+        for i in 0..count {
+            let id = self.input.byte();
+            let selectors = self.input.byte();
 
             // As in libjpeg, slot `ci` of the scan is what excuses component `ci`, whichever component that slot holds.
             let found = self
                 .components
                 .iter()
                 .zip(self.scan_components.iter())
-                .position(|(comp, slot)| comp.id == cc && slot.is_none());
+                .position(|(comp, slot)| comp.id == id && slot.is_none());
             let Some(ci) = found else {
-                return Err(Error::BadComponentId(cc));
+                return Err(Error::BadComponentId(id));
             };
             if self
                 .scan_components
@@ -144,19 +142,19 @@ impl Decoder<'_> {
                 .take(i)
                 .any(|&slot| slot == Some(ci))
             {
-                return Err(Error::BadComponentId(cc));
+                return Err(Error::BadComponentId(id));
             }
             *self.scan_components.get_mut(i).ok_or(Error::Internal)? = Some(ci);
             let comp = self.components.get_mut(ci).ok_or(Error::Internal)?;
-            comp.dc_selector = c >> 4;
-            comp.ac_selector = c & 15;
+            comp.dc_selector = selectors >> 4;
+            comp.ac_selector = selectors & 15;
         }
 
         self.ss = self.input.byte();
         self.se = self.input.byte();
-        let c = self.input.byte();
-        self.ah = c >> 4;
-        self.al = c & 15;
+        let approximation = self.input.byte();
+        self.ah = approximation >> 4;
+        self.al = approximation & 15;
 
         self.input.next_restart_num = 0;
         self.input_scan_number += 1;
@@ -167,7 +165,7 @@ impl Decoder<'_> {
         let mut length = i32::from(self.input.u16()) - 2;
         while length > 0 {
             let index = self.input.byte();
-            let val = self.input.byte();
+            let value = self.input.byte();
             length -= 2;
 
             let i = usize::from(index);
@@ -175,14 +173,14 @@ impl Decoder<'_> {
                 .checked_sub(NUM_ARITH_TABLES)
                 .and_then(|i| self.arith_ac_k.get_mut(i))
             {
-                *k = val;
+                *k = value;
             } else if let (Some(l), Some(u)) =
                 (self.arith_dc_l.get_mut(i), self.arith_dc_u.get_mut(i))
             {
-                *l = val & 0x0f;
-                *u = val >> 4;
+                *l = value & 0x0f;
+                *u = value >> 4;
                 if *l > *u {
-                    return Err(Error::DacValue(val));
+                    return Err(Error::DacValue(value));
                 }
             } else {
                 return Err(Error::DacIndex(index));
@@ -203,9 +201,9 @@ impl Decoder<'_> {
                 huffval: [0; 256],
             };
             let mut count: i32 = 0;
-            for b in spec.bits.iter_mut().skip(1) {
-                *b = self.input.byte();
-                count += i32::from(*b);
+            for codes in spec.bits.iter_mut().skip(1) {
+                *codes = self.input.byte();
+                count += i32::from(*codes);
             }
             length -= 1 + 16;
 
@@ -213,8 +211,8 @@ impl Decoder<'_> {
             if count > 256 || count > length {
                 return Err(Error::BadHuffTable);
             }
-            for v in spec.huffval.iter_mut().take(count as usize) {
-                *v = self.input.byte();
+            for symbol in spec.huffval.iter_mut().take(count as usize) {
+                *symbol = self.input.byte();
             }
             length -= count;
 
@@ -223,11 +221,10 @@ impl Decoder<'_> {
             } else {
                 &mut self.dc_huff
             };
-            let slot = usize::from(index & !0x10);
-            if slot >= NUM_HUFF_TABLES {
-                return Err(Error::DhtIndex(index & !0x10));
-            }
-            *tables.get_mut(slot).ok_or(Error::Internal)? = Some(Box::new(spec));
+            let selector = index & !0x10;
+            *tables
+                .get_mut(usize::from(selector))
+                .ok_or(Error::DhtIndex(selector))? = Some(Box::new(spec));
         }
         if length != 0 {
             return Err(Error::BadLength);
@@ -238,31 +235,22 @@ impl Decoder<'_> {
     fn read_dqt(&mut self) -> Result<()> {
         let mut length = i32::from(self.input.u16()) - 2;
         while length > 0 {
-            let n = self.input.byte();
-            let prec = n >> 4;
-            let n = n & 0x0f;
-            if usize::from(n) >= NUM_QUANT_TABLES {
-                return Err(Error::DqtIndex(n));
-            }
+            let index = self.input.byte();
+            let wide = index >> 4 != 0;
+            let selector = index & 0x0f;
             let table = self
                 .quant_tables
-                .get_mut(usize::from(n))
-                .ok_or(Error::Internal)?
+                .get_mut(usize::from(selector))
+                .ok_or(Error::DqtIndex(selector))?
                 .get_or_insert([0; 64]);
-            for &pos in NATURAL_ORDER.iter().take(64) {
-                let v = if prec != 0 {
+            for k in 0..64 {
+                *table.get_mut(natural_order(k)).ok_or(Error::Internal)? = if wide {
                     self.input.u16()
                 } else {
                     u16::from(self.input.byte())
                 };
-                if let Some(q) = table.get_mut(usize::from(pos)) {
-                    *q = v;
-                }
             }
-            length -= 64 + 1;
-            if prec != 0 {
-                length -= 64;
-            }
+            length -= if wide { 1 + 128 } else { 1 + 64 };
         }
         if length != 0 {
             return Err(Error::BadLength);
@@ -281,20 +269,20 @@ impl Decoder<'_> {
     /// APP0 and APP14 say which color space the components are in.
     fn read_app0_or_app14(&mut self, marker: u8) {
         let length = usize::from(self.input.u16()).saturating_sub(2);
-        let mut b = [0u8; APPN_DATA_LEN];
-        let numtoread = length.min(APPN_DATA_LEN);
-        for v in b.iter_mut().take(numtoread) {
-            *v = self.input.byte();
+        let mut data = [0u8; APPN_DATA_LEN];
+        let read = length.min(APPN_DATA_LEN);
+        for byte in data.iter_mut().take(read) {
+            *byte = self.input.byte();
         }
         if marker == M_APP0 {
-            if numtoread >= 14 && b.starts_with(b"JFIF\0") {
+            if read >= 14 && data.starts_with(b"JFIF\0") {
                 self.saw_jfif = true;
             }
-        } else if numtoread >= 12 && b.starts_with(b"Adobe") {
-            let [.., transform, _, _] = b;
+        } else if read >= 12 && data.starts_with(b"Adobe") {
+            let [.., transform, _, _] = data;
             self.adobe_transform = Some(transform);
         }
-        self.input.skip(length - numtoread);
+        self.input.skip(length - read);
     }
 
     /// APP2 segments are kept whole: they may be pieces of an ICC profile.

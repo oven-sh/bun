@@ -75,6 +75,17 @@ pub(crate) struct Component {
     pub(crate) last_col_width: u32,
 }
 
+/// What a block of an MCU is decoded with.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct McuBlock {
+    /// Index into `scan_components`.
+    pub(crate) scan_component: u8,
+    pub(crate) dc_selector: u8,
+    pub(crate) ac_selector: u8,
+    /// An image scaled to 1/8 is made of the DC coefficients alone.
+    pub(crate) ac_needed: bool,
+}
+
 pub struct Decoder<'a> {
     pub(crate) input: Input<'a>,
     saw_soi: bool,
@@ -121,8 +132,7 @@ pub struct Decoder<'a> {
 
     pub(crate) mcus_per_row: u32,
     pub(crate) blocks_in_mcu: usize,
-    /// For each block of an MCU, the index into `scan_components` of its component.
-    pub(crate) mcu_membership: [u8; MAX_BLOCKS_IN_MCU],
+    pub(crate) mcu_blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
 }
 
 /// How many are in the last group when `total` are put in groups of `size`.
@@ -175,7 +185,7 @@ impl<'a> Decoder<'a> {
             total_imcu_rows: 0,
             mcus_per_row: 0,
             blocks_in_mcu: 0,
-            mcu_membership: [0; MAX_BLOCKS_IN_MCU],
+            mcu_blocks: [McuBlock::default(); MAX_BLOCKS_IN_MCU],
         };
         match this.read_markers()? {
             Reached::Sos => this.initial_setup()?,
@@ -230,7 +240,7 @@ impl<'a> Decoder<'a> {
         usual || doubled || same
     }
 
-    pub(crate) fn comp(&self, ci: usize) -> Result<&Component> {
+    pub(crate) fn component(&self, ci: usize) -> Result<&Component> {
         self.components.get(ci).ok_or(Error::Internal)
     }
 
@@ -244,7 +254,12 @@ impl<'a> Decoder<'a> {
     }
 
     pub(crate) fn scan_component(&self, i: usize) -> Result<&Component> {
-        self.comp(self.scan_component_index(i)?)
+        self.component(self.scan_component_index(i)?)
+    }
+
+    fn scan_component_mut(&mut self, i: usize) -> Result<&mut Component> {
+        let ci = self.scan_component_index(i)?;
+        self.components.get_mut(ci).ok_or(Error::Internal)
     }
 
     /// Once, when the first SOS has been read.
@@ -311,45 +326,54 @@ impl<'a> Decoder<'a> {
     /// Before each scan.
     pub(crate) fn per_scan_setup(&mut self) -> Result<()> {
         let data_unit = if self.lossless { 1 } else { DCTSIZE };
-
-        if self.components_in_scan == 1 {
-            let ci = self.scan_component_index(0)?;
-            let comp = self.components.get_mut(ci).ok_or(Error::Internal)?;
-            self.mcus_per_row = comp.width_in_blocks;
-            comp.mcu_width = 1;
-            comp.mcu_height = 1;
-            comp.last_col_width = 1;
-            self.blocks_in_mcu = 1;
-            self.mcu_membership = [0; MAX_BLOCKS_IN_MCU];
+        let interleaved = self.components_in_scan > 1;
+        self.mcus_per_row = if interleaved {
+            self.width.div_ceil(self.max_h_samp * data_unit)
         } else {
-            self.mcus_per_row = self.width.div_ceil(self.max_h_samp * data_unit);
-            self.blocks_in_mcu = 0;
-            for i in 0..self.components_in_scan {
-                let ci = self.scan_component_index(i)?;
-                let comp = self.components.get_mut(ci).ok_or(Error::Internal)?;
-                comp.mcu_width = comp.h_samp;
-                comp.mcu_height = comp.v_samp;
-                comp.last_col_width = last_group(comp.width_in_blocks, comp.mcu_width);
-                for _ in 0..comp.mcu_width * comp.mcu_height {
-                    *self
-                        .mcu_membership
-                        .get_mut(self.blocks_in_mcu)
-                        .ok_or(Error::BadMcuSize)? = i as u8;
-                    self.blocks_in_mcu += 1;
-                }
+            self.scan_component(0)?.width_in_blocks
+        };
+        self.blocks_in_mcu = 0;
+        for i in 0..self.components_in_scan {
+            let comp = self.scan_component_mut(i)?;
+            (comp.mcu_width, comp.mcu_height) = if interleaved {
+                (comp.h_samp, comp.v_samp)
+            } else {
+                (1, 1)
+            };
+            comp.last_col_width = last_group(comp.width_in_blocks, comp.mcu_width);
+            let blocks = comp.mcu_width * comp.mcu_height;
+            let block = McuBlock {
+                scan_component: i as u8,
+                dc_selector: comp.dc_selector,
+                ac_selector: comp.ac_selector,
+                ac_needed: comp.dct_scaled_size > 1,
+            };
+            for _ in 0..blocks {
+                *self
+                    .mcu_blocks
+                    .get_mut(self.blocks_in_mcu)
+                    .ok_or(Error::BadMcuSize)? = block;
+                self.blocks_in_mcu += 1;
             }
         }
         Ok(())
+    }
+
+    /// Rows of data units of `comp` in iMCU row `imcu_row`.
+    pub(crate) fn rows_in_imcu_row(&self, comp: &Component, imcu_row: u32) -> u32 {
+        if imcu_row + 1 < self.total_imcu_rows {
+            comp.v_samp
+        } else {
+            comp.last_row_height
+        }
     }
 
     /// An iMCU row of a scan with one component has as many rows of MCUs as the component has rows of data units in it.
     pub(crate) fn mcu_rows_in_imcu_row(&self, imcu_row: u32) -> Result<u32> {
         Ok(if self.components_in_scan > 1 {
             1
-        } else if imcu_row + 1 < self.total_imcu_rows {
-            self.scan_component(0)?.v_samp
         } else {
-            self.scan_component(0)?.last_row_height
+            self.rows_in_imcu_row(self.scan_component(0)?, imcu_row)
         })
     }
 
@@ -357,13 +381,12 @@ impl<'a> Decoder<'a> {
     /// its first scan began with.
     pub(crate) fn latch_quant_tables(&mut self) -> Result<()> {
         for i in 0..self.components_in_scan {
-            let ci = self.scan_component_index(i)?;
-            let comp = self.components.get_mut(ci).ok_or(Error::Internal)?;
+            let quant_tables = self.quant_tables;
+            let comp = self.scan_component_mut(i)?;
             if comp.quant_table.is_some() {
                 continue;
             }
-            let table = self
-                .quant_tables
+            let table = quant_tables
                 .get(usize::from(comp.quant_selector))
                 .copied()
                 .flatten();

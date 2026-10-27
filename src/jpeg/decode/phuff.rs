@@ -1,9 +1,9 @@
 //! Huffman decoding of progressive scans (jdphuff.c).
 
-use super::bits::{BitReader, DerivedTable, TableKind, huff_extend};
+use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
 use super::coef::{CoefBits, McuBlocks};
 use super::input::Input;
-use super::{Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, NUM_HUFF_TABLES, coef_at};
+use super::{Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
 use crate::error::{Error, Result};
 
 #[derive(Clone, Copy, Default)]
@@ -23,10 +23,8 @@ pub(crate) struct PHuffDecoder {
     last_dc_val: [i32; MAX_COMPONENTS_IN_SCAN],
     restarts_to_go: u32,
     restart_interval: u32,
-    /// DC and AC tables share these slots: a scan has only one kind.
-    tables: [Option<Box<DerivedTable>>; NUM_HUFF_TABLES],
-    /// The slot of the one table of an AC scan.
-    ac_table: u8,
+    /// DC or AC: a scan has only one kind.
+    tables: DerivedTables,
     coef_bits: CoefBits,
 
     pass: Pass,
@@ -34,8 +32,7 @@ pub(crate) struct PHuffDecoder {
     se: usize,
     al: u32,
     blocks_in_mcu: usize,
-    /// For each block of an MCU, the index into `last_dc_val` and the slot of the table.
-    blocks: [(u8, u8); MAX_BLOCKS_IN_MCU],
+    blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
 }
 
 /// Records the scan in `coef_bits`. The arithmetic decoder does the same.
@@ -119,15 +116,9 @@ impl PHuffDecoder {
                 }
                 (&decoder.dc_huff, comp.dc_selector, TableKind::Dc)
             } else {
-                self.ac_table = comp.ac_selector;
                 (&decoder.ac_huff, comp.ac_selector, TableKind::Ac)
             };
-            let spec = specs.get(usize::from(selector)).and_then(|t| t.as_deref());
-            let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(selector))?, kind)?;
-            *self
-                .tables
-                .get_mut(usize::from(selector))
-                .ok_or(Error::Internal)? = Some(table);
+            bits::derive(specs, selector, kind, &mut self.tables)?;
         }
         self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
 
@@ -135,19 +126,7 @@ impl PHuffDecoder {
         self.se = usize::from(decoder.se);
         self.al = u32::from(decoder.al);
         self.blocks_in_mcu = decoder.blocks_in_mcu;
-        for (info, &scan_component) in self
-            .blocks
-            .iter_mut()
-            .zip(decoder.mcu_membership.iter())
-            .take(decoder.blocks_in_mcu)
-        {
-            *info = (
-                scan_component,
-                decoder
-                    .scan_component(usize::from(scan_component))?
-                    .dc_selector,
-            );
-        }
+        self.blocks = decoder.mcu_blocks;
 
         self.bits.reset();
         decoder.input.insufficient_data = false;
@@ -188,17 +167,11 @@ impl PHuffDecoder {
         if input.insufficient_data {
             return Ok(());
         }
-        for (index, &(scan_component, selector)) in
-            self.blocks.iter().enumerate().take(self.blocks_in_mcu)
-        {
-            let table = self
-                .tables
-                .get(usize::from(selector))
-                .and_then(|t| t.as_deref())
-                .ok_or(Error::Internal)?;
+        for (index, info) in self.blocks.iter().enumerate().take(self.blocks_in_mcu) {
+            let table = bits::table(&self.tables, info.dc_selector)?;
             let last_dc = self
                 .last_dc_val
-                .get_mut(usize::from(scan_component))
+                .get_mut(usize::from(info.scan_component))
                 .ok_or(Error::Internal)?;
             let s = u32::from(self.bits.decode(input, table));
             let mut diff = 0;
@@ -221,11 +194,9 @@ impl PHuffDecoder {
             self.eobrun -= 1;
             return Ok(());
         }
-        let table = self
-            .tables
-            .get(usize::from(self.ac_table))
-            .and_then(|t| t.as_deref());
-        let table = table.ok_or(Error::Internal)?;
+        // An AC scan has one component and one block in an MCU.
+        let [info, ..] = self.blocks;
+        let table = bits::table(&self.tables, info.ac_selector)?;
         let block = mcu.block(0).ok_or(Error::Internal)?;
         let bits = &mut self.bits;
 
@@ -273,11 +244,9 @@ impl PHuffDecoder {
         if input.insufficient_data {
             return Ok(());
         }
-        let table = self
-            .tables
-            .get(usize::from(self.ac_table))
-            .and_then(|t| t.as_deref());
-        let table = table.ok_or(Error::Internal)?;
+        // An AC scan has one component and one block in an MCU.
+        let [info, ..] = self.blocks;
+        let table = bits::table(&self.tables, info.ac_selector)?;
         let block = mcu.block(0).ok_or(Error::Internal)?;
         let bits = &mut self.bits;
         let se = self.se;

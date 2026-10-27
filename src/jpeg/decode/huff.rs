@@ -1,9 +1,11 @@
 //! Huffman decoding of sequential scans (jdhuff.c).
 
-use super::bits::{BitReader, DerivedTable, FastBitReader, TableKind, huff_extend};
+use super::bits::{
+    self, BitReader, DerivedTable, DerivedTables, FastBitReader, TableKind, huff_extend,
+};
 use super::coef::McuBlocks;
 use super::input::Input;
-use super::{Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, NUM_HUFF_TABLES, coef_at};
+use super::{Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
 use crate::error::{Error, Result};
 use crate::tables;
 
@@ -14,26 +16,10 @@ pub(crate) struct HuffDecoder {
     /// MCUs left in this restart interval.
     restarts_to_go: u32,
     restart_interval: u32,
-    dc_tables: [Option<Box<DerivedTable>>; NUM_HUFF_TABLES],
-    ac_tables: [Option<Box<DerivedTable>>; NUM_HUFF_TABLES],
-    blocks: [BlockInfo; MAX_BLOCKS_IN_MCU],
+    dc_tables: DerivedTables,
+    ac_tables: DerivedTables,
+    blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
     blocks_in_mcu: usize,
-}
-
-/// What a block of an MCU is decoded with.
-#[derive(Default, Clone, Copy)]
-struct BlockInfo {
-    /// Index into `last_dc_val`.
-    scan_component: u8,
-    dc_table: u8,
-    ac_table: u8,
-    /// An image scaled to 1/8 is made of the DC coefficients alone.
-    ac_needed: bool,
-}
-
-struct Tables<'a> {
-    dc: &'a DerivedTable,
-    ac: &'a DerivedTable,
 }
 
 impl HuffDecoder {
@@ -52,43 +38,15 @@ impl HuffDecoder {
     pub(crate) fn start_pass(&mut self, decoder: &mut Decoder) -> Result<()> {
         for i in 0..decoder.components_in_scan {
             let comp = decoder.scan_component(i)?;
-            let (dc, ac) = (comp.dc_selector, comp.ac_selector);
-            let spec = decoder
-                .dc_huff
-                .get(usize::from(dc))
-                .and_then(|t| t.as_deref());
-            let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(dc))?, TableKind::Dc)?;
-            *self
-                .dc_tables
-                .get_mut(usize::from(dc))
-                .ok_or(Error::Internal)? = Some(table);
-            let spec = decoder
-                .ac_huff
-                .get(usize::from(ac))
-                .and_then(|t| t.as_deref());
-            let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(ac))?, TableKind::Ac)?;
-            *self
-                .ac_tables
-                .get_mut(usize::from(ac))
-                .ok_or(Error::Internal)? = Some(table);
+            let dc_tables = &mut self.dc_tables;
+            bits::derive(&decoder.dc_huff, comp.dc_selector, TableKind::Dc, dc_tables)?;
+            let ac_tables = &mut self.ac_tables;
+            bits::derive(&decoder.ac_huff, comp.ac_selector, TableKind::Ac, ac_tables)?;
         }
         self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
 
+        self.blocks = decoder.mcu_blocks;
         self.blocks_in_mcu = decoder.blocks_in_mcu;
-        for (info, &scan_component) in self
-            .blocks
-            .iter_mut()
-            .zip(decoder.mcu_membership.iter())
-            .take(decoder.blocks_in_mcu)
-        {
-            let comp = decoder.scan_component(usize::from(scan_component))?;
-            *info = BlockInfo {
-                scan_component,
-                dc_table: comp.dc_selector,
-                ac_table: comp.ac_selector,
-                ac_needed: comp.dct_scaled_size > 1,
-            };
-        }
 
         self.bits.reset();
         decoder.input.insufficient_data = false;
@@ -147,22 +105,6 @@ impl HuffDecoder {
         input.remaining().len() >= BUFSIZE * self.blocks_in_mcu && input.unread_marker == 0
     }
 
-    #[inline(always)]
-    fn tables(&self, info: BlockInfo) -> Result<Tables<'_>> {
-        let dc = self
-            .dc_tables
-            .get(usize::from(info.dc_table))
-            .and_then(|t| t.as_deref());
-        let ac = self
-            .ac_tables
-            .get(usize::from(info.ac_table))
-            .and_then(|t| t.as_deref());
-        match (dc, ac) {
-            (Some(dc), Some(ac)) => Ok(Tables { dc, ac }),
-            _ => Err(Error::Internal),
-        }
-    }
-
     /// The blocks of an MCU, from either source of bits. Returns the new DC predictions.
     #[inline(always)]
     fn decode_blocks(
@@ -172,13 +114,14 @@ impl HuffDecoder {
     ) -> Result<[i32; MAX_COMPONENTS_IN_SCAN]> {
         let mut last_dc_val = self.last_dc_val;
         for (index, info) in self.blocks.iter().enumerate().take(self.blocks_in_mcu) {
-            let tables = self.tables(*info)?;
+            let dc_table = bits::table(&self.dc_tables, info.dc_selector)?;
+            let ac_table = bits::table(&self.ac_tables, info.ac_selector)?;
             let block = mcu.block(index).ok_or(Error::Internal)?;
             let last_dc = last_dc_val
                 .get_mut(usize::from(info.scan_component))
                 .ok_or(Error::Internal)?;
 
-            let s = u32::from(bits.symbol(tables.dc));
+            let s = u32::from(bits.symbol(dc_table));
             let diff = if s != 0 {
                 huff_extend(bits.bits(s), s)
             } else {
@@ -191,7 +134,7 @@ impl HuffDecoder {
 
             let mut k = 1;
             while k < 64 {
-                let symbol = bits.symbol(tables.ac);
+                let symbol = bits.symbol(ac_table);
                 let r = usize::from(symbol >> 4);
                 let s = u32::from(symbol & 15);
                 if s != 0 {

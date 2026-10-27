@@ -1,8 +1,8 @@
 //! Lossless streams: Huffman-coded differences from a prediction (jdlhuff.c, jdlossls.c, jddiffct.c).
 
-use super::bits::{BitReader, DerivedTable, TableKind, huff_extend};
+use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
 use super::coef::Plane;
-use super::{Decoder, MAX_BLOCKS_IN_MCU, NUM_HUFF_TABLES};
+use super::{Decoder, MAX_BLOCKS_IN_MCU};
 use crate::error::{Error, Result, try_vec};
 
 /// The rows of one component for one iMCU row, as numbers wider than a sample.
@@ -27,15 +27,15 @@ impl Rows {
 /// Where a run of samples of an MCU goes: `width` samples in a row of a component.
 #[derive(Default, Clone, Copy)]
 struct Run {
-    comp: usize,
+    component: usize,
     yoffset: usize,
     width: usize,
-    table: u8,
+    selector: u8,
 }
 
 pub(crate) struct DiffController {
     bits: BitReader,
-    tables: [Option<Box<DerivedTable>>; NUM_HUFF_TABLES],
+    tables: DerivedTables,
     runs: [Run; MAX_BLOCKS_IN_MCU],
     num_runs: usize,
 
@@ -97,29 +97,19 @@ impl DiffController {
     pub(crate) fn start_input_pass(&mut self, decoder: &mut Decoder) -> Result<()> {
         for i in 0..decoder.components_in_scan {
             let selector = decoder.scan_component(i)?.dc_selector;
-            let spec = decoder
-                .dc_huff
-                .get(usize::from(selector))
-                .and_then(|t| t.as_deref());
-            let table = DerivedTable::new(
-                spec.ok_or(Error::NoHuffTable(selector))?,
-                TableKind::Lossless,
-            )?;
-            *self
-                .tables
-                .get_mut(usize::from(selector))
-                .ok_or(Error::Internal)? = Some(table);
+            let tables = &mut self.tables;
+            bits::derive(&decoder.dc_huff, selector, TableKind::Lossless, tables)?;
         }
         self.num_runs = 0;
         for i in 0..decoder.components_in_scan {
-            let comp_index = decoder.scan_component_index(i)?;
-            let comp = decoder.comp(comp_index)?;
+            let ci = decoder.scan_component_index(i)?;
+            let comp = decoder.component(ci)?;
             for yoffset in 0..comp.mcu_height as usize {
                 *self.runs.get_mut(self.num_runs).ok_or(Error::Internal)? = Run {
-                    comp: comp_index,
+                    component: ci,
                     yoffset,
                     width: comp.mcu_width as usize,
-                    table: comp.dc_selector,
+                    selector: comp.dc_selector,
                 };
                 self.num_runs += 1;
             }
@@ -148,7 +138,10 @@ impl DiffController {
         if decoder.input.insufficient_data {
             // With no differences and the prediction started over, the samples come out gray.
             for run in self.runs.iter().take(self.num_runs) {
-                let rows = self.diff_buf.get_mut(run.comp).ok_or(Error::Internal)?;
+                let rows = self
+                    .diff_buf
+                    .get_mut(run.component)
+                    .ok_or(Error::Internal)?;
                 for diff in rows
                     .row_mut(mcu_row_num + run.yoffset)?
                     .iter_mut()
@@ -163,12 +156,11 @@ impl DiffController {
         let input = &mut decoder.input;
         for mcu_num in 0..mcus_per_row {
             for run in self.runs.iter().take(self.num_runs) {
-                let table = self
-                    .tables
-                    .get(usize::from(run.table))
-                    .and_then(|t| t.as_deref());
-                let table = table.ok_or(Error::Internal)?;
-                let rows = self.diff_buf.get_mut(run.comp).ok_or(Error::Internal)?;
+                let table = bits::table(&self.tables, run.selector)?;
+                let rows = self
+                    .diff_buf
+                    .get_mut(run.component)
+                    .ok_or(Error::Internal)?;
                 let row = rows.row_mut(mcu_row_num + run.yoffset)?;
                 for diff in row.iter_mut().skip(mcu_num * run.width).take(run.width) {
                     let s = u32::from(self.bits.decode(input, table));
@@ -209,16 +201,11 @@ impl DiffController {
             }
         }
 
-        let last_imcu_row = decoder.total_imcu_rows - 1;
         for i in 0..decoder.components_in_scan {
             let ci = decoder.scan_component_index(i)?;
-            let comp = decoder.comp(ci)?;
+            let comp = decoder.component(ci)?;
             let width = comp.width_in_blocks as usize;
-            let rows = if self.input_imcu_row == last_imcu_row {
-                comp.last_row_height
-            } else {
-                comp.v_samp
-            } as usize;
+            let rows = decoder.rows_in_imcu_row(comp, self.input_imcu_row) as usize;
             let diff_buf = self.diff_buf.get_mut(ci).ok_or(Error::Internal)?;
             let undiff_buf = self.undiff_buf.get_mut(ci).ok_or(Error::Internal)?;
             let first_row = self.first_row.get_mut(ci).ok_or(Error::Internal)?;
@@ -323,11 +310,7 @@ impl DiffController {
             if !defined {
                 return Err(Error::BadVirtualAccess);
             }
-            let rows = if output_imcu_row < decoder.total_imcu_rows - 1 {
-                comp.v_samp
-            } else {
-                comp.last_row_height
-            } as usize;
+            let rows = decoder.rows_in_imcu_row(comp, output_imcu_row) as usize;
             let first = (output_imcu_row * comp.v_samp) as usize;
             let width = comp.width_in_blocks as usize;
             for (row, out) in plane.data.chunks_mut(plane.stride).enumerate().take(rows) {

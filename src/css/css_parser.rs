@@ -3441,8 +3441,11 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn expect_percentage(&mut self) -> CssResult<f32> {
         let start_location = self.current_source_location();
+        let non_negative = self.flags.non_negative();
         let tok = self.next()?;
-        if let Token::Percentage { unit_value, .. } = tok {
+        if let Token::Percentage { unit_value, .. } = tok
+            && !(non_negative && *unit_value < 0.0)
+        {
             return Ok(*unit_value);
         }
         let tok = *tok;

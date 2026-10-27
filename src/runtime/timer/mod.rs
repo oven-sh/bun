@@ -23,10 +23,6 @@ pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 use crate::jsc::JSValue;
 
 // ─── JS-facing surface (`impl All { set_timeout / clear_* / … }`) ────────────
-// Named `timer` so codegen (`generated_js2native.rs`) resolves
-// `crate::timer::timer::internal_bindings::timer_clock_ms` per the
-// `$rust(Timer.rs, …)` → `crate::<dir>::<file>` path-mapping.
-
 #[path = "Timer.rs"]
 pub(crate) mod timer;
 
@@ -35,25 +31,17 @@ pub(crate) mod timer;
 // `Timer.bind.ts` class over `{ref_count, event_loop_timer, internals}` whose
 // JS-facing host-fns are pure forwarders to `TimerObjectInternals`. The macro
 // emits the parts shared by both types so each `*.rs` file holds only its
-// type-specific surface (`init`, `do_refresh`, the `_idleStart` accessors,
+// type-specific surface (`init`, `refresh`, the `_idleStart` accessors,
 // `run_immediate_task`).
 //
-// Emits, at the call-site module path, `pub struct $T { … }` and:
-//   - `bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer)`
-//   - `impl RefCounted for $T` (intrusive `ref_count` field, `deinit` destructor)
-//   - `impl Default for $T` (`EventLoopTimer::init_paused(EventLoopTimerTag::$tag)`)
-//   - `impl $T`: `ref_`/`deref`/`deinit`/`init_with`/`constructor`/`finalize`
-//     and the forwarder host-fns `to_primitive`/`do_ref`/`do_unref`/`has_ref`/
-//     `get_destroyed`/`dispose`.
-//
-// Type-specific items (`init`, `do_refresh`, `close`, `_idleStart` get/set,
+// Type-specific items (`init`, `refresh`, `close`, `_idleStart` get/set,
 // `run_immediate_task`) go in a *second* `impl $T` block in the caller's file.
 //
 // Paths in the body are written `super::…` / `::crate_name::…` because the
 // macro is invoked *from the child module* (`super::impl_timer_object!(…)`),
 // so `super` at the expansion site resolves back here to `timer/mod.rs`.
 macro_rules! impl_timer_object {
-    ($T:ident, $tag:ident, $js_name:literal) => {
+    ($T:ident) => {
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
@@ -76,7 +64,7 @@ macro_rules! impl_timer_object {
                     ref_count: ::bun_ptr::RefCount::init(),
                     // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
                     event_loop_timer: super::EventLoopTimer::init_paused(
-                        super::EventLoopTimerTag::$tag,
+                        super::EventLoopTimerTag::$T,
                     ),
                     // Default-constructed here, then overwritten in `init()`.
                     internals: super::TimerObjectInternals::default(),
@@ -130,11 +118,6 @@ macro_rules! impl_timer_object {
                 // SAFETY: `payload` is a fresh heap allocation whose ownership
                 // transfers to the GC wrapper.
                 let js_value = unsafe { Self::to_js_ptr(payload, cx.global()) };
-                // Round-trip ABI check.
-                debug_assert!(
-                    <Self as ::bun_jsc::JsClass>::from_js(js_value) == Some(payload),
-                    concat!($js_name, "__create ABI mismatch"),
-                );
                 let _keep = ::bun_jsc::EnsureStillAlive(js_value);
                 // SAFETY: `payload` was just allocated above and is exclusively
                 // owned here; `internals.init()` writes every field.
@@ -543,9 +526,18 @@ pub(crate) use wtf_timer::WTFTimer;
 
 // ─── All ─────────────────────────────────────────────────────────────────────
 
+/// Limits [`All::cancel_timeout_objects`] to the timers created since the latest `--hot` reload.
+pub(crate) struct HotRun {
+    /// The current `hot_reload_counter`.
+    pub(crate) counter: u32,
+    pub(crate) only_intervals: bool,
+}
+
 pub(crate) struct All {
     /// Id of the next timer. Allocate ids with [`All::next_id`].
     pub(crate) last_id: u64,
+    /// `last_id` at the latest `--hot` reload.
+    pub(crate) first_id_of_hot_run: u64,
     pub(crate) thread_id: std::thread::ThreadId,
     pub(crate) timers: TimerHeap,
     pub(crate) active_timer_count: i32,
@@ -572,6 +564,7 @@ impl All {
     pub(crate) fn init() -> Self {
         Self {
             last_id: 1,
+            first_id_of_hot_run: 0,
             thread_id: std::thread::current().id(),
             timers: TimerHeap::default(),
             active_timer_count: 0,
@@ -1190,6 +1183,21 @@ impl All {
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
     ) {
+        // SAFETY: same contract.
+        unsafe { Self::cancel_timeout_objects(this, vm, None) };
+    }
+
+    /// [`Self::cancel_all_timeout_objects`], limited to `hot_run` if given.
+    ///
+    /// # Safety
+    /// See [`Self::cancel_all_timeout_objects`].
+    pub(crate) unsafe fn cancel_timeout_objects(
+        this: *mut Self,
+        vm: *mut crate::jsc::virtual_machine::VirtualMachine,
+        hot_run: Option<&HotRun>,
+    ) {
+        // SAFETY: `this` is the live per-thread `All` (JS thread only).
+        let first_id = unsafe { (*this).first_id_of_hot_run };
         let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
@@ -1242,7 +1250,15 @@ impl All {
             // parent box is still alive (the +1 ref `cancel()` releases is
             // exactly the one keeping it pinned). `cancel()` may free the
             // parent on the final deref — never touched again.
-            unsafe { (*internals).cancel(vm) };
+            unsafe {
+                if hot_run.is_none_or(|run| {
+                    (*internals).id >= first_id
+                        && (!run.only_intervals
+                            || (*internals).flags.get().kind() == Kind::SetInterval)
+                }) {
+                    (*internals).cancel(vm);
+                }
+            }
         }
 
         // `AbortSignal.timeout()` boxes are owned by the C++ `AbortSignal`, so
@@ -1256,7 +1272,13 @@ impl All {
             // box (and therefore its owning signal) is still alive; JS thread;
             // no borrow of `*this` is held across the call (`discard` re-enters
             // `remove` through `timer_remove`). `t` is freed by the call.
-            unsafe { AbortSignalTimeout::discard(t) };
+            unsafe {
+                if hot_run
+                    .is_none_or(|run| (*t).hot_reload_counter == run.counter && !run.only_intervals)
+                {
+                    AbortSignalTimeout::discard(t);
+                }
+            }
         }
     }
 }

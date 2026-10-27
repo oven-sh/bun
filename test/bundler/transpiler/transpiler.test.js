@@ -479,6 +479,22 @@ describe("Bun.Transpiler", () => {
       exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
     });
 
+    it("emitDecoratorMetadata in an arrow function with a return type in a true branch", async () => {
+      const script = `
+        const tsconfig = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+        const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig });
+        for (const head of ["()", "(b)", "(b: B)"]) {
+          const out = transpiler.transformSync(
+            "x = a ? " + head + ": T => { class A { @d() p: Date; @d() q: Map<K, V>; } return A; } : null;",
+          );
+          console.log(head, ...out.matchAll(/"design:type", typeof (\\w+)/g).map(m => m[1]));
+        }`;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("() Date Map\n(b) Date Map\n(b: B) Date Map\n");
+      expect(exitCode).toBe(0);
+    });
+
     it("type-only import syntax", () => {
       const exp = ts.expectPrinted_;
       const errStartsWith = (code, prefix) => {
@@ -2499,6 +2515,40 @@ export default class {
       expect(stdout).toBe(JSON.stringify(['export const foo = "bar";\n', 'export default "dflt";\n']) + "\n");
       expect(exitCode).toBe(0);
     });
+
+    it("takes a String object whose toString() loads a module as a replacement value", async () => {
+      using dir = tempDir("transpiler-replace-string-object", {
+        "other.cjs": `module.exports = 1;`,
+        "entry.cjs": `
+          const value = new String("ignored");
+          value.toString = () => (require("./other.cjs"), "bar");
+          const transpiler = new Bun.Transpiler({ exports: { replace: { foo: value } } });
+          console.log(transpiler.transformSync("export const foo = 1;"));
+        `,
+      });
+      expect(await bunRun(join(String(dir), "entry.cjs"))).toEqual({
+        stdout: `export const foo = "bar";`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    it("prints `export default` for a replacement named default", () => {
+      const transpiler = new Bun.Transpiler({ exports: { replace: { x: ["default", 5] } } });
+      for (const source of [
+        `export let x;`,
+        `export var x;`,
+        `export let x = 1;`,
+        `export const x = 1;`,
+        `export function x() {}`,
+        `export class x {}`,
+      ]) {
+        expect(transpiler.transformSync(source)).toBe(`export default 5;\n`);
+      }
+      expect(transpiler.transformSync(`export let x, y;`)).toBe(`export default 5;\nexport let y;\n`);
+      expect(transpiler.transformSync(`let x;\nexport { x };`)).toBe(`let x;\nexport default 5;\n`);
+    });
   });
 
   const bunTranspiler = new Bun.Transpiler({
@@ -2706,6 +2756,11 @@ export const after = { a: 1 };
         signalCode: null,
       });
     });
+  });
+
+  it("Array.prototype as external is an empty array", () => {
+    const transform = external => new Bun.Transpiler({ external }).transformSync('import "a"; 1');
+    expect(transform(Array.prototype)).toBe(transform([]));
   });
 
   it("define errors after an earlier config error don't corrupt the log", async () => {

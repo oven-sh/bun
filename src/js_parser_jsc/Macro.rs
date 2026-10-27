@@ -59,7 +59,7 @@ pub(crate) struct MacroContext {
     /// UTF-16 string data / `from_blob` JSON sub-parse), so we own the backing arena here
     /// — `MacroContext` is stored in the long-lived `Transpiler` and outlives
     /// every `Expr` it produces (the parser splices the result into the AST and
-    /// prints it before the `Transpiler` drops).
+    /// prints it before the context is freed).
     ///
     /// Lazy: `Arena::new()` calls `mi_heap_new()`, and `MacroContext::init`
     /// runs once per `RuntimeTranspilerStore::TranspilerJob::run` iteration
@@ -176,9 +176,6 @@ impl MacroContext {
                     return Err(e.into());
                 }
             };
-            // The resolver's `Result` owns its path strings via the global `DirnameStore`
-            // (lifetime-erased `&'static [u8]`), so dropping `resolve_result`
-            // does not invalidate `text`.
             break 'brk resolve_result.path_pair.primary.text;
         };
 
@@ -273,7 +270,7 @@ fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Ma
     // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
     // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
     // runtime so reading it as `'static` is layout-identical. The boxed state
-    // is leaked for the long-lived `vm.transpiler` instance — but callers that run on a
+    // stays with the long-lived `vm.transpiler` instance — but callers that run on a
     // short-lived bytewise-cloned `Transpiler` (e.g.
     // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
     // `__bun_macro_context_deinit` or the `Box<MacroContext>` (and, if a macro
@@ -600,9 +597,10 @@ pub(crate) struct Run<'a> {
     // printed long after this frame returns.
     pub(crate) bump: &'a bun_alloc::Arena,
     pub(crate) log: &'a mut Log,
-    pub(crate) source: &'a Source,
+    pub(crate) source: &'a Source<'a>,
     pub(crate) visited: VisitMap<'a>,
     pub(crate) is_top_level: bool,
+    pub(crate) stack_check: bun_core::StackCheck,
 }
 
 impl<'a> Run<'a> {
@@ -638,6 +636,7 @@ impl<'a> Run<'a> {
                 source,
                 visited: VisitMap::new(roots),
                 is_top_level: false,
+                stack_check: bun_core::StackCheck::init(),
             };
 
             runner.run(result)
@@ -646,6 +645,14 @@ impl<'a> Run<'a> {
 
     pub(crate) fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
         use ConsoleObject::formatter::Tag as T;
+        if !self.stack_check.is_safe_to_recurse() {
+            self.log.add_error(
+                Some(self.source),
+                self.caller.loc,
+                b"The value returned by this macro is nested too deeply",
+            );
+            return Err(MacroError::MacroFailed);
+        }
         // `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
         // collapse the payload to its discriminant via `.tag()`.
         match T::get(value, self.global)?.tag.tag() {
@@ -1059,7 +1066,7 @@ impl Runner {
             bump: &'c bun_alloc::Arena,
             caller: Expr,
             js_args: &'c [JSValue],
-            source: &'c Source,
+            source: &'c Source<'c>,
             id: i32,
             result: Result<Expr, MacroError>,
         }

@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
 use super::Expect;
@@ -8,23 +9,17 @@ use super::get_signature;
 use super::throw;
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn to_contain(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
     ) -> JsResult<JSValue> {
+        let global = cx.global();
         let (this, value, not) =
-            self.matcher_prelude(global, frame.this(), "toContain", "<green>expected<r>")?;
+            self.matcher_prelude(global, this_value.to_js(), "toContain", "<green>expected<r>")?;
 
-        let arguments = frame.arguments();
-
-        if arguments.len() < 1 {
-            return Err(global.throw_invalid_arguments(format_args!("toContain() takes 1 argument")));
-        }
-
-        let expected = arguments[0];
-        expected.ensure_still_alive();
+        let expected = expected.to_js();
         let mut pass = false;
 
         // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs

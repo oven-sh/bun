@@ -359,6 +359,7 @@ test("inspector.close() does not wait for a garbage collection on the debugger t
   expect({
     ...result,
     logNamesFullCollections: log.includes("=> FullCollection"),
+    closes: closes.length,
     fullCollectionsDuringClose: closes.filter(close => close.includes("=> FullCollection")),
   }).toEqual({
     stdout: "closed every time\n",
@@ -366,6 +367,7 @@ test("inspector.close() does not wait for a garbage collection on the debugger t
     signalCode: null,
     logIfFailed: "",
     logNamesFullCollections: true,
+    closes: 3,
     fullCollectionsDuringClose: [],
   });
 });
@@ -373,6 +375,10 @@ test("inspector.close() does not wait for a garbage collection on the debugger t
 const closeDuringCollectionFixture = `
 import inspector from "node:inspector";
 import { writeSync } from "node:fs";
+
+// A full collection of this thread's heap while it is the only heap. The log then starts
+// with this heap, and it has the epilogue of one of this heap's collections.
+Bun.gc(true);
 
 for (let round = 0; round < Number(process.argv[2]); round++) {
   inspector.open(0, "127.0.0.1", false);
@@ -413,13 +419,15 @@ test("inspector.close() returns while a garbage collection of the calling thread
   // when the marker follows its START and not yet its epilogue. JSC writes each of these two
   // tokens in one piece. The rest of a log line can have another heap's text in the middle of it.
   const callerHeap = log.match(/\[GC<([^>]+)>: starting /)?.[1];
-  const closedDuringACollection = [...log.matchAll(/\nCLOSING\n/g)].some(({ index }) => {
-    const started = log.lastIndexOf(`[GC<${callerHeap}>: START `, index);
-    return started !== -1 && log.lastIndexOf(`[GC<${callerHeap}>: epilogue `, index) < started;
-  });
+  const start = `[GC<${callerHeap}>: START `;
+  const epilogue = `[GC<${callerHeap}>: epilogue `;
+  const closedDuringACollection = [...log.matchAll(/\nCLOSING\n/g)].some(
+    ({ index }) => log.lastIndexOf(epilogue, index) < log.lastIndexOf(start, index),
+  );
   expect({
     ...result,
     schedulerReadItsOptions: log.includes("tp=0.000000ms"),
+    logNamesEpilogues: log.includes(epilogue),
     closedDuringACollection,
   }).toEqual({
     stdout: "closed every time\n",
@@ -427,6 +435,7 @@ test("inspector.close() returns while a garbage collection of the calling thread
     signalCode: null,
     logIfFailed: "",
     schedulerReadItsOptions: true,
+    logNamesEpilogues: true,
     closedDuringACollection: true,
   });
 });

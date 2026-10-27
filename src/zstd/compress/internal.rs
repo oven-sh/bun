@@ -1,5 +1,8 @@
 //! `zstd_compress_internal.h`: what the parts of the compressor share.
 
+use core::hint::{Locality, prefetch_read};
+use core::sync::atomic::{Ordering, compiler_fence};
+
 use super::fse::{FseCTable, FseRepeat};
 use super::huf::{HufCTable, HufRepeat};
 use crate::common::{
@@ -8,8 +11,6 @@ use crate::common::{
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64, try_zeroed, write_le24};
-use core::hint::{Locality, prefetch_read};
-use core::sync::atomic::{Ordering, compiler_fence};
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
 pub(crate) const HASH_READ_SIZE: usize = 8;
@@ -788,6 +789,73 @@ impl<'a> Near<'a> {
         len
     }
 
+    /// [`Self::count`] of positions that are known to have `from` bytes in common, and which one is before the other in
+    /// the order of what follows them. Only the sum of `match_pos` and `from` has to be a position.
+    #[inline(always)]
+    pub(crate) fn compare(self, pos: u32, match_pos: u32, from: u32) -> Common {
+        let mut len = match self.compare_chunks(pos, match_pos, from) {
+            Ok(common) => return common,
+            Err(len) => len,
+        };
+        while let Some(byte) = self.read8(pos.wrapping_add(len))
+            && let Some(match_byte) = self.read8(match_pos.wrapping_add(len))
+        {
+            if byte != match_byte {
+                return Common::followed_by(len, match_byte, byte);
+            }
+            len += 1;
+        }
+        Common::up_to_the_end(len)
+    }
+
+    /// [`Self::compare`], 16 bytes at a time as long as there are as many. Fails with how many bytes are known to be in
+    /// common when there are not.
+    #[inline(always)]
+    pub(crate) fn compare_chunks(
+        self,
+        pos: u32,
+        match_pos: u32,
+        from: u32,
+    ) -> core::result::Result<Common, u32> {
+        self.compare_chunks_with(pos, self, match_pos, from)
+    }
+
+    /// [`Self::compare_chunks`], for a match that is at `match_pos` in `other`.
+    #[inline(always)]
+    pub(crate) fn compare_chunks_with(
+        self,
+        pos: u32,
+        other: Self,
+        match_pos: u32,
+        from: u32,
+    ) -> core::result::Result<Common, u32> {
+        let mut len = from;
+        while let (Some(bytes), Some(match_bytes)) = (
+            self.chunk16(pos.wrapping_add(len)),
+            other.chunk16(match_pos.wrapping_add(len)),
+        ) {
+            // A comparison of vectors.
+            let mut differ = 0u32;
+            for (n, (byte, match_byte)) in bytes.iter().zip(match_bytes).enumerate() {
+                differ |= u32::from(byte != match_byte) << n;
+            }
+            if differ != 0 {
+                let first = differ.trailing_zeros();
+                let byte = bytes.get(first as usize & 15).copied().unwrap_or(0);
+                let match_byte = match_bytes.get(first as usize & 15).copied().unwrap_or(0);
+                return Ok(Common::followed_by(len + first, match_byte, byte));
+            }
+            len += 16;
+        }
+        Err(len)
+    }
+
+    /// A hint that `pos`, which may be anything, is about to be read.
+    #[inline(always)]
+    pub(crate) fn prefetch(self, pos: u32) {
+        prefetch_read(self.0.as_ptr().wrapping_add(pos as usize), Locality::L1);
+    }
+
     /// How many of the 16 bytes at `match_pos` are the same as `bytes`, from the first on. It takes no branch.
     #[inline(always)]
     fn count16(self, bytes: &[u8; 16], match_pos: u32) -> Option<u32> {
@@ -882,11 +950,469 @@ pub(crate) fn table_prefetch(table: &[u32], hash: usize) {
     prefetch_read(table.as_ptr().wrapping_add(hash), Locality::L1);
 }
 
+/// What a position and a match for it have in common.
+#[derive(Clone, Copy)]
+pub(crate) struct Common {
+    pub(crate) len: u32,
+    /// Whether the match is before the position in the order of what follows them. `None` if the input ends before
+    /// they differ.
+    pub(crate) match_is_smaller: Option<bool>,
+}
+
+impl Common {
+    #[inline(always)]
+    pub(crate) const fn followed_by(len: u32, match_byte: u8, byte: u8) -> Self {
+        Self {
+            len,
+            match_is_smaller: Some(match_byte < byte),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) const fn up_to_the_end(len: u32) -> Self {
+        Self {
+            len,
+            match_is_smaller: None,
+        }
+    }
+}
+
+/// A table of binary trees of positions, in the order of what follows them: for each position, the roots of the smaller
+/// ones and of the larger ones below it. Its size is a power of 2.
+pub(crate) type Nodes = [[u32; 2]];
+
+/// `chainTable`, as the strategies that use binary trees see it.
+#[inline(always)]
+pub(crate) fn bt_nodes(chain_table: &mut [u32]) -> &mut Nodes {
+    let (nodes, _) = chain_table.as_chunks_mut();
+    nodes
+}
+
+/// What is below `index`, the smaller ones first.
+#[inline(always)]
+pub(crate) fn bt_children(bt: &Nodes, index: u32) -> [u32; 2] {
+    let node = bt.get(index as usize & bt.len().wrapping_sub(1));
+    node.copied().unwrap_or_default()
+}
+
+/// Sets what [`bt_children`] returns.
+#[inline(always)]
+pub(crate) fn bt_set_children(bt: &mut Nodes, index: u32, children: [u32; 2]) {
+    let mask = bt.len().wrapping_sub(1);
+    if let Some(node) = bt.get_mut(index as usize & mask) {
+        *node = children;
+    }
+}
+
+/// A hint that [`bt_children`] of `index` is about to be read.
+#[inline(always)]
+pub(crate) fn bt_prefetch(bt: &Nodes, index: u32) {
+    let node = index as usize & bt.len().wrapping_sub(1);
+    prefetch_read(bt.as_ptr().wrapping_add(node), Locality::L1);
+}
+
+/// The way down a tree for a position that becomes its root: what is met on the way goes to its left or to its right.
+pub(crate) struct Descent {
+    /// The positions from there down have been overwritten in the table.
+    bt_low: u32,
+    /// Where the next smaller position goes, as twice the position that it goes below, plus 1 for its larger side. And
+    /// the next larger one.
+    smaller_slot: usize,
+    larger_slot: usize,
+    /// What all the smaller positions from here on are sure to have in common with the new root, and the larger ones.
+    common_smaller: u32,
+    common_larger: u32,
+}
+
+impl Descent {
+    #[inline(always)]
+    pub(crate) const fn new(bt: &Nodes, curr: u32) -> Self {
+        Self::down_to(curr, bt_low(bt, curr))
+    }
+
+    /// [`Self::new`], which does not go below the positions from `bt_low` down.
+    #[inline(always)]
+    pub(crate) const fn down_to(curr: u32, bt_low: u32) -> Self {
+        let slot = (curr as usize) << 1;
+        Self {
+            bt_low,
+            smaller_slot: slot,
+            larger_slot: slot + 1,
+            common_smaller: 0,
+            common_larger: 0,
+        }
+    }
+
+    /// What the next position is sure to have in common with the new root.
+    #[inline(always)]
+    pub(crate) fn common(&self) -> u32 {
+        self.common_smaller.min(self.common_larger)
+    }
+
+    /// Goes past `match_index`, which has `len` bytes in common with the new root and `children` below it. Returns the
+    /// next position, if the table still has it.
+    #[inline(always)]
+    pub(crate) fn step(
+        &mut self,
+        bt: &mut Nodes,
+        match_index: u32,
+        children: [u32; 2],
+        len: u32,
+        match_is_smaller: bool,
+    ) -> Option<u32> {
+        let slots = bt.as_flattened_mut();
+        let slot = (match_index as usize) << 1;
+        let [smaller_child, larger_child] = children;
+        if match_is_smaller {
+            table_put(slots, self.smaller_slot, match_index);
+            self.common_smaller = len;
+            if match_index <= self.bt_low {
+                // This slot keeps its value: only the other one is cleared.
+                self.smaller_slot = self.larger_slot;
+                return None;
+            }
+            // What is larger than it may be smaller than the new root.
+            self.smaller_slot = slot + 1;
+            Some(larger_child)
+        } else {
+            table_put(slots, self.larger_slot, match_index);
+            self.common_larger = len;
+            if match_index <= self.bt_low {
+                self.larger_slot = self.smaller_slot;
+                return None;
+            }
+            self.larger_slot = slot;
+            Some(smaller_child)
+        }
+    }
+
+    /// Nothing more goes to the left or to the right of the new root.
+    #[inline(always)]
+    pub(crate) fn end(&self, bt: &mut Nodes) {
+        let slots = bt.as_flattened_mut();
+        table_put(slots, self.smaller_slot, 0);
+        table_put(slots, self.larger_slot, 0);
+    }
+}
+
+/// The positions from there down have been overwritten in the table when `curr` is added.
+#[inline(always)]
+pub(crate) const fn bt_low(bt: &Nodes, curr: u32) -> u32 {
+    curr.saturating_sub(bt.len().wrapping_sub(1) as u32)
+}
+
+/// What the match finders that use binary trees read.
+#[derive(Clone, Copy)]
+pub(crate) struct TreeInput<'a> {
+    /// The current segment, up to where matches end. A position in it is an index minus `dict_limit`.
+    pub(crate) near: Near<'a>,
+    pub(crate) dict_limit: u32,
+    /// The older segment.
+    pub(crate) dict: Prefix<'a>,
+    /// Whether there is enough of it for hints at what is about to be read to be worth giving.
+    pub(crate) far: bool,
+}
+
+impl<'a> TreeInput<'a> {
+    /// `prefix` is the current segment, which starts at the index `dict_limit`, and `dict` the older one.
+    pub(crate) fn new(
+        prefix: Prefix<'a>,
+        dict: Prefix<'a>,
+        dict_limit: u32,
+        iend: usize,
+    ) -> Result<Self> {
+        let near = Near::new(prefix.buf.sub(prefix.pos_of(dict_limit)..iend)?)?;
+        Ok(Self {
+            near,
+            dict_limit,
+            dict,
+            far: near.len() > 1 << 16,
+        })
+    }
+
+    /// `ZSTD_count_2segments`, for the position `ip` of `near` and a match that starts in another segment.
+    #[inline(always)]
+    pub(crate) fn count_2segments(
+        &self,
+        ip: u32,
+        match_buf: &[u8],
+        match_pos: usize,
+        match_end: usize,
+    ) -> Result<u32> {
+        let buf = self.near.bytes();
+        let len = count_2segments(
+            buf,
+            ip as usize,
+            match_buf,
+            match_pos,
+            buf.len(),
+            match_end,
+            0,
+        )?;
+        Ok(len as u32)
+    }
+
+    /// [`Self::count_2segments`] for a match at `match_index`, in the older segment.
+    #[inline(always)]
+    pub(crate) fn count_ext_dict(&self, ip: u32, match_index: u32) -> Result<u32> {
+        self.count_2segments(
+            ip,
+            self.dict.buf,
+            self.dict.pos_of(match_index),
+            self.dict.pos_of(self.dict_limit),
+        )
+    }
+
+    /// [`Near::compare`] wherever the match is, for what [`Near::compare_chunks`] leaves.
+    #[cold]
+    #[inline(never)]
+    fn compare_rest(self, ip: u32, match_index: u32, from: u32) -> Result<Common> {
+        // A position of the older segment, as one of the current segment, only makes sense with a length that brings
+        // it there.
+        if u64::from(match_index) + u64::from(from) >= u64::from(self.dict_limit) {
+            let match_pos = match_index.wrapping_sub(self.dict_limit);
+            return Ok(self.near.compare(ip, match_pos, from));
+        }
+
+        let len = from + self.count_ext_dict(ip + from, match_index.wrapping_add(from))?;
+        let Some(byte) = self.near.read8(ip.wrapping_add(len)) else {
+            return Ok(Common::up_to_the_end(len));
+        };
+        let differs = match_index.wrapping_add(len);
+        let match_byte = if differs < self.dict_limit {
+            self.dict.buf.at(self.dict.pos_of(differs))?
+        } else {
+            let pos = differs.wrapping_sub(self.dict_limit);
+            self.near.read8(pos).ok_or(BUG)?
+        };
+        Ok(Common::followed_by(len, match_byte, byte))
+    }
+}
+
+/// Hints at what the ways down the trees start with for the positions after `ip`, which are likely to be the next: the
+/// cell of the hash table for the one 8 bytes ahead, the root that it has for the one `ROOT` bytes ahead, and what is
+/// below the root for the one `BELOW` bytes ahead.
+#[inline(always)]
+pub(crate) fn bt_look_ahead<const ROOT: u32, const BELOW: u32>(
+    hash_table: &[u32],
+    bt: &Nodes,
+    input: &TreeInput<'_>,
+    hasher: Hasher,
+    ip: u32,
+) {
+    let near = input.near;
+    if !input.far {
+        return;
+    }
+    let Some(bytes) = near.chunk16(ip) else {
+        return;
+    };
+    let bytes = u128::from_le_bytes(*bytes);
+    let hash_of = |ahead: u32| hasher.hash((bytes >> (8 * ahead)) as u64);
+    prefetch_read(hash_table.as_ptr().wrapping_add(hash_of(8)), Locality::L1);
+    let root = table_get(hash_table, hash_of(ROOT));
+    bt_prefetch(bt, root);
+    near.prefetch(root.wrapping_sub(input.dict_limit));
+    for child in bt_children(bt, table_get(hash_table, hash_of(BELOW))) {
+        bt_prefetch(bt, child);
+        near.prefetch(child.wrapping_sub(input.dict_limit));
+    }
+}
+
+/// Goes down the tree whose root is `root` for the position `ip` of `input.near`, which `descent` is for and which
+/// becomes the root. `visit` is called with each position that is met on the way, which are all at least `low` and at
+/// most `nb_compares`, and what it has in common with `ip`, and returns whether to go on. Returns how many more positions
+/// could have been compared.
+#[inline(always)]
+pub(crate) fn bt_walk(
+    bt: &mut Nodes,
+    input: &TreeInput<'_>,
+    ip: u32,
+    root: u32,
+    low: u32,
+    mut nb_compares: u32,
+    mut descent: Descent,
+    mut visit: impl FnMut(u32, Common) -> Result<bool>,
+) -> Result<u32> {
+    if bt.is_empty() {
+        return Err(BUG);
+    }
+    let near = input.near;
+    let dict_limit = input.dict_limit;
+    let mut match_index = root;
+    while nb_compares != 0 && match_index >= low {
+        let children = bt_children(bt, match_index);
+        let from = descent.common();
+        // Whichever way it goes, the next step does not wait as long for memory.
+        if input.far {
+            for child in children {
+                bt_prefetch(bt, child);
+                near.prefetch(child.wrapping_sub(dict_limit).wrapping_add(from));
+            }
+        }
+        let common = match near.compare_chunks(ip, match_index.wrapping_sub(dict_limit), from) {
+            Ok(common) => common,
+            Err(from) => input.compare_rest(ip, match_index, from)?,
+        };
+        if !visit(match_index, common)? {
+            break;
+        }
+        let match_is_smaller = common.match_is_smaller.ok_or(BUG)?;
+        let Some(next) = descent.step(bt, match_index, children, common.len, match_is_smaller)
+        else {
+            break;
+        };
+        match_index = next;
+        nb_compares -= 1;
+    }
+    descent.end(bt);
+    Ok(nb_compares)
+}
+
+/// The tree of a dictionary that a search goes on in. It is only read.
+#[derive(Clone, Copy)]
+pub(crate) struct DictTree<'a> {
+    dms: DictMatchState<'a>,
+    bt: &'a Nodes,
+    /// The content of the dictionary. A position in it is an index minus `low_limit`.
+    content: Near<'a>,
+    low_limit: u32,
+    high_limit: u32,
+    bt_low: u32,
+    /// What to add to an index of the dictionary for an index of the window.
+    pub(crate) index_delta: u32,
+}
+
+impl<'a> DictTree<'a> {
+    /// `window_low` is the index of the window that the end of the dictionary is at.
+    pub(crate) fn new(dms: DictMatchState<'a>, window_low: u32) -> Result<Self> {
+        let (bt, _) = dms.ms.chain_table.as_chunks();
+        if bt.len() != 1usize.wrapping_shl(dms.ms.c_params.chain_log.wrapping_sub(1)) {
+            return Err(BUG);
+        }
+        let bt_mask = bt.len().wrapping_sub(1) as u32;
+        let low_limit = dms.ms.window.low_limit;
+        let high_limit = dms.end.wrapping_sub(dms.base) as u32;
+        Ok(Self {
+            dms,
+            bt,
+            content: Near::new(dms.buf.sub(dms.pos_of(low_limit)..dms.end)?)?,
+            low_limit,
+            high_limit,
+            bt_low: if bt_mask < high_limit.wrapping_sub(low_limit) {
+                high_limit.wrapping_sub(bt_mask)
+            } else {
+                low_limit
+            },
+            index_delta: window_low.wrapping_sub(high_limit),
+        })
+    }
+
+    /// The root of the tree of `dms` for `hash`, or 0 if there is none, and a hint that the way down is about to start.
+    #[inline(always)]
+    pub(crate) fn root(dms: DictMatchState<'_>, hash: usize) -> Result<u32> {
+        let root = dms.ms.hash_table.at(hash)?;
+        if root <= dms.ms.window.low_limit {
+            return Ok(0);
+        }
+        let (bt, _) = dms.ms.chain_table.as_chunks();
+        bt_prefetch(bt, root);
+        prefetch_read(
+            dms.buf.as_ptr().wrapping_add(dms.pos_of(root)),
+            Locality::L1,
+        );
+        Ok(root)
+    }
+
+    /// [`Near::compare`] for a match in the dictionary, for what [`Near::compare_chunks_with`] leaves. A match that
+    /// reaches the end of the dictionary goes on at the start of the current segment.
+    #[cold]
+    #[inline(never)]
+    fn compare_rest(
+        self,
+        input: &TreeInput<'_>,
+        ip: u32,
+        dict_match_index: u32,
+        from: u32,
+    ) -> Result<Common> {
+        let dms = &self.dms;
+        let match_pos = dms.pos_of(dict_match_index.wrapping_add(from));
+        let len = from + input.count_2segments(ip + from, dms.buf, match_pos, dms.end)?;
+        let Some(byte) = input.near.read8(ip.wrapping_add(len)) else {
+            return Ok(Common::up_to_the_end(len));
+        };
+        let differs = dict_match_index.wrapping_add(len);
+        let match_byte = if differs >= self.high_limit {
+            let index = differs.wrapping_add(self.index_delta);
+            let pos = index.wrapping_sub(input.dict_limit);
+            input.near.read8(pos).ok_or(BUG)?
+        } else {
+            dms.buf.at(dms.pos_of(differs))?
+        };
+        Ok(Common::followed_by(len, match_byte, byte))
+    }
+
+    /// Goes down the tree for the position `ip` of `input.near`, from what [`Self::root`] returns for it. `visit` is called with each position that is met on the way, at most `nb_compares` of them, and what it has in
+    /// common with `ip`, and returns whether to go on.
+    #[inline(always)]
+    pub(crate) fn walk(
+        &self,
+        input: &TreeInput<'_>,
+        ip: u32,
+        root: u32,
+        mut nb_compares: u32,
+        mut visit: impl FnMut(u32, Common) -> Result<bool>,
+    ) -> Result<()> {
+        let mut dict_match_index = root;
+        let mut common_smaller = 0u32;
+        let mut common_larger = 0u32;
+        while nb_compares != 0 && dict_match_index > self.low_limit {
+            let [smaller_child, larger_child] = bt_children(self.bt, dict_match_index);
+            let from = common_smaller.min(common_larger);
+            // Whichever way it goes, the next step does not wait as long for memory.
+            for child in [smaller_child, larger_child] {
+                bt_prefetch(self.bt, child);
+                let pos = child.wrapping_sub(self.low_limit);
+                self.content.prefetch(pos.wrapping_add(from));
+            }
+            let match_pos = dict_match_index.wrapping_sub(self.low_limit);
+            let chunks = input
+                .near
+                .compare_chunks_with(ip, self.content, match_pos, from);
+            let common = match chunks {
+                Ok(common) => common,
+                Err(from) => self.compare_rest(input, ip, dict_match_index, from)?,
+            };
+            if !visit(dict_match_index, common)? || dict_match_index <= self.bt_low {
+                break;
+            }
+            if common.match_is_smaller.ok_or(BUG)? {
+                common_smaller = common.len;
+                dict_match_index = larger_child;
+            } else {
+                common_larger = common.len;
+                dict_match_index = smaller_child;
+            }
+            nb_compares -= 1;
+        }
+        Ok(())
+    }
+}
+
 /// `table[hash]`. The size of `table` is a power of 2 that `hash` is less than, which the mask tells the compiler.
 #[inline(always)]
 pub(crate) fn table_get(table: &[u32], hash: usize) -> u32 {
     let cell = table.get(hash & table.len().wrapping_sub(1));
     cell.copied().unwrap_or(0)
+}
+
+/// `table[hash] = index`, likewise.
+#[inline(always)]
+pub(crate) fn table_put(table: &mut [u32], hash: usize, index: u32) {
+    let mask = table.len().wrapping_sub(1);
+    if let Some(cell) = table.get_mut(hash & mask) {
+        *cell = index;
+    }
 }
 
 /// `table[hash]`. `hash` is less than the size of `table`: to check that delays nothing, which a mask would.
@@ -994,10 +1520,45 @@ pub(crate) const fn hash8(u: u64, h: u32, s: u64) -> usize {
     (((u.wrapping_mul(PRIME_8_BYTES)) ^ s) >> ((64 - h) & 63)) as usize
 }
 
-/// `ZSTD_hash3Ptr`: `h` is from 1 to 32, as for all these.
+/// `ZSTD_hash3Ptr` of the position that the 4 bytes `bytes` were read at. `h` is from 1 to 32, as for all these.
 #[inline(always)]
-pub(crate) fn hash3_ptr(buf: &[u8], pos: usize, h: u32) -> Result<usize> {
-    Ok(hash3(read_le32(buf, pos)?, h, 0) as usize)
+pub(crate) const fn hash3_of(bytes: u32, h: u32) -> usize {
+    hash3(bytes, h, 0) as usize
+}
+
+/// [`hash_of`], when `mls` is not a constant.
+#[derive(Clone, Copy)]
+pub(crate) struct Hasher {
+    /// Takes the bytes that do not count out, on the left.
+    factor: u64,
+    shift: u32,
+}
+
+impl Hasher {
+    pub(crate) const fn new(h_bits: u32, mls: u32) -> Self {
+        let factor = match mls {
+            5 => PRIME_5_BYTES << (64 - 40),
+            6 => PRIME_6_BYTES << (64 - 48),
+            7 => PRIME_7_BYTES << (64 - 56),
+            8 => PRIME_8_BYTES,
+            _ => (PRIME_4_BYTES as u64) << 32,
+        };
+        Self { factor, shift: 0 }.with_log(h_bits)
+    }
+
+    /// The same for a table of another size.
+    pub(crate) const fn with_log(self, h_bits: u32) -> Self {
+        Self {
+            shift: 64u32.wrapping_sub(h_bits) & 63,
+            ..self
+        }
+    }
+
+    /// [`hash_ptr`] of the position that the 8 bytes `bytes` were read at.
+    #[inline(always)]
+    pub(crate) const fn hash(self, bytes: u64) -> usize {
+        (bytes.wrapping_mul(self.factor) >> self.shift) as usize
+    }
 }
 
 /// [`hash_ptr`] of the position that the 8 bytes `bytes` were read at.
@@ -1353,22 +1914,35 @@ pub(crate) struct RawSeqStore {
     pub(crate) capacity: usize,
 }
 
-/// `ZSTD_optimal_t`
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Optimal {
+/// `ZSTD_optimal_t`, one array per member: how to get to each of the positions that the optimal parser looks at, by a
+/// match followed by literals.
+#[derive(Default)]
+pub(crate) struct PriceTable {
     /// The cost of getting to this position.
-    pub(crate) price: i32,
-    pub(crate) off: u32,
-    pub(crate) mlen: u32,
-    pub(crate) litlen: u32,
-    pub(crate) rep: [u32; ZSTD_REP_NUM],
+    pub(crate) price: Vec<i32>,
+    pub(crate) off: Vec<u32>,
+    /// `mlen` and `litlen`.
+    pub(crate) lens: Vec<u32>,
+    pub(crate) rep: Vec<[u32; ZSTD_REP_NUM]>,
+    /// The price of each length of match.
+    pub(crate) ml_price: Vec<u32>,
 }
 
-/// `ZSTD_OptPrice_e`
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OptPrice {
-    Dynamic,
-    Predef,
+impl PriceTable {
+    /// Makes room for `len` positions.
+    pub(crate) fn resize(&mut self, len: usize) -> Result<()> {
+        if self.price.len() != len {
+            *self = Self::default();
+            *self = Self {
+                price: try_zeroed(len)?,
+                off: try_zeroed(len)?,
+                lens: try_zeroed(len)?,
+                rep: try_zeroed(len)?,
+                ml_price: try_zeroed(len)?,
+            };
+        }
+        Ok(())
+    }
 }
 
 /// `optState_t`. `symbolCosts` is in [`BlockSrc`].
@@ -1378,16 +1952,11 @@ pub(crate) struct OptState {
     pub(crate) match_length_freq: Vec<u32>,
     pub(crate) off_code_freq: Vec<u32>,
     pub(crate) match_table: Vec<Match>,
-    pub(crate) price_table: Vec<Optimal>,
+    pub(crate) price_table: PriceTable,
     pub(crate) lit_sum: u32,
     pub(crate) lit_length_sum: u32,
     pub(crate) match_length_sum: u32,
     pub(crate) off_code_sum: u32,
-    pub(crate) lit_sum_base_price: u32,
-    pub(crate) lit_length_sum_base_price: u32,
-    pub(crate) match_length_sum_base_price: u32,
-    pub(crate) off_code_sum_base_price: u32,
-    pub(crate) price_type: OptPrice,
     pub(crate) literal_compression_mode: ParamSwitch,
 }
 
@@ -1399,16 +1968,17 @@ impl OptState {
             match_length_freq: Vec::new(),
             off_code_freq: Vec::new(),
             match_table: Vec::new(),
-            price_table: Vec::new(),
+            price_table: PriceTable {
+                price: Vec::new(),
+                off: Vec::new(),
+                lens: Vec::new(),
+                rep: Vec::new(),
+                ml_price: Vec::new(),
+            },
             lit_sum: 0,
             lit_length_sum: 0,
             match_length_sum: 0,
             off_code_sum: 0,
-            lit_sum_base_price: 0,
-            lit_length_sum_base_price: 0,
-            match_length_sum_base_price: 0,
-            off_code_sum_base_price: 0,
-            price_type: OptPrice::Dynamic,
             literal_compression_mode: ParamSwitch::Auto,
         }
     }

@@ -3908,7 +3908,9 @@ describe("bundler", () => {
 
   // The files that the lifted file imports get lazy wrappers as well, for
   // every entry point. An entry point that only imports one of them calls
-  // its wrapper first, and prints what `bun run` prints.
+  // its wrapper first, and prints what `bun run` prints. A wrapper runs in
+  // import order, as in a `--target=node` build. With no wrapper, the file
+  // is in a shared chunk that runs before the entry point's own imports.
   itBundled("splitting/SplitRequireOfLiftedCommonJSWrapsItsImportsForOtherEntryPoints", {
     files: {
       "/server.ts": /* ts */ `
@@ -3922,6 +3924,14 @@ describe("bundler", () => {
       "/client.ts": /* ts */ `
         import { useState } from "react";
         console.log("client", useState());
+      `,
+      "/ordered.ts": /* ts */ `
+        import "./first";
+        import { useState } from "react";
+        console.log("ordered", useState());
+      `,
+      "/first.ts": /* ts */ `
+        console.log("first evaluated");
       `,
       "/node_modules/react-dom/package.json": /* json */ `
         { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
@@ -3938,7 +3948,7 @@ describe("bundler", () => {
         exports.useState = () => "state";
       `,
     },
-    entryPoints: ["/server.ts", "/client.ts"],
+    entryPoints: ["/server.ts", "/client.ts", "/ordered.ts"],
     splitting: true,
     target: "bun",
     outdir: "/out",
@@ -3955,6 +3965,7 @@ describe("bundler", () => {
     run: [
       { file: "/out/client.js", stdout: "react evaluated\nclient state" },
       { file: "/out/server.js", stdout: "server" },
+      { file: "/out/ordered.js", stdout: "first evaluated\nreact evaluated\nordered state" },
     ],
   });
 
@@ -4057,6 +4068,43 @@ describe("bundler", () => {
     format: "esm",
     external: ["external-package"],
     run: { file: "/out/main.js", stdout: "side effect\nexternal value" },
+  });
+
+  // Control: with an `import()` of that file the chunk has no function around
+  // `export *`, and the call loads it. Inline, the file gets that function.
+  itBundledLikeBunRun("splitting/SplitRequireOfLiftedReExportOfExternalWithImport", {
+    files: {
+      "/main.ts": /* ts */ `
+        let m;
+        try {
+          m = require("react-dom");
+        } catch (e) {
+          console.log(e.message);
+        }
+        const ns = await import("react-dom");
+        console.log(m?.value, ns.value);
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('external-package');
+      `,
+      "/node_modules/external-package/package.json": /* json */ `
+        { "name": "external-package", "version": "1.0.0", "main": "index.js" }
+      `,
+      "/node_modules/external-package/index.js": /* js */ `
+        exports.value = "external value";
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    external: ["external-package"],
+    run: { file: "/out/main.js", stdout: "side effect\nexternal value external value" },
   });
 
   // A top-level require() in a module that the required chunk imports back

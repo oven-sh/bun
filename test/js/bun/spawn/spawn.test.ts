@@ -2527,18 +2527,18 @@ int main(int argc, char **argv) {
   });
   const result = ((): typeof denyCreat => {
     const bin = join(String(dir), "deny-creat");
-    let compile;
     try {
-      compile = spawnSync({ cmd: ["cc", "-O0", "-o", bin, join(String(dir), "deny-creat.c")], stderr: "pipe" });
+      const compile = spawnSync({ cmd: ["cc", "-O0", "-o", bin, join(String(dir), "deny-creat.c")], stderr: "pipe" });
+      if (compile.exitCode !== 0) {
+        const stderr = compile.stderr.toString();
+        // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
+        return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
+      }
+      return spawnSync({ cmd: [bin, "--probe"] }).exitCode === 0 ? { bin } : { skip: true };
     } catch {
-      return { skip: true }; // no cc
+      // spawnSync throws when there is no cc, or when the host cannot run the binary it built.
+      return { skip: true };
     }
-    if (compile.exitCode !== 0) {
-      const stderr = compile.stderr.toString();
-      // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
-      return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
-    }
-    return spawnSync({ cmd: [bin, "--probe"] }).exitCode === 0 ? { bin } : { skip: true };
   })();
   // The test needs the binary until the file ends. Every other outcome is done with the directory now.
   if ("bin" in result) afterAll(() => dir[Symbol.dispose]());
@@ -2546,8 +2546,8 @@ int main(int argc, char **argv) {
   return result;
 })();
 
-// stdio "ignore" opens /dev/null. The open must not carry O_CREAT: on a rootfs without /dev/null
-// that creates a regular file there.
+// stdio "ignore", and an inherited slot whose fd is closed, open /dev/null. The open must not carry
+// O_CREAT: on a rootfs without /dev/null that creates a regular file there.
 it.skipIf("skip" in denyCreat)("stdio ignore opens /dev/null without O_CREAT", async () => {
   if ("error" in denyCreat) throw new Error("failed to compile deny-creat.c:\n" + denyCreat.error);
   using dir = tempDir("spawn-ignore-no-creat", {});
@@ -2556,9 +2556,11 @@ it.skipIf("skip" in denyCreat)("stdio ignore opens /dev/null without O_CREAT", a
       (denyCreat as { bin: string }).bin,
       bunExe(),
       "-e",
-      `const result = {};
+      `import { spawnSync } from "node:child_process";
+       import { closeSync, openSync } from "node:fs";
+       const result = {};
        try {
-         require("node:fs").closeSync(require("node:fs").openSync("created-by-the-test", "w"));
+         closeSync(openSync("created-by-the-test", "w"));
          result.create = "allowed";
        } catch (e) {
          result.create = e.code;
@@ -2571,8 +2573,19 @@ it.skipIf("skip" in denyCreat)("stdio ignore opens /dev/null without O_CREAT", a
        } catch (e) {
          result.bun = String(e);
        }
-       const node = require("node:child_process").spawnSync(process.execPath, ["-e", "process.exit(8)"], { stdio: "ignore" });
+       const node = spawnSync(process.execPath, ["-e", "process.exit(8)"], { stdio: "ignore" });
        result.node = node.error ? String(node.error) : node.status;
+       // An inherited slot whose fd is closed gets /dev/null too.
+       closeSync(0);
+       try {
+         const child = Bun.spawn({
+           cmd: [process.execPath, "-e", "process.exit(9)"],
+           stdio: ["inherit", "ignore", "ignore"],
+         });
+         result.closedStdin = await child.exited;
+       } catch (e) {
+         result.closedStdin = String(e);
+       }
        console.log(JSON.stringify(result));`,
     ],
     env: bunEnv,
@@ -2582,6 +2595,6 @@ it.skipIf("skip" in denyCreat)("stdio ignore opens /dev/null without O_CREAT", a
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ create: "EACCES", bun: 7, node: 8 });
+  expect(JSON.parse(stdout)).toEqual({ create: "EACCES", bun: 7, node: 8, closedStdin: 9 });
   expect(exitCode).toBe(0);
 });

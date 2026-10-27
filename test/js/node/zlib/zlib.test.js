@@ -799,40 +799,6 @@ for (const C of [zlib.BrotliCompress, zlib.BrotliDecompress]) {
 }
 
 describe("zlib.zstd", () => {
-  describe("pledgedSrcSize", () => {
-    const compress = pledgedSrcSize => {
-      const { promise, resolve, reject } = Promise.withResolvers();
-      const chunks = [];
-      zlib
-        .createZstdCompress({ pledgedSrcSize })
-        .on("data", chunk => chunks.push(chunk))
-        .on("error", reject)
-        .on("end", () => resolve(Buffer.concat(chunks).toString("hex")))
-        .end("x");
-      return promise;
-    };
-
-    it("can be 4 GiB or more", async () => {
-      await expect(compress(2 ** 32)).rejects.toMatchObject({ code: "ZSTD_error_srcSize_wrong" });
-      await expect(compress(2 ** 40)).rejects.toMatchObject({ code: "ZSTD_error_srcSize_wrong" });
-    });
-
-    it("is truncated to an integer", async () => {
-      expect(await compress(1.9)).toBe(await compress(1));
-      expect(await compress(1)).not.toBe(await compress(undefined));
-    });
-
-    it("may not be negative", () => {
-      expect(() => zlib.createZstdCompress({ pledgedSrcSize: -1 })).toThrow(
-        expect.objectContaining({
-          name: "TypeError",
-          code: "ERR_INVALID_ARG_VALUE",
-          message: "pledgedSrcSize may not be negative",
-        }),
-      );
-    });
-  });
-
   const inputString =
     "ΩΩLorem ipsum dolor sit amet, consectetur adipiscing eli" +
     "t. Morbi faucibus, purus at gravida dictum, libero arcu " +

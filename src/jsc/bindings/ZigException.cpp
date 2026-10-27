@@ -887,11 +887,7 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         return;
     }
 
-    if (jscException) {
-        if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
-        }
-
-        exceptionFromString(*exception, value, global);
+    if (jscException && jscException->stack().size() > 0) {
+        populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
     }
 }

@@ -491,6 +491,25 @@ setTimeout(() => {
     },
   );
 
+  // The same path used to read the name and message of a thrown plain object a
+  // second time while it collected the source lines.
+  test.concurrent("a thrown object's name and message getters run once when the file is gone", async () => {
+    using dir = tempDir("uncaught-print", {
+      "gone.js": `require("fs").unlinkSync(__filename);
+setTimeout(() => {
+  throw {
+    get name() { console.log("name read"); return "CustomName"; },
+    get message() { console.log("message read"); return "custom message"; },
+  };
+}, 1);
+`,
+    });
+    const { stdout, stderr, exitCode } = await bunRun(join(String(dir), "gone.js"), env);
+    expect(stdout).toBe("name read\nmessage read");
+    expect(stderr).toContain("CustomName: custom message\n");
+    expect(exitCode).toBe(1);
+  });
+
   // node:events rethrows an 'error' event nobody listens for, from a tick. The
   // stream's error is built by native code with no JS on the stack.
   test.concurrent("an unhandled 'error' event prints the properties of the system error", async () => {

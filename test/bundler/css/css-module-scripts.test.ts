@@ -977,9 +977,11 @@ describe("bundler", () => {
   for (const target of ["browser", "node"] as const) {
     for (const bundling of [true, false]) {
       const attribute = target === "browser" ? ` with { type: "css" }` : "";
-      itBundled(`css-module-script/ImportThatStaysInTheOutput${bundling ? "" : "NoBundle"}For${target === "browser" ? "ABrowser" : "Node"}`, {
-        files: {
-          "/entry.js": /* js */ `
+      itBundled(
+        `css-module-script/ImportThatStaysInTheOutput${bundling ? "" : "NoBundle"}For${target === "browser" ? "ABrowser" : "Node"}`,
+        {
+          files: {
+            "/entry.js": /* js */ `
             import sheet from "./widget.css" with { type: "css" };
             export { default as other } from "./other.css" with { type: "css" };
             export * from "./star.css" with { type: "css" };
@@ -987,22 +989,23 @@ describe("bundler", () => {
             import "./page.css";
             console.log(sheet, text);
           `,
+          },
+          entryPoints: ["/entry.js"],
+          external: ["./widget.css", "./other.css", "./star.css", "./notes.txt", "./page.css"],
+          bundling,
+          outdir: bundling ? "/out" : undefined,
+          target,
+          onAfterBundle(api) {
+            const js = api.readFile(bundling ? "/out/entry.js" : "/out.js");
+            expect(js).toContain(`import sheet from "./widget.css"${attribute};`);
+            expect(js).toContain(`from "./other.css"${attribute};`);
+            expect(js).toContain(`export * from "./star.css"${attribute};`);
+            // Unchanged: the other types are for Bun only, and a plain import has no attribute.
+            expect(js).toContain(`import text from "./notes.txt";`);
+            expect(js).toMatch(/import ?"\.\/page\.css";/);
+          },
         },
-        entryPoints: ["/entry.js"],
-        external: ["./widget.css", "./other.css", "./star.css", "./notes.txt", "./page.css"],
-        bundling,
-        outdir: bundling ? "/out" : undefined,
-        target,
-        onAfterBundle(api) {
-          const js = api.readFile(bundling ? "/out/entry.js" : "/out.js");
-          expect(js).toContain(`import sheet from "./widget.css"${attribute};`);
-          expect(js).toContain(`from "./other.css"${attribute};`);
-          expect(js).toContain(`export * from "./star.css"${attribute};`);
-          // Unchanged: the other types are for Bun only, and a plain import has no attribute.
-          expect(js).toContain(`import text from "./notes.txt";`);
-          expect(js).toMatch(/import ?"\.\/page\.css";/);
-        },
-      });
+      );
     }
   }
 

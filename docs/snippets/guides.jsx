@@ -50,6 +50,7 @@ export const GuidesList = () => {
         items: [
           { title: "Deploy Bun on Vercel", href: "/guides/deployment/vercel" },
           { title: "Deploy Bun on Railway", href: "/guides/deployment/railway" },
+          { title: "Deploy Bun on Fly.io", href: "/guides/deployment/fly" },
           { title: "Deploy Bun on Render", href: "/guides/deployment/render" },
         ],
       },

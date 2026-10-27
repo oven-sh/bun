@@ -1,0 +1,172 @@
+---
+title: Deploy a Bun application on Fly.io
+description: Deploy a Bun application to Fly.io from the CLI, with an auto-generated Dockerfile, optional PostgreSQL, and deploys from GitHub Actions
+sidebarTitle: Deploy on Fly.io
+mode: center
+---
+
+[Fly.io](https://fly.io/) runs your apps in lightweight VMs (Fly Machines) in regions close to your users. It handles TLS certificates, load balancing, and scaling Machines up and down, and provides managed PostgreSQL.
+
+Fly.io supports Bun out of the box. `fly launch` detects Bun from your `bun.lock` and generates a `Dockerfile` based on the official `oven/bun` image.
+
+---
+
+**Prerequisites**:
+
+- A Bun application ready for deployment
+- A [Fly.io account](https://fly.io/app/sign-up)
+- The [`flyctl` CLI](https://fly.io/docs/flyctl/install/)
+
+---
+
+## Deploy via CLI
+
+<Steps>
+<Step title="Step 1">
+Install `flyctl`.
+
+```bash terminal icon="terminal"
+# macOS
+brew install flyctl
+
+# Linux and macOS
+curl -L https://fly.io/install.sh | sh
+```
+
+</Step>
+<Step title="Step 2">
+Log into your Fly.io account.
+
+```bash terminal icon="terminal"
+fly auth login
+```
+
+</Step>
+<Step title="Step 3">
+Make sure your server listens on all interfaces (`0.0.0.0`), so Fly.io's proxy can reach it. `Bun.serve()` does this by default, on port 3000 unless the `PORT` environment variable is set. The generated configuration routes traffic to port 3000; if your app uses a different port, change `internal_port` in `fly.toml`.
+
+```ts index.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  // port defaults to $BUN_PORT, $PORT, $NODE_PORT, then 3000
+  fetch(req) {
+    return new Response("Hello from Bun on Fly.io!");
+  },
+});
+
+console.log(`Listening on ${server.url}`);
+```
+
+</Step>
+<Step title="Step 4">
+From the root of your project, create and deploy the app.
+
+```bash terminal icon="terminal"
+fly launch
+```
+
+`fly launch` detects Bun, generates a `Dockerfile`, `.dockerignore`, and `fly.toml`, and lets you review the app name, region, and Machine size before deploying. When it finishes, your app is live at `https://<app-name>.fly.dev`.
+
+</Step>
+<Step title="Step 5">
+After changing your code, deploy again.
+
+```bash terminal icon="terminal"
+fly deploy
+```
+
+</Step>
+</Steps>
+
+---
+
+## Add a PostgreSQL database (Optional)
+
+<Steps>
+<Step title="Step 1">
+Create a [Managed Postgres](https://fly.io/docs/mpg/) cluster.
+
+```bash terminal icon="terminal"
+fly mpg create
+```
+
+</Step>
+<Step title="Step 2">
+Attach the cluster to your app. This sets the `DATABASE_URL` secret on the app and restarts its Machines.
+
+```bash terminal icon="terminal"
+fly mpg attach <cluster-id> --app <app-name>
+```
+
+</Step>
+<Step title="Step 3">
+Read the connection string from `process.env.DATABASE_URL`. [`Bun.sql`](/runtime/sql) uses it automatically.
+
+```ts index.ts icon="/icons/typescript.svg"
+import { sql } from "bun";
+
+const [{ now }] = await sql`SELECT now()`;
+```
+
+</Step>
+</Steps>
+
+You can also provision the database while running `fly launch` by choosing to tweak the settings before deploying.
+
+---
+
+## Deploy from GitHub (Optional)
+
+`fly deploy` deploys your local directory. To deploy on every push to `main`, run `fly deploy` from GitHub Actions.
+
+<Steps>
+<Step title="Step 1">
+Create a deploy token, and save it as a repository secret named `FLY_API_TOKEN` (**Settings** → **Secrets and variables** → **Actions**).
+
+```bash terminal icon="terminal"
+fly tokens create deploy
+```
+
+</Step>
+<Step title="Step 2">
+Add a workflow.
+
+```yaml .github/workflows/fly-deploy.yml icon="file-code"
+name: Fly Deploy
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency: deploy-group
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+```
+
+</Step>
+</Steps>
+
+---
+
+## Configuration (Optional)
+
+The generated `Dockerfile` pins Bun to the version you have installed locally, in the `BUN_VERSION` build argument. To upgrade Bun, edit that line, or regenerate the `Dockerfile` after upgrading Bun locally:
+
+```bash terminal icon="terminal"
+bunx --bun @flydotio/dockerfile@latest
+```
+
+The generator is open source at [fly-apps/dockerfile-node](https://github.com/fly-apps/dockerfile-node), and its options cover build dependencies, extra packages, and environment variables. You can also edit the `Dockerfile` by hand. `fly deploy` builds whatever `Dockerfile` is in your project.
+
+Set environment variables for your app with `fly secrets set`:
+
+```bash terminal icon="terminal"
+fly secrets set API_KEY=your-api-key
+```
+
+For more settings, such as regions, Machine sizes, and auto-stopping idle Machines, see the [`fly.toml` reference](https://fly.io/docs/reference/configuration/).

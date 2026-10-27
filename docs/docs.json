@@ -362,6 +362,7 @@
             "pages": [
               "/guides/deployment/vercel",
               "/guides/deployment/railway",
+              "/guides/deployment/fly",
               "/guides/deployment/render",
               "/guides/deployment/aws-lambda",
               "/guides/deployment/digital-ocean",

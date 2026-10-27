@@ -57,6 +57,16 @@ ALWAYS_INLINE auto* asExtern(T& value)
     return reinterpret_cast<ExternType*>(&value);
 }
 
+// `value` as a union of it and a `uint64_t` holds it, with the other bytes zero.
+template<typename T>
+    requires(canBitCastToExtern<T> && sizeof(T) < sizeof(uint64_t))
+ALWAYS_INLINE uint64_t toBits(T value)
+{
+    uint64_t bits = 0;
+    memcpy(&bits, &value, sizeof(T));
+    return bits;
+}
+
 template<> struct ExternTraits<bool> : TrivialExtern<bool> {};
 template<> struct ExternTraits<uint8_t> : TrivialExtern<uint8_t> {};
 template<> struct ExternTraits<uint16_t> : TrivialExtern<uint16_t> {};

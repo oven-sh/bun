@@ -336,7 +336,14 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
           : alternative.returnsValueUnchanged
             ? `${target} = value;`
             : `${target} = Bun::uncheckedConvertIDL<${alternative.idlType}>(*globalObject, value, ctx);`;
-      const take = `result.tag = ${i};
+      const isStoredAsBits = type.isStoredAsBits(alternative);
+      const take = isStoredAsBits
+        ? `result.tag = ${i};
+${implementationType(alternative)} converted;
+${convert("converted")}
+result.bits = Bun::Bindgen::toBits(converted);
+${returnSuccess}`
+        : `result.tag = ${i};
 std::construct_at(&${member});
 ${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
 ${returnSuccess}`;
@@ -344,7 +351,7 @@ ${returnSuccess}`;
         return reportsNonObjects ? take : `if (value.isObject()) {\n${indent(take, 4)}\n}`;
       if (alternative.refuses)
         return `if (auto converted = Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx)) {
-    std::construct_at(&${member}, WTF::move(*converted));
+    ${isStoredAsBits ? "result.bits = Bun::Bindgen::toBits(*converted);" : `std::construct_at(&${member}, WTF::move(*converted));`}
     result.tag = ${i};
     ${returnSuccess}
 }${alternative.tryConvertThrows ? "\nRETURN_IF_EXCEPTION(scope, false);" : ""}`;
@@ -444,7 +451,7 @@ ${
   held.length === 0
     ? ""
     : `    union {
-${held.map(a => `        ${a.type.convertsInPlace ? `std::optional<${implementationType(a.type)}>` : implementationType(a.type)} ${a.name};`).join("\n")}
+${held.some(a => type.isStoredAsBits(a.type)) ? "        uint64_t bits;\n" : ""}${held.map(a => `        ${a.type.convertsInPlace ? `std::optional<${implementationType(a.type)}>` : implementationType(a.type)} ${a.name};`).join("\n")}
     };
 `
 }};

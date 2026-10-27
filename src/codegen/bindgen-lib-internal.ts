@@ -2925,6 +2925,10 @@ export class UnionType extends NamedType {
   get cppCanBitCastToExtern(): boolean {
     return this.#held.length > 0 && this.#held.every(type => type.cppCanBitCastToExtern);
   }
+  /** Whether C++ stores `alternative` as `bits`. The caller of the converter loads `bits`, and a CPU forwards no store to a load that is wider. */
+  isStoredAsBits(alternative: Type): boolean {
+    return this.externFields !== null && this.cppCanBitCastToExtern && alternative.layout().size < 8;
+  }
   /** The enum is then `#[repr(C, u8)]`. */
   get rustFromExternIsTransmute(): boolean {
     return (

@@ -3441,6 +3441,137 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
+  // https://github.com/oven-sh/bun/issues/40626
+  // No external rule may apply to a macro import: the macro runs at build
+  // time and is inlined. Each case below hits a different external check in
+  // the resolver. The entry lives in a subdirectory because the bug only
+  // showed when the cwd was not the importing file's directory.
+  const macroInlinedOutput = `// @bun
+// src/entry.ts
+console.log("abc");
+`;
+  const relativeMacroFiles = {
+    "/src/entry.ts": /* js */ `
+      import { identity } from "./macro.ts" with { type: "macro" };
+      console.log(identity("abc"));
+    `,
+    "/src/macro.ts": /* js */ `
+      export function identity(arg: any) {
+        return arg;
+      }
+    `,
+  };
+  const packageMacroFiles = {
+    "/src/entry.ts": /* js */ `
+      import { identity } from "macro-pkg" with { type: "macro" };
+      console.log(identity("abc"));
+    `,
+    "/src/node_modules/macro-pkg/package.json": `{ "name": "macro-pkg", "main": "index.ts" }`,
+    "/src/node_modules/macro-pkg/index.ts": /* js */ `
+      export function identity(arg: any) {
+        return arg;
+      }
+    `,
+  };
+  // "*" is a wildcard pattern.
+  itBundled("edgecase/MacroWithWildcardExternal", {
+    files: relativeMacroFiles,
+    entryPoints: ["/src/entry.ts"],
+    target: "bun",
+    external: ["*"],
+    onAfterBundle(api) {
+      api.expectFile("out.js").toBe(macroInlinedOutput);
+    },
+    run: { stdout: "abc" },
+  });
+  // The same through the CLI, which runs the macro in its own VM. The macro
+  // imports a helper, so that VM resolves a relative import of its own too.
+  itBundled("edgecase/MacroWithWildcardExternalCli", {
+    files: {
+      ...relativeMacroFiles,
+      "/src/macro.ts": /* js */ `
+        import { wrap } from "./helper.ts";
+        export function identity(arg: any) {
+          return wrap(arg);
+        }
+      `,
+      "/src/helper.ts": /* js */ `
+        export const wrap = (arg: any) => arg;
+      `,
+    },
+    entryPoints: ["/src/entry.ts"],
+    target: "bun",
+    backend: "cli",
+    external: ["*"],
+    onAfterBundle(api) {
+      api.expectFile("out.js").toBe(macroInlinedOutput);
+    },
+    run: { stdout: "abc" },
+  });
+  // A path is normalized against the cwd into the absolute-path set. That
+  // check already returned the absolute path, so the macro loaded before the
+  // fix too. This case guards the behavior.
+  itBundled("edgecase/MacroWithAbsolutePathExternal", {
+    files: relativeMacroFiles,
+    entryPoints: ["/src/entry.ts"],
+    target: "bun",
+    external: ["{{root}}/src/macro.ts"],
+    onAfterBundle(api) {
+      api.expectFile("out.js").toBe(macroInlinedOutput);
+    },
+    run: { stdout: "abc" },
+  });
+  // A bare package name goes into the exact-name set.
+  itBundled("edgecase/MacroWithExactPackageExternal", {
+    files: packageMacroFiles,
+    entryPoints: ["/src/entry.ts"],
+    target: "bun",
+    external: ["macro-pkg"],
+    onAfterBundle(api) {
+      api.expectFile("out.js").toBe(macroInlinedOutput);
+    },
+    run: { stdout: "abc" },
+  });
+  // packages: "external" marks every package path external.
+  itBundled("edgecase/MacroWithPackagesExternal", {
+    files: packageMacroFiles,
+    entryPoints: ["/src/entry.ts"],
+    target: "bun",
+    packages: "external",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toBe(macroInlinedOutput);
+    },
+    run: { stdout: "abc" },
+  });
+  // https://github.com/oven-sh/bun/issues/40626
+  // A macro module that fails to load must produce a build error, not crash.
+  // A resolution failure rejects the macro load with a ResolveMessage, and
+  // handling that rejection allocates a JSC Weak, so the handler must hold
+  // the JSC API lock. Only the CLI creates the macro VM without a caller that
+  // holds the lock, and release builds compile the lock assertion out, so this
+  // case guards the debug and ASAN lanes.
+  itBundled("edgecase/MacroLoadErrorDoesNotCrash", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { identity } from "./macro.ts" with { type: "macro" };
+        console.log(identity("abc"));
+      `,
+      "/macro.ts": /* js */ `
+        import { x } from "./missing.ts";
+        export function identity(arg: any) {
+          return x ?? arg;
+        }
+      `,
+    },
+    target: "bun",
+    backend: "cli",
+    // The CLI prints the resolve error with no location line, followed by
+    // `"MacroLoadError" error in macro` at the call site in entry.ts. The
+    // harness joins the two into one entry at that location.
+    bundleErrors: {
+      "/entry.ts": ["Cannot find module './missing.ts'"],
+    },
+  });
   // A macro result or a folded constant that is NaN, ±Infinity or undefined
   // prints as the bare global name. The renamer reserves those names, so a
   // user binding called NaN, Infinity or undefined is renamed instead of

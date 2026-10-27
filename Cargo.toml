@@ -493,6 +493,26 @@ bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
 
+# Bun.Image's PNG codec stays optimised in debug builds: at opt-level 0 the image-adversarial hygiene test (1,500
+# PNG round trips) took 4.5 s against main's 1.25 s, next to bun:test's 5 s timeout.
+[profile.dev.package.png]
+opt-level = 3
+
+[profile.dev.package.fdeflate]
+opt-level = 3
+
+[profile.dev.package.zlib-rs]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3
+
+[profile.dev.package.crc32fast]
+opt-level = 3
+
+[profile.dev.package.simd-adler32]
+opt-level = 3
+
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
 

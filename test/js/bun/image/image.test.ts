@@ -1334,6 +1334,137 @@ test("a subclass inherits Bun.Image.backend", () => {
   expect(Subclass.backend).toBe(Bun.Image.backend);
 });
 
+describe("PNG decode: every colour type, depth, tRNS and interlace", () => {
+  // Any IHDR combination, built from samples, so each decode path is pinned
+  // against RGBA worked out here rather than against another decoder.
+  type Spec = {
+    ctype: 0 | 2 | 3 | 4 | 6;
+    depth: 1 | 2 | 4 | 8 | 16;
+    w: number;
+    h: number;
+    // Samples per pixel in the file's own units (palette index for ctype 3).
+    px: (x: number, y: number) => number[];
+    plte?: [number, number, number][];
+    trns?: number[]; // ctype 0/2: the key sample(s); ctype 3: alpha per palette entry
+    interlace?: boolean;
+  };
+  const ADAM7 = [
+    [0, 0, 8, 8],
+    [4, 0, 8, 8],
+    [0, 4, 4, 8],
+    [2, 0, 4, 4],
+    [0, 2, 2, 4],
+    [1, 0, 2, 2],
+    [0, 1, 1, 2],
+  ];
+
+  function packRow(s: Spec, xs: number[], y: number): Uint8Array {
+    const samples = xs.flatMap(x => s.px(x, y));
+    if (s.depth === 16) return new Uint8Array(samples.flatMap(v => [v >> 8, v & 255]));
+    if (s.depth === 8) return new Uint8Array(samples);
+    const out = new Uint8Array(Math.ceil((samples.length * s.depth) / 8));
+    samples.forEach((v, i) => (out[(i * s.depth) >> 3] |= v << (8 - s.depth - ((i * s.depth) & 7))));
+    return out;
+  }
+
+  function encode(s: Spec): Uint8Array {
+    const rows: Uint8Array[] = [];
+    const passes = s.interlace ? ADAM7 : [[0, 0, 1, 1]];
+    for (const [x0, y0, dx, dy] of passes) {
+      const xs: number[] = [];
+      for (let x = x0; x < s.w; x += dx) xs.push(x);
+      if (xs.length === 0) continue;
+      for (let y = y0; y < s.h; y += dy) rows.push(new Uint8Array([0, ...packRow(s, xs, y)]));
+    }
+    const ihdr = new Uint8Array(13);
+    const dv = new DataView(ihdr.buffer);
+    dv.setUint32(0, s.w);
+    dv.setUint32(4, s.h);
+    ihdr.set([s.depth, s.ctype, 0, 0, s.interlace ? 1 : 0], 8);
+    const chunks = [pngChunk("IHDR", ihdr)];
+    if (s.plte) chunks.push(pngChunk("PLTE", new Uint8Array(s.plte.flat())));
+    if (s.trns) {
+      const body = s.ctype === 3 ? s.trns : s.trns.flatMap(v => [v >> 8, v & 255]);
+      chunks.push(pngChunk("tRNS", new Uint8Array(body)));
+    }
+    chunks.push(pngChunk("IDAT", zlib.deflateSync(Buffer.concat(rows))));
+    chunks.push(pngChunk("IEND", new Uint8Array(0)));
+    return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), ...chunks]);
+  }
+
+  // What every decoder Bun has used hands back: 8-bit RGBA, the high byte of
+  // 16-bit samples, sub-byte gray scaled to 0-255, tRNS as alpha 0.
+  function expected(s: Spec): Uint8Array {
+    const out = new Uint8Array(s.w * s.h * 4);
+    const to8 = (v: number) => (s.depth === 16 ? v >> 8 : s.depth < 8 ? (v * 255) / ((1 << s.depth) - 1) : v);
+    for (let y = 0; y < s.h; y++)
+      for (let x = 0; x < s.w; x++) {
+        const v = s.px(x, y);
+        const keyed = s.trns && s.ctype !== 3 && v.every((c, i) => c === s.trns![i]);
+        let rgba: number[];
+        if (s.ctype === 3) rgba = [...s.plte![v[0]], s.trns?.[v[0]] ?? 255];
+        else if (s.ctype === 0) rgba = [to8(v[0]), to8(v[0]), to8(v[0]), keyed ? 0 : 255];
+        else if (s.ctype === 4) rgba = [to8(v[0]), to8(v[0]), to8(v[0]), to8(v[1])];
+        else if (s.ctype === 2) rgba = [to8(v[0]), to8(v[1]), to8(v[2]), keyed ? 0 : 255];
+        else rgba = v.map(to8);
+        out.set(rgba, (y * s.w + x) * 4);
+      }
+    return out;
+  }
+
+  // 7×5 so every Adam7 pass is partial; values vary per channel so a
+  // swapped, dropped or duplicated channel can't pass.
+  const W = 7,
+    H = 5;
+  const v8 = (x: number, y: number, c: number) => (x * 37 + y * 53 + c * 91) & 255;
+  const v16 = (x: number, y: number, c: number) => (x * 9001 + y * 4099 + c * 2731) & 65535;
+  const plte: [number, number, number][] = Array.from({ length: 16 }, (_, i) => [i * 16, 255 - i * 9, (i * 77) & 255]);
+  const cases: [string, Spec][] = [
+    ["gray 1-bit", { ctype: 0, depth: 1, w: W, h: H, px: (x, y) => [(x + y) & 1] }],
+    ["gray 2-bit", { ctype: 0, depth: 2, w: W, h: H, px: (x, y) => [(x + y) & 3] }],
+    ["gray 4-bit", { ctype: 0, depth: 4, w: W, h: H, px: (x, y) => [(x * 3 + y) & 15] }],
+    ["gray 8-bit", { ctype: 0, depth: 8, w: W, h: H, px: (x, y) => [v8(x, y, 0)] }],
+    [
+      "gray 8-bit + tRNS",
+      { ctype: 0, depth: 8, w: W, h: H, px: (x, y) => [(x + y) % 3 === 0 ? 40 : v8(x, y, 0) | 1], trns: [40] },
+    ],
+    ["gray 16-bit", { ctype: 0, depth: 16, w: W, h: H, px: (x, y) => [v16(x, y, 0)] }],
+    ["gray+alpha 8-bit", { ctype: 4, depth: 8, w: W, h: H, px: (x, y) => [v8(x, y, 0), v8(x, y, 1)] }],
+    ["gray+alpha 16-bit", { ctype: 4, depth: 16, w: W, h: H, px: (x, y) => [v16(x, y, 0), v16(x, y, 1)] }],
+    ["RGB 8-bit", { ctype: 2, depth: 8, w: W, h: H, px: (x, y) => [0, 1, 2].map(c => v8(x, y, c)) }],
+    [
+      "RGB 8-bit + tRNS",
+      {
+        ctype: 2,
+        depth: 8,
+        w: W,
+        h: H,
+        px: (x, y) => ((x * y) % 4 === 0 ? [1, 2, 3] : [0, 1, 2].map(c => v8(x, y, c) | 128)),
+        trns: [1, 2, 3],
+      },
+    ],
+    ["RGB 16-bit", { ctype: 2, depth: 16, w: W, h: H, px: (x, y) => [0, 1, 2].map(c => v16(x, y, c)) }],
+    ["RGBA 16-bit", { ctype: 6, depth: 16, w: W, h: H, px: (x, y) => [0, 1, 2, 3].map(c => v16(x, y, c)) }],
+    ["palette 4-bit", { ctype: 3, depth: 4, w: W, h: H, plte, px: (x, y) => [(x + y * 3) & 15] }],
+    ["palette 8-bit", { ctype: 3, depth: 8, w: W, h: H, plte, px: (x, y) => [(x * 5 + y) & 15] }],
+    // Shorter than PLTE: entries past the end are opaque.
+    [
+      "palette 8-bit + partial tRNS",
+      { ctype: 3, depth: 8, w: W, h: H, plte, px: (x, y) => [(x * 5 + y) & 15], trns: [0, 64, 128] },
+    ],
+    ["RGBA 8-bit", { ctype: 6, depth: 8, w: W, h: H, px: (x, y) => [0, 1, 2, 3].map(c => v8(x, y, c)) }],
+  ];
+
+  for (const [name, spec] of cases)
+    for (const interlace of [false, true])
+      test(`${name}${interlace ? ", Adam7" : ""}`, async () => {
+        const s = { ...spec, interlace };
+        const { w, h, data } = decodePngRaw(await new Bun.Image(encode(s)).png().bytes());
+        expect([w, h]).toEqual([W, H]);
+        expect(Buffer.from(data)).toEqual(Buffer.from(expected(s)));
+      });
+});
+
 describe("decode-only formats (BMP / TIFF / GIF)", () => {
   // Several tests here flip the process-global backend; restore after the
   // describe so leaks can't reach the suites below regardless of throw paths.

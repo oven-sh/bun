@@ -10,6 +10,7 @@ off the JS thread.
 | `Image.bind.ts`                       | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
 | `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                  | new options, new chainable, new terminal |
 | `codecs.rs`                           | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
+| `codec_png.rs`                        | PNG decode + truecolour encode on the `png` crate (`zlib-rs` backend); indexed encode on libspng                | bumping `png`, PNG behaviour             |
 | `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
 | `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
 | `backend_coregraphics.rs`             | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                                       | macOS-specific behaviour                 |
@@ -21,7 +22,8 @@ compiles away. On macOS/Windows the backend is tried first; it returns
 a `BackendUnavailable` error for anything it can't do (palette PNG, lossless
 WebP, dlopen miss) and the static path takes over.
 
-The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspng,libwebp}.ts`.
+The C codecs are vendored via `scripts/build/deps/{libjpeg-turbo,libspng,libwebp}.ts`; libspng is now only
+the indexed (`png({palette})`) encoder. PNG decode and truecolour encode come from the `png` crate.
 `patches/libjpeg-turbo/` carries the 8-bit-only patch + the j12/j16 stub overlay, and
 `fatal-clears-warning.patch`: after `tj3DecompressHeader` and `tj3Decompress8`, TurboJPEG's warning
 flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a decode on that signal

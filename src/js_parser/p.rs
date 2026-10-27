@@ -82,6 +82,9 @@ impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
     }
 }
 
+/// A read of a `const` string longer than this (`EString::len()`) stays a name, so the string prints once.
+pub(crate) const MAX_INLINED_CONST_STRING_LEN: usize = 64;
+
 // ─── Conditional field types ───
 // Rust const generics cannot select a type, so we
 // store both variants behind an enum and gate access in methods.
@@ -563,6 +566,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) is_revisit_for_substitution: bool,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
+
+    /// Set while visiting what needs a literal (a macro, `require()` or `import()` argument, an enum initializer, a class key).
+    pub(crate) const_literal_required: bool,
+
+    /// Set once a read of a long const string stayed a name. It gates `long_const_read`.
+    pub(crate) has_long_const_read: bool,
 
     // Inside a TypeScript namespace, an "export declare" statement can be used
     // to cause a namespace to be emitted even though it has no other observable
@@ -2163,6 +2172,121 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    #[inline]
+    pub(crate) fn is_string_over_inline_bound(data: &js_ast::ExprData) -> bool {
+        let data = match data {
+            js_ast::ExprData::EInlinedEnum(inlined) => &inlined.value.data,
+            data => data,
+        };
+        matches!(data, js_ast::ExprData::EString(str) if str.len() > MAX_INLINED_CONST_STRING_LEN)
+    }
+
+    /// The string of the `const` binding `ref_` when it is over the inline bound, so its reads stay names.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn long_const_value(&self, ref_: Ref) -> Option<Expr> {
+        if !self.options.features.inlining
+            || self.symbols[ref_.inner_index() as usize].kind != js_ast::symbol::Kind::Constant
+        {
+            return None;
+        }
+        self.const_values
+            .get(&ref_)
+            .copied()
+            .filter(|value| Self::is_string_over_inline_bound(&value.data))
+    }
+
+    /// The string that `id` stands for when it reads a long const string and no `with` object can shadow it.
+    #[inline]
+    pub(crate) fn long_const_read(&self, id: E::Identifier) -> Option<Expr> {
+        if self.has_long_const_read && !id.must_keep_due_to_with_stmt() {
+            self.long_const_value(id.ref_)
+        } else {
+            None
+        }
+    }
+
+    /// Takes the read `expr` of a long const string out of the use counts and returns the string.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn take_long_const_read(&mut self, expr: Expr) -> Option<Expr> {
+        if let js_ast::ExprData::EIdentifier(id) = expr.data
+            && let Some(value) = self.long_const_read(id)
+        {
+            self.forget_long_const_read(id.ref_);
+            return Some(value);
+        }
+        None
+    }
+
+    /// Un-counts a read of a long const string that a fold removes. A read that a substitution moved was counted too.
+    pub(crate) fn forget_long_const_read(&mut self, ref_: Ref) {
+        let is_revisit = core::mem::replace(&mut self.is_revisit_for_substitution, false);
+        self.ignore_usage(ref_);
+        self.is_revisit_for_substitution = is_revisit;
+    }
+
+    /// Un-counts a read of a long const string in a branch that a revisit finds dead and drops. The first visit counted it.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn forget_dropped_long_const_read(&mut self, expr: Expr) {
+        let is_dead = core::mem::replace(&mut self.is_control_flow_dead, false);
+        self.take_long_const_read(expr);
+        self.is_control_flow_dead = is_dead;
+    }
+
+    /// Gives a consumer that needs a literal the string in place of a read of a long const string.
+    #[inline]
+    pub(crate) fn long_const_literal(&mut self, expr: Expr) -> Expr {
+        if self.has_long_const_read
+            && let Some(value) = self.take_long_const_read(expr)
+        {
+            return value;
+        }
+        expr
+    }
+
+    /// Replaces a read of a long const string with `true` where only its truthiness is used.
+    #[inline]
+    pub(crate) fn long_const_test(&mut self, expr: &mut Expr) {
+        if self.has_long_const_read && self.take_long_const_read(*expr).is_some() {
+            expr.data = js_ast::ExprData::EBoolean(E::Boolean { value: true });
+        }
+    }
+
+    /// `long_const_test` for a whole condition: each operand of its `&&` and `||` is only tested too.
+    #[inline]
+    pub(crate) fn long_const_condition(&mut self, expr: &mut Expr) {
+        if self.has_long_const_read {
+            self.long_const_condition_slow(expr);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn long_const_condition_slow(&mut self, expr: &mut Expr) {
+        let js_ast::ExprData::EBinary(mut binary) = expr.data else {
+            self.long_const_test(expr);
+            return;
+        };
+        // A chain of left operands can be long, so the loop follows it and only a right operand recurses.
+        while matches!(
+            binary.op,
+            js_ast::op::Code::BinLogicalAnd | js_ast::op::Code::BinLogicalOr
+        ) {
+            if self.stack_check.is_safe_to_recurse() {
+                self.long_const_condition_slow(&mut binary.right);
+            }
+            match binary.left.data {
+                js_ast::ExprData::EBinary(left) => binary = left,
+                _ => {
+                    self.long_const_test(&mut binary.left);
+                    return;
+                }
+            }
+        }
+    }
+
     /// This function is very very hot.
     pub(crate) fn handle_identifier(
         &mut self,
@@ -2175,9 +2299,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if self.options.features.inlining {
             if let Some(replacement) = self.const_values.get(&ref_) {
-                let replacement = *replacement;
-                self.ignore_usage(ref_);
-                return replacement;
+                if !Self::is_string_over_inline_bound(&replacement.data)
+                    || self.const_literal_required
+                    || self.symbols[ref_.inner_index() as usize].kind
+                        != js_ast::symbol::Kind::Constant
+                {
+                    let replacement = *replacement;
+                    self.ignore_usage(ref_);
+                    return replacement;
+                }
+                // A long string of a `const` is not copied into the read: the read stays a name.
+                self.has_long_const_read = true;
             }
         }
 
@@ -2738,6 +2870,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | js_ast::ExprData::EUnary(_)
                         | js_ast::ExprData::EIf(_)
                 ) {
+                    // The one use that moved was counted, so this statement is live code.
+                    debug_assert!(!self.is_control_flow_dead);
                     let prev_substituting = self.is_revisit_for_substitution;
                     self.is_revisit_for_substitution = true;
                     // O(n^2) and we will need to think more carefully about
@@ -9776,6 +9910,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,
+            const_literal_required: false,
+            has_long_const_read: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),

@@ -167,6 +167,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // function) would be re-bound to a fresh `Unbound` and the renamer
         // would lose the link to its declaration.
         if p.is_revisit_for_substitution {
+            // The first visit counted a read in a branch that this visit finds dead and drops.
+            if p.is_control_flow_dead && p.has_long_const_read {
+                p.forget_dropped_long_const_read(*e);
+            }
+            // A read that the substitution moved under a consumer of a literal is the literal there.
+            if p.const_literal_required {
+                *e = p.long_const_literal(*e);
+            }
             return;
         }
         let expr = *e;
@@ -1216,6 +1224,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
 
+                e_.value = p.long_const_literal(e_.value);
                 if let Some(typeof_) = SideEffects::typeof_(&e_.value.data) {
                     *e = p.new_expr(
                         E::String {
@@ -1230,6 +1239,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Op::UnDelete => {
                 p.delete_target = e_.value.data;
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
+                // `delete` of a name is an early error in strict mode. Of a string it is not.
+                e_.value = p.long_const_literal(e_.value);
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);
@@ -1245,6 +1256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 match e_.op {
                     Op::UnNot => {
                         p.ignore_namespace_local_test_use(&e_.value);
+                        p.long_const_condition(&mut e_.value);
                         if p.options.features.minify_syntax {
                             e_.value = SideEffects::simplify_boolean(p, e_.value);
                         }
@@ -1510,6 +1522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut e_.test);
         p.in_branch_condition = prev_in_branch;
         p.ignore_namespace_local_test_use(&e_.test);
+        p.long_const_condition(&mut e_.test);
 
         e_.test = SideEffects::simplify_boolean(p, e_.test);
 
@@ -1845,7 +1858,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_should_fold_typescript_constant_expressions = true;
         p.should_fold_typescript_constant_expressions = true;
 
+        let old_const_literal_required = core::mem::replace(&mut p.const_literal_required, true);
         p.visit_expr(&mut e_.expr);
+        p.const_literal_required = old_const_literal_required;
         p.visit_expr(&mut e_.options);
 
         // Already transposed (this is a re-visit, e.g. after the minifier
@@ -2123,13 +2138,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // macros, as they require constant known values, but also
             // for `require` and `require.resolve`, as they go through
             // the module resolver.
-            if is_macro_ref
+            let needs_literal_args = is_macro_ref
                 || matches!(e_.target.data, Data::ERequireCallTarget)
-                || matches!(e_.target.data, Data::ERequireResolveCallTarget)
-            {
-                p.options.ignore_dce_annotations = true;
-                p.should_fold_typescript_constant_expressions = true;
-            }
+                || matches!(e_.target.data, Data::ERequireResolveCallTarget);
 
             // When a value is targeted by `--drop`, it will be removed.
             // The HMR APIs in `import.meta.hot` are implicitly dropped when HMR is disabled.
@@ -2152,8 +2163,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            for arg in e_.args.slice_mut() {
-                p.visit_expr(arg);
+            if needs_literal_args {
+                p.options.ignore_dce_annotations = true;
+                p.should_fold_typescript_constant_expressions = true;
+                let old_const_literal_required =
+                    core::mem::replace(&mut p.const_literal_required, true);
+                for arg in e_.args.slice_mut() {
+                    p.visit_expr(arg);
+                }
+                p.const_literal_required = old_const_literal_required;
+            } else {
+                for arg in e_.args.slice_mut() {
+                    p.visit_expr(arg);
+                }
             }
 
             // Restore saved state.
@@ -2549,7 +2571,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 
-        let arg = e_.args.slice()[0];
+        let arg = p.long_const_literal(e_.args.slice()[0]);
 
         // Validate: argument must be a string literal
         if !matches!(arg.data, Data::EString(..)) {

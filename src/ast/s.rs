@@ -270,6 +270,15 @@ impl Local {
             && self.is_export == other.is_export
             && self.origin.is_commonjs_export() == other.origin.is_commonjs_export()
     }
+
+    /// `can_merge_with` before the import scan. That scan drops an unused `import a = b` as a whole statement, so it stays alone.
+    pub fn can_merge_before_import_scan(&self, other: &Local) -> bool {
+        !self.kind.is_using()
+            && self.kind == other.kind
+            && self.is_export == other.is_export
+            && self.origin == other.origin
+            && !self.origin.is_ts_import_equals()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]

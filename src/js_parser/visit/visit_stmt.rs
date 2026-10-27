@@ -1800,6 +1800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::While,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.test);
+        p.long_const_condition(&mut data.test);
         data.body = p.visit_loop_body(data.body);
 
         data.test = SideEffects::simplify_boolean(p, data.test);
@@ -1826,6 +1827,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         data.body = p.visit_loop_body(data.body);
         p.visit_expr(&mut data.test);
+        p.long_const_condition(&mut data.test);
 
         data.test = SideEffects::simplify_boolean(p, data.test);
         stmts.push(*stmt);
@@ -1843,6 +1845,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut data.test);
         p.in_branch_condition = prev_in_branch;
         p.ignore_namespace_local_test_use(&data.test);
+        p.long_const_condition(&mut data.test);
 
         if p.options.features.minify_syntax {
             data.test = SideEffects::simplify_boolean(p, data.test);
@@ -1942,29 +1945,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // TODO: more if statement syntax minification
-            let can_remove_test = p.expr_can_be_removed_if_unused(&data.test);
-            match data.yes.data {
-                StmtData::SExpr(yes_expr) => {
-                    if yes_expr.value.is_missing() {
-                        if let Some(no) = data.no {
-                            if no.is_missing_expr() && can_remove_test {
-                                return Ok(());
-                            }
-                        } else if can_remove_test {
-                            return Ok(());
-                        }
-                    }
+            let has_no_body = match data.yes.data {
+                StmtData::SExpr(yes_expr) => yes_expr.value.is_missing(),
+                StmtData::SEmpty(_) => true,
+                _ => false,
+            } && data.no.is_none_or(|no| no.is_missing_expr());
+            if has_no_body && p.expr_can_be_removed_if_unused(&data.test) {
+                // The test leaves with the statement, so its reads of long const strings are not uses.
+                if p.has_long_const_read {
+                    SideEffects::simplify_unused_expr(p, data.test);
                 }
-                StmtData::SEmpty(_) => {
-                    if let Some(no) = data.no {
-                        if no.is_missing_expr() && can_remove_test {
-                            return Ok(());
-                        }
-                    } else if can_remove_test {
-                        return Ok(());
-                    }
-                }
-                _ => {}
+                return Ok(());
             }
         }
 
@@ -1987,6 +1978,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(mut test) = data.test {
             p.visit_expr(&mut test);
+            p.long_const_condition(&mut test);
             data.test = Some(SideEffects::simplify_boolean(p, test));
 
             if let Some(result) = SideEffects::to_boolean(p, &data.test.unwrap().data) {
@@ -2342,6 +2334,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_should_fold_typescript_constant_expressions =
             p.should_fold_typescript_constant_expressions;
         p.should_fold_typescript_constant_expressions = true;
+        // An initializer that names a const string makes a string member.
+        let old_const_literal_required = core::mem::replace(&mut p.const_literal_required, true);
 
         // Create an assignment for each enum value
         for value in values.iter_mut() {
@@ -2473,6 +2467,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.should_fold_typescript_constant_expressions =
             old_should_fold_typescript_constant_expressions;
+        p.const_literal_required = old_const_literal_required;
 
         let mut value_stmts: StmtList<'a> = BumpVec::with_capacity_in(value_exprs.len(), p.arena);
         // Generate statements from expressions

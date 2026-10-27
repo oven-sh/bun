@@ -112,6 +112,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// `.length` of a read of a long const string, as the literal's `.length` folds. It removes the read.
+    #[cold]
+    #[inline(never)]
+    fn long_const_length(&mut self, id: E::Identifier, loc: bun_ast::Loc) -> Option<Expr> {
+        let string = self.long_const_read(id)?.unwrap_inlined().data.e_string()?;
+        let length = e_string_javascript_length(&string)?;
+        self.forget_long_const_read(id.ref_);
+        Some(self.new_expr(E::Number::new(length as f64), loc))
+    }
+
     // EDot nodes represent a property access. This function may return an
     // expression to replace the property access with. It assumes that the
     // target of the EDot expression has already been visited.
@@ -173,6 +183,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EIdentifier(id) => {
+                    if p.has_long_const_read
+                        && name == b"length"
+                        && p.options.features.minify_syntax
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        && !identifier_opts.is_delete_target()
+                        && let Some(length) = p.long_const_length(id, loc)
+                    {
+                        return Some(length);
+                    }
+
                     // A local holding one module's namespace (`const ns = await
                     // import(…)`) reads its exports as `import * as ns` does:
                     // `ns.a` becomes an import item of that record, below.

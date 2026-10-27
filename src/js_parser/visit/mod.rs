@@ -741,6 +741,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
                             self.const_values.put(id_ref, val).expect("oom");
+                        } else if let ExprData::EIdentifier(target) = val.data
+                            && let Some(value) = self.long_const_read(target)
+                        {
+                            self.const_values.put(id_ref, value).expect("oom");
                         }
                     }
                 } else {
@@ -1136,7 +1140,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let class_body = self.current_scope;
                         self.field_init_class_bodies.push(class_body);
                     }
+                    // Class lowering tells a constant computed key by its literal.
+                    let old_const_literal_required =
+                        core::mem::replace(&mut self.const_literal_required, true);
                     self.visit_expr(key);
+                    self.const_literal_required = old_const_literal_required;
                     if is_field {
                         self.field_init_class_bodies.pop();
                     }
@@ -1870,8 +1878,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         if p.const_values.contains(&id_ref) {
                                             any_decl_in_const_values = true;
                                             let symbol = &p.symbols[id_ref.inner_index() as usize];
-                                            if symbol.use_count_estimate == 0 {
+                                            // A later `case` can still read a long const string by name.
+                                            if symbol.use_count_estimate == 0
+                                                && !(kind == StmtsKind::SwitchStmt
+                                                    && p.long_const_value(id_ref).is_some())
+                                            {
                                                 // Skip declarations that are constants with zero usage
+                                                if p.has_long_const_read
+                                                    && let Some(alias_of) = decls[idx].value
+                                                {
+                                                    p.take_long_const_read(alias_of);
+                                                }
                                                 continue;
                                             }
                                         }
@@ -1986,7 +2003,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Try to substitute the identifier with the initializer. This will
                     // fail if something with side effects is in between the declaration
                     // and the usage.
+                    // A long const string keeps its declaration and its read stays a name.
                     if symbol.use_count_estimate == 1
+                        && !(p.has_long_const_read && p.long_const_value(id).is_some())
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
                         // `const ns = await import(x); return ns` — the single use just
@@ -2037,7 +2056,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_idx = output.len() - 1;
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
-                            if local.can_merge_with(&prev_local) {
+                            if local.can_merge_before_import_scan(&prev_local) {
                                 // `Vec::append_slice` requires `T: Clone`
                                 // but `G::Decl` lacks the derive (its fields are all
                                 // `Copy`). Per-element bitwise copy instead.

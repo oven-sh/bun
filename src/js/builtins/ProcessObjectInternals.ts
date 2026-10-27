@@ -678,8 +678,8 @@ export function createOnWarning(process, redirectPath, disabledArr) {
       if (
         e != null &&
         typeof e === "object" &&
-        e.name === "RangeError" &&
-        e.message === "Maximum call stack size exceeded."
+        (e as Partial<Error>).name === "RangeError" &&
+        (e as Partial<Error>).message === "Maximum call stack size exceeded."
       )
         throw e;
     } finally {

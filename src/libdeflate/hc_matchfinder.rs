@@ -1,7 +1,8 @@
-//! Hash chains matchfinder, for the greedy and lazy levels: positions whose first four bytes hash alike form a list, newest first.
+//! Hash chains matchfinder, for levels 2 to 9. Positions whose first four bytes hash alike form a list.
 
 use crate::matchfinder::{
-    INITVAL, Pos, WINDOW_SIZE, load_u24, load_u32, lz_extend, lz_hash, new_table, node_pos, rebase,
+    INITVAL, Match, Pos, WINDOW_SIZE, load_u24, load_u32, lz_extend, lz_hash, new_table, node_pos,
+    rebase,
 };
 
 const HASH3_ORDER: u32 = 15;
@@ -47,9 +48,8 @@ impl HcMatchfinder {
         ))
     }
 
-    /// The longest match at `in_next` over `best_len` bytes as (length, offset), or `best_len`. Moves `next_hashes` on to the next position.
+    /// The longest match at `in_next` of more than `best_len` bytes. Without one, the length returned is `best_len`.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn longest_match(
         &mut self,
         input: &[u8],
@@ -60,7 +60,7 @@ impl HcMatchfinder {
         nice_len: u32,
         max_search_depth: u32,
         next_hashes: &mut [u32; 2],
-    ) -> Option<(u32, u32)> {
+    ) -> Option<Match> {
         let mut depth_remaining = max_search_depth;
         let mut best_match_pos = in_next;
 
@@ -169,7 +169,10 @@ impl HcMatchfinder {
                 }
             }
         }
-        Some((best_len, (in_next - best_match_pos) as u32))
+        Some(Match {
+            length: best_len,
+            offset: (in_next - best_match_pos) as u32,
+        })
     }
 
     /// Enters `count` positions from `in_next` on without looking for matches.
@@ -178,7 +181,7 @@ impl HcMatchfinder {
         &mut self,
         input: &[u8],
         in_base: &mut usize,
-        mut in_next: usize,
+        in_next: usize,
         count: u32,
         next_hashes: &mut [u32; 2],
     ) -> Option<()> {
@@ -188,7 +191,11 @@ impl HcMatchfinder {
 
         let mut cur_pos = in_next - *in_base;
         let [mut hash3, mut hash4] = *next_hashes;
-        for _ in 0..count {
+        for next_hashseq in input
+            .get(in_next + 1..)?
+            .get(..count as usize + 3)?
+            .array_windows()
+        {
             if cur_pos == WINDOW_SIZE {
                 self.slide_window();
                 *in_base += WINDOW_SIZE;
@@ -198,8 +205,7 @@ impl HcMatchfinder {
             let slot4 = self.hash4_tab.get_mut(hash4 as usize)?;
             *self.next_tab.get_mut(cur_pos)? = core::mem::replace(slot4, cur_pos as Pos);
 
-            in_next += 1;
-            let next_hashseq = load_u32(input, in_next)?;
+            let next_hashseq = u32::from_le_bytes(*next_hashseq);
             hash3 = lz_hash(next_hashseq & 0xFF_FFFF, HASH3_ORDER);
             hash4 = lz_hash(next_hashseq, HASH4_ORDER);
             cur_pos += 1;

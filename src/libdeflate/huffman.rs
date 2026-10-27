@@ -1,6 +1,6 @@
 //! Length-limited canonical Huffman codes from symbol frequencies.
 
-use crate::constants::{MAX_CODEWORD_LEN, MAX_NUM_SYMS};
+use crate::constants::{DEFLATE_MAX_CODEWORD_LEN, DEFLATE_MAX_NUM_SYMS};
 
 /// An array entry packs a symbol in the low bits with a frequency, parent index or depth above it.
 const NUM_SYMBOL_BITS: u32 = 10;
@@ -10,14 +10,14 @@ const FREQ_MASK: u32 = !SYMBOL_MASK;
 /// The most a block's frequencies may add up to.
 pub(crate) const MAX_TOTAL_FREQ: usize = (1 << (32 - NUM_SYMBOL_BITS)) - 1;
 
-const _: () = assert!(MAX_NUM_SYMS <= 1 << NUM_SYMBOL_BITS);
+const _: () = assert!(DEFLATE_MAX_NUM_SYMS <= 1 << NUM_SYMBOL_BITS);
 
-type LenCounts = [u32; MAX_CODEWORD_LEN + 1];
+type LenCounts = [u32; DEFLATE_MAX_CODEWORD_LEN + 1];
 
 /// Fills `symout` with the used symbols sorted by frequency, then value, and zeroes the `lens` of the others.
 fn sort_symbols(freqs: &[u32], lens: &mut [u8], symout: &mut [u32]) -> Option<usize> {
     let last_counter = freqs.len().checked_sub(1)?;
-    let mut counters = [0u32; MAX_NUM_SYMS];
+    let mut counters = [0u32; DEFLATE_MAX_NUM_SYMS];
     let counters = counters.get_mut(..=last_counter)?;
     let counter_of = |freq: u32| (freq as usize).min(last_counter);
 
@@ -44,7 +44,7 @@ fn sort_symbols(freqs: &[u32], lens: &mut [u8], symout: &mut [u32]) -> Option<us
     Some(num_used_syms as usize)
 }
 
-/// Turns the sorted frequencies in `a` into the tree's non-leaf nodes, each holding its parent's index. The root is `a[a.len() - 2]`.
+/// Turns the sorted frequencies in `a` into the non-leaf nodes, each with its parent's index. The last is the root.
 fn build_tree(a: &mut [u32]) -> Option<()> {
     let last_idx = a.len().checked_sub(1)?;
     // The next leaf without a parent, the next non-leaf without one, and where the next non-leaf goes.
@@ -137,7 +137,7 @@ fn gen_codewords(
         }
     }
 
-    let mut next_codewords = [0u32; MAX_CODEWORD_LEN + 1];
+    let mut next_codewords = [0u32; DEFLATE_MAX_CODEWORD_LEN + 1];
     for len in 2..=max_codeword_len {
         *next_codewords.get_mut(len)? =
             (*next_codewords.get(len - 1)? + *len_counts.get(len - 1)?) << 1;

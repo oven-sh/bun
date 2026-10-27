@@ -256,7 +256,7 @@ pub struct RareData {
     compression_scratch: Option<Vec<u8>>,
     /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
     websocket_inflate_scratch: Option<Vec<u8>>,
-    /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
+    /// One decompressor for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
     libdeflate_decompressor: Option<bun_libdeflate::Decompressor>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
@@ -777,7 +777,7 @@ impl RareData {
         }
     }
 
-    /// It keeps no state between calls, so one serves every one-shot inflate on this thread.
+    /// No result of a `Decompressor` depends on its earlier calls, so one serves every one-shot inflate on this thread.
     pub fn libdeflate_decompressor(&mut self) -> &mut bun_libdeflate::Decompressor {
         self.libdeflate_decompressor
             .get_or_insert_with(bun_libdeflate::Decompressor::new)

@@ -166,9 +166,9 @@ impl PerMessageDeflate {
                 out,
                 bun_libdeflate::Decoding::Deflate,
             );
-            if let Ok(decompressed) = result {
+            if let Ok(counts) = result {
                 // Stopping before the appended block means the peer sent a final block of its own. That is left to zlib.
-                if decompressed.read == in_with_trailer.len() {
+                if counts.read == in_with_trailer.len() {
                     if out.len() - initial_len > max_len {
                         return Err(DecompressError::TooLarge);
                     }

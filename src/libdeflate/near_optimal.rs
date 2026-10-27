@@ -1,13 +1,14 @@
-//! The near-optimal parser, levels 10 to 12: the cheapest path through all of a block's matches, for symbol costs refined over several passes.
+//! The near-optimal parser, levels 10 to 12: the cheapest path through a block's matches, at costs refined over passes.
 
 use crate::bt_matchfinder::{self, BtMatchfinder, LzMatch};
-use crate::compress::{
-    Common, Items, LENGTH_SLOT, Lens, MAX_BLOCK_LENGTH, MIN_BLOCK_LENGTH, NUM_OBSERVATION_TYPES,
-    OutputBitstream, SOFT_MAX_BLOCK_LENGTH, Sequence, adjust_max_and_nice_len, at,
-    calculate_min_match_len, choose_max_block_end, choose_min_match_len, new_vec,
-};
 use crate::constants::*;
+use crate::deflate_compress::{
+    BlockSplitStats, Common, Items, LENGTH_SLOT, Lens, MAX_BLOCK_LENGTH, MIN_BLOCK_LENGTH,
+    NUM_OBSERVATION_TYPES, OutputBitstream, SOFT_MAX_BLOCK_LENGTH, Sequence,
+    adjust_max_and_nice_len, calculate_min_match_len, choose_max_block_end, choose_min_match_len,
+};
 use crate::matchfinder::WINDOW_SIZE;
+use crate::vec_with_capacity;
 
 /// Costs are in sixteenths of a bit.
 const BIT_COST: u32 = 16;
@@ -21,26 +22,26 @@ const OFFSET_NOSTAT_BITS: u32 = 10;
 const MATCH_CACHE_LENGTH: usize = SOFT_MAX_BLOCK_LENGTH * 5;
 
 /// No two matches at a position have the same length.
-const MAX_MATCHES_PER_POS: usize = (MAX_MATCH_LEN - MIN_MATCH_LEN + 1) as usize;
+const MAX_MATCHES_PER_POS: usize = (DEFLATE_MAX_MATCH_LEN - DEFLATE_MIN_MATCH_LEN + 1) as usize;
 
 const _: () = assert!(MIN_BLOCK_LENGTH * MAX_MATCHES_PER_POS <= MATCH_CACHE_LENGTH);
 
 const NUM_OFFSET_SLOTS: usize = OFFSET_SLOT_BASE.len();
-const NUM_LENGTHS: usize = MAX_MATCH_LEN as usize + 1;
+const NUM_LENGTHS: usize = DEFLATE_MAX_MATCH_LEN as usize + 1;
 
 #[derive(Clone)]
 struct Costs {
-    literal: [u32; NUM_LITERALS],
+    literal: [u32; DEFLATE_NUM_LITERALS],
     length: [u32; NUM_LENGTHS],
     offset_slot: [u32; NUM_OFFSET_SLOTS],
 }
 
 /// A position in the block.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct OptimumNode {
     /// The least cost of getting from here to the end of the block.
     cost_to_end: u32,
-    /// The first step of that way: its length in the low nine bits, above them the offset, or the literal if the length is 1.
+    /// The first step of that way: its length in the low nine bits. Above them the offset, or for length 1 the literal.
     pub(crate) item: u32,
 }
 
@@ -53,6 +54,8 @@ struct DefaultLitlenCosts {
     /// `int(-log2(match_prob / 29) * BIT_COST)`
     len_sym_cost: u8,
 }
+
+const _: () = assert!(BIT_COST == 16);
 
 /// For a match probability of 0.25, 0.5 and 0.75.
 static DEFAULT_LITLEN_COSTS: [DefaultLitlenCosts; 3] = [
@@ -119,14 +122,14 @@ static DEFAULT_LITLEN_COSTS: [DefaultLitlenCosts; 3] = [
 ];
 
 fn default_length_cost(len: usize, len_sym_cost: u32) -> Option<u32> {
-    let slot = usize::from(at(&LENGTH_SLOT, len)?);
-    Some(len_sym_cost + u32::from(at(&EXTRA_LENGTH_BITS, slot)?) * BIT_COST)
+    let slot = usize::from(*LENGTH_SLOT.get(len)?);
+    Some(len_sym_cost + u32::from(*EXTRA_LENGTH_BITS.get(slot)?) * BIT_COST)
 }
 
 fn default_offset_slot_cost(slot: usize) -> Option<u32> {
     // All 30 offset symbols taken as equally likely: `int(-log2(1 / 30) * BIT_COST)`.
     let offset_sym_cost = 4 * BIT_COST + (907 * BIT_COST) / 1000;
-    Some(offset_sym_cost + u32::from(at(&EXTRA_OFFSET_BITS, slot)?) * BIT_COST)
+    Some(offset_sym_cost + u32::from(*EXTRA_OFFSET_BITS.get(slot)?) * BIT_COST)
 }
 
 /// Moves a cost towards its default, further the more the block differs from the previous one.
@@ -150,15 +153,18 @@ impl Costs {
             .length
             .iter_mut()
             .enumerate()
-            .skip(MIN_MATCH_LEN as usize)
+            .skip(DEFLATE_MIN_MATCH_LEN as usize)
         {
-            let slot = usize::from(at(&LENGTH_SLOT, len)?);
-            let bits = or(lens.litlen(FIRST_LEN_SYM + slot)?, LENGTH_NOSTAT_BITS);
-            *cost = (bits + u32::from(at(&EXTRA_LENGTH_BITS, slot)?)) * BIT_COST;
+            let slot = usize::from(*LENGTH_SLOT.get(len)?);
+            let bits = or(
+                lens.litlen(DEFLATE_FIRST_LEN_SYM + slot)?,
+                LENGTH_NOSTAT_BITS,
+            );
+            *cost = (bits + u32::from(*EXTRA_LENGTH_BITS.get(slot)?)) * BIT_COST;
         }
         for (slot, cost) in self.offset_slot.iter_mut().enumerate() {
             let bits = or(lens.offset(slot)?, OFFSET_NOSTAT_BITS);
-            *cost = (bits + u32::from(at(&EXTRA_OFFSET_BITS, slot)?)) * BIT_COST;
+            *cost = (bits + u32::from(*EXTRA_OFFSET_BITS.get(slot)?)) * BIT_COST;
         }
         Some(())
     }
@@ -169,7 +175,7 @@ impl Costs {
             .length
             .iter_mut()
             .enumerate()
-            .skip(MIN_MATCH_LEN as usize)
+            .skip(DEFLATE_MIN_MATCH_LEN as usize)
         {
             *cost = default_length_cost(len, len_sym_cost)?;
         }
@@ -187,7 +193,7 @@ impl Costs {
             .length
             .iter_mut()
             .enumerate()
-            .skip(MIN_MATCH_LEN as usize)
+            .skip(DEFLATE_MIN_MATCH_LEN as usize)
         {
             adjust_cost(cost, default_length_cost(len, len_sym_cost)?, change_amount);
         }
@@ -200,12 +206,12 @@ impl Costs {
 
 pub(crate) struct NearOptimal {
     bt_mf: BtMatchfinder,
-    /// For each position of the block its matches, shortest first, then an entry with their number as `length` and the literal as `offset`.
+    /// For each position its matches, shortest first, then their number as `length` with the literal as `offset`.
     match_cache: Vec<LzMatch>,
     optimum_nodes: Vec<OptimumNode>,
     costs: Costs,
     costs_saved: Costs,
-    offset_slot_full: Box<[u8; MAX_MATCH_OFFSET + 1]>,
+    offset_slot_full: Box<[u8; DEFLATE_MAX_MATCH_OFFSET + 1]>,
     prev_observations: [u32; NUM_OBSERVATION_TYPES],
     prev_num_observations: u32,
     /// How often a greedy parse would use each match length, for the first costs of a block.
@@ -227,7 +233,7 @@ impl NearOptimal {
         min_bits_to_use_nonfinal_path: u32,
         max_len_to_optimize_static_block: u32,
     ) -> Option<Box<Self>> {
-        let mut offset_slot_full = new_vec(MAX_MATCH_OFFSET + 1)?;
+        let mut offset_slot_full = vec_with_capacity(DEFLATE_MAX_MATCH_OFFSET + 1)?;
         offset_slot_full.push(0);
         for (slot, &extra_bits) in EXTRA_OFFSET_BITS.iter().enumerate() {
             offset_slot_full.resize(offset_slot_full.len() + (1 << extra_bits), slot as u8);
@@ -238,11 +244,12 @@ impl NearOptimal {
             offset_slot: [0; _],
         };
         // Past the point where a full cache is noticed there can be one position's matches, then a skipped match.
-        let match_cache_len = MATCH_CACHE_LENGTH + MAX_MATCHES_PER_POS + MAX_MATCH_LEN as usize - 1;
-        Some(Box::new(Self {
+        let match_cache_len =
+            MATCH_CACHE_LENGTH + MAX_MATCHES_PER_POS + DEFLATE_MAX_MATCH_LEN as usize - 1;
+        Box::try_new(Self {
             bt_mf: BtMatchfinder::new()?,
-            match_cache: new_vec(match_cache_len)?,
-            optimum_nodes: new_vec(MAX_BLOCK_LENGTH + 1)?,
+            match_cache: vec_with_capacity(match_cache_len)?,
+            optimum_nodes: vec_with_capacity(MAX_BLOCK_LENGTH + 1)?,
             costs: costs.clone(),
             costs_saved: costs,
             offset_slot_full: offset_slot_full.into_boxed_slice().try_into().ok()?,
@@ -254,7 +261,8 @@ impl NearOptimal {
             min_improvement_to_continue,
             min_bits_to_use_nonfinal_path,
             max_len_to_optimize_static_block,
-        }))
+        })
+        .ok()
     }
 
     /// Counts the symbols of the minimum-cost path into `common.freqs`.
@@ -264,17 +272,22 @@ impl NearOptimal {
             let item = self.optimum_nodes.get(cur)?.item;
             let length = (item & OPTIMUM_LEN_MASK) as usize;
             let offset = (item >> OPTIMUM_OFFSET_SHIFT) as usize;
-            if length == 1 {
-                *common.freqs.litlen.get_mut(offset)? += 1;
-            } else {
-                let length_slot = usize::from(at(&LENGTH_SLOT, length)?);
-                *common.freqs.litlen.get_mut(FIRST_LEN_SYM + length_slot)? += 1;
-                let offset_slot = at(self.offset_slot_full.as_slice(), offset)?;
-                *common.freqs.offset.get_mut(usize::from(offset_slot))? += 1;
+            match length {
+                0 => return None,
+                1 => *common.freqs.litlen.get_mut(offset)? += 1,
+                _ => {
+                    let length_slot = usize::from(*LENGTH_SLOT.get(length)?);
+                    let offset_slot = usize::from(*self.offset_slot_full.get(offset)?);
+                    *common
+                        .freqs
+                        .litlen
+                        .get_mut(DEFLATE_FIRST_LEN_SYM + length_slot)? += 1;
+                    *common.freqs.offset.get_mut(offset_slot)? += 1;
+                }
             }
-            cur += length.max(1);
+            cur += length;
         }
-        *common.freqs.litlen.get_mut(END_OF_BLOCK)? += 1;
+        *common.freqs.litlen.get_mut(DEFLATE_END_OF_BLOCK)? += 1;
         Some(())
     }
 
@@ -282,7 +295,10 @@ impl NearOptimal {
         let mut literal_freq = block.len() as u32;
         let cutoff = literal_freq >> 11;
 
-        let literal_freqs = common.freqs.litlen.first_chunk_mut::<NUM_LITERALS>()?;
+        let literal_freqs = common
+            .freqs
+            .litlen
+            .first_chunk_mut::<DEFLATE_NUM_LITERALS>()?;
         literal_freqs.fill(0);
         for &byte in block {
             *literal_freqs.get_mut(usize::from(byte))? += 1;
@@ -312,7 +328,7 @@ impl NearOptimal {
         } else {
             &DEFAULT_LITLEN_COSTS[0]
         };
-        let lit_cost = at(&costs.used_lits_to_lit_cost, num_used_literals)?;
+        let lit_cost = *costs.used_lits_to_lit_cost.get(num_used_literals)?;
         Some((u32::from(lit_cost), u32::from(costs.len_sym_cost)))
     }
 
@@ -341,7 +357,7 @@ impl NearOptimal {
         }
     }
 
-    /// Finds the cheapest path under `self.costs`, backwards from `match_cache[cache_end]`, and sets `common.freqs` and `common.codes` from it.
+    /// Finds the cheapest path at `self.costs`, backwards from `match_cache[cache_end]`, and tallies it into `common`.
     fn find_min_cost_path(
         &mut self,
         common: &mut Common,
@@ -358,24 +374,26 @@ impl NearOptimal {
             let LzMatch {
                 length: num_matches,
                 offset: literal,
-            } = at(&self.match_cache, cache_idx)?;
+            } = *self.match_cache.get(cache_idx)?;
             let (num_matches, literal) = (usize::from(num_matches), u32::from(literal));
 
-            let mut best_cost_to_end =
-                at(&costs.literal, literal as usize)?.wrapping_add(nodes.get(cur + 1)?.cost_to_end);
+            let mut best_cost_to_end = costs
+                .literal
+                .get(literal as usize)?
+                .wrapping_add(nodes.get(cur + 1)?.cost_to_end);
             let mut best_item = (literal << OPTIMUM_OFFSET_SHIFT) | 1;
 
             // Every length up to the longest match's is tried, each with the nearest match that has it.
             if num_matches != 0 {
                 let first_match = cache_idx.checked_sub(num_matches)?;
-                let mut len = MIN_MATCH_LEN as usize;
+                let mut len = DEFLATE_MIN_MATCH_LEN as usize;
                 for lz_match in self.match_cache.get(first_match..cache_idx)? {
                     let offset = u32::from(lz_match.offset);
-                    let offset_slot = at(self.offset_slot_full.as_slice(), offset as usize)?;
-                    let offset_cost = at(&costs.offset_slot, usize::from(offset_slot))?;
+                    let offset_slot = *self.offset_slot_full.get(offset as usize)?;
+                    let offset_cost = *costs.offset_slot.get(usize::from(offset_slot))?;
                     loop {
                         let cost_to_end = offset_cost
-                            .wrapping_add(at(&costs.length, len)?)
+                            .wrapping_add(*costs.length.get(len)?)
                             .wrapping_add(nodes.get(cur + len)?.cost_to_end);
                         if cost_to_end < best_cost_to_end {
                             best_cost_to_end = cost_to_end;
@@ -419,17 +437,17 @@ impl NearOptimal {
         let only_lits_cost = common.compute_true_cost()?;
 
         // Make any match that reaches past the end of the block too expensive to use.
-        let past_end = (block_length + MAX_MATCH_LEN as usize).min(MAX_BLOCK_LENGTH + 1);
-        self.optimum_nodes.clear();
+        let past_end = (block_length + DEFLATE_MAX_MATCH_LEN as usize).min(MAX_BLOCK_LENGTH + 1);
+        let too_expensive = OptimumNode {
+            cost_to_end: 0x8000_0000,
+            item: 0,
+        };
+        if self.optimum_nodes.len() < past_end {
+            self.optimum_nodes.resize(past_end, too_expensive);
+        }
         self.optimum_nodes
-            .resize(block_length, OptimumNode::default());
-        self.optimum_nodes.resize(
-            past_end,
-            OptimumNode {
-                cost_to_end: 0x8000_0000,
-                item: 0,
-            },
-        );
+            .get_mut(block_length..past_end)?
+            .fill(too_expensive);
 
         if block_length <= self.max_len_to_optimize_static_block as usize {
             self.costs_saved.clone_from(&self.costs);
@@ -491,7 +509,7 @@ impl NearOptimal {
     }
 
     fn init_stats(&mut self, common: &mut Common) {
-        common.split_stats = Default::default();
+        common.split_stats = BlockSplitStats::default();
         self.new_match_len_freqs = [0; _];
         self.match_len_freqs = [0; _];
     }
@@ -531,7 +549,7 @@ impl NearOptimal {
         let mut in_block_begin = 0;
         let mut in_cur_base = 0;
         let mut in_next_slide = in_end.min(WINDOW_SIZE);
-        let mut max_len = MAX_MATCH_LEN;
+        let mut max_len = DEFLATE_MAX_MATCH_LEN;
         let mut nice_len = common.nice_match_length.min(max_len);
         let mut next_hashes = [0, 0];
         let mut prev_block_used_only_literals = false;
@@ -550,7 +568,7 @@ impl NearOptimal {
 
             // This only steers the statistics. The parse weighs short matches by their cost.
             let min_len = if prev_block_used_only_literals {
-                MAX_MATCH_LEN + 1
+                DEFLATE_MAX_MATCH_LEN + 1
             } else {
                 calculate_min_match_len(
                     input.get(in_block_begin..in_max_block_end)?,
@@ -584,7 +602,7 @@ impl NearOptimal {
                         best_len = u32::from(self.match_cache.last()?.length);
                     }
                 }
-                let literal = at(input, in_next)?;
+                let literal = *input.get(in_next)?;
                 if in_next >= next_observation {
                     if best_len >= min_len {
                         common.split_stats.observe_match(best_len);
@@ -603,7 +621,7 @@ impl NearOptimal {
                 in_next += 1;
 
                 // Matches inside a very long match are not looked for: highly redundant data has far too many.
-                if best_len >= MIN_MATCH_LEN && best_len >= nice_len {
+                if best_len >= DEFLATE_MIN_MATCH_LEN && best_len >= nice_len {
                     for _ in 1..best_len {
                         let remaining = in_end - in_next;
                         if in_next == in_next_slide {
@@ -624,7 +642,7 @@ impl NearOptimal {
                         }
                         self.match_cache.push(LzMatch {
                             length: 0,
-                            offset: u16::from(at(input, in_next)?),
+                            offset: u16::from(*input.get(in_next)?),
                         });
                         in_next += 1;
                     }
@@ -688,7 +706,7 @@ impl NearOptimal {
                 in_block_begin = in_next;
             }
 
-            if in_next == in_end || os.overflow {
+            if in_next == in_end || os.overflowed() {
                 return Some(());
             }
         }
@@ -700,6 +718,6 @@ fn choose_all_literals(common: &mut Common, block: &[u8]) -> Option<()> {
     for &byte in block {
         *common.freqs.litlen.get_mut(usize::from(byte))? += 1;
     }
-    *common.freqs.litlen.get_mut(END_OF_BLOCK)? += 1;
+    *common.freqs.litlen.get_mut(DEFLATE_END_OF_BLOCK)? += 1;
     common.codes.make(&common.freqs)
 }

@@ -309,7 +309,7 @@ impl<'a> InternalState<'a> {
                 }
                 let format = match self.encoding {
                     Encoding::Gzip => bun_libdeflate::Decoding::Gzip,
-                    // zlib-ng alone judges a zlib-wrapped body: libdeflate accepted more streams, so that decoder is not ported.
+                    // `bun_libdeflate` does not decode the zlib wrapper.
                     Encoding::Deflate if has_zlib_header(buffer) => break 'libdeflate,
                     Encoding::Deflate => bun_libdeflate::Decoding::Deflate,
                     _ => unreachable!(),
@@ -349,7 +349,7 @@ impl<'a> InternalState<'a> {
                         // libdeflate decodes a single gzip member; unconsumed
                         // input means this is a multi-member stream (RFC 1952
                         // §2.2). Let the zlib path handle it.
-                        if result.is_ok_and(|decompressed| decompressed.read == buffer.len()) {
+                        if result.is_ok_and(|counts| counts.read == buffer.len()) {
                             still_needs_to_decompress = false;
                         } else {
                             self.decoded_body.list.clear();
@@ -367,13 +367,13 @@ impl<'a> InternalState<'a> {
 
                 // libdeflate decodes a single member; unconsumed input means
                 // a multi-member gzip stream. Let the zlib path handle it.
-                if let Ok(decompressed) = result
-                    && decompressed.read == buffer.len()
+                if let Ok(counts) = result
+                    && counts.read == buffer.len()
                 {
                     if self
                         .decoded_body
                         .list
-                        .try_reserve_exact(decompressed.written)
+                        .try_reserve_exact(counts.written)
                         .is_err()
                     {
                         self.compressed_body.reset();
@@ -381,7 +381,7 @@ impl<'a> InternalState<'a> {
                     }
                     self.decoded_body
                         .list
-                        .extend_from_slice(&deflater.shared_buffer[0..decompressed.written]);
+                        .extend_from_slice(&deflater.shared_buffer[0..counts.written]);
                     still_needs_to_decompress = false;
                 }
             }

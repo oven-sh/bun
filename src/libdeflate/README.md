@@ -9,7 +9,9 @@ Two rules hold for every change:
 - **The compressor writes the bytes libdeflate writes**, at every level (0 to 12) and for every input.
 - **The decompressor accepts what libdeflate accepts** and reports the same error, bytes read and bytes written.
 
-Both are what make it possible to check the crate against the C library byte for byte.
+`describe("libdeflate")` in `test/js/node/zlib/zlib.test.js` pins what the C library did with a set of inputs and streams.
+The rules also mean that any change can be checked against the C library itself: build it at that commit and give both
+the same inputs, at every level, with output sizes around the size of the result.
 
 The crate forbids `unsafe` and denies indexing, `unwrap`, `expect`, `panic!` and `unreachable!`. An index that the
 algorithm keeps in bounds is still looked up with `get`, and the `None` that never comes is passed up with `?`: a
@@ -17,14 +19,19 @@ decompressor reports it as bad data, a compressor as a result that does not fit.
 
 ## Files
 
-| File                               | libdeflate                                      |                                              |
-| ---------------------------------- | ----------------------------------------------- | -------------------------------------------- |
-| `compressor.rs`, `decompressor.rs` | `gzip_*.c`, `zlib_compress.c`                   | The public types, the gzip and zlib wrappers |
-| `decompress.rs`                    | `deflate_decompress.c`, `decompress_template.h` | Decode tables and the decoding loops         |
-| `compress.rs`                      | `deflate_compress.c`                            | Blocks, the output bit stream, levels 0 to 9 |
-| `near_optimal.rs`                  | `deflate_compress.c`                            | Levels 10 to 12                              |
-| `huffman.rs`                       | `deflate_compress.c`                            | Length-limited canonical codes               |
-| `ht_`, `hc_`, `bt_matchfinder.rs`  | the headers of the same names                   | Level 1, levels 2 to 9, levels 10 to 12      |
+Names are libdeflate's wherever the thing is libdeflate's, so that the two can be read side by side.
+
+| File                               | libdeflate                                         |                                              |
+| ---------------------------------- | -------------------------------------------------- | -------------------------------------------- |
+| `compressor.rs`, `decompressor.rs` | `gzip_*.c`, `zlib_compress.c`                      | The public types, the gzip and zlib wrappers |
+| `deflate_decompress.rs`            | `deflate_decompress.c`, `decompress_template.h`    | Decode tables and the decoding loops         |
+| `deflate_compress.rs`              | `deflate_compress.c`                               | Blocks, the output bit stream, levels 0 to 9 |
+| `near_optimal.rs`                  | `deflate_compress.c`                               | Levels 10 to 12                              |
+| `huffman.rs`                       | `deflate_compress.c`                               | Length-limited canonical codes               |
+| `ht_`, `hc_`, `bt_matchfinder.rs`  | the headers of the same names                      | Level 1, levels 2 to 9, levels 10 to 12      |
+| `matchfinder.rs`                   | `matchfinder_common.h`                             | What the three share                         |
+| `constants.rs`                     | `deflate_constants.h`, `gzip_`, `zlib_constants.h` | Numbers fixed by the formats                 |
+| `output.rs`, `error.rs`            |                                                    | Where a result goes, and what can go wrong   |
 
 The two checksums come from zlib, through `bun_zlib::crc32_bytes` and `adler32_bytes`.
 
@@ -37,15 +44,16 @@ output has to be initialized. Filling a whole reservation with zeros first would
 - A WebSocket client reserves 128 KiB for a message that is usually a few hundred bytes.
 - A compressor reserves the worst case, about the size of the input, and normally uses a fraction of it.
 
-So a `Vec` is lengthened as the output grows:
+So a `Vec` is lengthened as the result grows (`Output`):
 
-- `Inflate::run` can stop between two symbols and go on in a longer output (`Progress::NeedsOutput`). `VecSink` starts
-  with 4 KiB and doubles, up to 256 KiB a step. A step that is written right after it is zeroed is still in the cache.
-  Within the capacity a longer output is asked for early, so that the fast loop always has room. Where it would take a
-  reallocation, the output is first used to its last byte: a `Vec` reserved at exactly the right size never moves.
-- `OutputBitstream` knows the exact size of a block before it writes it, and asks its `Sink` for that much.
-- The sequence store, the match cache and the optimum nodes are `Vec`s with their full capacity reserved, filled by
-  `push` or sized to the block. A compressor for level 12 reserves 9 MB and a small input touches little of it.
+- The compressor knows the size of a block before it writes it, and asks for just that.
+- The decompressor does not know, so it asks for as much again as there is, at least 512 bytes and at most 256 KiB. A
+  step that is written right after it is zeroed is still in the cache. The first step is small for the sake of short
+  messages, and costs a few more steps on the way to 4 KiB.
+- It asks early where that takes no reallocation, so that the fast loop always has room. Where it would take one, the
+  output is first used to its last byte: a `Vec` reserved at exactly the right size never moves.
+- The sequence store, the match cache and the optimum nodes are `Vec`s with their full capacity reserved, which get as
+  long as the blocks so far needed. A compressor for level 12 reserves 9 MB and a small input touches little of it.
 
 ## The bit buffer of the decompressor
 
@@ -96,7 +104,7 @@ of the bit buffer taken before: the low `entry & 0xFF` bits, shifted right by th
 
 ## The fast loop of the decompressor
 
-Nearly all the time of a decompression goes into `fast_loop`. A round of it decodes what a round of libdeflate's loop
+Nearly all the time of a decompression goes into `fastloop`. A round of it decodes what a round of libdeflate's loop
 decodes. How it is written is about three things that C does not have to care about, or cares about less.
 
 **Registers.** Release builds keep the frame pointer, which leaves x86-64 fourteen registers, and without BMI2 a shift by
@@ -104,31 +112,30 @@ a variable takes `cl`. The loop needs about that many, and what matters is which
 stack. The output's pointer and length cost next to nothing there. `bitbuf`, `bitsleft` and `entry` are each the input of
 the next step, so storing and reloading one of them slows down every symbol. That is why:
 
-- The loop is a function of its own, not inlined, with only the state it changes (`Position`).
-- The copies that need a loop (`copy_match_slow`) are out of line and cold.
+- The loop is a function of its own, not inlined, and keeps its state in local variables.
+- The copies that need a loop (`copy_long_or_overlapping_match`) are out of line and cold.
 - The input is a slice that shrinks from the front (`rest`), a pointer and a length, not a slice and an index. The
   compiler also sees from `rest.len() > FASTLOOP_MAX_BYTES_READ` that no refill in the round can fail.
 - `FULL_LITLEN_TABLE` makes the size of the litlen table a constant when it is the full size, as it is for most text: one
-  register less, and no bounds checks on the lookups, since 2047 is less than `LITLEN_ENOUGH`. Worth 12%.
-- The mask for the extra bits is looked up (`BITMASKS`). Worth 6%.
-- There is one check for room, at the top of the loop, and `run` works out again which side ran out. Telling it costs 7%.
-  The check is also made before the first refill. So where C always does a first round, the refill can leave too little
-  input for one, and the other loop decodes that round, to the same result.
+  register less, and no bounds checks on the lookups, since 2047 is less than `LITLEN_ENOUGH`.
+- The mask for the extra bits is looked up (`BITMASKS`).
+- There is one check for room, at the top of the loop, and the caller works out again which side ran out. The check is
+  also made before the first refill. So where C always does a first round, the refill can leave too little input for
+  one, and the other loop decodes that round, to the same result.
 
 **Where the jumps fall.** Skylake and its descendants up to Cascade Lake do not keep a jump in the cache of decoded
 instructions if it crosses a 32-byte boundary or ends on one (the fix for erratum SKX102, "JCC"). The bounds checks give
-this loop more jumps than C's has. On such a CPU the same code ran at 0.74 to 0.93 of the speed of C depending on nothing
-but its address, and C's own varied by 3%. So:
+this loop more jumps than C's has, so on such a CPU its speed depends a good deal on nothing but its address.
 
-- `#[rustc_align(64)]` makes the address a property of the source. Without it any change anywhere in Bun can move it.
+- `#[rustc_align(64)]` keeps changes elsewhere in Bun from moving it.
 - To compare two versions of the loop, build both with `-Cllvm-args=-x86-branches-within-32B-boundaries`, which pads the
   jumps away from the boundaries. That takes out the luck, and is about what other CPUs see. Then see what the better one
-  does without it, and nudge it if it is unlucky.
+  does without it, in a release build of Bun, and nudge it if it is unlucky.
 - Use the other flags of a release build: `-Ctarget-cpu=nehalem -Cforce-frame-pointers=yes -Crelocation-model=static`.
 
 **Copying a match** without pointers. A match may overlap its own output: with offset 1 and length 100 it repeats one byte.
 
-- `copy_chunks` copies 40 bytes as 16, 16 and 8, each loaded whole and then stored, with one bounds check for all of them.
+- `copy_step` copies 40 bytes as 16, 16 and 8, each loaded whole and then stored, with one bounds check for all of them.
   That is right if the offset is 16 or more, and also if the match is no longer than its offset, since then the bytes
   that come out wrong are beyond its end. Nearly every match is one or the other, and at most 40 bytes long.
 - A longer match with an offset of 40 or more is that again and again.
@@ -136,4 +143,4 @@ but its address, and C's own varied by 3%. So:
   written is read back, which would have to wait for the write. For an offset under 8 a word is first filled with whole
   repeats, by a multiplication.
 
-A copy may write up to `COPY_BYTES - 1` bytes past the end of the match, which `FASTLOOP_MAX_BYTES_WRITTEN` allows for.
+A copy may write up to `COPY_STEP - 1` bytes past the end of the match, which `FASTLOOP_MAX_BYTES_WRITTEN` allows for.

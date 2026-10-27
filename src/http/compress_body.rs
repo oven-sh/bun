@@ -85,7 +85,7 @@ pub(crate) fn compress_into(
 
 /// libdeflate one-shot fast path into `state.shared_buffer`. Returns `None`
 /// when the bound exceeds the shared buffer, the compressor can't be allocated,
-/// or the output doesn't fit. The caller falls back to
+/// the output doesn't fit, or libdeflate is disabled. The caller falls back to
 /// [`compress_zlib_streaming`].
 fn compress_libdeflate_fast(
     state: &mut LibdeflateState,
@@ -93,7 +93,7 @@ fn compress_libdeflate_fast(
     enc: bun_libdeflate::Encoding,
     level: Option<i32>,
 ) -> Option<usize> {
-    use bun_libdeflate::Compressor;
+    use bun_libdeflate::{Compressor, Level};
 
     // Split-borrow so the compressor handle and `shared_buffer` can be used
     // together.
@@ -102,7 +102,9 @@ fn compress_libdeflate_fast(
         shared_buffer,
         ..
     } = state;
-    if Compressor::max_bytes_needed(input.len(), enc) > shared_buffer.len() {
+    if !bun_core::feature_flags::is_libdeflate_enabled()
+        || Compressor::max_bytes_needed(input.len(), enc) > shared_buffer.len()
+    {
         return None;
     }
 
@@ -110,10 +112,10 @@ fn compress_libdeflate_fast(
     // pinned to DEFAULT_DEFLATE_LEVEL.
     let mut tmp: Option<Compressor> = None;
     let compressor: &mut Compressor = match level {
-        Some(l) if l != DEFAULT_DEFLATE_LEVEL => tmp.insert(Compressor::new(l)?),
+        Some(l) if l != DEFAULT_DEFLATE_LEVEL => tmp.insert(Compressor::new(Level::new(l)?).ok()?),
         _ => match compressor {
             Some(cached) => cached,
-            None => compressor.insert(Compressor::new(DEFAULT_DEFLATE_LEVEL)?),
+            None => compressor.insert(Compressor::new(Level::new(DEFAULT_DEFLATE_LEVEL)?).ok()?),
         },
     };
 

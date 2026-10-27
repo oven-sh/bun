@@ -495,7 +495,7 @@ bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
 
-# Unoptimized, it takes ten times as long as the C library it replaced did at -O0, and every `bun install` goes through it.
+# Every `bun install` of a debug build goes through it, and unoptimized it is many times slower.
 [profile.dev.package.bun_libdeflate]
 opt-level = 3
 

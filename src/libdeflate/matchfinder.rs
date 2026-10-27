@@ -1,8 +1,8 @@
 //! What the three matchfinders share. They keep positions relative to a base that moves up by a window at a time.
 
-use crate::constants::WINDOW_ORDER;
+use crate::constants::DEFLATE_WINDOW_ORDER;
 
-pub(crate) const WINDOW_SIZE: usize = 1 << WINDOW_ORDER;
+pub(crate) const WINDOW_SIZE: usize = 1 << DEFLATE_WINDOW_ORDER;
 
 pub(crate) type Pos = i16;
 
@@ -11,9 +11,16 @@ pub(crate) const INITVAL: Pos = Pos::MIN;
 
 const _: () = assert!(INITVAL as isize == -(WINDOW_SIZE as isize));
 
+/// What the hash table and hash chains matchfinders find.
+#[derive(Clone, Copy)]
+pub(crate) struct Match {
+    pub(crate) length: u32,
+    pub(crate) offset: u32,
+}
+
 /// A table of `N` times [`INITVAL`] on the heap, or `None` if there is no memory for it.
 pub(crate) fn new_table<const N: usize>() -> Option<Box<[Pos; N]>> {
-    let mut table = crate::compress::new_vec(N)?;
+    let mut table = crate::vec_with_capacity(N)?;
     table.resize(N, INITVAL);
     table.into_boxed_slice().try_into().ok()
 }
@@ -21,7 +28,7 @@ pub(crate) fn new_table<const N: usize>() -> Option<Box<[Pos; N]>> {
 /// Subtracts the window size from every position. Those already before the window stay there.
 pub(crate) fn rebase(table: &mut [Pos]) {
     for pos in table {
-        *pos = INITVAL | (*pos & !(*pos >> 15));
+        *pos = pos.saturating_add(INITVAL);
     }
 }
 

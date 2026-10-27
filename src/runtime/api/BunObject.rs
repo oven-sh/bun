@@ -1829,18 +1829,14 @@ pub(crate) mod JSZlib {
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
-                if !(bun_libdeflate::MIN_COMPRESSION_LEVEL..=bun_libdeflate::MAX_COMPRESSION_LEVEL)
-                    .contains(&level)
-                {
+                let Some(level) = bun_libdeflate::Level::new(level) else {
                     return Err(heap.invalid_arguments(format_args!(
                         "Compression level must be between {} and {} for libdeflate",
-                        bun_libdeflate::MIN_COMPRESSION_LEVEL,
-                        bun_libdeflate::MAX_COMPRESSION_LEVEL,
+                        bun_libdeflate::Level::MIN.get(),
+                        bun_libdeflate::Level::MAX.get(),
                     )));
-                }
-                let Some(mut compressor) = bun_libdeflate::Compressor::new(level) else {
-                    return Err(bun_alloc::AllocError.into());
                 };
+                let mut compressor = bun_libdeflate::Compressor::new(level)?;
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
                 } else {

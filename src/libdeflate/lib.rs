@@ -1,5 +1,6 @@
-//! DEFLATE and its wrappers, one whole buffer at a time, byte for byte as libdeflate does it. A port of it (LICENSE.md, README.md).
+//! A port of libdeflate: DEFLATE, zlib and gzip, one whole buffer at a time. See README.md and LICENSE next to it.
 
+#![feature(allocator_api)]
 #![feature(fn_align)]
 #![forbid(unsafe_code)]
 // Streams come from anywhere and the release profile aborts on a panic.
@@ -13,41 +14,26 @@
 #![warn(unused_must_use)]
 
 mod bt_matchfinder;
-mod compress;
 mod compressor;
 mod constants;
-mod decompress;
 mod decompressor;
+mod deflate_compress;
+mod deflate_decompress;
 mod error;
 mod hc_matchfinder;
 mod ht_matchfinder;
 mod huffman;
 mod matchfinder;
 mod near_optimal;
+mod output;
 
-pub use compressor::{Compressor, MAX_COMPRESSION_LEVEL, MIN_COMPRESSION_LEVEL};
-pub use decompressor::{Decoding, Decompressed, Decompressor};
+pub use compressor::{Compressor, Encoding, Level};
+pub use decompressor::{ByteCounts, Decoding, Decompressor};
 pub use error::{Error, Result};
 
-/// What a [`Compressor`] wraps the DEFLATE stream in.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Encoding {
-    /// Nothing (RFC 1951).
-    Deflate,
-    /// A two-byte header and an Adler-32 (RFC 1950).
-    Zlib,
-    /// A header of ten bytes or more, a CRC-32 and the length (RFC 1952).
-    Gzip,
+/// An empty `Vec` with room for `capacity` elements, or `None` if there is no memory for them.
+fn vec_with_capacity<T>(capacity: usize) -> Option<Vec<T>> {
+    let mut vec = Vec::new();
+    vec.try_reserve_exact(capacity).ok()?;
+    Some(vec)
 }
-
-const GZIP_MIN_HEADER_SIZE: usize = 10;
-const GZIP_FOOTER_SIZE: usize = 8;
-const GZIP_MIN_OVERHEAD: usize = GZIP_MIN_HEADER_SIZE + GZIP_FOOTER_SIZE;
-const GZIP_ID1: u8 = 0x1F;
-const GZIP_ID2: u8 = 0x8B;
-const GZIP_CM_DEFLATE: u8 = 8;
-
-const ZLIB_MIN_HEADER_SIZE: usize = 2;
-const ZLIB_FOOTER_SIZE: usize = 4;
-const ZLIB_CM_DEFLATE: u16 = 8;
-const ZLIB_CINFO_32K_WINDOW: u16 = 7;

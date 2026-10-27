@@ -1,7 +1,7 @@
-//! Hash table matchfinder, for the fastest level: two candidates per hash and no matches under four bytes.
+//! Hash table matchfinder, for level 1: two candidates per hash and no matches under four bytes.
 
 use crate::matchfinder::{
-    Pos, WINDOW_SIZE, load_u32, lz_extend, lz_hash, new_table, node_pos, rebase,
+    INITVAL, Match, Pos, WINDOW_SIZE, load_u32, lz_extend, lz_hash, new_table, node_pos, rebase,
 };
 
 const HASH_ORDER: u32 = 15;
@@ -27,8 +27,12 @@ impl HtMatchfinder {
 
     pub(crate) fn init(&mut self) {
         if !core::mem::replace(&mut self.is_clear, false) {
-            self.hash_tab.fill(crate::matchfinder::INITVAL);
+            self.hash_tab.fill(INITVAL);
         }
+    }
+
+    fn slide_window(&mut self) {
+        rebase(self.hash_tab.as_mut_slice());
     }
 
     #[inline(always)]
@@ -36,7 +40,7 @@ impl HtMatchfinder {
         self.hash_tab.as_chunks_mut().0.get_mut(hash as usize)
     }
 
-    /// The length (0 for none) and offset of the longest match found at `in_next`.
+    /// The longest match found at `in_next`, of length 0 if there is none.
     #[inline(always)]
     pub(crate) fn longest_match(
         &mut self,
@@ -46,10 +50,10 @@ impl HtMatchfinder {
         max_len: u32,
         nice_len: u32,
         next_hash: &mut u32,
-    ) -> Option<(u32, u32)> {
+    ) -> Option<Match> {
         let mut cur_pos = in_next - *in_base;
         if cur_pos == WINDOW_SIZE {
-            rebase(self.hash_tab.as_mut_slice());
+            self.slide_window();
             *in_base += WINDOW_SIZE;
             cur_pos = 0;
         }
@@ -64,7 +68,10 @@ impl HtMatchfinder {
         let first = i32::from(bucket[0]);
         bucket[0] = cur_pos as Pos;
         if first <= cutoff {
-            return Some((0, 0));
+            return Some(Match {
+                length: 0,
+                offset: 0,
+            });
         }
         let second = i32::from(bucket[1]);
         bucket[1] = first as Pos;
@@ -95,7 +102,10 @@ impl HtMatchfinder {
                 best_match_pos = match_pos;
             }
         }
-        Some((best_len, (in_next - best_match_pos) as u32))
+        Some(Match {
+            length: best_len,
+            offset: (in_next - best_match_pos) as u32,
+        })
     }
 
     /// Enters `count` positions from `in_next` on without looking for matches.
@@ -104,7 +114,7 @@ impl HtMatchfinder {
         &mut self,
         input: &[u8],
         in_base: &mut usize,
-        mut in_next: usize,
+        in_next: usize,
         count: u32,
         next_hash: &mut u32,
     ) -> Option<()> {
@@ -114,19 +124,22 @@ impl HtMatchfinder {
 
         let mut cur_pos = (in_next - *in_base) as i32;
         if cur_pos + count as i32 > WINDOW_SIZE as i32 {
-            rebase(self.hash_tab.as_mut_slice());
+            self.slide_window();
             *in_base += WINDOW_SIZE;
             cur_pos -= WINDOW_SIZE as i32;
         }
 
         let mut hash = *next_hash;
-        for _ in 0..count {
+        for next_seq in input
+            .get(in_next + 1..)?
+            .get(..count as usize + 3)?
+            .array_windows()
+        {
             let bucket = self.bucket(hash)?;
             bucket[1] = bucket[0];
             bucket[0] = cur_pos as Pos;
 
-            in_next += 1;
-            hash = lz_hash(load_u32(input, in_next)?, HASH_ORDER);
+            hash = lz_hash(u32::from_le_bytes(*next_seq), HASH_ORDER);
             cur_pos += 1;
         }
         *next_hash = hash;

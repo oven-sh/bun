@@ -1,7 +1,7 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import * as internalForTesting from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -167,7 +167,8 @@ describe("zlib", () => {
     beforeAll(() => {
       let state = 0x2545f491;
       const next = () => ((state ^= state << 13), (state ^= state >>> 17), (state ^= state << 5), state >>> 0);
-      const noise = length => Buffer.from(Uint32Array.from({ length: length / 4 }, next).buffer);
+      const fourBytesEach = (length, four) => Buffer.from(Uint32Array.from({ length: length / 4 }, four).buffer);
+      const noise = length => fourBytesEach(length, next);
       const word = () =>
         next()
           .toString(36)
@@ -196,13 +197,17 @@ describe("zlib", () => {
         ]),
         // Repeats 32768 bytes back, which DEFLATE allows and libdeflate does not look for, then 32767, then 32769.
         far: Buffer.concat([window, window, window.subarray(1), Buffer.alloc(1), window]),
-        // Few enough symbols for the static codes.
         few: noise(3_000).map(byte => 65 + (byte & 1)),
       };
+      // So many matches of 4 bytes that blocks end because levels 1 to 9 can hold no more of them.
+      const dictionary = Uint32Array.from({ length: 2000 }, next);
+      inputs.shortMatches = fourBytesEach(260_000, () => dictionary[next() % 2000]);
+      // So many matches at each position that blocks end because levels 10 to 12 can hold no more of them.
+      inputs.coins = fourBytesEach(200_000, () => 0x41414141 + (next() & 0x01010101));
     });
 
     // What the C library wrote for each input at levels 0 to 12: the length and the start of the SHA-1.
-    const written = {
+    const writtenByC = {
       words: [
         "330030 d7f84ba13a54f264",
         "56001 279e40bd452f38b9",
@@ -218,21 +223,7 @@ describe("zlib", () => {
         "51659 9b29eae17ae31818",
         "51658 84efb6a1781e3b25",
       ],
-      noise: [
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-        "70010 df587075ba18e4f0",
-      ],
+      noise: Array(13).fill("70010 df587075ba18e4f0"),
       runs: [
         "92917 a07e5a15790a02b3",
         "940 4cbed6a7b703ce5f",
@@ -293,8 +284,38 @@ describe("zlib", () => {
         "485 909eeb66b020af9e",
         "483 86e9105ce8c087ae",
       ],
+      shortMatches: [
+        "260020 c025453e35174c60",
+        "138614 e8af131b97d62047",
+        "133071 f833a3261eee9d02",
+        "133176 16abddfc5197fb2b",
+        "133177 12b00d9c5196d696",
+        "132973 3245e56877325607",
+        "132973 3245e56877325607",
+        "132973 3245e56877325607",
+        "132978 d4093cc70e4a37ae",
+        "132978 d4093cc70e4a37ae",
+        "131441 76689d18e556e26b",
+        "131438 19996b77c9ca60fd",
+        "131435 d9781fa23d4153a4",
+      ],
+      coins: [
+        "200020 34ac1cf7829aaa95",
+        "36994 780c180280e82e14",
+        "35014 acd6fe6943acd4e0",
+        "33765 321294b1a669ce0d",
+        "32536 83dabf0c27bc5762",
+        "32461 44cd2afdb914c63e",
+        "32265 64348175f7404cd0",
+        "31601 b67e306b8cfdb275",
+        "31082 982bb287e68b00d1",
+        "30910 bb55b2f8b3d6ac0a",
+        "29231 f3791a5f5a9477bc",
+        "28591 fa53b93c06cf5b85",
+        "28484 ee4045a8538f6798",
+      ],
     };
-    const writtenFor0To79Bytes = [
+    const writtenByCFor0To79Bytes = [
       "3560 c856dc0aca751fee",
       "3336 9670bcd7658c3a2c",
       "3324 a41f274d19e02250",
@@ -310,19 +331,19 @@ describe("zlib", () => {
       "3121 4c15cfd06cab6322",
     ];
 
-    it.each(Object.keys(written))("compresses %s to the bytes the C library wrote", name => {
-      const outputs = written[name].map((_, level) => deflateSync(inputs[name], { library, level }));
-      expect(outputs.map(digest)).toEqual(written[name]);
+    it.each(Object.keys(writtenByC))("compresses %s to the bytes the C library wrote", name => {
+      const outputs = writtenByC[name].map((_, level) => deflateSync(inputs[name], { library, level }));
+      expect(outputs.map(digest)).toEqual(writtenByC[name]);
       for (const output of outputs) {
         expect(Bun.SHA1.hash(inflateSync(output, { library }), "hex")).toBe(Bun.SHA1.hash(inputs[name], "hex"));
       }
     });
 
     it("compresses 0 to 79 bytes to the bytes the C library wrote", () => {
-      const outputs = writtenFor0To79Bytes.map((_, level) =>
+      const outputs = writtenByCFor0To79Bytes.map((_, level) =>
         Array.from({ length: 80 }, (_, length) => deflateSync(inputs.words.subarray(0, length), { library, level })),
       );
-      expect(outputs.map(output => digest(Buffer.concat(output)))).toEqual(writtenFor0To79Bytes);
+      expect(outputs.map(output => digest(Buffer.concat(output)))).toEqual(writtenByCFor0To79Bytes);
     });
 
     it("gzip is a header that tells the level, what deflate writes, the CRC-32 and the length", () => {
@@ -341,6 +362,7 @@ describe("zlib", () => {
     // What the C library made of each stream: the text, or null for "bad data".
     describe.each([
       [
+        "inflateSync",
         inflateSync,
         [
           ["no input", "", null],
@@ -471,6 +493,7 @@ describe("zlib", () => {
         ],
       ],
       [
+        "gunzipSync",
         gunzipSync,
         [
           ["no input", "", null],
@@ -500,7 +523,7 @@ describe("zlib", () => {
           ["bytes after the member", "1f8b08000000000000ffcbc80400ac2a93d80200000000ff00", "hi"],
         ],
       ],
-    ])("%p", (decompress, streams) => {
+    ])("%s", (_, decompress, streams) => {
       it.each(streams)("%s", (_, hex, text) => {
         const run = () => Buffer.from(decompress(Buffer.from(hex, "hex"), { library })).toString("latin1");
         if (text === null) expect(run).toThrow(new Error("libdeflate returned an error: bad data"));
@@ -511,16 +534,16 @@ describe("zlib", () => {
     // libdeflate_test.bind.ts is only in a build with assertions: a debug build, CI's ASAN lane.
     const internals = internalForTesting.libdeflate;
 
-    // An output that grows is decoded with more care before each step. One with room to spare is not. The results, if they differ.
-    const inflateEveryWay = stream => {
-      const grown = inflateSync(stream, { library });
-      const results = [{ written: grown.length, crc32: Bun.hash.crc32(grown) }];
-      if (internals) {
-        const { read, ...roomy } = internals.decompressToSlice(stream, { room: 200_000 });
-        if (!Bun.deepEquals(roomy, results[0])) results.push(roomy);
-      }
-      return results;
+    const sizeAndChecksum = bytes => ({ written: bytes.length, crc32: Bun.hash.crc32(bytes) });
+
+    // The end of an output that has to grow is decoded with more care. One with room to spare has no such end.
+    const inflateBothWays = stream => {
+      const grown = sizeAndChecksum(inflateSync(stream, { library }));
+      if (!internals) return { grown };
+      const { read, ...roomy } = internals.decompressToSlice(stream, { room: 200_000 });
+      return { grown, roomy };
     };
+    const bothWays = result => (internals ? { grown: result, roomy: result } : { grown: result });
 
     describe("streams whose text is too long to spell out", () => {
       // 10000 each of "a", "b" and "c", then "d".
@@ -575,9 +598,9 @@ describe("zlib", () => {
       ])("%s", (_, hex, length, crc32) => {
         // How near the end of the input is decides which loop decodes the last items.
         for (let after = 0; after <= 40; after++) {
-          expect(inflateEveryWay(Buffer.concat([Buffer.from(hex, "hex"), Buffer.alloc(after, 0xa5)]))).toEqual([
-            { written: length, crc32 },
-          ]);
+          expect(inflateBothWays(Buffer.concat([Buffer.from(hex, "hex"), Buffer.alloc(after, 0xa5)]))).toEqual(
+            bothWays({ written: length, crc32 }),
+          );
         }
       });
     });
@@ -634,10 +657,10 @@ describe("zlib", () => {
         putCode(0, 7);
         put(0, 7);
         // With bytes after its end, the stream is not near the end of the input, where another loop decodes.
-        expect([distance, ...inflateEveryWay(stream.subarray(0, streamLength + 64).fill(0, streamLength))]).toEqual([
+        expect({ distance, ...inflateBothWays(stream.subarray(0, streamLength + 64).fill(0, streamLength)) }).toEqual({
           distance,
-          { written: textLength, crc32: Bun.hash.crc32(text.subarray(0, textLength)) },
-        ]);
+          ...bothWays(sizeAndChecksum(text.subarray(0, textLength))),
+        });
       }
     });
 
@@ -653,9 +676,8 @@ describe("zlib", () => {
     });
 
     // Capacities, growth, reuse and what an error leaves, which Bun.gzipSync and the like do not show.
-    describe.skipIf(!internals)("in Rust", () => {
+    describe.skipIf(!internals)("Compressor and Decompressor", () => {
       const levels = Array.from({ length: 13 }, (_, level) => level);
-      const bytes = output => ({ written: output.length, crc32: Bun.hash.crc32(output) });
       const nothing = error => ({ error, written: 0, crc32: 0 });
       // Each ends its `length` bytes of output in another way: a stored block, a long match, literals and short matches.
       const streamsOf = length => {
@@ -672,6 +694,9 @@ describe("zlib", () => {
       };
       // Past its end a stream reads as up to 64 zero bits, and each can be a match of 258.
       const roomForAnything = 64 * 258;
+      const withoutTouched = ({ touchedPastEnd, ...outcome }) => outcome;
+      const compressToVec = (...args) => withoutTouched(internals.compressToVec(...args));
+      const decompressToVec = (...args) => withoutTouched(internals.decompressToVec(...args));
 
       it("the bound is 5 bytes for each 5000, and the wrapper", () => {
         for (const [length, bound] of [
@@ -720,16 +745,24 @@ describe("zlib", () => {
         const input = inputs.mixed.subarray(25_000, 35_000);
         const spare = internals.maxBytesNeeded(input.length, "deflate");
         for (const level of levels) {
-          const appended = { ...bytes(deflateSync(input, { library, level })), keptWhatItHeld: true };
-          expect(internals.compressToVec(input, { level, held: 6, spare })).toEqual({
+          const appended = { ...sizeAndChecksum(deflateSync(input, { library, level })), keptWhatItHeld: true };
+          expect(compressToVec(input, { level, held: 6, spare })).toEqual({
             ...appended,
             moved: false,
             capacity: 6 + spare,
           });
-          expect(internals.compressToVec(input, { level, held: 6, spare: 0 })).toMatchObject({
+          expect(compressToVec(input, { level, held: 6, spare: 0 })).toMatchObject({
             ...appended,
             capacity: 6 + spare,
           });
+        }
+      });
+
+      it("a compressor writes no more than a word past its output in a Vec", () => {
+        const input = inputs.words.subarray(0, 100_000);
+        const spare = internals.maxBytesNeeded(input.length, "deflate");
+        for (const level of levels) {
+          expect(internals.compressToVec(input, { level, spare }).touchedPastEnd).toBeLessThanOrEqual(8);
         }
       });
 
@@ -742,7 +775,7 @@ describe("zlib", () => {
         ];
         for (const level of levels) {
           for (const input of all) {
-            const alone = bytes(deflateSync(input, { library, level }));
+            const alone = sizeAndChecksum(deflateSync(input, { library, level }));
             for (const first of all) {
               expect(internals.compressToSlice(input, { level, room: 50_000 }, first)).toEqual(alone);
             }
@@ -758,7 +791,10 @@ describe("zlib", () => {
               expect(internals.decompressToSlice(stream, { room })).toEqual(nothing("insufficient space"));
             }
             for (const room of [length, length + 1, length + 299, length + 300, length + 400]) {
-              expect(internals.decompressToSlice(stream, { room })).toEqual({ read: stream.length, ...bytes(plain) });
+              expect(internals.decompressToSlice(stream, { room })).toEqual({
+                read: stream.length,
+                ...sizeAndChecksum(plain),
+              });
             }
           }
         }
@@ -768,7 +804,10 @@ describe("zlib", () => {
         for (const extra of [1, 7, 8, 9, 40]) {
           for (const [stream, plain] of streamsOf(500)) {
             const more = Buffer.concat([stream, Buffer.alloc(extra, 0xff)]);
-            expect(internals.decompressToSlice(more, { room: 500 })).toEqual({ read: stream.length, ...bytes(plain) });
+            expect(internals.decompressToSlice(more, { room: 500 })).toEqual({
+              read: stream.length,
+              ...sizeAndChecksum(plain),
+            });
           }
         }
       });
@@ -783,17 +822,15 @@ describe("zlib", () => {
         for (const first of [member, withFields]) {
           for (const rest of [Buffer.alloc(0), Buffer.alloc(1), Buffer.alloc(30, 0xff), member]) {
             const stream = Buffer.concat([first, rest]);
-            const done = { read: first.length, ...bytes(plain) };
+            const done = { read: first.length, ...sizeAndChecksum(plain) };
             expect(internals.decompressToSlice(stream, { decoding: "gzip", room: 5000 })).toEqual(done);
-            expect(internals.decompressToVec(stream, { decoding: "gzip", held: 6, spare: 5000 })).toEqual({
+            expect(decompressToVec(stream, { decoding: "gzip", held: 6, spare: 5000 })).toEqual({
               ...done,
               keptWhatItHeld: true,
               moved: false,
               capacity: 5006,
             });
-            expect(internals.decompressToVec(stream, { decoding: "gzip", spare: 0, maxLength: 5000 })).toMatchObject(
-              done,
-            );
+            expect(decompressToVec(stream, { decoding: "gzip", spare: 0, maxLength: 5000 })).toMatchObject(done);
           }
         }
       });
@@ -819,7 +856,10 @@ describe("zlib", () => {
           Buffer.alloc(0),
         ];
         const room = 600 + roomForAnything;
-        expect(internals.decompressToSlice(staticCodes, { room })).toEqual({ read: 5, ...bytes(Buffer.from("ababa")) });
+        expect(internals.decompressToSlice(staticCodes, { room })).toEqual({
+          read: 5,
+          ...sizeAndChecksum(Buffer.from("ababa")),
+        });
         for (const stream of all) {
           const alone = internals.decompressToSlice(stream, { room });
           for (const first of all) expect(internals.decompressToSlice(stream, { room }, first)).toEqual(alone);
@@ -827,24 +867,22 @@ describe("zlib", () => {
       });
 
       it("a decompressor appends within the spare capacity of a Vec", () => {
-        for (const length of [0, 1, 300, 4095, 4096, 4097, 9000]) {
+        for (const length of [0, 1, 300, 511, 512, 513, 4095, 4096, 4097, 9000]) {
           for (const [stream, plain] of streamsOf(length)) {
             const untouched = spare => ({ keptWhatItHeld: true, moved: false, capacity: 6 + spare });
             for (const spare of [length, length + 1, length + 300, length + 5000]) {
-              expect(internals.decompressToVec(stream, { held: 6, spare })).toEqual({
+              expect(decompressToVec(stream, { held: 6, spare })).toEqual({
                 read: stream.length,
-                ...bytes(plain),
+                ...sizeAndChecksum(plain),
                 ...untouched(spare),
               });
             }
             if (length === 0) continue;
-            expect(internals.decompressToVec(stream, { held: 6, spare: length - 1 })).toEqual({
+            expect(decompressToVec(stream, { held: 6, spare: length - 1 })).toEqual({
               ...nothing("insufficient space"),
               ...untouched(length - 1),
             });
-            expect(
-              internals.decompressToVec(stream.subarray(0, -1), { held: 6, spare: length + roomForAnything }),
-            ).toEqual({
+            expect(decompressToVec(stream.subarray(0, -1), { held: 6, spare: length + roomForAnything })).toEqual({
               ...nothing("bad data"),
               ...untouched(length + roomForAnything),
             });
@@ -852,16 +890,27 @@ describe("zlib", () => {
         }
       });
 
-      it("a Vec grows as far as allowed, to twice what it needs at most, and not at all if it has the room", () => {
-        for (const length of [0, 1, 300, 4095, 4096, 4097, 8191, 8192, 8193, 12_500, 300_000]) {
+      it("a decompressor writes no more than as much again past its output in a Vec", () => {
+        for (const length of [0, 1, 300, 5000, 100_000]) {
+          for (const [stream] of streamsOf(length)) {
+            const { written, touchedPastEnd } = internals.decompressToVec(stream, { spare: 2 ** 20 });
+            expect(written).toBe(length);
+            // A step is at least 512 bytes, and comes when fewer than 300 are left.
+            expect(touchedPastEnd).toBeLessThanOrEqual(Math.max(512, length + 600));
+          }
+        }
+      });
+
+      it("a decompressor makes a Vec grow as far as allowed, to twice what it needs at most, or not at all", () => {
+        for (const length of [0, 1, 300, 511, 512, 513, 4095, 4096, 4097, 12_500, 300_000]) {
           for (const [stream, plain] of streamsOf(length)) {
-            const done = { read: stream.length, ...bytes(plain) };
+            const done = { read: stream.length, ...sizeAndChecksum(plain), keptWhatItHeld: true };
             for (const maxLength of [length, length + 1, length + 300, Number.MAX_SAFE_INTEGER]) {
-              const { moved, capacity, ...grown } = internals.decompressToVec(stream, { held: 6, spare: 0, maxLength });
+              const { moved, capacity, ...grown } = decompressToVec(stream, { held: 6, spare: 0, maxLength });
               expect(grown).toEqual(done);
-              expect(capacity).toBeLessThanOrEqual(Math.max(6, Math.min(maxLength, Math.max(4096 + 6, 2 * length))));
+              expect(capacity).toBeLessThanOrEqual(6 + Math.min(maxLength, Math.max(512, 2 * length + 6)));
               if (length === 0) continue;
-              expect(internals.decompressToVec(stream, { spare: length, maxLength })).toEqual({
+              expect(decompressToVec(stream, { spare: length, maxLength })).toEqual({
                 ...done,
                 moved: false,
                 capacity: length,
@@ -869,28 +918,29 @@ describe("zlib", () => {
             }
             for (const maxLength of [0, length >> 1, length - 300, length - 1]) {
               if (maxLength < 0 || maxLength === length) continue;
-              expect(internals.decompressToVec(stream, { held: 6, spare: 0, maxLength })).toMatchObject(
-                nothing("insufficient space"),
-              );
+              expect(decompressToVec(stream, { held: 6, spare: 0, maxLength })).toMatchObject({
+                ...nothing("insufficient space"),
+                keptWhatItHeld: true,
+              });
             }
             if (length === 0) continue;
             expect(
-              internals.decompressToVec(stream.subarray(0, -1), {
+              decompressToVec(stream.subarray(0, -1), {
                 held: 6,
                 spare: 0,
                 maxLength: Number.MAX_SAFE_INTEGER,
               }),
-            ).toMatchObject(nothing("bad data"));
+            ).toMatchObject({ ...nothing("bad data"), keptWhatItHeld: true });
           }
         }
       });
     });
   });
 
-  // libdeflate never emits a block bigger than a stored one, so output longer than the input plus
-  // its overhead (5 bytes, plus 18 for gzip) means it wrote past the allocation.
+  // A block is sized in one pass over the input and written in a second. Whatever the second pass finds, the output
+  // stays within what was reserved: the input and 5 bytes, plus 18 for gzip.
   it.concurrent.each(["gzip", "deflate"])(
-    "libdeflate %s doesn't write past its output buffer while another thread writes to the shared input",
+    "libdeflate %s stays within its bound while another thread writes to the shared input",
     async kind => {
       const fixture = `
         import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
@@ -1928,9 +1978,9 @@ describe("crc32", () => {
   });
 });
 
-// Only ASAN can detect the out-of-bounds write.
-it.skipIf(!isASAN)(
-  "libdeflate doesn't write past its output buffer when another thread rewrites a mapped input",
+// Windows has no Bun.mmap.
+it.skipIf(isWindows)(
+  "libdeflate compresses a mapped input that another thread rewrites, or finds that it does not fit",
   async () => {
     using dir = tempDir("libdeflate-race", { "bytes.bin": Buffer.alloc(4096) });
     await using proc = Bun.spawn({

@@ -4,7 +4,10 @@ use crate::constants::*;
 use crate::hc_matchfinder::HcMatchfinder;
 use crate::ht_matchfinder::{self, HtMatchfinder};
 use crate::huffman::{MAX_TOTAL_FREQ, make_huffman_code};
+use crate::matchfinder::Match;
 use crate::near_optimal::{NearOptimal, OPTIMUM_LEN_MASK, OPTIMUM_OFFSET_SHIFT, OptimumNode};
+use crate::output::Output;
+use crate::vec_with_capacity;
 
 /// No block but the last is shorter than this. [`compress_bound`] depends on it.
 pub(crate) const MIN_BLOCK_LENGTH: usize = 5000;
@@ -19,12 +22,14 @@ const FAST_SOFT_MAX_BLOCK_LENGTH: usize = 65535;
 const FAST_SEQ_STORE_LENGTH: usize = 8192;
 
 /// One bit under the format's limit, so that four literals fit the bit buffer at once.
-const MAX_LITLEN_CODEWORD_LEN_USED: u32 = 14;
+const MAX_LITLEN_CODEWORD_LEN: u32 = 14;
+const MAX_OFFSET_CODEWORD_LEN: u32 = DEFLATE_MAX_OFFSET_CODEWORD_LEN;
+const MAX_PRE_CODEWORD_LEN: u32 = DEFLATE_MAX_PRE_CODEWORD_LEN;
 
 /// Reached by a last block, or by two literals and the longest match from just under the soft maximum.
 pub(crate) const MAX_BLOCK_LENGTH: usize = {
     let last_block = SOFT_MAX_BLOCK_LENGTH + MIN_BLOCK_LENGTH - 1;
-    let lazy2_block = SOFT_MAX_BLOCK_LENGTH + 1 + MAX_MATCH_LEN as usize;
+    let lazy2_block = SOFT_MAX_BLOCK_LENGTH + 1 + DEFLATE_MAX_MATCH_LEN as usize;
     if last_block > lazy2_block {
         last_block
     } else {
@@ -35,10 +40,22 @@ pub(crate) const MAX_BLOCK_LENGTH: usize = {
 const _: () = {
     assert!(SOFT_MAX_BLOCK_LENGTH >= MIN_BLOCK_LENGTH);
     assert!(FAST_SOFT_MAX_BLOCK_LENGTH >= MIN_BLOCK_LENGTH);
-    assert!(SEQ_STORE_LENGTH * MIN_MATCH_LEN as usize >= MIN_BLOCK_LENGTH);
+    assert!(SEQ_STORE_LENGTH * DEFLATE_MIN_MATCH_LEN as usize >= MIN_BLOCK_LENGTH);
     assert!(FAST_SEQ_STORE_LENGTH * ht_matchfinder::MIN_MATCH_LEN as usize >= MIN_BLOCK_LENGTH);
     assert!(FAST_SOFT_MAX_BLOCK_LENGTH <= SOFT_MAX_BLOCK_LENGTH);
-    assert!(MAX_LITLEN_CODEWORD_LEN_USED <= MAX_LITLEN_CODEWORD_LEN);
+    assert!(
+        SEQ_STORE_LENGTH * DEFLATE_MIN_MATCH_LEN as usize
+            <= SOFT_MAX_BLOCK_LENGTH + MIN_BLOCK_LENGTH
+    );
+    assert!(
+        FAST_SEQ_STORE_LENGTH * ht_matchfinder::MIN_MATCH_LEN as usize
+            <= FAST_SOFT_MAX_BLOCK_LENGTH + MIN_BLOCK_LENGTH
+    );
+    assert!(MAX_LITLEN_CODEWORD_LEN <= DEFLATE_MAX_LITLEN_CODEWORD_LEN);
+    assert!(1 << MAX_LITLEN_CODEWORD_LEN >= DEFLATE_NUM_LITLEN_SYMS);
+    assert!(1 << MAX_OFFSET_CODEWORD_LEN >= DEFLATE_NUM_OFFSET_SYMS);
+    assert!(1 << MAX_PRE_CODEWORD_LEN >= DEFLATE_NUM_PRECODE_SYMS);
+    assert!(MAX_LITLEN_CODEWORD_LEN + DEFLATE_MAX_EXTRA_LENGTH_BITS <= u32::BITS);
     assert!(MAX_BLOCK_LENGTH <= MAX_TOTAL_FREQ);
     assert!(MAX_BLOCK_LENGTH <= SEQ_LITRUNLEN_MASK as usize);
     assert!(2 * MIN_BLOCK_LENGTH <= u16::MAX as usize);
@@ -46,10 +63,10 @@ const _: () = {
 
 /// Length to length slot.
 #[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
-pub(crate) static LENGTH_SLOT: [u8; MAX_MATCH_LEN as usize + 1] = {
+pub(crate) static LENGTH_SLOT: [u8; DEFLATE_MAX_MATCH_LEN as usize + 1] = {
     let mut slots = [0; _];
     let mut slot = 0;
-    let mut len = MIN_MATCH_LEN as usize;
+    let mut len = DEFLATE_MIN_MATCH_LEN as usize;
     while len < slots.len() {
         if slot + 1 < LENGTH_SLOT_BASE.len() && len >= LENGTH_SLOT_BASE[slot + 1] as usize {
             slot += 1;
@@ -76,24 +93,12 @@ static OFFSET_SLOT: [u8; 256] = {
     slots
 };
 
-const EXTRA_PRECODE_BITS: [u8; NUM_PRECODE_SYMS] =
+const EXTRA_PRECODE_BITS: [u8; DEFLATE_NUM_PRECODE_SYMS] =
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7];
 
-/// An empty `Vec` with room for `capacity` elements, or `None` if there is no memory for them.
-pub(crate) fn new_vec<T>(capacity: usize) -> Option<Vec<T>> {
-    let mut vec = Vec::new();
-    vec.try_reserve_exact(capacity).ok()?;
-    Some(vec)
-}
-
-#[inline(always)]
-pub(crate) fn at<T: Copy>(slice: &[T], index: usize) -> Option<T> {
-    slice.get(index).copied()
-}
-
 pub(crate) struct Freqs {
-    pub(crate) litlen: [u32; NUM_LITLEN_SYMS],
-    pub(crate) offset: [u32; NUM_OFFSET_SYMS],
+    pub(crate) litlen: [u32; DEFLATE_NUM_LITLEN_SYMS],
+    pub(crate) offset: [u32; DEFLATE_NUM_OFFSET_SYMS],
 }
 
 impl Freqs {
@@ -106,26 +111,26 @@ impl Freqs {
 }
 
 /// The codeword lengths of the litlen code, then those of the offset code.
-pub(crate) struct Lens([u8; NUM_LITLEN_SYMS + NUM_OFFSET_SYMS]);
+pub(crate) struct Lens([u8; DEFLATE_NUM_LITLEN_SYMS + DEFLATE_NUM_OFFSET_SYMS]);
 
 impl Lens {
     #[inline(always)]
     pub(crate) fn litlen(&self, sym: usize) -> Option<u32> {
         Some(u32::from(
-            *self.0.first_chunk::<NUM_LITLEN_SYMS>()?.get(sym)?,
+            *self.0.first_chunk::<DEFLATE_NUM_LITLEN_SYMS>()?.get(sym)?,
         ))
     }
     #[inline(always)]
     pub(crate) fn offset(&self, sym: usize) -> Option<u32> {
         Some(u32::from(
-            *self.0.last_chunk::<NUM_OFFSET_SYMS>()?.get(sym)?,
+            *self.0.last_chunk::<DEFLATE_NUM_OFFSET_SYMS>()?.get(sym)?,
         ))
     }
 }
 
 pub(crate) struct Codes {
-    litlen_codewords: [u32; NUM_LITLEN_SYMS],
-    offset_codewords: [u32; NUM_OFFSET_SYMS],
+    litlen_codewords: [u32; DEFLATE_NUM_LITLEN_SYMS],
+    offset_codewords: [u32; DEFLATE_NUM_OFFSET_SYMS],
     pub(crate) lens: Lens,
 }
 
@@ -139,9 +144,10 @@ impl Codes {
     }
 
     pub(crate) fn make(&mut self, freqs: &Freqs) -> Option<()> {
-        let (litlen_lens, offset_lens) = self.lens.0.split_at_mut_checked(NUM_LITLEN_SYMS)?;
+        let (litlen_lens, offset_lens) =
+            self.lens.0.split_at_mut_checked(DEFLATE_NUM_LITLEN_SYMS)?;
         make_huffman_code(
-            MAX_LITLEN_CODEWORD_LEN_USED as usize,
+            MAX_LITLEN_CODEWORD_LEN as usize,
             &freqs.litlen,
             litlen_lens,
             &mut self.litlen_codewords,
@@ -156,7 +162,6 @@ impl Codes {
 }
 
 /// A run of literals, which are read from the input, then a match or the end of the block.
-#[derive(Clone, Copy, Default)]
 pub(crate) struct Sequence {
     /// The number of literals in the low 23 bits. Above them the length of the match, 0 at the end of the block.
     litrunlen_and_length: u32,
@@ -277,138 +282,100 @@ const fn can_buffer(nbits: u32) -> bool {
 
 const _: () = {
     assert!(can_buffer(1 + 2 + 5 + 5 + 4 + 3));
-    assert!(can_buffer(3 * (NUM_PRECODE_SYMS as u32 - 1)));
+    assert!(can_buffer(3 * (DEFLATE_NUM_PRECODE_SYMS as u32 - 1)));
     assert!(can_buffer(MAX_PRE_CODEWORD_LEN + 7));
-    assert!(can_buffer(4 * MAX_LITLEN_CODEWORD_LEN_USED));
+    assert!(can_buffer(4 * MAX_LITLEN_CODEWORD_LEN));
     assert!(can_buffer(
-        MAX_LITLEN_CODEWORD_LEN_USED
-            + MAX_EXTRA_LENGTH_BITS
+        MAX_LITLEN_CODEWORD_LEN
+            + DEFLATE_MAX_EXTRA_LENGTH_BITS
             + MAX_OFFSET_CODEWORD_LEN
-            + MAX_EXTRA_OFFSET_BITS
+            + DEFLATE_MAX_EXTRA_OFFSET_BITS
     ));
 };
 
-/// Where the stream goes.
-pub(crate) enum Sink<'a> {
-    Fixed(&'a mut [u8]),
-    /// Up to `limit` bytes of a `Vec`'s capacity from `start` on. It is lengthened block by block, so that reserved memory the stream does not reach stays untouched.
-    Spare {
-        vec: &'a mut Vec<u8>,
-        start: usize,
-        limit: usize,
-    },
-}
-
-impl Sink<'_> {
-    /// The stream so far and room for it to reach `len` bytes, or `None` if there is no such room.
-    fn bytes_with_room(&mut self, len: usize) -> Option<&mut [u8]> {
-        match self {
-            Sink::Fixed(bytes) => (len <= bytes.len()).then_some(&mut **bytes),
-            Sink::Spare { vec, start, limit } => {
-                let limit = (*limit).min(vec.capacity() - *start);
-                if len > limit {
-                    return None;
-                }
-                // A few bytes more let the last bits of a block be written a word at a time.
-                let wanted = *start + (len + size_of::<BitBuf>()).min(limit);
-                if wanted > vec.len() {
-                    vec.resize(wanted, 0);
-                }
-                vec.get_mut(*start..)
-            }
-        }
-    }
-}
-
-/// The state of the stream between blocks.
-pub(crate) struct OutputBitstream<'a> {
-    sink: Sink<'a>,
+#[derive(Clone, Copy)]
+struct BitstreamState {
+    /// The whole bytes written.
     pos: usize,
+    /// The bits after them, lowest first.
     bitbuf: BitBuf,
     bitcount: u32,
     /// The output did not fit.
-    pub(crate) overflow: bool,
+    overflow: bool,
+}
+
+/// The stream between blocks.
+pub(crate) struct OutputBitstream<'a> {
+    output: Output<'a>,
+    state: BitstreamState,
+}
+
+/// The stream while a block is written, with the room for it at hand. Its `state` goes back to the [`OutputBitstream`].
+struct BitWriter<'a> {
+    out: &'a mut [u8],
+    state: BitstreamState,
 }
 
 impl<'a> OutputBitstream<'a> {
-    fn new(sink: Sink<'a>) -> Self {
+    fn new(output: Output<'a>) -> Self {
         Self {
-            sink,
-            pos: 0,
-            bitbuf: 0,
-            bitcount: 0,
-            overflow: false,
+            output,
+            state: BitstreamState {
+                pos: 0,
+                bitbuf: 0,
+                bitcount: 0,
+                overflow: false,
+            },
         }
     }
 
-    /// A writer for `nbytes` more bytes. Without room for them, sets `overflow` and returns `None`.
+    pub(crate) fn overflowed(&self) -> bool {
+        self.state.overflow
+    }
+
+    /// A writer for `nbytes` more bytes. Without room for them, the stream has overflowed and there is none.
     fn writer(&mut self, nbytes: usize) -> Option<BitWriter<'_>> {
-        let Some(out) = self.sink.bytes_with_room(self.pos + nbytes) else {
-            self.overflow = true;
+        if self
+            .output
+            .grow_in_place_to(self.state.pos + nbytes)
+            .is_err()
+        {
+            self.state.overflow = true;
             return None;
-        };
+        }
         Some(BitWriter {
-            out,
-            pos: self.pos,
-            bitbuf: self.bitbuf,
-            bitcount: self.bitcount,
-            overflow: false,
+            out: self.output.bytes(),
+            state: self.state,
         })
     }
-}
 
-/// What a [`BitWriter`] hands back to its [`OutputBitstream`].
-#[derive(Clone, Copy)]
-struct Written {
-    pos: usize,
-    bitbuf: BitBuf,
-    bitcount: u32,
-    overflow: bool,
-}
-
-impl OutputBitstream<'_> {
-    fn commit(&mut self, written: Written) {
-        let Written {
-            pos,
-            bitbuf,
-            bitcount,
-            overflow,
-        } = written;
-        (self.pos, self.bitbuf, self.bitcount, self.overflow) = (pos, bitbuf, bitcount, overflow);
+    /// Uncompressed blocks, each of which holds 65535 bytes at most. Without bytes, an empty one.
+    fn put_uncompressed_blocks(&mut self, mut bytes: &[u8], is_final_block: bool) {
+        loop {
+            let (chunk, rest) = bytes
+                .split_at_checked(usize::from(u16::MAX))
+                .unwrap_or((bytes, &[]));
+            let header_size = (self.state.bitcount + 3).div_ceil(8) as usize + 4;
+            let Some(mut writer) = self.writer(header_size + chunk.len()) else {
+                return;
+            };
+            writer.put_uncompressed_block(chunk, is_final_block && rest.is_empty());
+            self.state = writer.state;
+            if rest.is_empty() {
+                return;
+            }
+            bytes = rest;
+        }
     }
-}
-
-struct BitWriter<'a> {
-    out: &'a mut [u8],
-    pos: usize,
-    bitbuf: BitBuf,
-    bitcount: u32,
-    overflow: bool,
 }
 
 impl BitWriter<'_> {
-    fn finish(self) -> Written {
-        let Self {
-            pos,
-            bitbuf,
-            bitcount,
-            overflow,
-            ..
-        } = self;
-        Written {
-            pos,
-            bitbuf,
-            bitcount,
-            overflow,
-        }
-    }
-
     /// The caller flushes often enough for the bits to fit.
     #[inline(always)]
     fn add_bits(&mut self, bits: u32, nbits: u32) {
-        self.bitbuf |= BitBuf::from(bits) << self.bitcount;
-        self.bitcount += nbits;
-        debug_assert!(self.bitcount <= BITBUF_NBITS);
+        self.state.bitbuf |= BitBuf::from(bits) << self.state.bitcount;
+        self.state.bitcount += nbits;
+        debug_assert!(self.state.bitcount <= BITBUF_NBITS);
     }
 
     /// Writes out the whole bytes in the bit buffer.
@@ -416,55 +383,55 @@ impl BitWriter<'_> {
     fn flush_bits(&mut self) {
         if let Some(word) = self
             .out
-            .get_mut(self.pos..)
+            .get_mut(self.state.pos..)
             .and_then(|rest| rest.first_chunk_mut())
         {
-            *word = self.bitbuf.to_le_bytes();
-            self.bitbuf >>= self.bitcount & !7;
-            self.pos += (self.bitcount >> 3) as usize;
-            self.bitcount &= 7;
+            *word = self.state.bitbuf.to_le_bytes();
+            self.state.bitbuf >>= self.state.bitcount & !7;
+            self.state.pos += (self.state.bitcount >> 3) as usize;
+            self.state.bitcount &= 7;
         } else {
-            while self.bitcount >= 8 {
-                self.put_byte(self.bitbuf as u8);
-                self.bitcount -= 8;
-                self.bitbuf >>= 8;
+            while self.state.bitcount >= 8 {
+                self.put_byte(self.state.bitbuf as u8);
+                self.state.bitcount -= 8;
+                self.state.bitbuf >>= 8;
             }
         }
     }
 
     #[inline(always)]
     fn put_byte(&mut self, byte: u8) {
-        match self.out.get_mut(self.pos) {
+        match self.out.get_mut(self.state.pos) {
             Some(slot) => {
                 *slot = byte;
-                self.pos += 1;
+                self.state.pos += 1;
             }
-            None => self.overflow = true,
+            None => self.state.overflow = true,
         }
     }
 
     fn put_bytes(&mut self, bytes: &[u8]) {
         match self
             .out
-            .get_mut(self.pos..)
+            .get_mut(self.state.pos..)
             .and_then(|rest| rest.get_mut(..bytes.len()))
         {
             Some(slot) => {
                 slot.copy_from_slice(bytes);
-                self.pos += bytes.len();
+                self.state.pos += bytes.len();
             }
-            None => self.overflow = true,
+            None => self.state.overflow = true,
         }
     }
 
     /// An uncompressed block of at most 65535 bytes, after the bits of the previous block.
     fn put_uncompressed_block(&mut self, bytes: &[u8], is_final_block: bool) {
-        self.put_byte((u8::from(is_final_block) << self.bitcount) | self.bitbuf as u8);
-        if self.bitcount > 5 {
+        self.put_byte((u8::from(is_final_block) << self.state.bitcount) | self.state.bitbuf as u8);
+        if self.state.bitcount > 5 {
             self.put_byte(0);
         }
-        self.bitbuf = 0;
-        self.bitcount = 0;
+        self.state.bitbuf = 0;
+        self.state.bitcount = 0;
         let len = bytes.len() as u16;
         self.put_bytes(&len.to_le_bytes());
         self.put_bytes(&(!len).to_le_bytes());
@@ -474,11 +441,11 @@ impl BitWriter<'_> {
 
 /// What it takes to write the two codes of a dynamic block, themselves coded with the precode.
 struct Precode {
-    freqs: [u32; NUM_PRECODE_SYMS],
-    codewords: [u32; NUM_PRECODE_SYMS],
-    lens: [u8; NUM_PRECODE_SYMS],
+    freqs: [u32; DEFLATE_NUM_PRECODE_SYMS],
+    codewords: [u32; DEFLATE_NUM_PRECODE_SYMS],
+    lens: [u8; DEFLATE_NUM_PRECODE_SYMS],
     /// A precode symbol in the low five bits, its extra bits above them.
-    items: [u32; NUM_LITLEN_SYMS + NUM_OFFSET_SYMS],
+    items: [u32; DEFLATE_NUM_LITLEN_SYMS + DEFLATE_NUM_OFFSET_SYMS],
     num_litlen_syms: usize,
     num_offset_syms: usize,
     num_explicit_lens: usize,
@@ -487,8 +454,8 @@ struct Precode {
 
 /// For each match length, its litlen codeword joined with its extra bits.
 struct LengthCodewords {
-    codewords: [u32; MAX_MATCH_LEN as usize + 1],
-    lens: [u8; MAX_MATCH_LEN as usize + 1],
+    codewords: [u32; DEFLATE_MAX_MATCH_LEN as usize + 1],
+    lens: [u8; DEFLATE_MAX_MATCH_LEN as usize + 1],
 }
 
 /// The literals and matches of a block.
@@ -496,7 +463,7 @@ struct LengthCodewords {
 pub(crate) enum Items<'a> {
     Sequences(&'a [Sequence]),
     /// The minimum-cost path, and the map from offset to offset slot.
-    Path(&'a [OptimumNode], &'a [u8; MAX_MATCH_OFFSET + 1]),
+    Path(&'a [OptimumNode], &'a [u8; DEFLATE_MAX_MATCH_OFFSET + 1]),
 }
 
 /// The part of a compressor that does not depend on the parser.
@@ -515,18 +482,13 @@ pub(crate) struct Common {
 fn get_offset_slot(offset: u32) -> Option<u32> {
     // Each slot from 16 on is 128 times as wide as the slot 14 below it.
     let shift = 256u32.wrapping_sub(offset) >> 29;
-    Some(
-        u32::from(at(
-            &OFFSET_SLOT,
-            (offset.wrapping_sub(1) >> shift) as usize,
-        )?) + (shift << 1),
-    )
+    Some(u32::from(*OFFSET_SLOT.get((offset.wrapping_sub(1) >> shift) as usize)?) + (shift << 1))
 }
 
 fn compute_precode_items(
     lens: &[u8],
-    precode_freqs: &mut [u32; NUM_PRECODE_SYMS],
-    precode_items: &mut [u32; NUM_LITLEN_SYMS + NUM_OFFSET_SYMS],
+    precode_freqs: &mut [u32; DEFLATE_NUM_PRECODE_SYMS],
+    precode_items: &mut [u32; DEFLATE_NUM_LITLEN_SYMS + DEFLATE_NUM_OFFSET_SYMS],
 ) -> Option<usize> {
     *precode_freqs = [0; _];
     let mut num_items = 0;
@@ -539,9 +501,9 @@ fn compute_precode_items(
 
     let mut run_start = 0;
     while run_start != lens.len() {
-        let len = at(lens, run_start)?;
+        let len = *lens.get(run_start)?;
         let mut run_end = run_start + 1;
-        while run_end != lens.len() && len == at(lens, run_end)? {
+        while run_end != lens.len() && len == *lens.get(run_end)? {
             run_end += 1;
         }
 
@@ -624,19 +586,20 @@ impl Common {
         let precode = &mut self.precode;
         let lens = &mut self.codes.lens;
 
-        precode.num_litlen_syms = NUM_LITLEN_SYMS;
+        precode.num_litlen_syms = DEFLATE_NUM_LITLEN_SYMS;
         while precode.num_litlen_syms > 257 && lens.litlen(precode.num_litlen_syms - 1)? == 0 {
             precode.num_litlen_syms -= 1;
         }
-        precode.num_offset_syms = NUM_OFFSET_SYMS;
+        precode.num_offset_syms = DEFLATE_NUM_OFFSET_SYMS;
         while precode.num_offset_syms > 1 && lens.offset(precode.num_offset_syms - 1)? == 0 {
             precode.num_offset_syms -= 1;
         }
 
         // The lengths in use are written as one list, so for a while the offset lengths move down next to the others.
-        let moved = precode.num_litlen_syms != NUM_LITLEN_SYMS;
+        let moved = precode.num_litlen_syms != DEFLATE_NUM_LITLEN_SYMS;
         if moved {
-            let offset_lens = NUM_LITLEN_SYMS..NUM_LITLEN_SYMS + precode.num_offset_syms;
+            let offset_lens =
+                DEFLATE_NUM_LITLEN_SYMS..DEFLATE_NUM_LITLEN_SYMS + precode.num_offset_syms;
             lens.0.copy_within(offset_lens, precode.num_litlen_syms);
         }
 
@@ -654,10 +617,10 @@ impl Common {
             &mut precode.codewords,
         )?;
 
-        precode.num_explicit_lens = NUM_PRECODE_SYMS;
+        precode.num_explicit_lens = DEFLATE_NUM_PRECODE_SYMS;
         while precode.num_explicit_lens > 4 {
-            let sym = at(&PRECODE_LENS_PERMUTATION, precode.num_explicit_lens - 1)?;
-            if at(&precode.lens, usize::from(sym))? != 0 {
+            let sym = *PRECODE_LENS_PERMUTATION.get(precode.num_explicit_lens - 1)?;
+            if *precode.lens.get(usize::from(sym))? != 0 {
                 break;
             }
             precode.num_explicit_lens -= 1;
@@ -666,7 +629,7 @@ impl Common {
         if moved {
             let offset_lens =
                 precode.num_litlen_syms..precode.num_litlen_syms + precode.num_offset_syms;
-            lens.0.copy_within(offset_lens, NUM_LITLEN_SYMS);
+            lens.0.copy_within(offset_lens, DEFLATE_NUM_LITLEN_SYMS);
         }
         Some(())
     }
@@ -692,25 +655,31 @@ impl Common {
         self.codes
             .lens
             .0
-            .get_mut(self.precode.num_litlen_syms..NUM_LITLEN_SYMS)?
+            .get_mut(self.precode.num_litlen_syms..DEFLATE_NUM_LITLEN_SYMS)?
             .fill(0);
 
         let lens = &self.codes.lens;
         let mut cost = self.huffman_header_cost();
-        for (sym, &freq) in self.freqs.litlen.iter().enumerate().take(FIRST_LEN_SYM) {
+        for (sym, &freq) in self
+            .freqs
+            .litlen
+            .iter()
+            .enumerate()
+            .take(DEFLATE_FIRST_LEN_SYM)
+        {
             cost += freq * lens.litlen(sym)?;
         }
         for (slot, &extra) in EXTRA_LENGTH_BITS.iter().enumerate() {
-            let sym = FIRST_LEN_SYM + slot;
-            cost += at(&self.freqs.litlen, sym)? * (lens.litlen(sym)? + u32::from(extra));
+            let sym = DEFLATE_FIRST_LEN_SYM + slot;
+            cost += *self.freqs.litlen.get(sym)? * (lens.litlen(sym)? + u32::from(extra));
         }
         for (sym, &extra) in EXTRA_OFFSET_BITS.iter().enumerate() {
-            cost += at(&self.freqs.offset, sym)? * (lens.offset(sym)? + u32::from(extra));
+            cost += *self.freqs.offset.get(sym)? * (lens.offset(sym)? + u32::from(extra));
         }
         Some(cost)
     }
 
-    /// Writes a block as the cheapest of the three types. `self.freqs` and `self.codes` describe `items` and the end-of-block symbol.
+    /// Writes a block as the cheapest of the three types. `self.freqs` and `self.codes` are those of `items`.
     pub(crate) fn flush_block(
         &mut self,
         os: &mut OutputBitstream<'_>,
@@ -726,26 +695,26 @@ impl Common {
 
         let freqs = &self.freqs;
         let lens = &self.codes.lens;
-        for (sym, &freq) in freqs.litlen.iter().enumerate().take(NUM_LITERALS) {
+        for (sym, &freq) in freqs.litlen.iter().enumerate().take(DEFLATE_NUM_LITERALS) {
             dynamic_cost += freq * lens.litlen(sym)?;
             static_cost += freq * if sym < 144 { 8 } else { 9 };
         }
-        dynamic_cost += lens.litlen(END_OF_BLOCK)?;
+        dynamic_cost += lens.litlen(DEFLATE_END_OF_BLOCK)?;
         static_cost += 7;
         for (slot, &extra) in EXTRA_LENGTH_BITS.iter().enumerate() {
-            let sym = FIRST_LEN_SYM + slot;
-            let (freq, extra) = (at(&freqs.litlen, sym)?, u32::from(extra));
+            let sym = DEFLATE_FIRST_LEN_SYM + slot;
+            let (freq, extra) = (*freqs.litlen.get(sym)?, u32::from(extra));
             dynamic_cost += freq * (extra + lens.litlen(sym)?);
             static_cost += freq * (extra + self.static_codes.lens.litlen(sym)?);
         }
         for (sym, &extra) in EXTRA_OFFSET_BITS.iter().enumerate() {
-            let (freq, extra) = (at(&freqs.offset, sym)?, u32::from(extra));
+            let (freq, extra) = (*freqs.offset.get(sym)?, u32::from(extra));
             dynamic_cost += freq * (extra + lens.offset(sym)?);
             static_cost += freq * (extra + 5);
         }
 
         let block_length = block.len() as u32;
-        uncompressed_cost += (0u32.wrapping_sub(os.bitcount + 3) & 7)
+        uncompressed_cost += (0u32.wrapping_sub(os.state.bitcount + 3) & 7)
             + 32
             + 40 * (block_length.div_ceil(u32::from(u16::MAX)) - 1)
             + 8 * block_length;
@@ -753,93 +722,85 @@ impl Common {
         // In a tie, uncompressed comes before static, and static before dynamic.
         let best_cost = dynamic_cost.min(static_cost).min(uncompressed_cost);
 
-        let stream = os;
-        let Some(mut writer) = stream.writer((stream.bitcount + best_cost).div_ceil(8) as usize)
+        // Nothing of a block is written unless all of it fits.
+        let Some(mut writer) = os.writer((os.state.bitcount + best_cost).div_ceil(8) as usize)
         else {
             return Some(());
         };
-        let os = &mut writer;
-
         if best_cost == uncompressed_cost {
-            // An uncompressed block holds 65535 bytes at most, so there may be several.
-            let mut chunks = block.chunks(usize::from(u16::MAX)).peekable();
-            while let Some(chunk) = chunks.next() {
-                os.put_uncompressed_block(chunk, is_final_block && chunks.peek().is_none());
-            }
-            let written = writer.finish();
-            stream.commit(written);
+            os.put_uncompressed_blocks(block, is_final_block);
             return Some(());
         }
 
         let codes = if best_cost == static_cost {
-            os.add_bits(u32::from(is_final_block), 1);
-            os.add_bits(BLOCKTYPE_STATIC_HUFFMAN, 2);
-            os.flush_bits();
+            writer.add_bits(u32::from(is_final_block), 1);
+            writer.add_bits(DEFLATE_BLOCKTYPE_STATIC_HUFFMAN, 2);
+            writer.flush_bits();
             &self.static_codes
         } else {
             let precode = &self.precode;
-            os.add_bits(u32::from(is_final_block), 1);
-            os.add_bits(BLOCKTYPE_DYNAMIC_HUFFMAN, 2);
-            os.add_bits(precode.num_litlen_syms as u32 - 257, 5);
-            os.add_bits(precode.num_offset_syms as u32 - 1, 5);
-            os.add_bits(precode.num_explicit_lens as u32 - 4, 4);
+            writer.add_bits(u32::from(is_final_block), 1);
+            writer.add_bits(DEFLATE_BLOCKTYPE_DYNAMIC_HUFFMAN, 2);
+            writer.add_bits(precode.num_litlen_syms as u32 - 257, 5);
+            writer.add_bits(precode.num_offset_syms as u32 - 1, 5);
+            writer.add_bits(precode.num_explicit_lens as u32 - 4, 4);
 
             // All the precode lengths but one fit the bit buffer at once, so the first goes with the counts.
             let mut explicit_syms = PRECODE_LENS_PERMUTATION
                 .iter()
                 .take(precode.num_explicit_lens);
-            os.add_bits(
-                u32::from(at(&precode.lens, usize::from(*explicit_syms.next()?))?),
+            writer.add_bits(
+                u32::from(*precode.lens.get(usize::from(*explicit_syms.next()?))?),
                 3,
             );
-            os.flush_bits();
+            writer.flush_bits();
             for &sym in explicit_syms {
-                os.add_bits(u32::from(at(&precode.lens, usize::from(sym))?), 3);
+                writer.add_bits(u32::from(*precode.lens.get(usize::from(sym))?), 3);
             }
-            os.flush_bits();
+            writer.flush_bits();
 
             for &item in precode.items.get(..precode.num_items)? {
                 let sym = (item & 0x1F) as usize;
-                os.add_bits(
-                    at(&precode.codewords, sym)?,
-                    u32::from(at(&precode.lens, sym)?),
+                writer.add_bits(
+                    *precode.codewords.get(sym)?,
+                    u32::from(*precode.lens.get(sym)?),
                 );
-                os.add_bits(item >> 5, u32::from(at(&EXTRA_PRECODE_BITS, sym)?));
-                os.flush_bits();
+                writer.add_bits(item >> 5, u32::from(*EXTRA_PRECODE_BITS.get(sym)?));
+                writer.flush_bits();
             }
             &self.codes
         };
 
         let length = &mut self.length;
-        for len in MIN_MATCH_LEN as usize..=MAX_MATCH_LEN as usize {
-            let slot = usize::from(at(&LENGTH_SLOT, len)?);
-            let sym = FIRST_LEN_SYM + slot;
-            let extra_bits = len as u32 - u32::from(at(&LENGTH_SLOT_BASE, slot)?);
+        for len in DEFLATE_MIN_MATCH_LEN as usize..=DEFLATE_MAX_MATCH_LEN as usize {
+            let slot = usize::from(*LENGTH_SLOT.get(len)?);
+            let sym = DEFLATE_FIRST_LEN_SYM + slot;
+            let extra_bits = len as u32 - u32::from(*LENGTH_SLOT_BASE.get(slot)?);
             let sym_len = codes.lens.litlen(sym)?;
             *length.codewords.get_mut(len)? =
-                at(&codes.litlen_codewords, sym)? | (extra_bits << sym_len);
-            *length.lens.get_mut(len)? = sym_len as u8 + at(&EXTRA_LENGTH_BITS, slot)?;
+                *codes.litlen_codewords.get(sym)? | (extra_bits << sym_len);
+            *length.lens.get_mut(len)? = sym_len as u8 + *EXTRA_LENGTH_BITS.get(slot)?;
         }
         let length = &self.length;
 
-        let add_literal = |os: &mut BitWriter<'_>, literal: usize| {
-            os.add_bits(
-                at(&codes.litlen_codewords, literal)?,
+        let add_literal = |writer: &mut BitWriter<'_>, literal: usize| {
+            writer.add_bits(
+                *codes.litlen_codewords.get(literal)?,
                 codes.lens.litlen(literal)?,
             );
             Some(())
         };
-        let write_match = |os: &mut BitWriter<'_>, len: usize, offset: u32, slot: usize| {
-            os.add_bits(
-                at(&length.codewords, len)?,
-                u32::from(at(&length.lens, len)?),
+        let write_match = |writer: &mut BitWriter<'_>, len: usize, offset: u32, slot: usize| {
+            writer.add_bits(
+                *length.codewords.get(len)?,
+                u32::from(*length.lens.get(len)?),
             );
-            os.add_bits(at(&codes.offset_codewords, slot)?, codes.lens.offset(slot)?);
-            os.add_bits(
-                offset.wrapping_sub(u32::from(at(&OFFSET_SLOT_BASE, slot)?)),
-                u32::from(at(&EXTRA_OFFSET_BITS, slot)?),
+            writer.add_bits(*codes.offset_codewords.get(slot)?, codes.lens.offset(slot)?);
+            writer.add_bits(
+                offset.wrapping_sub(u32::from(*OFFSET_SLOT_BASE.get(slot)?)),
+                u32::from(*EXTRA_OFFSET_BITS.get(slot)?),
             );
-            os.flush_bits();
+            writer.flush_bits();
             Some(())
         };
 
@@ -850,15 +811,16 @@ impl Common {
                     let item = nodes.get(cur)?.item;
                     let len = (item & OPTIMUM_LEN_MASK) as usize;
                     let offset = item >> OPTIMUM_OFFSET_SHIFT;
-                    if len == 0 {
-                        return None;
-                    }
-                    if len == 1 {
-                        add_literal(os, offset as usize)?;
-                        os.flush_bits();
-                    } else {
-                        let slot = at(offset_slot_full, offset as usize)?;
-                        write_match(os, len, offset, usize::from(slot))?;
+                    match len {
+                        0 => return None,
+                        1 => {
+                            add_literal(&mut writer, offset as usize)?;
+                            writer.flush_bits();
+                        }
+                        _ => {
+                            let slot = *offset_slot_full.get(offset as usize)?;
+                            write_match(&mut writer, len, offset, usize::from(slot))?;
+                        }
                     }
                     cur += len;
                 }
@@ -873,30 +835,34 @@ impl Common {
                     let (fours, tail) = literals.as_chunks::<4>();
                     for four in fours {
                         for &literal in four {
-                            add_literal(os, usize::from(literal))?;
+                            add_literal(&mut writer, usize::from(literal))?;
                         }
-                        os.flush_bits();
+                        writer.flush_bits();
                     }
                     if !tail.is_empty() {
                         for &literal in tail {
-                            add_literal(os, usize::from(literal))?;
+                            add_literal(&mut writer, usize::from(literal))?;
                         }
-                        os.flush_bits();
+                        writer.flush_bits();
                     }
 
                     if len == 0 {
                         break;
                     }
-                    write_match(os, len, u32::from(seq.offset), usize::from(seq.offset_slot))?;
+                    write_match(
+                        &mut writer,
+                        len,
+                        u32::from(seq.offset),
+                        usize::from(seq.offset_slot),
+                    )?;
                     rest = after.get(len..)?;
                 }
             }
         }
 
-        add_literal(os, END_OF_BLOCK)?;
-        os.flush_bits();
-        let written = writer.finish();
-        stream.commit(written);
+        add_literal(&mut writer, DEFLATE_END_OF_BLOCK)?;
+        writer.flush_bits();
+        os.state = writer.state;
         Some(())
     }
 
@@ -907,25 +873,38 @@ impl Common {
         sequences: &[Sequence],
         is_final_block: bool,
     ) -> Option<()> {
-        *self.freqs.litlen.get_mut(END_OF_BLOCK)? += 1;
+        *self.freqs.litlen.get_mut(DEFLATE_END_OF_BLOCK)? += 1;
         self.codes.make(&self.freqs)?;
         self.flush_block(os, block, Items::Sequences(sequences), is_final_block)
     }
+}
+
+/// Whether a parser keeps the statistics that say where to end a block.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GatherSplitStats {
+    Yes,
+    No,
 }
 
 /// The sequences of the block being parsed.
 struct SequenceWriter<'a> {
     sequences: &'a mut Vec<Sequence>,
     litrunlen: u32,
+    gather_split_stats: GatherSplitStats,
 }
 
 impl<'a> SequenceWriter<'a> {
-    fn begin(common: &mut Common, sequences: &'a mut Vec<Sequence>) -> Self {
+    fn begin(
+        common: &mut Common,
+        sequences: &'a mut Vec<Sequence>,
+        gather_split_stats: GatherSplitStats,
+    ) -> Self {
         common.freqs.reset();
         sequences.clear();
         Self {
             sequences,
             litrunlen: 0,
+            gather_split_stats,
         }
     }
 
@@ -935,29 +914,27 @@ impl<'a> SequenceWriter<'a> {
     }
 
     #[inline(always)]
-    fn choose_literal<const SPLIT_STATS: bool>(&mut self, common: &mut Common, literal: u8) {
+    fn choose_literal(&mut self, common: &mut Common, literal: u8) {
         if let Some(freq) = common.freqs.litlen.get_mut(usize::from(literal)) {
             *freq += 1;
         }
-        if SPLIT_STATS {
+        if self.gather_split_stats == GatherSplitStats::Yes {
             common.split_stats.observe_literal(literal);
         }
         self.litrunlen += 1;
     }
 
     #[inline(always)]
-    fn choose_match<const SPLIT_STATS: bool>(
-        &mut self,
-        common: &mut Common,
-        length: u32,
-        offset: u32,
-    ) -> Option<()> {
-        let length_slot = usize::from(at(&LENGTH_SLOT, length as usize)?);
+    fn choose_match(&mut self, common: &mut Common, Match { length, offset }: Match) -> Option<()> {
+        let length_slot = usize::from(*LENGTH_SLOT.get(length as usize)?);
         let offset_slot = get_offset_slot(offset)?;
 
-        *common.freqs.litlen.get_mut(FIRST_LEN_SYM + length_slot)? += 1;
+        *common
+            .freqs
+            .litlen
+            .get_mut(DEFLATE_FIRST_LEN_SYM + length_slot)? += 1;
         *common.freqs.offset.get_mut(offset_slot as usize)? += 1;
-        if SPLIT_STATS {
+        if self.gather_split_stats == GatherSplitStats::Yes {
             common.split_stats.observe_match(length);
         }
 
@@ -979,7 +956,7 @@ impl<'a> SequenceWriter<'a> {
 /// Matches cannot go past the end of the input.
 #[inline(always)]
 pub(crate) fn adjust_max_and_nice_len(max_len: &mut u32, nice_len: &mut u32, remaining: usize) {
-    if remaining < MAX_MATCH_LEN as usize {
+    if remaining < DEFLATE_MAX_MATCH_LEN as usize {
         *max_len = remaining as u32;
         *nice_len = (*nice_len).min(*max_len);
     }
@@ -1008,7 +985,7 @@ pub(crate) fn choose_min_match_len(num_used_literals: u32, max_search_depth: u32
 pub(crate) fn calculate_min_match_len(data: &[u8], max_search_depth: u32) -> u32 {
     // A very short input is likely to use the static codes, where short matches pay.
     if data.len() < 512 {
-        return MIN_MATCH_LEN;
+        return DEFLATE_MIN_MATCH_LEN;
     }
     let mut used = [false; 256];
     for &byte in data.iter().take(4096) {
@@ -1021,7 +998,7 @@ pub(crate) fn calculate_min_match_len(data: &[u8], max_search_depth: u32) -> u32
 }
 
 fn recalculate_min_match_len(freqs: &Freqs, max_search_depth: u32) -> u32 {
-    let literal_freqs = freqs.litlen.iter().take(NUM_LITERALS);
+    let literal_freqs = freqs.litlen.iter().take(DEFLATE_NUM_LITERALS);
     let literal_freq: u32 = literal_freqs.clone().sum();
     let cutoff = literal_freq >> 10;
     let num_used_literals = literal_freqs.filter(|&&freq| freq > cutoff).count() as u32;
@@ -1041,34 +1018,18 @@ pub(crate) fn choose_max_block_end(
     }
 }
 
-/// Level 0, and inputs too short to bother with: uncompressed blocks only.
-fn compress_none(input: &[u8], os: &mut OutputBitstream<'_>) {
-    let mut chunks = input.chunks(usize::from(u16::MAX)).peekable();
-    // An empty input still takes a block.
-    let mut next = Some(chunks.next().unwrap_or_default());
-    while let Some(chunk) = next {
-        let Some(mut writer) = os.writer(5 + chunk.len()) else {
-            return;
-        };
-        next = chunks.next();
-        writer.put_uncompressed_block(chunk, next.is_none());
-        let written = writer.finish();
-        os.commit(written);
-    }
-}
-
 /// Level 1: the longest of two candidates, and blocks of a fixed length.
 fn compress_fastest(
     common: &mut Common,
     mf: &mut HtMatchfinder,
-    sequences: &mut Vec<Sequence>,
+    seq_store: &mut Vec<Sequence>,
     input: &[u8],
     os: &mut OutputBitstream<'_>,
 ) -> Option<()> {
     let in_end = input.len();
     let mut in_next = 0;
     let mut in_cur_base = 0;
-    let mut max_len = MAX_MATCH_LEN;
+    let mut max_len = DEFLATE_MAX_MATCH_LEN;
     let mut nice_len = common.nice_match_length.min(max_len);
     let mut next_hash = 0;
 
@@ -1077,22 +1038,22 @@ fn compress_fastest(
     loop {
         let in_block_begin = in_next;
         let in_max_block_end = choose_max_block_end(in_next, in_end, FAST_SOFT_MAX_BLOCK_LENGTH);
-        let mut seq = SequenceWriter::begin(common, sequences);
+        let mut sequences = SequenceWriter::begin(common, seq_store, GatherSplitStats::No);
 
         loop {
             let remaining = in_end - in_next;
-            if remaining < MAX_MATCH_LEN as usize {
+            if remaining < DEFLATE_MAX_MATCH_LEN as usize {
                 max_len = remaining as u32;
                 if max_len < ht_matchfinder::REQUIRED_NBYTES {
                     for &literal in input.get(in_next..)? {
-                        seq.choose_literal::<false>(common, literal);
+                        sequences.choose_literal(common, literal);
                     }
                     in_next = in_end;
                     break;
                 }
                 nice_len = nice_len.min(max_len);
             }
-            let (length, offset) = mf.longest_match(
+            let found = mf.longest_match(
                 input,
                 &mut in_cur_base,
                 in_next,
@@ -1100,29 +1061,29 @@ fn compress_fastest(
                 nice_len,
                 &mut next_hash,
             )?;
-            if length != 0 {
-                seq.choose_match::<false>(common, length, offset)?;
+            if found.length != 0 {
+                sequences.choose_match(common, found)?;
                 mf.skip_bytes(
                     input,
                     &mut in_cur_base,
                     in_next + 1,
-                    length - 1,
+                    found.length - 1,
                     &mut next_hash,
                 )?;
-                in_next += length as usize;
+                in_next += found.length as usize;
             } else {
-                seq.choose_literal::<false>(common, at(input, in_next)?);
+                sequences.choose_literal(common, *input.get(in_next)?);
                 in_next += 1;
             }
 
-            if !(in_next < in_max_block_end && seq.len() < FAST_SEQ_STORE_LENGTH) {
+            if !(in_next < in_max_block_end && sequences.len() < FAST_SEQ_STORE_LENGTH) {
                 break;
             }
         }
 
         let block = input.get(in_block_begin..in_next)?;
-        common.finish_block(os, block, seq.finish(), in_next == in_end)?;
-        if in_next == in_end || os.overflow {
+        common.finish_block(os, block, sequences.finish(), in_next == in_end)?;
+        if in_next == in_end || os.overflowed() {
             return Some(());
         }
     }
@@ -1132,14 +1093,14 @@ fn compress_fastest(
 fn compress_greedy(
     common: &mut Common,
     mf: &mut HcMatchfinder,
-    sequences: &mut Vec<Sequence>,
+    seq_store: &mut Vec<Sequence>,
     input: &[u8],
     os: &mut OutputBitstream<'_>,
 ) -> Option<()> {
     let in_end = input.len();
     let mut in_next = 0;
     let mut in_cur_base = 0;
-    let mut max_len = MAX_MATCH_LEN;
+    let mut max_len = DEFLATE_MAX_MATCH_LEN;
     let mut nice_len = common.nice_match_length.min(max_len);
     let mut next_hashes = [0, 0];
     let max_search_depth = common.max_search_depth;
@@ -1151,13 +1112,13 @@ fn compress_greedy(
         let in_max_block_end = choose_max_block_end(in_next, in_end, SOFT_MAX_BLOCK_LENGTH);
 
         common.split_stats = BlockSplitStats::default();
-        let mut seq = SequenceWriter::begin(common, sequences);
+        let mut sequences = SequenceWriter::begin(common, seq_store, GatherSplitStats::Yes);
         let min_len =
             calculate_min_match_len(input.get(in_next..in_max_block_end)?, max_search_depth);
 
         loop {
             adjust_max_and_nice_len(&mut max_len, &mut nice_len, in_end - in_next);
-            let (length, offset) = mf.longest_match(
+            let found = mf.longest_match(
                 input,
                 &mut in_cur_base,
                 in_next,
@@ -1168,23 +1129,25 @@ fn compress_greedy(
                 &mut next_hashes,
             )?;
 
-            if length >= min_len && (length > MIN_MATCH_LEN || offset <= 4096) {
-                seq.choose_match::<true>(common, length, offset)?;
+            if found.length >= min_len
+                && (found.length > DEFLATE_MIN_MATCH_LEN || found.offset <= 4096)
+            {
+                sequences.choose_match(common, found)?;
                 mf.skip_bytes(
                     input,
                     &mut in_cur_base,
                     in_next + 1,
-                    length - 1,
+                    found.length - 1,
                     &mut next_hashes,
                 )?;
-                in_next += length as usize;
+                in_next += found.length as usize;
             } else {
-                seq.choose_literal::<true>(common, at(input, in_next)?);
+                sequences.choose_literal(common, *input.get(in_next)?);
                 in_next += 1;
             }
 
             if !(in_next < in_max_block_end
-                && seq.len() < SEQ_STORE_LENGTH
+                && sequences.len() < SEQ_STORE_LENGTH
                 && !common
                     .split_stats
                     .should_end_block(in_block_begin, in_next, in_end))
@@ -1194,8 +1157,8 @@ fn compress_greedy(
         }
 
         let block = input.get(in_block_begin..in_next)?;
-        common.finish_block(os, block, seq.finish(), in_next == in_end)?;
-        if in_next == in_end || os.overflow {
+        common.finish_block(os, block, sequences.finish(), in_next == in_end)?;
+        if in_next == in_end || os.overflowed() {
             return Some(());
         }
     }
@@ -1203,28 +1166,25 @@ fn compress_greedy(
 
 /// Whether a match found later is enough better than the current one to give that up for literals.
 #[inline(always)]
-fn is_better_match(cur: (u32, u32), next: (u32, u32), threshold: i32) -> Option<bool> {
-    let ((cur_len, cur_offset), (next_len, next_offset)) = (cur, next);
-    Some(
-        next_len >= cur_len
-            && 4 * (next_len - cur_len) as i32
-                + (cur_offset.checked_ilog2()? as i32 - next_offset.checked_ilog2()? as i32)
-                > threshold,
-    )
+fn is_better_match(cur: Match, next: Match, threshold: i32) -> bool {
+    // As many more leading zeros as the offset has fewer bits.
+    let offset_bits_saved = next.offset.leading_zeros() as i32 - cur.offset.leading_zeros() as i32;
+    next.length >= cur.length
+        && 4 * (next.length - cur.length) as i32 + offset_bits_saved > threshold
 }
 
 /// Levels 5 to 9: before taking a match, see whether the next position (with `LAZY2`, the next two) has a better one.
 fn compress_lazy<const LAZY2: bool>(
     common: &mut Common,
     mf: &mut HcMatchfinder,
-    sequences: &mut Vec<Sequence>,
+    seq_store: &mut Vec<Sequence>,
     input: &[u8],
     os: &mut OutputBitstream<'_>,
 ) -> Option<()> {
     let in_end = input.len();
     let mut in_next = 0;
     let mut in_cur_base = 0;
-    let mut max_len = MAX_MATCH_LEN;
+    let mut max_len = DEFLATE_MAX_MATCH_LEN;
     let mut nice_len = common.nice_match_length.min(max_len);
     let mut next_hashes = [0, 0];
     let max_search_depth = common.max_search_depth;
@@ -1237,7 +1197,7 @@ fn compress_lazy<const LAZY2: bool>(
         let mut next_recalc_min_len = in_next + (in_end - in_next).min(10000);
 
         common.split_stats = BlockSplitStats::default();
-        let mut seq = SequenceWriter::begin(common, sequences);
+        let mut sequences = SequenceWriter::begin(common, seq_store, GatherSplitStats::Yes);
         let mut min_len =
             calculate_min_match_len(input.get(in_next..in_max_block_end)?, max_search_depth);
 
@@ -1260,8 +1220,10 @@ fn compress_lazy<const LAZY2: bool>(
                     max_search_depth,
                     &mut next_hashes,
                 )?;
-                if cur.0 < min_len || (cur.0 == MIN_MATCH_LEN && cur.1 > 8192) {
-                    seq.choose_literal::<true>(common, at(input, in_next)?);
+                if cur.length < min_len
+                    || (cur.length == DEFLATE_MIN_MATCH_LEN && cur.offset > 8192)
+                {
+                    sequences.choose_literal(common, *input.get(in_next)?);
                     in_next += 1;
                     break 'item;
                 }
@@ -1269,17 +1231,16 @@ fn compress_lazy<const LAZY2: bool>(
 
                 // `cur` is a match at `in_next - 1`.
                 loop {
-                    let (cur_len, cur_offset) = cur;
-                    if cur_len >= nice_len {
-                        seq.choose_match::<true>(common, cur_len, cur_offset)?;
+                    if cur.length >= nice_len {
+                        sequences.choose_match(common, cur)?;
                         mf.skip_bytes(
                             input,
                             &mut in_cur_base,
                             in_next,
-                            cur_len - 1,
+                            cur.length - 1,
                             &mut next_hashes,
                         )?;
-                        in_next += cur_len as usize - 1;
+                        in_next += cur.length as usize - 1;
                         break 'item;
                     }
 
@@ -1289,15 +1250,15 @@ fn compress_lazy<const LAZY2: bool>(
                         input,
                         &mut in_cur_base,
                         in_next,
-                        cur_len - 1,
+                        cur.length - 1,
                         max_len,
                         nice_len,
                         max_search_depth >> 1,
                         &mut next_hashes,
                     )?;
                     in_next += 1;
-                    if is_better_match(cur, next, 2)? {
-                        seq.choose_literal::<true>(common, at(input, in_next - 2)?);
+                    if is_better_match(cur, next, 2) {
+                        sequences.choose_literal(common, *input.get(in_next - 2)?);
                         cur = next;
                         continue;
                     }
@@ -1308,47 +1269,47 @@ fn compress_lazy<const LAZY2: bool>(
                             input,
                             &mut in_cur_base,
                             in_next,
-                            cur_len - 1,
+                            cur.length - 1,
                             max_len,
                             nice_len,
                             max_search_depth >> 2,
                             &mut next_hashes,
                         )?;
                         in_next += 1;
-                        if is_better_match(cur, next, 6)? {
-                            seq.choose_literal::<true>(common, at(input, in_next - 3)?);
-                            seq.choose_literal::<true>(common, at(input, in_next - 2)?);
+                        if is_better_match(cur, next, 6) {
+                            sequences.choose_literal(common, *input.get(in_next - 3)?);
+                            sequences.choose_literal(common, *input.get(in_next - 2)?);
                             cur = next;
                             continue;
                         }
-                        seq.choose_match::<true>(common, cur_len, cur_offset)?;
-                        if cur_len > 3 {
+                        sequences.choose_match(common, cur)?;
+                        if cur.length > 3 {
                             mf.skip_bytes(
                                 input,
                                 &mut in_cur_base,
                                 in_next,
-                                cur_len - 3,
+                                cur.length - 3,
                                 &mut next_hashes,
                             )?;
-                            in_next += cur_len as usize - 3;
+                            in_next += cur.length as usize - 3;
                         }
                     } else {
-                        seq.choose_match::<true>(common, cur_len, cur_offset)?;
+                        sequences.choose_match(common, cur)?;
                         mf.skip_bytes(
                             input,
                             &mut in_cur_base,
                             in_next,
-                            cur_len - 2,
+                            cur.length - 2,
                             &mut next_hashes,
                         )?;
-                        in_next += cur_len as usize - 2;
+                        in_next += cur.length as usize - 2;
                     }
                     break 'item;
                 }
             }
 
             if !(in_next < in_max_block_end
-                && seq.len() < SEQ_STORE_LENGTH
+                && sequences.len() < SEQ_STORE_LENGTH
                 && !common
                     .split_stats
                     .should_end_block(in_block_begin, in_next, in_end))
@@ -1358,14 +1319,37 @@ fn compress_lazy<const LAZY2: bool>(
         }
 
         let block = input.get(in_block_begin..in_next)?;
-        common.finish_block(os, block, seq.finish(), in_next == in_end)?;
-        if in_next == in_end || os.overflow {
+        common.finish_block(os, block, sequences.finish(), in_next == in_end)?;
+        if in_next == in_end || os.overflowed() {
             return Some(());
         }
     }
 }
 
+/// How hard a compressor tries: 0 only stores, 1 is the fastest and 12 the slowest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Level(u8);
+
+impl Level {
+    pub const MIN: Self = Self(0);
+    pub const DEFAULT: Self = Self(6);
+    pub const MAX: Self = Self(12);
+
+    pub const fn new(level: i32) -> Option<Self> {
+        if Self::MIN.get() <= level && level <= Self::MAX.get() {
+            Some(Self(level as u8))
+        } else {
+            None
+        }
+    }
+
+    pub const fn get(self) -> i32 {
+        self.0 as i32
+    }
+}
+
 enum Parser {
+    /// Level 0, and inputs too short to bother with: uncompressed blocks only.
     None,
     Fastest(HtMatchfinder, Vec<Sequence>),
     Greedy(HcMatchfinder, Vec<Sequence>),
@@ -1374,17 +1358,16 @@ enum Parser {
     NearOptimal(Box<NearOptimal>),
 }
 
-pub(crate) struct Deflate {
-    pub(crate) level: u32,
+pub(crate) struct DeflateCompressor {
     /// Inputs up to this size are not worth trying to compress.
     max_passthrough_size: usize,
     common: Common,
     parser: Parser,
 }
 
-impl Deflate {
-    /// `None` if `level` is over 12 or there is not enough memory.
-    pub(crate) fn new(level: u32) -> Option<Box<Self>> {
+impl DeflateCompressor {
+    /// `None` if there is not enough memory.
+    pub(crate) fn new(Level(level): Level) -> Option<Box<Self>> {
         let (max_search_depth, nice_match_length) = match level {
             0 => (0, 0),
             1 => (0, 32),
@@ -1393,70 +1376,72 @@ impl Deflate {
             4 | 5 => (16, 30),
             6 => (35, 65),
             7 => (100, 130),
-            8 => (300, MAX_MATCH_LEN),
-            9 => (600, MAX_MATCH_LEN),
+            8 => (300, DEFLATE_MAX_MATCH_LEN),
+            9 => (600, DEFLATE_MAX_MATCH_LEN),
             10 => (35, 75),
             11 => (100, 150),
-            12 => (300, MAX_MATCH_LEN),
-            _ => return None,
+            _ => (300, DEFLATE_MAX_MATCH_LEN),
         };
+        let seq_store = || vec_with_capacity(SEQ_STORE_LENGTH + 1);
         let parser = match level {
             0 => Parser::None,
-            1 => Parser::Fastest(HtMatchfinder::new()?, new_vec(FAST_SEQ_STORE_LENGTH + 1)?),
-            2..=4 => Parser::Greedy(HcMatchfinder::new()?, new_vec(SEQ_STORE_LENGTH + 1)?),
-            5..=7 => Parser::Lazy(HcMatchfinder::new()?, new_vec(SEQ_STORE_LENGTH + 1)?),
-            8 | 9 => Parser::Lazy2(HcMatchfinder::new()?, new_vec(SEQ_STORE_LENGTH + 1)?),
+            1 => Parser::Fastest(
+                HtMatchfinder::new()?,
+                vec_with_capacity(FAST_SEQ_STORE_LENGTH + 1)?,
+            ),
+            2..=4 => Parser::Greedy(HcMatchfinder::new()?, seq_store()?),
+            5..=7 => Parser::Lazy(HcMatchfinder::new()?, seq_store()?),
+            8 | 9 => Parser::Lazy2(HcMatchfinder::new()?, seq_store()?),
             10 => Parser::NearOptimal(NearOptimal::new(2, 32, 32, 0)?),
             11 => Parser::NearOptimal(NearOptimal::new(4, 16, 16, 1000)?),
             _ => Parser::NearOptimal(NearOptimal::new(10, 1, 1, 10000)?),
         };
-        Some(Box::new(Self {
-            level,
-            max_passthrough_size: if level == 0 {
-                usize::MAX
-            } else {
-                55 - level as usize * 4
-            },
+        Box::try_new(Self {
+            max_passthrough_size: 55 - usize::from(level) * 4,
             common: Common::new(max_search_depth, nice_match_length)?,
             parser,
-        }))
+        })
+        .ok()
     }
 
-    /// The size of the stream written to `sink`, or `None` if it does not fit.
-    pub(crate) fn compress(&mut self, input: &[u8], sink: Sink<'_>) -> Option<usize> {
-        let mut os = OutputBitstream::new(sink);
+    /// The size of the stream written to `output`, or `None` if it does not fit.
+    pub(crate) fn compress(&mut self, input: &[u8], output: Output<'_>) -> Option<usize> {
+        let mut os = OutputBitstream::new(output);
         let common = &mut self.common;
-        match &mut self.parser {
-            _ if input.len() <= self.max_passthrough_size => compress_none(input, &mut os),
-            Parser::None => return None,
-            Parser::Fastest(mf, sequences) => {
-                compress_fastest(common, mf, sequences, input, &mut os)?
+        let parser = if input.len() <= self.max_passthrough_size {
+            &mut Parser::None
+        } else {
+            &mut self.parser
+        };
+        match parser {
+            Parser::None => os.put_uncompressed_blocks(input, true),
+            Parser::Fastest(mf, seq_store) => {
+                compress_fastest(common, mf, seq_store, input, &mut os)?
             }
-            Parser::Greedy(mf, sequences) => {
-                compress_greedy(common, mf, sequences, input, &mut os)?
+            Parser::Greedy(mf, seq_store) => {
+                compress_greedy(common, mf, seq_store, input, &mut os)?
             }
-            Parser::Lazy(mf, sequences) => {
-                compress_lazy::<false>(common, mf, sequences, input, &mut os)?
+            Parser::Lazy(mf, seq_store) => {
+                compress_lazy::<false>(common, mf, seq_store, input, &mut os)?
             }
-            Parser::Lazy2(mf, sequences) => {
-                compress_lazy::<true>(common, mf, sequences, input, &mut os)?
+            Parser::Lazy2(mf, seq_store) => {
+                compress_lazy::<true>(common, mf, seq_store, input, &mut os)?
             }
             Parser::NearOptimal(parser) => parser.compress(common, input, &mut os)?,
         }
 
-        if !os.overflow && os.bitcount != 0 {
+        if !os.overflowed() && os.state.bitcount != 0 {
             let mut writer = os.writer(1)?;
-            writer.put_byte(writer.bitbuf as u8);
-            let written = writer.finish();
-            os.commit(written);
+            writer.put_byte(writer.state.bitbuf as u8);
+            os.state = writer.state;
         }
-        (!os.overflow).then_some(os.pos)
+        (!os.overflowed()).then_some(os.state.pos)
     }
 }
 
-/// The most that [`Deflate::compress`] writes for an input of this size, at any level.
+/// The most that [`DeflateCompressor::compress`] writes for an input of this size, at any level.
 pub(crate) fn compress_bound(in_nbytes: usize) -> usize {
     // A block is never larger than it would be uncompressed, which costs five bytes for each.
     let max_blocks = in_nbytes.div_ceil(MIN_BLOCK_LENGTH).max(1);
-    5 * max_blocks + in_nbytes
+    in_nbytes.saturating_add(5 * max_blocks)
 }

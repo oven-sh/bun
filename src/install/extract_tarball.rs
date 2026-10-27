@@ -328,7 +328,7 @@ impl ExtractTarball {
                         );
                         // Only the first gzip member is read, so a tarball with more is left to `extract_to_dir`.
                         decompressed_in_memory =
-                            result.is_ok_and(|decompressed| decompressed.read == tgz_bytes.len());
+                            result.is_ok_and(|counts| counts.read == tgz_bytes.len());
                     }
                 }
             }

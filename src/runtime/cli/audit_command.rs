@@ -645,8 +645,7 @@ fn send_audit_request(
     echo_json: bool,
 ) -> Result<Result<Box<[u8]>, SkipReason>, bun_alloc::AllocError> {
     let mut compressed_body = Vec::new();
-    bun_libdeflate::Compressor::new(6)
-        .ok_or(bun_alloc::AllocError)?
+    bun_libdeflate::Compressor::new(bun_libdeflate::Level::DEFAULT)?
         .compress_to_vec(body, &mut compressed_body, bun_libdeflate::Encoding::Gzip)
         .map_err(|_| bun_alloc::AllocError)?;
 

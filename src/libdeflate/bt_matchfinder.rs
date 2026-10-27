@@ -1,4 +1,4 @@
-//! Binary trees matchfinder, for the near-optimal levels: positions whose first four bytes hash alike form a sorted tree.
+//! Binary trees matchfinder, for levels 10 to 12. Positions whose first four bytes hash alike form a sorted tree.
 
 use crate::matchfinder::{
     INITVAL, Pos, WINDOW_SIZE, load_u24, load_u32, lz_extend, lz_hash, new_table, node_pos, rebase,
@@ -11,7 +11,7 @@ const HASH4_ORDER: u32 = 16;
 /// The least `max_len` that [`BtMatchfinder::get_matches`] and [`BtMatchfinder::skip_byte`] take.
 pub(crate) const REQUIRED_NBYTES: u32 = 5;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct LzMatch {
     pub(crate) length: u16,
     pub(crate) offset: u16,
@@ -70,10 +70,9 @@ impl BtMatchfinder {
         Some(())
     }
 
-    /// Enters the position `in_base + cur_pos`. With `RECORD`, appends its matches to `matches`.
+    /// Enters the position `in_base + cur_pos`, and appends its matches to `matches` if there is one.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    fn advance_one_byte<const RECORD: bool>(
+    fn advance_one_byte(
         &mut self,
         input: &[u8],
         in_base: usize,
@@ -82,18 +81,16 @@ impl BtMatchfinder {
         nice_len: u32,
         max_search_depth: u32,
         next_hashes: &mut [u32; 2],
-        matches: &mut Vec<LzMatch>,
+        mut matches: Option<&mut Vec<LzMatch>>,
     ) -> Option<()> {
         let in_next = in_base + cur_pos;
         let mut depth_remaining = max_search_depth;
         let cutoff = cur_pos as i32 - WINDOW_SIZE as i32;
         let mut best_len = 3;
 
-        let mut record = |length: u32, match_pos: usize| {
-            matches.push(LzMatch {
-                length: length as u16,
-                offset: (in_next - match_pos) as u16,
-            });
+        let lz_match = |length: u32, match_pos: usize| LzMatch {
+            length: length as u16,
+            offset: (in_next - match_pos) as u16,
         };
 
         let next_hashseq = load_u32(input, in_next + 1)?;
@@ -108,13 +105,15 @@ impl BtMatchfinder {
         let cur_node = i32::from(ways[0]);
         let cur_node_2 = i32::from(ways[1]);
         *ways = [cur_pos as Pos, cur_node as Pos];
-        if RECORD && cur_node > cutoff {
+        if let Some(matches) = &mut matches
+            && cur_node > cutoff
+        {
             let seq3 = load_u24(input, in_next)?;
             if seq3 == load_u24(input, node_pos(in_base, cur_node))? {
-                record(3, node_pos(in_base, cur_node));
+                matches.push(lz_match(3, node_pos(in_base, cur_node)));
             } else if cur_node_2 > cutoff && seq3 == load_u24(input, node_pos(in_base, cur_node_2))?
             {
-                record(3, node_pos(in_base, cur_node_2));
+                matches.push(lz_match(3, node_pos(in_base, cur_node_2)));
             }
         }
 
@@ -140,10 +139,10 @@ impl BtMatchfinder {
 
             if input.get(match_pos + len as usize)? == input.get(in_next + len as usize)? {
                 len = lz_extend(input, in_next, match_pos, len + 1, max_len)?;
-                if !RECORD || len > best_len {
-                    if RECORD {
+                if matches.is_none() || len > best_len {
+                    if let Some(matches) = &mut matches {
                         best_len = len;
-                        record(len, match_pos);
+                        matches.push(lz_match(len, match_pos));
                     }
                     if len >= nice_len {
                         self.set_child(pending_lt, self.child(left_child(cur_node))?)?;
@@ -182,7 +181,6 @@ impl BtMatchfinder {
 
     /// Appends the matches at `in_base + cur_pos` to `matches`, each longer than the one before.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn get_matches(
         &mut self,
         input: &[u8],
@@ -194,7 +192,7 @@ impl BtMatchfinder {
         next_hashes: &mut [u32; 2],
         matches: &mut Vec<LzMatch>,
     ) -> Option<()> {
-        self.advance_one_byte::<true>(
+        self.advance_one_byte(
             input,
             in_base,
             cur_pos,
@@ -202,7 +200,7 @@ impl BtMatchfinder {
             nice_len,
             max_search_depth,
             next_hashes,
-            matches,
+            Some(matches),
         )
     }
 
@@ -216,7 +214,7 @@ impl BtMatchfinder {
         max_search_depth: u32,
         next_hashes: &mut [u32; 2],
     ) -> Option<()> {
-        self.advance_one_byte::<false>(
+        self.advance_one_byte(
             input,
             in_base,
             cur_pos,
@@ -224,7 +222,7 @@ impl BtMatchfinder {
             nice_len,
             max_search_depth,
             next_hashes,
-            &mut Vec::new(),
+            None,
         )
     }
 }

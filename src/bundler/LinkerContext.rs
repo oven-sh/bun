@@ -4568,6 +4568,7 @@ impl<'a> LinkerContext<'a> {
                 }
             };
             let source = import_records[file].as_slice()[record_index as usize].source_index;
+            // An external module can be an ES module.
             if !source.is_valid() {
                 return false;
             }

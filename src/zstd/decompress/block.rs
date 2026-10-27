@@ -844,11 +844,27 @@ impl<'a> SeqState<'a> {
     }
 
     /// Decodes sequences for as long as the start of the stream is far. Returns how many that is.
-    /// With `PREFETCH`, `history` follows the output, and what matches refer to is on its way to the cache.
+    /// With `prefetch`, `history` follows the output, and what matches refer to is on its way to the cache.
     ///
-    /// `MORE_BITS` is for when it cannot be predicted which lengths come with additional bits.
+    /// `more_bits` is for when it cannot be predicted which lengths come with additional bits.
     #[inline(never)]
-    fn decode_batch<const PREFETCH: bool, const MORE_BITS: bool>(
+    fn decode_batch(
+        &mut self,
+        prefetch: bool,
+        more_bits: bool,
+        out: &mut [RawSequence],
+        history: &mut History,
+    ) -> Result<usize> {
+        match (prefetch, more_bits) {
+            (false, false) => self.decode_batch_as::<false, false>(out, history),
+            (false, true) => self.decode_batch_as::<false, true>(out, history),
+            (true, false) => self.decode_batch_as::<true, false>(out, history),
+            (true, true) => self.decode_batch_as::<true, true>(out, history),
+        }
+    }
+
+    #[inline(always)]
+    fn decode_batch_as<const PREFETCH: bool, const MORE_BITS: bool>(
         &mut self,
         out: &mut [RawSequence],
         history: &mut History,
@@ -1515,11 +1531,7 @@ impl<'a> Executor<'_, 'a> {
                 let room = (batch.len() - 3).min(remaining - ahead.len().max(1));
                 let room = batch.span_mut(3, room)?;
                 let history = &mut self.history();
-                count = if more_bits {
-                    seq_state.decode_batch::<LONG, true>(room, history)?
-                } else {
-                    seq_state.decode_batch::<LONG, false>(room, history)?
-                };
+                count = seq_state.decode_batch(LONG, more_bits, room, history)?;
                 if count == 0
                     && can_leave
                     && let Some(bit_d) = start.set(&seq_state.bit_d)

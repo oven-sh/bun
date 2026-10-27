@@ -46,7 +46,6 @@ pub(crate) trait Cell: Copy + 'static {
     const NEXT_STATES: &'static [u64; 4 * MAX_TABLE_SIZE];
     /// The fields one after the other, from the lowest bits on.
     fn from_bits(bits: u64) -> Self;
-    fn has_additional_bits(self) -> bool;
     fn unpack(self) -> SeqSymbol;
 }
 
@@ -115,11 +114,6 @@ impl Cell for LengthCell {
             nb_additional_bits: (bits >> 48) as u8,
             nb_bits: (bits >> 56) as u8,
         }
-    }
-
-    #[inline(always)]
-    fn has_additional_bits(self) -> bool {
-        self.nb_additional_bits != 0
     }
 
     #[inline(always)]
@@ -195,11 +189,6 @@ impl Cell for OffsetCell {
     }
 
     #[inline(always)]
-    fn has_additional_bits(self) -> bool {
-        self.nb_additional_bits != 0
-    }
-
-    #[inline(always)]
     fn unpack(self) -> SeqSymbol {
         SeqSymbol {
             next_state: u16::from(self.next_state),
@@ -242,6 +231,20 @@ const fn offset_codes() -> Codes {
         left = others;
     }
     codes
+}
+
+/// `nb_additional_bits` is at the same place in cells of both kinds.
+const fn has_additional_bits(code: u64) -> bool {
+    (code >> 48) as u8 != 0
+}
+
+/// How many of 512 symbols are expected to come with additional bits in a table made from `counts`.
+fn share_with_more_bits(counts: &[i16], codes: &Codes, table_log: u32) -> u32 {
+    (counts.iter().zip(codes))
+        .filter(|&(_, &code)| has_additional_bits(code))
+        .map(|(&count, _)| u32::from(count.unsigned_abs()))
+        .sum::<u32>()
+        << (9 - table_log.min(9))
 }
 
 pub(crate) static LL_CODES: Codes = length_codes(&LL_BASE, &LL_BITS);
@@ -315,11 +318,10 @@ impl<C: Cell, const N: usize> SeqTable<C, N> {
 
     /// `ZSTD_buildSeqTable_rle`
     pub(crate) fn build_rle(&mut self, code: u64) {
-        let code = C::from_bits(code);
         self.table_log = 0;
-        self.with_more_bits = u32::from(code.has_additional_bits()) << 9;
+        self.with_more_bits = u32::from(has_additional_bits(code)) << 9;
         if let Some(cell) = self.table.first_mut() {
-            *cell = code;
+            *cell = C::from_bits(code);
         }
     }
 
@@ -335,13 +337,8 @@ impl<C: Cell, const N: usize> SeqTable<C, N> {
         let table_size = 1usize << table_log;
         let table_decode = self.table.sub_mut(..table_size)?;
         self.table_log = table_log;
-        self.with_more_bits = (spread.counts.sub(..nb_symbols)?)
-            .iter()
-            .zip(codes)
-            .filter(|&(_, &code)| C::from_bits(code).has_additional_bits())
-            .map(|(&count, _)| u32::from(count.unsigned_abs()))
-            .sum::<u32>()
-            << (9 - table_log.min(9));
+        self.with_more_bits =
+            share_with_more_bits(spread.counts.sub(..nb_symbols)?, codes, table_log);
         spread.set(nb_symbols, table_log)?;
 
         for (cell, &symbol) in table_decode.iter_mut().zip(&spread.symbols) {

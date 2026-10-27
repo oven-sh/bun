@@ -384,9 +384,10 @@ impl HufDTable {
         if !streams.0.iter().all(Stream::fits_tail) {
             return self.decode_stragglers(streams);
         }
-        self.decode_tails(streams.0)
+        self.decode_4_tails(streams)
     }
 
+    #[inline(never)]
     fn decode_most(&self, streams: &mut Streams<'_>) {
         match self.log {
             11 => streams.decode_most::<11, 5>(&self.table, 0),
@@ -433,10 +434,16 @@ impl HufDTable {
             }
             self.decode_most(&mut decoding);
         }
+        self.decode_4_tails(streams)
+    }
+
+    #[inline(never)]
+    fn decode_4_tails(&self, streams: Streams<'_>) -> bool {
         self.decode_tails(streams.0)
     }
 
     /// Decodes what is left of streams. Whether each turns out to be exactly as many symbols as its output takes.
+    #[inline(always)]
     fn decode_tails<const N: usize>(&self, mut streams: [Stream<'_>; N]) -> bool {
         let mut tails = [const { Tail::new() }; N];
         for (tail, stream) in tails.iter_mut().zip(&streams) {
@@ -753,6 +760,7 @@ impl<'a> Streams<'a> {
 
     /// Decodes for as long as no stream is close to its start and no output to its end. A lookup is of `LOG` bits, or of
     /// `64 - shift` if that is 0, and `LOOKUPS` of them are at most 55 bits.
+    #[inline(always)]
     fn decode_most<const LOG: u32, const LOOKUPS: usize>(
         &mut self,
         table: &[Entry; TABLE_SIZE],

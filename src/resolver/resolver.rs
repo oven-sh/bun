@@ -3024,17 +3024,14 @@ impl<'a> Resolver<'a> {
         reread: &mut Vec<u64>,
     ) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let dir = if bun_paths::is_absolute(import_path) {
-            bun_paths::dirname(import_path)
-        } else {
-            ResolvePath::join_abs_string_buf_checked(
-                source_dir,
-                &mut buf[..],
-                &[import_path, b".."],
-                bun_paths::Platform::AUTO,
-            )
-        };
-        let Some(dir) = dir.map(strings::without_trailing_slash_windows_path) else {
+        // The join gives an absolute specifier the separators of a cache key too.
+        let Some(dir) = ResolvePath::join_abs_string_buf_checked(
+            source_dir,
+            &mut buf[..],
+            &[import_path, b".."],
+            bun_paths::Platform::AUTO,
+        )
+        .map(strings::without_trailing_slash_windows_path) else {
             return false;
         };
         let key = bun_wyhash::hash(dir);

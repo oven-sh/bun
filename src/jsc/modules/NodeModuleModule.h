@@ -18,6 +18,8 @@ using namespace JSC;
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
+JSC_DECLARE_CUSTOM_GETTER(getterLoadFunction);
+JSC_DECLARE_CUSTOM_SETTER(setterLoadFunction);
 JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);
 

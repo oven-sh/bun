@@ -43,6 +43,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
+JSC_DECLARE_CUSTOM_GETTER(getterLoadFunction);
+JSC_DECLARE_CUSTOM_SETTER(setterLoadFunction);
 
 // This is a list of builtin module names that do not have the node prefix. It
 // also includes Bun's builtin modules, as well as Bun's thirdparty overrides.
@@ -619,6 +621,28 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
     return true;
 }
 
+// One `load` slot shared by both prototype objects, like `require` above.
+JSC_DEFINE_CUSTOM_GETTER(getterLoadFunction,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    return JSValue::encode(globalObject->getDirect(
+        globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableLoadPrivateName()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterLoadFunction,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value,
+        JSC::PropertyName propertyName))
+{
+    auto& vm = globalObject->vm();
+    globalObject->putDirect(vm,
+        WebCore::clientData(vm)->builtinNames().overridableLoadPrivateName(),
+        JSValue::decode(value), 0);
+    return true;
+}
+
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
     // See getBuiltinModulesObject for why this needs a top exception scope.
@@ -788,7 +812,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
     prototype->putDirectCustomAccessor(
         vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
@@ -797,6 +821,19 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
         0);
 
     Bun::putDirectNamed(vm, prototype, "_compile"_s, globalObject->modulePrototypeUnderscoreCompileFunction());
+
+    // This object is distinct from the instance prototype
+    // (`JSCommonJSModulePrototype`); mirror `load` and `isPreloading` here so
+    // `require("module").prototype.load` etc. match Node.
+    prototype->putDirectCustomAccessor(
+        vm, Identifier::fromString(vm, "load"_s),
+        JSC::CustomGetterSetter::create(vm, getterLoadFunction, setterLoadFunction),
+        0);
+
+    prototype->putDirectCustomAccessor(
+        vm, Identifier::fromString(vm, "isPreloading"_s),
+        JSC::CustomGetterSetter::create(vm, getterIsPreloading, nullptr),
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 
     return prototype;
 }

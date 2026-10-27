@@ -1,0 +1,235 @@
+//! `entropy_common.c`: the headers of FSE and Huffman tables.
+
+use super::fse_decompress::fse_decompress_weights;
+use super::{FSE_MIN_TABLELOG, FSE_TABLELOG_ABSOLUTE_MAX, HUF_TABLELOG_MAX};
+use crate::error::{ErrorCode, Result};
+use crate::util::{SliceExt, highbit32, read_le32};
+
+/// What [`read_ncount`] found besides the counts.
+pub(crate) struct NCount {
+    /// How many bytes of the input the header takes.
+    pub(crate) size: usize,
+    pub(crate) max_symbol_value: u32,
+    pub(crate) table_log: u32,
+}
+
+/// `FSE_readNCount`: `normalized_counter` has room for the symbols up to `max_symbol_value`.
+pub(crate) fn read_ncount(
+    normalized_counter: &mut [i16],
+    max_symbol_value: u32,
+    header: &[u8],
+) -> Result<NCount> {
+    if header.len() < 8 {
+        let mut buffer = [0u8; 8];
+        buffer.write_at(0, header)?;
+        let ncount = read_ncount(normalized_counter, max_symbol_value, &buffer)?;
+        if ncount.size > header.len() {
+            return Err(ErrorCode::CorruptionDetected);
+        }
+        return Ok(ncount);
+    }
+
+    let iend = header.len() as isize;
+    let mut ip: isize = 0;
+    let load = |ip: isize, bit_count: i32| -> Result<u32> {
+        Ok(read_le32(header, ip as usize)? >> (bit_count & 31))
+    };
+    let max_sv1 = max_symbol_value + 1;
+    let mut charnum: u32 = 0;
+    let mut previous0 = false;
+
+    normalized_counter.sub_mut(..max_sv1 as usize)?.fill(0);
+    let mut bit_stream = read_le32(header, 0)?;
+    let mut nb_bits = ((bit_stream & 0xF) + FSE_MIN_TABLELOG) as i32;
+    if nb_bits > FSE_TABLELOG_ABSOLUTE_MAX as i32 {
+        return Err(ErrorCode::TableLogTooLarge);
+    }
+    bit_stream >>= 4;
+    let mut bit_count: i32 = 4;
+    let table_log = nb_bits as u32;
+    let mut remaining: i32 = (1 << nb_bits) + 1;
+    let mut threshold: i32 = 1 << nb_bits;
+    nb_bits += 1;
+
+    loop {
+        if previous0 {
+            // Each pair of set bits stands for three more symbols of count 0.
+            let mut repeats = ((!bit_stream | 0x8000_0000).trailing_zeros() >> 1) as i32;
+            while repeats >= 12 {
+                charnum += 3 * 12;
+                if ip <= iend - 7 {
+                    ip += 3;
+                } else {
+                    bit_count -= (8 * (iend - 7 - ip)) as i32;
+                    bit_count &= 31;
+                    ip = iend - 4;
+                }
+                bit_stream = load(ip, bit_count)?;
+                repeats = ((!bit_stream | 0x8000_0000).trailing_zeros() >> 1) as i32;
+            }
+            charnum += 3 * repeats as u32;
+            bit_stream >>= 2 * repeats;
+            bit_count += 2 * repeats;
+
+            charnum += bit_stream & 3;
+            bit_count += 2;
+
+            if charnum >= max_sv1 {
+                break;
+            }
+
+            if ip <= iend - 7 || ip + (bit_count >> 3) as isize <= iend - 4 {
+                ip += (bit_count >> 3) as isize;
+                bit_count &= 7;
+            } else {
+                bit_count -= (8 * (iend - 4 - ip)) as i32;
+                bit_count &= 31;
+                ip = iend - 4;
+            }
+            bit_stream = load(ip, bit_count)?;
+        }
+        {
+            let max = (2 * threshold - 1) - remaining;
+            let mut count: i32;
+
+            if (bit_stream & (threshold - 1) as u32) < max as u32 {
+                count = (bit_stream & (threshold - 1) as u32) as i32;
+                bit_count += nb_bits - 1;
+            } else {
+                count = (bit_stream & (2 * threshold - 1) as u32) as i32;
+                if count >= threshold {
+                    count -= max;
+                }
+                bit_count += nb_bits;
+            }
+
+            // The stored value is the count plus one, and a count of -1 takes one slot.
+            count -= 1;
+            if count >= 0 {
+                remaining -= count;
+            } else {
+                remaining += count;
+            }
+            normalized_counter.put(charnum as usize, count as i16)?;
+            charnum += 1;
+            previous0 = count == 0;
+
+            if remaining < threshold {
+                if remaining <= 1 {
+                    break;
+                }
+                nb_bits = highbit32(remaining as u32) as i32 + 1;
+                threshold = 1 << (nb_bits - 1);
+            }
+            if charnum >= max_sv1 {
+                break;
+            }
+
+            if ip <= iend - 7 || ip + (bit_count >> 3) as isize <= iend - 4 {
+                ip += (bit_count >> 3) as isize;
+                bit_count &= 7;
+            } else {
+                bit_count -= (8 * (iend - 4 - ip)) as i32;
+                bit_count &= 31;
+                ip = iend - 4;
+            }
+            bit_stream = load(ip, bit_count)?;
+        }
+    }
+    if remaining != 1 {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+    if charnum > max_sv1 {
+        return Err(ErrorCode::MaxSymbolValueTooSmall);
+    }
+    if bit_count > 32 {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+    ip += ((bit_count + 7) >> 3) as isize;
+    Ok(NCount {
+        size: ip as usize,
+        max_symbol_value: charnum - 1,
+        table_log,
+    })
+}
+
+/// What [`huf_read_stats`] found besides the weights and how many symbols have each.
+pub(crate) struct HufStats {
+    /// How many bytes of the input the header takes.
+    pub(crate) size: usize,
+    pub(crate) nb_symbols: u32,
+    pub(crate) table_log: u32,
+}
+
+/// `HUF_readStats`
+pub(crate) fn huf_read_stats(
+    huff_weight: &mut [u8; 256],
+    rank_stats: &mut [u32; HUF_TABLELOG_MAX as usize + 1],
+    src: &[u8],
+) -> Result<HufStats> {
+    let Some((&first, rest)) = src.split_first() else {
+        return Err(ErrorCode::SrcSizeWrong);
+    };
+    let mut i_size = usize::from(first);
+    let o_size;
+
+    if i_size >= 128 {
+        // Not compressed: two weights to a byte.
+        o_size = i_size - 127;
+        i_size = o_size.div_ceil(2);
+        if i_size + 1 > src.len() {
+            return Err(ErrorCode::SrcSizeWrong);
+        }
+        if o_size >= huff_weight.len() {
+            return Err(ErrorCode::CorruptionDetected);
+        }
+        let (pairs, _) = huff_weight.as_chunks_mut::<2>();
+        for (pair, &byte) in pairs.iter_mut().zip(rest.sub(..i_size)?) {
+            *pair = [byte >> 4, byte & 15];
+        }
+    } else {
+        if i_size + 1 > src.len() {
+            return Err(ErrorCode::SrcSizeWrong);
+        }
+        o_size = fse_decompress_weights(huff_weight.sub_mut(..255)?, rest.sub(..i_size)?)?;
+    }
+
+    rank_stats.fill(0);
+    let mut weight_total: u32 = 0;
+    for &weight in huff_weight.sub(..o_size)? {
+        let Some(rank) = rank_stats.get_mut(usize::from(weight)) else {
+            return Err(ErrorCode::CorruptionDetected);
+        };
+        *rank += 1;
+        weight_total += (1 << weight) >> 1;
+    }
+    if weight_total == 0 {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+
+    // The last symbol's weight is not stored: it completes the total to a power of 2.
+    let table_log = highbit32(weight_total) + 1;
+    if table_log > HUF_TABLELOG_MAX {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+    let total = 1u32 << table_log;
+    let rest = total - weight_total;
+    let verif = 1u32 << highbit32(rest);
+    let last_weight = highbit32(rest) + 1;
+    if verif != rest {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+    huff_weight.put(o_size, last_weight as u8)?;
+    *rank_stats.at_mut(last_weight as usize)? += 1;
+
+    let [_, rank1, ..] = *rank_stats;
+    if rank1 < 2 || rank1 & 1 != 0 {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+
+    Ok(HufStats {
+        size: i_size + 1,
+        nb_symbols: o_size as u32 + 1,
+        table_log,
+    })
+}

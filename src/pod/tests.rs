@@ -123,6 +123,19 @@ fn vec_from_bytes_copies_from_any_address() {
 }
 
 #[test]
+fn try_zeroed_vec_is_zeros_or_none() {
+    assert_eq!(try_zeroed_vec::<u32>(5).unwrap(), [0; 5]);
+    assert_eq!(try_zeroed_vec::<[u16; 3]>(2).unwrap(), [[0; 3]; 2]);
+    assert_eq!(try_zeroed_vec::<u64>(0).unwrap().capacity(), 0);
+    assert_eq!(try_zeroed_vec::<()>(7).unwrap().len(), 7);
+    assert!(try_zeroed_vec::<u64>(usize::MAX / 8).is_none());
+    assert!(try_zeroed_vec::<u64>(usize::MAX).is_none());
+    let mut grows = try_zeroed_vec::<u8>(3).unwrap();
+    grows.extend_from_slice(&[1; 100]);
+    assert_eq!(grows.len(), 103);
+}
+
+#[test]
 fn read_prefix_takes_the_front() {
     let bytes = &BYTES.0;
     assert_eq!(

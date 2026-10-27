@@ -34,20 +34,26 @@ impl<const N: usize> Block<N> {
     };
 
     /// Bit `i` tells whether the tag of position `i` is `tag`.
-    ///
-    /// On its own, this compiles to vector comparisons. As a part of a larger function it did not.
-    #[inline(never)]
+    #[inline(always)]
     fn matching_tags(&self, tag: u8) -> u64 {
-        let mut matches = 0u64;
-        for (i, chunk) in self.tags.as_chunks::<16>().0.iter().enumerate() {
-            let mut equal_mask = 0u16;
-            for (j, &candidate) in chunk.iter().enumerate() {
-                equal_mask |= u16::from(candidate == tag) << j;
-            }
-            matches |= u64::from(equal_mask) << (16 * i);
-        }
-        matches
+        matching_tags(self.tags.as_chunks().0, tag)
     }
+}
+
+/// Bit `i` tells whether tag `i` of `tags`, which are 64 at most, is `tag`.
+///
+/// On its own, this compiles to vector comparisons. As a part of a larger function it did not.
+#[inline(never)]
+fn matching_tags(tags: &[[u8; 16]], tag: u8) -> u64 {
+    let mut matches = 0u64;
+    for (i, chunk) in tags.iter().take(4).enumerate() {
+        let mut equal_mask = 0u16;
+        for (j, &candidate) in chunk.iter().enumerate() {
+            equal_mask |= u16::from(candidate == tag) << j;
+        }
+        matches |= u64::from(equal_mask) << (16 * i);
+    }
+    matches
 }
 
 /// `x`, of which the low `N` bits are used, rotated right by `n` bits. `N` is 16 or 32.

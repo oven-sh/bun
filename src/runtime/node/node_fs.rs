@@ -3846,72 +3846,74 @@ pub(crate) mod args {
                 match &args.buffer {
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
                     StringOrBuffer::Buffer(_) | StringOrBuffer::PinnedBuffer(_) => {
-                        if current.is_undefined_or_null() || current.is_function() {
-                            break 'parse;
-                        }
-                        args.offset = u64::try_from(validators::validate_integer(
-                            ctx,
-                            current,
-                            "offset",
-                            Some(0),
-                            Some(9007199254740991),
-                        )?)
-                        .expect("infallible: validated range");
-                        arguments.eat();
-                        // Node bounds `offset` by the buffer whether or not a
-                        // `length` follows (`length` defaults to the rest).
+                        // Node reads each of the three whatever the others are. In `fs.write()` one can be the callback.
                         let buf_len = args.buffer.slice().len();
-                        let max_offset = buf_len as i64;
-                        if args.offset as i64 > max_offset {
-                            return Err(ctx.throw_range_error(
-                                bun_core::fmt::NodeNumber(args.offset as f64),
-                                bun_jsc::RangeErrorOptions {
-                                    field_name: b"offset",
-                                    max: max_offset,
-                                    ..Default::default()
-                                },
-                            ));
-                        }
-                        let Some(next) = arguments.next() else {
-                            break 'parse;
-                        };
-                        current = next;
-                        if !(current.is_number() || current.is_big_int()) {
-                            break 'parse;
-                        }
-                        let length = current.to_int64();
-                        let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
-                        if length > max_len || length < 0 {
-                            return Err(ctx.throw_range_error(
-                                bun_core::fmt::NodeNumber(length as f64),
-                                if length < 0 {
+                        let is_callback = flavor == Flavor::Async && current.is_function();
+                        if !current.is_undefined_or_null() && !is_callback {
+                            args.offset = u64::try_from(validators::validate_integer(
+                                ctx,
+                                current,
+                                "offset",
+                                Some(0),
+                                Some(9007199254740991),
+                            )?)
+                            .expect("infallible: validated range");
+                            if args.offset > buf_len as u64 {
+                                return Err(ctx.throw_range_error(
+                                    bun_core::fmt::NodeNumber(args.offset as f64),
                                     bun_jsc::RangeErrorOptions {
-                                        field_name: b"length",
-                                        min: 0,
+                                        field_name: b"offset",
+                                        max: buf_len as i64,
                                         ..Default::default()
-                                    }
-                                } else {
-                                    bun_jsc::RangeErrorOptions {
-                                        field_name: b"length",
-                                        max: max_len,
-                                        ..Default::default()
-                                    }
-                                },
-                            ));
+                                    },
+                                ));
+                            }
                         }
-                        args.length = u64::try_from(length).expect("int cast");
                         arguments.eat();
-                        let Some(next) = arguments.next() else {
+                        let Some(length_value) = arguments.next_eat() else {
                             break 'parse;
                         };
-                        current = next;
-                        if !(current.is_number() || current.is_big_int()) {
-                            break 'parse;
+                        // validateOffsetLengthWrite(offset, length, buffer.byteLength);
+                        if length_value.is_number() {
+                            let length = length_value.as_number();
+                            let max_len =
+                                ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
+                            let field_name = b"length";
+                            let expected = if length > max_len as f64 {
+                                Some(bun_jsc::RangeErrorOptions {
+                                    field_name,
+                                    max: max_len,
+                                    ..Default::default()
+                                })
+                            } else if length < 0.0 {
+                                Some(bun_jsc::RangeErrorOptions {
+                                    field_name,
+                                    min: 0,
+                                    ..Default::default()
+                                })
+                            } else if length.fract() != 0.0 {
+                                Some(bun_jsc::RangeErrorOptions {
+                                    field_name,
+                                    msg: b"an integer",
+                                    ..Default::default()
+                                })
+                            } else {
+                                None
+                            };
+                            if let Some(expected) = expected {
+                                return Err(ctx.throw_range_error(
+                                    bun_core::fmt::NodeNumber(length),
+                                    expected,
+                                ));
+                            }
+                            args.length = length as u64;
                         }
-                        if let Some(position @ 0..) = offset_from_js(current) {
+                        let Some(position_value) = arguments.next_eat() else {
+                            break 'parse;
+                        };
+                        if let Some(position @ 0..) = offset_from_js(position_value) {
                             args.position = Some(position);
                         }
-                        arguments.eat();
                     }
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {

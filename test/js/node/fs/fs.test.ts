@@ -6235,6 +6235,53 @@ it("lchown succeeds on every platform", async () => {
   }
 });
 
+// The expected files are what Node.js v26.12.1 writes.
+describe("write() reads offset, length and position whatever the others are", () => {
+  const abcd = Buffer.from("abcd");
+  const cases: [offset: any, length: any, position: any, written: number, file: string][] = [
+    [0, null, 5, 4, "01234abcd9"],
+    [0, undefined, 5, 4, "01234abcd9"],
+    [0, "2", 5, 4, "01234abcd9"],
+    [0, 2n, 5, 4, "01234abcd9"],
+    [undefined, undefined, 5, 4, "01234abcd9"],
+    [undefined, 2, 5, 2, "01234ab789"],
+    [undefined, 2, undefined, 2, "ab23456789"],
+    [undefined, 0, undefined, 0, "0123456789"],
+    [1, null, 5, 3, "01234bcd89"],
+    [{ length: null, position: 5 }, undefined, undefined, 4, "01234abcd9"],
+    // `typeof null` is "object", so it stands for the options, and the rest is not read.
+    [null, 2, 5, 4, "abcd456789"],
+  ];
+
+  async function withFile(run: (fd: number) => unknown) {
+    using dir = tempDir("fs-write-slots", { "file.txt": "0123456789" });
+    const file = join(String(dir), "file.txt");
+    const fd = fs.openSync(file, "r+");
+    try {
+      return [await run(fd), fs.readFileSync(file, "latin1")];
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  it.each(cases)("writeSync(fd, buffer, %p, %p, %p)", async (offset, length, position, written, file) => {
+    expect(await withFile(fd => fs.writeSync(fd, abcd, offset, length, position))).toEqual([written, file]);
+  });
+
+  it.each(cases)("write(fd, buffer, %p, %p, %p, callback)", async (offset, length, position, written, file) => {
+    const write = (fd: number) => promisify(fs.write)(fd, abcd, offset, length, position);
+    expect(await withFile(async fd => (await write(fd)).bytesWritten)).toEqual([written, file]);
+  });
+
+  it("writeSync() does not take a function for the offset", async () => {
+    await withFile(fd => {
+      expect(() => fs.writeSync(fd, abcd, (() => {}) as any)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
+  });
+});
+
 describe("ERR_OUT_OF_RANGE is worded as in Node.js", () => {
   const outOfRange = (name: string, range: string, received: string) =>
     expect.objectContaining({
@@ -6275,6 +6322,11 @@ describe("ERR_OUT_OF_RANGE is worded as in Node.js", () => {
       expect(() => fs.writeSync(fd, buffer, 2, 3)).toThrow(outOfRange("length", "<= 2", "3"));
       expect(() => fs.writeSync(fd, buffer, 0, 2 ** 40)).toThrow(outOfRange("length", "<= 4", "1_099_511_627_776"));
       expect(() => fs.writeSync(fd, buffer, 0, -1)).toThrow(outOfRange("length", ">= 0", "-1"));
+      expect(() => fs.writeSync(fd, buffer, 0, -1.5)).toThrow(outOfRange("length", ">= 0", "-1.5"));
+      expect(() => fs.writeSync(fd, buffer, 0, 4294967297.5)).toThrow(outOfRange("length", "<= 4", "4294967297.5"));
+      expect(() => fs.writeSync(fd, buffer, 0, Infinity)).toThrow(outOfRange("length", "<= 4", "Infinity"));
+      expect(() => fs.writeSync(fd, buffer, 0, 1.5)).toThrow(outOfRange("length", "an integer", "1.5"));
+      expect(() => fs.writeSync(fd, buffer, 0, NaN)).toThrow(outOfRange("length", "an integer", "NaN"));
     });
   });
 

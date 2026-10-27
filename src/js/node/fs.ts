@@ -511,8 +511,8 @@ var access = function access(path, mode, callback?) {
     try {
       if (types.isArrayBufferView(buffer)) {
         let offset = offsetOrOptions;
-        if (typeof offset === "object" && offset !== null) {
-          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions);
+        if (typeof offset === "object") {
+          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? {});
           return fs.writeSync(fd, buffer, offset, length, position);
         }
         return arguments.length <= 2 ? fs.writeSync(fd, buffer) : fs.writeSync(fd, buffer, offset, length, position);

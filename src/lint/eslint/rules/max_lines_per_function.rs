@@ -14,8 +14,7 @@ const EXCEED: Message = Message::new(
     "{{name}} has too many lines ({{lineCount}}). Maximum allowed is {{maxLines}}.",
 );
 
-/// ESLint's `getCommentOnlyLines`: for each line, by its number, whether it has nothing but comments
-/// and whitespace.
+/// ESLint's `getCommentOnlyLines`: for each line number, whether the line has only comments and whitespace.
 fn get_comment_only_lines<'a>(file: &'a File<'a>) -> Vec<bool> {
     let mut lines = vec![false; file.line_count() as usize + 1];
     for comment in file.comments() {
@@ -42,8 +41,8 @@ fn get_comment_only_lines<'a>(file: &'a File<'a>) -> Vec<bool> {
     lines
 }
 
-/// For each comment where it starts, and how many lines oxlint's `count_comment_lines` finds in the comments up to it:
-/// the lines that a comment has for itself. A line with two comments is a line of code.
+/// For each comment, returns its start and how many lines oxlint's `count_comment_lines` finds in the comments up to
+/// and including it. It counts the lines that a comment has to itself. A line with two comments is a line of code.
 pub(super) fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
     let mut count = 0;
     let counts = file.comments().map(|comment| {
@@ -65,7 +64,7 @@ pub(super) fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32,
     counts.collect()
 }
 
-/// Whether a line of `text` ends with something else than a `\n`.
+/// True if a line of `text` ends with anything other than `\n`.
 fn has_other_line_breaks(text: &[u8]) -> bool {
     let mut rest = text;
     while let Some(at) = strings::index_of_any(rest, b"\r\xE2") {
@@ -86,21 +85,21 @@ fn is_method(func: Func) -> bool {
     )
 }
 
-/// What is counted once in a file, when it is needed.
+/// Per-file data, computed once when it's first needed.
 #[derive(Default)]
 pub struct Counts<'a> {
-    /// The functions that are long enough to have too many lines, with what of each is counted.
+    /// The functions long enough to have too many lines, each with the span that's counted.
     candidates: Vec<(Func<'a>, Span)>,
     /// [`has_other_line_breaks`] for the file.
     has_other_line_breaks: Option<bool>,
-    /// What [`MaxLinesPerFunction::count_lines`] returns.
+    /// The result of [`MaxLinesPerFunction::count_lines`].
     lines: Option<Vec<u32>>,
-    /// What [`count_comment_lines_as_oxlint`] returns.
+    /// The result of [`count_comment_lines_as_oxlint`].
     comments: Option<Vec<(u32, u32)>>,
 }
 
 impl MaxLinesPerFunction {
-    /// For each line, and for 0, how many lines up to it count.
+    /// For each line number, and for 0, returns how many lines up to it count.
     fn count_lines<'a>(&self, file: &'a File<'a>) -> Vec<u32> {
         let comment_only_lines = match self.skips_comments && !file.language().is_oxlint {
             true => get_comment_only_lines(file),
@@ -116,7 +115,7 @@ impl MaxLinesPerFunction {
         std::iter::once(0).chain(counts).collect()
     }
 
-    /// How many line breaks there are in `span`, if they are all `\n`. If not, the lines tell.
+    /// Returns the number of line breaks in `span` if they're all `\n`. Otherwise the caller has to use the line table.
     fn count_line_breaks<'a>(span: Span, cx: &mut Cx<'a, Self>) -> Option<u32> {
         let (file, text) = (cx.file(), cx.slice(span));
         let in_file = &mut cx.state.has_other_line_breaks;
@@ -156,7 +155,8 @@ impl Rule for MaxLinesPerFunction {
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        // The last of them that has few lines. So has what is in it, which comes before it.
+        // The last candidate found to be short enough. Everything nested in it is short too, and comes before it in the
+        // list.
         let mut short = Span::default();
         for (func, span) in std::mem::take(&mut cx.state.candidates).into_iter().rev() {
             if short.contains(span) {
@@ -173,7 +173,7 @@ impl Rule for MaxLinesPerFunction {
 impl MaxLinesPerFunction {
     #[inline(never)]
     fn add_candidate<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        // For oxlint a method of a class is a function also if it has no body.
+        // For oxlint a class method is a function even if it has no body.
         let is_method_without_body = || {
             cx.language().is_oxlint
                 && is_method(func)
@@ -182,8 +182,8 @@ impl MaxLinesPerFunction {
         if !ast_utils::is_function_with_body(func) && !is_method_without_body() {
             return;
         }
-        // A method or an accessor counts from its first modifier or its name. oxlint counts from where the function starts,
-        // which is after the name of a method.
+        // A method or accessor counts from its first modifier or its name. oxlint counts from where the function
+        // starts, which is after a method's name.
         let is_oxlint = cx.language().is_oxlint;
         let span = match (func.owner(), func.kind()) {
             (Node::Member(member), _) if !is_oxlint => member.span(),
@@ -205,7 +205,7 @@ impl MaxLinesPerFunction {
         }
     }
 
-    /// `span`: what of `func` is counted. `line_breaks`: how many are in it, if that is known.
+    /// `span` is the part of `func` that's counted. `line_breaks` is how many it contains, if known.
     fn check<'a>(
         &self,
         func: Func<'a>,
@@ -243,8 +243,8 @@ impl MaxLinesPerFunction {
                 return;
             }
         }
-        // oxlint points at the function.
-        let (name, place) = match cx.language().is_oxlint {
+        // oxlint reports the whole function.
+        let (name, report_span) = match cx.language().is_oxlint {
             true => (
                 [
                     &b"The "[..],
@@ -255,15 +255,15 @@ impl MaxLinesPerFunction {
             ),
             false => {
                 let name = ast_utils::get_function_name_with_kind(func);
-                // Before ESLint 10 it is all whose lines are counted.
-                let place = match cx.language().eslint_major < 10 {
+                // Before ESLint 10, the report covers everything whose lines are counted.
+                let report_span = match cx.language().eslint_major < 10 {
                     true => span,
                     false => ast_utils::get_function_head_loc(func),
                 };
-                (text::upper_case_first(&name).into_owned(), place)
+                (text::upper_case_first(&name).into_owned(), report_span)
             }
         };
-        cx.report(place, EXCEED)
+        cx.report(report_span, EXCEED)
             .called_with(func)
             .data("name", name)
             .data("lineCount", line_count)

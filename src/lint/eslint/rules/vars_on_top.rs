@@ -13,8 +13,8 @@ fn looks_like_directive(statement: Stmt) -> bool {
     matches!(statement.kind(), StmtKind::Expr(e) if e.tag() == ExprTag::String)
 }
 
-/// Whether only variable declarations precede `node`, which is one of `statements`, after the directives and the imports
-/// if `skips_prologue`.
+/// True if only variable declarations come before `node`, one of `statements`. With `skips_prologue`, leading
+/// directives and imports don't count.
 fn is_var_on_top<'a>(node: Stmt<'a>, statements: List<'a, Stmt<'a>>, skips_prologue: bool) -> bool {
     let mut is_in_prologue = skips_prologue;
     for statement in statements {
@@ -62,17 +62,17 @@ impl Rule for VarsOnTop {
                 let skips_prologue = func.kind() != FnKind::StaticBlock;
                 is_var_on_top(statement, body, skips_prologue)
             }),
-            // Only an `export` makes ESLint look at the body of a namespace.
-            Node::Stmt(around) => match around.kind() {
-                // oxlint says nothing about it.
+            // ESLint only checks a namespace's body for an exported declaration.
+            Node::Stmt(container) => match container.kind() {
+                // oxlint doesn't report it.
                 StmtKind::Module(_) if statement.is_exported() && is_oxlint => true,
                 StmtKind::Module(module) if statement.is_exported() => {
                     is_var_on_top(statement, module.body(), true)
                 }
-                // For oxlint a block that is a statement of the body of a function has a top too.
+                // For oxlint, a block directly in a function's body has a top too.
                 StmtKind::Block(body)
                     if is_oxlint
-                        && matches!(around.parent(), Node::Func(func) if func.kind() != FnKind::StaticBlock) =>
+                        && matches!(container.parent(), Node::Func(func) if func.kind() != FnKind::StaticBlock) =>
                 {
                     is_var_on_top(statement, body, true)
                 }
@@ -83,7 +83,7 @@ impl Rule for VarsOnTop {
         if is_on_top {
             return;
         }
-        // oxlint says nothing about ambient declarations.
+        // oxlint doesn't report ambient declarations.
         if is_oxlint && cx.state.has_ambient_typescript_ancestor(statement.into()) {
             return;
         }

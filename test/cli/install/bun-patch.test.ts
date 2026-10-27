@@ -10,9 +10,11 @@ import {
   readFileSync,
   readlinkSync,
   realpathSync,
+  rmdirSync,
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
 } from "fs";
 import {
   bunEnv,
@@ -366,9 +368,9 @@ index 0000000000000000000000000000000000000000..4932cd6395b5d79049adb4736a669e22
     };
 
     const cases: Case[] = [
-      // Both members depend on the same @types/ws, so the hoisted tree has it in the root
-      // node_modules. The root does not depend on it, so the isolated linker links nothing there,
-      // and by name it is the folder in the store.
+      // Both workspaces depend on the same @types/ws, so the hoisted tree has it in the root node_modules. The root
+      // doesn't depend on it, so the isolated linker links nothing there, and looking it up by name finds the folder in
+      // the store.
       {
         name: "hoisted dependency, by path",
         layout: { shared: true },
@@ -406,7 +408,8 @@ index 0000000000000000000000000000000000000000..4932cd6395b5d79049adb4736a669e22
         version: "8.5.4",
         file: "index.d.ts",
       },
-      // The root depends on 7.4.7 and one member on 8.5.4. Run from the member; the edit adds a file.
+      // The root depends on 7.4.7 and one workspace depends on 8.5.4. The command runs in the workspace, and the edit
+      // adds a file.
       {
         name: "two versions, from a member, by path",
         layout: { root: "7.4.7" },
@@ -467,7 +470,7 @@ index 0000000000000000000000000000000000000000..4932cd6395b5d79049adb4736a669e22
         const shownFolder = cwdRelative === "." ? folder : `${root}/${folder}`;
         expect(await bunOk(cwd, env, "patch", arg)).toContain(patchMessage("@types/ws", shownFolder));
 
-        // Whatever links lead to it, the folder bun prepared is the package's folder in the store.
+        // No matter which links lead to it, the folder that Bun prepared is the package's folder in the store.
         const links = () =>
           ["node_modules/@repo/eslint-config", "packages/eslint-config/node_modules/@types/ws"].map(path =>
             lstatSync(join(String(root), path)).isSymbolicLink(),
@@ -723,7 +726,7 @@ index 0000000000000000000000000000000000000000..4932cd6395b5d79049adb4736a669e22
     expect((await Bun.file(join(String(dir), "package.json")).json()).patchedDependencies).toEqual({
       "is-odd@0.1.2": "patches/is-odd@0.1.2.patch",
     });
-    // The `.bun-tag-*` marker of the first patch is in the folder too, and stays out (#19327).
+    // The `.bun-tag-*` marker of the first patch is in the folder too, and isn't included in the patch (#19327).
     expect(await Bun.file(patchPath).text()).toBe(`diff --git a/index.js b/index.js
 index 34b9978faf31873baf7154ea8db59a1e2a13c3a2..a781bb1f3d3a10022110fa5fe12ffec39ea5cc14 100644
 --- a/index.js
@@ -1065,8 +1068,8 @@ describe.concurrent.each([
       "project": {},
     });
     const repo = join(String(dir), "gitrepo");
-    // The checkout in the cache has the links; the copies in node_modules have none, and that used
-    // to be in the patch as `deleted file mode 120000`, which no install can apply.
+    // The checkout in the cache has the symlinks, and the copies in node_modules don't. That used to end up in the
+    // patch as `deleted file mode 120000`, which no install can apply.
     if (!isWindows) {
       symlinkSync("index.js", join(repo, "main.js"));
       symlinkSync("v2", join(repo, "docs", "latest"));
@@ -1191,9 +1194,9 @@ describe.concurrent.each([
 // root alias takes the name `one-dep`, so the hoisted linker nests one-dep@1.0.0 next to the bundled copy.
 const bundledAndNested = { dependencies: { "bundled-transitive": "1.0.0", "one-dep": "npm:no-deps@2.0.0" } };
 
-// `bun patch` used to delete the package's folder and then copy it again. `bun patch --commit`
-// moves what is not part of the package out of the folder while `git diff` runs. Both exited on a
-// later failure, so the files were gone.
+// `bun patch` used to delete the package's folder and then copy it again. `bun patch --commit` moves files that aren't
+// part of the package out of the folder while `git diff` runs. Both exited if a later step failed, so the files were
+// lost.
 describe.concurrent("a step that fails leaves node_modules as it was", () => {
   // RLIMIT_FSIZE makes the copy of a file larger than the limit fail with EFBIG. pkg-to-patch needs
   // no-deps@1.0.0 and the root no-deps@2.0.0, so the hoisted linker nests the former under it.
@@ -1233,7 +1236,7 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
         "package.json",
       ]);
 
-      // 16 blocks of 512 bytes: big.js (64 KiB) does not fit.
+      // 16 blocks of 512 bytes, so big.js (64 KiB) doesn't fit.
       await using proc = Bun.spawn({
         cmd: ["sh", "-c", `ulimit -f 16 && exec "$0" patch pkg-to-patch`, bunExe()],
         cwd: dir,
@@ -1267,7 +1270,7 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
         dir,
         env,
         `error: GET ${emptyRegistry.url.href}no-deps/-/no-deps-1.0.0.tgz - 404\n` +
-          "error: no-deps is not in the cache, and getting it again failed\n",
+          "error: no-deps not in cache, re-download failed\n",
         ...command.split(" ").slice(2),
         "no-deps",
       );
@@ -1276,8 +1279,8 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
     },
   );
 
-  // The folder of a package that is patched already, bundles a dependency and has one nested under
-  // it: the marker of the first patch and the nested package are what --commit moves out.
+  // The folder of a package that's already patched, bundles a dependency and has another one nested under it. --commit
+  // moves the first patch's marker and the nested package out of the folder.
   async function commitWithPath(path: string) {
     await using project = await installedProject(bundledAndNested);
     const { dir, env } = project;
@@ -1324,10 +1327,10 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
   });
 });
 
-// `bun patch` moves the package folder aside and the copy into its place. Windows does not rename a
-// folder while a file below it is open (an editor, a dev server), and overlayfs (Docker) does not
-// rename one from a lower layer. The entries of the folder move one by one then.
-describe.concurrent("a package folder that the system does not rename", () => {
+// `bun patch` moves the package folder aside and moves the copy into its place. Windows can't rename a folder while a
+// file below it is open (by an editor or a dev server), and overlayfs (Docker) can't rename a folder from a lower
+// layer. In those cases, the folder's entries are moved one by one.
+describe.concurrent("a package folder that can't be renamed", () => {
   /** Every path in node_modules, with what it holds. */
   const state = (dir: string) =>
     tree(join(dir, "node_modules")).map(path => {
@@ -1365,10 +1368,10 @@ describe.concurrent("a package folder that the system does not rename", () => {
     },
   );
 
-  // Folders are not renamed, but for what is in a temporary folder of bun, which is new as in the
-  // upper layer of overlayfs. locked.js is neither renamed nor deleted, as a file that a Windows
-  // process opened for itself alone. With -DNO_D_TYPE a listing of what is not new does not say
-  // what is a folder, as on some FUSE and network file systems.
+  // Renaming a folder fails, except for folders inside one of Bun's temporary folders, which are new, like in the upper
+  // layer of overlayfs. locked.js can't be renamed or deleted, like a file that a Windows process has opened
+  // exclusively. With -DNO_D_TYPE, listing a folder that isn't new doesn't say which entries are folders, like on some
+  // FUSE and network file systems.
   const shimC = /* c */ `
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -1471,7 +1474,7 @@ long syscall(long number, ...) {
       expect(state(dir)).toEqual(prepared);
     });
 
-    test("a file that cannot move: the folder is whole again", async () => {
+    test("a file that can't be moved: the folder is restored completely", async () => {
       await using project = await installedProject(bundledAndNested, { linker });
       using shimDir = tempDir("bun-patch-shim", { "shim.c": shimC });
       const { dir, env } = project;
@@ -1582,7 +1585,7 @@ describe.concurrent("a commit whose patch bun install cannot apply changes nothi
 
     const { stderr, exitCode } = await runBun(dir, env, "patch", "--commit", name);
     expect(stderr).toContain("error: failed applying patch file: ");
-    expect(stderr).toContain("nothing was written");
+    expect(stderr).toContain("no changes made");
     expect(await state()).toEqual(before);
     expect(exitCode).toBe(1);
   });
@@ -1660,7 +1663,7 @@ describe.concurrent("a commit whose install is refused changes nothing", () => {
     });
 
     // No linker runs, so nothing puts the package back in the place of the copy.
-    test("--lockfile-only leaves the folder", async () => {
+    test("--lockfile-only keeps the folder", async () => {
       await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } }, { linker, globalStore });
       const { dir, env } = project;
       await bunOk(dir, env, "patch", "no-deps");
@@ -1730,7 +1733,7 @@ describe.concurrent("committing a package with every edit undone removes its pat
     expect(await state(dir)).toEqual(unpatched);
     expect([existsSync(join(dir, patchPath)), kind(dir, "node_modules", "no-deps")]).toEqual([false, link]);
 
-    // What everybody else gets.
+    // This is what everybody else gets.
     rmSync(join(dir, "node_modules"), { recursive: true, force: true });
     await bunOk(dir, env, "install");
     expect(await state(dir)).toEqual(unpatched);
@@ -1738,7 +1741,7 @@ describe.concurrent("committing a package with every edit undone removes its pat
 
   // The repository chooses the path.
   test.each(["a path with ..", "an absolute path", ...(isWindows ? [] : ["a path through a link"])])(
-    "a patch file outside the project stays: %s",
+    "a patch file outside the project is kept: %s",
     async row => {
       await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } });
       const { dir, env } = project;
@@ -1768,7 +1771,7 @@ describe.concurrent("committing a package with every edit undone removes its pat
 
   // One fix that fits two versions, kept as one file. Migrating from pnpm writes such entries.
   test.each(["patches/shared.patch", "./patches/../patches/shared.patch"])(
-    "a patch file that the entry of another version names stays: %s",
+    "a patch file that another version's entry also uses is kept: %s",
     async otherPath => {
       await using project = await installedProject({
         dependencies: { "no-deps": "1.0.0", "no-deps-2": "npm:no-deps@2.0.0" },
@@ -1794,12 +1797,12 @@ describe.concurrent("committing a package with every edit undone removes its pat
       await bunOk(dir, env, "patch", "no-deps@1.0.0");
       rmSync(join(dir, "node_modules", "no-deps", "added.js"));
       expect(await bunOk(dir, env, "patch", "--commit", "no-deps@1.0.0")).toContain(
-        "Removed the patch for no-deps@1.0.0 (another package uses patches/shared.patch)\n",
+        "Removed the patch for no-deps@1.0.0 (kept patches/shared.patch, used by another package)\n",
       );
       expect((await readPackageJson()).patchedDependencies).toEqual({ "no-deps@2.0.0": otherPath });
       expect(await readdirSorted(join(dir, "patches"))).toEqual(["shared.patch"]);
 
-      // What everybody else gets.
+      // This is what everybody else gets.
       rmSync(join(dir, "node_modules"), { recursive: true, force: true });
       await bunOk(dir, env, "install");
       expect([added("no-deps"), added("no-deps-2")]).toEqual([false, true]);
@@ -1807,7 +1810,7 @@ describe.concurrent("committing a package with every edit undone removes its pat
   );
 });
 
-describe.concurrent("--dry-run says what it would do and leaves the project as it is", () => {
+describe.concurrent("--dry-run prints what it would do and doesn't change the project", () => {
   /** Every path outside of the cache, with its inode: a file that was written again has another one. */
   const state = (dir: string) =>
     tree(dir)
@@ -1852,12 +1855,12 @@ describe.concurrent("--dry-run says what it would do and leaves the project as i
   });
 });
 
-// An install makes the files that `bin` names executable in node_modules. Unless files are hard
-// links, the cache entry that `bun patch` copies and `bun patch --commit` compares with has the
-// mode from the tarball: the commands stopped working, and a chmod by hand went into the patch.
+// An install makes the files that `bin` points to executable in node_modules. Unless files are hard links, the cache
+// entry that `bun patch` copies and that `bun patch --commit` compares with still has the mode from the tarball. So the
+// commands stopped working, and a manual chmod ended up in the patch.
 describe.concurrent("the commands of a package that is being patched", () => {
   test.skipIf(isWindows).each(["hoisted", "isolated"] as const)(
-    "run, and their mode stays out of the patch (%s linker, copyfile backend)",
+    "still run, and their mode isn't included in the patch (%s linker, copyfile backend)",
     async linker => {
       const name = "dep-with-directory-bins";
       await using tmp = tempDir("bun-patch-bins", {
@@ -1890,8 +1893,8 @@ describe.concurrent("the commands of a package that is being patched", () => {
   );
 });
 
-// The copy is the package as published: what its scripts wrote at install is not in it, and would
-// go into the patch if it were. uses-what-bin's install script writes what-bin.txt.
+// The copy is the package as published. Files that its scripts wrote during the install aren't in it, and would end up
+// in the patch if they were. uses-what-bin's install script writes what-bin.txt.
 describe.concurrent("a package with install scripts", () => {
   test.each([
     ["are trusted", ["uses-what-bin"]],
@@ -1906,9 +1909,7 @@ describe.concurrent("a package with install scripts", () => {
     const stdout = await bunOk(dir, env, "patch", "uses-what-bin");
     expect(stdout).toContain(patchMessage("uses-what-bin", "node_modules/uses-what-bin"));
     expect(stdout.split("\n").filter(line => line.includes("scripts"))).toEqual(
-      trusted
-        ? ["The install scripts of uses-what-bin have not run on this copy. They run again at bun patch --commit."]
-        : [],
+      trusted ? ["Install scripts of uses-what-bin have not run on this copy. They run on bun patch --commit."] : [],
     );
     expect(written()).toBe(false);
 
@@ -1982,7 +1983,7 @@ describe.concurrent("bun patch keeps the node_modules of the package", () => {
       await Bun.write(join(bundled, "index.js"), "module.exports = 'patched bundled dependency';\n");
       await bunOk(dir, env, "patch", "--commit", "node_modules/bundled-1");
 
-      // The two edits and nothing else: the bundled files that were not edited are not deleted.
+      // Only the two edits. The bundled files that weren't edited aren't deleted.
       const patch = await Bun.file(join(dir, "patches", "bundled-1@1.0.0.patch")).text();
       expect(patch.match(/^(diff --git|deleted file) .*$/gm)).toEqual([
         "diff --git a/index.js b/index.js",
@@ -2006,7 +2007,7 @@ describe.concurrent("bun patch keeps the node_modules of the package", () => {
 
   // The copy also skipped these two names, at every depth.
   test.each(["hoisted", "isolated"] as const)(
-    "folders named CMakeFiles and .git survive and stay out of the patch (%s linker)",
+    "folders named CMakeFiles and .git are kept and aren't included in the patch (%s linker)",
     async linker => {
       const tarball = await packTarball({
         "package.json": JSON.stringify({ name: "pkg-to-patch", version: "1.0.0" }),
@@ -2041,12 +2042,12 @@ describe.concurrent("bun patch keeps the node_modules of the package", () => {
     },
   );
 
-  test("dependencies bun nested under the package survive and stay out of the patch", async () => {
+  test("dependencies that bun nested under the package are kept and aren't included in the patch", async () => {
     await using project = await installedProject({ dependencies: { "one-dep": "1.0.0", "no-deps": "2.0.0" } });
     const { dir, env } = project;
     const nested = join(dir, "node_modules", "one-dep", "node_modules", "no-deps");
     expect(await installedVersion(nested)).toBe("1.0.1");
-    // What an install nests for a scoped dependency.
+    // This is what an install nests for a scoped dependency.
     await Bun.write(join(nested, "..", "@scope", "pkg", "package.json"), JSON.stringify({ version: "3.0.0" }));
 
     await expectPrepared(dir, env, "one-dep", "one-dep", "node_modules/one-dep");
@@ -2087,7 +2088,7 @@ describe.concurrent("bun patch keeps the node_modules of the package", () => {
   });
 
   // The dependencies that are not bundled are links next to the package in its store entry.
-  test("isolated linker: the links next to the package stay", async () => {
+  test("isolated linker: the links next to the package are kept", async () => {
     await using project = await installedProject(
       { dependencies: { "bundled-transitive": "1.0.0" } },
       { linker: "isolated" },
@@ -2115,8 +2116,7 @@ describe.concurrent("bun patch keeps the node_modules of the package", () => {
 // workspace with a directory, and read a folder that an installed package ships from the project root.
 describe.concurrent("a folder as the target", () => {
   const refusal = (name: string, what: string) =>
-    `error: cannot patch ${name}: it is ${what}, and bun install never applies a patch to one\n` +
-    "note: edit the folder itself instead\n";
+    `error: refusing to patch ${what} "${name}"\n` + "note: edit the folder directly\n";
 
   // bundled-file@2.0.0 declares "bundled-file-dep": "file:vendor/bundled-file-dep" and ships that folder.
   const shipped = join("node_modules", "bundled-file", "node_modules", "bundled-file-dep");
@@ -2139,11 +2139,11 @@ describe.concurrent("a folder as the target", () => {
     );
     const { dir, env } = project;
     expect(await shippedIndex(dir)).toBe('module.exports = "bundled-file-dep";\n');
-    await expectRefused(dir, env, refusal("bundled-file-dep", "a file: folder"), ...args);
+    await expectRefused(dir, env, refusal("bundled-file-dep", "file: folder"), ...args);
     expect(await shippedIndex(dir)).toBe('module.exports = "bundled-file-dep";\n');
   });
 
-  // The way to change such a folder: patch the package that ships it.
+  // To change such a folder, patch the package that ships it.
   test("bun patch bundled-file carries an edit to the folder it ships", async () => {
     await using project = await installedProject({ dependencies: { "bundled-file": "2.0.0" } });
     const { dir, env } = project;
@@ -2169,7 +2169,7 @@ describe.concurrent("a folder as the target", () => {
         },
       },
     );
-    await expectRefused(project.dir, project.env, refusal("bundled-file-dep", "a file: folder"), "bundled-file-dep");
+    await expectRefused(project.dir, project.env, refusal("bundled-file-dep", "file: folder"), "bundled-file-dep");
   });
 
   test("a file: dependency of the project", async () => {
@@ -2183,8 +2183,8 @@ describe.concurrent("a folder as the target", () => {
       },
     );
     const { dir, env } = project;
-    await expectRefused(dir, env, refusal("local-dep", "a file: folder"), "local-dep");
-    await expectRefused(dir, env, refusal("local-dep", "a file: folder"), "--commit", "node_modules/local-dep");
+    await expectRefused(dir, env, refusal("local-dep", "file: folder"), "local-dep");
+    await expectRefused(dir, env, refusal("local-dep", "file: folder"), "--commit", "node_modules/local-dep");
     expect(await Bun.file(join(dir, "node_modules", "local-dep", "index.js")).text()).toBe(
       'module.exports = "local-dep";\n',
     );
@@ -2201,8 +2201,8 @@ describe.concurrent("a folder as the target", () => {
       },
     );
     const { dir, env } = project;
-    await expectRefused(dir, env, refusal("member", "a workspace package"), "member");
-    await expectRefused(dir, env, refusal("member", "a workspace package"), "--commit", "node_modules/member");
+    await expectRefused(dir, env, refusal("member", "workspace package"), "member");
+    await expectRefused(dir, env, refusal("member", "workspace package"), "--commit", "node_modules/member");
     expect(kind(dir, "node_modules", "member")).toBe("link");
   });
 
@@ -2218,8 +2218,8 @@ describe.concurrent("a folder as the target", () => {
     await bunOk(join(dir, "lib"), env, "link");
     await bunOk(dir, env, "install");
 
-    await expectRefused(dir, env, refusal("lib", "a link: dependency"), "lib");
-    await expectRefused(dir, env, refusal("lib", "a link: dependency"), "--commit", "node_modules/lib");
+    await expectRefused(dir, env, refusal("lib", "link: dependency"), "lib");
+    await expectRefused(dir, env, refusal("lib", "link: dependency"), "--commit", "node_modules/lib");
     expect(kind(dir, "node_modules", "lib")).toBe("link");
   });
 });
@@ -2234,7 +2234,7 @@ describe.concurrent("a folder as the target", () => {
 // `bun patch` used to delete the bundled copy and copy the registry's package in its place.
 describe.concurrent("a bundled dependency as the target", () => {
   const refusal = (name: string) =>
-    `error: cannot patch ${name}: bun does not install it, it ships inside the tarball of a package that bundles it\n` +
+    `error: refusing to patch bundled dependency "${name}"\n` +
     "note: patch the package that bundles it, and edit it in that package's node_modules\n";
 
   // A file that only the bundled copy has shows whether `bun patch` replaced the folder.
@@ -2251,7 +2251,7 @@ describe.concurrent("a bundled dependency as the target", () => {
     ["bundled-1", "1.0.0", "no-deps", ["node_modules/bundled-1/node_modules/no-deps"]],
     ["bundled-1", "1.0.0", "no-deps", ["--commit", "no-deps"]],
     ["bundled-1", "1.0.0", "no-deps", ["--commit", "node_modules/bundled-1/node_modules/no-deps"]],
-    // It is a file: folder too. There is one message, and it is this one.
+    // It's also a file: folder. Only one message is printed, and it's this one.
     ["bundled-file", "1.0.0", "bundled-file-dep", ["bundled-file-dep"]],
     ["bundled-file", "1.0.0", "bundled-file-dep", ["node_modules/bundled-file/node_modules/bundled-file-dep"]],
     // A dependency of a bundled dependency.
@@ -2299,10 +2299,10 @@ describe.concurrent("a bundled dependency as the target", () => {
 describe.concurrent("a folder whose version is not in the lockfile as the target", () => {
   const shippedCopy = "node_modules/ships-no-deps/node_modules/no-deps";
   const notInLockfile = (command: string) =>
-    `error: cannot patch ${shippedCopy}: no-deps@1.0.0 is not in the lockfile\n` +
+    `error: cannot patch ${shippedCopy}: no-deps@1.0.0 not in lockfile\n` +
     `note: if the edits changed "version" in its package.json, run ${command} no-deps@<version in the lockfile> instead\n`;
   const needsLabel = (command: string, folder: string, name: string, version: string) =>
-    `error: cannot patch ${folder}: no npm package ${name}@${version} is in the lockfile, and the other packages named ${name} have a git, tarball or folder label. Run ${command} <dependency>@<label> with the dependency name and the label from the lockfile instead.\n`;
+    `error: cannot patch ${folder}: no npm package ${name}@${version} in lockfile. Other packages named ${name} have a git, tarball or folder label: run ${command} <dependency>@<label>\n`;
 
   test.each([
     ["one other version", { "no-deps": "2.0.0" }],
@@ -2416,7 +2416,7 @@ describe.concurrent("an npm: aliased dependency", () => {
   });
 
   // The store names the folder after the package, and only the links to it after the alias.
-  test("isolated linker: an alias that the root does not link", async () => {
+  test("isolated linker: an alias that the root doesn't link", async () => {
     await using project = await installedProject(
       { workspaces: ["packages/*"] },
       {
@@ -2498,11 +2498,11 @@ describe.concurrent("an npm: aliased dependency", () => {
     const dir = String(tmp);
     const env = projectEnv(dir);
     const install = await runBun(dir, env, "install");
-    expect(install.stderr).toStartWith('error: Invalid dependency name "a/b"\n');
+    expect(install.stderr).toStartWith('error: invalid dependency name "a/b"\n');
     expect(install.exitCode).toBe(1);
 
     const { stdout, stderr, exitCode } = await runBun(dir, env, "patch", arg);
-    expect(stderr).toStartWith('error: Invalid dependency name "a/b"\n');
+    expect(stderr).toStartWith('error: invalid dependency name "a/b"\n');
     expect(stdout).not.toContain("To patch");
     expect(existsSync(join(dir, "node_modules"))).toBe(false);
     expect(exitCode).toBe(1);
@@ -2697,7 +2697,7 @@ describe.concurrent("isolated linker: a package that the project links", () => {
 
   // A patch that adds a symlink does not apply (`bad_file_mode`). Windows is skipped: git records
   // a symlink as mode 120000 only with `core.symlinks`, which is off there by default.
-  test.skipIf(isWindows)("the edits stay when the patch does not apply", async () => {
+  test.skipIf(isWindows)("the edits are kept when the patch doesn't apply", async () => {
     await using project = await installedProject({ dependencies }, { linker: "isolated" });
     const { dir, env } = project;
     await expectPrepared(dir, env, "has-bin-entries", "has-bin-entries", folder);
@@ -2801,7 +2801,7 @@ describe.concurrent("isolated linker: a package with no folder at its hoisted pa
     // `node_modules/one-fixed-dep` is a link, so that path is inside the store entry of the dependent.
     const folder = storeFolder("no-deps@1.0.0", "no-deps");
     const nestedInDependent = join(storeFolder("one-fixed-dep@1.0.0", "one-fixed-dep"), "node_modules");
-    // The second run finds what the first one left.
+    // The second run finds what the first one left behind.
     for (const run of [1, 2]) {
       await patch(dir, env, "no-deps@1.0.0", "no-deps", folder);
       expect({ run, nested: kind(dir, nestedInDependent), link: kind(dir, "node_modules", "one-fixed-dep") }).toEqual({
@@ -2934,7 +2934,7 @@ describe.concurrent("isolated linker: a package with no folder at its hoisted pa
 describe.concurrent("the links on the way to the package folder", () => {
   // The root takes no-deps@2.0.0, so the workspace's no-deps@1.0.0 is at
   // node_modules/w/node_modules/no-deps, below the node_modules/w link.
-  test.each(["hoisted", "isolated"] as const)("a workspace link stays (%s linker)", async linker => {
+  test.each(["hoisted", "isolated"] as const)("a workspace link is kept (%s linker)", async linker => {
     await using project = await installedProject(
       { workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0", w: "workspace:*" } },
       {
@@ -2968,7 +2968,7 @@ describe.concurrent("the links on the way to the package folder", () => {
     expect(await bunOk(dir, env, "-e", `console.log(require("w"))`)).toBe("patched\n");
   });
 
-  test("a symlinked node_modules folder stays", async () => {
+  test("a symlinked node_modules folder is kept", async () => {
     await using tmp = tempDir("bun-patch-linked-node-modules", {
       "package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0" } }),
       "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
@@ -2988,9 +2988,188 @@ describe.concurrent("the links on the way to the package folder", () => {
     expect(await readdirSorted(join(dir, "real-node-modules", "no-deps"))).toEqual(["index.js", "package.json"]);
   });
 
-  // A link that `publicHoistPattern` made stays when the pattern goes. The hoisted tree has
-  // no-deps@1.0.0 at `node_modules/no-deps`, and the link there leads to no-deps@1.0.1.
-  test("isolated linker: a link at the hoisted path that leads to another version is not followed", async () => {
+  // `bun link <name>` puts a link to a checkout at node_modules/<name>. package.json and the lockfile keep the version
+  // from the registry, so `bun patch` takes the package. It used to replace the checkout with the copy.
+  describe("a link from bun link", () => {
+    /** `app` with `dependencies` installed, where `bun link` then put a link to the checkout at `at` over `name`. */
+    async function linkedProject(
+      linker: Linker,
+      dependencies: Record<string, string>,
+      {
+        name,
+        version,
+        files = {},
+        at = "checkout",
+      }: { name: string; version: string; files?: DirectoryTree; at?: string },
+    ) {
+      const tmp = tempDir("bun-patch-bun-link", {
+        app: {
+          "package.json": JSON.stringify({ name: "app", dependencies }),
+          "bunfig.toml": `[install]\nlinker = "${linker}"\nglobalStore = false\n`,
+        },
+        [at]: {
+          ".git": { HEAD: "ref: refs/heads/main\n" },
+          "package.json": JSON.stringify({ name, version }),
+          "index.js": "module.exports = 'checkout';\n",
+          "uncommitted.txt": "work in progress\n",
+          ...files,
+        },
+      });
+      const dir = join(String(tmp), "app");
+      const checkout = join(String(tmp), at);
+      const env = { ...projectEnv(dir), BUN_INSTALL_GLOBAL_DIR: join(String(tmp), "global") };
+      await bunOk(dir, env, "install");
+      await bunOk(checkout, env, "link");
+      await bunOk(dir, env, "link", name);
+      const link = join(dir, "node_modules", name);
+      expect([kind(link), realpathSync(link)]).toEqual(["link", checkout]);
+      return {
+        dir,
+        env,
+        checkout,
+        link,
+        /** The names next to the project, and each path in the checkout with the contents of the files. */
+        outside: () => ({
+          siblings: readdirSync(String(tmp)).sort(),
+          checkout: tree(checkout).map(path =>
+            kind(checkout, path) === "file" ? `${path}: ${readFileSync(join(checkout, path), "utf8")}` : path,
+          ),
+        }),
+        [Symbol.asyncDispose]: () => tmp[Symbol.asyncDispose](),
+      };
+    }
+    const noDeps = { name: "no-deps", version: "1.1.0" };
+    const insideNodeModules = { ...noDeps, at: "app/node_modules/.vendor/no-deps" };
+    const refusal = (folder: string, real: string, note: string) =>
+      `error: refusing to patch ${folder}: resolves to ${real}, which bun install does not manage\nnote: ${note}\n`;
+
+    test.each([
+      ["no-deps", noDeps],
+      ["node_modules/no-deps", noDeps],
+      ["@types/is-number", { name: "@types/is-number", version: "1.0.0" }],
+      ["no-deps", insideNodeModules],
+    ])("bun patch %s replaces the link and keeps the checkout %j", async (arg, pkg) => {
+      await using project = await linkedProject("hoisted", { [pkg.name]: pkg.version }, pkg);
+      const { dir, env, link, outside } = project;
+      const before = outside();
+
+      await expectPrepared(dir, env, arg, pkg.name, `node_modules/${pkg.name}`);
+      expect({ copy: kind(link), files: tree(link), outside: outside() }).toEqual({
+        copy: "directory",
+        files: ["index.js", "package.json"],
+        outside: before,
+      });
+
+      await Bun.write(join(link, "index.js"), patched);
+      await bunOk(dir, env, "patch", "--commit", arg);
+      expect(Object.keys((await Bun.file(join(dir, "package.json")).json()).patchedDependencies)).toEqual([
+        `${pkg.name}@${pkg.version}`,
+      ]);
+      expect(await bunOk(dir, env, "-e", `console.log(require("${pkg.name}"))`)).toBe("patched\n");
+      expect(outside()).toEqual(before);
+    });
+
+    // The install that `bun patch` starts with puts the link to the store back.
+    test("isolated linker: bun patch keeps the checkout", async () => {
+      await using project = await linkedProject("isolated", { "no-deps": "1.1.0" }, noDeps);
+      const { dir, env, link, outside } = project;
+      const before = outside();
+
+      await expectPrepared(dir, env, "no-deps", "no-deps", "node_modules/no-deps");
+      expect({ link: realpathSync(link), outside: outside() }).toEqual({
+        link: join(dir, storeFolder("no-deps@1.1.0", "no-deps")),
+        outside: before,
+      });
+    });
+
+    // The diff moves files in and out of the folder, and puts its scratch folders next to it.
+    test.each([
+      ["hoisted", "no-deps", noDeps],
+      ["hoisted", "node_modules/no-deps", noDeps],
+      ["isolated", "node_modules/no-deps", noDeps],
+      ["hoisted", "no-deps", insideNodeModules],
+    ] as const)("%s linker: --commit %s without bun patch is refused %j", async (linker, arg, pkg) => {
+      await using project = await linkedProject(linker, { "no-deps": "1.1.0" }, pkg);
+      const { dir, env, checkout, link, outside } = project;
+      const before = outside();
+
+      const note = "run bun patch on the package first to create an editable copy";
+      await expectRefused(dir, env, refusal("node_modules/no-deps", checkout, note), "--commit", arg);
+      expect({ link: kind(link), outside: outside() }).toEqual({ link: "link", outside: before });
+    });
+
+    // The root takes no-deps@2.0.0, so the hoisted tree has no-deps@1.0.0 below the link.
+    test.each(["no-deps@1.0.0", "node_modules/one-fixed-dep/node_modules/no-deps"])(
+      "bun patch %s below the link is refused",
+      async arg => {
+        await using project = await linkedProject(
+          "hoisted",
+          { "no-deps": "2.0.0", "one-fixed-dep": "1.0.0" },
+          {
+            name: "one-fixed-dep",
+            version: "1.0.0",
+            files: {
+              "node_modules/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+              "node_modules/no-deps/not-in-the-package.txt": "",
+            },
+          },
+        );
+        const { dir, env, checkout, link, outside } = project;
+        const before = outside();
+        const folder = "node_modules/one-fixed-dep/node_modules/no-deps";
+        const message = refusal(
+          folder,
+          join(checkout, "node_modules", "no-deps"),
+          "remove the symlink that leads there, run bun install and patch the package again",
+        );
+
+        await expectRefused(dir, env, message, arg);
+        await expectRefused(dir, env, message, "--commit", arg);
+        expect({ link: kind(link), outside: outside() }).toEqual({ link: "link", outside: before });
+
+        // On Windows the link is a junction, which only rmdir removes.
+        if (isWindows) rmdirSync(link);
+        else unlinkSync(link);
+        await bunOk(dir, env, "install");
+        await expectPrepared(dir, env, arg, "no-deps", folder);
+        expect(outside()).toEqual(before);
+      },
+    );
+  });
+
+  // No link on the way leaves the node_modules that the path starts in.
+  test.each([
+    ["hoisted", "nested/node_modules/no-deps"],
+    ["isolated", "nested/node_modules/no-deps"],
+    ["hoisted", "node_modules/../nested/node_modules/no-deps"],
+  ] as const)(
+    "a path into the node_modules of a nested project that isn't a workspace (%s linker, %s)",
+    async (linker, folder) => {
+      await using project = await installedProject(
+        { dependencies: { "no-deps": "1.1.0" } },
+        {
+          files: {
+            "nested/package.json": JSON.stringify({ name: "nested", dependencies: { "no-deps": "1.1.0" } }),
+            "nested/bunfig.toml": `[install]\nlinker = "${linker}"\nglobalStore = false\n`,
+          },
+        },
+      );
+      const { dir, env } = project;
+      await bunOk(join(dir, "nested"), env, "install");
+      expect(kind(dir, folder)).toBe(linker === "hoisted" ? "directory" : "link");
+
+      await expectPrepared(dir, env, folder, "no-deps", folder);
+      await Bun.write(join(dir, folder, "index.js"), patched);
+      await bunOk(dir, env, "patch", "--commit", folder);
+      expect(await Bun.file(join(dir, "patches", "no-deps@1.1.0.patch")).text()).toContain(
+        "+module.exports = 'patched';",
+      );
+    },
+  );
+
+  // A link that `publicHoistPattern` created isn't removed when the pattern is. The hoisted tree has no-deps@1.0.0 at
+  // `node_modules/no-deps`, and the link there points to no-deps@1.0.1.
+  test("isolated linker: a link at the hoisted path that points to another version isn't followed", async () => {
     const bunfig = (rest: string) => `[install]\nlinker = "isolated"\n${rest}`;
     await using project = await installedProject(
       { dependencies: { z: "npm:one-dep@1.0.0" } },
@@ -3080,7 +3259,7 @@ describe.concurrent("isolated linker with the global store", () => {
       expect(await bunOk(dir, env, "-e", `console.log(require("two-range-deps"))`)).toBe("patched\n");
       expect(shared(dir)).toEqual(before);
 
-      // The copy used to stay for good, and from there the package loads the root's no-deps@2.0.0.
+      // The copy used to stay there forever, and from there the package loads the root's no-deps@2.0.0.
       const loadsNoDeps = `const from = require("path").dirname(require.resolve("two-range-deps"));
         console.log(require(require.resolve("no-deps/package.json", { paths: [from] })).version);`;
       expect([kind(folder), await bunOk(dir, env, "-e", loadsNoDeps)]).toEqual(["link", "1.1.0\n"]);
@@ -3090,7 +3269,7 @@ describe.concurrent("isolated linker with the global store", () => {
   );
 
   // A patch that adds a symlink does not apply. Windows is skipped as in the test without the global store.
-  test.skipIf(isWindows)("the copy stays when the patch does not apply", async () => {
+  test.skipIf(isWindows)("the copy is kept when the patch doesn't apply", async () => {
     await using project = await twoVersions();
     const { dir, env } = project;
     const folder = join(dir, "node_modules", "two-range-deps");
@@ -3103,8 +3282,8 @@ describe.concurrent("isolated linker with the global store", () => {
     expect(commit.exitCode).toBe(1);
   });
 
-  // In the store the links to its dependencies stand next to the package. From the copy it found
-  // the root's no-deps@2.0.0, and a dependency that the root does not have not at all.
+  // In the store, the links to a package's dependencies are next to the package. From the copy, it found the root's
+  // no-deps@2.0.0 instead, and couldn't find a dependency that the root doesn't have.
   test("the copy loads the dependencies that the package has in the store", async () => {
     await using project = await twoVersions();
     const { dir, env } = project;
@@ -3147,7 +3326,7 @@ describe.concurrent("isolated linker with the global store", () => {
     expect(stdout).toContain(patchMessage("no-deps", "node_modules/no-deps"));
     // one-fixed-dep is in the store, where its link to no-deps cannot lead to the copy.
     expect(stdout).toContain(
-      "The packages that depend on no-deps load it from the global store. They see your changes after bun patch --commit.\n",
+      "Dependents of no-deps load it from the global store and will not see changes until bun patch --commit.\n",
     );
     await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), patched);
     await bunOk(dir, env, "install");
@@ -3171,7 +3350,7 @@ describe.concurrent("isolated linker with the global store", () => {
 
   // bun.lock puts nothing at the hoisted path, so `bun prune` took the copy for a package that is
   // left over and deleted it with the edits.
-  test("bun prune leaves the copy of a transitive dependency", async () => {
+  test("bun prune keeps the copy of a transitive dependency", async () => {
     await using project = await installedProject(
       { dependencies: { "one-fixed-dep": "1.0.0" } },
       { linker: "isolated", globalStore: true },
@@ -3181,7 +3360,7 @@ describe.concurrent("isolated linker with the global store", () => {
     await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), patched);
     expect(await bunOk(dir, env, "prune", "--check")).toContain("(nothing to prune)");
 
-    // A folder with a package that the lockfile does not have still goes.
+    // A folder with a package that isn't in the lockfile is still removed.
     await Bun.write(join(dir, "node_modules", "stray", "package.json"), `{ "name": "stray", "version": "1.0.0" }`);
     expect(await bunOk(dir, env, "prune")).toMatch(/- stray@1\.0\.0\s+1 package removed/);
     expect(await readdirSorted(join(dir, "node_modules"))).toEqual([".bun", "no-deps", "one-fixed-dep"]);
@@ -3195,9 +3374,9 @@ describe.concurrent("isolated linker with the global store", () => {
   });
 
   const refusal = (folder: string, commit: boolean) =>
-    `error: ${folder} resolves into the global store, which other projects share; refusing to patch through it\n` +
+    `error: refusing to patch ${folder}: resolves into the shared global store\n` +
     (commit
-      ? "note: run bun patch on the package first, it makes the copy to edit\n"
+      ? "note: run bun patch on the package first to create an editable copy\n"
       : "note: set globalStore = false under [install] in bunfig.toml, run bun install and patch the package again\n");
 
   // None of these has a link of the project's own as its last part.
@@ -3241,7 +3420,7 @@ describe.concurrent("isolated linker with the global store", () => {
 // marker to decide whether the folder already has the patch applied, so every copy of a patched
 // package has one. `bun patch --commit` diffs the folder against the pristine package, and the
 // marker must stay out of that diff.
-describe.concurrent("what bun patch --commit writes", () => {
+describe.concurrent("the patch that bun patch --commit writes", () => {
   /** basic-1@1.0.0 installed, and a copy of it as installed before any patch in pristine/. */
   async function createProject(linker: Linker) {
     const project = await installedProject({ dependencies: { "basic-1": "1.0.0" } }, { linker });
@@ -3378,15 +3557,15 @@ describe.concurrent("what bun patch --commit writes", () => {
     expect(await Bun.file(join(locales, "café.json")).text()).toBe('{"a":2}\n');
   });
 
-  // The folders are part of every path that git prints, so git used to quote all of them. A path
-  // with a `"`, a tab or a `\` in it is quoted whatever the settings; a Windows path has none of
-  // them. `bun patch` also made its copy in another folder, with a `/` for the `\`.
+  // The folders are part of every path that git prints, so git used to quote all of them. A path with a `"`, a tab or a
+  // `\` in it is quoted regardless of the settings, and a Windows path can't contain any of those. `bun patch` also
+  // made its copy in a different folder, with a `/` instead of the `\`.
   test.each(["josé", ...(isWindows ? [] : ['q"q', "q\tq", "q\\q"])])("a project folder named %j", async name => {
     using tmp = tempDir(`bun-patch-${name}`, {
       "package.json": JSON.stringify({ name: "root", dependencies: { "basic-1": "1.0.0" } }),
     });
     const dir = String(tmp);
-    // bun reads a `\` in BUN_INSTALL_CACHE_DIR as a `/`: that cache would be outside of `tmp`.
+    // Bun reads a `\` in BUN_INSTALL_CACHE_DIR as a `/`, so that cache would be outside of `tmp`.
     using cache = tempDir("bun-patch-cache", {});
     const env = projectEnv(dir, name.includes("\\") ? String(cache) : undefined);
     await bunOk(dir, env, "install");
@@ -3414,9 +3593,9 @@ describe.concurrent("what bun patch --commit writes", () => {
     expect(await gitApplyCheck(dir, patchPath)).toEqual({ stderr: "", exitCode: 0 });
   });
 
-  // A `color.ui = always` or a `diff.noprefix` in /etc/gitconfig used to end up in the patch: the
-  // variables that turn the config files off were passed as bare names, without `=value`.
-  // The git that shows its environment is a shell script.
+  // A `color.ui = always` or a `diff.noprefix` in /etc/gitconfig used to end up in the patch, because the variables
+  // that turn the config files off were passed as bare names, without `=value`. The git that prints its environment is
+  // a shell script.
   test.skipIf(isWindows)("git runs without the config of the machine and of the user", async () => {
     await using project = await createProject("hoisted");
     const { dir, env } = project;
@@ -3436,8 +3615,8 @@ describe.concurrent("what bun patch --commit writes", () => {
     });
   });
 
-  // With over 1000 files deleted and 1000 added, git stops looking for renames: it prints the whole
-  // patch, and says so on stderr. The git that warns is a shell script.
+  // With more than 1000 files deleted and 1000 added, git stops looking for renames. It prints the whole patch and a
+  // warning on stderr. The git that prints the warning is a shell script.
   test.skipIf(isWindows)("a warning from git does not fail the commit", async () => {
     await using project = await createProject("hoisted");
     const { dir, env } = project;
@@ -3521,7 +3700,7 @@ describe.concurrent("what bun patch --commit writes", () => {
       await expectRefused(
         dir,
         env,
-        `error: a patch cannot hold a change to a binary file, and git found these in ${folder}:\n` +
+        `error: patches cannot contain binary file changes. found in ${folder}:\n` +
           "  Binary files /dev/null and b/added.bin differ\n" +
           "  Binary files a/data.bin and b/data.bin differ\n" +
           "note: undo the changes to these files, then commit again\n",
@@ -3540,7 +3719,7 @@ describe.concurrent("what bun patch --commit writes", () => {
   );
 });
 
-describe.concurrent("a patch file that is not there", () => {
+describe.concurrent("a missing patch file", () => {
   const indexJs = (dir: string, name: string) => join(dir, "node_modules", name, "index.js");
   const commitEdit = async (dir: string, env: Env, name: string, edited: string) => {
     await Bun.write(indexJs(dir, name), edited);
@@ -3561,18 +3740,18 @@ describe.concurrent("a patch file that is not there", () => {
     return project;
   }
 
-  test("bun install names the command that writes it again", async () => {
+  test("bun install suggests the command that recreates it", async () => {
     await using project = await withoutPatchFiles(["basic-1"]);
     const { stderr, exitCode } = await runBun(project.dir, project.env, "install");
     expect(stderr).toEndWith(
-      "error: Couldn't find patch file: 'patches/basic-1@1.0.0.patch'\n\n" +
-        "To write it again from the patched package in node_modules, run:\n\n  bun patch --commit basic-1@1.0.0\n\n" +
-        'To install the package without a patch, remove "basic-1@1.0.0" from "patchedDependencies" in package.json\n',
+      "error: patch file not found: 'patches/basic-1@1.0.0.patch'\n\n" +
+        "To recreate it from the patched package in node_modules, run:\n\n  bun patch --commit basic-1@1.0.0\n\n" +
+        'To install without the patch, remove "basic-1@1.0.0" from "patchedDependencies" in package.json\n',
     );
     expect(exitCode).toBe(1);
   });
 
-  test("a --commit of the package's own text takes the entry out of package.json", async () => {
+  test("committing the unmodified package removes the entry from package.json", async () => {
     await using project = await withoutPatchFiles(["basic-1"]);
     const { dir, env } = project;
     rmSync(indexJs(dir, "basic-1"));
@@ -3584,10 +3763,10 @@ describe.concurrent("a patch file that is not there", () => {
     await bunOk(dir, env, "install");
   });
 
-  // The patched folder may be the last copy of the change. `bun patch` laid the unpatched package
-  // over it, and with the global store so did `bun patch` and `bun patch --commit` of another package.
+  // The patched folder may be the only copy of the change. `bun patch` used to overwrite it with the unpatched package.
+  // With the global store, so did `bun patch` and `bun patch --commit` of a different package.
   test.each(layouts)(
-    "bun patch leaves the patched folders alone, and --commit writes the files again (%s linker, globalStore = %p)",
+    "bun patch doesn't touch the patched folders, and --commit writes the files again (%s linker, globalStore = %p)",
     async (linker, globalStore) => {
       await using project = await withoutPatchFiles(["basic-1", "no-deps"], linker, globalStore);
       const { dir, env } = project;
@@ -3608,21 +3787,21 @@ describe.concurrent("a patch file that is not there", () => {
       };
 
       const { stdout, stderr, exitCode } = await runBun(dir, env, "patch", "basic-1@1.0.0");
-      expect(stderr).toContain("error: Couldn't find patch file: 'patches/");
+      expect(stderr).toContain("error: patch file not found: 'patches/");
       expect(stdout).not.toContain("To patch");
       expect(await state()).toEqual(bothPatched);
       expect(exitCode).toBe(1);
 
       // The file of no-deps is still lost. That stops the install, not the commit.
       const first = await runBun(dir, env, "patch", "--commit", "basic-1");
-      expect(first.stderr).toContain("error: Couldn't find patch file: 'patches/no-deps@1.0.0.patch'\n");
-      expect(first.stderr).toEndWith("note: patches/basic-1@1.0.0.patch was written, and the install did not run\n");
+      expect(first.stderr).toContain("error: patch file not found: 'patches/no-deps@1.0.0.patch'\n");
+      expect(first.stderr).toEndWith("note: wrote patches/basic-1@1.0.0.patch, install did not run\n");
       expect(await state()).toEqual(bothPatched);
       expect(await readdirSorted(join(dir, "patches"))).toEqual(["basic-1@1.0.0.patch"]);
       expect(first.exitCode).toBe(1);
 
       const other = await runBun(dir, env, "patch", "basic-1");
-      expect(other.stderr).toContain("error: Couldn't find patch file: 'patches/no-deps@1.0.0.patch'\n");
+      expect(other.stderr).toContain("error: patch file not found: 'patches/no-deps@1.0.0.patch'\n");
       expect(await state()).toEqual(bothPatched);
       expect(other.exitCode).toBe(1);
 
@@ -3653,7 +3832,7 @@ describe.concurrent("--patches-dir with an absolute path", () => {
     return (await Bun.file(join(dir, "package.json")).json()).patchedDependencies;
   }
 
-  test("inside the project: package.json gets the path from the project", async () => {
+  test("inside the project: package.json gets the path relative to the project", async () => {
     await using project = await installedProject({ dependencies: { "basic-1": "1.0.0" } });
     expect(await commitTo(project.dir, project.env, join(project.dir, "my", "patches"))).toEqual({
       "basic-1@1.0.0": "my/patches/basic-1@1.0.0.patch",

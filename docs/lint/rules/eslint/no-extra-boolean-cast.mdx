@@ -14,7 +14,7 @@ deprecated: false
 
 The test of an `if`, a loop or a `? :`, the operand of `!`, and the argument of `Boolean()` are already converted to a boolean. Writing `!!value` or `Boolean(value)` there converts twice and gives the same result.
 
-`--fix` removes the cast.
+`--fix` removes the cast. In a TypeScript file, it leaves the test of an `if` or a `? :` alone if the file shows that the value is a function, a promise or an enum member. TypeScript rejects `if (callback)` when `callback` is always defined, and `if (!!callback)` is how people tell it they mean it. `--fix-dangerously` removes those casts too.
 
 This rule is on by default.
 

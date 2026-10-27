@@ -1,4 +1,4 @@
-//! oxlint's `utils/unicorn.rs`, on the handles. Each function has the name that it has there.
+//! oxlint's `utils/unicorn.rs`, ported to the AST handles. Each function keeps its oxlint name.
 
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -22,26 +22,26 @@ pub(crate) fn is_empty_stmt(stmt: Stmt) -> bool {
     true
 }
 
-/// `[...a]`, not in parentheses.
+/// `[...a]`, not parenthesized.
 pub(crate) fn is_array_of_one_spread(e: Expr) -> bool {
     !e.is_parenthesized()
         && matches!(e.kind(), ExprKind::Array(elements)
             if elements.len() == 1 && elements.first().is_some_and(|it| it.tag() == ExprTag::Spread))
 }
 
-/// `e;`: the parent is an `ExpressionStatement`, or the `ChainExpression` that is all of one.
+/// `e;`: the parent is an `ExpressionStatement`, or a `ChainExpression` that's the whole statement.
 pub(crate) fn is_expression_statement(e: Expr) -> bool {
     !e.is_parenthesized()
         && matches!(e.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::Expr)
 }
 
-/// What `get_inner_expression()` leads to `e` from, the outermost: `(e as T)!`. `None`: `e` is the whole of an optional
-/// chain, which it does not look into.
+/// The outermost expression that `get_inner_expression()` unwraps to `e`, such as `(e as T)!`. `None` if `e` is a whole
+/// optional chain, which `get_inner_expression()` doesn't look into.
 pub(crate) fn outermost_wrapper(e: Expr<'_>) -> Option<Expr<'_>> {
     outermost_wrapper_and_parent(e).map(|it| it.0)
 }
 
-/// [`outermost_wrapper`], and what that is directly part of.
+/// [`outermost_wrapper`], and that wrapper's parent.
 pub(crate) fn outermost_wrapper_and_parent(e: Expr<'_>) -> Option<(Expr<'_>, Node<'_>)> {
     let mut at = e;
     loop {
@@ -75,8 +75,8 @@ fn is_boolean_call(e: Expr) -> bool {
     })
 }
 
-/// Whether the parent of the parent of `node` is `Boolean(..)`, as oxlint counts parents: parentheses and the
-/// `ChainExpression` around an optional chain are some. So not `Boolean(node)`, but `Boolean((node))`,
+/// True if `node`'s grandparent is `Boolean(..)`, counting parents the way oxlint does: parentheses and the
+/// `ChainExpression` around an optional chain are parents too. So not `Boolean(node)`, but `Boolean((node))`,
 /// `Boolean(f(node))`, `Boolean(a?.node())`.
 fn is_boolean_call_argument(node: Expr, parent: Node) -> bool {
     let wrappers = |e: Expr| {
@@ -97,8 +97,8 @@ fn is_boolean_call_argument(node: Expr, parent: Node) -> bool {
     }
 }
 
-/// Whether only the truthiness of `node` counts. `known`: of the rule, for the file: what has been found for the `&&`
-/// and `||` that the questions have in common.
+/// True if only `node`'s truthiness matters. `known` is the rule's per-file cache of the answers for the `&&` and `||`
+/// expressions that several calls walk through.
 pub(crate) fn is_boolean_node<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
     let answer = known.find(Node::Expr(node), |node, parent| {
         let Node::Expr(node) = node else {
@@ -110,7 +110,7 @@ pub(crate) fn is_boolean_node<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, b
         {
             return Some(true);
         }
-        // The parent is a `ChainExpression`, which oxlint does not look through.
+        // The parent is a `ChainExpression`, which oxlint doesn't look through.
         if node.is_chain_root() {
             return Some(false);
         }
@@ -134,13 +134,13 @@ pub(crate) fn is_boolean_node<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, b
     answer.unwrap_or(false)
 }
 
-/// `[]`, not in parentheses.
+/// `[]`, not parenthesized.
 pub(crate) fn is_empty_array_expression(e: Expr) -> bool {
     !e.is_parenthesized() && matches!(e.kind(), ExprKind::Array(elements) if elements.is_empty())
 }
 
-/// `Array.prototype.property`, `[].property`: `object` is `"Array"`. `Object.prototype.property`, `{}.property`:
-/// `"Object"`.
+/// `Array.prototype.property` or `[].property` if `object` is `"Array"`. `Object.prototype.property` or `{}.property`
+/// if it's `"Object"`.
 pub(crate) fn is_prototype_property(member: Expr, property: &str, object: &str) -> bool {
     let Some(of) = member.object() else {
         return false;
@@ -166,7 +166,7 @@ pub(crate) fn is_prototype_property(member: Expr, property: &str, object: &str) 
         }
 }
 
-/// The name of the first parameter, which is not `...rest`.
+/// The first parameter's name, unless it's `...rest`.
 pub(crate) fn get_first_parameter_name(func: Func<'_>) -> Option<Name<'_>> {
     func.params()
         .first()
@@ -175,7 +175,7 @@ pub(crate) fn get_first_parameter_name(func: Func<'_>) -> Option<Name<'_>> {
         .as_ident()
 }
 
-/// The `a` of a body that starts with `return a`, `{ return a }` or `a;`.
+/// The `a` in a body that starts with `return a`, `{ return a }` or `a;`.
 pub(crate) fn get_return_identifier_name(func: Func<'_>) -> Option<Name<'_>> {
     fn identifier(e: Expr<'_>) -> Option<Name<'_>> {
         e.as_ident().filter(|_| !e.is_parenthesized())
@@ -197,7 +197,7 @@ pub(crate) fn get_return_identifier_name(func: Func<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// `Expression::is_number_value`. What is in parentheses is not a number there.
+/// `Expression::is_number_value`. A parenthesized number doesn't count there.
 pub(crate) fn is_number_value(e: Expr, value: f64) -> bool {
     !e.is_parenthesized()
         && matches!(e.kind(), ExprKind::Number(n) if (n - value).abs() < f64::EPSILON)
@@ -218,8 +218,8 @@ pub(crate) fn is_number_0(e: Expr) -> bool {
     !e.is_parenthesized() && matches!(e.kind(), ExprKind::Number(n) if n == 0.0)
 }
 
-/// The statements that `statement` is one of.
-pub(crate) fn statements_around(statement: Stmt<'_>) -> Option<List<'_, Stmt<'_>>> {
+/// The statement list that contains `statement`.
+pub(crate) fn enclosing_statement_list(statement: Stmt<'_>) -> Option<List<'_, Stmt<'_>>> {
     match statement.parent() {
         Node::File(file) => Some(file.body()),
         Node::Func(func) => func.body_statements(),
@@ -233,12 +233,12 @@ pub(crate) fn statements_around(statement: Stmt<'_>) -> Option<List<'_, Stmt<'_>
 pub(crate) struct UnnecessaryArgument<'a> {
     pub(crate) first: Expr<'a>,
     pub(crate) second: Expr<'a>,
-    /// How a message calls `second`.
+    /// How messages refer to `second`.
     pub(crate) arg_str: Cow<'a, [u8]>,
 }
 
-/// `array.method(start, array.length)`, `array.method(start, Infinity)`, for one of `methods`. What
-/// `no-unnecessary-slice-end` and `no-unnecessary-array-splice-count` have in common.
+/// `array.method(start, array.length)` or `array.method(start, Infinity)`, for one of `methods`. Shared by
+/// `no-unnecessary-slice-end` and `no-unnecessary-array-splice-count`.
 pub(crate) fn unnecessary_length_or_infinity_argument<'a>(
     call: Call<'a>,
     methods: &[&str],
@@ -287,7 +287,7 @@ pub(crate) fn unnecessary_length_or_infinity_argument<'a>(
 
 pub(crate) const GLOBAL_OBJECT_NAMES: [&str; 4] = ["global", "globalThis", "self", "window"];
 
-/// `oxc_ecmascript`'s `ValueType`, as far as it is told from literals and operators.
+/// `oxc_ecmascript`'s `ValueType`, as far as literals and operators determine it.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ValueType {
     Undefined,
@@ -296,12 +296,12 @@ enum ValueType {
     BigInt,
     String,
     Boolean,
-    /// An object, or what cannot be told.
+    /// An object, or a type that can't be determined.
     Other,
 }
 
 impl ValueType {
-    /// What `ToNumeric` makes of it.
+    /// The result type of `ToNumeric`.
     fn to_numeric(self) -> ValueType {
         match self {
             ValueType::BigInt | ValueType::Other => self,
@@ -369,11 +369,12 @@ fn value_type(e: Expr) -> ValueType {
     }
 }
 
-/// `oxc_ecmascript`'s `may_have_side_effects`, where reading a property can have some and reading a global has none.
+/// `oxc_ecmascript`'s `may_have_side_effects`, configured so that reading a property can have side effects and reading
+/// a global can't.
 ///
-/// Not all of it: what it knows about the globals (`Math.PI`, `Math.abs(1)`, `new Set()`), functions that are called
-/// where they are written, the members of classes, `{ ...{ a } }`, `[a][0]` and `1 instanceof Array` is left out. All
-/// these "may have side effects" here.
+/// It's incomplete. It omits what the original knows about globals (`Math.PI`, `Math.abs(1)`, `new Set()`),
+/// immediately invoked functions, class members, `{ ...{ a } }`, `[a][0]` and `1 instanceof Array`. All of these "may
+/// have side effects" here.
 pub(crate) fn may_have_side_effects(e: Expr) -> bool {
     let is_primitive = |e: Expr| value_type(e) != ValueType::Other;
     let mut pending: SmallVec<[Expr; 8]> = smallvec![e];
@@ -392,7 +393,7 @@ pub(crate) fn may_have_side_effects(e: Expr) -> bool {
             | ExprKind::Fn(_)
             | ExprKind::Super
             | ExprKind::Missing => {}
-            // A symbol cannot become a string.
+            // A symbol can't be converted to a string.
             ExprKind::Template(template) => {
                 if !template.exprs().iter().all(is_primitive) {
                     return true;
@@ -514,8 +515,7 @@ pub(crate) fn may_have_side_effects(e: Expr) -> bool {
     false
 }
 
-/// Where the name of the method is written in `a.method()`. The whole call if the callee is not plainly a member with a
-/// name.
+/// The span of the method's name in `a.method()`, or the whole call if the callee isn't plainly a member with a name.
 pub(crate) fn call_expr_member_expr_property_span(call_expr: Expr) -> Span {
     let property = call_expr
         .callee()
@@ -524,7 +524,7 @@ pub(crate) fn call_expr_member_expr_property_span(call_expr: Expr) -> Span {
     property.map_or_else(|| call_expr.span(), |it| it.0)
 }
 
-/// Whether `expr` is `a.b.c` for one of `paths`, each of which is `["a", "b", "c"]`.
+/// True if `expr` is `a.b.c` for one of `paths`, each of which is `["a", "b", "c"]`.
 pub(crate) fn does_expr_match_any_path<P: AsRef<[S]>, S: AsRef<str>>(
     expr: Expr,
     paths: &[P],
@@ -567,7 +567,7 @@ pub(crate) fn does_expr_match_any_path<P: AsRef<[S]>, S: AsRef<str>>(
     paths.iter().any(is_path)
 }
 
-/// The outermost of the `!` and `Boolean(..)` that `node` is directly in, and whether they negate it.
+/// The outermost of the `!` and `Boolean(..)` directly around `node`, and whether they negate it.
 pub(crate) fn get_boolean_ancestor(node: Expr<'_>) -> (Expr<'_>, bool) {
     let (mut current, mut is_negative) = (node, false);
     while let Node::Expr(parent) = current.parent()
@@ -583,8 +583,8 @@ pub(crate) fn get_boolean_ancestor(node: Expr<'_>) -> (Expr<'_>, bool) {
     (current, is_negative)
 }
 
-/// Pads `replacement` with spaces where it would otherwise join the names before and after `span`. The bytes next to `span` are
-/// taken for characters, as in oxlint.
+/// Pads `replacement` with spaces where it would otherwise merge with the names before and after `span`. Like oxlint,
+/// it treats the bytes next to `span` as characters.
 pub(crate) fn pad_fix_with_token_boundary(
     source_text: &[u8],
     span: Span,
@@ -642,7 +642,7 @@ pub(crate) const BUILT_IN_ERRORS: [&str; 10] = [
     "SuppressedError",
 ];
 
-/// Whether there is a `?.` in the call or in what is called: in `a?.b.c()`, `a.b?.()`, `(a?.b).c()`.
+/// True if there's a `?.` in the call or in its callee: `a?.b.c()`, `a.b?.()`, `(a?.b).c()`.
 pub(crate) fn call_uses_optional_chain(call_expr: Call) -> bool {
     call_expr.chain() != Chain::No || expression_uses_optional_chain(call_expr.callee())
 }
@@ -650,7 +650,7 @@ pub(crate) fn call_uses_optional_chain(call_expr: Call) -> bool {
 pub(crate) fn expression_uses_optional_chain(expr: Expr) -> bool {
     let mut at = Some(expr);
     while let Some(e) = at {
-        // What continues a chain has the `?.` further down.
+        // An expression that continues a chain has the `?.` further down.
         if e.is_in_optional_chain() {
             return true;
         }
@@ -668,18 +668,18 @@ pub(crate) fn expression_uses_optional_chain(expr: Expr) -> bool {
     false
 }
 
-/// `format!`, for bytes.
+/// `format!` for bytes.
 pub(crate) fn concat(parts: &[&[u8]]) -> Vec<u8> {
     parts.concat()
 }
 
-/// The parent is an `AstKind::Decorator`: it is the `e` of `@e`.
+/// The parent is an `AstKind::Decorator`, so it's the `e` in `@e`.
 pub(crate) fn is_decorator(e: Expr) -> bool {
     !e.is_parenthesized() && is_decorator_expression(e)
 }
 
-/// Of `ast_util.rs`: what is before `start` on its line, if that is nothing but blanks. As `str::lines` has no empty
-/// line after the last line break, at the start of a line it is the line before.
+/// From `ast_util.rs`: the text before `start` on its line, if it's all whitespace. `str::lines` has no empty line
+/// after the last line break, so at the start of a line this returns the previous line.
 pub(crate) fn get_preceding_indent_str(source_text: &[u8], start: u32) -> Option<&[u8]> {
     let preceding_source_text = source_text
         .get(..start as usize)
@@ -688,7 +688,7 @@ pub(crate) fn get_preceding_indent_str(source_text: &[u8], start: u32) -> Option
         Some(lines) => lines.strip_suffix(b"\r").unwrap_or(lines),
         None => preceding_source_text,
     };
-    // Back to where the line starts, as long as it is blank: the whole file can be one line.
+    // Walk back to the start of the line only while it's whitespace, because the whole file can be one line.
     let mut line_start = lines.len();
     while let Some(c) = text::last_code_point(lines.get(..line_start)?).and_then(char::from_u32)
         && c != '\n'
@@ -701,7 +701,7 @@ pub(crate) fn get_preceding_indent_str(source_text: &[u8], start: u32) -> Option
     lines.get(line_start..)
 }
 
-/// Of `utils/static_value.rs`: the text of what is made of strings, templates and `+`.
+/// From `utils/static_value.rs`: the value of an expression made of strings, templates and `+`.
 pub(crate) fn static_string_value(expression: Expr) -> Option<Vec<u8>> {
     enum Part<'a> {
         Expression(Expr<'a>),

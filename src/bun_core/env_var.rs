@@ -118,7 +118,7 @@ new!(pub BUN_INSTALL: string, "BUN_INSTALL", {});
 new!(pub BUN_INSTALL_BIN: string, "BUN_INSTALL_BIN", {});
 new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
 // Minimum response `Content-Length` (in bytes) for `bun install` to
-// stream a tarball directly into libarchive instead of buffering the
+// stream a tarball directly into the extractor instead of buffering the
 // whole body first. Smaller tarballs stay on the buffered path where
 // the fixed overhead of the resumable state machine isn't worth it.
 new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", { default: 2 * 1024 * 1024 });
@@ -178,6 +178,7 @@ new!(pub JENKINS_URL: string, "JENKINS_URL", {});
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
+new!(pub NODE_CHANNEL_SERIALIZATION_MODE: string, "NODE_CHANNEL_SERIALIZATION_MODE", {});
 // A string, not a boolean: node suppresses warnings only when the value is
 // exactly "1" (lib/internal/process/pre_execution.js).
 new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});

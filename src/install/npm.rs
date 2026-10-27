@@ -260,11 +260,13 @@ pub mod registry {
     struct EmbeddedAuth<'a> {
         /// In the order of `EMBEDDED_OPTIONS`.
         values: [Option<&'a [u8]>; 4],
-        /// The scan hit a token or an `_auth`, which ends it; nothing after it is read.
+        /// True if the scan found a token or an `_auth`. That ends the scan, and nothing after it
+        /// is read.
         terminal: bool,
     }
 
-    /// `(start, index in EMBEDDED_OPTIONS)`. Anchored on the whole marker: base64 values hold `/`.
+    /// Returns `(start, index in EMBEDDED_OPTIONS)`. Matches the whole marker, because base64
+    /// values can contain `/`.
     fn last_embedded_marker(pathname: &[u8]) -> Option<(usize, usize)> {
         (0..pathname.len())
             .rev()
@@ -276,7 +278,8 @@ pub mod registry {
             })
     }
 
-    /// A trailing `:<word>=` of no known option is a misspelt credential: stripped, never adopted.
+    /// A trailing `:<word>=` that isn't a known option is a misspelled credential. It's stripped
+    /// and never used.
     fn trailing_misspelt_marker(pathname: &[u8]) -> Option<usize> {
         let unslashed = pathname.strip_suffix(b"/").unwrap_or(pathname);
         let start = strings::last_index_of_char(unslashed, b'/')? + 1;
@@ -292,12 +295,13 @@ pub mod registry {
         shaped.then_some(start)
     }
 
-    /// Stripped whether or not adopted: left there, the secret ships in every request path.
+    /// The credentials are stripped whether or not they're used. If they stayed, the secret would
+    /// be sent in every request path.
     fn parse_embedded_auth<'a>(url: &mut URL<'a>) -> EmbeddedAuth<'a> {
         let mut out = EmbeddedAuth::default();
         let mut pathname: &'a [u8] = url.pathname;
 
-        // Right to left: the credentials are appended after the path.
+        // Scan from right to left, because the credentials are appended after the path.
         loop {
             let start = if let Some((start, option)) = last_embedded_marker(pathname) {
                 let value = &pathname[start + 1 + EMBEDDED_OPTIONS[option].len()..];
@@ -308,7 +312,7 @@ pub mod registry {
                     out.values[option] = Some(value);
                     out.terminal = option < 2;
                 }
-                // `/<name>=` leaves the slash that closes the path; `:<name>=` follows that slash.
+                // `/<name>=` keeps the slash that ends the path. `:<name>=` comes after that slash.
                 if pathname[start] == b'/' {
                     pathname = &pathname[..start + 1];
                     continue;
@@ -351,7 +355,8 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
-        /// The one place a credential leaves a `Scope`, so the one that refuses a non-http(s) URL.
+        /// This is the only place where a credential leaves a `Scope`, so it's where a URL that
+        /// isn't http(s) is refused.
         pub fn authorization_parts(&self, url: &URL) -> Option<(&'static [u8], &[u8])> {
             if !url.has_http_like_protocol() {
                 None
@@ -364,7 +369,7 @@ pub mod registry {
             }
         }
 
-        /// Raw bytes: a credential need not be UTF-8.
+        /// Returns raw bytes, because a credential doesn't have to be UTF-8.
         pub fn authorization(&self, url: &URL) -> Option<Vec<u8>> {
             self.authorization_parts(url)
                 .map(|(scheme, value)| [scheme, value].concat())
@@ -372,7 +377,7 @@ pub mod registry {
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
         pub fn set_url(&mut self, href: Box<[u8]>) {
-            self.url = URL::from_string(&bun_core::String::borrow_utf8(&href))
+            self.url = URL::from_string(&bun_core::StringView::borrow_utf8(&href))
                 .unwrap_or_else(|_| OwnedURL::from_href(href));
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
         }
@@ -409,7 +414,8 @@ pub mod registry {
             &name[1..]
         }
 
-        /// `env`: `None` for a registry that package data names: no variable is expanded into it.
+        /// `env` is `None` for a registry URL that comes from package data, so that no environment
+        /// variable is expanded into it.
         pub(crate) fn from_api(
             name: &[u8],
             registry: api::NpmRegistry,
@@ -431,7 +437,8 @@ pub mod registry {
             })
         }
 
-        /// The one builder of a `Scope`: checks the final bytes that go into `Authorization`.
+        /// The only function that builds a `Scope`. It checks the final bytes that go into
+        /// `Authorization`.
         fn build(
             name: &[u8],
             mut registry: api::NpmRegistry,
@@ -449,7 +456,8 @@ pub mod registry {
                 }
             }
 
-            // The config loaders split literal strings; an expanded $ENV_VAR is split here.
+            // The config loaders split literal strings. A URL that came from an expanded $ENV_VAR
+            // is split here.
             let from_url = api::NpmRegistry::from_url(&registry.url);
             registry.url = from_url.url;
             if !registry.has_credentials() {
@@ -465,7 +473,8 @@ pub mod registry {
                 ("username", &mut registry.username),
                 ("password", &mut registry.password),
             ] {
-                // Anything else after the `$` is no variable name: a password that starts so.
+                // Anything else after the `$` isn't a variable name, so it's a password that starts
+                // with `$`.
                 if field.len() < 2
                     || field[0] != b'$'
                     || !(field[1..].iter()).all(|c| c.is_ascii_alphanumeric() || *c == b'_')
@@ -481,7 +490,7 @@ pub mod registry {
                             .at_least(bun_ast::Level::Warn)
                         {
                             bun_core::warn!(
-                                "registry {} references <b>{}<r>, but that environment variable is not set; treating it as no credential",
+                                "registry {} references unset variable <b>{}<r>, ignoring credential",
                                 what,
                                 bun_fmt::escape_control_chars(&**field),
                             );
@@ -522,12 +531,13 @@ pub mod registry {
                         }
                     }
 
-                    // Sent verbatim; the decode only derives `user` for `bun pm whoami`.
+                    // Sent verbatim. It's only decoded to get `user` for `bun pm whoami`.
                     if !registry.auth.is_empty() {
                         let mut decoded = vec![0u8; bun_base64::decode_len(&registry.auth)];
                         let result = bun_base64::decode(&mut decoded, &registry.auth);
                         decoded.truncate(result.count);
-                        // A blank username or password is a real pattern: no identity then.
+                        // A blank username or password is a real pattern. There's no identity to
+                        // report then.
                         if result.is_successful()
                             && strings::index_of_char_usize(&decoded, b':')
                                 .is_some_and(|colon| colon > 0 && colon + 1 < decoded.len())
@@ -578,11 +588,12 @@ pub mod registry {
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
     pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
 
-    /// One `.npmrc` credential key. It carries no scheme: it applies to `http` and `https` alike.
+    /// One credential key from `.npmrc`. It has no scheme, so it applies to both `http` and
+    /// `https`.
     pub(crate) struct UrlAuth {
         /// npm's config key, already normalized by `bun_ini` (`host/path/`).
         pub(crate) key: Box<[u8]>,
-        /// Only the credential fields are meaningful; `url` is empty.
+        /// Only the credential fields are set. `url` is empty.
         pub(crate) credentials: Scope,
     }
 
@@ -605,7 +616,8 @@ pub mod registry {
             }))
         }
 
-        /// npm's walk. `url` is a WHATWG serialisation: `Scope::url`, `normalize_tarball_url`.
+        /// Walks the path like npm does. `url` must be a WHATWG serialization, from `Scope::url` or
+        /// `normalize_tarball_url`.
         pub(crate) fn find_entry<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a UrlAuth> {
             if list.is_empty() || !url.has_http_like_protocol() {
                 return None;
@@ -616,13 +628,14 @@ pub mod registry {
         }
     }
 
-    /// `dist.tarball` as npm's `new URL()` serialises it; `None` if one parse cannot settle it.
+    /// Returns `dist.tarball` as npm's `new URL()` serializes it, or `None` if parsing it once
+    /// doesn't give a stable result.
     pub fn normalize_tarball_url(raw: &[u8]) -> Option<Box<[u8]>> {
         // The parse would read bytes that are not UTF-8 as U+FFFD, which names another resource.
         if raw.iter().any(|&b| b <= 0x20 || b == 0x7f) || !strings::is_valid_utf8(raw) {
             return None;
         }
-        let href = URL::from_string(&bun_core::String::borrow_utf8(raw))
+        let href = URL::from_string(&bun_core::StringView::borrow_utf8(raw))
             .ok()?
             .into_href();
         if hides_dot_segment(query_free_path(&URL::parse(&href))) {
@@ -851,9 +864,11 @@ pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonV
     this.combine()
 }
 
-/// Only the registry's full document has `libc`. By name alone: macOS locks `libc` for Linux too.
+/// Only the registry's full document has `libc`. This goes by the name alone, because a lockfile
+/// written on macOS records `libc` for Linux too.
 pub(crate) fn name_suggests_libc(name: &[u8]) -> bool {
-    // Not `gnu`: it is also in `signup`, and comes after `linux` where it means glibc.
+    // `gnu` isn't checked, because it's also in `signup`, and where it means glibc it comes after
+    // `linux`.
     strings::contains(name, b"linux")
         || strings::contains(name, b"musl")
         || strings::contains(name, b"glibc")
@@ -870,7 +885,7 @@ pub struct PackageVersion {
     pub(crate) integrity: Integrity,
 
     // Explicit padding so this struct has no implicit (uninitialized) padding
-    // bytes — `Serializer::write_array` reinterprets the whole slice as `&[u8]`,
+    // bytes — `Serializer::write` reinterprets the whole slice as `&[u8]`,
     // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
     // fields, `Default` zero-fills them and every byte of the struct is
     // initialized. Layout (size=248, align=8) is unchanged; see the
@@ -922,7 +937,8 @@ pub struct PackageVersion {
     /// `"cpu"` field in package.json
     pub(crate) cpu: Architecture,
 
-    /// `"libc"` field in package.json; only in the full document, see `name_suggests_libc`.
+    /// The `"libc"` field in package.json. It's only in the full document. See
+    /// `name_suggests_libc`.
     pub(crate) libc: Libc,
 
     /// The `hasInstallScript` field of the registry API. It is derived from `scripts` when the
@@ -993,8 +1009,7 @@ const _: () = assert!(
 
 // Compile-time proof that the explicit `_padding_*` fields above leave no
 // implicit padding gaps in `PackageVersion` (so `&[PackageVersion] as &[u8]`
-// in `Serializer::write_array` reads only initialized bytes). Mirrors the
-// `NpmPackage` checks below and `padding_checker.rs`.
+// in `Serializer::write` reads only initialized bytes). See `padding_checker.rs`.
 const _: () = {
     use core::mem::{offset_of, size_of};
     // gap between `integrity` (size 65, align 1) and `dependencies` (align 4 → 68)
@@ -1047,12 +1062,7 @@ pub struct NpmPackage {
     /// "modified" in the JSON
     pub(crate) modified: SemverString,
     pub(crate) public_max_age: u32,
-    // Explicit padding so this struct has no implicit (uninitialized) padding
-    // bytes — `Serializer::write` reinterprets the whole struct as `&[u8]`,
-    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
-    // fields, `Default` zero-fills them and every byte of the struct is
-    // initialized. Layout (size=120, align=8) is unchanged; see the
-    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
+    // Explicit, because `impl_pod!` below rejects implicit padding.
     pub(crate) _padding_after_max_age: [u8; 4],
 
     pub(crate) name: ExternalString,
@@ -1064,30 +1074,18 @@ pub struct NpmPackage {
     pub(crate) versions_buf: VersionSlice,
     pub(crate) string_lists_buf: ExternalStringList,
 
-    // The full document was fetched: `publish_timestamp_ms` and `libc` are populated.
-    pub(crate) has_extended_manifest: bool,
+    // 1 if the full document was fetched, so `publish_timestamp_ms` and `libc` are populated. A `bool` could not be read from disk bytes.
+    pub(crate) has_extended_manifest: u8,
     pub(crate) _padding_tail: [u8; 7],
 }
 
-// Compile-time proof that the explicit `_padding_*` fields above leave no
-// implicit padding gaps in `NpmPackage` (so `&NpmPackage as &[u8]` reads only
-// initialized bytes). Mirrors the per-field-gap check documented in
-// `padding_checker.rs`.
-const _: () = {
-    use core::mem::{offset_of, size_of};
-    // gap between `public_max_age` (u32, ends at 28) and `name` (align 8 → 32)
-    assert!(
-        offset_of!(NpmPackage, _padding_after_max_age)
-            == offset_of!(NpmPackage, public_max_age) + size_of::<u32>()
-    );
-    assert!(offset_of!(NpmPackage, name) == offset_of!(NpmPackage, _padding_after_max_age) + 4);
-    // tail gap after `has_extended_manifest` (bool, at 112) → struct end (120)
-    assert!(
-        offset_of!(NpmPackage, _padding_tail)
-            == offset_of!(NpmPackage, has_extended_manifest) + size_of::<bool>()
-    );
-    assert!(offset_of!(NpmPackage, _padding_tail) + 7 == size_of::<NpmPackage>());
-};
+bun_core::impl_pod!(NpmPackage);
+
+impl NpmPackage {
+    pub(crate) fn has_extended_manifest(&self) -> bool {
+        self.has_extended_manifest != 0
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1124,8 +1122,6 @@ pub mod package_manifest {
     use super::*;
     use bun_io::Write as _;
 
-    // bindings — see bun_install_jsc::npm_jsc::ManifestBindings (deleted *_jsc alias)
-
     pub struct Serializer;
 
     /// The `save_async` tasks that have not finished.
@@ -1151,15 +1147,19 @@ pub mod package_manifest {
     );
 
     impl Serializer {
-        pub(crate) fn write_array<W: bun_io::Write, T: Copy>(
+        pub(crate) fn write_array<W: bun_io::Write, T: bun_core::NoUninit>(
             writer: &mut W,
             array: &[T],
             pos: &mut u64,
         ) -> Result<(), Error> {
-            // SAFETY: T is Copy POD; sliceAsBytes equivalent
-            let bytes = unsafe {
-                bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
-            };
+            Self::write_array_bytes::<W, T>(writer, bun_core::slice_as_bytes(array), pos)
+        }
+
+        fn write_array_bytes<W: bun_io::Write, T>(
+            writer: &mut W,
+            bytes: &[u8],
+            pos: &mut u64,
+        ) -> Result<(), Error> {
             if bytes.is_empty() {
                 writer.write_int_le::<u64>(0)?;
                 *pos += 8;
@@ -1175,7 +1175,7 @@ pub mod package_manifest {
             Ok(())
         }
 
-        fn read_array_bytes<'a, T: Copy>(
+        fn read_array_bytes<'a, T>(
             stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
         ) -> Result<&'a [u8], Error> {
             let byte_len = stream.read_int_le::<u64>()?;
@@ -1193,25 +1193,11 @@ pub mod package_manifest {
             Ok(result_bytes)
         }
 
-        fn array_from_bytes<T: Copy>(result_bytes: &[u8]) -> &[T] {
-            if result_bytes.is_empty() {
-                return &[];
-            }
-            // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
-            unsafe {
-                bun_core::ffi::slice(
-                    result_bytes.as_ptr().cast::<T>(),
-                    result_bytes.len() / core::mem::size_of::<T>(),
-                )
-            }
-        }
-
-        pub fn read_array<'a, T: Copy>(
+        pub fn read_array<'a, T: bun_core::AnyBitPattern>(
             stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
         ) -> Result<&'a [T], Error> {
-            Ok(Self::array_from_bytes::<T>(Self::read_array_bytes::<T>(
-                stream,
-            )?))
+            bun_core::try_cast_slice(Self::read_array_bytes::<T>(stream)?)
+                .ok_or(crate::Error::BufferTooSmall)
         }
 
         pub(crate) fn write<W: bun_io::Write>(
@@ -1234,19 +1220,7 @@ pub mod package_manifest {
             // if the layout changes.
             {
                 // "pkg"
-                // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
-                // implicit padding** — the two layout gaps are filled by
-                // explicit `_padding_*: [u8; N]` fields (zero-initialized via
-                // `Default`), and the `const _ = { offset_of!… }` block at the
-                // struct definition statically asserts no gap remains. Every
-                // byte of `this.pkg` is therefore initialized, so viewing it
-                // as `&[u8]` is sound.
-                let bytes = unsafe {
-                    bun_core::ffi::slice(
-                        (&raw const this.pkg).cast::<u8>(),
-                        core::mem::size_of::<NpmPackage>(),
-                    )
-                };
+                let bytes = bun_core::bytes_of(&this.pkg);
                 pos += Aligner::write::<NpmPackage, W>(writer, pos)? as u64;
                 writer.write_all(bytes)?;
                 pos += bytes.len() as u64;
@@ -1255,7 +1229,16 @@ pub mod package_manifest {
             Self::write_array(writer, &this.versions, &mut pos)?;
             Self::write_array(writer, &this.external_strings, &mut pos)?;
             Self::write_array(writer, &this.external_strings_for_versions, &mut pos)?;
-            Self::write_array(writer, &this.package_versions, &mut pos)?;
+            // SAFETY: the asserts at `PackageVersion` rule out padding. `impl_no_uninit!`
+            // rejects it for `bin::Value`, a union whose arms differ in size;
+            // `Value::init_*` sets every byte.
+            let package_versions = unsafe {
+                core::slice::from_raw_parts(
+                    this.package_versions.as_ptr().cast::<u8>(),
+                    core::mem::size_of_val::<[PackageVersion]>(&this.package_versions),
+                )
+            };
+            Self::write_array_bytes::<W, PackageVersion>(writer, package_versions, &mut pos)?;
             Self::write_array(writer, &this.extern_strings_bin_entries, &mut pos)?;
             Self::write_array(writer, &this.bundled_deps_buf, &mut pos)?;
 
@@ -1387,7 +1370,8 @@ pub mod package_manifest {
                 if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
                     return Ok(());
                 }
-                // Keep the entry present throughout: rename over it below instead of unlinking it.
+                // Keep the entry in place the whole time: rename over it below instead of unlinking
+                // it first.
                 bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
             }
 
@@ -1449,7 +1433,8 @@ pub mod package_manifest {
             }
         }
 
-        /// No install waits for the file; the process does, in `finish_saves_at_exit`.
+        /// The install doesn't wait for the file to be written. The process does, in
+        /// `finish_saves_at_exit`.
         pub(crate) fn save_async(
             this: &PackageManifest,
             scope: &registry::Scope,
@@ -1639,12 +1624,10 @@ pub mod package_manifest {
                 pkg_stream.pos = pkg_stream
                     .pos
                     .next_multiple_of(core::mem::align_of::<NpmPackage>());
-                let flag_at =
-                    pkg_stream.pos + core::mem::offset_of!(NpmPackage, has_extended_manifest);
-                if !matches!(bytes.get(flag_at).copied(), Some(0 | 1)) {
-                    return Ok(None);
+                match pkg_stream.read_struct::<NpmPackage>() {
+                    Ok(pkg) if pkg.has_extended_manifest <= 1 => pkg,
+                    _ => return Ok(None),
                 }
-                pkg_stream.read_struct::<NpmPackage>()?
             };
             let string_buf = Self::read_array::<u8>(&mut pkg_stream)?;
             let versions = Self::read_array::<Semver::Version>(&mut pkg_stream)?;
@@ -1682,7 +1665,13 @@ pub mod package_manifest {
                         return Ok(None);
                     }
                 }
-                Self::array_from_bytes::<PackageVersion>(raw_package_versions)
+                // SAFETY: the loop above checked the fields that do not take any bytes.
+                let (misaligned, package_versions, _) =
+                    unsafe { raw_package_versions.align_to::<PackageVersion>() };
+                if !misaligned.is_empty() {
+                    return Ok(None);
+                }
+                package_versions
             };
             let version_map = |map: &ExternVersionMap| {
                 map.keys.len == map.values.len
@@ -1724,8 +1713,9 @@ impl PackageManifest {
         external.slice(&self.string_buf)
     }
 
-    /// Whether every list of `version` points inside its array. This is checked right before
-    /// `Package::from_npm` reads the lists, so loading a manifest does not check unused versions.
+    /// Returns true if every list of `version` points inside its array. This is checked right
+    /// before `Package::from_npm` reads the lists, so loading a manifest doesn't check unused
+    /// versions.
     pub(crate) fn is_in_bounds(&self, version: &PackageVersion) -> bool {
         [
             &version.dependencies,
@@ -1775,7 +1765,8 @@ impl FindResult<'_> {
     }
 }
 
-/// pnpm's grammar: `name` exempts a package, `name@1.2.3 || 1.2.4` only those versions.
+/// Uses pnpm's grammar: `name` exempts a package, and `name@1.2.3 || 1.2.4` only exempts those
+/// versions.
 pub struct MinimumReleaseAgeExcludes(Vec<(&'static [u8], Option<Semver::Version>)>);
 
 impl MinimumReleaseAgeExcludes {
@@ -1799,7 +1790,7 @@ impl MinimumReleaseAgeExcludes {
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
-                            "Ignoring minimumReleaseAgeExcludes entry {}: expected a package name or exact versions, e.g. \"{name}@1.2.3\" or \"{name}@1.2.3 || 1.2.4\"",
+                            "ignoring minimumReleaseAgeExcludes entry {}: expected a package name or exact versions, e.g. \"{name}@1.2.3\" or \"{name}@1.2.3 || 1.2.4\"",
                             bun_fmt::EscapeControlChars(bun_fmt::quote(entry)),
                             name = bun_fmt::escape_control_chars(name),
                         ),
@@ -1857,7 +1848,7 @@ impl PackageManifest {
         self.pkg.prereleases.keys.get(&self.versions)
     }
 
-    /// Like `npm view`: an exact dist-tag name wins, else the best range match.
+    /// Like `npm view`: an exact dist-tag name wins, and otherwise the best match for the range.
     pub fn find_by_spec(&self, spec: &[u8]) -> Result<FindResult<'_>, Error> {
         use crate::dependency::{Tag, TagExt as _};
         let spec: &[u8] = if spec.is_empty() { b"latest" } else { spec };
@@ -1880,7 +1871,8 @@ impl PackageManifest {
                     spec
                 };
                 let query = Semver::query::parse(range, SlicedString::init(range, range))?;
-                // Only unknown words (e.g. `npm:x@1`): the lenient parser made a match-all group.
+                // The spec only has unknown words (e.g. `npm:x@1`), which the lenient parser turned
+                // into a group that matches everything.
                 if query.is_empty() {
                     return Err(Error::NoMatchingVersion);
                 }
@@ -1908,7 +1900,7 @@ impl PackageManifest {
         self.find_by_version(version)
     }
 
-    /// Whether every version of this package bypasses the minimum release age.
+    /// Returns true if every version of this package bypasses the minimum release age.
     pub(crate) fn should_exclude_from_age_filter(
         &self,
         exclusions: Option<&MinimumReleaseAgeExcludes>,
@@ -1971,7 +1963,8 @@ impl PackageManifest {
                     }
                     continue;
                 }
-                // Listed versions count as stable: no age gate; they replace an unstable fallback.
+                // Listed versions count as stable, so they skip the age gate and replace an
+                // unstable fallback.
                 if exclusions.is_some_and(|e| e.excludes_version(self.name(), version)) {
                     best_version = Some(FindResult { version, package });
                     break;
@@ -2053,8 +2046,8 @@ impl<'a> FindVersionResult<'a> {
     }
 }
 
-/// Whether the text of a range is npm's `*`, which `find_any_version` resolves. npm goes by the
-/// text: `x` and `>=0.0.0` are ranges like any other.
+/// Returns true if the text of a range is npm's `*`, which `find_any_version` resolves. npm goes by
+/// the text: `x` and `>=0.0.0` are ranges like any other.
 pub(crate) fn is_any_version_range(literal: &[u8]) -> bool {
     literal == b"*" || literal.ends_with(b"@*")
 }
@@ -2079,7 +2072,8 @@ impl PackageManifest {
                 exclusions,
             );
         }
-        // Nobody wrote `latest` (`bun add pkg`): as npm, not followed onto a deprecated version.
+        // Nobody wrote `latest` explicitly (`bun add pkg`), so like npm, don't follow the tag to a
+        // deprecated version.
         if literal.is_empty()
             && (self.find_by_dist_tag(b"latest"))
                 .is_some_and(|latest| !latest.package.deprecated.is_empty())
@@ -2093,7 +2087,8 @@ impl PackageManifest {
         )
     }
 
-    /// npm's `*`: `latest`, even a prerelease, unless it is deprecated; else the highest release.
+    /// Resolves npm's `*`: `latest`, even if it's a prerelease, unless it's deprecated. Otherwise
+    /// the highest release.
     pub(crate) fn find_any_version(
         &self,
         minimum_release_age_ms: Option<f64>,
@@ -2244,7 +2239,7 @@ impl PackageManifest {
             return (self.find_best_version(group, group_buf))
                 .map_or(NOT_FOUND, FindVersionResult::Found);
         };
-        debug_assert!(self.pkg.has_extended_manifest);
+        debug_assert!(self.pkg.has_extended_manifest());
 
         let left = group.head.head.range.left;
         let mut newest_filtered: Option<Semver::Version> = None;
@@ -2323,7 +2318,7 @@ impl PackageManifest {
             return self.find_by_version(exact);
         }
 
-        // As npm-pick-manifest: a deprecated version is picked only when every match is deprecated.
+        // Like npm-pick-manifest, only pick a deprecated version if every match is deprecated.
         if let Some(result) = self.find_by_dist_tag(b"latest") {
             if result.package.deprecated.is_empty()
                 && (group.is_empty()
@@ -2374,7 +2369,7 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 3] = [
     DependencyGroup::PEER,
 ];
 
-/// npm accepts both spellings; `bundleDependencies` is the documented one.
+/// npm accepts both spellings. `bundleDependencies` is the documented one.
 fn bundled_dependencies_field(
     version_obj: Option<&JSON::E::ObjectJSON>,
 ) -> Option<&JSON::E::JsonValue> {
@@ -2392,7 +2387,8 @@ fn deprecation_message(version_obj: Option<&JSON::E::ObjectJSON>) -> Option<&[u8
     }
 }
 
-/// As npm: no time passes minimum-release-age (0), one that is not a date never does.
+/// Like npm: a version with no time passes minimum-release-age (0), and a time that isn't a date
+/// never does.
 fn publish_timestamp_ms(time: &JSON::E::JsonValue) -> f64 {
     use JSON::E::JsonValue;
     match time {
@@ -2416,10 +2412,6 @@ impl PackageManifest {
         public_max_age: u32,
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
-        // `bun_ast::Source::init_path_string` accepts borrowed `&[u8]` via
-        // `IntoStr`; the Source only lives for the duration of this function,
-        // so pass the caller's buffers through directly without manufacturing
-        // `'static` references here (PORTING.md §Forbidden lifetime extension).
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
         // `initialize_mini_store` deliberately keeps the allocator pushed
@@ -2429,9 +2421,8 @@ impl PackageManifest {
         let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
-                let mut cloned_log = bun_ast::Log::init();
-                log.clone_to_with_recycled(&mut cloned_log, true);
-                *log = cloned_log;
+                // It knows a source by its address, and `json_buffer` is about to be freed.
+                log.line_column_tracker = None;
                 return Ok(None);
             }
         };
@@ -2508,7 +2499,8 @@ impl PackageManifest {
             };
 
             let versions = versions_obj.get().properties();
-            // A package that deprecates many versions repeats one sentence: stored once per run.
+            // A package that deprecates many versions repeats the same sentence, so it's stored
+            // once per run of equal messages.
             let mut prev_deprecated: &[u8] = b"";
             for prop in versions {
                 let version_name = prop.key.slice();
@@ -3038,7 +3030,7 @@ impl PackageManifest {
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
-                                    "Unsupported or malformed integrity hash in registry metadata for {}@{}; its tarball will not be verified",
+                                    "Unsupported or malformed integrity hash in registry metadata for {}@{}, tarball will not be verified",
                                     bstr::BStr::new(expected_name),
                                     bun_fmt::escape_control_chars(version_name),
                                 ),
@@ -3494,7 +3486,7 @@ impl PackageManifest {
         };
         result.bundled_deps_buf = bundled_deps_buf;
         result.pkg.public_max_age = public_max_age;
-        result.pkg.has_extended_manifest = is_extended_manifest;
+        result.pkg.has_extended_manifest = u8::from(is_extended_manifest);
 
         if let Some(buf) = string_builder.ptr.take() {
             let mut v = buf.into_vec();

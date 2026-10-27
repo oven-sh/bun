@@ -13,18 +13,18 @@ pub struct NoDeprecated;
 const DEPRECATED: Message =
     Message::new("deprecated", "{{oldMethod}} is deprecated since React {{version}}{{newMethod}}{{refs}}");
 
-/// An entry of what `getDeprecated(pragma)` returns.
+/// One entry of the object that `getDeprecated(pragma)` returns.
 struct Deprecated {
-    /// What is before the first `.` of the key. `None`: the pragma. Empty: the key has no `.`.
+    /// The part of the key before the first `.`. `None` means the pragma, empty means the key has no `.`.
     object: Option<&'static str>,
-    /// What is after it.
+    /// The part after it.
     property: &'static str,
     version: Version,
-    /// Empty: there is none. With a `.` at its start it follows the pragma.
+    /// Empty if there is none. If it starts with a `.`, the pragma goes in front.
     new_method: &'static str,
-    /// Empty: there are none. Those of a key without a `.` go on with [`CODEMOD`].
+    /// Empty if there are none. For a key without a `.`, [`CODEMOD`] is appended.
     refs: &'static str,
-    /// [`mention_bit`] of the last name of the key.
+    /// [`mention_bit`] of the key's last name.
     bit: u32,
 }
 
@@ -32,32 +32,32 @@ const CODEMOD: &str =
     "Use https://github.com/reactjs/react-codemod#rename-unsafe-lifecycles to automatically update your components.";
 const CREATE_ROOT: &str = "https://reactjs.org/link/switch-to-createroot";
 
-/// In upstream's order: of two entries with one key the later one counts.
+/// In upstream's order. If two entries have the same key, the later one wins.
 static ALL_DEPRECATED: [Deprecated; 31] = [
-    Deprecated::of_pragma("renderComponent", (0, 12, 0), ".render"),
-    Deprecated::of_pragma("renderComponentToString", (0, 12, 0), ".renderToString"),
-    Deprecated::of_pragma("renderComponentToStaticMarkup", (0, 12, 0), ".renderToStaticMarkup"),
-    Deprecated::of_pragma("isValidComponent", (0, 12, 0), ".isValidElement"),
-    Deprecated::of_pragma("PropTypes.component", (0, 12, 0), ".PropTypes.element"),
-    Deprecated::of_pragma("PropTypes.renderable", (0, 12, 0), ".PropTypes.node"),
-    Deprecated::of_pragma("isValidClass", (0, 12, 0), ""),
+    Deprecated::pragma_member("renderComponent", (0, 12, 0), ".render"),
+    Deprecated::pragma_member("renderComponentToString", (0, 12, 0), ".renderToString"),
+    Deprecated::pragma_member("renderComponentToStaticMarkup", (0, 12, 0), ".renderToStaticMarkup"),
+    Deprecated::pragma_member("isValidComponent", (0, 12, 0), ".isValidElement"),
+    Deprecated::pragma_member("PropTypes.component", (0, 12, 0), ".PropTypes.element"),
+    Deprecated::pragma_member("PropTypes.renderable", (0, 12, 0), ".PropTypes.node"),
+    Deprecated::pragma_member("isValidClass", (0, 12, 0), ""),
     Deprecated::new("this", "transferPropsTo", (0, 12, 0), "spread operator ({...})", ""),
-    Deprecated::of_pragma("addons.classSet", (0, 13, 0), "the npm module classnames"),
-    Deprecated::of_pragma("addons.cloneWithProps", (0, 13, 0), ".cloneElement"),
-    Deprecated::of_pragma("render", (0, 14, 0), "ReactDOM.render"),
-    Deprecated::of_pragma("unmountComponentAtNode", (0, 14, 0), "ReactDOM.unmountComponentAtNode"),
-    Deprecated::of_pragma("findDOMNode", (0, 14, 0), "ReactDOM.findDOMNode"),
-    Deprecated::of_pragma("renderToString", (0, 14, 0), "ReactDOMServer.renderToString"),
-    Deprecated::of_pragma("renderToStaticMarkup", (0, 14, 0), "ReactDOMServer.renderToStaticMarkup"),
-    Deprecated::of_pragma("addons.LinkedStateMixin", (15, 0, 0), ""),
+    Deprecated::pragma_member("addons.classSet", (0, 13, 0), "the npm module classnames"),
+    Deprecated::pragma_member("addons.cloneWithProps", (0, 13, 0), ".cloneElement"),
+    Deprecated::pragma_member("render", (0, 14, 0), "ReactDOM.render"),
+    Deprecated::pragma_member("unmountComponentAtNode", (0, 14, 0), "ReactDOM.unmountComponentAtNode"),
+    Deprecated::pragma_member("findDOMNode", (0, 14, 0), "ReactDOM.findDOMNode"),
+    Deprecated::pragma_member("renderToString", (0, 14, 0), "ReactDOMServer.renderToString"),
+    Deprecated::pragma_member("renderToStaticMarkup", (0, 14, 0), "ReactDOMServer.renderToStaticMarkup"),
+    Deprecated::pragma_member("addons.LinkedStateMixin", (15, 0, 0), ""),
     Deprecated::new("ReactPerf", "printDOM", (15, 0, 0), "ReactPerf.printOperations", ""),
     Deprecated::new("Perf", "printDOM", (15, 0, 0), "Perf.printOperations", ""),
     Deprecated::new("ReactPerf", "getMeasurementsSummaryMap", (15, 0, 0), "ReactPerf.getWasted", ""),
     Deprecated::new("Perf", "getMeasurementsSummaryMap", (15, 0, 0), "Perf.getWasted", ""),
-    Deprecated::of_pragma("createClass", (15, 5, 0), "the npm module create-react-class"),
-    Deprecated::of_pragma("addons.TestUtils", (15, 5, 0), "ReactDOM.TestUtils"),
-    Deprecated::of_pragma("PropTypes", (15, 5, 0), "the npm module prop-types"),
-    Deprecated::of_pragma("DOM", (15, 6, 0), "the npm module react-dom-factories"),
+    Deprecated::pragma_member("createClass", (15, 5, 0), "the npm module create-react-class"),
+    Deprecated::pragma_member("addons.TestUtils", (15, 5, 0), "ReactDOM.TestUtils"),
+    Deprecated::pragma_member("PropTypes", (15, 5, 0), "the npm module prop-types"),
+    Deprecated::pragma_member("DOM", (15, 6, 0), "the npm module react-dom-factories"),
     Deprecated::new(
         "",
         "componentWillMount",
@@ -91,7 +91,7 @@ static ALL_DEPRECATED: [Deprecated; 31] = [
     ),
 ];
 
-/// The names of methods in the table. The `name` of a `PrivateIdentifier` is without the `#`.
+/// The method names in the table. A `PrivateIdentifier`'s `name` doesn't include the `#`.
 const LIFE_CYCLE_METHODS: [u32; 6] = [
     mention_bit(b"componentWillMount"),
     mention_bit(b"componentWillReceiveProps"),
@@ -101,7 +101,7 @@ const LIFE_CYCLE_METHODS: [u32; 6] = [
     mention_bit(b"#componentWillUpdate"),
 ];
 
-/// What a file with something else that is deprecated mentions, if not the pragma: an object, a module, `require`.
+/// A file that uses anything else deprecated has to mention the pragma or one of these: an object, a module, `require`.
 const ABOUT_REACT: [u32; 10] = [
     mention_bit(b"ReactPerf"),
     mention_bit(b"Perf"),
@@ -120,9 +120,9 @@ const MODULE_NAMES: [&str; 5] = ["React", "ReactPerf", "Perf", "ReactDOM", "Reac
 
 pub struct State<'a> {
     pragmas: Pragmas<'a>,
-    /// What the text of a deprecated `MemberExpression` starts with, if that is no `this`.
+    /// The names a deprecated `MemberExpression`'s text can start with, other than `this`.
     objects: [Name<'a>; 5],
-    /// The version of React, once it has been asked for.
+    /// The React version, computed lazily.
     version: Option<Version>,
 }
 
@@ -157,7 +157,8 @@ impl Rule for NoDeprecated {
             return None;
         }
         let pragmas = Pragmas::new(file);
-        // What is imported from a module that is called as something of `Object.prototype` is a member of `undefined`.
+        // An import from a module named like an `Object.prototype` property is checked as a member of `undefined`,
+        // which only matches if that's the pragma.
         if !has_methods
             && !ABOUT_REACT.iter().any(|&bit| file.mentions_bit(bit))
             && !file.mentions_bit(mention_bit(pragmas.pragma))
@@ -172,13 +173,13 @@ impl Rule for NoDeprecated {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(object) = e.object() else {
-            // `isES5Component` is for what is in a call.
+            // `isES5Component` only applies to an object inside a call.
             if matches!(e.parent(), Node::Expr(parent) if parent.callee().is_some()) {
                 self.check_life_cycle_methods(Node::Expr(e), cx);
             }
             return;
         };
-        // The keys have three names at most.
+        // The keys have at most three names.
         let first = object.object().filter(|_| object.tag() == ExprTag::Dot).unwrap_or(object);
         let can_be_deprecated = match first.as_ident() {
             Some(name) => cx.state.objects.contains(&name),
@@ -226,7 +227,7 @@ impl Rule for NoDeprecated {
 
     fn import_spec<'a>(&self, specifier: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
         let (source, imported) = (specifier.import().spec().bytes(), specifier.imported());
-        // `MODULES[source]` also finds what `Object.prototype` has, which has no `[0]`.
+        // `MODULES[source]` also finds `Object.prototype`'s properties, which have no `[0]`.
         let module = module_name(source).or_else(|| is_in_object_prototype(source).then_some("undefined"));
         if let Some(module) = module.filter(|_| !imported.is_string()) {
             self.check_deprecation(specifier.span(), module.as_bytes(), imported.bytes(), cx);
@@ -270,7 +271,7 @@ impl NoDeprecated {
         }
     }
 
-    /// `implements a.b`, and `extends a.b` of an interface: ESTree has a `MemberExpression` there.
+    /// `implements a.b`, and an interface's `extends a.b`: ESTree has a `MemberExpression` there.
     fn check_heritage<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         let TypeKind::Ref { name, .. } = ty.kind() else {
             return;
@@ -319,16 +320,16 @@ impl Deprecated {
         Deprecated { object: Some(object), property, version, new_method, refs, bit }
     }
 
-    const fn of_pragma(property: &'static str, version: Version, new_method: &'static str) -> Deprecated {
+    const fn pragma_member(property: &'static str, version: Version, new_method: &'static str) -> Deprecated {
         Deprecated { object: None, ..Deprecated::new("", property, version, new_method, "") }
     }
 
     /// `deprecated[method]`
     fn get(pragma: &[u8], object: &[u8], property: &[u8]) -> Option<&'static Deprecated> {
-        let is_it = |it: &&Deprecated| {
+        let has_key = |it: &&Deprecated| {
             it.property.as_bytes() == property && it.object.map_or(pragma, str::as_bytes) == object
         };
-        ALL_DEPRECATED.iter().rfind(is_it)
+        ALL_DEPRECATED.iter().rfind(has_key)
     }
 }
 
@@ -347,7 +348,7 @@ fn module_name(source: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// `reactModuleName || pragma` for a declarator with that `init`. `None` where upstream looks no further.
+/// `reactModuleName || pragma` for a declarator with that `init`. `None` where upstream stops looking.
 fn module_required_by<'a>(init: Expr<'a>, pragma: &'a [u8]) -> Option<&'a [u8]> {
     if let Some(name) = init.as_ident() {
         return MODULE_NAMES.into_iter().find(|it| name.is(it)).map(str::as_bytes);
@@ -357,7 +358,7 @@ fn module_required_by<'a>(init: Expr<'a>, pragma: &'a [u8]) -> Option<&'a [u8]> 
         return None;
     };
     let source = call.args().get(0).filter(|_| !init.is_chain_root())?.as_string()?.bytes();
-    // `MODULES[source]` also finds what `Object.prototype` has.
+    // `MODULES[source]` also finds `Object.prototype`'s properties.
     let is_react_require = || call.callee().is_ident("require") && is_in_object_prototype(source);
     module_name(source).map(str::as_bytes).or_else(|| is_react_require().then_some(pragma))
 }

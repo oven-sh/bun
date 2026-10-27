@@ -9,12 +9,12 @@ unsafe extern "C" {
     safe fn JSC__Exception__getStackTrace(
         this: &Exception,
         global: &JSGlobalObject,
-        stack: &mut ZigStackTrace,
+        stack: &mut ZigStackTrace<'_>,
     );
 }
 
 impl Exception {
-    pub(crate) fn get_stack_trace(&self, global: &JSGlobalObject, stack: &mut ZigStackTrace) {
+    pub(crate) fn get_stack_trace(&self, global: &JSGlobalObject, stack: &mut ZigStackTrace<'_>) {
         JSC__Exception__getStackTrace(self, global, stack);
     }
 

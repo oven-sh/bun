@@ -4120,70 +4120,74 @@ describe("bundler", () => {
   });
 });
 
-// ValidateUseMemo keeps the `useMemo` calls whose result nothing has read yet
-// in a map that keeps their order, and took a call out of it with the remove
-// that moves every later entry. The results of the calls below all stay unused
-// until the `<div>` reads them, so N calls took N^2 steps. The pass is a small
-// part of a build, so the test reads the time of the pass itself. Only a debug
-// or ASAN build records it, and on a debug build one round takes 3 seconds.
-test.skipIf(isDebug || !isASAN)(
+// ValidateUseMemo keeps the `useMemo` calls whose result nothing has read yet in a map that keeps their order, and
+// took a call out of it with the remove that moves every later entry. The results of the calls below all stay unread
+// until the array takes them, so N calls took N^2 steps. EnterSSA stops each component at `const y = f(y)`, soon
+// after the pass, so the pass is most of the build: 30,000 calls in one component took 6 to 7 times the CPU time of
+// the same calls in 1,500 components. Now the two take the same time.
+// Not on a debug or ASAN build, where the rest of the build takes most of the time.
+test.skipIf(isDebug || isASAN)(
   "react-compiler ValidateUseMemo time does not grow with the square of the number of useMemo calls",
   async () => {
-    const calls = 6000;
+    const calls = 30_000;
     const perComponent = 20;
-    const call = "{useMemo(() => 1, [])}";
+    const call = "useMemo(() => 1, []), ";
     const source = (components: number, callsEach: number) =>
       `import { useMemo } from "react";\n` +
       Array.from(
         { length: components },
         (_, c) =>
-          `export function App${c}(props) {\n  return <div>${Buffer.alloc(callsEach * call.length, call)}</div>;\n}\n`,
+          `export function App${c}(props) {\n  const x = (0, [${Buffer.alloc(callsEach * call.length, call)}]);\n` +
+          `  const y = f(y);\n  return <div>{x}{y}</div>;\n}\n`,
       ).join("");
     using dir = tempDir("react-compiler-use-memo-time", {
       "large.jsx": source(1, calls),
       "control.jsx": source(calls / perComponent, perComponent),
+      "small.jsx": source(1, 2),
+      ".oxlintrc.json": JSON.stringify({
+        plugins: ["react"],
+        categories: { correctness: "off" },
+        rules: { "react/todo": "error" },
+      }),
     });
 
-    // The milliseconds that the pass took in all the components of `entry`.
-    const passTime = async (entry: string, components: number) => {
+    // What stops a component is EnterSSA, so ValidateUseMemo ran before.
+    await using lint = Bun.spawn({
+      cmd: [bunExe(), "lint", "-f", "json", "small.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [linted] = await Promise.all([lint.stdout.text(), lint.exited]);
+    expect(
+      JSON.parse(linted).diagnostics.map((it: { code: string; message: string }) => [it.code, it.message]),
+    ).toEqual([["react(todo)", "[hoisting] EnterSSA: Expected identifier to be defined before being used"]]);
+
+    // The user CPU time of one build. The page faults of a build are system time, which changes from run to run.
+    const userTime = async (entry: string) => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-        env: { ...bunEnv, BUN_REACT_COMPILER_TIMING: "1" },
+        env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // "     12.34ms   5.6%      30×  ValidateUseMemo"
-      const [, ms, ran] = stderr.match(/([\d.]+)ms +[\d.]+% +(\d+)× +ValidateUseMemo$/m) ?? [];
-      // Every component reached the pass, and the build compiled them.
-      expect({ ran: ran ?? stderr, compiled: stdout.includes("react/compiler-runtime"), exitCode }).toEqual({
-        ran: String(components),
-        compiled: true,
-        exitCode: 0,
-      });
-      return Number(ms);
+      expect(stderr).toBe("");
+      expect(stdout).not.toContain("react/compiler-runtime");
+      expect(exitCode).toBe(0);
+      return Number(proc.resourceUsage()!.cpuTime.user);
     };
 
-    // Both builds hold the same calls, so a linear pass takes about as long in
-    // one as in the other: the ratio is 0.5 with the fix, and 5 to 6 without
-    // it. The times are wall time. Other load on the machine only adds to a
-    // time, so the best time of each build counts, and the two builds of a
-    // round run together. A round takes 1 second. The rounds stop once the
-    // ratio is under 1: load on the control build alone can put a ratio of 5
-    // under the limit for one round.
-    let control = Infinity;
+    // The least time of each build counts, because other load only adds to a time. A round takes half a second.
     let large = Infinity;
-    for (let round = 0; round < 3; round++) {
-      const [largeTime, controlTime] = await Promise.all([
-        passTime("large.jsx", 1),
-        passTime("control.jsx", calls / perComponent),
-      ]);
-      large = Math.min(large, largeTime);
-      control = Math.min(control, controlTime);
-      if (large / control < 1) break;
+    let control = Infinity;
+    for (let round = 0; round < 2 && !(large / control < 2); round++) {
+      large = Math.min(large, await userTime("large.jsx"));
+      control = Math.min(control, await userTime("control.jsx"));
     }
-    expect(large / control).toBeLessThan(3);
+    expect(large / control).toBeLessThan(4);
   },
 );
 

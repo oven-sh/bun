@@ -38,9 +38,7 @@ fn validate_use_memo_impl(
     let mut use_memos: IdBitSet<IdentifierId> = IdBitSet::default();
     let mut react: IdBitSet<IdentifierId> = IdBitSet::default();
     let mut func_exprs: IdMap<IdentifierId, FuncExprInfo> = IdMap::new();
-    // Not in upstream: a used entry becomes `None` in place, which keeps the order of the report.
-    let mut unused_use_memos: IdMap<IdentifierId, Option<(SourceLocation, Option<String>)>> =
-        IdMap::new();
+    let mut unused_use_memos: IdMap<IdentifierId, (SourceLocation, Option<String>)> = IdMap::new();
 
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
@@ -51,9 +49,8 @@ fn validate_use_memo_impl(
             // Remove used operands from unused_use_memos
             if !unused_use_memos.is_empty() {
                 for operand in operands(value, functions) {
-                    if let Some(unused) = unused_use_memos.get_mut(operand.identifier) {
-                        *unused = None;
-                    }
+                    // The order of what is left does not show: `bun lint` sorts the report by position.
+                    unused_use_memos.swap_remove(operand.identifier);
                 }
             }
 
@@ -123,16 +120,14 @@ fn validate_use_memo_impl(
         // Check terminal operands for unused_use_memos
         if !unused_use_memos.is_empty() {
             for operand in terminal_operands(&block.terminal) {
-                if let Some(unused) = unused_use_memos.get_mut(operand.identifier) {
-                    *unused = None;
-                }
+                unused_use_memos.swap_remove(operand.identifier);
             }
         }
     }
 
     // Report unused useMemo results
     if !unused_use_memos.is_empty() {
-        for (loc, ident_name) in unused_use_memos.values().flatten() {
+        for (loc, ident_name) in unused_use_memos.values() {
             void_memo_errors.push_diagnostic(diag_unused_use_memo(*loc, ident_name.clone()));
         }
     }
@@ -236,7 +231,7 @@ fn handle_possible_use_memo_call(
     void_memo_errors: &mut CompilerError,
     use_memos: &IdBitSet<IdentifierId>,
     func_exprs: &IdMap<IdentifierId, FuncExprInfo>,
-    unused_use_memos: &mut IdMap<IdentifierId, Option<(SourceLocation, Option<String>)>>,
+    unused_use_memos: &mut IdMap<IdentifierId, (SourceLocation, Option<String>)>,
     callee: &Place,
     args: &[PlaceOrSpread],
     lvalue: &Place,
@@ -280,10 +275,7 @@ fn handle_possible_use_memo_call(
         if let Some(callee_loc) = callee.loc {
             // The callee is always useMemo/React.useMemo since we checked is_use_memo above.
             // The identifierName in Babel's AST SourceLocation is "useMemo".
-            unused_use_memos.insert(
-                lvalue.identifier,
-                Some((callee_loc, Some("useMemo".to_string()))),
-            );
+            unused_use_memos.insert(lvalue.identifier, (callee_loc, Some("useMemo".to_string())));
         }
     }
 }

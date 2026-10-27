@@ -391,6 +391,26 @@ describe("zlib.zstdCompress pledges the size of its input", () => {
     assert.deepStrictEqual(options, { chunkSize: 128 });
   });
 
+  // The copy has no prototype. A child process, because the test changes Object.prototype.
+  test("in a copy that reads no option from Object.prototype", async () => {
+    const script = `
+      const zlib = require("node:zlib");
+      const input = Buffer.alloc(64, 97);
+      const results = [];
+      const done = (error, result) => {
+        results.push(error === null && Buffer.isBuffer(result));
+        if (results.length === 2) console.log(JSON.stringify(results));
+      };
+      // With this option, the result is an object that holds the buffer.
+      Object.prototype.info = true;
+      zlib.zstdCompress(input, done);
+      zlib.zstdCompress(input, { __proto__: null }, done);`;
+    const { stdout } = await promisify(execFile)(process.execPath, ["-e", script], {
+      env: harness?.bunEnv ?? process.env,
+    });
+    assert.deepStrictEqual(JSON.parse(stdout), [true, true]);
+  });
+
   for (const defaultEncoding of [undefined, null, "utf8", "utf-8"]) {
     test(`of a string with defaultEncoding ${defaultEncoding}`, async () => {
       const frame = await compress("h\xe9llo", { defaultEncoding } as Options);

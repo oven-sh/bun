@@ -92,6 +92,37 @@ fn unaligned_reads_any_address() {
 }
 
 #[test]
+fn slice_of_leaves_out_a_partial_element() {
+    let bytes = &BYTES.0;
+    let odd = Unaligned::<u32>::slice_of(&bytes[1..11]);
+    assert_eq!(odd.len(), 2);
+    assert_eq!(odd[1].get(), u32::from_ne_bytes([5, 6, 7, 8]));
+    assert_eq!(Unaligned::<u32>::slice_of(&bytes[1..4]).len(), 0);
+    assert_eq!(Unaligned::<u64>::slice_of(&[]).len(), 0);
+
+    let mut bytes = BYTES;
+    Unaligned::<u16>::slice_of_mut(&mut bytes.0[1..6]).fill(Unaligned::new(0xffff));
+    assert_eq!(bytes.0[..7], [0, 255, 255, 255, 255, 5, 6]);
+}
+
+#[test]
+fn vec_from_bytes_copies_from_any_address() {
+    let bytes = &BYTES.0;
+    for start in 0..2 {
+        assert_eq!(
+            vec_from_bytes::<u32>(&bytes[start..start + 8]).unwrap(),
+            [
+                u32::from_ne_bytes(bytes[start..start + 4].try_into().unwrap()),
+                u32::from_ne_bytes(bytes[start + 4..start + 8].try_into().unwrap()),
+            ],
+        );
+    }
+    assert_eq!(vec_from_bytes::<u32>(&bytes[..6]), None);
+    assert_eq!(vec_from_bytes::<[u8; 3]>(&bytes[..4]), None);
+    assert_eq!(vec_from_bytes::<u64>(&[]), Some(Vec::new()));
+}
+
+#[test]
 fn read_prefix_takes_the_front() {
     let bytes = &BYTES.0;
     assert_eq!(

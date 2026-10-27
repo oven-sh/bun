@@ -1,4 +1,3 @@
-import { ptr, toArrayBuffer } from "bun:ffi";
 import { expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, gc, isLinux, isMacOS, isWindows } from "harness";
 import { readFileSync } from "node:fs";
@@ -44,17 +43,32 @@ it("arrayBufferToString u16", () => {
   gc(true);
 });
 
-it("arrayBufferToString u16 at an odd address", () => {
-  for (const text of ["hello world", "h\u00e9llo w\u2603rld"]) {
-    const bytes = new Uint8Array(1 + text.length * 2);
-    for (let i = 0; i < text.length; i++) {
-      new DataView(bytes.buffer).setUint16(1 + i * 2, text.charCodeAt(i), true);
-    }
-    const address = ptr(bytes) + 1;
-    expect(address % 2).toBe(1);
-    expect(Bun.unsafe.arrayBufferToString(new Uint16Array(toArrayBuffer(address, 0, text.length * 2)))).toBe(text);
-    expect(bytes[0]).toBe(0);
-  }
+it("arrayBufferToString u16 at an odd address", async () => {
+  const texts = ["hello world", "h\u00e9llo w\u2603rld"];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { ptr, toArrayBuffer } from "bun:ffi";
+        const out = ${JSON.stringify(texts)}.map(text => {
+          const bytes = new Uint8Array(1 + text.length * 2);
+          const view = new DataView(bytes.buffer);
+          for (let i = 0; i < text.length; i++) view.setUint16(1 + i * 2, text.charCodeAt(i), true);
+          const address = ptr(bytes) + 1;
+          const units = new Uint16Array(toArrayBuffer(address, 0, text.length * 2));
+          return [address % 2, Bun.unsafe.arrayBufferToString(units), bytes[0]];
+        });
+        console.log(JSON.stringify(out));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(texts.map(text => [1, text, 0]));
+  expect(exitCode).toBe(0);
 });
 
 it("arrayBufferToString u16 of nothing", () => {

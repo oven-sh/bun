@@ -5,7 +5,7 @@ everything here; only crates below it name `bun_pod`.
 | trait           | promise                                  | unlocks                |
 | --------------- | ---------------------------------------- | ---------------------- |
 | `NoUninit`      | every byte of every value is initialized | `&T` → `&[u8]`         |
-| `AnyBitPattern` | every byte pattern is a value            | `&[u8]` → `&T`         |
+| `AnyBitPattern` | every byte pattern is a value            | `&[u8]` → `T`          |
 | `Pod`           | both (blanket-implemented)               | `&mut T` ↔ `&mut [u8]` |
 | `Zeroable`      | the all-zero byte pattern is a value     | `zeroed()`             |
 
@@ -145,11 +145,14 @@ computation. An empty slice always casts: its pointer is often dangling, so it
 says nothing about the alignment of the data it stands for.
 
 `Unaligned<T>` is a `T` with alignment 1, so `&[u8]` → `&[Unaligned<T>]` has no
-alignment to check. Use it for bytes whose address Bun does not control: an
-`ArrayBuffer` over `bun:ffi` or N-API memory, an offset into a file.
+alignment to check. `Unaligned::slice_of` and `slice_of_mut` also leave out a
+trailing partial element, so they cannot fail. Use them for bytes whose address
+Bun does not control: an `ArrayBuffer` over `bun:ffi` or N-API memory, an offset
+into a file. `vec_from_bytes` (feature `alloc`) copies such bytes into a `Vec<T>`.
 
 ```
-let bytes = [0u8, 1, 0, 2, 0];
-let odd: &[bun_pod::Unaligned<u16>] = bun_pod::cast_slice(&bytes[1..]);
+let bytes = [0u8, 1, 0, 2, 0, 3];
+let odd = bun_pod::Unaligned::<u16>::slice_of(&bytes[1..]);
+assert_eq!(odd.len(), 2);
 assert_eq!(odd[1].get(), u16::from_ne_bytes([2, 0]));
 ```

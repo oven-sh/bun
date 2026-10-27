@@ -2565,7 +2565,7 @@ pub mod ffi {
     /// Unchecked all-bits-zero — escape hatch for types not yet proven
     /// [`Zeroable`] (libuv handles, bindgen structs in `_sys` crates that
     /// don't depend on `bun_core`, generic `T` where the bound can't be
-    /// threaded). Prefer [`zeroed`] + an `unsafe impl Zeroable` whenever the
+    /// threaded). Prefer [`zeroed`] + `impl_zeroable!` whenever the
     /// type is reachable.
     ///
     /// # Safety

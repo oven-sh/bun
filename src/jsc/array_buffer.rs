@@ -682,9 +682,7 @@ impl ArrayBuffer {
     /// The whole `u32`s of the view. `Unaligned`: JS can put an ArrayBuffer over any address.
     #[inline]
     pub fn as_u32(&mut self) -> &mut [bun_core::Unaligned<u32>] {
-        let bytes = self.byte_slice_mut();
-        let whole = bytes.len() & !3;
-        bun_core::cast_slice_mut(&mut bytes[..whole])
+        bun_core::Unaligned::slice_of_mut(self.byte_slice_mut())
     }
 }
 

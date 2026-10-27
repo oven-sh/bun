@@ -92,10 +92,8 @@ impl MachoFile {
         Ok(Box::new(MachoFile {
             header,
             data,
-            // SAFETY: all-zero is a valid segment_command_64 / section_64 (#[repr(C)] POD, no NonZero/NonNull fields)
-            segment: unsafe { bun_core::ffi::zeroed_unchecked() },
-            // SAFETY: all-zero is a valid section_64 (#[repr(C)] POD, no NonZero/NonNull fields)
-            section: unsafe { bun_core::ffi::zeroed_unchecked() },
+            segment: bun_core::ffi::zeroed(),
+            section: bun_core::ffi::zeroed(),
         }))
     }
 
@@ -120,31 +118,28 @@ impl MachoFile {
 
         let mut found_bun = false;
 
-        let lc_base = size_of::<macho::mach_header_64>();
-        let mut iter = self.iterator();
-
-        while let Some(entry) = iter.next() {
-            let cmd = entry.hdr;
+        for entry in self.command_ranges() {
+            let cmd: macho::load_command = read_struct(&self.data[entry.clone()]);
             match cmd.cmd {
                 macho::LC::SEGMENT_64 => {
-                    let command = entry
-                        .cast::<macho::segment_command_64>()
-                        .ok_or(MachoError::InvalidObject)?;
+                    let command: macho::segment_command_64 =
+                        bun_core::read_prefix(&self.data[entry.clone()])
+                            .ok_or(MachoError::InvalidObject)?;
                     if command.seg_name() == b"__BUN" {
                         if command.nsects > 0 {
-                            let section_offset = lc_base + entry.offset;
+                            let section_offset = entry.start;
                             let sections_base =
                                 section_offset + size_of::<macho::segment_command_64>();
                             let sect_sz = size_of::<macho::section_64>();
                             let nsects = command.nsects as usize;
                             // `nsects` is untrusted; reject a section table that
                             // overflows or doesn't fit inside this command's cmdsize
-                            // (`entry.data.len()`) before indexing `self.data`.
+                            // (`entry.len()`) before indexing `self.data`.
                             let table_end = nsects
                                 .checked_mul(sect_sz)
                                 .and_then(|s| s.checked_add(size_of::<macho::segment_command_64>()))
                                 .ok_or(MachoError::InvalidObject)?;
-                            if table_end > entry.data.len() {
+                            if table_end > entry.len() {
                                 return Err(MachoError::InvalidObject);
                             }
                             for i in 0..nsects {
@@ -196,11 +191,11 @@ impl MachoFile {
                             }
                         }
                     } else if command.seg_name() == SEG_LINKEDIT {
-                        linkedit_seg_idx = Some(lc_base + entry.offset);
+                        linkedit_seg_idx = Some(entry.start);
                     }
                 }
                 macho::LC::CODE_SIGNATURE => {
-                    code_sign_cmd_idx = Some(lc_base + entry.offset);
+                    code_sign_cmd_idx = Some(entry.start);
                 }
                 _ => {}
             }
@@ -380,8 +375,6 @@ impl MachoFile {
         let aligned_previous = align_size(previous_fileoff, PAGE_SIZE);
         let aligned_linkedit = align_size(new_linkedit_fileoff, PAGE_SIZE);
 
-        let mut iter = self.iterator();
-
         // Create shifter with validated parameters
         let shifter = Shifter {
             start: aligned_previous,
@@ -390,11 +383,10 @@ impl MachoFile {
             linkedit_filesize: new_linkedit_filesize,
         };
 
-        while let Some(entry) = iter.next() {
-            let cmd = entry.hdr;
+        for entry in self.command_ranges() {
             // `cmdsize` is untrusted: `edit_command` rejects a command too small for its struct.
-            let command = &mut self.data[size_of::<macho::mach_header_64>() + entry.offset..]
-                [..entry.data.len()];
+            let command = &mut self.data[entry];
+            let cmd: macho::load_command = read_struct(command);
 
             match cmd.cmd {
                 macho::LC::SYMTAB => {
@@ -459,11 +451,21 @@ impl MachoFile {
         Ok(())
     }
 
-    pub(crate) fn iterator(&self) -> macho::LoadCommandIterator {
+    pub(crate) fn iterator(&self) -> macho::LoadCommandIterator<'_> {
         macho::LoadCommandIterator::new(
             self.header.ncmds,
             &self.data[size_of::<macho::mach_header_64>()..][..self.header.sizeofcmds as usize],
         )
+    }
+
+    /// Where each load command is in `self.data`. Borrows nothing, so the caller can edit them.
+    fn command_ranges(&self) -> Vec<core::ops::Range<usize>> {
+        self.iterator()
+            .map(|command| {
+                let start = size_of::<macho::mach_header_64>() + command.offset;
+                start..start + command.data.len()
+            })
+            .collect()
     }
 
     pub(crate) fn build(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
@@ -472,10 +474,9 @@ impl MachoFile {
     }
 
     fn validate_segments(&self) -> Result<(), MachoError> {
-        let mut iter = self.iterator();
         let mut prev_end: u64 = 0;
 
-        while let Some(entry) = iter.next() {
+        for entry in self.iterator() {
             let cmd = entry.hdr;
             if cmd.cmd == macho::LC::SEGMENT_64 {
                 let seg = entry
@@ -561,19 +562,13 @@ impl MachoSigner {
         let mut cs_cmd_off: usize = 0;
         let mut linkedit_off: usize = 0;
 
-        // SAFETY: all-zero is a valid segment_command_64 (#[repr(C)] POD)
-        let mut text_seg: macho::segment_command_64 = unsafe { bun_core::ffi::zeroed_unchecked() };
-        // SAFETY: all-zero is a valid segment_command_64 (#[repr(C)] POD)
-        let mut linkedit_seg: macho::segment_command_64 =
-            unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut text_seg: macho::segment_command_64 = bun_core::ffi::zeroed();
+        let mut linkedit_seg: macho::segment_command_64 = bun_core::ffi::zeroed();
 
-        let mut it = macho::LoadCommandIterator::new(
-            header.ncmds,
-            &obj[header_size..][..header.sizeofcmds as usize],
-        );
+        let commands = &obj[header_size..][..header.sizeofcmds as usize];
 
         // First pass: find segments to establish bounds
-        while let Some(cmd) = it.next() {
+        for cmd in macho::LoadCommandIterator::new(header.ncmds, commands) {
             if cmd.cmd() == macho::LC::SEGMENT_64 {
                 let seg = cmd
                     .cast::<macho::segment_command_64>()
@@ -594,14 +589,8 @@ impl MachoSigner {
             }
         }
 
-        // Reset iterator
-        it = macho::LoadCommandIterator::new(
-            header.ncmds,
-            &obj[header_size..][..header.sizeofcmds as usize],
-        );
-
         // Second pass: find code signature
-        while let Some(cmd) = it.next() {
+        for cmd in macho::LoadCommandIterator::new(header.ncmds, commands) {
             match cmd.cmd() {
                 macho::LC::CODE_SIGNATURE => {
                     let cs = cmd
@@ -691,8 +680,7 @@ impl MachoSigner {
         };
 
         // Setup CodeDirectory
-        // SAFETY: all-zero is a valid CodeDirectory (#[repr(C)] POD)
-        let mut code_dir: CodeDirectory = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut code_dir: CodeDirectory = bun_core::ffi::zeroed();
         code_dir.magic = CSMAGIC_CODEDIRECTORY.swap_bytes();
         code_dir.length = (code_dir_length as u32).swap_bytes();
         code_dir.version = 0x20400u32.swap_bytes();

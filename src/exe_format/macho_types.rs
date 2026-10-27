@@ -1,13 +1,6 @@
 //! Mach-O type definitions needed by `macho.rs`. All structs are `#[repr(C)]`
 //! POD matching the on-disk Mach-O format so they can be read/written via
 //! unaligned `ptr::{read,write}_unaligned`.
-//!
-//! `LoadCommandIterator` deliberately stores a raw `*const u8` rather than a
-//! borrowed `&'a [u8]`: macho.rs interleaves iterator reads with in-place
-//! mutation of the same backing `Vec<u8>`. Holding a Rust borrow across that
-//! mutation would force a structural rewrite; raw pointers avoid that.
-//! SAFETY contract: callers must not reallocate or shrink the backing buffer
-//! while a `LoadCommandIterator` derived from it is live.
 
 #![allow(non_snake_case)]
 
@@ -192,9 +185,7 @@ bun_core::impl_pod!(
 );
 
 // ── load-command iterator ─────────────────────────────────────────────────
-// Canonical impl lives in `bun_sys::macho` (raw-ptr storage; see module-level
-// SAFETY note above for why a borrowed `&[u8]` does not work for `macho.rs`).
-pub use bun_sys::macho::{LoadCommand, LoadCommandIterator, RawSlice};
+pub use bun_sys::macho::LoadCommandIterator;
 
 #[inline]
 fn parse_name(name: &[u8; 16]) -> &[u8] {

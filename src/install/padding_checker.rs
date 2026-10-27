@@ -47,7 +47,7 @@
 // little-endian and 8-byte pointer alignment).
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
-pub mod layout_asserts {
+mod layout_asserts {
     use core::mem::{align_of, size_of};
 
     macro_rules! pin {

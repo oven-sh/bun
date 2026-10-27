@@ -1,4 +1,3 @@
-import { ptr, toArrayBuffer } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import {
   bunEnv,
@@ -288,30 +287,48 @@ it("BigIntArray", () => {
   }
 });
 
-it("TypedArray over an ArrayBuffer at an odd address prints", () => {
-  const bytes = new Uint8Array(32).map((_, i) => i + 1);
-  // `.buffer` moves the bytes of a small typed array, so it comes before `ptr()`.
-  const view = new DataView(bytes.buffer, 1, 16);
-  const address = ptr(bytes) + 1;
-  expect(address % 2).toBe(1);
-  for (const [TypedArray, get, suffix] of [
-    [Int16Array, "getInt16", ""],
-    [Uint16Array, "getUint16", ""],
-    [Int32Array, "getInt32", ""],
-    [Uint32Array, "getUint32", ""],
-    [Float16Array, "getFloat16", ""],
-    [Float32Array, "getFloat32", ""],
-    [Float64Array, "getFloat64", ""],
-    [BigInt64Array, "getBigInt64", "n"],
-    [BigUint64Array, "getBigUint64", "n"],
-  ]) {
-    const length = 16 / TypedArray.BYTES_PER_ELEMENT;
-    const expected = Array.from({ length }, (_, i) => view[get](i * TypedArray.BYTES_PER_ELEMENT, true) + suffix);
-    expect(Bun.inspect(new TypedArray(toArrayBuffer(address, 0, 16)))).toBe(
-      `${TypedArray.name}(${length}) [ ${expected.join(", ")} ]`,
-    );
-  }
-  expect(bytes[0]).toBe(1);
+it("TypedArray over an ArrayBuffer at an odd address prints", async () => {
+  const types = [
+    ["Int16Array", "getInt16", ""],
+    ["Uint16Array", "getUint16", ""],
+    ["Int32Array", "getInt32", ""],
+    ["Uint32Array", "getUint32", ""],
+    ["Float16Array", "getFloat16", ""],
+    ["Float32Array", "getFloat32", ""],
+    ["Float64Array", "getFloat64", ""],
+    ["BigInt64Array", "getBigInt64", "n"],
+    ["BigUint64Array", "getBigUint64", "n"],
+  ];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { ptr, toArrayBuffer } from "bun:ffi";
+        const bytes = new Uint8Array(32).map((_, i) => i + 1);
+        // Moves the bytes of a small typed array, so it comes before ptr().
+        bytes.buffer;
+        const address = ptr(bytes) + 1;
+        for (const name of ${JSON.stringify(types.map(([name]) => name))}) {
+          console.log(new globalThis[name](toArrayBuffer(address, 0, 16)));
+        }
+        console.log(address % 2, bytes[0]);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const view = new DataView(new Uint8Array(32).map((_, i) => i + 1).buffer, 1, 16);
+  const expected = types.map(([name, get, suffix]) => {
+    const size = globalThis[name].BYTES_PER_ELEMENT;
+    const elements = Array.from({ length: 16 / size }, (_, i) => view[get](i * size, true) + suffix);
+    return `${name}(${elements.length}) [ ${elements.join(", ")} ]`;
+  });
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual([...expected, "1 1"]);
+  expect(exitCode).toBe(0);
 });
 
 for (let TypedArray of [Float32Array, Float64Array]) {

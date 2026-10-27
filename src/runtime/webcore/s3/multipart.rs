@@ -112,13 +112,13 @@ use bun_s3_signing::storage_class::StorageClass;
 // File-level mods are declared flat in `webcore.rs` via `#[path]`, so `super`
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
 // re-export hub instead.
-use crate::webcore::fetch::fetch_request_body_sink::RequestBodyChunk as Chunk;
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
     S3UploadResult, execute_simple_s3_request,
 };
 use crate::webcore::s3::xml_response;
+use crate::webcore::streams::EncodedChunk;
 use bun_collections::index_sort;
 
 declare_scope!(S3MultiPartUpload, hidden);
@@ -1113,19 +1113,23 @@ impl MultiPartUpload {
         self.available.get().mask == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::init_full().mask
     }
 
-    fn append_chunk(&self, chunk: Chunk<'_>) -> Result<(), AllocError> {
+    fn append_chunk(&self, chunk: EncodedChunk<'_>) -> Result<(), AllocError> {
         let before = self.buffered.get().size();
         self.buffered.with_mut(|buffered| match chunk {
-            Chunk::Bytes(bytes) => buffered.write(bytes),
-            Chunk::Latin1(text) => buffered.write_latin1::<true>(text),
-            Chunk::Utf16(text) => buffered.write_utf16(text),
+            EncodedChunk::Bytes(bytes) => buffered.write(bytes),
+            EncodedChunk::Latin1(text) => buffered.write_latin1::<true>(text),
+            EncodedChunk::Utf16(text) => buffered.write_utf16(text),
         })?;
         self.uploaded_bytes
             .set(self.uploaded_bytes.get() + (self.buffered.get().size() - before) as u64);
         Ok(())
     }
 
-    fn write(&self, chunk: Chunk<'_>, is_last: bool) -> Result<UploadBackpressure, AllocError> {
+    fn write(
+        &self,
+        chunk: EncodedChunk<'_>,
+        is_last: bool,
+    ) -> Result<UploadBackpressure, AllocError> {
         if self.ended.get() {
             return Ok(UploadBackpressure::Done); // no backpressure since we are done
         }
@@ -1186,7 +1190,7 @@ impl MultiPartUpload {
         chunk: &[u8],
         is_last: bool,
     ) -> Result<UploadBackpressure, AllocError> {
-        self.write(Chunk::Latin1(chunk), is_last)
+        self.write(EncodedChunk::Latin1(chunk), is_last)
     }
 
     pub(crate) fn write_utf16(
@@ -1194,7 +1198,7 @@ impl MultiPartUpload {
         chunk: &[u16],
         is_last: bool,
     ) -> Result<UploadBackpressure, AllocError> {
-        self.write(Chunk::Utf16(chunk), is_last)
+        self.write(EncodedChunk::Utf16(chunk), is_last)
     }
 
     pub(crate) fn write_bytes(
@@ -1202,7 +1206,7 @@ impl MultiPartUpload {
         chunk: &[u8],
         is_last: bool,
     ) -> Result<UploadBackpressure, AllocError> {
-        self.write(Chunk::Bytes(chunk), is_last)
+        self.write(EncodedChunk::Bytes(chunk), is_last)
     }
 }
 

@@ -58,8 +58,7 @@ mod sizes {
     ///
     /// This is the alignment of a slice descriptor (a `(*T, usize)` fat
     /// pointer) — i.e. pointer alignment, not element alignment. This 8-byte
-    /// boundary is load-bearing for on-disk parity AND for
-    /// `read_array::<ExternalString>` (which has a `u64` field) to produce an aligned `&[T]`.
+    /// boundary is load-bearing for on-disk parity, and `read_array` rejects a payload off its element's alignment.
     pub(super) const ALIGN_TYPE_0: usize = align_of::<usize>();
     const _: () = assert!(ALIGN_TYPE_0 == align_of::<&[Tree]>());
 }

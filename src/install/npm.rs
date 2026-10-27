@@ -885,7 +885,7 @@ pub struct PackageVersion {
     pub(crate) integrity: Integrity,
 
     // Explicit padding so this struct has no implicit (uninitialized) padding
-    // bytes — `Serializer::write_array` reinterprets the whole slice as `&[u8]`,
+    // bytes — `Serializer::write` reinterprets the whole slice as `&[u8]`,
     // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
     // fields, `Default` zero-fills them and every byte of the struct is
     // initialized. Layout (size=248, align=8) is unchanged; see the
@@ -1009,8 +1009,7 @@ const _: () = assert!(
 
 // Compile-time proof that the explicit `_padding_*` fields above leave no
 // implicit padding gaps in `PackageVersion` (so `&[PackageVersion] as &[u8]`
-// in `Serializer::write_array` reads only initialized bytes). Mirrors the
-// `NpmPackage` checks below and `padding_checker.rs`.
+// in `Serializer::write` reads only initialized bytes). See `padding_checker.rs`.
 const _: () = {
     use core::mem::{offset_of, size_of};
     // gap between `integrity` (size 65, align 1) and `dependencies` (align 4 → 68)
@@ -1625,11 +1624,10 @@ pub mod package_manifest {
                 pkg_stream.pos = pkg_stream
                     .pos
                     .next_multiple_of(core::mem::align_of::<NpmPackage>());
-                let pkg: NpmPackage = pkg_stream.read_struct()?;
-                if pkg.has_extended_manifest > 1 {
-                    return Ok(None);
+                match pkg_stream.read_struct::<NpmPackage>() {
+                    Ok(pkg) if pkg.has_extended_manifest <= 1 => pkg,
+                    _ => return Ok(None),
                 }
-                pkg
             };
             let string_buf = Self::read_array::<u8>(&mut pkg_stream)?;
             let versions = Self::read_array::<Semver::Version>(&mut pkg_stream)?;

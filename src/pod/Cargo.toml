@@ -9,9 +9,13 @@ path = "lib.rs"
 [lints]
 workspace = true
 
-# `#![no_std]`, no `alloc`, no `#[no_mangle]`: the freestanding
-# `bun-shim-impl.exe` links this crate. The two dependencies below are here only
-# because the orphan rule puts `impl Zeroable for <foreign type>` in this crate.
+# Off for the freestanding `bun-shim-impl.exe`, which is built with `core` alone.
+[features]
+alloc = []
+
+# `#![no_std]`, no `#[no_mangle]`: `bun-shim-impl.exe` links this crate. The two
+# dependencies below are here only because the orphan rule puts
+# `impl Zeroable for <foreign type>` in this crate.
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 

@@ -2,6 +2,9 @@
 #![no_std]
 #![feature(transmutability)]
 
+#[cfg(any(test, feature = "alloc"))]
+extern crate alloc;
+
 use core::mem::{align_of, size_of, size_of_val};
 
 mod foreign;
@@ -144,6 +147,23 @@ impl<T: Copy> Unaligned<T> {
     #[inline(always)]
     pub const fn get(self) -> T {
         self.0
+    }
+}
+
+impl<T: AnyBitPattern> Unaligned<T> {
+    /// The whole `T`s in `bytes`, leaving out a trailing partial one. Cannot fail.
+    #[inline]
+    pub fn slice_of(bytes: &[u8]) -> &[Self] {
+        cast_slice(&bytes[..bytes.len() - bytes.len() % size_of::<T>()])
+    }
+}
+
+impl<T: Pod> Unaligned<T> {
+    /// [`Self::slice_of`], writable.
+    #[inline]
+    pub fn slice_of_mut(bytes: &mut [u8]) -> &mut [Self] {
+        let whole = bytes.len() - bytes.len() % size_of::<T>();
+        cast_slice_mut(&mut bytes[..whole])
     }
 }
 
@@ -298,6 +318,13 @@ pub fn cast_slice_mut<A: Pod, B: Pod>(a: &mut [A]) -> &mut [B] {
         Ok(b) => b,
         Err(error) => cast_failed(error),
     }
+}
+
+/// Copies `bytes` into a `Vec<T>`, whatever their alignment. `None` if they do not divide into whole `T`s.
+#[cfg(any(test, feature = "alloc"))]
+pub fn vec_from_bytes<T: AnyBitPattern>(bytes: &[u8]) -> Option<alloc::vec::Vec<T>> {
+    let elements: &[Unaligned<T>] = try_cast_slice(bytes)?;
+    Some(elements.iter().map(|element| element.get()).collect())
 }
 
 #[cfg(test)]

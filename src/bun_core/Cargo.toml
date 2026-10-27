@@ -12,7 +12,7 @@ workspace = true
 [dependencies]
 itoa.workspace = true
 bun_opaque.workspace = true
-bun_pod.workspace = true
+bun_pod = { workspace = true, features = ["alloc"] }
 strum.workspace = true
 bstr.workspace = true
 const_format.workspace = true

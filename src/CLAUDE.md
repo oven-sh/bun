@@ -330,17 +330,15 @@ bun_core::read_prefix::<Header>(bytes)       // Option<Header>, any alignment
 bun_core::vec_from_bytes::<Header>(bytes)    // Option<Vec<Header>>, any alignment
 bun_core::try_cast_slice::<u8, u16>(bytes)   // Option<&[u16]>: None if misaligned or a partial element
 bun_core::cast_slice::<u8, u16>(bytes)       // same, panics: only for layouts Bun itself established
-bun_core::cast_slice::<u8, Unaligned<u16>>(bytes) // no alignment to check; `.get()` each element
+bun_core::Unaligned::<u16>::slice_of(bytes)  // &[Unaligned<u16>], cannot fail; `.get()` each element
 ```
 
 Memory whose address JS controls (an `ArrayBuffer` can wrap any `bun:ffi` or
-N-API pointer) is not aligned to anything: never `cast_slice` it to an aligned
-type. Use `read_prefix`, `vec_from_bytes`, `try_cast_slice`, or `cast_slice` to
-`Unaligned<T>` over a whole number of elements (it still panics on a partial
-one). A hand-written
-`unsafe impl` of these traits is only for what rustc cannot analyze (generic
-parameters, associated-type fields such as `bitflags!` storage, types over
-4 KiB, and pointers for `Zeroable`). If a function is generic over "`u8` or
+N-API pointer) is not aligned to anything: never `cast_slice` it. Use
+`Unaligned::slice_of`, `read_prefix`, `vec_from_bytes` or `try_cast_slice`. A
+hand-written `unsafe impl` of these traits is only for what rustc cannot analyze
+(generic parameters, associated-type fields such as `bitflags!` storage, types
+over 4 KiB, and pointers for `Zeroable`). If a function is generic over "`u8` or
 `u16`", dispatch with a trait method (`PathByte::units`), not a cast.
 
 ## Environment Variables (`bun_core::env_var`)

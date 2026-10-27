@@ -2412,8 +2412,7 @@ impl<'a> Formatter<'a> {
 
                     macro_rules! print_typed_slice {
                         ($t:ty) => {{
-                            let slice_with_type: &[bun_core::Unaligned<$t>] =
-                                bun_core::cast_slice(slice);
+                            let slice_with_type = bun_core::Unaligned::<$t>::slice_of(slice);
                             self.indent += 1;
                             for el in slice_with_type {
                                 writer.write_all(b"\n");

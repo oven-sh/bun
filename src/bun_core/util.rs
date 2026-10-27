@@ -3018,40 +3018,8 @@ impl<H: core::hash::Hasher> Hasher for H {
 pub use bun_pod::{
     AnyBitPattern, NoUninit, Pod, Unaligned, bytes_of, bytes_of_mut, cast_slice, cast_slice_mut,
     impl_any_bit_pattern, impl_no_uninit, impl_pod, impl_zeroable, read_prefix, slice_as_bytes,
-    slice_as_bytes_mut, try_cast_slice, try_cast_slice_mut,
+    slice_as_bytes_mut, try_cast_slice, try_cast_slice_mut, vec_from_bytes,
 };
-
-/// Copies `bytes` into a `Vec<T>`, whatever their alignment. `None` if they do not divide into whole `T`s.
-pub fn vec_from_bytes<T: AnyBitPattern>(bytes: &[u8]) -> Option<Vec<T>> {
-    let elements: &[Unaligned<T>] = try_cast_slice(bytes)?;
-    Some(elements.iter().map(|element| element.get()).collect())
-}
-
-#[cfg(test)]
-mod vec_from_bytes_tests {
-    use super::vec_from_bytes;
-
-    #[test]
-    fn copies_from_any_alignment() {
-        let bytes: Vec<u8> = (0..9).collect();
-        for start in 0..2 {
-            assert_eq!(
-                vec_from_bytes::<u32>(&bytes[start..start + 8]).unwrap(),
-                [
-                    u32::from_ne_bytes(bytes[start..start + 4].try_into().unwrap()),
-                    u32::from_ne_bytes(bytes[start + 4..start + 8].try_into().unwrap()),
-                ],
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_a_partial_element() {
-        assert_eq!(vec_from_bytes::<u32>(&[0; 6]), None);
-        assert_eq!(vec_from_bytes::<[u8; 3]>(&[0; 4]), None);
-        assert_eq!(vec_from_bytes::<u64>(&[]), Some(Vec::new()));
-    }
-}
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call

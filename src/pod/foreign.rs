@@ -2,6 +2,13 @@
 
 use crate::{Zeroable, impl_zeroable};
 
+macro_rules! has_pointers {
+    ($($T:ty),+ $(,)?) => {$(
+        // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
+        unsafe impl Zeroable for $T {}
+    )+};
+}
+
 #[cfg(unix)]
 mod unix {
     use super::*;
@@ -37,19 +44,15 @@ mod unix {
     #[cfg(target_os = "freebsd")]
     impl_zeroable!(libc::_umtx_time);
 
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for libc::sigaction {}
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for libc::passwd {}
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for libc::tm {}
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for libc::Dl_info {}
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for libc::addrinfo {}
+    has_pointers!(
+        libc::sigaction,
+        libc::passwd,
+        libc::tm,
+        libc::Dl_info,
+        libc::addrinfo
+    );
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for libc::kevent {}
+    has_pointers!(libc::kevent);
 }
 
 #[cfg(windows)]
@@ -68,6 +71,7 @@ mod windows {
         w::WIN32_FIND_DATAW,
         w::FILETIME,
         w::IO_COUNTERS,
+        w::IO_STATUS_BLOCK,
         w::JOBOBJECT_BASIC_LIMIT_INFORMATION,
         w::JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         ws2_32::sockaddr_storage,
@@ -75,18 +79,12 @@ mod windows {
         ws2_32::sockaddr_in6,
     );
 
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for w::IO_STATUS_BLOCK {}
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for w::OBJECT_ATTRIBUTES {}
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for w::UNICODE_STRING {}
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for w::SECURITY_ATTRIBUTES {}
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for w::OVERLAPPED {}
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for w::PROCESS_INFORMATION {}
-    // SAFETY: integers, raw pointers and `Option<fn>` only; the pointers are what stop `impl_zeroable!`.
-    unsafe impl Zeroable for ws2_32::addrinfo {}
+    has_pointers!(
+        w::OBJECT_ATTRIBUTES,
+        w::UNICODE_STRING,
+        w::SECURITY_ATTRIBUTES,
+        w::OVERLAPPED,
+        w::PROCESS_INFORMATION,
+        ws2_32::addrinfo,
+    );
 }

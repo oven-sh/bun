@@ -538,7 +538,7 @@ pub fn last_index_of_char_t<T: PathByte>(self_: &[T], char: T) -> Option<usize> 
     match (T::units(self_), T::units(core::slice::from_ref(&char))) {
         (CodeUnits::U8(s), CodeUnits::U8(c)) => last_index_of_char(s, c[0]),
         (CodeUnits::U16(s), CodeUnits::U16(c)) => highway::memrmem16(s, c),
-        _ => self_.iter().rposition(|c| *c == char),
+        _ => unreachable!(),
     }
 }
 
@@ -554,14 +554,7 @@ pub fn last_index_of_t<T: PathByte>(haystack: &[T], needle: &[T]) -> Option<usiz
     match (T::units(haystack), T::units(needle)) {
         (CodeUnits::U8(h), CodeUnits::U8(n)) => last_index_of(h, n),
         (CodeUnits::U16(h), CodeUnits::U16(n)) => highway::memrmem16(h, n),
-        _ => {
-            if needle.len() > haystack.len() {
-                return None;
-            }
-            (0..=haystack.len() - needle.len())
-                .rev()
-                .find(|&i| haystack[i..i + needle.len()] == *needle)
-        }
+        _ => unreachable!(),
     }
 }
 
@@ -2141,7 +2134,7 @@ pub fn index_of_scalar<T: PathByte>(input: &[T], scalar: T) -> Option<usize> {
     match (T::units(input), T::units(core::slice::from_ref(&scalar))) {
         (CodeUnits::U8(s), CodeUnits::U8(c)) => index_of_char_usize(s, c[0]),
         (CodeUnits::U16(s), CodeUnits::U16(c)) => highway::memmem16(s, c),
-        _ => input.iter().position(|c| *c == scalar),
+        _ => unreachable!(),
     }
 }
 

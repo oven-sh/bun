@@ -188,6 +188,48 @@ impl StreamResult {
     }
 }
 
+/// One sink chunk in its source encoding, so whoever buffers it transcodes straight into its own buffer.
+#[derive(Clone, Copy)]
+pub(crate) enum EncodedChunk<'a> {
+    Bytes(&'a [u8]),
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
+impl<'a> EncodedChunk<'a> {
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        match *self {
+            Self::Bytes(b) | Self::Latin1(b) => b.is_empty(),
+            Self::Utf16(u) => u.is_empty(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn utf8_len(&self) -> usize {
+        match *self {
+            Self::Bytes(b) => b.len(),
+            Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
+            Self::Utf16(u) => {
+                bun_simdutf_sys::simdutf::length::utf8::from::utf16::le_with_replacement(u)
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn append_utf8_into(&self, out: &mut Vec<u8>) {
+        match *self {
+            Self::Bytes(b) => out.extend_from_slice(b),
+            Self::Latin1(b) => {
+                let _ = out.write_latin1(b);
+            }
+            Self::Utf16(u) => {
+                let _ = out.write_utf16(u);
+            }
+        }
+    }
+}
+
 pub enum StreamError {
     Error(SysError),
     AbortReason(CommonAbortReason),

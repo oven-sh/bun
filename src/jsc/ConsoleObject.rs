@@ -5544,7 +5544,7 @@ pub mod formatter {
             bytes: &[u8],
         ) {
             // `Unaligned`: an ArrayBuffer over foreign memory (bun:ffi, N-API) starts anywhere.
-            let slice: &[bun_core::Unaligned<N>] = bun_core::cast_slice(bytes);
+            let slice = bun_core::Unaligned::<N>::slice_of(bytes);
             // Only the per-element `Display` differs by `N`; the loop is shared.
             Self::write_typed_array_elements::<C>(
                 writer,

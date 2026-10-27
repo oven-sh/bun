@@ -452,7 +452,10 @@ function asyncWrap(fn: any, name: string) {
     // needs to exist for https://github.com/nodejs/node/blob/8641d941893/test/parallel/test-worker-message-port-transfer-fake-js-transferable.js to pass
     [Symbol("messaging_transfer_symbol")]() {}
 
-    async appendFile(data, options?: BufferEncoding | { encoding?: BufferEncoding | null; flush?: boolean } | null) {
+    async appendFile(
+      data,
+      options?: BufferEncoding | { encoding?: BufferEncoding | null; flush?: boolean; signal?: AbortSignal } | null,
+    ) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
       let encoding: BufferEncoding = "utf8";

@@ -317,6 +317,7 @@ const chromeInstalled =
 // before the constructor looked at the connection shows as a second connection.
 function constructDuringCollection({
   setup = "",
+  settle = "",
   backend = `{ type: "chrome", url: mock.url }`,
   options = "",
   use = `const navigate = await view.navigate("http://mock/kept").then(() => "resolved", e => "rejected: " + e.message);`,
@@ -325,11 +326,12 @@ function constructDuringCollection({
     import { fullGC } from "bun:jsc";
     const mock = startMockCDP();
     ${setup}
-    // The only open view. Nothing closes it.
+    // Nothing closes this view. It is the only open one when the next view is constructed.
     const holder = { dropped: new Bun.WebView({ backend: ${backend}, width: 100, height: 100 }) };
     // Made before the await: a WeakRef keeps its target alive until the job that made it ends.
     const ref = new WeakRef(holder.dropped);
     await holder.dropped.navigate("http://mock/dropped");
+    ${settle}
     // From a task of the event loop, not from the continuation of the await. That one runs under the
     // socket read that delivered the reply, whose unwritten locals can still hold the view's address,
     // and the collector scans the stack conservatively.
@@ -361,18 +363,24 @@ test.concurrent.each([
   ["a ws:// url", {}],
   [
     "a ws:// url, after 20 other views",
-    // Closed views take the cells that are destroyed with their collection, so the dropped view is in a
-    // block. On globalThis: a binding that nothing reads after an await is dead across it.
+    // The views before it take the cells that are destroyed with their collection, so the dropped view is
+    // in a block. They close while the dropped view is open: none of them is the last view to close.
+    // On globalThis: a binding that nothing reads after an await is dead across it.
     {
-      setup: `globalThis.held = Array.from({ length: 20 }, () => { const view = mock.newView(); view.close(); return view; });`,
+      setup: `globalThis.held = Array.from({ length: 20 }, () => mock.newView());`,
+      settle: `for (const view of globalThis.held) view.close();`,
     },
   ],
   [
     "a ws:// url and a url to load",
     {
       options: `url: "http://mock/kept",`,
-      // The constructor starts this navigation, and no promise for it reaches the script.
-      use: `const navigate = view.loading ? await new Promise(resolve => (view.onNavigated = () => resolve("resolved"))) : "not started";`,
+      // The constructor starts this navigation, and no promise for it reaches the script. loading turns
+      // false when the navigation ends, whichever way it ends.
+      use: `
+        while (view.loading) await new Promise(resolve => setImmediate(resolve));
+        const navigate = view.url === "http://mock/kept" ? "resolved" : "not loaded";
+      `,
     },
   ],
 ])(

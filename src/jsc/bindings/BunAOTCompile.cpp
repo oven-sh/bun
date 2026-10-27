@@ -479,7 +479,6 @@ extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, siz
     return JSC::AOT::describeWhatThreadsAreCompiling({ reinterpret_cast<char*>(buffer), capacity });
 }
 
-
 // What the parser of JavaScript says of a regular expression literal, which it refuses the whole file for. How deep a pattern may be nested depends on the thread, so that is left to where the literal is evaluated. The front end reads the flags itself.
 extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t* pattern, size_t patternSize, const uint8_t* flags, size_t flagsSize, uint8_t* message, size_t capacity)
 {

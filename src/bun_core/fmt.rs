@@ -3708,6 +3708,9 @@ fn write_received_number(f: &mut Formatter<'_>, digits: &str, is_large: bool) ->
 
 impl OutOfRangeValue for f64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if *self == 0.0 && self.is_sign_negative() {
+            return f.write_str(" Received -0");
+        }
         let is_large = self.is_finite() && self.fract() == 0.0 && self.abs() > 4294967296.0;
         write_received_number(f, &double(*self).to_string(), is_large)
     }

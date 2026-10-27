@@ -1091,6 +1091,7 @@ test("Error.captureStackTrace in a node:vm context of a Worker is Bun's function
       const message = await new Promise((resolve, reject) => {
         worker.once("message", resolve);
         worker.once("error", reject);
+        worker.once("exit", code => reject(new Error("the worker exited with code " + code + " before it posted a message")));
       });
       await worker.terminate();
       console.log(JSON.stringify(message));
@@ -1226,41 +1227,37 @@ const capturesUnderAwaitCycle = `
   pb = b();
 `;
 
-// With no limit on the await chain, a child does not return from the capture. So each child has a timeout.
+// With no limit on the await chain, a child does not return from the capture. Its timeout ends it before the test's timeout.
 test.each([
   ["a node:vm context", `require("node:vm").runInNewContext(code, { print })`],
   ["the main context", `(0, eval)(code)`],
-])(
-  "Error.captureStackTrace returns under async functions that await each other, in %s",
-  async (_, run) => {
-    const script = `
+])("Error.captureStackTrace returns under async functions that await each other, in %s", async (_, run) => {
+  const script = `
       globalThis.print = value => console.log(JSON.stringify(value));
       const code = ${JSON.stringify(capturesUnderAwaitCycle)};
       ${run};
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 10_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 4_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
 
-    // `c` runs from a microtask, so it is the only frame of the stack. The trace has at most 10 frames of the cycle.
-    const fromC = expect.stringMatching(/^c, async a, async b(, async [ab]){0,7}$/);
-    expect(JSON.parse(stdout)).toEqual({
-      noCaller: fromC,
-      callerOnStack: fromC,
-      errorSubclass: fromC,
-      callerResumed: expect.stringMatching(/^async a, async b(, async [ab]){0,8}$/),
-      callerNotOnStack: "",
-    });
-  },
-  20_000,
-);
+  // `c` runs from a microtask, so it is the only frame of the stack. The trace has at most 10 frames of the cycle.
+  const fromC = expect.stringMatching(/^c, async a, async b(, async [ab]){0,7}$/);
+  expect(JSON.parse(stdout)).toEqual({
+    noCaller: fromC,
+    callerOnStack: fromC,
+    errorSubclass: fromC,
+    callerResumed: expect.stringMatching(/^async a, async b(, async [ab]){0,8}$/),
+    callerNotOnStack: "",
+  });
+});
 
 test("Error.captureStackTrace inside error constructor works", () => {
   class ExtendedError extends Error {

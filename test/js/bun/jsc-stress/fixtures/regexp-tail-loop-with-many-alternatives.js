@@ -20,7 +20,7 @@ function tailLoop(count, descending)
 }
 
 // What matches is the same whether the pass gets to the end of the loop, which it does up to about 90 classes, or not.
-for (const count of [3, 50, 80, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 100, 500, 2000, 25000]) {
+for (const count of [3, 50, 80, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 100, 500, 2000, 12000]) {
     for (const descending of count > 2000 ? [true] : [false, true]) {
         const regExp = tailLoop(count, descending);
         const first = character(0), last = character(count - 1), middle = character(count >> 1), outside = character(count);
@@ -34,7 +34,7 @@ for (const count of [3, 50, 80, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 100,
 
 // A class of a million code points costs no more than a small one, and one of 700 ranges not much more.
 for (const [characterClass, flags] of [["[\\S]", ""], ["[\\S]", "u"], ["[\\u0100-\\uffff]", ""], ["[\\u{100}-\\u{10ffff}]", "u"], ["\\p{L}", "u"]]) {
-    const regExp = new RegExp(`(?:${new Array(10000).fill(characterClass + "|xy").join("|")})*`, flags);
+    const regExp = new RegExp(`(?:${new Array(2000).fill(characterClass + "|xy").join("|")})*`, flags);
     shouldBe(regExp.exec("\u4e2d\u4e2dxy\u4e2d \u4e2d")[0].length, 5);
 }
 

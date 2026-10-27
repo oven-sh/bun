@@ -13,34 +13,35 @@ function shouldBe(actual, expected)
 }
 
 // Every start position in the filler fails after its lookaround has matched. The only match starts after the filler.
-function test(regExp, filler, tail, offset, expected)
+// The time to match grows with the square of the filler's length, so each filler is only a quarter longer than the shortest
+// one that fails without the fix.
+function test(regExp, repeats, tail, offset, expected)
 {
+    const filler = "ab".repeat(repeats);
     const result = regExp.exec(filler + tail);
     shouldBe(JSON.stringify(result), JSON.stringify(expected));
     shouldBe(result.index, filler.length + offset);
 }
 
-const filler = "ab".repeat(4096);
-
-test(/(?=((?:ab|c)+))\1x/, filler, "yabx", 1, ["abx", "ab"]);
-test(/(?=((?:(a)b)+))\1x/, filler, "yabx", 1, ["abx", "ab", "a"]);
-test(/(?<!y)(?=((?:\w(b)?)+))\1!/, filler, " b!", 1, ["b!", "b", null]);
-test(/(?=((?:ab|c)+))\1x/g, filler, "yabx", 1, ["abx", "ab"]);
-test(/(?=((?:ab|c)+))\1x/u, filler, "yabx", 1, ["abx", "ab"]);
-test(/(?=((?:ab|c)+))\1x/i, filler, "yABX", 1, ["ABX", "AB"]);
+test(/(?=((?:ab|c)+))\1x/, 2160, "yabx", 1, ["abx", "ab"]);
+test(/(?=((?:(a)b)+))\1x/, 2000, "yabx", 1, ["abx", "ab", "a"]);
+test(/(?<!y)(?=((?:\w(b)?)+))\1!/, 1440, " b!", 1, ["b!", "b", null]);
+test(/(?=((?:ab|c)+))\1x/g, 2160, "yabx", 1, ["abx", "ab"]);
+test(/(?=((?:ab|c)+))\1x/u, 2160, "yabx", 1, ["abx", "ab"]);
+test(/(?=((?:ab|c)+))\1x/i, 2160, "yABX", 1, ["ABX", "AB"]);
 
 // A negative lookahead fails when what is in it matches.
-test(/(?!(?:(a)|(b))+y)[ab]+?z/, filler, "y bz", 2, ["bz", null, null]);
+test(/(?!(?:(a)|(b))+y)[ab]+?z/, 960, "y bz", 2, ["bz", null, null]);
 
 // More than one alternative, and one that is only tried at the start.
-test(/(?=((?:ab|c)+))\1x|(?=((?:ba|c)+))\2z/, filler, "ybaz", 1, ["baz", null, "ba"]);
-test(/^q|(?=((?:ab|c)+))\1x/, filler, "yabx", 1, ["abx", "ab"]);
+test(/(?=((?:ab|c)+))\1x|(?=((?:ba|c)+))\2z/, 1600, "ybaz", 1, ["baz", null, "ba"]);
+test(/^q|(?=((?:ab|c)+))\1x/, 2160, "yabx", 1, ["abx", "ab"]);
 
 // 16-bit input.
-test(/(?=((?:ab|c)+))\1x/, filler, "あabx", 1, ["abx", "ab"]);
+test(/(?=((?:ab|c)+))\1x/, 2160, "あabx", 1, ["abx", "ab"]);
 
 // The groups outside of the lookaround keep their state within one attempt.
-test(/(?:(a)(?=((?:b|ab)+))b|(b)(?=(a)))+x/, "ab".repeat(128), "yabx", 1, ["abx", "a", "b", null, null]);
+test(/(?:(a)(?=((?:b|ab)+))b|(b)(?=(a)))+x/, 128, "yabx", 1, ["abx", "a", "b", null, null]);
 
 // No match at all.
-shouldBe(/(?=((?:ab|c)+))\1x/.exec(filler), null);
+shouldBe(/(?=((?:ab|c)+))\1x/.exec("ab".repeat(2160)), null);

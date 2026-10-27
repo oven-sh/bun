@@ -1195,7 +1195,11 @@ pub(crate) fn parse_rgb_components(
             parser.clamp_unit(input, unit_value)
         };
 
-        (get_component(red)?, get_component(green)?, get_component(blue)?)
+        (
+            get_component(red)?,
+            get_component(green)?,
+            get_component(blue)?,
+        )
     };
 
     if is_legacy_syntax && (g.is_nan() || b.is_nan()) {

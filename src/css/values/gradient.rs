@@ -37,7 +37,9 @@ macro_rules! impl_gradient_position {
     ($ty:ty) => {
         impl GradientPosition for $ty {
             #[inline]
-            fn parse(input: &mut Parser) -> Result<Self> { <$ty>::parse(input) }
+            fn parse(input: &mut Parser) -> Result<Self> {
+                <$ty>::parse(input)
+            }
             #[inline]
             fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
                 <$ty>::to_css(self, dest)

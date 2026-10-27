@@ -181,7 +181,10 @@ impl KeyframeSelector {
         } else if let Some(name) =
             <TimelineRangeName as css::EnumProperty>::from_ascii_case_insensitive(ident)
         {
-            Ok(KeyframeSelector::TimelineRangePercentage(name, Percentage::parse(input)?))
+            Ok(KeyframeSelector::TimelineRangePercentage(
+                name,
+                Percentage::parse(input)?,
+            ))
         } else {
             Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
         }

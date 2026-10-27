@@ -7,7 +7,7 @@ use super::idct::{self, DctTable};
 use super::input::Input;
 use super::phuff::PHuffDecoder;
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, coef_at};
-use crate::error::{Error, Result, try_vec};
+use crate::error::{Error, Result, try_vec, try_vec_with_capacity};
 use crate::tables::natural_order;
 
 /// Where an entropy decoder finds the blocks of the MCU it is decoding.
@@ -148,11 +148,20 @@ impl Idct {
 
 /// The coefficients of one component, padded to whole MCUs.
 struct CoefArray {
+    /// Has the room from the start. Empty until `zero`.
     blocks: Vec<Block>,
     blocks_per_row: usize,
+    rows: usize,
 }
 
 impl CoefArray {
+    /// For the first scan with the component, or else the output: memory that no one has written to costs nothing.
+    fn zero(&mut self) {
+        if self.blocks.is_empty() {
+            self.blocks.resize(self.blocks_per_row * self.rows, [0; 64]);
+        }
+    }
+
     fn row(&self, y: usize) -> Result<&[Block]> {
         self.blocks
             .get(y * self.blocks_per_row..(y + 1) * self.blocks_per_row)
@@ -272,12 +281,18 @@ impl CoefController {
             for comp in &decoder.components {
                 let blocks_per_row = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
                 let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
-                let blocks = try_vec([0; 64], blocks_per_row * rows)?;
                 self.whole_image.push(CoefArray {
-                    blocks,
+                    blocks: try_vec_with_capacity(blocks_per_row * rows)?,
                     blocks_per_row,
+                    rows,
                 });
             }
+        }
+        for i in 0..decoder.components_in_scan {
+            self.whole_image
+                .get_mut(decoder.scan_component_index(i)?)
+                .ok_or(Error::Internal)?
+                .zero();
         }
         while self.input_imcu_row < decoder.total_imcu_rows {
             let mut mcu = McuInImage {
@@ -316,6 +331,7 @@ impl CoefController {
     /// Smoothing estimates the low AC coefficients that a progressive stream has not delivered in full, which only
     /// happens if it breaks off early.
     pub(crate) fn start_output_pass(&mut self, decoder: &Decoder) {
+        self.whole_image.iter_mut().for_each(CoefArray::zero);
         self.smoothing = self.smoothing_latch(decoder);
     }
 

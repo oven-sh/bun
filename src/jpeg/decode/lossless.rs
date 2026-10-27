@@ -3,7 +3,7 @@
 use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
 use super::coef::Plane;
 use super::{Decoder, MAX_BLOCKS_IN_MCU};
-use crate::error::{Error, Result, try_vec};
+use crate::error::{Error, Result, try_vec, try_vec_with_capacity};
 
 /// The rows of one component for one iMCU row, as numbers wider than a sample.
 struct Rows {
@@ -267,16 +267,20 @@ impl DiffController {
             for comp in &decoder.components {
                 let stride = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
                 let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
-                self.whole_image.push((Plane::new(stride, rows)?, false));
+                let data = try_vec_with_capacity(stride * rows)?;
+                self.whole_image.push((Plane { data, stride }, false));
             }
         }
         let mut whole_image = core::mem::take(&mut self.whole_image);
         let result = (|| {
             for i in 0..decoder.components_in_scan {
-                whole_image
-                    .get_mut(decoder.scan_component_index(i)?)
-                    .ok_or(Error::Internal)?
-                    .1 = true;
+                let ci = decoder.scan_component_index(i)?;
+                let comp = decoder.component(ci)?;
+                let (plane, in_a_scan) = whole_image.get_mut(ci).ok_or(Error::Internal)?;
+                // Memory that no one has written to costs nothing, so not before the component's first scan.
+                let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
+                plane.data.resize(plane.stride * rows, 0);
+                *in_a_scan = true;
             }
             let mut rest: Vec<(usize, usize, &mut [u8])> = whole_image
                 .iter_mut()

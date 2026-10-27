@@ -46,7 +46,8 @@ JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
         JSWebSocket::getConstructor(vm, globalObject),
         JSCloseEvent::getConstructor(vm, globalObject),
         JSErrorEvent::getConstructor(vm, globalObject),
-        JSMessageEvent::getConstructor(vm, globalObject));
+        JSMessageEvent::getConstructor(vm, globalObject),
+        globalObject->nativeFetchFunction());
 
     auto* obj = constructEmptyObject(globalObject, globalObject->objectPrototype(),
         std::tuple_size_v<decltype(fields)>);

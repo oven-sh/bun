@@ -982,7 +982,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     jsFunctionBunEscapeHTML                                             DontDelete|Function 2
-    fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback
+    fetch                                          BunObject_lazyPropCb_wrap_fetch                                     DontDelete|PropertyCallback
     file                                           Bun::Bindgen::Generated::Blob::jsFile                               DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
     gc                                             Bun::Bindgen::Generated::BunObject::jsGc                            DontDelete|Function 1
@@ -1007,7 +1007,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     password                                       Bun::Bindgen::Generated::PasswordObject::createPassword             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
-    plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
+    plugin                                         constructPluginObject                                               DontDelete|PropertyCallback
     randomUUIDv7                                   Bun::Bindgen::Generated::Crypto::jsRandomUUIDv7                     DontDelete|Function 2
     randomUUIDv5                                   Bun::Bindgen::Generated::Crypto::jsRandomUUIDv5                     DontDelete|Function 3
     readableStreamToArray                          WebCore::jsFunctionReadableStreamToArray           DontDelete|Function 1
@@ -1129,6 +1129,12 @@ static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     return zigGlobalObject->m_bunStdout.getInitializedOnMainThread(zigGlobalObject);
+}
+
+static JSValue BunObject_lazyPropCb_wrap_fetch(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
+    return zigGlobalObject->nativeFetchFunction();
 }
 
 #include "BunObject.lut.h"

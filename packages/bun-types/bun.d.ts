@@ -6727,7 +6727,7 @@ declare module "bun" {
     clearAll(): void;
   }
 
-  const plugin: BunRegisterPlugin;
+  var plugin: BunRegisterPlugin;
 
   /**
    * Whether the current global scope is the main thread

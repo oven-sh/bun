@@ -52,8 +52,18 @@ JSC::JSValue createNodeFetchInternalBinding(Zig::GlobalObject* globalObject)
         globalObject, 5,
         globalObject->JSDOMFileConstructor());
     RETURN_IF_EXCEPTION(scope, {});
+    obj->putDirectIndex(
+        globalObject, 6,
+        globalObject->nativeFetchFunction());
+    RETURN_IF_EXCEPTION(scope, {});
 
     return obj;
+}
+
+// The native fetch alone, for a module that needs nothing else from the binding above.
+JSC::JSValue createNativeFetchBinding(Zig::GlobalObject* globalObject)
+{
+    return globalObject->nativeFetchFunction();
 }
 
 }

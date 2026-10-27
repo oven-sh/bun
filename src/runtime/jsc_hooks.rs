@@ -442,7 +442,13 @@ unsafe fn init_runtime_state(
                 None => opts.env_loader.map(|p| p.as_ptr()),
             }
         };
-        match bun_bundler::Transpiler::init(arena, log, args, env_loader) {
+        match bun_bundler::Transpiler::init_with_load_mode(
+            arena,
+            log,
+            args,
+            env_loader,
+            opts.load_mode.unwrap_or(bun_resolver::LoadMode::ALL),
+        ) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
                 // field is zero-init'd uninhabited memory (never dropped).
@@ -477,13 +483,8 @@ unsafe fn init_runtime_state(
                             handler: bun_jsc::async_module::Queue::on_wake_handler,
                         }),
                     );
-                    // Branch on `opts.graph` here — with a module graph,
-                    // auto_jsx=true would
-                    // `read_dir_info(cwd)` and cache its tsconfig.json BEFORE
-                    // `apply_standalone_runtime_flags` can set
-                    // `resolver.opts.load_tsconfig_json = false`, defeating
-                    // `compile.autoloadTsconfig: false`.
-                    if opts.graph.is_some() {
+                    // A VM of a standalone executable does not read the working directory to start.
+                    if opts.load_mode.is_some() {
                         t.configure_linker_with_auto_jsx(false);
                     } else {
                         t.configure_linker();

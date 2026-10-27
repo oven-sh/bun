@@ -1107,7 +1107,7 @@ pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
 /// **Coalesced arena.** An earlier version
 /// `mmap`ed each one separately, costing 6 `mmap` syscalls + 6 VMAs on the
 /// `bun run <npm-script>` path (≈2 MiB total across `entry_store_backing`,
-/// `dirname_store_backing`, `hash_map_instance`, …) before any user code
+/// `dirname_store_backing`, `hash_map_for`, …) before any user code
 /// runs. We instead bump-allocate every request out of one lazily-mapped
 /// [`BSS_ARENA_SIZE`] region, restoring the single-VMA `.bss` locality and
 /// dropping the syscall count to 1. Requests that overflow the arena (none
@@ -1139,7 +1139,7 @@ pub(crate) fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
 /// Size of the shared demand-zero arena backing every `bss_*!` singleton on
 /// unix. Sum of all live monomorphizations on the `bun run` path is ≈2 MiB
 /// (`entry_store_backing` 1,216,560 B + `dirname_store_backing` 528,384 B +
-/// `hash_map_instance` 229,440 B + slice/key buffers); 4 MiB leaves ~2×
+/// `hash_map_for` 245,816 B per map + slice/key buffers); 4 MiB leaves ~2×
 /// headroom. `MAP_NORESERVE` means the unused tail costs only address space.
 #[cfg(unix)]
 const BSS_ARENA_SIZE: usize = 4 * 1024 * 1024;

@@ -448,6 +448,9 @@ impl Debugger {
             env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init_with_map(
                 env_map,
             ))),
+            // A debugger must not make a standalone executable read configuration files.
+            load_mode: crate::virtual_machine::standalone_module_graph()
+                .map(|graph| graph.load_mode()),
             is_main_thread: false,
             ..Default::default()
         })

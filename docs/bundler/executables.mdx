@@ -469,6 +469,8 @@ bun build --compile --compile-autoload-package-json ./app.ts --outfile myapp
 bun build --compile --compile-autoload-tsconfig --compile-autoload-package-json ./app.ts --outfile myapp
 ```
 
+These flags apply only to the modules that the executable itself loads. A build that the executable runs reads the `tsconfig.json` and `package.json` files of the project that it builds, and these flags do not change that. A build is a `Bun.build()` call or a page that a `Bun.serve()` HTML route bundles. `Bun.Transpiler` resolves the import of a macro in the same way.
+
 ### Disabling config loading at runtime
 
 To disable `.env` or `bunfig.toml` loading for deterministic execution:

@@ -379,6 +379,12 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn compile_exec_argv(&self) -> &[u8] {
         self.compile_exec_argv
     }
+    fn load_mode(&self) -> bun_resolver::LoadMode {
+        bun_resolver::LoadMode::new(
+            !self.flags.contains(Flags::DISABLE_AUTOLOAD_PACKAGE_JSON),
+            !self.flags.contains(Flags::DISABLE_AUTOLOAD_TSCONFIG),
+        )
+    }
     fn builtin_module_bytecode(&self, id: u32) -> Option<(*mut [u8], u32)> {
         StandaloneModuleGraph::builtin_module_bytecode(self, id)
     }

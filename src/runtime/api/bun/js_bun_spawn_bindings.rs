@@ -164,11 +164,7 @@ fn get_argv(
     argv: &mut Vec<CStrPtr>,
     storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
-    if args.is_empty_or_undefined_or_null() {
-        return Err(
-            global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
-        );
-    }
+    debug_assert!(args.is_array());
 
     let mut cmds_array = args.array_iterator(global_this)?;
 
@@ -255,11 +251,6 @@ fn get_argv(
         arg_index += 1;
     }
 
-    if argv.is_empty() {
-        return Err(
-            global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
-        );
-    }
     Ok(())
 }
 
@@ -438,7 +429,9 @@ fn spawn_maybe_sync(
             return Err(cx
                 .global()
                 .throw_invalid_arguments(format_args!("cmd must be an array")));
-        } else if let Some(cmd_value_) = args.get_truthy(cx.global(), "cmd")? {
+        } else if let Some(cmd_value_) = args.get_truthy(cx.global(), "cmd")?
+            && cmd_value_.is_array()
+        {
             cmd_value = cmd_value_;
         } else {
             return Err(cx

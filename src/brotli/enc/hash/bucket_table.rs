@@ -6,7 +6,7 @@ use bun_core::AllocError;
 
 /// Which block is the bucket's own, counted from 1, or 0 if it has none yet. Then how many positions were added to the
 /// bucket, modulo 65536.
-type Head = [u16; 2];
+pub(crate) type Head = [u16; 2];
 
 pub(crate) struct BucketTable {
     /// How many positions a bucket holds. Older ones are forgotten.

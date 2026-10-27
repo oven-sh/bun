@@ -1,6 +1,7 @@
 //! A hash table that keeps the last few positions of each hash, and 8 more bits of the hash of each of them, so that
 //! most of the positions that do not match are skipped without looking at the input.
 
+use super::bucket_table::Head;
 use super::{
     BucketSearch, DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
     StaticDictionarySearch, find_longest_match_at_last_distances, for_each_position,
@@ -68,8 +69,8 @@ pub(crate) trait TaggedBuckets<const N: usize>: Sized {
     /// `1 << bucket_bits` empty buckets.
     fn new(bucket_bits: u32) -> Result<Self, AllocError>;
 
-    /// How many positions were added to bucket `key`, modulo 65536, and the last of them.
-    fn bucket_mut(&mut self, key: usize) -> Checked<(&mut u16, &mut Block<N>)>;
+    /// How many positions were added to bucket `key` so far, modulo 65536, and the last of them. Counts one more.
+    fn add(&mut self, key: usize) -> Checked<(u16, &mut Block<N>)>;
 
     /// Makes room for `positions` positions.
     fn reserve(&mut self, positions: usize) -> Result<(), AllocError>;
@@ -93,8 +94,10 @@ impl<const N: usize> TaggedBuckets<N> for DenseBuckets<N> {
     }
 
     #[inline(always)]
-    fn bucket_mut(&mut self, key: usize) -> Checked<(&mut u16, &mut Block<N>)> {
-        Ok((self.added.at_mut(key)?, self.blocks.at_mut(key)?))
+    fn add(&mut self, key: usize) -> Checked<(u16, &mut Block<N>)> {
+        let added = self.added.at_mut(key)?;
+        let before = core::mem::replace(added, added.wrapping_add(1));
+        Ok((before, self.blocks.at_mut(key)?))
     }
 
     fn reserve(&mut self, _positions: usize) -> Result<(), AllocError> {
@@ -109,9 +112,7 @@ impl<const N: usize> TaggedBuckets<N> for DenseBuckets<N> {
 /// A block for every bucket that was used, so that a short input only touches what it uses. Finding the block of a bucket
 /// makes this about a tenth slower.
 pub(crate) struct SparseBuckets<const N: usize> {
-    /// For each bucket, which of `blocks` is its own, counted from 1, or 0 if it has none yet. Then how many positions
-    /// were added to it, modulo 65536.
-    heads: Vec<[u16; 2]>,
+    heads: Vec<Head>,
     blocks: Vec<Block<N>>,
 }
 
@@ -150,12 +151,13 @@ impl<const N: usize> TaggedBuckets<N> for SparseBuckets<N> {
     }
 
     #[inline(always)]
-    fn bucket_mut(&mut self, key: usize) -> Checked<(&mut u16, &mut Block<N>)> {
+    fn add(&mut self, key: usize) -> Checked<(u16, &mut Block<N>)> {
         if let [0, _] = self.heads.at(key)? {
             self.give_block(key)?;
         }
         let [block, added] = self.heads.at_mut(key)?;
-        Ok((added, self.blocks.at_mut(usize::from(*block) - 1)?))
+        let before = core::mem::replace(added, added.wrapping_add(1));
+        Ok((before, self.blocks.at_mut(usize::from(*block) - 1)?))
     }
 
     fn reserve(&mut self, positions: usize) -> Result<(), AllocError> {
@@ -209,9 +211,8 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HashLongestMatchTagg
 
     #[inline(always)]
     fn add(&mut self, key: usize, tag: u8, ix: usize) -> Checked {
-        let (added, block) = self.buckets.bucket_mut(key)?;
-        let slot = usize::from(!*added) & (N - 1);
-        *added = added.wrapping_add(1);
+        let (added, block) = self.buckets.add(key)?;
+        let slot = usize::from(!added) & (N - 1);
         block.positions.put(slot, ix as u32)?;
         block.tags.put(slot, tag)
     }
@@ -297,8 +298,7 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> LongestMatchHasher
         let min_score = out.score;
         let mut best_len = out.len;
         let (key, tag) = Self::hash_bytes(data, cur_ix_masked)?;
-        let (added, block) = self.buckets.bucket_mut(key)?;
-        let added = core::mem::replace(added, added.wrapping_add(1));
+        let (added, block) = self.buckets.add(key)?;
         let slot = usize::from(!added) & (N - 1);
         // The newest position.
         let head = (slot + 1) & (N - 1);

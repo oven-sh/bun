@@ -39,14 +39,17 @@ async function fetchOne() {
   if (arrived !== body.byteLength) throw new Error(`got ${arrived} of ${body.byteLength} bytes`);
 }
 
-function rss() {
+// Bun.gc(true) leaves returning freed pages to the OS to background scavengers. Bun.shrink() does it as soon as the VM is idle.
+async function rss() {
   Bun.gc(true);
+  Bun.shrink();
+  await new Promise(resolve => setImmediate(resolve));
   return process.memoryUsage.rss();
 }
 
 await fetchOne();
-const before = rss();
+const before = await rss();
 for (let i = 0; i < Number(process.argv[2]); i++) await fetchOne();
-console.log(JSON.stringify({ deltaMiB: (rss() - before) / (1024 * 1024) }));
+console.log(JSON.stringify({ deltaMiB: ((await rss()) - before) / (1024 * 1024) }));
 client.destroy();
 server.destroy();

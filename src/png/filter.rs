@@ -46,6 +46,7 @@ impl Wide {
         Self(lanes)
     }
 
+    /// The low byte of each lane.
     #[inline(always)]
     fn store(self, pixel: &mut [u8]) {
         for (byte, lane) in pixel.iter_mut().zip(self.0) {
@@ -61,11 +62,29 @@ impl Wide {
         self
     }
 
-    /// `self` has all bits of a lane set, or none.
     #[inline(always)]
-    fn select(self, then: Self, otherwise: Self) -> Self {
-        let then = then.zip(self, |x, mask| x & mask);
-        then.zip(otherwise.zip(self, |x, mask| x & !mask), |x, y| x | y)
+    fn map(mut self, with: impl Fn(i16) -> i16) -> Self {
+        for lane in &mut self.0 {
+            *lane = with(*lane);
+        }
+        self
+    }
+
+    #[inline(always)]
+    fn gt(self, other: Self) -> Mask {
+        Mask(self.zip(other, |x, y| if x > y { -1 } else { 0 }))
+    }
+}
+
+/// All bits of a lane set, or none.
+#[derive(Clone, Copy)]
+struct Mask(Wide);
+
+impl Mask {
+    #[inline(always)]
+    fn select(self, then: Wide, otherwise: Wide) -> Wide {
+        let then = then.zip(self.0, |x, mask| x & mask);
+        then.zip(otherwise.zip(self.0, |x, mask| x & !mask), |x, y| x | y)
     }
 }
 
@@ -100,19 +119,15 @@ impl<const SIZE: usize> Undo<SIZE> {
     /// `a` is the pixel before `row` and `c` the one before `above`.
     #[inline(never)]
     fn paeth(a: &[u8; SIZE], c: &[u8; SIZE], row: &mut [u8], above: &[u8]) {
-        /// `rest` is b - 2c.
+        /// x plus what `paeth()` gives, for all a, b and c, in fewer steps from `a`. `known` is 3c - b.
+        // https://github.com/nothings/stb/blob/013ac3beddff3dbffafd5177e7972067cd2b5083/stb_image.h#L4657
         #[inline(always)]
-        fn next(x: &[u8], a: Wide, b: Wide, c: Wide, rest: Wide) -> Wide {
-            let pa = b.zip(c, |b, c| (b - c).abs());
-            let pb = a.zip(c, |a, c| (a - c).abs());
-            let pc = a.zip(rest, |a, rest| (a + rest).abs());
-            let not_b = pb.zip(pc, |pb, pc| if pb > pc { -1 } else { 0 });
-            let not_a = pa.zip(
-                pb.zip(pc, i16::min),
-                |pa, least| if pa > least { -1 } else { 0 },
-            );
-            let nearest = not_a.select(not_b.select(c, b), a);
-            Wide::load(x).zip(nearest, |x, nearest| (x + nearest) & 0xff)
+        fn next(x: &[u8], a: Wide, b: Wide, c: Wide, known: Wide) -> Wide {
+            let threshold = known.zip(a, |known, a| known - a);
+            let (min, max) = (a.zip(b, i16::min), a.zip(b, i16::max));
+            let otherwise = max.gt(threshold).select(c, min);
+            let nearest = threshold.gt(min).select(otherwise, max);
+            Wide::load(x).zip(nearest, |x, nearest| x + nearest)
         }
         let Some((last, pixels)) = row.as_chunks_mut::<SIZE>().0.split_last_mut() else {
             return;
@@ -122,15 +137,18 @@ impl<const SIZE: usize> Undo<SIZE> {
         };
         let (mut a, mut b, mut c) = (Wide::load(a), Wide::load(b), Wide::load(c));
         // Worked out one pixel ahead, or the compiler puts it on the way from one `a` to the next.
-        let mut rest = b.zip(c, |b, c| b - 2 * c);
+        let mut known = b.zip(c, |b, c| 3 * c - b);
         for (x, next_b) in pixels.iter_mut().zip(later_b) {
-            a = next(x, a, b, c, rest);
-            a.store(x);
+            let sum = next(x, a, b, c, known);
+            a = sum.map(|sum| sum & 0xff);
+            // The same bytes. From `a`, the compiler adds bytes, and widening them is on the way to the next `a` too.
+            // From `sum`, it is slower with a pixel that it does not keep in one register.
+            (if SIZE.is_multiple_of(4) { sum } else { a }).store(x);
             c = b;
             b = Wide::load(next_b);
-            rest = b.zip(c, |b, c| b - 2 * c);
+            known = b.zip(c, |b, c| 3 * c - b);
         }
-        next(last, a, b, c, rest).store(last);
+        next(last, a, b, c, known).store(last);
     }
 
     /// Where the row above repeats a pixel, b = c, so a is the nearest and Paeth is Sub, at a tenth of the cost.
@@ -188,6 +206,7 @@ impl<const SIZE: usize> Undo<SIZE> {
 
 /// Turns the filtered `row` back into pixels of `bytes_per_pixel`. `above` is the row before it, turned back already.
 pub(crate) fn undo(filter: u8, bytes_per_pixel: usize, row: &mut [u8], above: &[u8]) -> Result<()> {
+    debug_assert_eq!(row.len(), above.len());
     match bytes_per_pixel {
         1 => Undo::<1>::undo(filter, row, above),
         2 => Undo::<2>::undo(filter, row, above),

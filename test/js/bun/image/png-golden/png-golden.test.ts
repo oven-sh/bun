@@ -74,17 +74,24 @@ function* chunksOf(file: Uint8Array) {
 }
 
 /** The pixels as `rrggbbaa`, and the color profile. */
-async function decode(file: Uint8Array, options: { maxPixels?: number } = {}) {
+async function decodeToHex(file: Uint8Array, options: { maxPixels?: number } = {}) {
   const out = [...chunksOf(await new Bun.Image(file, options).png({ compressionLevel: 0 }).bytes())];
   const width = out[0].data.readUInt32BE(0);
   const lines = zlib.inflateSync(Buffer.concat(out.filter(c => c.type === "IDAT").map(c => c.data)));
-  const pixels: string[] = [];
+  const rows: string[] = [];
   for (let at = 0; at < lines.length; at += 1 + width * 4) {
     expect(lines[at]).toBe(0);
-    for (let x = 0; x < width; x++) pixels.push(lines.toString("hex", at + 1 + x * 4, at + 5 + x * 4));
+    rows.push(lines.toString("hex", at + 1, at + 1 + width * 4));
   }
   const iccp = out.find(c => c.type === "iCCP")?.data;
-  return { pixels, profile: iccp ? zlib.inflateSync(iccp.subarray(iccp.indexOf(0) + 2)).toString("latin1") : null };
+  return {
+    hex: rows.join(""),
+    profile: iccp ? zlib.inflateSync(iccp.subarray(iccp.indexOf(0) + 2)).toString("latin1") : null,
+  };
+}
+async function decode(file: Uint8Array, options: { maxPixels?: number } = {}) {
+  const { hex, profile } = await decodeToHex(file, options);
+  return { pixels: hex.match(/.{8}/g) ?? [], profile };
 }
 const pixels = async (...chunks: Buffer[]) => (await decode(png(...chunks))).pixels;
 const profile = async (...chunks: Buffer[]) => (await decode(png(...chunks))).profile;
@@ -334,8 +341,8 @@ describe("the image", () => {
     [RGBA, 16, 4],
   ];
 
-  /** A file whose rows have `filters` and the bytes that `filtered(bytesPerPixel)` gives, with what it decodes to. */
-  function filteredImage(layout: number[], width: number, filters: number[], filtered: (bpp: number) => number) {
+  /** A file whose rows have `filters` and the bytes that `filtered()` gives, with what it decodes to. */
+  function filteredImage(layout: number[], width: number, filters: number[], filtered: (predicted: number) => number) {
     const paeth = (a: number, b: number, c: number) => {
       const pa = Math.abs(b - c);
       const pb = Math.abs(a - c);
@@ -344,16 +351,15 @@ describe("the image", () => {
     };
     const [colorType, depth, channels] = layout;
     const bpp = (channels * depth) / 8;
-    const lines: number[] = [];
-    let above: number[] = Array(width * bpp).fill(0);
-    const rgba: number[] = [];
-    for (const filter of filters) {
-      const row: number[] = [];
-      lines.push(filter);
-      for (let i = 0; i < width * bpp; i++) {
-        const x = filtered(bpp);
-        lines.push(x);
-        const a = i < bpp ? 0 : row[i - bpp];
+    const lines = Buffer.alloc(filters.length * (1 + width * bpp));
+    const rgba = Buffer.alloc(filters.length * width * 4, 255);
+    let above = new Uint8Array(width * bpp);
+    for (const [y, filter] of filters.entries()) {
+      const row = lines.subarray(y * (1 + width * bpp) + 1, (y + 1) * (1 + width * bpp));
+      const unfiltered = new Uint8Array(row.length);
+      lines[y * (1 + width * bpp)] = filter;
+      for (let i = 0; i < row.length; i++) {
+        const a = i < bpp ? 0 : unfiltered[i - bpp];
         const b = above[i];
         const predicted =
           filter === 4
@@ -365,19 +371,23 @@ describe("the image", () => {
                 : filter === 1
                   ? a
                   : 0;
-        row.push((x + predicted) & 255);
+        row[i] = filtered(predicted);
+        unfiltered[i] = row[i] + predicted;
       }
       for (let x = 0; x < width; x++) {
-        const sample = (channel: number) => (channel < channels ? row[x * bpp + (channel * depth) / 8] : 255);
-        if (channels <= 2) rgba.push(sample(0), sample(0), sample(0), sample(1));
-        else rgba.push(sample(0), sample(1), sample(2), sample(3));
+        const to = (y * width + x) * 4;
+        // Gray is three times the same, and then comes the alpha.
+        for (let channel = 0; channel < (channels <= 2 ? channels + 2 : channels); channel++) {
+          const from = channels <= 2 ? Math.max(0, channel - 2) : channel;
+          rgba[to + channel] = unfiltered[x * bpp + (from * depth) / 8];
+        }
       }
-      above = row;
+      above = unfiltered;
     }
     return {
       name: `color type ${colorType}, depth ${depth}, width ${width}`,
-      file: png(ihdr(width, filters.length, depth, colorType), chunk("IDAT", zlib.deflateSync(Buffer.from(lines)))),
-      expected: Buffer.from(rgba).toString("hex") + "\n",
+      file: png(ihdr(width, filters.length, depth, colorType), chunk("IDAT", zlib.deflateSync(lines))),
+      expected: rgba.toString("hex") + "\n",
     };
   }
 
@@ -386,7 +396,7 @@ describe("the image", () => {
       images.map(async ({ name, file, expected }) => ({
         name,
         expected,
-        actual: (await decode(file)).pixels.join("") + "\n",
+        actual: (await decodeToHex(file)).hex + "\n",
       })),
     );
     expect(differences(results)).toBe("");
@@ -401,6 +411,45 @@ describe("the image", () => {
         [1, 2, 3, 4, 5, 7, 8, 9, 13].map(width => filteredImage(layout, width, filters, random)),
       ),
     );
+  });
+
+  test("Paeth where two of a, b and c are as near, or almost", async () => {
+    // a, b, c, a, b, c and so on. Which one is picked depends on a - c and b - c alone.
+    const cases: number[] = [];
+    const seen = new Set<number>();
+    const add = (a: number, b: number) => {
+      const c = -Math.min(0, a, b);
+      if (c + Math.max(0, a, b) > 255 || seen.has(a * 1024 + b)) return;
+      seen.add(a * 1024 + b);
+      cases.push(c + a, c + b, c);
+    };
+    for (let d = -255; d <= 255; d++) {
+      for (const tie of [d, -d, -2 * d, -d >> 1, 0]) {
+        for (let e = tie - 1; e <= tie + 1; e++) {
+          add(d, e);
+          add(e, d);
+        }
+      }
+    }
+    for (const layout of layouts) {
+      // One case to a byte: c and b side by side in the first row, a under c, and zero under b.
+      const bpp = (layout[1] * layout[2]) / 8;
+      const width = 2 * Math.ceil(cases.length / 3 / bpp);
+      const wanted = new Uint8Array(2 * width * bpp);
+      for (let i = 0; i < cases.length / 3; i++) {
+        const at = i + Math.floor(i / bpp) * bpp;
+        wanted[at + width * bpp] = cases[i * 3];
+        wanted[at + bpp] = cases[i * 3 + 1];
+        wanted[at] = cases[i * 3 + 2];
+      }
+      let at = 0;
+      const image = filteredImage(layout, width, [0, 4], predicted => wanted[at++] - predicted);
+      const { hex } = await decodeToHex(image.file);
+      const same = hex + "\n" === image.expected;
+      const wrong = same ? 0 : Array.from(hex).findIndex((digit, i) => digit !== image.expected[i]) >> 3;
+      const first = ((wrong % width) >> 1) * bpp * 3;
+      expect({ layout, wrong: same ? [] : cases.slice(first, first + bpp * 3) }).toEqual({ layout, wrong: [] });
+    }
   });
 
   test("Paeth under a row that is the same pixel over and over in places", async () => {

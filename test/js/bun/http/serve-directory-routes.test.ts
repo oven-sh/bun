@@ -1,7 +1,7 @@
 import { serve, type Server } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
 import { symlinkSync, utimesSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, kernelResolvesBeneath, tempDir } from "harness";
 import { join } from "path";
 
 const strace = isLinux ? Bun.which("strace") : null;
@@ -413,7 +413,7 @@ describe("Bun.serve() directory routes", () => {
     expect(dbl.body).not.toContain("SECRET");
   });
 
-  it.skipIf(!isLinux)("rejects symlink escapes on Linux via RESOLVE_IN_ROOT", async () => {
+  it.skipIf(!kernelResolvesBeneath())("rejects symlinks that leave the root", async () => {
     using dir = tempDir("serve-dir-symlink", {
       "secret.txt": "SECRET",
       "public/ok.txt": "ok",
@@ -421,10 +421,11 @@ describe("Bun.serve() directory routes", () => {
     });
 
     const root = String(dir);
-    // Absolute target: IN_ROOT resolves it against dirfd, so this looks for
-    // public/<abs path> which doesn't exist.
+    // Absolute target: RESOLVE_IN_ROOT resolves it against dirfd, so this looks
+    // for public/<abs path> which doesn't exist. O_RESOLVE_BENEATH refuses it.
     symlinkSync(join(root, "secret.txt"), join(root, "public", "escape-abs"));
-    // Relative target climbing out: `..` is clamped at the root.
+    symlinkSync(join(root, "public", "inside.txt"), join(root, "public", "alias-abs"));
+    // Relative target climbing out: clamped at the root, or refused.
     symlinkSync("../secret.txt", join(root, "public", "escape-rel"));
     symlinkSync("inside.txt", join(root, "public", "alias"));
 
@@ -439,12 +440,37 @@ describe("Bun.serve() directory routes", () => {
     expect(inside.status).toBe(200);
     expect(await inside.text()).toBe("inside");
 
-    // Symlinks that escape the root are clamped by the kernel.
-    for (const name of ["escape-abs", "escape-rel"]) {
+    for (const name of ["escape-abs", "escape-rel", "alias-abs"]) {
       const res = await fetch(`${server.url}static/${name}`);
-      expect(await res.text()).not.toContain("SECRET");
-      expect(res.status).toBe(404);
+      expect({ name, status: res.status, body: await res.text() }).toEqual({ name, status: 404, body: "" });
     }
+  });
+
+  it.skipIf(isWindows)("still follows symlinks on a kernel that cannot keep them in the root", async () => {
+    using dir = tempDir("serve-dir-symlink-fallback", { "public/inside.txt": "inside" });
+    const root = join(String(dir), "public");
+    symlinkSync("inside.txt", join(root, "alias"));
+    symlinkSync(join(root, "inside.txt"), join(root, "alias-abs"));
+
+    const script = `
+        const server = Bun.serve({ port: 0, routes: { "/static/*": { dir: ${JSON.stringify(root)} } } });
+        const out = [];
+        for (const p of ["alias", "alias-abs"]) {
+          const res = await fetch(server.url + "static/" + p);
+          out.push([res.status, await res.text()]);
+        }
+        server.stop(true);
+        console.log(JSON.stringify(out));
+      `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim(), stderr).toBe(`[[200,"inside"],[200,"inside"]]`);
+    expect(exitCode).toBe(0);
   });
 
   it.skipIf(!canInjectOpenat2Error)("keeps clamping symlinks to the root after an open error on one path", async () => {

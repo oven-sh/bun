@@ -1,4 +1,4 @@
-//! Resolves the paths an archive names without leaving a directory, whatever symlinks are on disk.
+//! Resolves the paths an archive or a URL names without leaving a directory, whatever symlinks are on disk.
 
 use bun_core::{ZStr, strings};
 use bun_paths::path_buffer_pool;
@@ -36,7 +36,28 @@ pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode, symlinks: Symlinks) 
     if symlinks == Symlinks::Follow {
         return crate::openat(dir, path, flags, mode);
     }
-    refuse_absolute_and_dot_dot(path.as_bytes(), Tag::open)?;
+    match openat_if_supported(dir, path, flags, mode, symlinks) {
+        Some(Err(err)) if err.get_errno() == E::EAGAIN => {}
+        Some(result) => return result,
+        None => {}
+    }
+    #[cfg(target_os = "macos")]
+    return crate::openat(dir, path, flags | O::NOFOLLOW_ANY, mode);
+    #[cfg(not(target_os = "macos"))]
+    open_component_by_component(dir, path, flags, mode)
+}
+
+/// `None` where the kernel cannot do this, for a caller that would rather not refuse every symlink then.
+pub fn openat_if_supported(
+    dir: Fd,
+    path: &ZStr,
+    flags: i32,
+    mode: Mode,
+    symlinks: Symlinks,
+) -> Option<Maybe<Fd>> {
+    if let Err(err) = refuse_absolute_and_dot_dot(path.as_bytes(), Tag::open) {
+        return Some(Err(err));
+    }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
@@ -46,34 +67,33 @@ pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode, symlinks: Symlinks) 
             resolve |= ResolveFlags::NO_SYMLINKS;
         }
         // A rename or mount anywhere on the system while a symlink's `..` resolves is `EAGAIN`.
+        let mut result = Err(libc::EAGAIN);
         for _ in 0..EAGAIN_ATTEMPTS {
-            match crate::openat2_if_available(dir, path, flags, mode, resolve) {
-                Some(Err(libc::EAGAIN)) => {}
-                Some(result) => {
-                    return result.map_err(|e| {
-                        Error::from_code_int(e, Tag::open).with_path(path.as_bytes())
-                    });
-                }
-                None => break,
+            result = crate::openat2_if_available(dir, path, flags, mode, resolve)?;
+            if !matches!(result, Err(libc::EAGAIN)) {
+                break;
             }
         }
-        open_component_by_component(dir, path, flags, mode)
+        Some(result.map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes())))
     }
     #[cfg(target_os = "macos")]
     {
-        let resolve = match (kernel_resolves_beneath(), symlinks) {
-            (true, Symlinks::Refuse) => O_RESOLVE_BENEATH | O::NOFOLLOW_ANY,
-            (true, _) => O_RESOLVE_BENEATH,
-            (false, _) => O::NOFOLLOW_ANY,
+        let resolve = match (kernel_resolves_beneath(dir), symlinks) {
+            (Err(err), _) => return Some(Err(err)),
+            (Ok(false), _) => return None,
+            (Ok(true), Symlinks::Refuse) => O_RESOLVE_BENEATH | O::NOFOLLOW_ANY,
+            (Ok(true), _) => O_RESOLVE_BENEATH,
         };
-        crate::openat(dir, path, flags | resolve, mode).map_err(not_capable_is_exdev)
+        Some(crate::openat(dir, path, flags | resolve, mode).map_err(not_capable_is_exdev))
     }
     #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
     {
         if symlinks == Symlinks::Refuse || !kernel_may_resolve() {
-            return open_component_by_component(dir, path, flags, mode);
+            return None;
         }
-        crate::openat(dir, path, flags | O_RESOLVE_BENEATH, mode).map_err(not_capable_is_exdev)
+        Some(
+            crate::openat(dir, path, flags | O_RESOLVE_BENEATH, mode).map_err(not_capable_is_exdev),
+        )
     }
 }
 
@@ -165,20 +185,30 @@ fn kernel_may_resolve() -> bool {
         .unwrap_or(false)
 }
 
-/// Refusing `/` the way macOS 26 does. 15.4 documents other semantics, and older kernels ignore the flag.
+/// Refusing to leave `dir` the way macOS 26 does. 15.4 documents other semantics, and older kernels ignore the flag.
 #[cfg(target_os = "macos")]
-fn kernel_resolves_beneath() -> bool {
+fn kernel_resolves_beneath(dir: Fd) -> Maybe<bool> {
     static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CACHED.get_or_init(|| {
-        kernel_may_resolve()
-            && match crate::open(bun_core::zstr!("/"), SEARCH | O_RESOLVE_BENEATH, 0) {
-                Ok(fd) => {
-                    let _ = crate::close(fd);
-                    false
-                }
-                Err(err) => i32::from(err.errno) == ENOTCAPABLE,
+    if let Some(known) = CACHED.get() {
+        return Ok(*known);
+    }
+    let leave = || crate::openat(dir, bun_core::zstr!(".."), SEARCH | O_RESOLVE_BENEATH, 0);
+    let known = kernel_may_resolve()
+        && match leave() {
+            Ok(fd) => {
+                let _ = crate::close(fd);
+                false
             }
-    })
+            Err(err) => match i32::from(err.errno) {
+                ENOTCAPABLE => true,
+                // These say nothing about the flag, so they are not remembered.
+                libc::EMFILE | libc::ENFILE | libc::ENOMEM | libc::EBADF | libc::ENOTDIR => {
+                    return Err(err);
+                }
+                _ => false,
+            },
+        };
+    Ok(*CACHED.get_or_init(|| known))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]

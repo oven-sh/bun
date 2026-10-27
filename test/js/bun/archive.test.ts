@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isFreeBSD, isLinux, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, kernelResolvesBeneath, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -14,7 +14,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { release } from "node:os";
 import { dirname, join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -1310,10 +1309,6 @@ describe("Bun.Archive", () => {
         },
       };
 
-      const [major, minor] = release().split(".").map(Number);
-      const kernelResolvesBeneath =
-        (isLinux && (major > 5 || (major === 5 && minor >= 6))) || isMacOSVersionAtLeast(26) || isFreeBSD;
-
       function tree(root: string, prefix = "", out: Record<string, string> = {}): Record<string, string> {
         for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
           const path = join(prefix, entry.name);
@@ -1383,7 +1378,7 @@ describe("Bun.Archive", () => {
       }
 
       describe.each([
-        ["by default", {}, kernelResolvesBeneath],
+        ["by default", {}, kernelResolvesBeneath()],
         ["when the kernel is not asked", { BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" }, false],
       ] as const)("%s", (_, env, followsInside) => {
         test.concurrent.each(["plain", "glob"] as const)("nothing is written outside of it (%s)", async mode => {

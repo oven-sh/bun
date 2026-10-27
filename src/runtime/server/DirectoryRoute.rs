@@ -289,7 +289,7 @@ impl DirectoryRoute {
         (bun_sys::S::ISREG(mode) && !had_trailing_slash).then_some(Subpath::File(file, stat, false))
     }
 
-    /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `openat` elsewhere.
+    /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `O_RESOLVE_BENEATH` on macOS and FreeBSD, `openat` without those.
     fn open_beneath(&self, rel: &[u8]) -> Option<File> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let zrel = resolve_path::z(rel, &mut *buf);
@@ -303,7 +303,14 @@ impl DirectoryRoute {
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let fd = bun_sys::openat2_in_root(self.root_fd.get(), zrel, flags, 0).ok()?;
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+        let fd = {
+            use bun_sys::beneath::{Symlinks, openat_if_supported};
+            openat_if_supported(self.root_fd.get(), zrel, flags, 0, Symlinks::FollowInside)
+                .unwrap_or_else(|| bun_sys::openat(self.root_fd.get(), zrel, flags, 0))
+                .ok()?
+        };
+        #[cfg(windows)]
         let fd = bun_sys::openat(self.root_fd.get(), zrel, flags, 0).ok()?;
         // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
         // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.

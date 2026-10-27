@@ -681,10 +681,13 @@ declare module "bun" {
      * `%XX` sequence encoding a character that may appear literally in a path
      * segment) are rejected with `404` so the served path is always the path
      * the router matched. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`,
-     * so symlinks that would escape `dir` are clamped by the kernel. Routing
-     * is case-sensitive but filesystems on macOS and Windows are not by
-     * default: do not place access-controlled content inside `dir` and rely
-     * on an overlapping route to gate it.
+     * so symlinks that would escape `dir` are clamped by the kernel. On macOS
+     * 26+ and FreeBSD it uses `O_RESOLVE_BENEATH`, so a symlink that would
+     * escape `dir`, or that has an absolute target, is a `404`. Other systems
+     * follow symlinks wherever they lead. Routing is case-sensitive but
+     * filesystems on macOS and Windows are not by default: do not place
+     * access-controlled content inside `dir` and rely on an overlapping route
+     * to gate it.
      *
      * Responses carry `Content-Type` (from the file extension),
      * `Last-Modified`, a weak `ETag`, and support single-range `Range`

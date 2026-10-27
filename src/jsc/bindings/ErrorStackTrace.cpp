@@ -151,32 +151,37 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     }
 
     JSC::JSObject* callerObject = caller.getObject();
-    WTF::String callerName = Zig::functionName(vm, callerObject);
+
+    auto indexOfSyncFrame = [&](const auto& isFrameOfCaller) -> size_t {
+        for (size_t i = 0; i < stackTrace.size() && !stackTrace.at(i).isAsyncFrame(); i++) {
+            if (isFrameOfCaller(stackTrace.at(i)))
+                return i;
+        }
+        return WTF::notFound;
+    };
 
     // Match V8: remove all frames up to and including the caller. If the caller
     // is not found anywhere in the sync portion of the stack, remove everything.
-    // We match by cell identity first, then by name — name matching is needed
-    // because a resumed async function's frame callee is the generator's `next`
-    // function (a different cell) but Zig::functionName still reports the
-    // original async function's name.
-    size_t removeCount = stackTrace.size();
-    for (size_t i = 0; i < stackTrace.size(); i++) {
-        const auto& frame = stackTrace.at(i);
-        if (frame.isAsyncFrame())
-            break;
-        if (frame.callee() == callerObject) {
-            removeCount = i + 1;
-            break;
-        }
+    // The caller's frame is the one whose callee is that cell. Only when no frame
+    // has it do we match by name: a resumed async function's frame callee is the
+    // generator's `next` function (a different cell) but Zig::functionName still
+    // reports the original async function's name. That frame runs user code, so
+    // a builtin's frame never matches by name: `function map() { [1].map(f) }`
+    // is cut at the user's `map`, not at the builtin under it.
+    size_t callerIndex = indexOfSyncFrame([&](const JSC::StackFrame& frame) {
+        return frame.callee() == callerObject;
+    });
+    if (callerIndex == WTF::notFound) {
+        WTF::String callerName = Zig::functionName(vm, callerObject);
         if (!callerName.isEmpty()) {
-            WTF::String frameName = Zig::functionName(vm, frame, nullptr);
-            if (frameName == callerName) {
-                removeCount = i + 1;
-                break;
-            }
+            callerIndex = indexOfSyncFrame([&](const JSC::StackFrame& frame) {
+                auto* codeBlock = frame.codeBlock();
+                return codeBlock && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && Zig::functionName(vm, frame, nullptr) == callerName;
+            });
         }
     }
 
+    size_t removeCount = callerIndex == WTF::notFound ? stackTrace.size() : callerIndex + 1;
     if (removeCount > 0)
         stackTrace.removeAt(0, removeCount);
 

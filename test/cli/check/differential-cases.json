@@ -18734,5 +18734,29 @@
       "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
     }
+  },
+  "property-typed-by-the-constructor-is-widened-like-an-initializer": {
+    "files": {
+      "a.ts": "interface Opt { label: string }\ndeclare function take(opt: Opt): void;\nclass A { private opt; constructor() { this.opt = { label: \"x\", extra: 1 }; } run() { take(this.opt); } }\nclass B { private opts; constructor() { this.opts = [{ label: \"x\", extra: 1 }]; } run() { const o: Opt[] = this.opts; return o; } }\nclass C { static opt; static { this.opt = { label: \"x\", extra: 1 }; } static run() { take(C.opt); } }\nabstract class F { abstract opt; constructor() { this.opt = { label: \"x\", extra: 1 }; } run() { take(this.opt); } }\ninterface M { m: Opt }\nclass M { m; constructor() { this.m = { label: \"x\", extra: 1 }; } }\nclass D { private s; constructor() { this.s = \"x\"; } run() { const t: \"x\" = this.s; return t; } }\nclass R { readonly r; constructor() { this.r = \"x\"; } run() { const t: \"x\" = this.r; return t; } }\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "property-typed-by-the-constructor-reports-implicit-any-widening": {
+    "files": {
+      "a.ts": "declare const u: unique symbol;\nclass A { private x; constructor() { this.x = { a: null }; } }\nclass B { static y; static { this.y = { b: undefined }; } }\nclass Q { \"q\"; constructor() { this.q = [null]; } }\nclass P { #p; constructor() { this.#p = [null]; } m() { return this.#p; } }\nclass O { x?; constructor() { this.x = u; } }\nexport const o: typeof u = new O().x;\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": false, \"noImplicitAny\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "property-without-annotation-widens-a-unique-symbol": {
+    "files": {
+      "a.ts": "declare const u: unique symbol;\ndeclare const c: boolean;\nclass A { x; constructor() { this.x = u; } }\nclass B { x: typeof u = u; }\nclass D extends B { declare x; }\nclass D2 extends B { declare x; constructor() { super(); if (c) this.x = u; } }\nclass C { static y; static { this.y = u; } }\nclass E { x = u; }\nclass OA { x?; constructor() { this.x = u; } }\nclass OE { x? = u; }\nclass OF { static y?; static { this.y = u; } }\nexport const a: typeof u = new A().x;\nexport const d: typeof u = new D().x;\nexport const d2: typeof u = new D2().x;\nexport const cy: typeof u = C.y;\nexport const e: typeof u = new E().x;\nexport const oa: typeof u | undefined = new OA().x;\nexport const oe: typeof u | undefined = new OE().x;\nexport const of: typeof u | undefined = OF.y;\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "optional-property-keeps-a-unique-symbol-with-exact-optional-types": {
+    "files": {
+      "a.ts": "declare const u: unique symbol;\nclass A { readonly x?; constructor() { this.x = u; } }\nclass B { x: typeof u = u; }\nclass D extends B { declare x?; }\nclass F { static readonly y?; static { this.y = u; } }\nexport const a: typeof u | undefined = new A().x;\nexport const d: typeof u | undefined = new D().x;\nexport const f: typeof u | undefined = F.y;\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"exactOptionalPropertyTypes\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
   }
 }

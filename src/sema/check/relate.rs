@@ -223,8 +223,8 @@ struct WorkerState {
 pub(super) struct Relater {
     pub(super) relation: Relation,
     /// The two types `check_type_related_to` was called with. `NEVER` in a relater created elsewhere.
-    top_source: TypeId,
-    top_target: TypeId,
+    pub(super) top_source: TypeId,
+    pub(super) top_target: TypeId,
     /// The comparisons in progress and those that succeeded assuming the ones in progress succeed.
     maybe_keys: Vec<Key>,
     /// `maybeKeysSet`: the keys in `maybe_keys`, from the point where there are many of them until
@@ -2484,18 +2484,29 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> (u32, u32, u32) {
         let hir = self.hir(file);
         let mut enclosing_deferred = u32::from(is_deferred);
+        // The signature of a function expression is checked at once. Only its body is deferred.
+        let mut below = Node::NONE;
         hir.find_ancestor(node, |node| {
-            if let NodeData::Expr(e) = hir.data(node)
-                && matches!(
-                    hir[e].kind,
-                    ExprKind::Fn(_)
-                        | ExprKind::Class(_)
-                        | ExprKind::Jsx(_)
-                        | ExprKind::Unary { op: UnOp::Void, .. }
-                )
-            {
-                enclosing_deferred += 1;
+            if let NodeData::Expr(e) = hir.data(node) {
+                let defers_below = match hir[e].kind {
+                    ExprKind::Fn(f) => {
+                        let func = &hir[f];
+                        let in_signature = !below.is_none()
+                            && (below == hir.node(func.ret)
+                                || below == hir.node(func.this_param)
+                                || func.params.iter().any(|p| hir.node(p) == below)
+                                || func.type_params.iter().any(|tp| hir.node(tp) == below));
+                        !in_signature
+                    }
+                    ExprKind::Jsx(jsx) => !hir[jsx].tag.is_none(),
+                    ExprKind::Class(_) | ExprKind::Unary { op: UnOp::Void, .. } => true,
+                    _ => false,
+                };
+                if defers_below {
+                    enclosing_deferred += 1;
+                }
             }
+            below = node;
             false
         });
         (self.files().rank_of_file(file), enclosing_deferred, pos)
@@ -4498,11 +4509,22 @@ impl<'p, 's> Checker<'p, 's> {
         written: &[TypeId],
     ) -> Option<(u32, u32, u32)> {
         let files = self.files();
+        // An optional member's type adds `undefined` to the type of its node.
+        let covers = |whole: TypeId, part: TypeId| {
+            whole == part
+                || match (self.data(whole), self.data(part)) {
+                    (TypeData::Union(parts), TypeData::Union(inner)) => {
+                        inner.iter().all(|p| parts.contains(p))
+                    }
+                    (TypeData::Union(parts), _) => parts.contains(&part),
+                    _ => false,
+                }
+        };
         let resolved = |file: FileId, node: TypeNodeId| {
             (!node.is_none())
                 .then(|| self.p.type_node_types.get(&self.task, &(file, node)))
                 .flatten()
-                .is_some_and(|ty| written.contains(&ty))
+                .is_some_and(|ty| written.iter().any(|&w| covers(w, ty)))
         };
         let declares_member = |file: FileId, m: MemberId| {
             let hir = self.hir(file);
@@ -4528,7 +4550,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let declares = resolved(file, func.ret)
                     || func.params.iter().any(|p| resolved(file, hir[p].ty))
                     || !func.this_param.is_none() && resolved(file, hir[func.this_param].ty);
-                // `checkFunctionExpressionOrObjectLiteralMethod` checks the signature at once and defers the body.
+                // Only the body of a function expression is deferred, and the signature is what declares.
                 let node = hir.node(f);
                 let from = match hir.data(node) {
                     NodeData::Expr(_) => hir.parent(node),

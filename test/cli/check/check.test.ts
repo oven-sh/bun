@@ -7143,6 +7143,77 @@ a.ts(2,14): error TS2322: Type 'Box<I1> | Box<I3>' is not assignable to type 'No
 `.slice(1, -1),
         ],
         [
+          "declared in a checked file after a parameter default that compares them, in a signature checked in order",
+          {
+            "a.ts": `declare const x: I4;
+export const g = (p: Node = x) => p;
+type Box<T> = { v: T };
+interface I0 { next: Box<number> }
+interface I1 { next: Box<I0> }
+interface I2 { next: Box<I1> }
+interface I3 { next: Box<I2> }
+interface I4 { next: Box<I3> }
+type Node = null | { next: Node } | { v: Node };
+`,
+          },
+          "",
+        ],
+        [
+          "declared in a checked file before the comparison, as optional members declared as unions",
+          {
+            "a.ts": `type Box<T> = { v: T };
+interface I0 { next?: Box<number> | null }
+interface I1 { next?: Box<I0> | null }
+interface I2 { next?: Box<I1> | null }
+interface I3 { next?: Box<I2> | null }
+interface I4 { next?: Box<I3> | null }
+type Node = null | { v?: Node; next?: Node };
+declare const x: I4;
+export const y: Node = x;
+`,
+          },
+          `
+a.ts(9,14): error TS2322: Type 'I4' is not assignable to type 'Node'.
+  Types of property 'next' are incompatible.
+    Type 'Box<I3> | null | undefined' is not assignable to type 'Node | undefined'.
+      Type 'Box<I3>' is not assignable to type '{ v?: Node | undefined; next?: Node | undefined; }'.
+        The types of 'v.next' are incompatible between these types.
+          Type 'Box<I2> | null | undefined' is not assignable to type 'Node | undefined'.
+            Type 'Box<I2>' is not assignable to type '{ v?: Node | undefined; next?: Node | undefined; }'.
+              The types of 'v.next' are incompatible between these types.
+                Type 'Box<I1> | null | undefined' is not assignable to type 'Node | undefined'.
+                  Type 'Box<I1>' is not assignable to type '{ v?: Node | undefined; next?: Node | undefined; }'.
+                    The types of 'v.next' are incompatible between these types.
+                      Type 'Box<I0> | null | undefined' is not assignable to type 'Node | undefined'.
+                        Type 'Box<I0>' is not assignable to type '{ v?: Node | undefined; next?: Node | undefined; }'.
+                          The types of 'v.next' are incompatible between these types.
+                            Type 'Box<number> | null | undefined' is not assignable to type 'Node | undefined'.
+                              Type 'Box<number>' is not assignable to type '{ v?: Node | undefined; next?: Node | undefined; }'.
+                                Types of property 'v' are incompatible.
+                                  Type 'number' has no properties in common with type '{ v?: Node | undefined; next?: Node | undefined; }'.
+`.slice(1, -1),
+        ],
+        [
+          "members of a union that the comparison started with, when the error is explained",
+          {
+            "decls.d.ts": `type Box<T> = { v: T };
+interface I1 { next: string }
+interface I2 { next: Box<I1> }
+interface I3 { next: Box<I2> }
+declare const x: Box<I3> | Box<I1>;
+`,
+            "a.ts": `interface Node { v?: Node; next?: Node }
+export const y: Node = x;
+`,
+          },
+          `
+a.ts(2,14): error TS2322: Type 'Box<I1> | Box<I3>' is not assignable to type 'Node'.
+  Type 'Box<I1>' is not assignable to type 'Node'.
+    The types of 'v.next' are incompatible between these types.
+      Type 'string' has no properties in common with type 'Node'.
+`.slice(1, -1),
+        ],
+        [
           "nested in one another in a declaration file that isn't checked",
           {
             "decls.d.ts": `type Box<T> = { v: T };
@@ -7181,6 +7252,26 @@ export const s: string = f(x);
         const line = where === "before the call" ? 11 : 4;
         expect(stdout).toBe(`a.ts(${line},14): error TS2322: Type '${inferred}' is not assignable to type 'string'.`);
         expect(exitCode).toBe(1);
+      });
+
+      test("declared after an assignment in a JSX fragment, which is checked in order", async () => {
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "preserve" },
+          }),
+          "jsx.d.ts": `declare namespace JSX {
+  interface Element {}
+  interface IntrinsicElements {}
+}
+`,
+          "a.tsx": `declare const x: I4;
+let y: Node;
+export const el = <>{y = x}</>;
+${box}`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(0);
       });
 
       test("an Iterable of an array of arrays as JSX children", async () => {

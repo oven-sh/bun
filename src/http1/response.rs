@@ -87,7 +87,7 @@ pub fn parse_response<'a, H: From<Header<'a>>>(
     })
 }
 
-/// Finds the end of a head that comes in pieces and reads no byte twice, as [`parse_response`] after each piece would.
+/// Finds the end of a head that comes in pieces without starting over at each, as [`parse_response`] would.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HeadScanner {
     part: Part,

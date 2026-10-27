@@ -1,6 +1,6 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
 import { dlopen } from "bun:ffi";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   gcTick as _gcTick,
   bunEnv,
@@ -2471,80 +2471,117 @@ it("doesn't crash when a subprocess pipe is canceled and the event loop runs ins
   expect(fetch(server.url).then(r => r.text())).resolves.toBe("ok");
 });
 
-// stdio "ignore" opens /dev/null. The open must not carry O_CREAT: on a rootfs
-// without /dev/null that creates a regular file there. A seccomp filter that
-// fails every openat(2) with O_CREAT proves the flag is gone.
-it.if(isLinux && (process.arch === "x64" || process.arch === "arm64"))(
-  "stdio ignore opens /dev/null without O_CREAT",
-  async () => {
-    using dir = tempDir("spawn-ignore-no-creat", {
-      "deny-creat.c": `
-        typedef unsigned short u16; typedef unsigned char u8; typedef unsigned int u32;
-        struct sock_filter { u16 code; u8 jt; u8 jf; u32 k; };
-        struct sock_fprog { u16 len; struct sock_filter *filter; };
-        int prctl(int option, ...);
-        #if defined(__x86_64__)
-        #define NR_OPENAT 257
-        #else
-        #define NR_OPENAT 56
-        #endif
-        int deny_openat_with_creat(void) {
-          struct sock_filter f[] = {
-            { 0x20, 0, 0, 0 },               /* A = nr                     (BPF_LD|BPF_W|BPF_ABS)  */
-            { 0x15, 0, 3, NR_OPENAT },       /* if nr != openat: allow     (BPF_JMP|BPF_JEQ|BPF_K) */
-            { 0x20, 0, 0, 16 + 2 * 8 },      /* A = args[2] (flags)                                 */
-            { 0x45, 0, 1, 0100 },            /* if !(A & O_CREAT): allow   (BPF_JMP|BPF_JSET|BPF_K) */
-            { 0x06, 0, 0, 0x00050000 | 13 }, /* SECCOMP_RET_ERRNO | EACCES (BPF_RET|BPF_K)          */
-            { 0x06, 0, 0, 0x7fff0000 },      /* SECCOMP_RET_ALLOW                                   */
-          };
-          struct sock_fprog prog = { sizeof(f) / sizeof(f[0]), f };
-          if (prctl(38 /* PR_SET_NO_NEW_PRIVS */, 1, 0, 0, 0) != 0) return -1;
-          if (prctl(22 /* PR_SET_SECCOMP */, 2 /* SECCOMP_MODE_FILTER */, &prog) != 0) return -2;
-          return 0;
-        }
-      `,
-      "fixture.ts": `
-        import { cc } from "bun:ffi";
-        import { spawnSync as nodeSpawnSync } from "node:child_process";
-        const { symbols } = cc({
-          source: new URL("./deny-creat.c", import.meta.url).pathname,
-          symbols: { deny_openat_with_creat: { args: [], returns: "i32" } },
-        });
-        const seccomp = symbols.deny_openat_with_creat();
-        const result: Record<string, unknown> = { seccomp };
-        if (seccomp !== 0) {
-          console.log(JSON.stringify(result));
-          process.exit(0);
-        }
-        try {
-          result.bun = Bun.spawnSync({
-            cmd: [process.execPath, "-e", "process.exit(7)"],
-            stdio: ["ignore", "ignore", "ignore"],
-          }).exitCode;
-        } catch (e) {
-          result.bun = String(e);
-        }
-        const node = nodeSpawnSync(process.execPath, ["-e", "process.exit(8)"], { stdio: "ignore" });
-        result.node = node.error ? String(node.error) : node.status;
-        console.log(JSON.stringify(result));
-      `,
-    });
-    await using proc = spawn({
-      cmd: [bunExe(), "fixture.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const result = JSON.parse(stdout);
-    if (result.seccomp !== 0) {
-      // bun:test has no runtime skip. Say so, to tell this apart from a pass.
-      console.warn("SKIP stdio ignore without O_CREAT: seccomp filter not permitted here (" + result.seccomp + ")");
-      return;
+// Runs a command under a seccomp filter that fails, with EACCES, every open(2) flavour that carries
+// O_CREAT. `skip` means this host cannot do that (no cc, missing headers, or a kernel or sandbox
+// that refuses the filter). `error` is a compile failure of the helper itself.
+const denyCreat: { bin: string } | { skip: true } | { error: string } = (() => {
+  if (!isLinux) return { skip: true };
+  const dir = tempDir("deny-creat", {
+    "deny-creat.c": `
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <stddef.h>
+#include <string.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+/* usage: deny-creat <command> [args...]
+          deny-creat --probe    exit 0 when the filter works on this host, else 77 */
+int main(int argc, char **argv) {
+  struct sock_filter filter[] = {
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+#ifdef __NR_open
+    /* x86_64: glibc's open() is the openat syscall, musl's is the open syscall. */
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_openat, 3, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_open, 4, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_creat, 5, 0),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[2])), /* openat flags */
+    BPF_JUMP(BPF_JMP | BPF_JA, 1, 0, 0),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1])), /* open flags */
+#else
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_openat, 1, 0),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[2])), /* openat flags */
+#endif
+    BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K, O_CREAT, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EACCES),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+  };
+  struct sock_fprog prog = { sizeof(filter) / sizeof(filter[0]), filter };
+  if (argc < 2) return 2;
+  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return 77;
+  if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) != 0) return 77;
+  if (strcmp(argv[1], "--probe") == 0) {
+    /* libc's own open() must now fail with O_CREAT and still work without it. */
+    int denied = open("/dev/null", O_WRONLY | O_CREAT, 0600) < 0 && errno == EACCES;
+    return denied && open("/dev/null", O_RDONLY) >= 0 ? 0 : 77;
+  }
+  execvp(argv[1], argv + 1);
+  return 127;
+}
+`,
+  });
+  const result = ((): typeof denyCreat => {
+    const bin = join(String(dir), "deny-creat");
+    let compile;
+    try {
+      compile = spawnSync({ cmd: ["cc", "-O0", "-o", bin, join(String(dir), "deny-creat.c")], stderr: "pipe" });
+    } catch {
+      return { skip: true }; // no cc
     }
-    expect(result).toEqual({ seccomp: 0, bun: 7, node: 8 });
-    expect(exitCode).toBe(0);
-  },
-);
+    if (compile.exitCode !== 0) {
+      const stderr = compile.stderr.toString();
+      // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
+      return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
+    }
+    return spawnSync({ cmd: [bin, "--probe"] }).exitCode === 0 ? { bin } : { skip: true };
+  })();
+  // The test needs the binary until the file ends. Every other outcome is done with the directory now.
+  if ("bin" in result) afterAll(() => dir[Symbol.dispose]());
+  else dir[Symbol.dispose]();
+  return result;
+})();
+
+// stdio "ignore" opens /dev/null. The open must not carry O_CREAT: on a rootfs without /dev/null
+// that creates a regular file there.
+it.skipIf("skip" in denyCreat)("stdio ignore opens /dev/null without O_CREAT", async () => {
+  if ("error" in denyCreat) throw new Error("failed to compile deny-creat.c:\n" + denyCreat.error);
+  using dir = tempDir("spawn-ignore-no-creat", {});
+  await using proc = spawn({
+    cmd: [
+      (denyCreat as { bin: string }).bin,
+      bunExe(),
+      "-e",
+      `const result = {};
+       try {
+         require("node:fs").closeSync(require("node:fs").openSync("created-by-the-test", "w"));
+         result.create = "allowed";
+       } catch (e) {
+         result.create = e.code;
+       }
+       try {
+         result.bun = Bun.spawnSync({
+           cmd: [process.execPath, "-e", "process.exit(7)"],
+           stdio: ["ignore", "ignore", "ignore"],
+         }).exitCode;
+       } catch (e) {
+         result.bun = String(e);
+       }
+       const node = require("node:child_process").spawnSync(process.execPath, ["-e", "process.exit(8)"], { stdio: "ignore" });
+       result.node = node.error ? String(node.error) : node.status;
+       console.log(JSON.stringify(result));`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ create: "EACCES", bun: 7, node: 8 });
+  expect(exitCode).toBe(0);
+});

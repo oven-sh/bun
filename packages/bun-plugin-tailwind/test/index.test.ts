@@ -287,13 +287,16 @@ describe("dev server", () => {
 
     // What the server printed, for the message of a test that gives up.
     let log = "";
+    let stdout = "";
     const listening = Promise.withResolvers<string>();
     for (const stream of [server.stdout, server.stderr]) {
       void (async () => {
         for await (const chunk of stream.pipeThrough(new TextDecoderStream())) {
           log += chunk;
-          const url = log.match(/^http:.*$/m)?.[0];
-          if (url) listening.resolve(url);
+          if (stream !== server.stdout) continue;
+          stdout += chunk;
+          const url = stdout.match(/^(http:.*)\n/m)?.[1];
+          if (url) listening.resolve(url.trim());
         }
       })();
     }

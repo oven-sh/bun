@@ -4999,6 +4999,166 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "x sees hDone: true ready: true" },
   });
+  // The next cases: two calls `import()` on one, and one reads an export that
+  // two sets after its await. one runs after two has run to its end.
+  itBundled("edgecase/ImportCallTargetReadsExportSetAfterAwaitOfCaller", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./one.js";
+        console.log("entry");
+      `,
+      "/one.js": /* js */ `
+        import { v } from "./two.js";
+        console.log("one sees v =", v);
+      `,
+      "/two.js": /* js */ `
+        import("./one.js");
+        await 0;
+        export const v = ["set"].join();
+      `,
+    },
+    format: "esm",
+    run: { stdout: "one sees v = set\nentry" },
+  });
+  // two and three import each other, and the entry imports three, then one.
+  // The `import()` stands behind the await of two.
+  itBundled("edgecase/ImportCallBehindAwaitOfImportCycleMember", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./three.js";
+        import "./one.js";
+        console.log("entry");
+      `,
+      "/one.js": /* js */ `
+        import { v } from "./two.js";
+        console.log("one sees v =", v);
+      `,
+      "/two.js": /* js */ `
+        import "./three.js";
+        await 0;
+        import("./one.js");
+        export const v = ["set"].join();
+      `,
+      "/three.js": /* js */ `
+        import "./two.js";
+        console.log("three");
+      `,
+    },
+    format: "esm",
+    run: { stdout: "three\none sees v = set\nentry" },
+  });
+  // The same, and the `import()` stands before the await of two. The `import`
+  // of one in the entry still starts one, so one waits for two.
+  itBundled("edgecase/ImportCallBeforeAwaitOfImportCycleMember", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./three.js";
+        import "./one.js";
+        console.log("entry");
+      `,
+      "/one.js": /* js */ `
+        import { v } from "./two.js";
+        console.log("one sees v =", v);
+      `,
+      "/two.js": /* js */ `
+        import "./three.js";
+        import("./one.js");
+        await 0;
+        export const v = ["set"].join();
+      `,
+      "/three.js": /* js */ `
+        import "./two.js";
+        console.log("three");
+      `,
+    },
+    format: "esm",
+    run: { stdout: "three\none sees v = set\nentry" },
+  });
+  // The next cases: the entry calls `import()` on a and sets a global behind
+  // the call. No module that the `import()` loads runs before the entry's code.
+  itBundled("edgecase/ImportCallTargetRunsAfterEntryCode", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("entry-start");
+        import("./a.js").then(() => console.log("loaded"));
+        globalThis.cfg = "set";
+        console.log("entry-end");
+      `,
+      "/a.js": /* js */ `console.log("a");`,
+    },
+    format: "esm",
+    run: { stdout: "entry-start\nentry-end\na\nloaded" },
+  });
+  // a has a top-level await, and a and b import each other.
+  itBundled("edgecase/ImportCallOfImportCycleRunsAfterEntryCode", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("entry-start");
+        import("./a.js").then(() => console.log("loaded"));
+        globalThis.cfg = "set";
+        console.log("entry-end");
+      `,
+      "/a.js": /* js */ `
+        import "./b.js";
+        console.log("a");
+        await 0;
+      `,
+      "/b.js": /* js */ `
+        import "./a.js";
+        console.log("b");
+      `,
+    },
+    format: "esm",
+    run: { stdout: "entry-start\nentry-end\nb\na\nloaded" },
+  });
+  // The same, and b reads the global that the entry sets behind the call.
+  itBundled("edgecase/ImportCallOfImportCycleReadsGlobalSetAfterTheCall", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("entry-start");
+        import("./a.js").then(() => console.log("loaded"));
+        globalThis.cfg = "set";
+        console.log("entry-end");
+      `,
+      "/a.js": /* js */ `
+        import "./b.js";
+        console.log("a");
+        await 0;
+      `,
+      "/b.js": /* js */ `
+        import "./a.js";
+        console.log("b-sees-cfg=" + globalThis.cfg);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "entry-start\nentry-end\nb-sees-cfg=set\na\nloaded" },
+  });
+  // An import cycle of three: a imports b, b imports c, and c imports a.
+  itBundled("edgecase/ImportCallOfImportCycleOfThreeRunsAfterEntryCode", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log("entry-start");
+        import("./a.js").then(() => console.log("loaded"));
+        globalThis.cfg = "set";
+        console.log("entry-end");
+      `,
+      "/a.js": /* js */ `
+        import "./b.js";
+        console.log("a");
+        await 0;
+      `,
+      "/b.js": /* js */ `
+        import "./c.js";
+        console.log("b");
+      `,
+      "/c.js": /* js */ `
+        import "./a.js";
+        console.log("c");
+      `,
+    },
+    format: "esm",
+    run: { stdout: "entry-start\nentry-end\nc\nb\na\nloaded" },
+  });
   // c.js has `export *` and `exports`, so its wrapper is `__commonJS`, a plain
   // function. The `init_tla()` of its `export *` has no `await` there.
   itBundled("edgecase/ExportStarOfAsyncModuleInCommonJSWrapper", {

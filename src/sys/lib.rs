@@ -3190,8 +3190,7 @@ mod posix_impl {
         );
         Ok(n as usize)
     }
-    /// A seccomp policy denied `recv`/`send` but allows `read`/`write` (libuv only
-    /// uses the latter on a stream). Relaxed: a standalone hint, no data behind it.
+    /// A seccomp policy denied `recv`/`send` but allows `read`/`write`, which is all libuv uses on a stream. Relaxed: a hint, no data behind it.
     static SOCKET_RECV_DENIED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
     static SOCKET_SEND_DENIED: core::sync::atomic::AtomicBool =
@@ -3201,8 +3200,7 @@ mod posix_impl {
     static SOCKET_RWF_NOWAIT_UNSUPPORTED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// What a seccomp policy answers: `RET_ERRNO` (EPERM, or EACCES under systemd)
-    /// or `RET_TRAP`, which bun's SIGSYS handler reports as ENOSYS.
+    /// What a seccomp policy answers: `RET_ERRNO` (EPERM, or EACCES under systemd) or `RET_TRAP`, which bun's SIGSYS handler reports as ENOSYS.
     fn is_socket_syscall_denied(err: &Error) -> bool {
         matches!(err.get_errno(), E::EPERM | E::EACCES | E::ENOSYS)
     }
@@ -3217,8 +3215,7 @@ mod posix_impl {
         Ok(posix::poll(&mut fds, 0).map_err(|err| err.with_fd(fd))? > 0)
     }
 
-    /// `read(2)` for `recv(MSG_DONTWAIT)`, as the pipe path reads: `RWF_NOWAIT`
-    /// where the kernel has it (6.4+ on sockets), else `poll(0)` then `read`.
+    /// `read(2)` for `recv(MSG_DONTWAIT)`, as the pipe path reads: `RWF_NOWAIT` where the kernel has it (6.4+ on sockets), else `poll(0)` then `read`.
     fn recv_fallback(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if !SOCKET_RWF_NOWAIT_UNSUPPORTED.load(core::sync::atomic::Ordering::Relaxed) {
@@ -3235,8 +3232,7 @@ mod posix_impl {
         read(fd, buf)
     }
 
-    /// `write(2)` for `send(MSG_DONTWAIT | MSG_NOSIGNAL)`, as in `recv_fallback`.
-    /// Without `RWF_NOWAIT` a blocking socket waits for the peer on a large write.
+    /// `write(2)` for `send(MSG_DONTWAIT | MSG_NOSIGNAL)`, as in `recv_fallback`. Without `RWF_NOWAIT` a blocking socket waits for the peer on a large write.
     fn send_fallback(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if !SOCKET_RWF_NOWAIT_UNSUPPORTED.load(core::sync::atomic::Ordering::Relaxed) {
@@ -3253,8 +3249,7 @@ mod posix_impl {
         write(fd, buf)
     }
 
-    /// Latch only when the file syscall worked where the socket one did not. Both
-    /// denied is a denied fd (a firewall rule, an LSM). "Not ready" proves nothing.
+    /// Latch only when the file syscall worked where the socket one did not: both denied is a denied fd (a firewall rule, an LSM), and "not ready" proves nothing.
     fn settle_denied(
         denied_flag: &core::sync::atomic::AtomicBool,
         socket_err: Error,
@@ -3283,9 +3278,7 @@ mod posix_impl {
             rc => rc,
         }
     }
-    /// `send(MSG_DONTWAIT | MSG_NOSIGNAL)` so a broken-pipe write returns EPIPE
-    /// instead of raising SIGPIPE, or `send_fallback` once the kernel has denied
-    /// `send`.
+    /// `send(MSG_DONTWAIT | MSG_NOSIGNAL)` so a broken-pipe write returns EPIPE instead of raising SIGPIPE, or `send_fallback` once the kernel has denied `send`.
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         if SOCKET_SEND_DENIED.load(core::sync::atomic::Ordering::Relaxed) {
             return send_fallback(fd, buf);

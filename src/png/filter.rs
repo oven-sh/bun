@@ -9,6 +9,14 @@ const UP: u8 = 2;
 const AVERAGE: u8 = 3;
 const PAETH: u8 = 4;
 
+/// What is above the first row.
+pub(crate) fn zeros(len: usize) -> Result<Vec<u8>> {
+    let mut zeros = Vec::new();
+    zeros.try_reserve_exact(len)?;
+    zeros.resize(len, 0);
+    Ok(zeros)
+}
+
 #[inline(always)]
 fn average(a: u8, b: u8) -> u8 {
     ((u16::from(a) + u16::from(b)) / 2) as u8

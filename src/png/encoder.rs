@@ -4,7 +4,7 @@ use bun_zlib::{DeflateEncoder, FlushValue, ReturnCode};
 
 use crate::chunk;
 use crate::error::{Error, Result};
-use crate::filter::Lines;
+use crate::filter::{self, Lines};
 use crate::header::{ColorType, Header, MAX_U31};
 
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L31
@@ -24,39 +24,21 @@ pub struct Palette<'a> {
     pub has_alpha: bool,
 }
 
-/// `level` is zlib's, 0 to 9, or `None` for its default.
-pub fn encode_rgba(
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-    level: Option<u8>,
-    icc_profile: Option<&[u8]>,
-) -> Result<Vec<u8>> {
-    let header = Header::new(width, height, 8, ColorType::TruecolorAlpha, false)?;
-    encode(header, rgba, None, level, icc_profile)
-}
-
-/// One byte per pixel in `indices`.
-pub fn encode_indexed(
-    indices: &[u8],
-    width: u32,
-    height: u32,
-    palette: &Palette,
-    level: Option<u8>,
-    icc_profile: Option<&[u8]>,
-) -> Result<Vec<u8>> {
-    let header = Header::new(width, height, 8, ColorType::Indexed, false)?;
-    encode(header, indices, Some(palette), level, icc_profile)
-}
-
+/// `image` is RGBA, or with a `palette` one index per pixel. `level` is zlib's: 0 to 9, or -1 for its default.
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L4737
-fn encode(
-    header: Header,
+pub fn encode(
     image: &[u8],
+    width: u32,
+    height: u32,
     palette: Option<&Palette>,
-    level: Option<u8>,
+    level: i8,
     icc_profile: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
+    let color_type = match palette {
+        Some(_) => ColorType::Indexed,
+        None => ColorType::TruecolorAlpha,
+    };
+    let header = Header::new(width, height, 8, color_type, false)?;
     let row_bytes = header.width as usize * header.bytes_per_pixel();
     if row_bytes.checked_mul(header.height as usize) != Some(image.len()) {
         return Err(Error::BufferSize);
@@ -65,7 +47,11 @@ fn encode(
     let mut out = Vec::new();
     out.try_reserve(2 * IDAT_LEN)?;
     out.extend_from_slice(&chunk::SIGNATURE);
-    chunk::write(&mut out, chunk::IHDR, &header.to_bytes())?;
+    let start = chunk::begin(&mut out, chunk::IHDR)?;
+    out.extend_from_slice(&header.width.to_be_bytes());
+    out.extend_from_slice(&header.height.to_be_bytes());
+    out.extend_from_slice(&[header.bit_depth, header.color_type as u8, 0, 0, 0]);
+    chunk::end(&mut out, start)?;
     // A profile longer than a chunk can be is left out.
     if let Some(profile) = icc_profile
         && !profile.is_empty()
@@ -78,15 +64,14 @@ fn encode(
     }
 
     // Neither stored bytes nor palette indices get smaller by filtering.
-    let filtering = level != Some(0) && palette.is_none();
+    let filtering = level != 0 && palette.is_none();
     let strategy = if filtering {
         Z_FILTERED
     } else {
         Z_DEFAULT_STRATEGY
     };
-    let level = level.map_or(Z_DEFAULT_COMPRESSION, i32::from);
     let mut idat = Idat {
-        zlib: DeflateEncoder::new(level, bun_zlib::MAX_WBITS, MEM_LEVEL, strategy)?,
+        zlib: DeflateEncoder::new(level.into(), bun_zlib::MAX_WBITS, MEM_LEVEL, strategy)?,
         start: chunk::begin(&mut out, chunk::IDAT)?,
         out,
     };
@@ -95,11 +80,7 @@ fn encode(
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1608
     let choosing = filtering && row_bytes <= (i32::MAX / 128) as usize;
     let mut lines = Lines::new(row_bytes, choosing)?;
-    let mut zeros = Vec::new();
-    if choosing {
-        zeros.try_reserve_exact(row_bytes)?;
-        zeros.resize(row_bytes, 0);
-    }
+    let zeros = filter::zeros(if choosing { row_bytes } else { 0 })?;
     let mut above = zeros.as_slice();
     for row in image.chunks_exact(row_bytes) {
         idat.write(if choosing {

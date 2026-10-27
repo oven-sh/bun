@@ -1,6 +1,6 @@
 //! PNG to 8-bit RGBA. No checksum is looked at: not a chunk's CRC, not a zlib stream's Adler-32.
 
-use bun_core::strings::index_of_char_usize;
+use bun_core::strings::{index_of_char_usize, split_once_char};
 use bun_zlib::{InflateDecoder, ReturnCode};
 
 use crate::chunk::{self, Reader, Type};
@@ -38,7 +38,7 @@ impl<'a> Decoder<'a> {
         if len != 13 || kind != chunk::IHDR {
             return Err(Error::InvalidHeader);
         }
-        let header = Header::parse(&reader.array()?)?;
+        let header = Header::parse(&mut reader)?;
         Ok(Self { header, reader })
     }
 
@@ -52,7 +52,7 @@ impl<'a> Decoder<'a> {
         let Self { header, mut reader } = self;
         let mut chunks = Chunks::new(header, max_inflated);
         let first_idat = chunks.read(&mut reader)?;
-        let expand = Expand::new(header, &chunks);
+        let expand = Expand::new(&chunks);
         let mut idat = Idat::new(reader, first_idat)?;
         Ok(Image {
             rgba: read_image(header, &expand, &mut idat)?,
@@ -74,8 +74,8 @@ struct Chunks<'a> {
     palette_len: usize,
     /// The data of a tRNS chunk of the right length for the color type.
     transparency: Option<&'a [u8]>,
-    has_background: bool,
-    has_histogram: bool,
+    /// There was a bKGD or hIST chunk, which PLTE may not follow.
+    palette_is_final: bool,
     /// Also set by an iCCP chunk that was passed over.
     has_iccp: bool,
     has_exif: bool,
@@ -92,8 +92,7 @@ impl<'a> Chunks<'a> {
             palette: [[0; 3]; 256],
             palette_len: 0,
             transparency: None,
-            has_background: false,
-            has_histogram: false,
+            palette_is_final: false,
             has_iccp: false,
             has_exif: false,
             icc_profile: None,
@@ -117,21 +116,16 @@ impl<'a> Chunks<'a> {
                 chunk::PLTE => self.palette(data)?,
                 chunk::IHDR | chunk::IEND => return Err(Error::ChunkOutOfPlace),
                 _ if chunk::is_critical(kind) => return Err(Error::UnknownCriticalChunk),
+                _ if data.is_empty() => {}
                 chunk::TRNS => self.transparency(data),
                 chunk::BKGD => self.background(data),
                 chunk::HIST => self.histogram(data),
                 chunk::ICCP => self.icc_profile(data)?,
                 chunk::TEXT | chunk::ZTXT | chunk::ITXT => self.text(kind, data)?,
-                chunk::SPLT => {
-                    if !data.is_empty() {
-                        self.count_stored()?;
-                    }
-                }
-                chunk::EXIF => {
-                    if !self.has_exif && !data.is_empty() {
-                        self.has_exif = true;
-                        self.count_stored()?;
-                    }
+                chunk::SPLT => self.count_stored()?,
+                chunk::EXIF if !self.has_exif => {
+                    self.has_exif = true;
+                    self.count_stored()?;
                 }
                 _ => {}
             }
@@ -139,7 +133,7 @@ impl<'a> Chunks<'a> {
     }
 
     fn palette(&mut self, data: &[u8]) -> Result<()> {
-        if self.transparency.is_some() || self.has_histogram || self.has_background {
+        if self.transparency.is_some() || self.palette_is_final {
             return Err(Error::ChunkOutOfPlace);
         }
         let (entries, rest) = data.as_chunks::<3>();
@@ -161,7 +155,7 @@ impl<'a> Chunks<'a> {
         let fits = match self.header.color_type {
             ColorType::Grayscale => data.len() == 2,
             ColorType::Truecolor => data.len() == 6,
-            ColorType::Indexed => !data.is_empty() && data.len() <= self.palette_len,
+            ColorType::Indexed => data.len() <= self.palette_len,
             ColorType::GrayscaleAlpha | ColorType::TruecolorAlpha => false,
         };
         if fits && self.transparency.is_none() {
@@ -169,9 +163,8 @@ impl<'a> Chunks<'a> {
         }
     }
 
-    /// Only matters for PLTE, which may not follow it.
     fn background(&mut self, data: &[u8]) {
-        self.has_background |= match self.header.color_type {
+        self.palette_is_final |= match self.header.color_type {
             ColorType::Grayscale | ColorType::GrayscaleAlpha => data.len() == 2,
             ColorType::Truecolor | ColorType::TruecolorAlpha => data.len() == 6,
             ColorType::Indexed => {
@@ -180,13 +173,12 @@ impl<'a> Chunks<'a> {
         };
     }
 
-    /// Only matters for PLTE, which may not follow it.
     fn histogram(&mut self, data: &[u8]) {
-        self.has_histogram |= self.palette_len != 0 && data.len() / 2 == self.palette_len;
+        self.palette_is_final |= self.palette_len != 0 && data.len() / 2 == self.palette_len;
     }
 
     fn icc_profile(&mut self, data: &[u8]) -> Result<()> {
-        if self.palette_len != 0 || self.has_iccp || data.is_empty() {
+        if self.palette_len != 0 || self.has_iccp {
             return Ok(());
         }
         self.has_iccp = true;
@@ -206,9 +198,6 @@ impl<'a> Chunks<'a> {
     /// Nothing is kept of the text, but libspng kept it, so one that inflates to too much fails the decode.
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L2761
     fn text(&mut self, kind: Type, data: &[u8]) -> Result<()> {
-        if data.is_empty() {
-            return Ok(());
-        }
         self.count_stored()?;
         // All the fields in front of the text have to be in here.
         let fields = data.get(..256).unwrap_or(data);
@@ -221,14 +210,12 @@ impl<'a> Chunks<'a> {
             (chunk::ZTXT, [0, compressed @ ..]) if !compressed.is_empty() => compressed.len(),
             // Compressed, compression method 0, a language tag, a translated keyword.
             (chunk::ITXT, [1, 0, tags @ ..]) if tags.len() >= 2 => {
-                let Some(language_len) = index_of_char_usize(tags, 0) else {
+                let after_language = split_once_char(tags, 0);
+                let Some((_, text)) = after_language.and_then(|(_, rest)| split_once_char(rest, 0))
+                else {
                     return Ok(());
                 };
-                let translated = tags.get(language_len + 1..).unwrap_or_default();
-                let Some(translated_len) = index_of_char_usize(translated, 0) else {
-                    return Ok(());
-                };
-                translated.len() - translated_len - 1
+                text.len()
             }
             _ => return Ok(()),
         };
@@ -277,12 +264,11 @@ enum Keep {
 /// from the rest, and refused a stream whose output filled the last buffer before its end was in sight.
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1244
 fn inflate(mut input: &[u8], max: usize, keep: Keep) -> Result<Option<Vec<u8>>> {
-    const INITIAL: usize = 8 * 1024;
     const DISCARDED_AT_ONCE: usize = 64 * 1024;
 
     let mut zlib = new_zlib()?;
     let mut out = Vec::new();
-    let mut size = INITIAL;
+    let mut size = 8 * 1024;
     let mut total = 0usize;
     loop {
         let mut room = size - total;
@@ -301,11 +287,11 @@ fn inflate(mut input: &[u8], max: usize, keep: Keep) -> Result<Option<Vec<u8>>> 
             ReturnCode::MemError => return Err(Error::Alloc(bun_alloc::AllocError)),
             _ => return Ok(None),
         }
+        // There was room left, so it is the input that ran out.
         if produced < room {
-            if input.is_empty() || (used == 0 && produced == 0) {
-                return Ok(None);
-            }
-        } else if total == size {
+            return Ok(None);
+        }
+        if total == size {
             if size > max / 2 {
                 return Err(Error::ChunkLimits);
             }
@@ -337,17 +323,12 @@ struct Idat<'a> {
 
 impl<'a> Idat<'a> {
     /// `reader` is behind the header of the first IDAT, which announces `len` bytes.
-    fn new(reader: Reader<'a>, len: usize) -> Result<Self> {
-        let mut idat = Self {
+    fn new(mut reader: Reader<'a>, len: usize) -> Result<Self> {
+        Ok(Self {
+            input: reader.take(len)?,
             reader,
-            input: &[],
             zlib: new_zlib()?,
-        };
-        idat.input = match len {
-            0 => idat.next_chunk()?,
-            _ => idat.reader.take(len)?,
-        };
-        Ok(idat)
+        })
     }
 
     /// The data of the next IDAT that has any. It has to be in the file whole, but its CRC does not.
@@ -372,9 +353,8 @@ impl<'a> Idat<'a> {
             let (used, code) = self.zlib.step_limited(self.input, out, end - out.len());
             self.input = self.input.get(used..).unwrap_or_default();
             match code {
-                ReturnCode::Ok => {}
                 ReturnCode::StreamEnd if out.len() < end => return Err(Error::IdatTooShort),
-                ReturnCode::StreamEnd => {}
+                ReturnCode::Ok | ReturnCode::StreamEnd => {}
                 ReturnCode::BufError => self.input = self.next_chunk()?,
                 ReturnCode::MemError => return Err(Error::Alloc(bun_alloc::AllocError)),
                 _ => return Err(Error::IdatStream),
@@ -407,10 +387,10 @@ enum Layout {
 
 impl Expand {
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L3878
-    fn new(header: Header, chunks: &Chunks) -> Self {
+    fn new(chunks: &Chunks) -> Self {
         let mut table = [[0, 0, 0, 255]; 256];
         let transparency = chunks.transparency.unwrap_or_default();
-        let layout = match (header.color_type, header.bit_depth) {
+        let layout = match (chunks.header.color_type, chunks.header.bit_depth) {
             (ColorType::TruecolorAlpha, 8) => Layout::Rgba8,
             (ColorType::TruecolorAlpha, _) => Layout::Rgba16,
             // Only the low byte of each 16-bit sample in tRNS counts.
@@ -509,11 +489,7 @@ impl Expand {
                     *out = [gray, gray, gray, a];
                 }
             }
-            Layout::Lookup(8) => {
-                for (out, &sample) in out.iter_mut().zip(row) {
-                    *out = self.color(sample);
-                }
-            }
+            Layout::Lookup(8) => self.packed_row::<8>(row, out),
             Layout::Lookup(4) => self.packed_row::<4>(row, out),
             Layout::Lookup(2) => self.packed_row::<2>(row, out),
             Layout::Lookup(_) => self.packed_row::<1>(row, out),
@@ -530,40 +506,25 @@ impl Expand {
     }
 }
 
-fn zeros(len: usize) -> Result<Vec<u8>> {
-    let mut zeros = Vec::new();
-    zeros.try_reserve_exact(len)?;
-    zeros.resize(len, 0);
-    Ok(zeros)
-}
-
-/// Undoes the filter of the last row of `rows`, of 4-byte pixels. `above_first` is what is above the first row.
-fn undo_last_row<'a>(
-    filter: u8,
-    rows: &'a mut [u8],
-    stride: usize,
-    above_first: &[u8],
-) -> Result<&'a mut [u8]> {
+/// Undoes the filter of the last row of `rows`, of 4-byte pixels.
+fn undo_last_row(filter: u8, rows: &mut [u8], stride: usize) -> Result<&mut [u8]> {
     let start = rows.len().saturating_sub(stride);
     let (done, row) = rows.split_at_mut_checked(start).unwrap_or_default();
-    let above = start.checked_sub(stride).and_then(|at| done.get(at..));
-    filter::undo(filter, 4, row, above.unwrap_or(above_first))?;
+    match start.checked_sub(stride).and_then(|at| done.get(at..)) {
+        Some(above) => filter::undo(filter, 4, row, above)?,
+        None => filter::undo(filter, 4, row, &filter::zeros(stride)?)?,
+    }
     Ok(row)
 }
 
 /// Inflates each row to where it stays, along with the filter byte of the next row, as libspng did.
 fn read_rgba8(stride: usize, size: usize, idat: &mut Idat, image: &mut Vec<u8>) -> Result<()> {
     idat.read(image, 1)?;
-    let mut above_first = Vec::new();
     while let Some(filter) = image.pop() {
         let end = image.len() + stride;
         idat.read(image, (stride + 1).min(size - image.len()))?;
-        // Memory is written to only now that there is a row: a header can announce any size.
-        if end == stride {
-            above_first = zeros(stride)?;
-        }
         let rows = image.get_mut(..end).unwrap_or_default();
-        undo_last_row(filter, rows, stride, &above_first)?;
+        undo_last_row(filter, rows, stride)?;
         if end == size {
             break;
         }
@@ -571,34 +532,21 @@ fn read_rgba8(stride: usize, size: usize, idat: &mut Idat, image: &mut Vec<u8>) 
     Ok(())
 }
 
-/// Appends a row that came as RGB. It becomes RGBA before its filter is undone, because that is faster on 4-byte pixels.
-fn push_rgb_row<'a>(
-    filter: u8,
-    rgb: &[u8],
-    rows: &'a mut Vec<u8>,
-    above_first: &[u8],
-) -> Result<&'a mut [u8]> {
-    filter::push_rgb_as_rgba(rgb, rows);
-    let row = undo_last_row(filter, rows, rgb.len() / 3 * 4, above_first)?;
-    filter::make_opaque(row);
-    Ok(row)
-}
-
+/// A row becomes RGBA before its filter is undone, because that is faster on 4-byte pixels.
 fn read_rgb8(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u8>) -> Result<()> {
     let (line_len, stride) = (header.width as usize * 3 + 1, header.width as usize * 4);
     let mut line: Vec<u8> = Vec::new();
     line.try_reserve_exact(line_len)?;
-    let mut above_first = Vec::new();
-    for y in 0..header.height {
+    for _ in 0..header.height {
         line.clear();
         idat.read(&mut line, line_len)?;
-        if y == 0 {
-            above_first = zeros(stride)?;
-        }
         let Some((&filter, filtered)) = line.split_first() else {
             return Err(Error::IdatTooShort);
         };
-        expand.make_transparent(push_rgb_row(filter, filtered, image, &above_first)?);
+        filter::push_rgb_as_rgba(filtered, image);
+        let row = undo_last_row(filter, image, stride)?;
+        filter::make_opaque(row);
+        expand.make_transparent(row);
     }
     Ok(())
 }
@@ -607,7 +555,7 @@ fn read_rgb8(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u
 fn read_image(header: Header, expand: &Expand, idat: &mut Idat) -> Result<Vec<u8>> {
     if header
         .passes()
-        .any(|pass| u64::from(pass.width) * 4 > u64::from(u32::MAX))
+        .any(|pass| pass.width * 4 > u32::MAX as usize)
     {
         return Err(Error::RowTooLong);
     }
@@ -628,22 +576,20 @@ fn read_image(header: Header, expand: &Expand, idat: &mut Idat) -> Result<Vec<u8
 fn read_rows(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u8>) -> Result<()> {
     let stride = header.width as usize * 4;
     let longest = header.passes().map(|pass| pass.row_bytes).max();
-    let line_len = longest.unwrap_or_default().saturating_add(1);
+    let mut line_len = longest.unwrap_or_default().saturating_add(1);
+    let mut bytes_per_pixel = header.bytes_per_pixel();
+    // A line that came as RGB, which becomes RGBA as in `read_rgb8()`.
+    let is_rgb = matches!(expand.layout, Layout::Rgb8(_));
+    let mut rgb_line: Vec<u8> = Vec::new();
+    if is_rgb {
+        rgb_line.try_reserve_exact(line_len)?;
+        (line_len, bytes_per_pixel) = (stride + 1, 4);
+    }
     // A filter byte and a row.
     let mut line: Vec<u8> = Vec::new();
     line.try_reserve_exact(line_len)?;
-
-    // What the row above became: like `line`, or RGBA if it came as RGB.
-    let is_rgb = matches!(expand.layout, Layout::Rgb8(_));
     let mut line_above: Vec<u8> = Vec::new();
-    let mut widened: Vec<u8> = Vec::new();
-    let mut widened_above: Vec<u8> = Vec::new();
-    if is_rgb {
-        widened.try_reserve_exact(stride)?;
-        widened_above.try_reserve_exact(stride)?;
-    } else {
-        line_above.try_reserve_exact(line_len)?;
-    }
+    line_above.try_reserve_exact(line_len)?;
 
     // For the passes that do not have every pixel of a row.
     let mut pass_rgba: Vec<u8> = Vec::new();
@@ -652,31 +598,31 @@ fn read_rows(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u
     }
 
     for pass in header.passes() {
-        for y in 0..pass.height as usize {
+        for y in 0..pass.height {
             line.clear();
-            idat.read(&mut line, pass.row_bytes + 1)?;
-            // After the read, for the same reason as in `read_rgba8()`.
+            if is_rgb {
+                rgb_line.clear();
+                idat.read(&mut rgb_line, pass.row_bytes + 1)?;
+                line.extend(rgb_line.first());
+                filter::push_rgb_as_rgba(rgb_line.get(1..).unwrap_or_default(), &mut line);
+            } else {
+                idat.read(&mut line, pass.row_bytes + 1)?;
+            }
+            // Memory is written to only now that there is a row: a header can announce any size.
             if y == 0 {
-                if is_rgb {
-                    widened_above.clear();
-                    widened_above.resize(pass.width as usize * 4, 0);
-                } else {
-                    line_above.clear();
-                    line_above.resize(pass.row_bytes + 1, 0);
-                }
+                line_above.clear();
+                line_above.resize(line.len(), 0);
                 if pass.x_step != 1 {
-                    pass_rgba.resize(pass.width as usize * 4, 0);
+                    pass_rgba.resize(pass.width * 4, 0);
                 }
             }
-            let Some((&mut filter, mut row)) = line.split_first_mut() else {
+            let Some((&mut filter, row)) = line.split_first_mut() else {
                 return Err(Error::IdatTooShort);
             };
+            let above = line_above.get(1..).unwrap_or_default();
+            filter::undo(filter, bytes_per_pixel, row, above)?;
             if is_rgb {
-                widened.clear();
-                row = push_rgb_row(filter, row, &mut widened, &widened_above)?;
-            } else {
-                let above = line_above.get(1..).unwrap_or_default();
-                filter::undo(filter, header.bytes_per_pixel(), row, above)?;
+                filter::make_opaque(row);
             }
 
             let start = (pass.y_start + y * pass.y_step) * stride;
@@ -698,11 +644,7 @@ fn read_rows(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u
                     }
                 }
             }
-            if is_rgb {
-                core::mem::swap(&mut widened, &mut widened_above);
-            } else {
-                core::mem::swap(&mut line, &mut line_above);
-            }
+            core::mem::swap(&mut line, &mut line_above);
         }
     }
     Ok(())

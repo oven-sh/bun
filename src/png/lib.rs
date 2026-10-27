@@ -12,13 +12,13 @@
 #![warn(unused_must_use)]
 
 mod chunk;
-pub mod decoder;
-pub mod encoder;
-pub mod error;
+mod decoder;
+mod encoder;
+mod error;
 mod filter;
-pub mod header;
+mod header;
 
 pub use decoder::{Decoder, Image};
-pub use encoder::{Palette, encode_indexed, encode_rgba};
+pub use encoder::{Palette, encode};
 pub use error::{Error, Result};
-pub use header::{ColorType, Header};
+pub use header::Header;

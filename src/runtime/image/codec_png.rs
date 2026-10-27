@@ -18,11 +18,6 @@ fn encode_error(error: bun_png::Error) -> codecs::Error {
     }
 }
 
-/// -1 is zlib's default.
-fn zlib_level(level: i8) -> Option<u8> {
-    u8::try_from(level).ok().map(|level| level.min(9))
-}
-
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     let decoder = bun_png::Decoder::new(bytes).map_err(decode_error)?;
     let bun_png::Header { width, height, .. } = decoder.header();
@@ -46,7 +41,7 @@ pub(crate) fn encode(
     level: i8,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    bun_png::encode_rgba(rgba, w, h, zlib_level(level), icc_profile)
+    bun_png::encode(rgba, w, h, None, level, icc_profile)
         .map(codecs::Encoded::from_owned)
         .map_err(encode_error)
 }
@@ -80,7 +75,7 @@ pub(crate) fn encode_indexed(
         rgba: q.palette.as_chunks().0,
         has_alpha: q.has_alpha,
     };
-    bun_png::encode_indexed(&q.indices, w, h, &palette, zlib_level(level), icc_profile)
+    bun_png::encode(&q.indices, w, h, Some(&palette), level, icc_profile)
         .map(codecs::Encoded::from_owned)
         .map_err(encode_error)
 }

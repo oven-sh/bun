@@ -376,25 +376,11 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawCell<JSClass, name>> : Bun::Defaul
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
-        constexpr auto article = std::derived_from<JSClass, JSC::JSObject> ? "an instance of "_s : "a "_s;
-        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString(article, Bun::idlHumanReadableName<Bun::Bindgen::IDLRawCell<JSClass, name>>()));
-    }
-};
-
-template<typename JSClass>
-struct WebCore::Converter<Bun::Bindgen::IDLRawInterface<JSClass>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawInterface<JSClass>> {
-    template<Bun::IDLConversionContext Ctx>
-    static std::optional<JSClass*> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
-    {
-        if (auto* object = dynamicDowncast<JSClass>(value))
-            return object;
-        return std::nullopt;
-    }
-
-    template<Bun::IDLConversionContext Ctx>
-    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
-    {
-        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, JSClass::info()->className));
+        constexpr auto className = Bun::idlHumanReadableName<Bun::Bindgen::IDLRawCell<JSClass, name>>();
+        if constexpr (std::derived_from<JSClass, JSC::JSObject>)
+            ctx.throwNotInstanceOf(globalObject, scope, className);
+        else
+            ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("a "_s, className));
     }
 };
 
@@ -417,7 +403,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bu
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
-        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedInterface<JSClass, name>>()));
+        ctx.throwNotInstanceOf(globalObject, scope, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedInterface<JSClass, name>>());
     }
 };
 
@@ -453,7 +439,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLWrappedRef<JSClass, name>> : Bun::Def
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
-        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedRef<JSClass, name>>()));
+        ctx.throwNotInstanceOf(globalObject, scope, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedRef<JSClass, name>>());
     }
 };
 

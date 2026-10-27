@@ -92,6 +92,11 @@ struct IDLConversionContextBase : Detail::IDLConversionContextMarker {
         derived().throwTypeMustBe(global, scope, "a Blob"_s);
     }
 
+    NEVER_INLINE void throwNotInstanceOf(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, WTF::ASCIILiteral className) const
+    {
+        derived().throwTypeMustBe(global, scope, WTF::makeString("an instance of "_s, className));
+    }
+
     template<typename IDLElement = void>
     void throwNotArray(JSC::JSGlobalObject& global, JSC::ThrowScope& scope) const
     {
@@ -129,8 +134,9 @@ struct IDLConversionContextBase : Detail::IDLConversionContextMarker {
         derived().throwTypeErrorWithPredicate(global, scope, "is of an unsupported type"_s);
     }
 
+    // Not inlined: every type that a context reports shares it.
     template<typename String>
-    void throwTypeMustBe(
+    NEVER_INLINE void throwTypeMustBe(
         JSC::JSGlobalObject& global,
         JSC::ThrowScope& scope,
         String&& expectedNounPhrase) const

@@ -188,20 +188,11 @@ struct IDLRawStringLike : IDLRawAny {};
 template<typename JSClass, auto name>
 struct IDLRawCell : IDLRawAny {};
 
-// An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
-template<typename JSClass>
-struct IDLRawInterface : WebCore::IDLType<JSClass*> {
-    using SequenceStorageType = void;
-    using NullableType = JSClass*;
-    using NullableInnerParameterType = JSClass*;
-    static JSClass* nullValue() { return nullptr; }
-};
-
 // An instance of a wrapper class, as a reference on what it wraps.
 template<typename JSClass, auto name>
 struct IDLWrappedRef : IDLRef<typename JSClass::DOMWrapped> {};
 
-// An instance of a `refCounted` class or of a wrapper class, as what it wraps. The caller's frame keeps the cell alive.
+// An instance of a generated class or of a wrapper class, as what it wraps. The caller's frame keeps the cell alive.
 template<typename JSClass, auto name>
 struct IDLWrappedInterface : WebCore::IDLType<void*> {
     using SequenceStorageType = void;

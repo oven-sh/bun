@@ -35,6 +35,7 @@ import {
   OptionalType,
   type Origin,
   type OverloadDispatch,
+  pascalCase,
   PrimitiveType,
   refusesNonObjects,
   RestType,
@@ -163,6 +164,49 @@ function nameConversions(file: SchemaFile): void {
   }
 }
 
+/** The file's host functions. `takesThis`: it hands its thunks `thisObject`, an instance of its class. */
+const hostFunctionsOf = (file: SchemaFile) => [
+  ...file.types.flatMap(type =>
+    type instanceof ClassType ? type.nativeFunctions.map(fn => ({ fn, takesThis: !isStaticFunction(fn) })) : [],
+  ),
+  ...file.functions.filter(fn => !fn.isValue).map(fn => ({ fn, takesThis: false })),
+];
+
+/** Each `sharedCall` of the file, with one of the signatures that has it. */
+const sharedCallsOf = (file: SchemaFile) => [
+  ...new Map(
+    hostFunctionsOf(file).flatMap(({ fn, takesThis }) =>
+      fn.signatures.flatMap(signature =>
+        signature.sharedCall ? [[signature.sharedCall, { fn, signature, takesThis }] as const] : [],
+      ),
+    ),
+  ).values(),
+];
+
+/**
+ * Host functions that differ only in the thunk share the function that converts the arguments, named after them.
+ * Not where every argument is passed on as it is: there is nothing to share.
+ */
+function nameSharedCalls(file: SchemaFile): void {
+  const bySource = new Map<string, Signature[]>();
+  for (const { fn, takesThis } of hostFunctionsOf(file)) {
+    for (const signature of fn.signatures) {
+      if (signature.args.every(({ type }) => type instanceof OpaqueType || type instanceof ConvertedByBodyType))
+        continue;
+      const source = cppSharedCall("", fn, signature, takesThis);
+      bySource.set(source, [...(bySource.get(source) ?? []), signature]);
+    }
+  }
+  const functionsNamed = new Map<string, number>();
+  for (const signatures of bySource.values()) {
+    if (signatures.length === 1) continue;
+    const base = `callWith${signatures[0].args.map(arg => pascalCase(arg.name)).join("")}`;
+    const count = (functionsNamed.get(base) ?? 0) + 1;
+    functionsNamed.set(base, count);
+    for (const signature of signatures) signature.sharedCall = count > 1 ? `${base}${count}` : base;
+  }
+}
+
 /** Marks which direction each named type travels and gives every table entry its index. */
 export function analyze(files: readonly SchemaFile[]): Tables {
   const tables: Tables = { memberNames: [], enumerationValues: [], classes: [] };
@@ -231,6 +275,7 @@ export function analyze(files: readonly SchemaFile[]): Tables {
     }
   }
   files.forEach(nameConversions);
+  files.forEach(nameSharedCalls);
   const symbols = files.flatMap(file => [
     ...file.functions.flatMap(fn => fn.signatures.map(signature => thunkSymbol(fn, signature))),
     ...file.types.flatMap(type => (type instanceof ClassType ? classSymbols(type) : [])),
@@ -317,12 +362,16 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
     .map(i => {
       const { name, type: alternative } = type.alternatives[i];
       const member = `result.${name}`;
-      const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "", "false");
-      if (alternative instanceof UnitType) return `result.tag = ${i};\nreturn true;`;
+      const taken = type.conversionThrows ? "return true;" : "return result;";
+      const convert = (target: string) =>
+        type.conversionThrows || !alternative.conversionThrows
+          ? alternative.cppConvertInto(target, "value", "ctx", "", "false")
+          : `${target} = *Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx);`;
+      if (alternative instanceof UnitType) return `result.tag = ${i};\n${taken}`;
       const take = `result.tag = ${i};
 std::construct_at(&${member});
 ${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
-return true;`;
+${taken}`;
       // As the last, its own conversion reports what is not an object.
       if (refusesNonObjects(alternative))
         return i === candidates.at(-1) ? take : `if (value.isObject()) {\n${indent(take, 4)}\n}`;
@@ -330,7 +379,7 @@ return true;`;
         return `if (auto converted = Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx)) {
     std::construct_at(&${member}, WTF::move(*converted));
     result.tag = ${i};
-    return true;
+    ${taken}
 }${alternative.tryConvertThrows ? "\nRETURN_IF_EXCEPTION(scope, false);" : ""}`;
       return take;
     })
@@ -366,7 +415,7 @@ namespace Bun::Bindgen::Generated {
 // Only the alternative that \`tag\` names is constructed.
 struct ${name} {
 ${cppDefaultConstructor(type)}${
-    type.needsLifetime
+    type.needsLifetime || type.rustLayoutIsExtern
       ? ""
       : `
     ${name}(${name}&& other)
@@ -380,11 +429,16 @@ ${cppDefaultConstructor(type)}${
         std::construct_at(this, WTF::move(other));
         return *this;
     }`
-  }
+  }${
+    type.rustLayoutIsExtern
+      ? ""
+      : `
     ~${name}()
     {
         ${switchOnHeld(member => `std::destroy_at(&${member})`)}
-    }
+    }`
+  }
+    uint8_t tag${type.rustLayoutIsExtern ? "" : ` { ${alternatives.length} }`};
 ${
   held.length === 0
     ? ""
@@ -392,13 +446,12 @@ ${
 ${held.map(a => `        ${a.type.convertsInPlace ? `std::optional<${implementationType(a.type)}>` : implementationType(a.type)} ${a.name};`).join("\n")}
     };
 `
-}    uint8_t tag { ${alternatives.length} };
-};
+}};
 struct Extern${name} {
+    uint8_t tag;
     union {
 ${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
     } data;
-    uint8_t tag;
 };
 ${layoutAssert(`Extern${name}`, type)}
 }
@@ -407,7 +460,12 @@ template<> struct Bun::Bindgen::ExternTraits<${type.cpp}> {
     static ExternType convertToExtern(${type.cpp}&& value)
     {
         ExternType result;
-        result.tag = value.tag;
+${
+  type.rustLayoutIsExtern
+    ? `        static_assert(std::is_trivially_copyable_v<${type.cpp}> && sizeof(value) == sizeof(result));
+${held.map(a => `        static_assert(sizeof(value.${a.name}) == sizeof(result.data.${a.name}));`).join("\n")}
+        memcpy(&result, &value, sizeof(result));`
+    : `        result.tag = value.tag;
         switch (value.tag) {
 ${held
   .map(
@@ -416,15 +474,32 @@ ${held
             break;`,
   )
   .join("\n")}
-        }
+        }`
+}
         return result;
     }
 };
 template<> struct Bun::IDLHumanReadableName<${type.idlType}> : Bun::IDLHumanReadableName<Bun::IDLAlternatives<${idlTypes}>> {};
-template<> struct WebCore::Converter<${type.idlType}> : Bun::DefaultContextConverter<${type.idlType}> {${
-    type.needsLifetime
-      ? ""
-      : `
+${
+  !type.conversionThrows
+    ? `template<> struct WebCore::Converter<${type.idlType}> : WebCore::DefaultConverter<${type.idlType}> {
+    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        auto* globalObject = &lexicalGlobalObject;
+        Bun::DefaultConversionContext ctx;
+        ReturnType result;
+${indent(code, 8)}
+        switch (choice) {
+${indent(cases.join("\n"), 8)}
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+};
+`
+    : `template<> struct WebCore::Converter<${type.idlType}> : Bun::DefaultContextConverter<${type.idlType}> {${
+        type.needsLifetime
+          ? ""
+          : `
     template<Bun::IDLConversionContext Ctx>
     static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
     {
@@ -433,7 +508,7 @@ template<> struct WebCore::Converter<${type.idlType}> : Bun::DefaultContextConve
         return result;
     }
 `
-  }
+      }
     template<Bun::IDLConversionContext Ctx>
     static bool convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
     {
@@ -447,7 +522,8 @@ ${indent(cases.join("\n"), 8)}
         ${outcomes.some(mayMatchNone) ? `ctx.template throwNoMatchInUnion<${idlTypes}>(*globalObject, scope);\n        return false;` : "RELEASE_ASSERT_NOT_REACHED();"}
     }
 };
-`;
+`
+}`;
 }
 
 function cppHeaderForType(type: NamedType): string {
@@ -664,17 +740,23 @@ const cppContext = (i: number, expected: Conversion["expected"], value: string) 
 const qualifiedName = (type: DictionaryType | DeferredDictionaryType, member: Member) =>
   type.reportedAs ? `${type.reportedAs}.${member.name}` : member.name;
 
-/** Declares `value`, read through `members` from the names of `member`, the first of which is at `nameIndex`. */
-function cppReadMember(member: Member, value: string, nameIndex: number, ctx: string): string[] {
+/** Declares `value`, read through `members` from the names of `member`, the first of which is at `nameIndex`. `get` reads the name at an index. */
+function cppReadMember(
+  member: Member,
+  value: string,
+  nameIndex: number,
+  ctx: string,
+  get = (index: number) => `members.get(${index})`,
+): string[] {
   const reads = member.privateSymbol
-    ? [`get(WebCore::builtinNames(vm).${member.privateSymbol}PrivateName())`]
-    : member.names.map((_, i) => `${member.own ? "getOwn" : "get"}(${nameIndex + i})`);
+    ? [`members.get(WebCore::builtinNames(vm).${member.privateSymbol}PrivateName())`]
+    : member.names.map((_, i) => (member.own ? `members.getOwn(${nameIndex + i})` : get(nameIndex + i)));
   if (isIfPassed(member.type))
     return [
       `JSC::JSValue ${value} = members.getOwnIfPropertyExists(${nameIndex});`,
       "RETURN_IF_EXCEPTION(scope, false);",
     ];
-  const [first, ...others] = reads.map(read => `members.${read};\n${cppReturnIfFailed(`!!${value}`, "false")}`);
+  const [first, ...others] = reads.map(read => `${read};\n${cppReturnIfFailed(`!!${value}`, "false")}`);
   return [
     `JSC::JSValue ${value} = ${first}`,
     ...others.map(read => `if (${value}.isUndefined()) {\n${indent(`${value} = ${read}`, 4)}\n}`),
@@ -833,8 +915,10 @@ function cppCallBody(
           ? `${holder} argument${i} = callFrame->argumentCount() > ${i} ? callFrame->uncheckedArgument(${i}) : JSC::JSValue();`
           : `${holder} argument${i} = callFrame->argument(${i});`,
     );
-    lines.push(...cppDeclareContext(i, [{ name, expected }]));
-    const ctx = cppContext(i, expected, value);
+    if (type.conversionThrows) lines.push(...cppDeclareContext(i, [{ name, expected }]));
+    const ctx = type.conversionThrows
+      ? cppContext(i, expected, value)
+      : "Bun::Bindgen::asLvalue(Bun::DefaultConversionContext {})";
     readLast.push(...type.cppReadLast(`converted${i}`, value));
     lines.push(...cppDeclareConverted(type, `converted${i}`, value, ctx, name, fromParameters?.failure ?? "{}"));
   });
@@ -868,11 +952,26 @@ function cppSourceForFromJS(type: UnionType): string {
 /** What the C++ function does with what it declared first: what reports the value, and `firstMemberNameIndex`. */
 function cppConversionBody({ type, member, expected }: Conversion): string[] {
   const { holder, value } = cppHeldValue(type, "argument");
+  const read = member?.of.members[member.index];
+  const object = "JSC::asObject(JSC::JSValue::decode(encodedValue))";
+  const getsOneName = read && read.names.length === 1 && !read.own && !read.privateSymbol && !isIfPassed(read.type);
   return [
-    ...(member
+    ...(read
       ? [
-          `Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, JSC::asObject(JSC::JSValue::decode(encodedValue)), firstMemberNameIndex, ${member.of.members[member.index].names.length});`,
-          ...cppReadMember(member.of.members[member.index], "read", 0, cppContext(0, expected, "read")),
+          ...(getsOneName
+            ? []
+            : [
+                `Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, ${object}, firstMemberNameIndex, ${read.names.length});`,
+              ]),
+          ...cppReadMember(
+            read,
+            "read",
+            0,
+            cppContext(0, expected, "read"),
+            getsOneName
+              ? () => `Bun::Bindgen::DictionaryMemberReader::get(globalObject, ${object}, firstMemberNameIndex)`
+              : undefined,
+          ),
           `${holder} argument = read;`,
         ]
       : [`${holder} argument = JSC::JSValue::decode(encodedValue);`]),
@@ -915,15 +1014,21 @@ ${indent(lines.join("\n"), 4)}
 `;
 }
 
+const cppThunkParameters = (signature: Signature, leading: readonly string[]) => {
+  const byPointer = passedByPointer(signature.args, leading.length);
+  return [
+    "JSC::JSGlobalObject*",
+    ...leading,
+    ...signature.args.map((arg, i) => externType(arg.type) + (byPointer[i] ? "*" : "")),
+  ].join(", ");
+};
+
 const cppExtern = (
   symbol: string,
   signature: Signature,
   leading: readonly string[] = [],
   returns = "JSC::EncodedJSValue",
-) => {
-  const byPointer = passedByPointer(signature.args, leading.length);
-  return `extern "C" ${returns} ${symbol}(${["JSC::JSGlobalObject*", ...leading, ...signature.args.map((arg, i) => externType(arg.type) + (byPointer[i] ? "*" : ""))].join(", ")});`;
-};
+) => `extern "C" ${returns} ${symbol}(${cppThunkParameters(signature, leading)});`;
 
 // ───────────────────────────── C++: classes ─────────────────────────────
 
@@ -1588,6 +1693,23 @@ function cppThrowIfArgumentsMissing(signature: Signature): string {
 `;
 }
 
+/** What a host function does once it has `this`. One with overloads has counted the arguments before it chose `signature`. */
+const cppConvertAndCall = (fn: FunctionDefinition, signature: Signature, symbol: string, leading: readonly string[]) =>
+  `${fn.signatures.length === 1 ? cppThrowIfArgumentsMissing(signature) : ""}${cppCallBody(signature, symbol, leading)}`;
+
+/** Defines the `sharedCall` of `signature` as `name`. */
+function cppSharedCall(name: string, fn: FunctionDefinition, signature: Signature, takesThis: boolean): string {
+  const leading = takesThis ? ["thisObject"] : cppLeadingOfFunction(fn);
+  const leadingTypes = takesThis ? ["JSC::JSCell*"] : leading.map(() => "JSC::EncodedJSValue");
+  return `
+static NEVER_INLINE JSC::EncodedJSValue ${name}(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, ${takesThis ? "JSC::JSCell* thisObject, " : ""}JSC::EncodedJSValue (*thunk)(${cppThunkParameters(signature, leadingTypes)}))
+{
+${cppPrologue}
+${cppConvertAndCall(fn, signature, "thunk", leading)}
+}
+`;
+}
+
 /** Defines the host function `name`. `takeThis` declares `thisObject`, which is then the thunks' first argument. */
 function cppHostFunction(
   name: string,
@@ -1620,11 +1742,15 @@ function cppHostFunctionBody(
   takeThis: string,
 ): string {
   const leading = takeThis ? ["thisObject"] : cppLeadingOfFunction(fn);
+  const convertAndCall = (signature: Signature) =>
+    signature.sharedCall
+      ? `    RELEASE_AND_RETURN(scope, ${signature.sharedCall}(${["globalObject", "callFrame", ...(takeThis ? leading : []), symbol(signature)].join(", ")}));`
+      : cppConvertAndCall(fn, signature, symbol(signature), leading);
   if (fn.signatures.length === 1) {
     return `${define}
 {
 ${cppPrologue}
-${takeThis}${cppThrowIfArgumentsMissing(fn.signatures[0])}${cppCallBody(fn.signatures[0], symbol(fn.signatures[0]), leading)}
+${takeThis}${convertAndCall(fn.signatures[0])}
 }`;
   }
   // An overload reads `this` and the callee from the frame.
@@ -1633,7 +1759,7 @@ ${takeThis}${cppThrowIfArgumentsMissing(fn.signatures[0])}${cppCallBody(fn.signa
     signature => `static inline JSC::EncodedJSValue ${name}${overloadSuffix(fn, signature)}(${["JSC::JSGlobalObject* globalObject", "JSC::CallFrame* callFrame", ...passed.map(argument => `JSC::JSCell* ${argument}`)].join(", ")})
 {
 ${cppPrologue}
-${cppCallBody(signature, symbol(signature), leading)}
+${convertAndCall(signature)}
 }`,
   );
   const cppDispatch = (dispatch: OverloadDispatch): string => {
@@ -1714,7 +1840,11 @@ export function cppSource(file: SchemaFile): string {
   return `${banner(file.origin)}#include "root.h"
 #include "Generated${file.origin.namespace}.h"
 #include "ZigGlobalObject.h"
-${[...headers].map(header => `#include "${header}"\n`).join("")}${systemHeaders.map(header => `#include <${header}>\n`).join("")}${file.types
+${[...headers].map(header => `#include "${header}"\n`).join("")}${systemHeaders.map(header => `#include <${header}>\n`).join("")}${sharedCallsOf(
+    file,
+  )
+    .map(({ fn, signature, takesThis }) => cppSharedCall(signature.sharedCall!, fn, signature, takesThis))
+    .join("")}${file.types
     .map(type =>
       type instanceof EnumerationType
         ? cppSourceForEnum(type)
@@ -1916,7 +2046,7 @@ function rustForUnion(type: UnionType, scope: RustScope): string {
     .filter((a, i, all) => all.findIndex(other => other.variant === a.variant) === i)
     .map(a => ({ variant: a.variant, type: a.nested?.union ?? a.type }));
   let text = `
-${type.accepted && type.rustIsCopy ? "#[derive(Clone, Copy)]\n" : ""}pub enum ${type.name}${lifetime} {
+${type.accepted && type.rustIsCopy ? "#[derive(Clone, Copy)]\n" : ""}${type.accepted && type.rustLayoutIsExtern ? "#[repr(C, u8)]\n" : ""}pub enum ${type.name}${lifetime} {
 ${variants.map(a => (a.type instanceof UnitType ? `    ${a.variant},` : `    ${a.variant}(${rustFieldType(type, a.type, scope)}),`)).join("\n")}
 }
 `;
@@ -1924,8 +2054,8 @@ ${variants.map(a => (a.type instanceof UnitType ? `    ${a.variant},` : `    ${a
     text += `#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Extern${type.name} {
-    data: Extern${type.name}Data,
     tag: u8,
+    data: Extern${type.name}Data,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1937,7 +2067,14 @@ impl${lifetime} ${type.name}${lifetime} {
     /// # Safety
     /// \`value\` was just filled in by generated C++${lifetime && " for the call `heap` belongs to"} and is read once.
     #[doc(hidden)]
-    pub unsafe fn from_extern(value: &Extern${type.name}${lifetime && ", heap: &bindgen::JsHeap<'a>"}) -> Self {
+${
+  type.rustLayoutIsExtern
+    ? `    #[inline(always)]
+    pub unsafe fn from_extern(value: &Extern${type.name}${lifetime && ", _: &bindgen::JsHeap<'a>"}) -> Self {
+        // SAFETY: C++ initialized the alternative \`tag\` names, and each is laid out as the variant of that index.
+        unsafe { core::mem::transmute(*value) }
+    }`
+    : `    pub unsafe fn from_extern(value: &Extern${type.name}${lifetime && ", heap: &bindgen::JsHeap<'a>"}) -> Self {
         // SAFETY: C++ initialized the alternative \`tag\` names.
         unsafe {
             match value.tag {
@@ -1951,7 +2088,8 @@ ${type.alternatives
                 _ => core::hint::unreachable_unchecked(),
             }
         }
-    }
+    }`
+}
 }
 `;
   }
@@ -2038,6 +2176,7 @@ function rustForDeferredDictionary(type: DeferredDictionaryType, scope: RustScop
   if (!type.accepted) return "";
   return `
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct ${type.name}<'a>(bindgen::JsLocal<'a, bun_jsc::JSObject>);
 impl<'a> ${type.name}<'a> {
     #[inline(always)]

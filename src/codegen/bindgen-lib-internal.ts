@@ -39,7 +39,7 @@ function structLayout(fields: readonly Layout[]): Layout {
 function taggedUnionLayout(alternatives: readonly Layout[]): Layout {
   const align = Math.max(...alternatives.map(a => a.align));
   const union = { size: roundUp(Math.max(...alternatives.map(a => a.size)), align), align };
-  return structLayout([union, { size: 1, align: 1 }]);
+  return structLayout([{ size: 1, align: 1 }, union]);
 }
 
 export function snakeCase(name: string): string {
@@ -413,6 +413,10 @@ export abstract class Type {
   /** A Rust expression (inside `unsafe`) that consumes `expr`, a `rustExternType`. What has a lifetime takes it from `heap`, in scope there. */
   rustFromExtern(expr: string, scope: RustScope): string {
     return expr;
+  }
+  /** `rustType` is laid out as `rustExternType`: `rustFromExtern` changes the type and no bits. */
+  get rustLayoutIsExtern(): boolean {
+    return this.rustFromExtern === Type.prototype.rustFromExtern;
   }
 
   /** The type of a member of a returned dictionary, and of an alternative of a returned union. */
@@ -803,6 +807,9 @@ export class UnitType extends Type {
   }
   rustFromExtern(): string {
     return "()";
+  }
+  get rustLayoutIsExtern(): boolean {
+    return true;
   }
   rustToJS(value: string): string {
     assert(this.unit === "undefined", "leave `returns` out, or return a nullable type");
@@ -1292,6 +1299,9 @@ export class BufferSourceType extends Type {
   rustFromExtern(expr: string): string {
     return `bindgen::JsLocal::from_extern(${expr}, heap)`;
   }
+  get rustLayoutIsExtern(): boolean {
+    return true;
+  }
   rustToJS(value: string): string {
     return `bindgen::to_js::any(heap, ${value})`;
   }
@@ -1347,6 +1357,9 @@ export class LocalType extends Type {
   }
   rustFromExtern(expr: string): string {
     return `bindgen::JsLocal::from_extern(${expr}, heap)`;
+  }
+  get rustLayoutIsExtern(): boolean {
+    return true;
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::any(heap, ${value})`;
@@ -1455,6 +1468,9 @@ export class OpaqueType extends Type {
   }
   rustFromExtern(expr: string): string {
     return `bindgen::JsLocal::from_extern(${expr}, heap)`;
+  }
+  get rustLayoutIsExtern(): boolean {
+    return true;
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::any(heap, ${value})`;
@@ -1731,6 +1747,9 @@ export class WrappedType extends Type {
   }
   rustFromExtern(expr: string): string {
     return `bindgen::class_ref_from_extern::<${this.options.rustPath}>(${expr}, heap)`;
+  }
+  get rustLayoutIsExtern(): boolean {
+    return true;
   }
 }
 
@@ -2614,6 +2633,9 @@ export class DeferredDictionaryType extends NamedType {
   rustFromExtern(expr: string, scope: RustScope): string {
     return `${this.path(scope, this.name)}::new(${objectType.rustFromExtern(expr)})`;
   }
+  get rustLayoutIsExtern(): boolean {
+    return true;
+  }
 }
 
 export interface Alternative {
@@ -2773,6 +2795,24 @@ export class UnionType extends NamedType {
   rustFromExtern(expr: string, scope: RustScope): string {
     return `${this.path(scope, this.name)}::from_extern(&${expr}${this.needsLifetime ? ", heap" : ""})`;
   }
+  /** Not if every value goes to an alternative that only tests it. C++ then returns it, which takes a trivial type. */
+  get conversionThrows(): boolean {
+    const everyValueIsTaken = [...this.alternativesByKind.values()].every(
+      candidates => candidates.length > 0 && !this.alternatives[candidates.at(-1)!].type.refuses,
+    );
+    return !(
+      this.rustLayoutIsExtern &&
+      everyValueIsTaken &&
+      this.alternatives.every(a => a.type instanceof UnitType || !a.type.tryConvertThrows)
+    );
+  }
+  /** The enum is `#[repr(C, u8)]`, so neither language switches on the tag to hand the value over. */
+  get rustLayoutIsExtern(): boolean {
+    return (
+      this.alternatives.some(a => !(a.type instanceof UnitType)) &&
+      this.alternatives.every(a => !a.nested && a.type.rustLayoutIsExtern)
+    );
+  }
   rustToJS(value: string): string {
     return `${value}.into_js(heap)`;
   }
@@ -2823,6 +2863,8 @@ export class Signature {
   readonly requiredArguments: number;
   readonly rustPath: string | undefined;
   readonly length: number | undefined;
+  /** The C++ function that converts the arguments and calls the thunk it is given, where several of the file's functions take the same arguments. */
+  sharedCall?: string;
   /** `hasThisValue`: the body is also handed its own JS object. `isProperty`: JS can call it, so each argument is converted from a JS value. */
   constructor(options: SignatureOptions, hasThisValue = false, isProperty = true) {
     this.length = options.length;
@@ -3637,9 +3679,7 @@ export class ClassType extends NamedType {
     return `Bun::Bindgen::Generated::JS${this.name}`;
   }
   get idlType(): string {
-    return this.refCounted
-      ? `Bun::Bindgen::IDLWrappedInterface<${this.cpp}, std::to_array("${this.name}")>`
-      : `Bun::Bindgen::IDLRawInterface<${this.cpp}>`;
+    return `Bun::Bindgen::IDLWrappedInterface<${this.cpp}, std::to_array("${this.name}")>`;
   }
   get valueKinds(): ValueKinds {
     return [this];
@@ -3674,8 +3714,10 @@ export class ClassType extends NamedType {
     return `&'a ${this.rustPath}`;
   }
   rustFromExtern(expr: string): string {
-    if (this.refCounted) return `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`;
-    return `bindgen::JsWrapper::<${this.rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(${expr}), heap).payload_ref()`;
+    return `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`;
+  }
+  get rustLayoutIsExtern(): boolean {
+    return true;
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::any(heap, ${value})`;

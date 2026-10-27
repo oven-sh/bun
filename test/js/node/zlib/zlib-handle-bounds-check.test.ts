@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { pbkdf2Sync } from "node:crypto";
+import zlib from "node:zlib";
 
 // Tests for bounds checking on native zlib handle write/writeSync methods.
 // These verify that user-controlled offset/length parameters are validated
@@ -530,6 +532,55 @@ describe.concurrent("zlib native handle argument validation", () => {
          console.log("ok " + zlib.inflateRawSync(out.subarray(0, written)).toString());`,
       ),
     ).toEqual({ stdout: "ok hello world", exitCode: 0 });
+  });
+});
+
+// The codec writes output before it has read all of the input.
+describe("brotli native handle whose out starts in the middle of its in", () => {
+  const c = zlib.constants;
+  const Handle = (zlib.createBrotliCompress() as any)._handle.constructor;
+  const text = Buffer.from(pbkdf2Sync("input", "", 1, 256 * 1024, "sha256").toString("hex"));
+  const encoderParams = (quality: number) => ({ [c.BROTLI_PARAM_QUALITY]: quality, [c.BROTLI_PARAM_LGWIN]: 16 });
+
+  /** What one call with all of `input` writes. */
+  async function finish(how: "write" | "writeSync", mode: number, params: Record<number, number>, input: Buffer) {
+    const outOffset = input.length >> 1;
+    const memory = Buffer.alloc(outOffset + text.length);
+    memory.set(input);
+    const paramsArray = new Uint32Array(c.BROTLI_PARAM_NDIRECT + 1).fill(-1);
+    for (const [key, value] of Object.entries(params)) paramsArray[+key] = value;
+    const writeState = new Uint32Array(2);
+    const written = Promise.withResolvers<void>();
+
+    const handle = new Handle(mode);
+    handle.onerror = (message: string, errno: number, code: string) => written.reject(new Error(`${code}: ${message}`));
+    handle.init(paramsArray, writeState, written.resolve);
+    handle[how](c.BROTLI_OPERATION_FINISH, memory, 0, input.length, memory, outOffset, text.length);
+    if (how === "writeSync") written.resolve();
+    await written.promise;
+    handle.close();
+
+    const [availOut, availIn] = writeState;
+    expect(availIn).toBe(0);
+    return memory.subarray(outOffset, memory.length - availOut);
+  }
+
+  describe.each(["writeSync", "write"] as const)("%s", how => {
+    test.each([1, 5])("compresses the input it was given at quality %i", async quality => {
+      const params = encoderParams(quality);
+      const output = await finish(how, c.BROTLI_ENCODE, params, text);
+      expect(output.equals(zlib.brotliCompressSync(text, { params }))).toBe(true);
+    });
+
+    test("decompresses the input it was given", async () => {
+      const output = await finish(
+        how,
+        c.BROTLI_DECODE,
+        {},
+        zlib.brotliCompressSync(text, { params: encoderParams(1) }),
+      );
+      expect(output.equals(text)).toBe(true);
+    });
   });
 });
 

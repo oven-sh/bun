@@ -1,4 +1,4 @@
-use core::ffi::c_int;
+use core::ffi::{CStr, c_int};
 use core::ptr;
 
 use bun_brotli::{
@@ -15,6 +15,12 @@ pub(crate) enum State {
     Encoder(Box<Encoder>),
     Decoder(Box<Decoder>),
 }
+
+// `write()` hands the `Context` to a pool thread by pointer.
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    assert_send::<State>();
+};
 
 pub(crate) struct Context {
     pub(crate) mode: bun_zlib::NodeMode,
@@ -56,7 +62,6 @@ impl Default for Context {
 mod _impl {
     use super::*;
     use core::cell::Cell;
-    use core::ffi::c_uint;
 
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
     use bun_jsc::{ErrorCode, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
@@ -130,13 +135,10 @@ mod _impl {
 
         /// Per-mode external-allocation footprint, fixed at construction.
         fn external_size_for(mode: bun_zlib::NodeMode) -> usize {
-            // What the state structs of the C library took. The buffers that
-            // come with the first write were never counted.
-            const ENCODER_STATE_SIZE: usize = 5143;
-            const DECODER_STATE_SIZE: usize = 855;
+            // The buffers that come with the first write are not counted.
             match mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => ENCODER_STATE_SIZE,
-                bun_zlib::NodeMode::BROTLI_DECODE => DECODER_STATE_SIZE,
+                bun_zlib::NodeMode::BROTLI_ENCODE => size_of::<Encoder>(),
+                bun_zlib::NodeMode::BROTLI_DECODE => size_of::<Decoder>(),
                 _ => 0,
             }
         }
@@ -256,7 +258,7 @@ mod _impl {
                 }
                 err = self
                     .stream
-                    .with_mut(|s| s.set_params(u32::try_from(i).expect("int cast") as c_uint, d));
+                    .with_mut(|s| s.set_params(u32::try_from(i).expect("int cast"), d));
                 if err.is_error() {
                     // impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
                     self.stream.with_mut(|s| s.close());
@@ -297,11 +299,7 @@ mod _impl {
                         dictionary.is_none_or(|dict| decoder.attach_dictionary(dict.into()));
                     self.state = State::Decoder(decoder);
                     if !attached {
-                        return Error::init(
-                            c"Failed to attach brotli dictionary".as_ptr(),
-                            -1,
-                            c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
-                        );
+                        return Self::dictionary_error(c"Failed to attach brotli dictionary");
                     }
                     Error::ok()
                 }
@@ -311,23 +309,23 @@ mod _impl {
 
         fn attach_encoder_dictionary(encoder: &mut Encoder, dictionary: &[u8]) -> Error {
             let Some(prepared) = PreparedDictionary::new(dictionary.into()) else {
-                return Error::init(
-                    c"Failed to prepare brotli dictionary".as_ptr(),
-                    -1,
-                    c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
-                );
+                return Self::dictionary_error(c"Failed to prepare brotli dictionary");
             };
             if !encoder.attach_prepared_dictionary(prepared) {
-                return Error::init(
-                    c"Failed to attach brotli dictionary".as_ptr(),
-                    -1,
-                    c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
-                );
+                return Self::dictionary_error(c"Failed to attach brotli dictionary");
             }
             Error::ok()
         }
 
-        pub(crate) fn set_params(&mut self, key: c_uint, value: u32) -> Error {
+        fn dictionary_error(message: &'static CStr) -> Error {
+            Error::init(
+                message.as_ptr(),
+                -1,
+                c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
+            )
+        }
+
+        pub(crate) fn set_params(&mut self, key: u32, value: u32) -> Error {
             let ok = match &mut self.state {
                 State::Encoder(encoder) => EncoderParameter::from_raw(key)
                     .is_some_and(|parameter| encoder.set_parameter(parameter, value)),
@@ -376,27 +374,34 @@ mod _impl {
         }
 
         pub(crate) fn do_work(&mut self) {
-            // SAFETY: `set_buffers` took `next_in`/`avail_in` from a slice of a
-            // buffer that `write()` keeps alive and pinned until the write
-            // completes. As with every buffer lent to the thread pool, JS is
-            // not to write to it before then.
-            let whole_input = unsafe { bun_core::ffi::slice(self.next_in, self.avail_in) };
+            // A handle driven before `init()`.
+            if matches!(self.state, State::None) {
+                return;
+            }
+            // SAFETY: `set_buffers` took `next_in`/`avail_in` from a view that
+            // `write()` keeps alive and pinned, or from the handle's
+            // `input_copy`, until the write completes, and a handle has one
+            // write at a time. The bytes are NOT kept from changing: JS still
+            // has the view while the pool thread is here, and shared memory
+            // has other writers. `bun_brotli` has no `unsafe` and checks every
+            // index, so a byte that reads differently the second time gives
+            // other output, an error or a failed debug assertion.
+            let mut input = unsafe { bun_core::ffi::slice(self.next_in, self.avail_in) };
             // "in" and "out" can be views of the same ArrayBuffer.
             let in_start = self.next_in.addr();
             let out_start = self.next_out.addr();
-            let input_copy: Vec<u8>;
-            let mut input =
-                if in_start < out_start + self.avail_out && out_start < in_start + self.avail_in {
-                    input_copy = whole_input.to_vec();
-                    input_copy.as_slice()
-                } else {
-                    whole_input
-                };
+            let mut input_copy = Vec::new();
+            if in_start < out_start + self.avail_out && out_start < in_start + self.avail_in {
+                if input_copy.try_reserve_exact(input.len()).is_err() {
+                    return self.set_out_of_memory();
+                }
+                input_copy.extend_from_slice(input);
+                input = &input_copy;
+            }
             // SAFETY: as above, and `input` does not overlap these bytes.
             let mut output = unsafe { bun_core::ffi::slice_mut(self.next_out, self.avail_out) };
             match &mut self.state {
-                // A handle driven before `init()`.
-                State::None => return,
+                State::None => unreachable!(),
                 State::Encoder(encoder) => {
                     self.encode_ok = encoder
                         .compress_stream(self.flush, &mut input, &mut output)
@@ -413,6 +418,13 @@ mod _impl {
             self.avail_in = input.len();
             self.next_out = self.next_out.wrapping_add(self.avail_out - output.len());
             self.avail_out = output.len();
+        }
+
+        /// Makes `get_error_info` report what it does when the codec cannot allocate.
+        fn set_out_of_memory(&mut self) {
+            self.encode_ok = false;
+            self.decode_result = DecoderResult::Error;
+            self.error = DecoderErrorCode::AllocRingBuffer1;
         }
 
         pub(crate) fn write_result(&self) -> [u32; 2] {

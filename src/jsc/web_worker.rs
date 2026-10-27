@@ -286,6 +286,7 @@ impl WebWorker {
         specifier_str: &BunString,
         error_message: &mut BunString,
         error_is_invalid_exec_argv: &mut bool,
+        error_is_init_failed: &mut bool,
         _parent_context_id: u32,
         this_context_id: u32,
         mini: bool,
@@ -495,10 +496,22 @@ impl WebWorker {
                 unsafe { (*parent).child_workers.push(worker) };
                 worker
             }
-            Err(_) => {
+            Err(err) => {
                 // The thread's ref went down with the closure; ours drops on return.
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
-                *error_message = BunString::static_("Failed to spawn worker thread");
+                // Windows: raw_os_error() is a Win32 code, not an errno.
+                #[cfg(windows)]
+                let errno = err
+                    .raw_os_error()
+                    .and_then(|c| bun_errno::SystemErrno::init(c as u32))
+                    .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+                #[cfg(not(windows))]
+                let errno = err
+                    .raw_os_error()
+                    .map(bun_errno::from_errno)
+                    .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+                *error_message = BunString::static_(<&'static str>::from(errno));
+                *error_is_init_failed = true;
                 core::ptr::null_mut()
             }
         }

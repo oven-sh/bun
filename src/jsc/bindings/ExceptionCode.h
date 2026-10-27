@@ -79,6 +79,7 @@ enum ExceptionCode : uint8_t {
     CryptoOperationFailedError,
     EVENT_RECURSION,
     WORKER_INVALID_EXEC_ARGV,
+    WORKER_INIT_FAILED,
 };
 
 } // namespace WebCore
@@ -124,10 +125,14 @@ template<> struct EnumTraits<WebCore::ExceptionCode> {
         WebCore::ExceptionCode::TypeError,
         WebCore::ExceptionCode::JSSyntaxError,
         WebCore::ExceptionCode::StackOverflowError,
+        WebCore::ExceptionCode::OutOfMemoryError,
         WebCore::ExceptionCode::ExistingExceptionError,
         WebCore::ExceptionCode::InvalidThisError,
         WebCore::ExceptionCode::InvalidURLError,
-        WebCore::ExceptionCode::CryptoOperationFailedError>;
+        WebCore::ExceptionCode::CryptoOperationFailedError,
+        WebCore::ExceptionCode::EVENT_RECURSION,
+        WebCore::ExceptionCode::WORKER_INVALID_EXEC_ARGV,
+        WebCore::ExceptionCode::WORKER_INIT_FAILED>;
 };
 
 } // namespace WTF

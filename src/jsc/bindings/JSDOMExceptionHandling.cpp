@@ -167,6 +167,8 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_EVENT_RECURSION, message);
     case ExceptionCode::WORKER_INVALID_EXEC_ARGV:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, message);
+    case ExceptionCode::WORKER_INIT_FAILED:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_WORKER_INIT_FAILED, message);
 
     default: {
         // FIXME: All callers to createDOMException need to pass in the correct global object.

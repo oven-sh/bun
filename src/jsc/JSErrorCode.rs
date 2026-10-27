@@ -68,4 +68,7 @@ pub enum DOMExceptionCode {
     InvalidThisError,
     InvalidURLError,
     CryptoOperationFailedError,
+    EventRecursion,
+    WorkerInvalidExecArgv,
+    WorkerInitFailed,
 }

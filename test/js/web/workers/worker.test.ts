@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir, unprivilegedSpawnOptions } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -849,5 +849,59 @@ describe("worker_threads", () => {
     });
     await p;
     expect(message).toEqual("hello");
+  });
+});
+
+describe("worker thread limit", () => {
+  // On Linux, RLIMIT_NPROC counts every thread of the uid, as a cgroup
+  // pids.max counts every thread of the cgroup. The kernel does not enforce it
+  // for root, so under a root test runner the child runs unprivileged.
+  const prlimit = isLinux ? Bun.which("prlimit") : null;
+
+  test.skipIf(!prlimit)("new Worker throws ERR_WORKER_INIT_FAILED when the OS refuses the thread", async () => {
+    using dir = tempDir("worker-thread-limit", {});
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    // A limit of 1 refuses every new thread, whatever else the uid runs: this
+    // process is already one task of the uid.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { Worker as NodeWorker } from "node:worker_threads";
+         const limited = Bun.spawnSync([${JSON.stringify(prlimit)}, "--pid", String(process.pid), "--nproc=1"]);
+         if (limited.exitCode !== 0) throw new Error("prlimit: " + limited.stderr);
+         const attempt = create => {
+           try {
+             create();
+             return "started";
+           } catch (e) {
+             return { code: e.code, message: e.message, name: e.name };
+           }
+         };
+         console.log(JSON.stringify({
+           web: attempt(() => new Worker("data:text/javascript,postMessage(1)")),
+           node: attempt(() => new NodeWorker(new URL("data:text/javascript,1"))),
+         }));`,
+      ],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        HOME: String(dir),
+        // The ASAN lanes tear the VM down at exit, which runs one more
+        // collection. JSC aborts when its collector thread is refused.
+        BUN_DESTRUCT_VM_ON_EXIT: undefined,
+        // LeakSanitizer needs a tracer thread at exit, which the limit refuses.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const refused = { code: "ERR_WORKER_INIT_FAILED", message: "EAGAIN", name: "Error" };
+    expect({ result: stdout && JSON.parse(stdout), exitCode }, stderr).toEqual({
+      result: { web: refused, node: refused },
+      exitCode: 0,
+    });
   });
 });

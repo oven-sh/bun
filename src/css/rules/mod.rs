@@ -854,6 +854,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
                 && i < rules.len()
                 && let CssRule::Style(other) = &rules[i]
                 && (!context.css_modules || source_index == other.loc.source_index)
+                // `revert-rule` in this rule rolls back to `other`. A hit is rare, so the test is last.
+                && !context.extra.may_revert_rule
             {
                 rules[i] = CssRule::Ignored;
             }
@@ -1117,6 +1119,10 @@ fn merge_style_rules<R>(
     dst_compat: &mut Option<bool>,
 ) -> bool {
     use css::VendorPrefix;
+    // See `StylesheetExtra::may_revert_rule`.
+    if context.extra.may_revert_rule {
+        return false;
+    }
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
     // Does not apply if css modules are enabled.
     if src.selectors.eql(&dst.selectors)

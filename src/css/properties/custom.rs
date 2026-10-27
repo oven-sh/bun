@@ -673,6 +673,9 @@ impl TokenList {
                         last_is_whitespace = false;
                         continue;
                     }
+                    if strings::eql_case_insensitive_ascii_check_length(name, b"revert-rule") {
+                        input.note_may_revert_rule();
+                    }
                 }
                 Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
                     let closing_delimiter = match &tok {

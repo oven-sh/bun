@@ -36,12 +36,14 @@ quality `q`: `0xFFF` for all of them.
 | `enc-tail <seed> <iterations> <mask>` | blocks that straddle the end of the ring buffer after a short first write: the byte after the end of the input is in the tail. Qualities 2 and up |
 | `enc-marks <seed> <iterations> <mask> <position>...` | lengths, ends of pieces and flushes near the given positions, for thresholds inside the encoder |
 | `enc-words <seed> <iterations> <max length> <mask>` | words of the static dictionary after each of the 121 transforms |
+| `enc-every-word <mask> <all>` | all 13,504 words of the static dictionary, as they are, with the first letter in upper case and all in upper case, each an input of its own. If `all` is not 0: after each of the 121 transforms |
 | `enc-lengths <seed> <iterations> <max length> <mask>` | runs of literals, copies and distances whose lengths are at the edges of the ranges of their codes |
 | `enc-dict <seed> <iterations> <max length> <mask>` | compound dictionaries: long copies from them, copies that go on in the next dictionary or in the next block of input, more matches than a search has room for |
 | `enc-far-dict <seed> <mask>` | 36 MiB with a window of 32 MiB: a copy from an attached dictionary, then what is as far back in the input as that copy's distance. Version 1.2.1 of the C encoder takes that for a match at the last distance at quality 4 (H55) |
 | `enc-offset-dict <seed> <iterations> <mask>` | a stream offset and a dictionary: a copy from the dictionary that ends with a block of input, and then what the dictionary has that many bytes earlier. The C encoder goes on with the copy. Qualities 5 and up |
 | `enc-blocks <seed> <iterations> <max length> <mask>` | stretches of many different kinds: many blocks, block types and histograms to cluster |
 | `enc-parts <seed> <iterations> <max length> <mask>` | a stream in parts, each by an encoder of its own with a stream offset, with dictionaries, and more input than the window holds. After a copy from a dictionary comes what could be taken for more of it. The whole has to decode. Also dictionaries that one encoder or decoder hands on to the next |
+| `enc-flint <mask>` | the start of a stream with an offset: every combination of three operations with little input and little room for output. None may be refused, and the stream has to decode |
 | `enc-states <seed> <iterations> <mask>` | calls in any order, with any amount of input and room, whether or not the call before was completed or refused |
 | `enc-select <seed> <length>` | every quality with every window size and size hints on both sides of 1 MiB: all that decides which hasher is used |
 | `enc-big <seed> <bytes> <param>=<value>...` | one long stream, through both decoders too. The position wraps at 3 GiB and then every 2 GiB |

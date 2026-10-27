@@ -561,6 +561,7 @@ pub fn run_parts(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus:
         let mut stream: Vec<u8> = Vec::new();
         let parts = *rng.pick(&[1, 1, 2, 2, 2, 3, 4]);
         let sparse = rng.chance(2, 3);
+        let wordy = rng.chance(1, 3);
         let fail = |e: String, whole: &[u8], part: usize, params: &[(i32, u32)]| -> ! {
             let path = format!("{}/brotli-partsfail-{seed}.bin", std::env::temp_dir().display());
             std::fs::write(&path, whole).unwrap();
@@ -590,6 +591,12 @@ pub fn run_parts(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus:
                 let before_end = to_end;
                 let literals = if straddle { 0 } else if sparse { *rng.pick(&[0, 0, 0, 1, 2, 5]) } else { *rng.pick(&[0, 0, 1, 3, 9, 40, 700]) };
                 whole.extend((0..literals).map(|_| rng.next() as u8));
+                // The distance that stands for a word of the static dictionary depends on the offset, too.
+                if wordy && !straddle && rng.chance(1, 2) {
+                    let n = rng.range(4, 80);
+                    whole.extend(crate::ring::words(&mut rng, n));
+                    continue;
+                }
                 if all.is_empty() || rng.chance(1, 4) {
                     // From the input, also from the parts before.
                     let distance = if rng.chance(1, 3) { edge(&mut rng, window).min(whole.len()) } else { rng.range(1, whole.len().max(1)) };
@@ -598,7 +605,7 @@ pub fn run_parts(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus:
                     }
                     continue;
                 }
-                let n = if straddle { (before_end + rng.below(3)).saturating_sub(1).max(1) } else { rng.range(4, 400) }.min(all.len());
+                let n = if straddle { (before_end + rng.below(3)).saturating_sub(1).max(1) } else if rng.chance(1, 8) { rng.range(400, 3000) } else { rng.range(4, 400) }.min(all.len());
                 // The first and the last byte of the dictionaries are the limits of what is a distance into them.
                 let address = match rng.below(if straddle { 3 } else { 8 }) {
                     0 => 0,
@@ -615,6 +622,13 @@ pub fn run_parts(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus:
                     // The dictionary as many bytes earlier or later as there were before this part.
                     1 if address + n >= offset => whole.extend_from_slice(&all[address + n - offset..(address + n - offset + more).min(all.len())]),
                     2 if address + n + offset < all.len() => whole.extend_from_slice(&all[address + n + offset..(address + n + offset + more).min(all.len())]),
+                    // Something else, then more of the dictionary at the same distance.
+                    5 => {
+                        let skipped = rng.range(1, 3);
+                        whole.extend((0..skipped).map(|_| rng.next() as u8));
+                        let from = (address + n + skipped).min(all.len());
+                        whole.extend_from_slice(&all[from..(from + more).min(all.len())]);
+                    }
                     // What is that far back in the input.
                     3 | 4 if whole.len() >= distance => {
                         for _ in 0..more {
@@ -647,4 +661,102 @@ pub fn run_parts(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus:
         totals.1 += stream.len();
     }
     println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
+}
+
+/// Every word of the static dictionary, as it is, with its first letter in upper case and all in upper case, or after each
+/// of the 121 transforms, each of them an input of its own. The tables in which the Rust encoder looks words up are made
+/// when they are first needed, those of the reference are part of its source.
+pub fn run_every_word(qualities: u64, all_transforms: bool) {
+    const TAILS: [&[u8]; 3] = [b"", b" ", b"ing "];
+    let qs = crate::args::qualities(qualities, 2..12);
+    let (mut cases, mut total_out) = (0usize, 0usize);
+    for len in 4..=24usize {
+        for index in 0..1usize << crate::grammar::size_bits(len) {
+            // Or Identity, UppercaseFirst and UppercaseAll without prefix or suffix.
+            for transform in if all_transforms { (0..121).collect() } else { vec![0, 9, 44] } {
+                let word = crate::grammar::dictionary_word(len, index, transform);
+                for &q in &qs {
+                    for tail in &TAILS[..if all_transforms { 1 } else { 3 }] {
+                        let case = EncCase { data: [&word[..], tail].concat(), params: vec![(1, q), (2, 16)], dicts: Vec::new(), schedule: 0, misuse: false };
+                        match enc::compare(&case) {
+                            Ok(out) => total_out += out.len(),
+                            Err(e) => panic!("seed 0: word {index} of length {len}, transform {transform}, quality {q}, {:?}: {e}", String::from_utf8_lossy(&case.data)),
+                        }
+                        cases += 1;
+                    }
+                }
+            }
+        }
+    }
+    println!("ok: {cases} cases, {total_out} bytes");
+}
+
+/// The start of a stream with an offset, call by call: every combination of three operations, each with little input and
+/// little room for output. All of these calls are in order, so none may be refused, and the stream has to decode.
+pub fn run_flint(qualities: u64) {
+    let qs = crate::args::qualities(qualities, 0..12);
+    let text: Vec<u8> = (0..200u32).map(|i| b'a' + (i * 7 % 26) as u8).collect();
+    let metadata = [0x5Au8; 17];
+    let mut cases = 0usize;
+    for &q in &qs {
+        for offset in [1usize, 77] {
+            let params = vec![(1, q), (2, 18)];
+            // What the offset stands for, from another encoder.
+            let first = rust_stream(&text[..offset], &params, &[], EncoderOperation::Flush).unwrap();
+            let params = [&params[..], &[(9, offset as u32)]].concat();
+            // (operation, bytes of input, room for output in the first call)
+            let mut calls: Vec<[(i32, usize, usize); 3]> = Vec::new();
+            for (op1, n1) in [(0, 1), (0, 2), (0, 3), (0, 10), (1, 1), (1, 2), (1, 3), (3, 0), (3, 1)] {
+                for op2 in 0..4 {
+                    for n2 in [0usize, 1, 16, 17] {
+                        for (op3, n3) in [(0, 1), (0, 17), (1, 0), (1, 1), (3, 0), (3, 16), (2, 0), (2, 1)] {
+                            for room1 in 0..7 {
+                                for room2 in 0..7 {
+                                    for room3 in [0usize, 1, 5, 100] {
+                                        calls.push([(op1, n1, room1), (op2, n2, room2), (op3, n3, room3)]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for sequence in calls {
+                let at = |e: String| -> ! { panic!("seed 0: quality {q}, offset {offset}, (operation, input, room) {sequence:?}: {e}") };
+                let mut p = enc::Pair::new(&EncCase { data: Vec::new(), params: params.clone(), dicts: Vec::new(), schedule: 0, misuse: false }).unwrap_or_else(|e| at(e));
+                let mut pos = offset;
+                for (op, n, room) in sequence {
+                    if p.is_finished() {
+                        break;
+                    }
+                    let mut input = if op == 3 { &metadata[..n] } else { &text[pos..pos + n] };
+                    let mut room = room;
+                    loop {
+                        let (ok, used) = p.step(op, input, room).unwrap_or_else(|e| at(e));
+                        if !ok {
+                            at(format!("both refuse operation {op} with {} bytes of input and room for {room}", input.len()));
+                        }
+                        input = &input[used..];
+                        // Process is complete when the input is taken. The others have to hand over their output.
+                        if input.is_empty() && (op == 0 || !p.has_more_output()) {
+                            break;
+                        }
+                        room = 1 << 16;
+                    }
+                    if op != 3 {
+                        pos += n;
+                    }
+                }
+                while !p.is_finished() {
+                    if !p.step(2, &[], 1 << 16).unwrap_or_else(|e| at(e)).0 {
+                        at("both refuse to finish".into());
+                    }
+                }
+                let stream = [&first[..], &p.out].concat();
+                enc::round_trip(&stream, &text[..pos], &[], false, cases as u64).unwrap_or_else(|e| at(e));
+                cases += 1;
+            }
+        }
+    }
+    println!("ok: {cases} cases");
 }

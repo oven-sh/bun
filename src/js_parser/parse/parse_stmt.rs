@@ -1271,7 +1271,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         b"cannot use export statement with \"type\" attribute",
                     );
                 } else if path.loader == Some(bun_ast::Loader::Css) {
-                    p.set_import_record_loader(import_record_index, bun_ast::Loader::Css);
+                    p.import_records.items_mut()[import_record_index as usize].loader =
+                        path.loader;
                 }
 
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
@@ -1335,7 +1336,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && parsed_path.import_tag == ImportRecordTag::None
                         && parsed_path.loader == Some(bun_ast::Loader::Css)
                     {
-                        p.set_import_record_loader(import_record_index, bun_ast::Loader::Css);
+                        p.import_records.items_mut()[import_record_index as usize].loader =
+                            parsed_path.loader;
                     }
                     let path_name = fs::PathName::init(parsed_path.text);
                     let namespace_ref = {

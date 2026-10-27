@@ -107,10 +107,6 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
-
-        /// `with { type: "css" }`: a CSS module script. Browser builds export a
-        /// constructed `CSSStyleSheet` instead of adding the file to the page CSS.
-        const CSS_MODULE_SCRIPT = 1 << 29;
     }
 }
 

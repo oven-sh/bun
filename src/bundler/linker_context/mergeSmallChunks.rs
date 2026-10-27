@@ -784,11 +784,7 @@ pub(crate) fn merge_small_chunks(
     };
     let is_live_js = |source_index: u32| {
         this.graph.files_live.is_set(source_index as usize)
-            && crate::linker_context_mod::is_chunked_as_js(
-                css_asts,
-                &this.css_module_scripts,
-                source_index,
-            )
+            && css_asts[source_index as usize].is_none()
     };
 
     // Which entries statically contain a live `import()` of each dynamic entry.

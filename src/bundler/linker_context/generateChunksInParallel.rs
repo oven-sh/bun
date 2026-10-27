@@ -20,9 +20,7 @@ use crate::options;
 use crate::options::Loader;
 
 use crate::LinkerContext;
-use crate::linker_context::generate_compile_result_for_css_chunk::{
-    generate_compile_result_for_css_chunk, generate_css_module_script_texts,
-};
+use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
 use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
 use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
 use crate::linker_context::output_file_list_builder::OutputFileList as OutputFileListBuilder;
@@ -48,8 +46,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let _trace = bun_core::perf::trace("Bundler.generateChunksInParallel");
 
     c.mangle_local_css();
-    // Fills in AST that the JS printer reads below.
-    generate_css_module_script_texts(c)?;
 
     let mut has_js_chunk = false;
     let mut has_css_chunk = false;

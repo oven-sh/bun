@@ -3,7 +3,6 @@ use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
-use crate::linker_context_mod::is_chunked_as_js;
 use crate::options::Loader;
 use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk, js_meta::Wrap};
 use bun_core::perf;
@@ -267,7 +266,7 @@ impl WalkPlan {
             for source_index in c.graph.reachable_files.iter() {
                 let file = source_index.get() as usize;
                 if c.graph.files_live.is_set(file)
-                    && is_chunked_as_js(css, &c.css_module_scripts, file as u32)
+                    && css[file].is_none()
                     && let Some(&chunk_index) =
                         chunk_of_key.get(file_entry_bits[file].bytes(entry_points.len()))
                 {
@@ -438,9 +437,7 @@ impl LoadTimeReads {
         let for_each_live_part = |each: &mut dyn FnMut(usize, u32, &bun_ast::Part)| {
             for source_index in c.graph.reachable_files.iter() {
                 let file = source_index.get() as usize;
-                if !c.graph.files_live.is_set(file)
-                    || !is_chunked_as_js(css, &c.css_module_scripts, file as u32)
-                {
+                if !c.graph.files_live.is_set(file) || css[file].is_some() {
                     continue;
                 }
                 for (part_index, part) in all_parts[file].as_slice().iter().enumerate() {
@@ -625,8 +622,7 @@ fn for_each_edge(
 ) {
     let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
     let css = c.graph.ast.items_css();
-    let is_plain_css = |file: IndexInt| !is_chunked_as_js(css, &c.css_module_scripts, file);
-    if is_plain_css(source_index)
+    if css[source_index as usize].is_some()
         || c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
     {
         // A CSS or HTML file has no parts; every record counts.
@@ -668,7 +664,7 @@ fn for_each_edge(
         if runs_here {
             for dependency in part.dependencies.iter() {
                 let other = dependency.source_index.get();
-                if is_plain_css(other) {
+                if css[other as usize].is_some() {
                     each(part_index, Edge::Import(other));
                 }
             }
@@ -936,7 +932,7 @@ impl EntryWalk {
                     }
                     return;
                 }
-                let is_css = !is_chunked_as_js(css, &c.css_module_scripts, other);
+                let is_css = css[other as usize].is_some();
                 if is_css {
                     let Some(slot) = slot else { return };
                     // The chunk of the importer loads the CSS file, whatever load reached the importer.
@@ -1189,7 +1185,7 @@ fn reached_chunks_in_order(
             }
             visited.set(source_index as usize);
 
-            let is_file_in_chunk = if is_chunked_as_js(css, &c.css_module_scripts, source_index) {
+            let is_file_in_chunk = if css[source_index as usize].is_none() {
                 entry_bits.eql(&file_entry_bits[source_index as usize])
             } else {
                 entry_bits.has_intersection(&file_entry_bits[source_index as usize])

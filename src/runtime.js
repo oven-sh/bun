@@ -342,28 +342,6 @@ export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
-// `import sheet from "./x.css" with { type: "css" }` in browser builds. Globals
-// go through `globalThis` so bundling does not reserve their names.
-export var __cssModule = css => {
-  var sheet = new globalThis.CSSStyleSheet();
-  sheet.replaceSync(css);
-  return sheet;
-};
-
-// Resolves a chunk-relative asset `url()` in that CSS against the chunk. The result is valid in `url()` with or without quotes.
-export var __cssUrl = (url, base) => {
-  try {
-    url = new globalThis.URL(url, base).href;
-  } catch {}
-  return url.replace(/[ "'()\\]/g, "\\$&");
-};
-
-// The chunk's URL in IIFE and CommonJS output. `currentScript` is only set while the chunk loads.
-export var __scriptUrl = /* @__PURE__ */ (() => {
-  var d = globalThis.document;
-  return d && d.currentScript && d.currentScript.src;
-})();
-
 export var __promiseAll = args => Promise.all(args);
 
 // React Compiler memo-cache slot sentinels.

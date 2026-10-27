@@ -6832,25 +6832,6 @@ pub mod bv2_impl {
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                 }
 
-                // Not supported by the dev server. Must precede `onResolve` plugins.
-                if self.dev_server.is_some()
-                    && import_record
-                        .flags
-                        .contains(bun_ast::ImportRecordFlags::CSS_MODULE_SCRIPT)
-                    && ctx.target.bake_graph() == bake_types::Graph::Client
-                {
-                    self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph())
-                        .add_range_error_fmt(
-                            Some(source),
-                            import_record.range,
-                            format_args!(
-                                "The dev server does not support CSS module scripts (import attribute type: \"css\") yet. Use \"bun build\", or remove the attribute to apply \"{}\" to the page.",
-                                bstr::BStr::new(import_record.path.text),
-                            ),
-                        );
-                    continue;
-                }
-
                 if self.enqueue_on_resolve_plugin_if_needed(
                     source.index.0,
                     import_record,

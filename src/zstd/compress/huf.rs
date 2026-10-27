@@ -109,25 +109,27 @@ fn set_value(elt: &mut u64, value: u64) {
     }
 }
 
-/// Gives each symbol its code. `ct` has the number of bits of each, at most `table_log`, and `nb_per_rank` has how
-/// many symbols there are of each number of bits.
-fn set_values<const RANKS: usize>(
-    ct: &mut [u64],
+/// The first code of each number of bits up to `table_log`, given how many symbols there are of each: the longest codes
+/// have the lowest values.
+fn first_values<const RANKS: usize>(
     nb_per_rank: &[u16; RANKS],
     table_log: u32,
-) -> Result<()> {
+) -> Result<[u16; RANKS]> {
     let mut val_per_rank = [0u16; RANKS];
-    // The first code of each rank: the longest codes have the lowest values.
     let mut min = 0u16;
     for n in (1..=table_log as usize).rev() {
         val_per_rank.put(n, min)?;
         min = min.wrapping_add(nb_per_rank.at(n)?) >> 1;
     }
-    for elt in ct {
-        let value = val_per_rank.at_mut(get_nb_bits(*elt) as usize)?;
-        set_value(elt, u64::from(*value));
-        *value = value.wrapping_add(1);
-    }
+    Ok(val_per_rank)
+}
+
+/// Gives `elt`, which has its number of bits, the next code of that many bits.
+#[inline(always)]
+fn set_next_value(elt: &mut u64, val_per_rank: &mut [u16]) -> Result<()> {
+    let value = val_per_rank.at_mut(get_nb_bits(*elt) as usize)?;
+    set_value(elt, u64::from(*value));
+    *value = value.wrapping_add(1);
     Ok(())
 }
 
@@ -268,7 +270,10 @@ pub(crate) fn read_ctable(
         *elt = u64::from(nb_bits);
         *nb_per_rank.at_mut(usize::from(nb_bits))? += 1;
     }
-    set_values(ct, &nb_per_rank, table_log)?;
+    let mut val_per_rank = first_values(&nb_per_rank, table_log)?;
+    for elt in ct {
+        set_next_value(elt, &mut val_per_rank)?;
+    }
 
     Ok(HufCTableStats {
         size: stats.size,
@@ -286,27 +291,19 @@ struct NodeElt {
     nb_bits: u8,
 }
 
-/// The first node that is not a leaf.
-const STARTNODE: i32 = HUF_SYMBOLVALUE_MAX as i32 + 1;
-
-/// `huffNodeTable`: the leaves from 0 on, sorted from the most frequent symbol to the rarest, the other nodes from
-/// [`STARTNODE`] on, and a sentinel at -1. A number that is out of the table wraps around, which spares the checks.
-struct HuffNodes([NodeElt; 2 * (HUF_SYMBOLVALUE_MAX as usize + 1)]);
+/// The leaves of `huffNodeTable`, sorted from the most frequent symbol to the rarest. What there is at -1, or anywhere
+/// else out of the table, is all zeros.
+struct HuffNodes([NodeElt; HUF_SYMBOLVALUE_MAX as usize + 1]);
 
 impl HuffNodes {
     #[inline(always)]
-    const fn index(n: i32) -> usize {
-        n.wrapping_add(1) as usize & (2 * (HUF_SYMBOLVALUE_MAX as usize + 1) - 1)
-    }
-
-    #[inline(always)]
     fn get(&self, n: i32) -> NodeElt {
-        self.0.get(Self::index(n)).copied().unwrap_or_default()
+        self.0.get(n as usize).copied().unwrap_or_default()
     }
 
     #[inline(always)]
     fn set(&mut self, n: i32, node: NodeElt) {
-        if let Some(slot) = self.0.get_mut(Self::index(n)) {
+        if let Some(slot) = self.0.get_mut(n as usize) {
             *slot = node;
         }
     }
@@ -322,31 +319,10 @@ impl HuffNodes {
     }
 
     #[inline(always)]
-    fn set_count(&mut self, n: i32, count: u32) {
-        if let Some(node) = self.0.get_mut(Self::index(n)) {
-            node.count = count;
-        }
-    }
-
-    #[inline(always)]
-    fn set_parent(&mut self, n: i32, parent: i32) {
-        if let Some(node) = self.0.get_mut(Self::index(n)) {
-            node.parent = parent as u16;
-        }
-    }
-
-    #[inline(always)]
     fn set_nb_bits(&mut self, n: i32, nb_bits: u32) {
-        if let Some(node) = self.0.get_mut(Self::index(n)) {
+        if let Some(node) = self.0.get_mut(n as usize) {
             node.nb_bits = nb_bits as u8;
         }
-    }
-
-    /// The nodes from 0 on.
-    #[inline(always)]
-    fn leaves(&self) -> &[NodeElt] {
-        let [_, nodes @ ..] = &self.0;
-        nodes
     }
 }
 
@@ -544,26 +520,49 @@ fn simple_quick_sort(arr: &mut HuffNodes, mut low: i32, mut high: i32) {
     }
 }
 
-/// `HUF_sort`: makes the first nodes, which are all zeros, the symbols by decreasing count. At most 256 counts.
-fn sort(huff_node: &mut HuffNodes, count: &[u32]) -> Result<()> {
+/// The symbols whose count is not 0, from the lowest to the highest.
+struct PresentSymbols {
+    symbols: [u8; HUF_SYMBOLVALUE_MAX as usize + 1],
+    len: usize,
+}
+
+impl PresentSymbols {
+    fn get(&self) -> &[u8] {
+        self.symbols.get(..self.len).unwrap_or_default()
+    }
+}
+
+/// `HUF_sort`: makes the first nodes, which are all zeros, the symbols by decreasing count, but for those whose count
+/// is 0, which would come last. At most 256 counts.
+fn sort(huff_node: &mut HuffNodes, count: &[u32]) -> Result<PresentSymbols> {
     let mut rank_position = [RankPos::default(); RANK_POSITION_TABLE_SIZE];
+    let mut present = PresentSymbols {
+        symbols: [0; _],
+        len: 0,
+    };
 
     // A bucket starts after the symbols of all the buckets above it.
-    for &c in count {
-        rank_position.at_mut(get_index(c))?.base += 1;
+    let mut highest = 0;
+    for (symbol, &c) in count.iter().enumerate() {
+        present.symbols.put(present.len, symbol as u8)?;
+        present.len += usize::from(c != 0);
+        let index = get_index(c);
+        rank_position.at_mut(index)?.base += 1;
+        highest = highest.max(index);
     }
     let mut above = 0u16;
-    for rank in rank_position.iter_mut().rev() {
+    for rank in rank_position.sub_mut(..=highest)?.iter_mut().rev() {
         rank.base += above;
         rank.curr = rank.base;
         above = rank.base;
     }
 
-    for (n, &c) in count.iter().enumerate() {
+    for &symbol in present.get() {
+        let c = count.at(usize::from(symbol))?;
         let rank = rank_position.at_mut(get_index(c) + 1)?;
         let node = NodeElt {
             count: c,
-            byte: n as u8,
+            byte: symbol,
             ..NodeElt::default()
         };
         huff_node.set(i32::from(rank.curr), node);
@@ -571,84 +570,102 @@ fn sort(huff_node: &mut HuffNodes, count: &[u32]) -> Result<()> {
     }
 
     let shared = RANK_POSITION_DISTINCT_COUNT_CUTOFF as usize..RANK_POSITION_TABLE_SIZE - 1;
-    for rank in rank_position.sub(shared)? {
+    for rank in rank_position
+        .sub(shared)?
+        .iter()
+        .take_while(|rank| rank.curr != 0)
+    {
         if rank.curr > rank.base + 1 {
             simple_quick_sort(huff_node, i32::from(rank.base), i32::from(rank.curr) - 1);
         }
     }
-    Ok(())
+    Ok(present)
 }
 
-/// `HUF_buildTree`: `huff_node` is sorted, and some count is not 0. Sets the depth of every leaf, and returns the
-/// rarest symbol whose count is not 0.
-fn build_tree(huff_node: &mut HuffNodes, max_symbol_value: u32) -> Result<i32> {
-    let mut symbols = (0..=max_symbol_value as i32).rev();
-    let non_null_rank = symbols.find(|&n| huff_node.count(n) != 0).ok_or(BUG)?;
-    let mut low_s = non_null_rank;
-    let mut node_nb = STARTNODE;
-    let node_root = node_nb + low_s - 1;
-    let mut low_n = node_nb;
-
-    let mut join = |huff_node: &mut HuffNodes, n1: i32, n2: i32| {
-        let count = huff_node.count(n1).wrapping_add(huff_node.count(n2));
-        huff_node.set_count(node_nb, count);
-        huff_node.set_parent(n1, node_nb);
-        huff_node.set_parent(n2, node_nb);
-        node_nb += 1;
-    };
-
-    join(huff_node, low_s, low_s - 1);
-    low_s -= 2;
-    for n in STARTNODE + 1..=node_root {
-        huff_node.set_count(n, 1 << 30);
+/// `HUF_buildTree`: sets the depth of `leaves`, which are sorted by decreasing count. There are at most 256.
+fn build_tree(leaves: &mut [NodeElt]) {
+    /// The count of a parent that is not made yet, which is more than any count,
+    const NO_PARENT: u32 = 1 << 30;
+    /// and what there is past the last leaf, which is more than that.
+    const NO_LEAF: u32 = 1 << 31;
+    type PerParent<T> = [T; HUF_SYMBOLVALUE_MAX as usize + 1];
+    #[inline(always)]
+    fn at<T: Copy + Default>(table: &PerParent<T>, n: u8) -> T {
+        table.get(usize::from(n)).copied().unwrap_or_default()
     }
-    // The sentinel is never the smaller of the two.
-    huff_node.set_count(-1, 1 << 31);
+    #[inline(always)]
+    fn put<T>(table: &mut PerParent<T>, n: u8, value: T) {
+        if let Some(slot) = table.get_mut(usize::from(n)) {
+            *slot = value;
+        }
+    }
 
-    // Join the two nodes of the lowest counts, which are the next leaves or the next parents.
-    for _ in STARTNODE + 1..=node_root {
-        let mut lowest = |huff_node: &HuffNodes| {
-            if huff_node.count(low_s) < huff_node.count(low_n) {
-                low_s -= 1;
-                low_s + 1
-            } else {
-                low_n += 1;
-                low_n - 1
-            }
+    // The parents, in the order they are made, which is by increasing count.
+    let nb_parents = leaves.len().saturating_sub(1) as u8;
+    let mut counts: PerParent<u32> = [NO_PARENT; _];
+    let mut parents: PerParent<u8> = [0; _];
+
+    // Join the two nodes of the lowest counts, which are among the next two leaves and the next two parents. With the
+    // same count, a parent goes first.
+    let mut low_s = leaves.len().wrapping_sub(1);
+    let mut low_n = 0u8;
+    for parent in 0..nb_parents {
+        let leaf = |n: usize| leaves.get(n).map_or(NO_LEAF, |leaf| leaf.count);
+        let (s0, s1) = (leaf(low_s), leaf(low_s.wrapping_sub(1)));
+        let (n0, n1) = (at(&counts, low_n), at(&counts, low_n.wrapping_add(1)));
+        let first_is_leaf = s0 < n0;
+        let second_is_leaf = if first_is_leaf { s1 < n0 } else { s0 < n1 };
+        let first = if first_is_leaf { s0 } else { n0 };
+        let second = match (first_is_leaf, second_is_leaf) {
+            (true, true) => s1,
+            (true, false) => n0,
+            (false, true) => s0,
+            (false, false) => n1,
         };
-        let n1 = lowest(huff_node);
-        let n2 = lowest(huff_node);
-        join(huff_node, n1, n2);
+        put(&mut counts, parent, first.wrapping_add(second));
+        // The nodes that are not taken this time get their parent when they are.
+        for n in [low_s, low_s.wrapping_sub(1)] {
+            if let Some(leaf) = leaves.get_mut(n) {
+                leaf.parent = u16::from(parent);
+            }
+        }
+        put(&mut parents, low_n, parent);
+        put(&mut parents, low_n.wrapping_add(1), parent);
+        let nb_leaves = u8::from(first_is_leaf) + u8::from(second_is_leaf);
+        low_s = low_s.wrapping_sub(usize::from(nb_leaves));
+        low_n = low_n.wrapping_add(2 - nb_leaves);
     }
 
     // The parents come after their children, so that this goes from the root down.
-    huff_node.set_nb_bits(node_root, 0);
-    for n in (STARTNODE..node_root).rev().chain(0..=non_null_rank) {
-        let parent = i32::from(huff_node.get(n).parent);
-        huff_node.set_nb_bits(n, huff_node.nb_bits(parent) + 1);
+    let mut depths: PerParent<u8> = [0; _];
+    for n in (0..nb_parents.saturating_sub(1)).rev() {
+        let depth = at(&depths, at(&parents, n)).wrapping_add(1);
+        put(&mut depths, n, depth);
     }
-
-    Ok(non_null_rank)
+    for leaf in leaves {
+        leaf.nb_bits = at(&depths, leaf.parent as u8).wrapping_add(1);
+    }
 }
 
-/// `HUF_buildCTableFromTree`: no leaf is deeper than `max_nb_bits`, which is at most 12.
+/// `HUF_buildCTableFromTree`: `leaves` are the symbols `present`, none deeper than `max_nb_bits`, which is at most 12.
 fn build_ctable_from_tree(
     ctable: &mut HufCTable,
-    huff_node: &[NodeElt],
-    non_null_rank: i32,
+    leaves: &[NodeElt],
+    present: &[u8],
     max_symbol_value: u32,
     max_nb_bits: u32,
 ) -> Result<()> {
-    let alphabet_size = max_symbol_value as usize + 1;
-    let ct = ctable.elements_mut().sub_mut(..alphabet_size)?;
+    let ct = ctable.elements_mut();
+    ct.sub_mut(..=max_symbol_value as usize)?.fill(0);
     let mut nb_per_rank = [0u16; HUF_TABLELOG_MAX as usize + 1];
-    for node in huff_node.sub(..=non_null_rank as usize)? {
+    for node in leaves {
         *nb_per_rank.at_mut(usize::from(node.nb_bits))? += 1;
-    }
-    for node in huff_node.sub(..alphabet_size)? {
         ct.put(usize::from(node.byte), u64::from(node.nb_bits))?;
     }
-    set_values(ct, &nb_per_rank, max_nb_bits)?;
+    let mut val_per_rank = first_values(&nb_per_rank, max_nb_bits)?;
+    for &symbol in present {
+        set_next_value(ct.at_mut(usize::from(symbol))?, &mut val_per_rank)?;
+    }
     ctable.write_header(max_nb_bits, max_symbol_value);
     Ok(())
 }
@@ -669,16 +686,17 @@ pub(crate) fn build_ctable(
     }
     let mut huff_node = HuffNodes([NodeElt::default(); _]);
 
-    sort(&mut huff_node, count.sub(..=max_symbol_value as usize)?)?;
-    let non_null_rank = build_tree(&mut huff_node, max_symbol_value)?;
+    let present = sort(&mut huff_node, count.sub(..=max_symbol_value as usize)?)?;
+    let non_null_rank = present.len.checked_sub(1).ok_or(BUG)?;
+    build_tree(huff_node.0.sub_mut(..present.len)?);
     max_nb_bits = set_max_height(&mut huff_node, non_null_rank as u32, max_nb_bits)?;
     if max_nb_bits > HUF_TABLELOG_MAX {
         return Err(ErrorCode::Generic);
     }
     build_ctable_from_tree(
         ctable,
-        huff_node.leaves(),
-        non_null_rank,
+        huff_node.0.sub(..present.len)?,
+        present.get(),
         max_symbol_value,
         max_nb_bits,
     )?;

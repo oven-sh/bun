@@ -519,12 +519,12 @@ export function createConsoleConstructor(console: Console) {
         // There may be an error occurring synchronously (e.g. for files or TTYs
         // on POSIX systems) or asynchronously (e.g. pipes on POSIX systems), so
         // handle both situations.
-        let lengthBefore: number | undefined;
+        let hasCalledWrite = false;
         try {
-          lengthBefore = stream.writableLength;
           // Add and later remove a noop error handler to catch synchronous
           // errors.
           if (stream.listenerCount("error") === 0) stream.once("error", noop);
+          hasCalledWrite = true;
           stream.write(string, errorHandler);
         } catch (e) {
           if (e != null && typeof e === "object" && (e as Partial<Error>).name === "RangeError") {
@@ -533,13 +533,14 @@ export function createConsoleConstructor(console: Console) {
             // desirable even in edge cases such as low stack space.
             if (message === "Maximum call stack size exceeded.") throw e;
             // Some memory is free again once an out-of-memory error has been thrown.
-            // Write once more if the stream has not taken the text.
-            if (typeof message === "string" && StringPrototypeStartsWith.$call(message, "Out of memory")) {
+            if (
+              !hasCalledWrite &&
+              typeof message === "string" &&
+              StringPrototypeStartsWith.$call(message, "Out of memory")
+            ) {
               try {
-                if (stream.writableLength === (lengthBefore ?? stream.writableLength)) {
-                  if (stream.listenerCount("error") === 0) stream.once("error", noop);
-                  stream.write(string, errorHandler);
-                }
+                if (stream.listenerCount("error") === 0) stream.once("error", noop);
+                stream.write(string, errorHandler);
               } catch {}
             }
           }

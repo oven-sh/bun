@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 /**
  * Regenerate test/expected-durations.json from recent Buildkite runs.
@@ -6,7 +6,7 @@
  * median per-lane cost in ms (see `lanes` below). runner.node.ts uses it
  * to bin-pack test files across --max-shards so every shard does roughly
  * the same amount of work instead of `index % shards`.
- * Usage: BUILDKITE_API_TOKEN=... node scripts/update-test-durations.mjs [--builds N]
+ * Usage: BUILDKITE_API_TOKEN=... bun scripts/update-test-durations.mjs [--builds N]
  * Intended to be run by a scheduled Buildkite job on oven-sh/bun; it only
  * reads public build metadata and writes one file in the repo.
  */

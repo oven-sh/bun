@@ -175,6 +175,7 @@ using namespace JSC;
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
+    macro(resumeUnlessFlowing) \
     macro(runTail) \
     macro(sameSite) \
     macro(secure) \
@@ -226,6 +227,7 @@ using namespace JSC;
     macro(ownWritableState) \
     macro(pipelinedResponses) \
     macro(readableMark) \
+    macro(resumeUnlessFlowing) \
     macro(writableMark)
 
 class BunBuiltinNames {

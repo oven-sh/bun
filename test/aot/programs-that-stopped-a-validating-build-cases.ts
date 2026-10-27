@@ -171,6 +171,9 @@ const stopped: Record<string, string[]> = {
     "function-export-read-by-name-through-the-caches",
     "namespace-object-protocol",
   ],
+  "native-callbacks": [
+    "an-object-is-assigned-from-and-lies-in-the-list-that-is-assigned-from-too",
+  ],
   "objects-that-are-not-what-their-layout-says": [
     "an-accessor-is-defined-on-what-from-entries-or-group-by-answered",
   ],

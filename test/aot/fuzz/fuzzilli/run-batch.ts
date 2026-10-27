@@ -10,6 +10,12 @@
 // `--prints-members 60` rewrites 60 programs of 100 so that they print members of their objects in place of the objects (print-members-of-objects.ts).
 // `--one-scene 40` leaves 40 programs of 100 one of their scenes.
 // `--hooks-fail 30` lets functions that built-ins call end in an error of the engine, in 30 programs of 100.
+// `--ordinary-scenes 50` writes scenes of ordinary code into 50 programs of 100, or in their place (write-ordinary-scenes.ts).
+// `--scenes-of-every-size 20` writes scenes with a drawn number of cases, elements, fields, operands or levels into 20 programs of 100, or in their place (write-scenes-of-every-size.ts).
+// `--hands-over-built-ins 40` puts built-in functions where 40 programs of 100 hand over functions of their own, and `--prints-into-a-text 40` lets 40 of 100 append what they print to a text (hand-over-built-ins.ts).
+// `--names-of-globals 20` gives variables of 20 programs of 100 the names of globals.
+// `--unwraps-try-blocks 50` takes `try` blocks out of 50 programs of 100.
+// `--validates 100` builds each batch a second time with --aot-validate and runs it: a program at which that executable stops is kept.
 // `--splits 80` cuts functions and classes of 80 programs of 100 out into other files, with declarations that can be wrong (split-into-files.ts).
 import {
   appendFileSync,
@@ -25,8 +31,16 @@ import {
 import { dirname, extname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { opensTheWorld } from "../the-world-is-open.ts";
+import {
+  giveNamesOfGlobals,
+  handOverBuiltIns,
+  keepWhatIsPrintedInAText,
+  unwrapTryBlocks,
+} from "./hand-over-built-ins.ts";
 import { endHooksInErrors, keepOneScene, printMembersOfObjects, randomFrom } from "./print-members-of-objects.ts";
 import { splitIntoFiles } from "./split-into-files.ts";
+import { writeOrdinaryScenes } from "./write-ordinary-scenes.ts";
+import { writeScenesOfEverySize } from "./write-scenes-of-every-size.ts";
 
 const { values: options } = parseArgs({
   options: {
@@ -44,6 +58,13 @@ const { values: options } = parseArgs({
     splits: { type: "string", default: "0" },
     "one-scene": { type: "string", default: "0" },
     "hooks-fail": { type: "string", default: "0" },
+    "ordinary-scenes": { type: "string", default: "0" },
+    "scenes-of-every-size": { type: "string", default: "0" },
+    "hands-over-built-ins": { type: "string", default: "0" },
+    "prints-into-a-text": { type: "string", default: "0" },
+    "names-of-globals": { type: "string", default: "0" },
+    "unwraps-try-blocks": { type: "string", default: "0" },
+    validates: { type: "string", default: "0" },
     "hides-function-text": { type: "boolean", default: false },
     // Kinds of outcomes that are only counted otherwise, separated by commas.
     "also-keep": { type: "string", default: "" },
@@ -132,13 +153,19 @@ function layOut(folder: string, texts: string[], extension: string, inGroup: num
     const rows = texts
       .slice(first, first + inGroup)
       .map((_, offset) => `  () => import("./programs/${first + offset}${extension}"),\n`);
+    // A group of one imports its program as an entry point imports a file. What stands behind `import()` is compiled as code that may never run, and no file behind it is left out.
     writeFileSync(
       join(folder, `group-${first / inGroup}${extension}`),
-      `const programs = [\n${rows.join("")}];\nawait programs[Number(process.env.BATCH_PROGRAM) - ${first}]();\n`,
+      inGroup === 1
+        ? `import "./programs/${first}${extension}";\n`
+        : `const programs = [\n${rows.join("")}];\nawait programs[Number(process.env.BATCH_PROGRAM) - ${first}]();\n`,
     );
   }
   copyFileSync(join(import.meta.dir, runner), join(folder, runner));
 }
+
+/** The largest value of each counter of the compiler in the builds so far. A counter that stays at zero counts something that no program has made the compiler do. */
+const largestSeen = new Map<string, number>();
 
 /** The programs in `folder` that import the file or the folder beside them, or a file that imports it. The names of such files and folders are hashes. */
 function importersOf(file: string, folder: string) {
@@ -164,13 +191,15 @@ function programsNamedBy(text: string, folder: string) {
 /** Whether the compiler made one program of the entry points in place of one of each, and the first of our programs that its report names as the reason. */
 function programsOf(folder: string, entryPoints: number) {
   type Unseen = { cause: string; builtin: string | null; location: { file: string } | null };
-  type Report = { statistics: { EngineRuns: number }; unseenCode: Unseen[] };
+  type Report = { statistics: Record<string, number>; unseenCode: Unseen[] };
   let report: Report;
   try {
     report = JSON.parse(readFileSync(join(folder, "report.json"), "utf8"));
   } catch {
     return {};
   }
+  for (const [counter, value] of Object.entries(report.statistics))
+    if (value > (largestSeen.get(counter) ?? 0)) largestSeen.set(counter, value);
   const named = report.unseenCode.map(({ location }) => programsNamedBy(location?.file ?? "", folder)[0]);
   const openedBy = named.find(index => index !== undefined);
   return {
@@ -732,9 +761,15 @@ async function takePrograms(): Promise<string[]> {
 function rewritten(text: string, extension: string) {
   const random = randomFrom("rewritten" + text);
   const isTypeScript = extension.endsWith("ts");
+  if (random() * 100 < Number(options["scenes-of-every-size"])) text = writeScenesOfEverySize(text, isTypeScript);
+  else if (random() * 100 < Number(options["ordinary-scenes"])) text = writeOrdinaryScenes(text, isTypeScript);
   if (random() * 100 < Number(options["one-scene"])) text = keepOneScene(text);
+  if (random() * 100 < Number(options["hands-over-built-ins"])) text = handOverBuiltIns(text, isTypeScript);
   if (random() * 100 < Number(options["hooks-fail"])) text = endHooksInErrors(text, isTypeScript);
+  if (random() * 100 < Number(options["names-of-globals"])) text = giveNamesOfGlobals(text);
+  if (random() * 100 < Number(options["unwraps-try-blocks"])) text = unwrapTryBlocks(text);
   if (random() * 100 < Number(options["prints-members"])) text = printMembersOfObjects(text, isTypeScript);
+  if (random() * 100 < Number(options["prints-into-a-text"])) text = keepWhatIsPrintedInAText(text, isTypeScript);
   if (random() * 100 < Number(options.splits)) text = splitIntoFiles(text, extension);
   return text;
 }
@@ -1001,6 +1036,60 @@ for (let batch = 0; batches === 0 || batch < batches || waitingWithTheWorldOpen.
       "bun-run.stderr": referenceAgain.stderr,
     });
   }
+  // The same programs once more, in an executable that checks while it runs what the compiler took for proven. It stops where that is false, also where the output happens to be right.
+  if (texts.length && Math.random() * 100 < Number(options.validates)) {
+    const flags = [...buildFlags, "--aot-validate"];
+    const command = `${bun} build --compile --aot ${flags.join(" ")}`;
+    const programsOfTheBuild = texts.map((text, offset) => `// ---- ${offset}\n${text}`).join("\n");
+    const { stopped, refused } = await build(folder, texts.length, extension, groupSize, ["--aot", ...flags]);
+    if (stopped) {
+      add("stopped the validating build");
+      keepFind("validating-build-stopped", stopped.reason, {
+        ["program" + extension]: stopped.culprit === undefined ? "" : texts[stopped.culprit],
+        "programs.txt": programsOfTheBuild,
+        "report.txt": `${stopped.reason}\n${command}\nprograms.txt holds the ${texts.length} programs of the build, in groups of ${groupSize}, and the program is number ${stopped.culprit ?? 0} in it\n`,
+        "compiler.stderr": stopped.stderr,
+      });
+    } else if (refused.size === 0) {
+      const validated = await run(
+        "validating",
+        [join(folder, "batch")],
+        folder,
+        extension,
+        groupSize,
+        all,
+        milliseconds * 4,
+      );
+      for (const index of all) {
+        const ended = validated.get(index)!;
+        const said = /^.*\bAOT (?:validation|native call)\b.*$/m.exec(ended.stderr)?.[0];
+        // Without such a line, an end by a signal counts where neither of the other two runs ended so.
+        const endedBySignalAlone =
+          ended.end.startsWith("the process ended") &&
+          !wasKilled(ended) &&
+          !reservedTooManyAddresses(ended) &&
+          // The bound of the run ends the process by SIGTERM, and a program that ran out of time in the other two runs does so here.
+          ended.end !== "the process ended: SIGTERM" &&
+          ![compiled.get(index)!, plain.get(index)!].some(
+            other => other.end.startsWith("the process ended") || isLimit(other),
+          );
+        if (said === undefined && !endedBySignalAlone) continue;
+        add("validation");
+        // The numbers of a function and a value differ from build to build.
+        const summary = (said ?? ended.end).replace(/\b[a-z]\d+\b/g, "_");
+        keepFind("validation", summary, {
+          ["program" + extension]: texts[index],
+          ...(texts.length > 1 && groupSize > 1 && { "programs.txt": programsOfTheBuild }),
+          "report.txt": `validation, one of ${texts.length} programs in groups of ${groupSize}, number ${index}\n${command}\n${said ?? ended.end}\nat default flags: ${compiled.get(index)!.end}, bun run: ${plain.get(index)!.end}\n`,
+          "compiled.stdout": ended.stdout,
+          "compiled.stderr": ended.stderr,
+        });
+      }
+    }
+  }
+  mkdirSync(finds, { recursive: true });
+  if (batch % 20 === 0)
+    writeFileSync(join(finds, `counters-${process.pid}.json`), JSON.stringify(Object.fromEntries(largestSeen)));
   rmSync(folder, { recursive: true, force: true });
   const cpuSeconds = Object.values(spent).reduce((sum, stage) => sum + stage.cpuSeconds, 0);
   const stages = Object.entries(spent).map(

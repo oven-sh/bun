@@ -4,6 +4,7 @@ const operations = ["InByIdAndCache", "InByValAndCache", "InByValGeneric", "PutB
 const asked = () => operations.reduce((sum, name) => sum + count("operationAOT" + name), 0);
 const hasWanted = object => "wanted" in object;
 const hasOther = object => "other" in object;
+const hasUnder = (object, key) => key in object;
 const storeWanted = (object, value) => { object.wanted = value; };
 const storeOther = (object, value) => { object.other = value; };
 const storeUnder = (object, key, value) => { object[key] = value; };
@@ -17,12 +18,14 @@ function attempt(label, work) {
 }
 
 function measure(label, proxy, bound, report) {
-  for (let i = 0; i < 40; i++) { hasWanted(proxy); hasOther(proxy); storeWanted(proxy, i); storeOther(proxy, i); storeUnder(proxy, "wanted", i); storeUnder(proxy, mark, i); }
+  for (let i = 0; i < 40; i++) { hasWanted(proxy); hasOther(proxy); hasUnder(proxy, "wanted"); hasUnder(proxy, "other"); hasUnder(proxy, mark); storeWanted(proxy, i); storeOther(proxy, i); storeUnder(proxy, "wanted", i); storeUnder(proxy, mark, i); }
   const before = asked();
   let found = 0;
   for (let i = 0; i < 1000; i++) {
     if (hasWanted(proxy)) found++;
     if (hasOther(proxy)) found += 2;
+    if (hasUnder(proxy, i & 1 ? "wanted" : "other")) found += 4;
+    if (hasUnder(proxy, mark)) found += 8;
     storeWanted(proxy, i); storeOther(proxy, -i); storeUnder(proxy, i & 1 ? "wanted" : "other", i); storeUnder(proxy, mark, i);
   }
   console.log(label + ": " + found + " " + report() + " | " + (asked() - before <= bound));
@@ -43,10 +46,10 @@ measure("arrows", new Proxy({}, { has: (target, key) => key === "other", set: (t
 const inherited = { stores: 0 };
 measure("inherited traps", new Proxy({}, Object.create({ has() { return true; }, set() { inherited.stores++; return true; } })), 20, () => inherited.stores);
 const passedOn = { wanted: 0 };
-measure("no traps", new Proxy(passedOn, {}), 6020, () => [passedOn.wanted, passedOn.other, passedOn[mark]].join(" "));
-measure("answers that are no booleans", new Proxy({}, { has() { return "yes"; }, set() { return 1; } }), 6020, () => "");
+measure("no traps", new Proxy(passedOn, {}), 8020, () => [passedOn.wanted, passedOn.other, passedOn[mark]].join(" "));
+measure("answers that are no booleans", new Proxy({}, { has() { return "yes"; }, set() { return 1; } }), 8020, () => "");
 const sealed = Object.seal({ wanted: 0, other: 0, [mark]: 0 });
-measure("a sealed target", new Proxy(sealed, { has(target, key) { return target[key] !== undefined; }, set(target, key, value) { target[key] = value; return true; } }), 6020, () => [sealed.wanted, sealed.other].join(" "));
+measure("a sealed target", new Proxy(sealed, { has(target, key) { return target[key] !== undefined; }, set(target, key, value) { target[key] = value; return true; } }), 8020, () => [sealed.wanted, sealed.other].join(" "));
 
 const seen = [];
 const watched = new Proxy({ held: 1 }, {

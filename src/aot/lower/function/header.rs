@@ -107,16 +107,22 @@ impl FileLowering<'_, '_, '_, '_> {
         )
     }
 
-    fn compute_text_range(&self, function: FnId) -> SourceRange {
+    pub(in crate::lower) fn find_end_of_function(&self, function: FnId) -> Option<u32> {
         let hir = self.hir;
-        let end = match self.bound.fns[function.idx()].owner {
-            FnOwner::Expr(expression) => hir[expression].end,
-            FnOwner::Stmt(statement) => hir[statement].loc.end,
-            FnOwner::Member(member) => hir[member].loc.end,
-            FnOwner::Type(_) | FnOwner::None => return SourceRange::default(),
+        match self.bound.fns[function.idx()].owner {
+            FnOwner::Expr(expression) => Some(hir[expression].end),
+            FnOwner::Stmt(statement) => Some(hir[statement].loc.end),
+            FnOwner::Member(member) => Some(hir[member].loc.end),
+            FnOwner::Type(_) | FnOwner::None => None,
+        }
+    }
+
+    fn compute_text_range(&self, function: FnId) -> SourceRange {
+        let Some(end) = self.find_end_of_function(function) else {
+            return SourceRange::default();
         };
         SourceRange {
-            start: self.type_ranges.map_offset(hir[function].text_start),
+            start: self.type_ranges.map_offset(self.hir[function].text_start),
             end: self.type_ranges.map_offset(end),
         }
     }

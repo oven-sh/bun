@@ -92,6 +92,7 @@ fn call_round_trip() {
             Some(name),
             Some(expected_result),
             None,
+            None,
             true,
             false,
             false,
@@ -101,6 +102,7 @@ fn call_round_trip() {
             callee,
             None,
             &[],
+            None,
             None,
             None,
             None,
@@ -121,7 +123,9 @@ fn call_round_trip() {
     let absent = ABSENT_WORD;
     assert_eq!(
         with_this.fields,
-        [1, 0, 1, 3, 2, 4, 3, reference, reference, reference, absent]
+        [
+            1, 0, 1, 3, 2, 4, 3, reference, reference, reference, absent, absent
+        ]
     );
 
     assert_eq!(
@@ -131,7 +135,7 @@ fn call_round_trip() {
     assert_eq!(without_this.position, None);
     assert_eq!(
         without_this.fields,
-        [2, 0, absent, 0, absent, absent, absent, absent]
+        [2, 0, absent, 0, absent, absent, absent, absent, absent]
     );
 }
 

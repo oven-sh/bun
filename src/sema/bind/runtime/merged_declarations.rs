@@ -146,7 +146,7 @@ impl Declarations<'_, '_> {
 
     fn record_first_conflict(&mut self, names: &NameDeclarations, later: Declaration) -> Conflict {
         for earlier in &names.first_by_kind {
-            let conflict = self.conflict(names.scope, earlier.kind, later.kind);
+            let conflict = self.conflict(names.scope, *earlier, later);
             let pair = EarlyRedeclaration {
                 earlier: earlier.decl,
                 later: later.decl,
@@ -264,29 +264,23 @@ impl Declarations<'_, '_> {
         variable
     }
 
-    fn conflict(
-        &mut self,
-        scope: ScopeId,
-        earlier: DeclarationKind,
-        later: DeclarationKind,
-    ) -> Conflict {
+    fn conflict(&mut self, scope: ScopeId, earlier: Declaration, later: Declaration) -> Conflict {
         use DeclarationKind as Kind;
-        match (earlier, later) {
-            (
-                Kind::NoBinding
-                | Kind::TypeScriptValue
-                | Kind::ImplicitBlockFunction
-                | Kind::BlockScopedRequire,
-                _,
-            )
-            | (
-                _,
-                Kind::NoBinding
-                | Kind::TypeScriptValue
-                | Kind::ImplicitBlockFunction
-                | Kind::BlockScopedRequire,
-            ) => Conflict::No,
+        match (earlier.kind, later.kind) {
+            (Kind::NoBinding | Kind::ImplicitBlockFunction | Kind::BlockScopedRequire, _)
+            | (_, Kind::NoBinding | Kind::ImplicitBlockFunction | Kind::BlockScopedRequire) => {
+                Conflict::No
+            }
             (Kind::Import, _) | (_, Kind::Import) if !self.hir.is_js => Conflict::No,
+            (Kind::Enum | Kind::Namespace, Kind::Enum | Kind::Namespace) => Conflict::No,
+            (_, Kind::Namespace) if self.is_written_above_namespace(earlier.decl, later.decl) => {
+                Conflict::No
+            }
+            (Kind::Namespace, _) if self.is_written_above_namespace(later.decl, earlier.decl) => {
+                Conflict::No
+            }
+            (Kind::Enum | Kind::Namespace | Kind::ImportEquals, _)
+            | (_, Kind::Enum | Kind::Namespace | Kind::ImportEquals) => Conflict::Always,
             (Kind::Parameter, Kind::Parameter) => self.parameter_conflict(scope),
             (Kind::TopLevelFunction, Kind::Var) | (Kind::Var, Kind::TopLevelFunction)
                 if matches!(self.bound.scopes[scope.idx()].kind, ScopeKind::File) =>
@@ -307,6 +301,16 @@ impl Declarations<'_, '_> {
                 Kind::BlockFunction | Kind::Lexical | Kind::Import | Kind::SimpleCatchParameter,
             ) => Conflict::Always,
         }
+    }
+
+    fn is_written_above_namespace(&self, decl: Decl, namespace: Decl) -> bool {
+        let hir = self.hir;
+        let start = match decl {
+            Decl::Class(class) => hir[class].start,
+            Decl::Fn(function) => hir[function].start,
+            _ => return false,
+        };
+        matches!(namespace, Decl::Module(module) if start < hir[hir[module].stmt].start)
     }
 
     fn parameter_conflict(&mut self, scope: ScopeId) -> Conflict {

@@ -625,7 +625,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     return None;
                 };
                 description.extend_from_slice(&home.0.to_be_bytes());
-                description.extend_from_slice(&key.position?.to_be_bytes());
+                description.extend_from_slice(&key.call_number?.to_be_bytes());
             }
             PropertyKeyKind::PrivateName => return None,
         }

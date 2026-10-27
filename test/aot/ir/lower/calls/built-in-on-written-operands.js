@@ -22,7 +22,7 @@
 // CHECK-NOT: NewArray
 // CHECK-NOT: ToPropertyKey
 // CHECK: [[keyThatIsComputed_made]] = NewDictionary
-// CHECK-NEXT: ElemDefine [[keyThatIsComputed_made]], [[keyThatIsComputed_key]], [[keyThatIsComputed_value]]
+// CHECK-NEXT: ElemDefine [[keyThatIsComputed_made]], [[keyThatIsComputed_key]], [[keyThatIsComputed_value]] calledBuiltin=ObjectFromEntries
 // CHECK-LABEL: function {{*}}name="map"
 // CHECK: b0([[map_a]]: {{*}}, [[map_b]]: {{*}}):
 // CHECK-NOT: NewArray

@@ -943,6 +943,14 @@
     "typed": 1046.2,
     "untyped": 1046.3
   },
+  "everyday-iteration-and-async/capture-a-stack-trace-behind-five-hundred-suspended-functions": {
+    "typed": 152910.5,
+    "untyped": 152953.7
+  },
+  "everyday-iteration-and-async/capture-a-stack-trace-two-thousand-calls-deep": {
+    "typed": 36330.2,
+    "untyped": 36327.5
+  },
   "everyday-iteration-and-async/catch-a-kept-error-and-throw-it-again": {
     "typed": 1313,
     "untyped": 1342.5
@@ -962,6 +970,10 @@
   "everyday-iteration-and-async/catch-the-error-of-a-built-in-function": {
     "typed": 4469.1,
     "untyped": 4478.7
+  },
+  "everyday-iteration-and-async/construct-an-error-that-captures-below-its-class-two-thousand-calls-deep": {
+    "typed": 40574.4,
+    "untyped": 40564.7
   },
   "everyday-iteration-and-async/error-told-apart-by-instanceof": {
     "typed": 3387.7,
@@ -1042,6 +1054,10 @@
   "everyday-iteration-and-async/throw-and-catch-a-plain-value": {
     "typed": 23,
     "untyped": 23
+  },
+  "everyday-iteration-and-async/throw-and-catch-an-error-two-thousand-calls-deep": {
+    "typed": 42632.5,
+    "untyped": 42644.3
   },
   "everyday-iteration-and-async/throw-and-catch-one-time-in-sixteen": {
     "typed": 11.1,
@@ -1483,6 +1499,10 @@
     "typed": 7,
     "untyped": 7
   },
+  "everyday-objects/state-updated-by-spread": {
+    "typed": 69.6,
+    "untyped": 71.5
+  },
   "everyday-objects/store-by-one-of-four-keys": {
     "typed": 101,
     "untyped": 218
@@ -1643,6 +1663,10 @@
     "typed": 1285,
     "untyped": 1240
   },
+  "everyday-small-programs/nested-update-by-spread": {
+    "typed": 137.6,
+    "untyped": 137.4
+  },
   "everyday-small-programs/objects-of-twelve-shapes-read-at-one-place": {
     "typed": 23,
     "untyped": 17
@@ -1650,6 +1674,10 @@
   "everyday-small-programs/range-by-array-keys": {
     "typed": 610.4,
     "untyped": 665.5
+  },
+  "everyday-small-programs/reducer-with-a-switch-on-the-action": {
+    "typed": 178.3,
+    "untyped": 237.1
   },
   "everyday-small-programs/union-find": {
     "typed": 253.2,

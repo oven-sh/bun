@@ -9,10 +9,10 @@
 //   AOT_GENERATED=<text> bun test test/aot/generated-..      those whose name contains the text
 //   AOT_GENERATED_KEEP=<folder> bun test ..                  writes the programs there and leaves them
 //   AOT_GENERATED_FLAGS="--aot-threads=1" bun test ..        more flags for every build
-//   AOT_GENERATED_COLLECTS=all bun test ..                   every program collects inside its calls (../fuzz/collections-inside-calls.ts), not every third
-//   AOT_GENERATED_HANDS=all bun test ..                      every program hands its functions to the host (../fuzz/functions-the-host-could-call.ts), not every third
-//   AOT_GENERATED_INSIDE=all bun test ..                     the text of every program stands inside something (../fuzz/the-whole-file-inside-something.ts), not of every third
-//   AOT_GENERATED_OPENS=all bun test ..                      every program opens the world (../fuzz/the-world-is-open.ts), not every sixth
+//   AOT_GENERATED_COLLECTS=all bun test ..                   every program collects inside its calls (../fuzz/collections-inside-calls.ts), not only those that are drawn for it
+//   AOT_GENERATED_HANDS=all bun test ..                      every program hands its functions to the host (../fuzz/functions-the-host-could-call.ts)
+//   AOT_GENERATED_INSIDE=all bun test ..                     the text of every program stands inside something (../fuzz/the-whole-file-inside-something.ts)
+//   AOT_GENERATED_OPENS=all bun test ..                      every program opens the world (../fuzz/the-world-is-open.ts)
 //   AOT_GENERATED_IN_ONE_EXECUTABLE=1 bun test ..            an executable for each program, also where programs share one
 import { afterAll, describe, expect, test } from "bun:test";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -79,6 +79,8 @@ export type Generated = {
   keepsItsText?: true;
   /** More flags for the build of this program. */
   flags?: string[];
+  /** What it prints differs in a build with --aot-validate, and docs/compiler/internals.mdx says why. */
+  isNeverValidated?: true;
   /** The executable runs once more under each of these and prints the same. */
   alsoUnder?: Record<string, string>[];
   /** How the program departs from plain Bun today. It is listed as a todo and not run. */
@@ -168,7 +170,22 @@ function inItsWorker(run: Run): Run {
 
 export function generated(title: string, given: Generated[]) {
   const listed = (onceWrong as Record<string, string[]>)[title] ?? [];
-  const programs = given.map(program => (listed.includes(program.name) ? { ...program, wasOnceWrong: true } : program));
+  // One program in four that takes no flags of its own is built with --aot-validate: its executable checks while it runs what the compiler took for granted, and stops where that does not hold,
+  // also where the program would have printed the right lines all the same.
+  const isDrawnToValidate = (program: Generated) =>
+    !program.flags?.length &&
+    !program.isNeverValidated &&
+    !program.mayStopOutOfMemory &&
+    !program.failsToday &&
+    !program.linesDepartToday &&
+    !moreFlags.length &&
+    Bun.hash.crc32(`${title} ? ${program.name}`) % 4 === 0 &&
+    // A very large program takes many times as long that way.
+    !/\bvery (many|large|long)\b/.test(title) &&
+    program.make().text.length < 32 * 1024;
+  const programs = given
+    .map(program => (listed.includes(program.name) ? { ...program, wasOnceWrong: true } : program))
+    .map(program => (isDrawnToValidate(program) ? { ...program, flags: ["--aot-validate"] } : program));
   const unknown = listed.filter(name => !given.some(program => program.name === name));
   if (unknown.length) test(`once-wrong.json names programs of "${title}"`, () => expect(unknown).toEqual([]));
   const kept = process.env.AOT_GENERATED_KEEP;
@@ -229,28 +246,40 @@ export function generated(title: string, given: Generated[]) {
   // A program that is here for what it once showed stays as it is.
   const staysAsItIs = (program: Generated) =>
     !!program.wasOnceWrong || !!program.linesDepartToday || !!program.written || !!program.keepsItsText;
+  // A change to a text can hide what the text shows, so half the programs of a family run as they are written. Of the other half, two in three take one change, and each of the rest takes
+  // every change that a draw of its own gives it.
+  const changes = ["turns", "collections", "host", "inside", "open"] as const;
+  const isDrawn = (program: Generated, change: (typeof changes)[number], byItself: boolean) => {
+    const draw = Bun.hash.crc32(`${title} | ${program.name}`);
+    if (draw % 2 === 0) return false;
+    return (draw >>> 1) % 3 === 0 ? byItself : changes[(draw >>> 3) % changes.length] === change;
+  };
   const isDrawnToOpenTheWorld = (program: Generated) =>
     !staysAsItIs(program) &&
-    (process.env.AOT_GENERATED_OPENS === "all" || Bun.hash.crc32(`${program.name} : ${title}`) % 6 === 0);
+    (process.env.AOT_GENERATED_OPENS === "all" ||
+      isDrawn(program, "open", Bun.hash.crc32(`${program.name} : ${title}`) % 6 === 0));
 
   function write(program: Generated, folder: string) {
     const { file, text, files, entryPoints = [] } = program.make();
-    // Every second program keeps its short loops as loops, every third collects inside its calls, every third hands its functions to the host, the text of every third stands inside a
-    // function, a try, a loop or the like, and every sixth opens the world.
+    // The changes: a program keeps its short loops as loops, collects inside its calls, hands its functions to the host, stands inside a function, a try, a loop or the like, or opens the world.
     const isChanged = !staysAsItIs(program);
-    const keepsItsLoops = isChanged && Bun.hash.crc32(`${title} ${program.name}`) % 2 === 1;
+    const keepsItsLoops = isChanged && isDrawn(program, "turns", Bun.hash.crc32(`${title} ${program.name}`) % 2 === 1);
     const collectsInsideCalls =
       isChanged &&
       !program.mayStopOutOfMemory &&
       !program.hangsOnCollections &&
-      (process.env.AOT_GENERATED_COLLECTS === "all" || Bun.hash.crc32(`${program.name} ${title}`) % 3 === 0);
+      (process.env.AOT_GENERATED_COLLECTS === "all" ||
+        isDrawn(program, "collections", Bun.hash.crc32(`${program.name} ${title}`) % 3 === 0));
     const handsItsFunctionsOn =
-      isChanged && (process.env.AOT_GENERATED_HANDS === "all" || Bun.hash.crc32(`${program.name}, ${title}`) % 3 === 0);
+      isChanged &&
+      (process.env.AOT_GENERATED_HANDS === "all" ||
+        isDrawn(program, "host", Bun.hash.crc32(`${program.name}, ${title}`) % 3 === 0));
     const standsInside =
       isChanged &&
       // What the analysis follows at the top of a file is what such a program is about.
       !program.flags?.some(flag => flag.startsWith("--aot-limit=MaxValueFlowEdgesLogged")) &&
-      (process.env.AOT_GENERATED_INSIDE === "all" || Bun.hash.crc32(`${program.name}; ${title}`) % 3 === 0);
+      (process.env.AOT_GENERATED_INSIDE === "all" ||
+        isDrawn(program, "inside", Bun.hash.crc32(`${program.name}; ${title}`) % 3 === 0));
     const place = places[Bun.hash.crc32(`${title}; ${program.name}`) % places.length];
     for (const [name, content] of Object.entries({ ...files, [file]: text })) {
       mkdirSync(dirname(join(folder, name)), { recursive: true });
@@ -509,12 +538,14 @@ export function generated(title: string, given: Generated[]) {
                 folder,
                 bunEnv,
               );
-              if (program.mayBeUnjudgeable && build.exitCode === 1 && /^error: TS\d+:/m.test(build.stderr)) return;
+              // A compiler that stops says so and ends its build with 1, as a refusal does. It is none.
+              const isRefused = build.exitCode === 1 && !/internal compiler error/.test(build.stderr);
+              if (program.mayBeUnjudgeable && isRefused && /^error: TS\d+:/m.test(build.stderr)) return;
               const fromSources =
                 program.modeFailsToday || program.groupsMayBeRefused || program.isOnlyCompiled
                   ? undefined
                   : await spawned([bunExe(), "run", "--aot", file], folder, bunEnv);
-              if (program.mayBeRefused && build.exitCode === 1 && /^error\b/m.test(build.stderr))
+              if (program.mayBeRefused && isRefused && /^error\b/m.test(build.stderr))
                 return void (fromSources && expect(fromSources.exitCode).not.toBe(0));
               built(build);
               executables++;

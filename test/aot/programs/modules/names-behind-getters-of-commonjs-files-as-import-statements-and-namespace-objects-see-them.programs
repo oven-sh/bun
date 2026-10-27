@@ -272,6 +272,8 @@ console.log(x, sum);
 var inner = require("./inner.cjs");
 ////= getter-not-listed	x	inner	
 Object.defineProperty(exports, "sum", { enumerable: true, get: function () { return 1 + 1; } });
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/data.json
+{ "x": 1 }
 //// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/inner.cjs
 exports.x = 1;
 exports.y = 2;
@@ -288,7 +290,9 @@ import * as all from "./lib.cjs";
 import * as whole from "./whole.cjs";
 import * as throughStar from "./star.mjs";
 import * as marked from "./marked.cjs";
+import * as overData from "./over-data.cjs";
 
+console.log(overData.x);
 console.log(Object.keys(all).join(), all.x, "x" in all);
 console.log(JSON.stringify(whole), Object.keys(whole.default).join(), whole.default.x);
 console.log(Object.keys(throughStar).join(), throughStar.x, "x" in throughStar);
@@ -307,6 +311,9 @@ var inner = require("./inner.cjs");
 ////= getter-not-listed	x	inner	
 ////= getter-listed	y	inner
 exports.default = "the default";
+//// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/over-data.cjs
+var inner = require("./data.json");
+////= getter-not-listed	x	inner	
 //// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/star.mjs
 export * from "./behind-star.cjs";
 //// the-namespace-object-of-a-commonjs-file-lacks-a-getter-that-is-not-enumerable/whole.cjs

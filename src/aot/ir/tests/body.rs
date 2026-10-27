@@ -292,6 +292,7 @@ fn build_body_with_references(offset: usize) -> Body {
             name,
             expected_result,
             None,
+            None,
             true,
             true,
             false,

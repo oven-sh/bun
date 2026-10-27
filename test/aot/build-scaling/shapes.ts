@@ -399,6 +399,103 @@ export const shapes: Shape[] = [
         `console.log(sum);\n`,
     }),
   },
+  // Whether the fields of two classes tell their objects apart is asked for each pair of classes, and the fields of a class are also those of all the classes above it.
+  {
+    name: "classes without fields that extend one another in a row",
+    counted: "classes",
+    size: 400,
+    entry: "main.js",
+    // Nothing besides: it takes 50 MB, and so stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js":
+        `class C0 {\n  m0() {\n    return 0;\n  }\n}\n` +
+        lines(size, index => `class C${index + 1} extends C${index} {\n  m${index + 1}() {\n    return ${index + 1};\n  }\n}`) +
+        `console.log(new C${size}().m0());\n`,
+    }),
+  },
+  // What the objects of a class hold is listed class by class up the row: a field counts where no class further down has one of its name.
+  {
+    name: "functions that each make a class below the one that the function before has made",
+    counted: "functions",
+    size: 400,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js":
+        `class Base {\n  constructor() {\n    this.base = 1;\n  }\n}\n` +
+        lines(size, index => `function mix${index}(Above) {\n  return class extends Above {\n    constructor() {\n      super();\n      this.mixed${index} = ${index};\n    }\n  };\n}`) +
+        `let Top = Base;\n` +
+        lines(size, index => `Top = mix${index}(Top);`) +
+        `const top = new Top();\nlet sum = 0;\n` +
+        lines(size, index => `sum += top.mixed${index};`) +
+        `console.log(sum);\n`,
+    }),
+  },
+  // Which class of a row holds a field is asked for each class that an access may meet, and the answer lies as many classes up as the row is long.
+  {
+    name: "classes with a field each that extend one another in a row, all constructed at one place",
+    counted: "classes",
+    size: 250,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js":
+        `class C0 {\n  f0 = 0;\n}\n` +
+        lines(size, index => `class C${index + 1} extends C${index} {\n  f${index + 1} = ${index + 1};\n}`) +
+        `const classes = [\n` +
+        lines(size + 1, index => `  C${index},`) +
+        `];\nlet sum = 0;\nfor (const made of classes) sum += new made().f0;\nconsole.log(sum);\n`,
+    }),
+  },
+  // Who reads a chain of prototypes that is still being found waits for the whole of it once the chain has grown some links: a row costs the same a class on both sides of that length.
+  {
+    name: "rows of classes that functions make one below the other, by the length of a row",
+    counted: "classes in each of 40 rows",
+    size: 10,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js":
+        `let sum = 0;\n` +
+        lines(
+          40,
+          row =>
+            `class Base${row} {\n  constructor() {\n    this.base = ${row};\n  }\n}\n` +
+            lines(size, index => `function mix${row}x${index}(Above) {\n  return class extends Above {\n    constructor() {\n      super();\n      this.mixed${index} = ${index};\n    }\n  };\n}`) +
+            `let Top${row} = Base${row};\n` +
+            lines(size, index => `Top${row} = mix${row}x${index}(Top${row});`) +
+            `const top${row} = new Top${row}();\n` +
+            lines(size, index => `sum += top${row}.mixed${index};`),
+        ) +
+        `console.log(sum);\n`,
+    }),
+  },
+  // What is found above a class under a name is remembered by class and name: each constructor may meet the objects of every class, and asks under its own name.
+  {
+    name: "classes that each extend what a function of their own makes of one base class",
+    counted: "classes",
+    size: 200,
+    entry: "main.js",
+    // Nothing besides: it stays out of the build of all shapes, whose budget was counted without it.
+    flags: [],
+    write: size => ({
+      "main.js":
+        `class Base {\n  constructor() {\n    this.base = 1;\n  }\n}\n` +
+        lines(
+          size,
+          index =>
+            `function mix${index}(Above) {\n  return class extends Above {\n    constructor() {\n      super();\n      this.mixed${index} = ${index};\n    }\n  };\n}\n` +
+            `class Below${index} extends mix${index}(Base) {\n  constructor() {\n    super();\n    this.below${index} = ${index};\n  }\n}`,
+        ) +
+        `let sum = 0;\n` +
+        lines(size, index => `sum += new Below${index}().below${index};`) +
+        `console.log(sum);\n`,
+    }),
+  },
   {
     name: "functions on one line after non-ASCII text",
     counted: "functions",

@@ -6,7 +6,7 @@
 //                  without the helpers of `esModuleInterop`, and half of the files at the end are written by hand
 //   at the end     a number, a text, an object, a list, a function, a class, an enum, a variable that changes, under a name or as the default, as one of the five writes it; an ES module; JSON; or the name is not
 //                  there at all (`lacks`): what a compiler that reads one file at a time emits for a type that is exported again
-//   where it lies  files of the project, a package in node_modules with one of five package.json, two packages of which one requires the other
+//   where it lies  files of the project, a package in node_modules with one of five package.json, two packages of which one requires the other; where `isQuiet`, always packages, which say "sideEffects": false
 //   declarations   none; a file for each file, as TypeScript emits them; one file for all; another type, another literal, other fields, other values of the enum, `const` for what changes; something invalid beside
 //                  or in the declaration under `skipLibCheck`; what TypeScript infers from the JavaScript
 //   the ES side    none, or one to three modules in `.ts` or `.mjs`: `export *`, `export { x } from`, under another name, `export * as`, imported and exported, read off the namespace or the default, to and from
@@ -650,6 +650,7 @@ export function generate(
   corner: Corner,
   lacks = false,
   isWider = false,
+  isQuiet = false,
 ): { file: string; text: string; files: Record<string, string> } {
   // The relations first.
   const levels = random.pick([1, 1, 2, 2, 3]);
@@ -672,7 +673,7 @@ export function generate(
   const hasInterop = !isWider || random.chance(0.3);
   const isRenamed = /names|stores|literal|getters/.test(corner) && !watchesDefault && random.chance(0.15);
   const lies = random.weighted([
-    [4, "the project"],
+    [isQuiet ? 0 : 4, "the project"],
     [4, "a package"],
     [last === "CommonJS" ? 2 : 0, "two packages"],
   ] as const);
@@ -1189,6 +1190,11 @@ export function generate(
         null,
         2,
       ) + "\n";
+  // Where `isQuiet`, every package says that its files have no side effects. They have none but in the last file, whose name is taken.
+  if (isQuiet)
+    for (const [path, text] of Object.entries(files))
+      if (path.startsWith("node_modules/") && path.endsWith("/package.json"))
+        files[path] = JSON.stringify({ ...JSON.parse(text), sideEffects: false }, null, 2) + "\n";
   const isModule = head.some(line => /^(?:\/\/ @ts-ignore\n)?(?:import|export) /.test(line));
   return {
     file: `main.${of}`,

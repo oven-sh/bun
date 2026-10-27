@@ -48,14 +48,14 @@ impl PropertyKey {
 
     pub fn from_created_symbol(
         module: ModuleId,
-        position: u32,
+        call_number: u32,
         description: Option<StringId>,
     ) -> PropertyKey {
         PropertyKey {
             kind: PropertyKeyKind::CreatedSymbol,
             text: description,
             module: Some(module),
-            position: Some(position),
+            call_number: Some(call_number),
             ..PropertyKey::default()
         }
     }

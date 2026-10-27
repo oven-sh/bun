@@ -1,10 +1,11 @@
 // A build that does not reach its end says on stderr what it was compiling: the function, the file and line where that function starts, and the step of the compiler.
 // That holds however it stops: an assertion of the compiler fails, the compiler reads a bad address, or somebody ends a build that takes too long.
+// A build that the compiler itself cannot finish ends as one with any other error does: with a line that starts with "error", exit code 1, and no executable.
 //
 // `--aot-sabotage=<name>` (hidden) makes a build stop at a known place: in a function named stopsTheCompiler, or at a step that every build has.
 import { afterAll, expect } from "bun:test";
-import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync, rmSync } from "fs";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./run-programs";
 import { describe, test } from "./supported";
@@ -42,6 +43,8 @@ describe("compile/aot/a build that stops says where", () => {
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   const carrier = withoutDebugInformation();
   const command = (...flags: string[]) => commandFor("program.ts", ...flags);
+  const executableOf = (file: string, ...flags: string[]) =>
+    join(folder, `${file}-${flags.join("").replace(/[^A-Za-z0-9]/g, "")}${isWindows ? ".exe" : ""}`);
   const commandFor = (file: string, ...flags: string[]) =>
     withoutCoreDump([
       bunExe(),
@@ -52,9 +55,14 @@ describe("compile/aot/a build that stops says where", () => {
       ...flags,
       join(folder, file),
       "--outfile",
-      join(folder, `${file}-${flags.join("").replace(/[^A-Za-z0-9]/g, "")}${isWindows ? ".exe" : ""}`),
+      executableOf(file, ...flags),
     ]);
   const environment = { ...bunEnv, ...withoutCrashReport };
+  // A sanitizer ends the process in its own way.
+  const endOf = (build: { exitCode: number; signal: string | null }) =>
+    isASAN ? { hasEndedWell: build.exitCode === 0 } : { exitCode: build.exitCode, signal: build.signal };
+  const endWithAnError = isASAN ? { hasEndedWell: false } : { exitCode: 1, signal: null };
+  const errorOfTheCompiler = isASAN ? "" : "error: internal compiler error: .*\\n";
 
   test.concurrent.each([
     [
@@ -74,12 +82,13 @@ describe("compile/aot/a build that stops says where", () => {
     "%s",
     async (sabotage, said) => {
       const build = await spawned(command(`--aot-sabotage=${sabotage}`), folder, environment);
-      expect({ stderr: build.stderr, hasEndedWell: build.exitCode === 0 }).toEqual({
-        stderr: expect.stringMatching(new RegExp(said)),
-        hasEndedWell: false,
+      expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
+        stderr: expect.stringMatching(new RegExp(errorOfTheCompiler + said)),
+        ...endWithAnError,
       });
       // Only threads that stopped are named. Versions of one function are compiled on several threads, which may stop together.
       expect(build.stderr).not.toContain("isCompiledToo");
+      expect(existsSync(executableOf("program.ts", `--aot-sabotage=${sabotage}`))).toBe(false);
     },
     300_000,
   );
@@ -89,15 +98,15 @@ describe("compile/aot/a build that stops says where", () => {
     "FunctionPassRunsOutOfStack",
     async () => {
       const build = await spawned(command("--aot-sabotage=FunctionPassRunsOutOfStack"), folder, environment);
-      expect({ stderr: build.stderr, hasEndedWell: build.exitCode === 0 }).toEqual({
-        stderr: expect.stringMatching(new RegExp(`${inTheFunction} in EliminateDeadCode\\.\n`)),
-        hasEndedWell: false,
+      expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
+        stderr: expect.stringMatching(new RegExp(`${errorOfTheCompiler}${inTheFunction} in EliminateDeadCode\\.\n`)),
+        ...endWithAnError,
       });
     },
     300_000,
   );
 
-  // The second thread to stop must not end the process in the middle of what the first one says.
+  // The first thread to stop says all it has to say, and the others say nothing.
   test.concurrent.each([1, 2, 3, 4])(
     "threads that stop at the same moment, %d",
     async round => {
@@ -106,12 +115,16 @@ describe("compile/aot/a build that stops says where", () => {
         folder,
         environment,
       );
-      expect({ stderr: build.stderr, hasEndedWell: build.exitCode === 0 }).toEqual({
+      expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
         stderr: expect.stringMatching(
-          /Stopped while compiling stopsTheCompiler \(.*many-at-once\.ts:\d+\) in EliminateDeadCode\.\n/,
+          /Stopped while compiling stopsTheCompiler \(.*many-at-once\.ts:\d+\) in EliminateDeadCode\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\.\n/,
         ),
-        hasEndedWell: false,
+        ...endWithAnError,
       });
+      if (!isASAN) {
+        expect(build.stderr.match(/Stopped while compiling/g)).toHaveLength(1);
+        expect(build.stderr).toMatch(/\nnote: This is a bug in Bun\. .*\n .+\n$/);
+      }
     },
     300_000,
   );

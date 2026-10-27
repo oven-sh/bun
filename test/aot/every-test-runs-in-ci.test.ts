@@ -99,6 +99,6 @@ test("what reads the engine's sources is what the workflow runs", () => {
   );
   expect(files.map(name => `aot/${name.replace(/\.ts$/, "")}`).sort()).toEqual([...testsOfEngineSources].sort());
   expect(readFileSync(join(root, "..", ".github", "workflows", "lint.yml"), "utf8")).toContain(
-    `grep -l "${helper}" test/aot/*.test.ts`,
+    `files=$(grep -l "${helper}" test/aot/*.test.ts)\n`,
   );
 });

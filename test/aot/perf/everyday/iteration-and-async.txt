@@ -549,3 +549,54 @@ function turn(i: number): number {
   using handle = resource(i & 255);
   return handle.id + released;
 }
+//// capture-a-stack-trace-two-thousand-calls-deep
+function descend(levels: number, error: Error): number {
+  if (levels === 0) {
+    Error.captureStackTrace(error);
+    return 0;
+  }
+  return descend(levels - 1, error) + 1;
+}
+function turn(i: number): number {
+  return descend(2000, new Error("deep")) + (i & 1);
+}
+//// construct-an-error-that-captures-below-its-class-two-thousand-calls-deep
+class Refused extends Error {
+  constructor(message: string) {
+    super(message);
+    Error.captureStackTrace(this, Refused);
+  }
+}
+function descend(levels: number): number {
+  if (levels === 0) return new Refused("deep").message.length;
+  return descend(levels - 1) + 1;
+}
+function turn(i: number): number {
+  return descend(2000) + (i & 1);
+}
+//// throw-and-catch-an-error-two-thousand-calls-deep
+function descend(levels: number): number {
+  if (levels === 0) {
+    try {
+      throw new Error("deep");
+    } catch (error) {
+      return (error as Error).message.length;
+    }
+  }
+  return descend(levels - 1) + 1;
+}
+function turn(i: number): number {
+  return descend(2000) + (i & 1);
+}
+//// capture-a-stack-trace-behind-five-hundred-suspended-functions
+async function descend(levels: number, error: Error): Promise<number> {
+  if (levels === 0) {
+    await 0;
+    Error.captureStackTrace(error);
+    return 0;
+  }
+  return (await descend(levels - 1, error)) + 1;
+}
+async function turn(i: number): Promise<number> {
+  return (await descend(500, new Error("deep"))) + (i & 1);
+}

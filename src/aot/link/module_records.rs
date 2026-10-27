@@ -417,6 +417,10 @@ impl RecordBuilder<'_, '_, '_> {
         let graph = projects.get(target.project).graph;
         match graph.find_export(ModuleRef::File(target.file), name, self.input.atoms) {
             ExportLookup::Found(found) => Some((target.project, found)),
+            // The run looks behind the stars of a file of the same project.
+            ExportLookup::Unknown if matches!(module, ModuleRef::File(_)) => {
+                Some((project, binding))
+            }
             ExportLookup::Unknown | ExportLookup::Absent => None,
         }
     }

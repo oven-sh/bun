@@ -63,6 +63,7 @@ struct Parts {
     forms: Vec<BindingForm>,
     placements: Placements,
     captures: CapturePlan,
+    captured: Vec<CapturedBinding>,
     functions_with_fields_for_handlers: Vec<WalkedFunctionId>,
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
 }
@@ -178,6 +179,7 @@ pub(super) fn analyze(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
         forms,
         placements,
         captures,
+        captured: sharing.captured,
         functions_with_fields_for_handlers: sharing.functions_with_fields_for_handlers,
         initialized_holders: sharing.initialized_holders,
     };

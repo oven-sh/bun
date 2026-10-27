@@ -55,7 +55,9 @@ fn declaration_binding_kind(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) ->
         DeclarationKind::Lexical => lexical_binding_kind(hir, bound, decl),
         DeclarationKind::Import => BindingKind::Import,
         DeclarationKind::SimpleCatchParameter => BindingKind::SimpleCatchParameter,
-        DeclarationKind::TypeScriptValue => typescript_binding_kind(decl),
+        DeclarationKind::Enum | DeclarationKind::Namespace | DeclarationKind::ImportEquals => {
+            typescript_binding_kind(decl)
+        }
         DeclarationKind::ImplicitBlockFunction | DeclarationKind::BlockScopedRequire => {
             BindingKind::NoBinding
         }

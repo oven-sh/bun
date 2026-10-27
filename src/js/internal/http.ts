@@ -51,7 +51,6 @@ const kRequest = Symbol("request");
 const kHeaderSource = Symbol("kHeaderSource");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
-const kResumeUnlessFlowing = Symbol("kResumeUnlessFlowing");
 // Method of a server socket. Whoever takes the connection over calls it while the connection is still open.
 const kRememberPeer = Symbol("kRememberPeer");
 // Getter of a server socket: whether the native side has read bytes or the end of a tunnel's stream that it will push
@@ -281,7 +280,7 @@ function onDataIncomingMessage(
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!this.upgrade && socket && !socket._paused && socket.readable) {
-      if (socket[kResumeUnlessFlowing] !== undefined) socket[kResumeUnlessFlowing](false);
+      if (socket.$resumeUnlessFlowing !== undefined) socket.$resumeUnlessFlowing(false);
       else {
         ("unlikely");
         socket.resume();
@@ -510,7 +509,7 @@ declare global {
       [kHandoffResponse]?: NodeHTTPResponse;
       [kRequest]?: IncomingMessage;
       [kCloseCallback]?: (this: HttpServerSocket) => void;
-      [kResumeUnlessFlowing]?(asksWhetherReadable: boolean): void;
+      $resumeUnlessFlowing?(asksWhetherReadable: boolean): void;
     }
 
     /** The server of a connection, as `node:http` reads it: an `http.Server`, or a `net.Server` (an `Http2SecureServer` that allows HTTP/1, a server whose sockets are handed on) that has some of an `http.Server`'s options or none. */
@@ -538,7 +537,7 @@ declare global {
       [kClosedWithUnsentData]: boolean | undefined;
       readonly [kInternalSocketData]: NodeHTTPResponse | null | undefined;
       readonly [kHasQueuedReads]: boolean;
-      [kResumeUnlessFlowing](asksWhetherReadable: boolean): void;
+      $resumeUnlessFlowing?(asksWhetherReadable: boolean): void;
       [kRememberPeer](): void;
     }
 
@@ -800,7 +799,6 @@ export {
   kRememberPeer,
   kReqShouldKeepAlive,
   kRequest,
-  kResumeUnlessFlowing,
   kSkipPendingData,
   kSocket,
   kUniqueHeaders,

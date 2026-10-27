@@ -159,10 +159,10 @@ for (const listing of listOfModules.listings.keys()) {
 const bundledPositions: Uint8Array[] = [];
 for (const line of fs.readFileSync(bundledNamesOfModules, "utf8").split("\n")) {
   const [kind, file, encoded] = line.split("\t");
-  // The positions are those of the text that was bundled.
-  if (line === "" || locate(file) !== path.join(import.meta.dir, "../js", file)) continue;
+  if (line === "") continue;
   if (kind !== "positions") {
-    lines.push(line);
+    // The names are those of the text that was bundled.
+    if (locate(file) === path.join(import.meta.dir, "../js", file)) lines.push(line);
     continue;
   }
   const positions = Buffer.from(encoded, "base64");

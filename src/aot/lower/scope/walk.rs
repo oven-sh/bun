@@ -187,6 +187,8 @@ struct Walker<'x, 's> {
     last_users: Vec<Option<WalkedFunctionId>>,
     unprinted_uses: Vec<(WalkedFunctionId, SymbolId)>,
     pending_stores: Vec<SymbolId>,
+    // By function: the half of an accessor behind which lowering may make this getter or setter of the same literal. Empty until there is one.
+    first_halves: Vec<FnId>,
     // The expressions of the expression statements that stand under no branch, loop, `try`, `switch`, label or `with` of their function.
     unconditional_statements: Vec<ExprId>,
     clock: u32,

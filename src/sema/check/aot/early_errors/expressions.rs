@@ -326,6 +326,13 @@ impl Checker<'_, '_> {
             self.early_grammar_error_at((file, hir[e].pos, 0), 1109, &[]);
         }
         let specifier = hir.id_at(args, 0);
+        // `bun run` takes `meta` alone after `import.`.
+        let mut deferred = hir.deferred_import_calls.iter();
+        if deferred.any(|call| call.0 == specifier) {
+            let name = hir.node(e).with(Part::Name);
+            let words = [b"defer".as_slice(), b"import", b"meta"].map(Arg::Bytes);
+            self.early_grammar_error_on_node(file, name, 17012, &words);
+        }
         if args.len() > 2 || matches!(hir[specifier].kind, ExprKind::Missing) {
             self.early_grammar_error_on_node(file, e, 1450, &[]);
             return;

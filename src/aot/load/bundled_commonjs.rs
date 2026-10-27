@@ -23,7 +23,7 @@ fn skip_trivia(text: &[u8], mut at: usize) -> usize {
         at += if rest.starts_with(b"//") {
             strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())
         } else if let Some(comment) = rest.strip_prefix(b"/*") {
-            match comment.windows(2).position(|pair| pair == b"*/") {
+            match strings::index_of(comment, b"*/") {
                 Some(length) => length + 4,
                 None => return at,
             }
@@ -39,7 +39,7 @@ fn skip_trivia_backwards(text: &[u8], start: usize, mut end: usize) -> usize {
         end = start + text[start..end].trim_ascii_end().len();
         let before = &text[start..end];
         if before.ends_with(b"*/") {
-            let Some(comment) = before.windows(2).rposition(|pair| pair == b"/*") else {
+            let Some(comment) = strings::last_index_of(before, b"/*") else {
                 return end;
             };
             end = start + comment;
@@ -181,6 +181,16 @@ mod tests {
                 " ".repeat(11)
             )
         );
+        assert_eq!(
+            unwrap(
+                "// @bun @bun-cjs\n(/**/function/*/ */(exports, require, module, __filename, __dirname) {\n} /*/ )"
+            ),
+            format!(
+                "// @bun @bun-cjs\n{}\n{}",
+                " ".repeat(START.len() + 10),
+                " ".repeat(7)
+            )
+        );
     }
 
     #[test]
@@ -194,6 +204,12 @@ mod tests {
             "// @bun @bun-cjs\n(function (exports, require, module, __filename, __dirnames) {\n});\n"
                 .to_string(),
             format!("// @bun @bun-cjs\n{START}"),
+            "// @bun @bun-cjs\n(function /* (exports, require, module, __filename, __dirname) {\n})"
+                .to_string(),
+            "// @bun @bun-cjs\n(/* a */".to_string(),
+            "// @bun @bun-cjs\n(/*".to_string(),
+            format!("// @bun @bun-cjs\n{START}\n}} */ )"),
+            format!("// @bun @bun-cjs\n{START}/* a */)"),
             "// @bun @bun-cjs".to_string(),
             String::new(),
         ] {

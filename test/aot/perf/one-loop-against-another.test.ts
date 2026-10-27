@@ -45,6 +45,10 @@ const rows: Row[] = [
     8.9,
   ],
   ["imported-by-default/main.mjs", [], "out of a module", "out of a CommonJS file", 3],
+  ["pieces-of-two-characters.ts", [], "slices of three characters", "slices of two characters", 1.3],
+  ["pieces-of-two-characters.ts", erased, "slices of three characters", "slices of two characters", 1.3],
+  ["pieces-of-two-characters.ts", [], "groups of three digits", "groups of two digits", 1.2],
+  ["pieces-of-two-characters.ts", erased, "groups of three digits", "groups of two digits", 1.2],
   ["a-list-that-is-emptied-now-and-then.ts", [], "kept to the end", "emptied every 256 turns", 3],
   ["a-list-that-is-emptied-now-and-then.ts", erased, "kept to the end", "emptied every 256 turns", 3],
   [

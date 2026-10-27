@@ -6,8 +6,8 @@ use smallvec::SmallVec;
 
 use super::variables::BodyForm;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{ImportPhase, NullishAccess};
-use crate::ir::{FunctionKey, ModuleId, ValueId, VariableId, VariableKey};
+use crate::ir::generated::{BlockFrequency, ImportPhase, NullishAccess};
+use crate::ir::{FunctionKey, ModuleId, TypeTable, ValueId, VariableId, VariableKey};
 use crate::lower::captures::Capture;
 use crate::lower::member::{PropertyName, Reference};
 use crate::lower::scope::{BindingForm, BindingRef, Storage};
@@ -193,6 +193,40 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return emit_module_value(self, module);
         }
         self.read_named_export(module, name)
+    }
+
+    /// What the link takes under a name: `undefined` of a getter that throws, as one does that returns a binding which nothing has filled yet.
+    pub(in crate::lower) fn read_name_at_link(
+        &mut self,
+        module: ModuleRef,
+        name: Atom,
+    ) -> Option<ValueId> {
+        let modules = self.file.inputs.modules;
+        let is_module_value = name == known::default && modules.marker(module) != Some(true);
+        let returned = modules.commonjs().member_behind_getter(module, name);
+        let Some(Member::Binding(symbol)) = returned.filter(|_| !is_module_value) else {
+            return self.read_imported_name(module, name);
+        };
+        let value = if symbol.file == self.file.file {
+            self.get_stored(BindingRef::Symbol(symbol.id))
+        } else {
+            let variable = self.file.ensure_variable(VariableKey::Symbol(symbol));
+            self.builder.get_module_variable(variable)
+        };
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        let split = self.split_on_type(value, TypeTable::ABSENT);
+        self.builder
+            .set_frequency(split.taken, BlockFrequency::Unlikely);
+        self.builder.switch_to(split.taken);
+        let undefined = self.builder.undefined();
+        self.builder.write_variable(result, undefined);
+        self.jump(join);
+        self.builder.switch_to(split.not_taken);
+        self.builder.write_variable(result, split.not_taken_value);
+        self.jump(join);
+        self.continue_in(join);
+        Some(self.builder.read_variable(result))
     }
 
     /// What `require` of a module has under a name that no member access spells: a key of a pattern.

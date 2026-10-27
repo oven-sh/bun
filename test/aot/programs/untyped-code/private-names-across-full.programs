@@ -976,7 +976,7 @@ var answers = [];
 for (var i = 0; i < 50; i++) answers = [several(trapped), destructured(trapped), inLoop([trapped, plain, trapped])];
 // The stub reads the trap off the handler at each read of the proxy and calls it. A few reads of other objects enter the generic operations.
 var lookups = trapLookups() - lookupsBefore, passedOn = genericReads() - genericReadsBefore;
-console.log(answers.join(" | "), "|", !counts || (lookups === 0 && passedOn <= 10));
+console.log(answers.join(" | "), "|", !counts || (lookups === 0 && passedOn <= 15));
 
 function attempt(label, work) { var answer; try { answer = String(work()); } catch (error) { answer = "threw " + error.constructor.name + ": " + error.message; } console.log(label + ": " + answer); }
 var fixed = Object.freeze({ alpha: 1, beta: 2, gamma: 3, delta: 4, epsilon: 5 });

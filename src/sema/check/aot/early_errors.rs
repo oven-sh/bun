@@ -13,6 +13,7 @@ mod report;
 mod sink;
 mod statements;
 mod syntax_class;
+mod typescript_syntax;
 
 pub(in crate::check) use error_classes::is_instance_constructor_name;
 
@@ -36,5 +37,6 @@ impl Checker<'_, '_> {
         self.check_strict_mode_statements(file);
         self.check_eval_or_arguments_early_errors(file);
         self.check_expression_early_errors(file);
+        self.check_typescript_syntax_early_errors(file);
     }
 }

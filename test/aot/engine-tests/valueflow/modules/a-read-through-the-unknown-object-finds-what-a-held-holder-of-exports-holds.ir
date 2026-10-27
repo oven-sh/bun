@@ -34,7 +34,7 @@ function f2 name="readline" module=m2 kind=Module role=Library results=[{type=an
     v0 = RequireModule module=m1 referrer=m2 specifier="node:path"
     v1 = Builtin builtin=Symbol
     v2 = String string="path"
-    v3 = Call v1, -, v2 @100
+    v3 = Call v1, -, v2 callNumber=100 @100
     PutModuleVariable v3 variable=g0
     v5 = NewClosure function=f3
     v6 = NewObject -, v5 layout=L0 fields=[0]

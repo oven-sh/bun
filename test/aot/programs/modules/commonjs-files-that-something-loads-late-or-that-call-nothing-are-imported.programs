@@ -1,0 +1,255 @@
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-a-module-that-reads-it/a.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var b_1 = require("./b.cjs");
+Object.defineProperty(exports, "x", { enumerable: true, get: function () { return b_1.x; } });
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-a-module-that-reads-it/b.cjs
+console.log("b begins");
+globalThis.called();
+exports.x = 5;
+console.log("b ends");
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-a-module-that-reads-it/first.cjs
+globalThis.called = function () { globalThis.called = function () {}; require("./late.mjs"); };
+console.log("first", require("./lazy.cjs").lazy());
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-a-module-that-reads-it/late.mjs
+const who = "late";
+import * as ns from "./a.cjs"; console.log(who, ns.x);
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-a-module-that-reads-it/lazy.cjs
+exports.lazy = function () { return require("./b.cjs").x; };
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-a-module-that-reads-it/main.mjs
+import "./first.cjs";
+const who = "main";
+import * as ns from "./a.cjs"; console.log(who, ns.x);
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-a-module-that-reads-it.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-the-file-that-hands-it-on/a.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var b_1 = require("./b.cjs");
+Object.defineProperty(exports, "x", { enumerable: true, get: function () { return b_1.x; } });
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-the-file-that-hands-it-on/b.cjs
+console.log("b begins");
+globalThis.called();
+exports.x = 5;
+console.log("b ends");
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-the-file-that-hands-it-on/first.cjs
+globalThis.called = function () { globalThis.called = function () {}; console.log("hook", require("./a.cjs").x); };
+
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-the-file-that-hands-it-on/main.mjs
+import "./first.cjs";
+const who = "main";
+import * as ns from "./a.cjs"; console.log(who, ns.x);
+//// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-the-file-that-hands-it-on.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// a-pattern-takes-names-behind-getters-from-an-awaited-import-of-a-file-that-calls-nothing/main.mjs
+const { a, b } = await import("./q.cjs"); console.log(a, typeof b === "function" ? b() : b);
+//// a-pattern-takes-names-behind-getters-from-an-awaited-import-of-a-file-that-calls-nothing/q.cjs
+Object.defineProperty(exports, "__esModule", { value: true });
+Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return a; } });
+Object.defineProperty(exports, 'b', { enumerable: true, get: function () { return b; } });
+const a = 1;
+const b = 2;
+exports.default = 3;
+//// a-pattern-takes-names-behind-getters-from-an-awaited-import-of-a-file-that-calls-nothing.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// a-pattern-takes-names-from-an-awaited-import-of-a-file-that-reads-a-constant-too-early/main.mjs
+try {
+  const { a, b } = await import("./q.cjs");
+  console.log(a, b);
+} catch (error) {
+  console.log(error.name);
+}
+//// a-pattern-takes-names-from-an-awaited-import-of-a-file-that-reads-a-constant-too-early/q.cjs
+exports.a = 1;
+exports.b = late;
+const late = 2;
+exports.default = 3;
+//// a-pattern-takes-names-from-an-awaited-import-of-a-file-that-reads-a-constant-too-early.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// a-pattern-takes-the-default-from-an-awaited-import-of-a-file-that-stores-over-its-getter/main.mjs
+try {
+  const { default: d, a } = await import("./q.cjs");
+  console.log(typeof d === "object" ? JSON.stringify(d) : d, a);
+} catch (error) {
+  console.log(error.name);
+}
+//// a-pattern-takes-the-default-from-an-awaited-import-of-a-file-that-stores-over-its-getter/q.cjs
+"use strict";
+Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return 1; } });
+exports.b = 2;
+exports.a = 5;
+exports.default = 3;
+//// a-pattern-takes-the-default-from-an-awaited-import-of-a-file-that-stores-over-its-getter.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// keys-of-the-namespace-of-a-file-that-marks-itself-behind-a-call-out-of-its-body/first.cjs
+console.log("first begins");
+globalThis.called = function () { globalThis.called = function () {}; const k = require("./k.cjs"); console.log("hook", k.__esModule, String(k.default), k.x, k.early); };
+console.log("first", String(require("./lazy.cjs").lazy()));
+//// keys-of-the-namespace-of-a-file-that-marks-itself-behind-a-call-out-of-its-body/k.cjs
+console.log("k begins");
+exports.early = 1;
+globalThis.called();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = 7;
+exports.x = 8;
+console.log("k ends");
+//// keys-of-the-namespace-of-a-file-that-marks-itself-behind-a-call-out-of-its-body/lazy.cjs
+exports.lazy = function () { return require("./k.cjs").default; };
+//// keys-of-the-namespace-of-a-file-that-marks-itself-behind-a-call-out-of-its-body/main.mjs
+import "./first.cjs";
+import * as ns from "./k.cjs";
+const who = "main";
+console.log(who, "keys", Object.keys(ns).join(), String(ns.default));
+import { lazy } from "./lazy.cjs";
+console.log("main lazy", String(lazy()));
+//// keys-of-the-namespace-of-a-file-that-marks-itself-behind-a-call-out-of-its-body.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// members-of-the-namespace-of-a-file-with-a-getter-that-an-earlier-file-starts/first.cjs
+console.log("first begins");
+globalThis.called = function () { globalThis.called = function () {}; console.log("hook lazy", String(require("./lazy.cjs").lazy())); };
+console.log("first", String(require("./lazy.cjs").lazy()));
+//// members-of-the-namespace-of-a-file-with-a-getter-that-an-earlier-file-starts/k.cjs
+console.log("k begins");
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.early = 1;
+globalThis.called();
+Object.defineProperty(exports, "x", { enumerable: true, get: function () { return x; } });
+const x = 8;
+exports.default = 7;
+console.log("k ends");
+//// members-of-the-namespace-of-a-file-with-a-getter-that-an-earlier-file-starts/lazy.cjs
+exports.lazy = function () { return require("./k.cjs").default; };
+//// members-of-the-namespace-of-a-file-with-a-getter-that-an-earlier-file-starts/main.mjs
+import "./first.cjs";
+import * as ns from "./k.cjs";
+const who = "main";
+console.log(who, "ns", String(ns.default), ns.x, ns.early);
+import { lazy } from "./lazy.cjs";
+console.log("main lazy", String(lazy()));
+//// members-of-the-namespace-of-a-file-with-a-getter-that-an-earlier-file-starts.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// names-stored-in-a-chain-by-a-file-that-calls-nothing-and-is-imported-again-late/main.mjs
+import d, { a, b } from "./q.cjs"; console.log(typeof d === "object" ? JSON.stringify(d) : d, a, typeof b); globalThis.again = () => import("./q.cjs");
+//// names-stored-in-a-chain-by-a-file-that-calls-nothing-and-is-imported-again-late/q.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.b = exports.a = void 0;
+exports.a = 1;
+exports.b = 2;
+exports.default = 3;
+//// names-stored-in-a-chain-by-a-file-that-calls-nothing-and-is-imported-again-late.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// the-default-and-a-name-of-a-file-without-the-marker-that-an-earlier-file-starts/first.cjs
+console.log("first begins");
+globalThis.called = function () { globalThis.called = function () {}; console.log("hook lazy", String(require("./lazy.cjs").lazy())); };
+console.log("first", String(require("./lazy.cjs").lazy()));
+//// the-default-and-a-name-of-a-file-without-the-marker-that-an-earlier-file-starts/k.cjs
+console.log("k begins");
+exports.early = 1;
+globalThis.called();
+exports.default = 7;
+exports.x = 8;
+console.log("k ends");
+//// the-default-and-a-name-of-a-file-without-the-marker-that-an-earlier-file-starts/lazy.cjs
+exports.lazy = function () { return require("./k.cjs").default; };
+//// the-default-and-a-name-of-a-file-without-the-marker-that-an-earlier-file-starts/main.mjs
+import "./first.cjs";
+import d, { x } from "./k.cjs";
+const who = "main";
+console.log(who, "d x", String(d), x);
+import { lazy } from "./lazy.cjs";
+console.log("main lazy", String(lazy()));
+//// the-default-and-a-name-of-a-file-without-the-marker-that-an-earlier-file-starts.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// the-default-of-a-file-that-an-earlier-file-starts-and-that-is-required-again-from-its-own-body/first.cjs
+console.log("first begins");
+globalThis.called = function () { globalThis.called = function () {}; console.log("hook lazy", String(require("./lazy.cjs").lazy())); };
+console.log("first", String(require("./lazy.cjs").lazy()));
+//// the-default-of-a-file-that-an-earlier-file-starts-and-that-is-required-again-from-its-own-body/k.cjs
+console.log("k begins");
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.early = 1;
+globalThis.called();
+exports.default = 7;
+exports.x = 8;
+console.log("k ends");
+//// the-default-of-a-file-that-an-earlier-file-starts-and-that-is-required-again-from-its-own-body/lazy.cjs
+exports.lazy = function () { return require("./k.cjs").default; };
+//// the-default-of-a-file-that-an-earlier-file-starts-and-that-is-required-again-from-its-own-body/main.mjs
+import "./first.cjs";
+import d from "./k.cjs";
+const who = "main";
+console.log(who, "d", typeof d, d && d.default, String(d));
+import { lazy } from "./lazy.cjs";
+console.log("main lazy", String(lazy()));
+//// the-default-of-a-file-that-an-earlier-file-starts-and-that-is-required-again-from-its-own-body.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// the-default-of-a-file-that-is-required-again-from-its-own-body/first.cjs
+console.log("first begins");
+globalThis.called = function () { globalThis.called = function () {}; const k = require("./k.cjs"); console.log("hook", k.__esModule, String(k.default), k.x, k.early); };
+
+//// the-default-of-a-file-that-is-required-again-from-its-own-body/k.cjs
+console.log("k begins");
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.early = 1;
+globalThis.called();
+exports.default = 7;
+exports.x = 8;
+console.log("k ends");
+//// the-default-of-a-file-that-is-required-again-from-its-own-body/lazy.cjs
+exports.lazy = function () { return require("./k.cjs").default; };
+//// the-default-of-a-file-that-is-required-again-from-its-own-body/main.mjs
+import "./first.cjs";
+import d from "./k.cjs";
+const who = "main";
+console.log(who, "d", typeof d, d && d.default, String(d));
+import { lazy } from "./lazy.cjs";
+console.log("main lazy", String(lazy()));
+//// the-default-of-a-file-that-is-required-again-from-its-own-body.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// the-default-of-a-file-whose-body-requires-a-module-that-imports-the-file/first.cjs
+console.log("first begins");
+globalThis.called = function () { globalThis.called = function () {}; require("./late.mjs"); };
+console.log("first", String(require("./lazy.cjs").lazy()));
+//// the-default-of-a-file-whose-body-requires-a-module-that-imports-the-file/k.cjs
+console.log("k begins");
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.early = 1;
+globalThis.called();
+exports.default = 7;
+exports.x = 8;
+console.log("k ends");
+//// the-default-of-a-file-whose-body-requires-a-module-that-imports-the-file/late.mjs
+import "./k.cjs";
+const who = "late";
+console.log(who, "side");
+//// the-default-of-a-file-whose-body-requires-a-module-that-imports-the-file/lazy.cjs
+exports.lazy = function () { return require("./k.cjs").default; };
+//// the-default-of-a-file-whose-body-requires-a-module-that-imports-the-file/main.mjs
+import "./first.cjs";
+import d from "./k.cjs";
+const who = "main";
+console.log(who, "d", typeof d, d && d.default, String(d));
+import { lazy } from "./lazy.cjs";
+console.log("main lazy", String(lazy()));
+//// the-default-of-a-file-whose-body-requires-a-module-that-imports-the-file.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// the-namespace-of-an-awaited-import-of-a-file-that-calls-nothing-and-requires-late/back.cjs
+const q = require("./q.cjs");
+exports.seen = [q.a, typeof q.b, q.default].join();
+//// the-namespace-of-an-awaited-import-of-a-file-that-calls-nothing-and-requires-late/main.mjs
+const ns = await import("./q.cjs"); console.log(Object.keys(ns).join(), ns.a, typeof ns.default === "object" ? JSON.stringify(ns.default) : ns.default);
+//// the-namespace-of-an-awaited-import-of-a-file-that-calls-nothing-and-requires-late/q.cjs
+exports.a = 1;
+exports.b = function () { return require("./back.cjs").seen; };
+exports.default = 3;
+//// the-namespace-of-an-awaited-import-of-a-file-that-calls-nothing-and-requires-late.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+//// the-namespace-of-an-awaited-import-of-a-file-that-stores-its-own-prototype/main.mjs
+const ns = await import("./q.cjs"); console.log(Object.keys(ns).join(), ns.a, typeof ns.default === "object" ? JSON.stringify(ns.default) : ns.default);
+//// the-namespace-of-an-awaited-import-of-a-file-that-stores-its-own-prototype/q.cjs
+exports.a = 1;
+exports.__proto__ = { b: 2 };
+exports.default = 3;
+//// the-namespace-of-an-awaited-import-of-a-file-that-stores-its-own-prototype.json
+{ "skipInShell": "it needs Bun's CommonJS modules and require()" }

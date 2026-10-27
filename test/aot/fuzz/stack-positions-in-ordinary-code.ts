@@ -86,6 +86,8 @@ export interface Shape {
   arity: number;
   members: Member[];
   base: Shape | null;
+  // To TypeScript the class is `any`, and an heir of it that writes no constructor takes no arguments.
+  isAny?: boolean;
 }
 
 interface Scope {
@@ -303,6 +305,7 @@ export function write(
   function chain(scope: Scope, endsInList: boolean): Doc {
     const next = inner(scope);
     const links: Doc[] = [];
+    let takesList = false;
     for (let index = random.between(endsInList ? 1 : 0, 2); index > 0; index--) {
       links.push(
         random.pick<() => Doc>([
@@ -312,7 +315,7 @@ export function write(
           () => [".flatMap", list("(", [arrowToList(next)], ")")],
           () => [".sort", list("(", [arrow(next, [fresh("left"), fresh("right")], [": number", ": number"])], ")")],
           () => ".slice(0, 2)",
-          () => [".concat", list("(", [listOf(next)], ")")],
+          () => ((takesList = true), [".concat", list("(", [listOf(next)], ")")]),
         ])(),
       );
     }
@@ -331,7 +334,9 @@ export function write(
         ])(),
       );
     }
-    const whole = group(listOf(next), links.length > 1 ? indent(links.map(link => [softline, link])) : links);
+    // A list of nothing but members of an enum takes no other number.
+    const head = takesList ? parenthesized([listOf(next), typed(" as number[]")]) : listOf(next);
+    const whole = group(head, links.length > 1 ? indent(links.map(link => [softline, link])) : links);
     return isLoose ? parenthesized(whole) : whole;
   }
 
@@ -1285,7 +1290,7 @@ export function write(
     if (random.chance(0.4))
       members.push(["static count", typed(": number"), " = ", number(own({ isStaticSelf: true })), ";"]);
     // A class may leave its constructor to the language.
-    if (shape.arity !== (base ? base.arity : 0) || random.chance(0.6)) {
+    if (shape.arity !== (base ? base.arity : 0) || random.chance(0.6) || (isTyped && base?.isAny && base.arity > 0)) {
       const body = own();
       const parts: Doc[] = [];
       for (let index = 0; index < shape.arity; index++) {

@@ -298,6 +298,22 @@ impl DynamicStarTargets {
             DynamicStarTargets::Many => Resolution::DynamicStar { module, name },
         }
     }
+
+    /// What a module exports that names `name` of `module`. It is linked only where one of the targets has the name, and the link finds which.
+    fn for_name_exported_again(
+        self,
+        modules: &ModuleSet,
+        module: FileId,
+        name: Atom,
+    ) -> Resolution {
+        match self.for_name(modules, module, name) {
+            Resolution::DynamicStar { module, name } => Resolution::LiveName {
+                module: ModuleRef::File(module),
+                name,
+            },
+            found => found,
+        }
+    }
 }
 
 fn find_table(table_files: &[FileId], module: ModuleRef) -> Option<usize> {
@@ -482,8 +498,13 @@ impl ResolutionGraph<'_> {
                 if let Some(&target_node) = nodes.index.get(&(file, name)) {
                     self.edges[node as usize].push(target_node);
                 } else if name != known::default {
-                    let dynamic_targets = nodes.tables[table].dynamic_targets;
-                    end.provider = dynamic_targets.for_name(modules, file, name);
+                    let targets = nodes.tables[table].dynamic_targets;
+                    match kind {
+                        NodeKind::Indirect => {
+                            end.binding = targets.for_name_exported_again(modules, file, name);
+                        }
+                        NodeKind::Star => end.provider = targets.for_name(modules, file, name),
+                    }
                 }
             }
         }

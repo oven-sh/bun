@@ -450,17 +450,19 @@ On Linux, the last 4 bytes of the executable's GNU build ID are the first 4 byte
 
 Don't run GNU `strip` on an executable that Bun built, with or without `--aot`. Afterwards it no longer finds your program, and it starts as `bun` itself.
 
-### When the build crashes or hangs
+### When the build stops or hangs
 
-If the compiler itself crashes, the crash report has a line that says what it was compiling: the function, the file and line where the function starts, and the step of the compiler.
+If the compiler can't finish a build because of a bug of its own, the build fails with an error and exit code 1, and writes no executable. The error says what the compiler was working on: the function, the file and line where the function starts, and the step of the compiler.
 
 ```txt
-panic: abort() called
+error: internal compiler error: abort() called
 Stopped while compiling lineTotal (app.ts:14) in PlaceTypeTests.
 To build without that step, add --aot-disable=pass:PlaceTypeTests.
+note: This is a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues with these lines and this link:
+ https://bun.report/...
 ```
 
-This is a bug in Bun. [Open an issue](https://github.com/oven-sh/bun/issues) with the report and, if you can share it, the function. If the report names an option, you can build with it until the bug is fixed. The executable behaves the same and may be slower. These lines only go to stderr. The link in the report has none of your names or paths.
+[Open an issue](https://github.com/oven-sh/bun/issues) with these lines and, if you can share it, the function. If the error names an option, you can build with it until the bug is fixed. The executable behaves the same and may be slower. These lines only go to stderr. The link has none of your names or paths.
 
 If a build seems stuck, press Ctrl+C, or end it with `kill` or `timeout`. Before it exits, it prints what each thread was working on and for how long.
 

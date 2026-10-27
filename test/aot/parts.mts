@@ -161,6 +161,7 @@ export const rows: Row[] = [
   ]),
   variant("every-function-hot", ["--aot-heat=everything-is-hot"]),
   variant("every-function-neither-hot-nor-cold", ["--aot-heat=nothing-is-hottest"]),
+  variant("every-stage-verified", ["--aot-check=verify-each-stage,used-values-are-listed"]),
   variant("flow-fixpoint", ["--aot-check=flow-fixpoint"]),
   variant("full-collections-beside-the-program", [], { ...besideTheProgram, BUN_JSC_useGenerationalGC: "0" }),
   variant("moved-loads-checked-at-run-time", ["--aot-check=MovedLoads"]),
@@ -430,6 +431,7 @@ export const rows: Row[] = [
     ["proofs-checked", ["--aot-testing=CheckProofsAtRunTime"]],
   ],
   ["aot/joined-programs-validated", 4, "./joined-programs", "joined", ["validated", ["--aot-validate"]]],
+  ["aot/minifying-first-saves-no-code", 16, "./minifying-first-saves-no-code-cases", "minifyingFirstInParts"],
   ["aot/modules-three-ways", 4, "./three-ways/run-three-ways", "threeWays"],
   ["aot/one-line-changes-little", 8, "./one-line-changes-little-cases", "oneLineChangesLittle"],
   ["aot/perf/idioms-in-parts", 4, "./perf/pinned-idioms", "pinnedIdiomsInParts"],
@@ -568,6 +570,7 @@ const unitsOfCallees = (callees: Set<string>) =>
 // These draw nothing. They are new to CI, and stay in the step that holds up nothing until they have been green there.
 const onTrial = [
   "aot/backend/backend-with-a-database.test.ts",
+  ...unitsOfCallees(new Set(["minifyingFirstInParts"])),
   "aot/programs-that-ask-the-shell-1.test.ts",
   "aot/programs-that-ask-the-shell-2.test.ts",
   "aot/programs-that-ask-the-shell-3.test.ts",

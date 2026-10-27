@@ -96,7 +96,7 @@ fn can_run_unseen_code(used: &UsedFeatures, requirements: &[OptionRequirement]) 
         || requirements.iter().any(runs_unseen_code)
 }
 
-// An image without ImageFlag::AdmitsLibraryText lets no realm run a built-in module from its text.
+// Without ImageFlag::AdmitsLibraryText the realm of the program runs no built-in module from its text. A realm that the program creates asks for the text and throws where it is gone.
 fn can_run_library_text(used: &UsedFeatures, requirements: &[OptionRequirement]) -> bool {
     used.causes
         .iter()

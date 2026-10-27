@@ -43,7 +43,6 @@ const abortedSymbol: typeof http.abortedSymbol = http.abortedSymbol;
 const eofInProgress: typeof http.eofInProgress = http.eofInProgress;
 const kHandle: typeof http.kHandle = http.kHandle;
 const kHandoffResponse: typeof http.kHandoffResponse = http.kHandoffResponse;
-const kResumeUnlessFlowing: typeof http.kResumeUnlessFlowing = http.kResumeUnlessFlowing;
 const kHeaderSource: typeof http.kHeaderSource = http.kHeaderSource;
 const noBodySymbol: typeof http.noBodySymbol = http.noBodySymbol;
 const kReqShouldKeepAlive: typeof http.kReqShouldKeepAlive = http.kReqShouldKeepAlive;
@@ -498,7 +497,7 @@ function resumeReadableConnection(req: $Node.IncomingMessage, socket: $Node.Http
     // Upgrade request with a body (Node 26 semantics): reading the request must not flip the raw socket into flowing mode - tunnel bytes pushed to the socket before the 'upgrade' listener attaches its own 'data' handler would be discarded by a flowing stream with no readers.
     onIncomingMessageResumeNodeHTTPResponse.$call(req);
   } else if (!socket._paused) {
-    const resumeUnlessFlowing = socket[kResumeUnlessFlowing];
+    const resumeUnlessFlowing = socket.$resumeUnlessFlowing;
     if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket, true);
     else {
       ("unlikely");
@@ -1196,7 +1195,7 @@ function takeBodyData(req: $Node.IncomingMessage, chunk: Buffer | undefined, isL
     emitEOFIncomingMessage(req);
   }
   if (!req.upgrade && socket && !socket._paused && socket.readable) {
-    const resumeUnlessFlowing = socket[kResumeUnlessFlowing];
+    const resumeUnlessFlowing = socket.$resumeUnlessFlowing;
     if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket, false);
     else {
       ("unlikely");

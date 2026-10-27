@@ -1,6 +1,5 @@
 use crate::ir::generated::{ColumnAdjustment, SourcePositions};
-use bstr::ByteSlice;
-use bun_core::strings::contains_char;
+use bun_core::strings::{contains, contains_char, index_of, index_of_char_pos, last_index_of};
 
 pub fn source_positions(source: &[u8], line_starts: Vec<u32>) -> SourcePositions {
     let column_adjustments = compute_column_adjustments(source, &line_starts);
@@ -67,8 +66,8 @@ fn is_word_byte(byte: u8) -> bool {
 fn find_starts_of_lines(text: &[u8]) -> Vec<u32> {
     let mut starts = vec![0];
     let mut at = 0;
-    while let Some(line_break) = text[at..].find_byte(b'\n') {
-        at += line_break + 1;
+    while let Some(line_break) = index_of_char_pos(text, b'\n', at) {
+        at = line_break + 1;
         starts.push(at as u32);
     }
     starts
@@ -207,17 +206,11 @@ impl<'a> Aligner<'a> {
             number => self.written.ranges[number - 1].1 as usize,
         };
         let gap = &text[end_of_last_word..start];
-        let find_behind_word = |end: &[u8]| text[start..].find(end).map(|at| start + at);
-        if gap
-            .rfind(b"//")
-            .is_some_and(|line| !contains_char(&gap[line..], b'\n'))
-        {
+        let find_behind_word = |end: &[u8]| index_of(&text[start..], end).map(|at| start + at);
+        if last_index_of(gap, b"//").is_some_and(|line| !contains_char(&gap[line..], b'\n')) {
             return find_behind_word(b"\n");
         }
-        if gap
-            .rfind(b"/*")
-            .is_some_and(|block| !gap[block..].contains_str(b"*/"))
-        {
+        if last_index_of(gap, b"/*").is_some_and(|block| !contains(&gap[block..], b"*/")) {
             return find_behind_word(b"*/");
         }
         None

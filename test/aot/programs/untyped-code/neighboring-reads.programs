@@ -2040,7 +2040,7 @@ for (let turn = 0; turn < 150000; turn++) total += sum(both[turn % 3]);
 lines.push("sums: " + total);
 console.log(lines.join("\n"));
 //// other-realm-code.ts
-// Code that runs in another realm (node:vm contexts, ShadowRealm) has built-ins of its own and works beside the compiled program. One row differs from plain Bun: a ShadowRealm cannot import a module that was compiled, and Bun's own modules are: importValue throws a TypeError.
+// Code that runs in another realm (node:vm contexts, ShadowRealm) has built-ins of its own and works beside the compiled program. A ShadowRealm imports the modules that come with the runtime.
 import vm from "node:vm";
 import path from "node:path";
 const out: string[] = [];

@@ -12,16 +12,11 @@ import { join } from "node:path";
 import { slot, spawned } from "./run-programs";
 import { test } from "./supported";
 
-const source = join(
-  import.meta.dir,
-  "programs",
-  "collector",
-  "a-word-is-read-in-front-of-a-call-that-makes-a-text-and-used-behind-it.ts",
-);
+const programs = join(import.meta.dir, "programs", "collector");
 
-async function placesNamedWith(...flags: string[]) {
+async function build(program: string, ...flags: string[]) {
   using folder = tempDir("aot-pointers-into-what-a-cell-owns", {});
-  const { stderr, exitCode } = await slot(() =>
+  return await slot(() =>
     spawned(
       [
         bunExe(),
@@ -30,13 +25,20 @@ async function placesNamedWith(...flags: string[]) {
         "--aot",
         "--aot-check=validate-references",
         ...flags,
-        source,
+        join(programs, program),
         "--outfile",
         join(String(folder), "program"),
       ],
-      join(source, ".."),
+      programs,
       bunEnv,
     ),
+  );
+}
+
+async function placesNamedWith(...flags: string[]) {
+  const { stderr, exitCode } = await build(
+    "a-word-is-read-in-front-of-a-call-that-makes-a-text-and-used-behind-it.ts",
+    ...flags,
   );
   return {
     exitCode,
@@ -57,5 +59,26 @@ test.skipIf(process.arch !== "x64" || isASAN)(
     const { exitCode, places } = await placesNamedWith("--aot-testing=FoldLoadsPastCollections");
     expect(exitCode).toBe(1);
     expect(places).toContain("GetTypedArrayElement");
+  },
+);
+
+// The first access behind a test that a value is a cell takes the test over. The check still has to know which field that access reads.
+// --aot-disable=b3:FoldTrapsIntoAccesses leaves each test where it stands, and the code holds the same pointers across the same places.
+async function pointersHeldWith(...flags: string[]) {
+  const { stderr, exitCode } = await build(
+    "a-list-a-view-and-a-text-out-of-fields-that-may-hold-null-are-read-in-loops.ts",
+    "--explain=statistics",
+    ...flags,
+  );
+  return { exitCode, pointers: Number(/^InnerPointersAcrossSafepoints (\d+)$/m.exec(stderr)?.[1]) };
+}
+
+test.skipIf(process.arch !== "x64" || isASAN)(
+  "a pointer is known although the access that loads it has taken over a test of its cell",
+  async () => {
+    const usual = await pointersHeldWith();
+    expect(usual.exitCode).toBe(0);
+    expect(usual.pointers).toBeGreaterThan(0);
+    expect(await pointersHeldWith("--aot-disable=b3:FoldTrapsIntoAccesses")).toEqual(usual);
   },
 );

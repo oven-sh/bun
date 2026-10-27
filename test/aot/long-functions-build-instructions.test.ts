@@ -140,6 +140,14 @@ test.skipIf(isSlowBuild || isWindows)(
 );
 
 test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of locals that hold results of calls, from 7,500 locals on",
+  async () => {
+    await expectLinearInstructionCount(7_500, writeLocalsThatHoldResultsOfCalls, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
   "the instructions of a build are nearly linear in the number of locals loaded from arrays",
   async () => {
     await expectLinearInstructionCount(8_000, writeLocalsLoadedFromArrays, 5.5);

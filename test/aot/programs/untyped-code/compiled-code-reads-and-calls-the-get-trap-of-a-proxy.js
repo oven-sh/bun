@@ -1,4 +1,4 @@
-// A read through a proxy reads `get` off the handler and calls it with the target, the key and the receiver. Compiled code does both itself, and asks the run time only where there is no trap to call or where the target may bind the answer.
+// A read through a proxy reads `get` off the handler and calls it with the target, the key and the receiver. Compiled code does both itself. Where there is no trap it reads a data property of the target itself. It asks the run time only for what is no function, for an accessor of the target, or where the target may bind the answer.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const operations = ["GetById", "GetByIdAndCache", "GetByVal", "GetByValAndCache", "GetGeneric", "GetByValGeneric", "GetWithProxyTrap", "ValidateAnswerOfProxyTrap"];
 const asked = () => operations.reduce((sum, name) => sum + count("operationAOT" + name), 0);
@@ -33,7 +33,9 @@ measure("a bound function", new Proxy({}, { get: function (first, target, key) {
 measure("the target answers", new Proxy({ wanted: 1, other: 2, [mark]: 3 }, { get(target, key) { return target[key]; } }), 20);
 measure("an array as the target", new Proxy([1, 2], { get(target, key) { return target.length; } }), 20);
 measure("a function as the target", new Proxy(function () {}, { get(target, key) { return typeof target; } }), 4020);
-measure("no trap", new Proxy({ wanted: "passed on", [mark]: "marked" }, {}), 4020);
+measure("no trap", new Proxy({ wanted: "passed on", [mark]: "marked" }, {}), 60);
+measure("only another trap", new Proxy({ wanted: "passed on", other: 2 }, { set() { return true; } }), 60);
+measure("no trap, and a getter of the target", new Proxy({ get wanted() { return typeof this; }, other: 1 }, {}), 4020);
 measure("a frozen target that agrees", new Proxy(Object.freeze({ wanted: 1, other: 2 }), { get(target, key) { return target[key]; } }), 4020);
 console.log(seen, ofClass.reads);
 

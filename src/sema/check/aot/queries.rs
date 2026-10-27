@@ -223,9 +223,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn restore_cut_state(&mut self, state: CutState) {
-        self.c.ran_out_of_stack.set(state.ran_out_of_stack);
-        self.c.flow_analysis_disabled = state.flow_analysis_disabled;
+    /// Why the question that ends here has no answer. `enclosing`: the state of the question around it, which goes on.
+    fn end_question(&mut self, enclosing: CutState) -> Option<GaveUp> {
+        self.forget_what_a_question_leaves();
+        let ran_out_of_stack = (self.c.ran_out_of_stack).replace(enclosing.ran_out_of_stack);
+        let own = CutState {
+            ran_out_of_stack,
+            flow_analysis_disabled: std::mem::replace(
+                &mut self.c.flow_analysis_disabled,
+                enclosing.flow_analysis_disabled,
+            ),
+        };
+        own.reason()
     }
 
     pub(super) fn ask<T>(
@@ -238,9 +247,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.depth += 1;
         let computed = compute(self);
         self.depth -= 1;
-        let own = self.take_cut_state();
-        self.restore_cut_state(enclosing);
-        let answer = match own.reason() {
+        let answer = match self.end_question(enclosing) {
             Some(reason) => Err(reason),
             None => computed,
         };

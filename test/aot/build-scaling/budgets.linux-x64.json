@@ -109,7 +109,7 @@
     "millionInstructions": 6960,
     "megabytes": 217,
     "growth": {
-      "instructions": 2.79
+      "instructions": 2.76
     }
   },
   "strings and regular expressions that are written once each": {
@@ -120,7 +120,7 @@
     "millionInstructions": 13501,
     "megabytes": 217,
     "growth": {
-      "instructions": 3.34
+      "instructions": 2.99
     }
   },
   "a string that grows by one statement after another": {
@@ -142,18 +142,52 @@
     }
   },
   "classes that extend one another in a row": {
-    "millionInstructions": 15026,
-    "megabytes": 232,
+    "millionInstructions": 5237,
+    "megabytes": 144,
     "growth": {
-      "instructions": 5.32,
-      "peakBytes": 9.46
+      "instructions": 2.99
     }
   },
   "classes that extend one another in a row, each constructed": {
-    "millionInstructions": 16578,
+    "millionInstructions": 9312,
     "megabytes": 133,
     "growth": {
-      "instructions": 4.14
+      "instructions": 2.67
+    }
+  },
+  "classes without fields that extend one another in a row": {
+    "millionInstructions": 18702,
+    "megabytes": 367,
+    "growth": {
+      "instructions": 3.6,
+      "peakBytes": 5
+    }
+  },
+  "functions that each make a class below the one that the function before has made": {
+    "millionInstructions": 21702,
+    "megabytes": 396,
+    "growth": {
+      "instructions": 3.49,
+      "peakBytes": 5.3
+    }
+  },
+  "classes with a field each that extend one another in a row, all constructed at one place": {
+    "millionInstructions": 12565,
+    "megabytes": 156,
+    "growth": {
+      "instructions": 3.2
+    }
+  },
+  "rows of classes that functions make one below the other, by the length of a row": {
+    "millionInstructions": 7199,
+    "megabytes": 139
+  },
+  "classes that each extend what a function of their own makes of one base class": {
+    "millionInstructions": 16680,
+    "megabytes": 250,
+    "growth": {
+      "instructions": 3.23,
+      "peakBytes": 3.5
     }
   },
   "functions on one line after non-ASCII text": {

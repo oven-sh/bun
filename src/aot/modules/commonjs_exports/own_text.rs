@@ -15,7 +15,7 @@ use bun_sema::hir::{
 };
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Sym};
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashMap, SharedSort};
 
 /// How the text names the exports of its module.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -69,6 +69,8 @@ pub(super) struct Alias {
     /// What a binding holds.
     pub value: StoredValue,
     pub is_enumerable: bool,
+    /// Somebody may look at the module in front of what fills the binding.
+    pub is_seen_unfilled: bool,
     pub start: u32,
 }
 
@@ -389,7 +391,7 @@ impl Scan<'_, '_, '_> {
                 | BindingKind::Class
                 | BindingKind::Function
         );
-        // An ES importer holds what the getter answered when the file was linked. Nobody can tell where nothing stores again.
+        // An ES importer holds what the getter answered when the file was linked. Nobody can tell where nothing stores again and the link finds the binding filled.
         let is_stable = text.bound.is_stable_binding(id);
         (is_declared_at_top && has_variable && is_stable && text.bound.has_runtime_value(id))
             .then_some(AliasTarget::Binding(Sym { file, id }))
@@ -441,6 +443,7 @@ impl Scan<'_, '_, '_> {
             node,
             value,
             is_enumerable,
+            is_seen_unfilled: false,
             start,
         });
     }
@@ -890,15 +893,72 @@ impl Scan<'_, '_, '_> {
             self.found.has_names = false;
             return;
         }
+        let is_seen_unfilled = |alias: &Alias| match alias.target {
+            AliasTarget::Binding(symbol) => found.is_half && !self.is_filled_first(symbol.id),
+            AliasTarget::Member { .. } => false,
+        };
+        let seen_unfilled: Vec<bool> = found.aliases.iter().map(is_seen_unfilled).collect();
         // Nobody sees what is stored under a name that a getter is defined for behind the store.
         let OwnText {
             creations, aliases, ..
         } = &mut self.found;
         creations.retain(|creation| aliases.iter().all(|alias| alias.name != creation.name));
+        for (alias, is_seen_unfilled) in aliases.iter_mut().zip(seen_unfilled) {
+            alias.is_seen_unfilled = is_seen_unfilled;
+        }
+    }
+
+    // Whether the binding holds its value by the time that any code but that of the body itself runs.
+    fn is_filled_first(&self, symbol: SymbolId) -> bool {
+        let hir = self.text.hir;
+        let filled_at = match self.text.bound.binding_initializer(hir, symbol) {
+            // The body starts with its function declarations made.
+            BindingInitializer::Function(_) => return true,
+            BindingInitializer::Expression(value) => hir[value].end,
+            BindingInitializer::PatternProperty { source, .. } => hir[source].end,
+            _ => return false,
+        };
+        self.runs_nothing_else_in_front_of(filled_at)
     }
 
     // Whether no code but that of the body itself runs until the body gets to the position: an accessor, a conversion or an iterator runs code as a call does, and a function that only makes the helpers of a compiler runs none.
     fn runs_nothing_else_in_front_of(&self, position: u32) -> bool {
+        self.runs_only_quiet_statements_in_front_of(position, &|_, _| false)
+    }
+
+    // A store of its own to the object that the module was born with gives the object a property and runs nothing: nobody finds a module half evaluated whose body does no more than that.
+    fn runs_nothing_else(&self) -> bool {
+        if !self.replacements.is_empty() || self.stores_to_exports_name != 0 {
+            return false;
+        }
+        let hir = self.text.hir;
+        let creations = self.found.creations.iter();
+        let stores = creations.filter(|it| it.is_in_order && it.name != known::__proto__);
+        let stored_values: FxHashMap<ExprId, ExprId> =
+            stores.map(|it| (it.node, it.value_node)).collect();
+        self.runs_only_quiet_statements_in_front_of(u32::MAX, &|quiet, statement| {
+            let StmtKind::Expr(mut value) = hir[statement].kind else {
+                return false;
+            };
+            // `exports.a = exports.b = v`
+            while let Some(&stored) = stored_values.get(&hir.skip_type_assertions(value)) {
+                if stored.is_none() {
+                    return false;
+                }
+                if quiet.is_quiet_expression(stored) {
+                    return true;
+                }
+                value = stored;
+            }
+            false
+        })
+    }
+
+    fn runs_only_quiet_statements_in_front_of(
+        &self,
+        position: u32,
+        is_quiet_too: &dyn Fn(&Quiet<'_, '_>, StmtId) -> bool,
+    ) -> bool {
         let (text, found) = (self.text, &self.found);
         let statements = match self.body {
             CodeUnit::File => text.hir.body,
@@ -926,7 +986,8 @@ impl Scan<'_, '_, '_> {
         let statements = text.hir.ids(statements);
         let mut in_front =
             statements.take_while(|&statement: &StmtId| text.hir[statement].start < position);
-        in_front.all(|statement| quiet.is_quiet_statement(statement))
+        in_front
+            .all(|statement| quiet.is_quiet_statement(statement) || is_quiet_too(&quiet, statement))
     }
 
     // `exports.__esModule = true` and `Object.defineProperty(exports, "__esModule", { value: true })`: once, in order, a true constant.
@@ -976,6 +1037,7 @@ impl Scan<'_, '_, '_> {
             false => self.apply_replacement(),
         };
         self.find_stores_that_fill();
+        self.found.is_half = self.found.is_half && !self.runs_nothing_else();
         self.check_definitions();
         self.find_marker();
         let found = &mut self.found;

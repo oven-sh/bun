@@ -2,6 +2,7 @@ use bun_sema::hir::ExprId;
 use smallvec::SmallVec;
 
 use super::{ObjectBuilder, ObjectState};
+use crate::builtins::id::BuiltinId;
 use crate::ir::{LayoutId, PropertyKeyId, ValueId};
 use crate::lower::member::PropertyName;
 use crate::lower::{FunctionLowering, convert};
@@ -100,5 +101,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let head = self.open_head(object);
         self.emit_define(head, name, value);
+    }
+
+    // A property that a call of a built-in function defines.
+    pub(crate) fn add_property_inside(
+        &mut self,
+        object: &mut ObjectBuilder,
+        name: PropertyName,
+        value: ValueId,
+        function: BuiltinId,
+    ) {
+        if let PropertyName::Constant(_) = name {
+            return self.add_property(object, name, value, None);
+        }
+        let head = self.open_head(object);
+        self.emit_define_inside(head, name, value, Some(function));
     }
 }

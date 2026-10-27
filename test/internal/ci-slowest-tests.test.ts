@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { aotTests } from "../../scripts/buildkite.ts";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
 import { parseLog } from "../../scripts/ci-slowest-tests";
@@ -171,6 +173,19 @@ test("scripts/update-test-durations.mjs keeps the durations of everything that t
   expect(aotTests.filter(group => !isAotTest(`${group}x.test.ts`))).toEqual([]);
   expect(isAotTest("internal/trim/features.test.ts")).toBe(true);
   expect(isAotTest("bundler/bundler_compile.test.ts")).toBe(false);
+});
+
+test("what .buildkite/update-test-durations.yml runs with node imports no TypeScript", () => {
+  const root = join(import.meta.dir, "..", "..");
+  const importsOf = (file: string): string[] =>
+    [...readFileSync(file, "utf8").matchAll(/^import .* from "(\.[^"]+)";$/gm)].flatMap(([, path]) => {
+      const imported = join(dirname(file), path);
+      return /\.m?ts$/.test(imported) ? [imported] : [imported, ...importsOf(imported)];
+    });
+  const commands = readFileSync(join(root, ".buildkite", "update-test-durations.yml"), "utf8");
+  const scripts = [...commands.matchAll(/^ +node (scripts\/\S+)/gm)].map(([, script]) => script);
+  expect(scripts).toContain("scripts/update-parallel-allowlist.mjs");
+  expect(scripts.filter(script => importsOf(join(root, script)).some(file => /\.m?ts$/.test(file)))).toEqual([]);
 });
 
 describe("scripts/update-test-durations.mjs parseLog", () => {

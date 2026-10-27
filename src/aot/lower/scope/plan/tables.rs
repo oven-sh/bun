@@ -142,11 +142,27 @@ fn compute_function_summaries(
             captures: start..captures.len() as u32,
             has_too_many_captures: over_limit.binary_search(&id).is_ok(),
             has_fields_for_handlers: with_fields_for_handlers.binary_search(&id).is_ok(),
+            created_at: function.created_at,
+            copies_settle_at: find_time_when_copies_settle(parts, id),
         });
     }
     summaries.sort_unstable_by_key(|summary| summary.key);
     debug_assert!(summaries.is_sorted_by(|first, second| first.key < second.key));
     (summaries, captures)
+}
+
+fn find_time_when_copies_settle(parts: &Parts, function: WalkedFunctionId) -> u32 {
+    let captures = parts.captures.captures[function.index()].iter();
+    let times = captures.map(|capture| match *capture {
+        Capture::Environment(_) => 0,
+        Capture::Value(binding) => {
+            let captured = &parts.captured;
+            let index = captured.binary_search_by_key(&binding, |captured| captured.binding);
+            let initialization = index.ok().and_then(|index| captured[index].initialization);
+            initialization.map_or(u32::MAX, |initialization| initialization.time)
+        }
+    });
+    times.max().unwrap_or(0)
 }
 
 fn argument_reads(context: &Context<'_, '_>, function: FnId) -> impl Iterator<Item = ArgumentRead> {

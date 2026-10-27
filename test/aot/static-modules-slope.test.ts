@@ -671,6 +671,142 @@ describe.concurrent("modules that do not run", () => {
   );
 
   test.skipIf(!perf)(
+    "a first import() beside no other job costs little more than one of an evaluated module",
+    async () => {
+      const modules = 200;
+      const files: Record<string, string> = {};
+      for (let index = 0; index < modules; index++) files[`leaf${index}.mjs`] = `export const c = ${index};\n`;
+      files["main.mjs"] =
+        "async function later(index) {\n  switch (index) {\n" +
+        Array.from(
+          { length: modules },
+          (_, index) => `    case ${index}: return (await import("./leaf${index}.mjs")).c;\n`,
+        ).join("") +
+        '  }\n}\nlet sum = 0;\nfor (let index = 0; index < Number(process.argv[2]); index++) sum += await later(index);\nconsole.log("end");\n';
+      await slot(async () => {
+        using directory = tempDir("aot-static-modules-first-import", files);
+        using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+        const { executable } = await build(String(directory), "main.mjs");
+        const best: number[] = [];
+        for (const calls of [0, modules]) {
+          let least = Infinity;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const counted = await run(
+              [perf as string, "stat", "-x,", "-e", "instructions:u", executable, String(calls)],
+              String(elsewhere),
+              bunEnv,
+            );
+            expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({ stdout: "end\n", exitCode: 0 });
+            least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+          }
+          best.push(least);
+        }
+        const each = (best[1] - best[0]) / modules;
+        console.log(`static-modules-slope: ${each.toFixed(0)} instructions for a first import()`);
+        expect(each).toBeLessThanOrEqual(8000);
+      });
+    },
+    1_800_000,
+  );
+
+  test.skipIf(!perf)(
+    "a level of a graph costs a first import() beside a chain of jobs little more than the jobs of the chain",
+    async () => {
+      const graphs = 200;
+      const each: number[] = [];
+      for (const levels of [0, 2]) {
+        const files: Record<string, string> = {};
+        for (let index = 0; index < graphs; index++) {
+          for (let level = 0; level <= levels; level++)
+            files[`g${index}-${level}.mjs`] =
+              level === levels
+                ? `export const c = ${index};\n`
+                : `import { c as below } from "./g${index}-${level + 1}.mjs";\nexport const c = below + 1;\n`;
+        }
+        files["main.mjs"] =
+          "async function later(index) {\n  switch (index) {\n" +
+          Array.from(
+            { length: graphs },
+            (_, index) => `    case ${index}: return (await import("./g${index}-0.mjs")).c;\n`,
+          ).join("") +
+          "  }\n}\nlet sum = 0, running = true;\n(async () => {\n  while (running) await null;\n})();\n" +
+          'for (let index = 0; index < Number(process.argv[2]); index++) sum += await later(index);\nrunning = false;\nconsole.log("end");\n';
+        await slot(async () => {
+          using directory = tempDir("aot-static-modules-watched-import", files);
+          using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+          const { executable } = await build(String(directory), "main.mjs");
+          const best: number[] = [];
+          for (const calls of [0, graphs]) {
+            let least = Infinity;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const counted = await run(
+                [perf as string, "stat", "-x,", "-e", "instructions:u", executable, String(calls)],
+                String(elsewhere),
+                bunEnv,
+              );
+              expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({ stdout: "end\n", exitCode: 0 });
+              least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+            }
+            best.push(least);
+          }
+          each.push((best[1] - best[0]) / graphs);
+        });
+      }
+      const [leaf, deep] = each;
+      console.log(
+        `static-modules-slope: ${leaf.toFixed(0)} instructions for a first import() of a leaf beside a chain of jobs, ${((deep - leaf) / 2).toFixed(0)} more for each level`,
+      );
+      expect(leaf).toBeLessThanOrEqual(17500);
+      expect((deep - leaf) / 2).toBeLessThanOrEqual(4600);
+    },
+    1_800_000,
+  );
+
+  test.skipIf(!perf)(
+    "two first import() at once cost little more than one behind the other",
+    async () => {
+      const pairs = 200;
+      const files: Record<string, string> = {};
+      for (let index = 0; index < pairs; index++) {
+        files[`a${index}.mjs`] = `export const c = ${index};\n`;
+        files[`b${index}.mjs`] = `import { c as below } from "./c${index}.mjs";\nexport const c = below;\n`;
+        files[`c${index}.mjs`] = "export const c = 1;\n";
+      }
+      files["main.mjs"] =
+        "async function later(index) {\n  switch (index) {\n" +
+        Array.from(
+          { length: pairs },
+          (_, index) =>
+            `    case ${index}: return (await Promise.all([import("./a${index}.mjs"), import("./b${index}.mjs")])).length;\n`,
+        ).join("") +
+        '  }\n}\nlet sum = 0;\nfor (let index = 0; index < Number(process.argv[2]); index++) sum += await later(index);\nconsole.log("end");\n';
+      await slot(async () => {
+        using directory = tempDir("aot-static-modules-two-imports", files);
+        using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+        const { executable } = await build(String(directory), "main.mjs");
+        const best: number[] = [];
+        for (const calls of [0, pairs]) {
+          let least = Infinity;
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const counted = await run(
+              [perf as string, "stat", "-x,", "-e", "instructions:u", executable, String(calls)],
+              String(elsewhere),
+              bunEnv,
+            );
+            expect({ stdout: counted.stdout, exitCode: counted.exitCode }).toEqual({ stdout: "end\n", exitCode: 0 });
+            least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+          }
+          best.push(least);
+        }
+        const each = (best[1] - best[0]) / pairs;
+        console.log(`static-modules-slope: ${each.toFixed(0)} instructions for two first import() at once`);
+        expect(each).toBeLessThanOrEqual(24500);
+      });
+    },
+    1_800_000,
+  );
+
+  test.skipIf(!perf)(
     "a module that a require() finds in a graph that is being loaded costs no step of a load",
     async () => {
       const best: number[] = [];

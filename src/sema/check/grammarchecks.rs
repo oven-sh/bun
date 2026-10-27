@@ -731,9 +731,14 @@ impl Checker<'_, '_> {
             } else {
                 1255
             };
-            return name.is_some_and(|name| {
-                self.check_grammar_for_invalid_postfix_token(file, name, b'!', code)
-            });
+            let Some(end) = name.and_then(|name| end_of_name(&hir.text, name as usize)) else {
+                return false;
+            };
+            return if node.ty.is_none() && !is_ambient {
+                self.early_grammar_error_on_token_after(file, end as u32, b'!', code)
+            } else {
+                self.grammar_error_on_token_after(file, end as u32, b'!', code)
+            };
         }
         if node.flags.contains(Flags::EXPORT)
             && !is_ambient

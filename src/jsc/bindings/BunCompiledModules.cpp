@@ -151,16 +151,19 @@ std::optional<AOT::ModuleID> compiledModuleForPath(const String& path)
     return found;
 }
 
-static std::optional<AOT::ModuleID> compiledModuleForRequest(const String& path, bool hasImportAttributes)
+static std::optional<AOT::ModuleID> compiledModuleForRequest(Zig::GlobalObject* globalObject, const String& path, bool hasImportAttributes)
 {
     if (hasImportAttributes)
         return std::nullopt;
-    return compiledModuleForPath(path);
+    auto module = compiledModuleForPath(path);
+    if (module && AOT::leavesModuleToHost(globalObject, *module))
+        return std::nullopt;
+    return module;
 }
 
 JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, bool hasImportAttributes)
 {
-    auto module = compiledModuleForRequest(key, hasImportAttributes);
+    auto module = compiledModuleForRequest(globalObject, key, hasImportAttributes);
     if (!module)
         return nullptr;
     auto& vm = getVM(globalObject);
@@ -174,7 +177,7 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
 
 JSPromise* importCompiledModule(Zig::GlobalObject* globalObject, const String& key, bool hasImportAttributes, int64_t referrerAsyncOrder)
 {
-    auto module = compiledModuleForRequest(key, hasImportAttributes);
+    auto module = compiledModuleForRequest(globalObject, key, hasImportAttributes);
     if (!module)
         return nullptr;
     return AOT::importModule(globalObject, *module, referrerAsyncOrder < 0 ? std::nullopt : std::optional(referrerAsyncOrder));
@@ -197,7 +200,7 @@ static void requireInto(Zig::GlobalObject* globalObject, JSCommonJSModule* targe
 
 bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool hasImportAttributes)
 {
-    auto module = compiledModuleForRequest(path, hasImportAttributes);
+    auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes);
     if (!module)
         return false;
     auto& vm = getVM(globalObject);
@@ -221,7 +224,7 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
 
 JSObject* loaderOfCompiledESModule(Zig::GlobalObject* globalObject, const String& path, bool hasImportAttributes)
 {
-    auto module = compiledModuleForRequest(path, hasImportAttributes);
+    auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes);
     if (!module || !AOT::isESModule(*module))
         return nullptr;
     auto& vm = getVM(globalObject);

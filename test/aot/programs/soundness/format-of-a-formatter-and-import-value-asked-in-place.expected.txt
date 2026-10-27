@@ -27,8 +27,8 @@ on an object that is no formatter: true
 on the prototype object: true
 ShadowRealm is true false
 importValue answers true true false false true true
-rejected with true true true
+fulfilled with true false false /
 a missing export answers true
 a missing export: true true
 a number for the name: true
-a function: TypeError
+a function comes wrapped: true false b.txt

@@ -29,4 +29,4 @@ an array of the context is an instance of this realm's Array: false
 an array of the context is an array: true
 the context's map calls a function of the program: 2,3,4
 the context's map on an array of the program: 12,15
-a ShadowRealm import throws: TypeError
+a ShadowRealm evaluates its own node:events: 10

@@ -63,6 +63,8 @@ struct Channel {
 }
 
 pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
+    // Fuzzilli keeps and reduces what ends by a signal.
+    bun_crash_handler::end_stopped_builds_by_signal();
     let [entry_point] = &mut ctx.args.entry_points[..] else {
         stop("Expected one entry point: the file that each program is written to");
     };

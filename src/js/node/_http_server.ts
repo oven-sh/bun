@@ -90,7 +90,6 @@ const serverSymbol: typeof http.serverSymbol = http.serverSymbol;
 const kHandle: typeof http.kHandle = http.kHandle;
 const kOnReadParsed: typeof http.kOnReadParsed = http.kOnReadParsed;
 const kHandoffResponse: typeof http.kHandoffResponse = http.kHandoffResponse;
-const kResumeUnlessFlowing: typeof http.kResumeUnlessFlowing = http.kResumeUnlessFlowing;
 const kHasQueuedReads: typeof http.kHasQueuedReads = http.kHasQueuedReads;
 const kRealListen: typeof http.kRealListen = http.kRealListen;
 const tlsSymbol: typeof http.tlsSymbol = http.tlsSymbol;
@@ -2234,6 +2233,23 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
   const NetSocket = netConstructors.Socket as unknown as NetSocketConstructor;
   const NetSocketPrototype = NetSocket.prototype;
   const { getTimerDuration } = require("internal/timers");
+  const resumeUnlessFlowing = function (this: $Node.HttpServerSocket, asksWhetherReadable: boolean) {
+    if (!readsFlowUnseen(this)) {
+      ("unlikely");
+      if (!asksWhetherReadable || this.readable) this.resume();
+      return;
+    }
+    if (
+      !((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(this, "resume")) || this.resume === serverSocketResume) ||
+      NetSocketPrototype.resume !== netSocketResume ||
+      DuplexPrototype.resume !== duplexResume ||
+      this[kStreamingEnabled] ||
+      (flagsOf(this._readableState) & (kFlowing | kHasPaused | kPaused)) !== (kFlowing | kHasPaused) ||
+      this[kUpgradeIncoming] !== undefined
+    ) {
+      this.resume();
+    }
+  };
   NodeHTTPServerSocket = class Socket extends NetSocket {
     bytesRead = 0;
     connecting = false;
@@ -2253,6 +2269,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     $readableMark = 0;
     $ownReadableState: $Node.ReadableState;
     $ownWritableState: $Node.WritableState;
+    declare $resumeUnlessFlowing?: (this: $Node.HttpServerSocket, asksWhetherReadable: boolean) => void;
     declare [kRequest]: $Node.IncomingMessage | undefined;
     declare [kCloseCallback]: ((this: $Node.HttpServerSocket) => void) | undefined;
     declare [kStopParsingOnCloseListener]: boolean | undefined;
@@ -2306,6 +2323,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       this.$ownWritableState = this._writableState;
       this.$writableMark = +this.writableHighWaterMark;
       this.$readableMark = +this.readableHighWaterMark;
+      if (IS_COMPILED_AHEAD_OF_TIME) this.$resumeUnlessFlowing = resumeUnlessFlowing;
       this.server = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
       this[kHandle] = handle;
@@ -2863,24 +2881,6 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       return super.pause();
     }
 
-    [kResumeUnlessFlowing](asksWhetherReadable: boolean) {
-      if (!readsFlowUnseen(this)) {
-        ("unlikely");
-        if (!asksWhetherReadable || this.readable) this.resume();
-        return;
-      }
-      if (
-        !((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(this, "resume")) || this.resume === serverSocketResume) ||
-        NetSocketPrototype.resume !== netSocketResume ||
-        DuplexPrototype.resume !== duplexResume ||
-        this[kStreamingEnabled] ||
-        (flagsOf(this._readableState) & (kFlowing | kHasPaused | kPaused)) !== (kFlowing | kHasPaused) ||
-        this[kUpgradeIncoming] !== undefined
-      ) {
-        this.resume();
-      }
-    }
-
     resume() {
       // Like Node's onSocketResume: the pipeline read gate outranks stream flow.
       if (this._paused) return this;
@@ -2898,7 +2898,6 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     }
   };
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
-  if (!IS_COMPILED_AHEAD_OF_TIME) Reflect.deleteProperty(NodeHTTPServerSocket.prototype, kResumeUnlessFlowing);
   serverSocketResume = NodeHTTPServerSocket.prototype.resume;
   serverSocketSetTimeout = NodeHTTPServerSocket.prototype.setTimeout;
   netSocketResume = NetSocket.prototype.resume;

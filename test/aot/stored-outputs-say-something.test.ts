@@ -47,6 +47,8 @@ const plainBunVaries: Record<string, string> = {
     "plain Bun begins the second file before the first in about one run of ten on a busy machine; the stored output is what it prints in the other nine, and what the executable always prints",
   "static-modules/earlier-cases/names-imported-by-es-modules-against-later-stores":
     "plain Bun prints another first line in about one run of eight; the stored output is what it prints in the other seven, and what the executable always prints",
+  "untyped-code/compiled-code-reads-and-calls-the-has-and-set-traps-of-a-proxy":
+    "plain Bun prints one of several outputs from run to run, the stored one among them",
   "untyped-code/contents-survive-added-properties-and-elements":
     "what a store of a number past the end of a BigInt64Array does in plain Bun goes by the tier that runs it, so one sum of that row is another in a run now and then; the stored output is the usual one, and what the executable always prints",
   "untyped-speed/names-read-a-hundred-times-off-each-new-shape-are-not-four-times-as-slow-as-off-one-shape":

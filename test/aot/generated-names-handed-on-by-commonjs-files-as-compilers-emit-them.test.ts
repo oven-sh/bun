@@ -9,6 +9,7 @@ import { generated } from "./generated/run-generated";
 const present = corners.length * 24;
 const lacking = corners.length * 4;
 const wider = corners.length * 12;
+const quiet = corners.length * 12;
 
 /** Nobody but one importer behind `export *` takes the name, which lies behind getters as TypeScript emits them. */
 const onlyThroughAStar = [127, 295, 316];
@@ -17,35 +18,42 @@ const variableOfAnESModule = [1001008];
 
 /** Getters as TypeScript emits them return a name that the file below lacks, and the name is imported by name. */
 const getterOntoNothing = [505, 526, 568];
-const onceWrong = [...onlyThroughAStar, ...getterOntoNothing, ...variableOfAnESModule];
 
-const linesDepartToday = new Map<number, string>([
-  [
-    21,
-    "it takes a member of a JSON file from behind a getter that is not listed, where the namespace of plain Bun has no such name",
-  ],
-  [
-    652,
-    "a getter returns `.default` of a CommonJS file without `__esModule`, and what takes the default meets a ReferenceError",
-  ],
-]);
+/** A getter that is not listed returns a member of a JSON file, and the name is read on the namespace. */
+const getterThatIsNotListedOverJSON = [21];
+
+/** A getter returns `.default` of a CommonJS file without `__esModule`. */
+const memberNamedDefault = [652];
+/** The files lie in a package without side effects, and an ES module stands between the getters and the program. */
+const behindGettersOfAQuietPackage = [883, 1030];
+const onceWrong = [
+  ...behindGettersOfAQuietPackage,
+  ...onlyThroughAStar,
+  ...getterOntoNothing,
+  ...variableOfAnESModule,
+  ...getterThatIsNotListedOverJSON,
+  ...memberNamedDefault,
+];
 
 generated(
   "names handed on by CommonJS files as compilers emit them",
-  [...Array(present + lacking + wider).keys(), ...variableOfAnESModule.map(seed => seed - 1)].map(index => {
+  [...Array(present + lacking + wider + quiet).keys(), ...variableOfAnESModule.map(seed => seed - 1)].map(index => {
     const corner = corners[index % corners.length];
     // In the last seeds of the row the file at the end lacks the name that the files above it hand on.
     const lacks = index >= present && index < present + lacking;
     // Behind them mostly the default is taken, mostly without the helpers of `esModuleInterop`.
     const isWider = index >= present + lacking && index < present + lacking + wider;
+    // In the last ones the files lie in packages that say "sideEffects": false.
+    const isQuiet = index >= present + lacking + wider && index < present + lacking + wider + quiet;
     const isErased = index % 3 === 2;
     return {
-      name: `seed ${index + 1}, ${corner}${lacks ? ", the name is lacking" : ""}${isErased ? ", types erased" : ""}.`,
-      // Every run takes two seeds of each corner, one in which the name is lacking and one of the later ones; AOT_GENERATED=all takes all.
+      name: `seed ${index + 1}, ${corner}${lacks ? ", the name is lacking" : ""}${isQuiet ? ", no side effects" : ""}${isErased ? ", types erased" : ""}.`,
+      // Every run takes two seeds of each corner, one in which the name is lacking and one of each of the later kinds; AOT_GENERATED=all takes all.
       isAlwaysRun:
         index < corners.length * 2 ||
         (lacks && index < present + corners.length) ||
-        (isWider && index < present + lacking + corners.length),
+        (isWider && index < present + lacking + corners.length) ||
+        (isQuiet && index < present + lacking + wider + corners.length),
       isOnlyCompiled: true as const,
       // Nothing is put into the text: one more importer of the name would be one more road to it.
       keepsItsText: true as const,
@@ -53,8 +61,7 @@ generated(
       exitsAsPlainBunDoes: true as const,
       ...(isErased && { flags: ["--aot-erase-types"] }),
       ...(onceWrong.includes(index + 1) && { wasOnceWrong: true }),
-      ...(linesDepartToday.has(index + 1) && { linesDepartToday: linesDepartToday.get(index + 1) }),
-      make: () => generate(new Random(index + 1), corner, lacks, isWider),
+      make: () => generate(new Random(index + 1), corner, lacks, isWider, isQuiet),
     };
   }),
 );

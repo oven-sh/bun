@@ -190,11 +190,13 @@ fn every_difference_from_the_bundler_has_its_reason() {
     for row in parse_table() {
         let expected: &[&str] = match (row.is_removable, row.plain) {
             (true, Bundler::Drops) | (false, Bundler::Keeps) | (_, Bundler::NotAsked) => &["-"],
-            (true, Bundler::Keeps) => &["folded", "table", "inert"],
+            (true, Bundler::Keeps) => &["folded", "table", "inert", "minified"],
             (false, Bundler::Drops) => &["missed"],
         };
         let (line, difference) = (row.line, row.difference);
         assert!(expected.contains(&difference), "line {line}: {difference}");
+        let is_minified = difference != "minified" || row.minified == Bundler::Drops;
+        assert!(is_minified, "line {line}: --minify-syntax keeps it");
         let is_monotonic = row.plain != Bundler::Drops || row.minified != Bundler::Keeps;
         assert!(is_monotonic, "line {line}: --minify-syntax keeps more");
     }
@@ -220,11 +222,8 @@ fn annotations_can_be_ignored() {
 }
 
 #[test]
-fn minified_syntax_leaves_out_constructions_of_known_globals() {
-    let minifying = RemovableOptions {
-        minifies_syntax: true,
-        ..RemovableOptions::default()
-    };
+fn constructions_of_known_globals_are_left_out() {
+    let plain = RemovableOptions::default();
     let removable = [
         "const MARK = new Map();",
         "const MARK = new Map(null);",
@@ -241,9 +240,7 @@ fn minified_syntax_leaves_out_constructions_of_known_globals() {
         "class MARK { static a = new Map([[\"a\", 1]]); }",
     ];
     for source in removable {
-        let plain = RemovableOptions::default();
-        assert!(!ask_one(source, "ts", plain), "{source}");
-        assert!(ask_one(source, "ts", minifying), "{source}");
+        assert!(ask_one(source, "ts", plain), "{source}");
     }
     let kept = [
         "function f(...a: any[]): any {} const MARK = new Map([[f(), 1]]);",
@@ -257,7 +254,7 @@ fn minified_syntax_leaves_out_constructions_of_known_globals() {
         "const MARK = new Map([], 1 as any);",
     ];
     for source in kept {
-        assert!(!ask_one(source, "ts", minifying), "{source}");
+        assert!(!ask_one(source, "ts", plain), "{source}");
     }
 }
 

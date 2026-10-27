@@ -2721,10 +2721,12 @@ pub(crate) fn inject<'a>(
                 if !additions.edit_template(&mut mapped) {
                     return None;
                 }
+                let addresses = mapped.addresses();
                 Some(write_elf(
                     cloned_executable_fd,
                     &mut mapped,
                     None,
+                    Some(&addresses),
                     bytes,
                     additions.image,
                     additions.symbols,
@@ -2749,6 +2751,7 @@ pub(crate) fn inject<'a>(
                         file,
                         mapping: Some((addresses.start, addresses.end)),
                     }),
+                    None,
                     bytes,
                     additions.image,
                     additions.symbols,
@@ -2774,6 +2777,7 @@ pub(crate) fn inject<'a>(
                 write_elf(
                     cloned_executable_fd,
                     &mut input_bytes,
+                    None,
                     None,
                     bytes,
                     additions.image,

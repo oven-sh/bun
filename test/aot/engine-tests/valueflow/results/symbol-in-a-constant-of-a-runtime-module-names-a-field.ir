@@ -24,7 +24,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v0 = RequireModule module=m1 referrer=m0 specifier="node:readline"
     v1 = Builtin builtin=Symbol
     v2 = String string="other"
-    v3 = Call v1, -, v2 @200
+    v3 = Call v1, -, v2 callNumber=200 @200
     PutModuleVariable v3 variable=g1
     v5 = Integer integer=1
     v6 = NewObject -, v5 layout=L1 fields=[0]
@@ -35,7 +35,7 @@ function f1 name="readline" module=m1 kind=Module role=Library results=[{type=an
   b0():
     v0 = Builtin builtin=Symbol
     v1 = String string="state"
-    v2 = Call v0, -, v1 @100
+    v2 = Call v0, -, v1 callNumber=100 @100
     PutModuleVariable v2 variable=g0
     v4 = Integer integer=1
     v5 = NewObject -, v4 layout=L0 fields=[0]

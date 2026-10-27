@@ -2,7 +2,7 @@
 // ./idioms-against-the-jit.ts says how, and prints the table; ./idioms-against-the-jit.test.ts holds each idiom against a bound.
 import { existsSync, readdirSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
-import { measureCommand } from "../analysis-scaling/measure-check";
+import { measureCommand, measureCommandWithMemory } from "../analysis-scaling/measure-check";
 import { writeEverydayIdioms } from "./everyday-idioms";
 import { writeTypedIdioms, writeUntypedIdioms } from "./untyped-idioms";
 
@@ -82,14 +82,20 @@ export function idiomsAgainstTheJit(
     process.platform === "linux" && existsSync("/usr/bin/time") ? ["/usr/bin/time", "-f", "peak %M"] : [];
 
   async function counted(cmd: string[], { turns, warmUp }: Turns, extra: Record<string, string> = {}) {
-    const { instructions, peakBytes, stdout, stderr } = await measureCommand(folder, [...underTime, ...cmd], 900_000, {
-      ...environment,
-      AOT_PERF_TURNS: String(turns),
-      AOT_PERF_WARM_UP_TURNS: String(warmUp),
-      ...extra,
-    });
+    const run = await (underTime.length ? measureCommand : measureCommandWithMemory)(
+      folder,
+      [...underTime, ...cmd],
+      900_000,
+      {
+        ...environment,
+        AOT_PERF_TURNS: String(turns),
+        AOT_PERF_WARM_UP_TURNS: String(warmUp),
+        ...extra,
+      },
+    );
+    const { instructions, stdout, stderr } = run;
     if (!instructions) throw new Error("instructions cannot be counted here");
-    const peakKilobytes = Number(/^peak (\d+)$/m.exec(stderr)?.[1] ?? peakBytes / 1024);
+    const peakKilobytes = "peakBytes" in run ? run.peakBytes / 1024 : Number(/^peak (\d+)$/m.exec(stderr)?.[1]);
     return {
       instructions,
       peakMegabytes: peakKilobytes / 1024,

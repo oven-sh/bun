@@ -397,7 +397,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     return;
                 };
                 self.set_position(prop.pos);
-                let function = self.get_method_function(&prop);
+                let function = get_method_function(hir, &prop);
                 let function_key = self.file.scopes.function_key(CodeUnit::Function(function));
                 let captures_home = captures::captures_home_object(self.file, function_key);
                 let home = captures_home.then(|| self.open_head(object));
@@ -412,7 +412,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 };
                 self.set_position(prop.pos);
                 let head = self.open_head(object);
-                let function = self.get_method_function(&prop);
+                let function = get_method_function(hir, &prop);
                 let given = GivenName::under_property(&prop, name);
                 let closure = self.lower_method(function, given, head);
                 let (computed_key, constant_key) = name.key_operands();
@@ -436,13 +436,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             PropKey::Private(_) | PropKey::None => None,
         }
     }
+}
 
-    fn get_method_function(&self, prop: &Prop) -> FnId {
-        let ExprKind::Fn(function) = self.file.hir[prop.value].kind else {
-            unreachable!("the value of a method, getter or setter is a function");
-        };
-        function
-    }
+fn get_method_function(hir: &File<'_>, prop: &Prop) -> FnId {
+    let ExprKind::Fn(function) = hir[prop.value].kind else {
+        unreachable!("the value of a method, getter or setter is a function");
+    };
+    function
 }
 
 fn is_literal(hir: &File<'_>, expression: ExprId) -> bool {
@@ -574,7 +574,12 @@ pub(crate) fn lower_object_literal(
         members.push((prop, in_front));
         in_front = InFront::Property(prop);
     }
-    put_halves_of_accessors_side_by_side(hir, &mut members);
+    let scopes = &lowering.file.scopes;
+    let key_of = |function: FnId| scopes.function_key(CodeUnit::Function(function));
+    let copies_same_values = |half: FnId, first_half: FnId| {
+        scopes.copies_same_values_beside(key_of(half), key_of(first_half))
+    };
+    put_halves_of_accessors_side_by_side(hir, &mut members, |member| member.0, copies_same_values);
     for (prop, in_front) in members {
         lowering.lower_property_definition(&mut object, dictionary, prop, in_front);
     }
@@ -582,35 +587,53 @@ pub(crate) fn lower_object_literal(
     super::finish_object(lowering, object)
 }
 
-// A getter or a setter goes right behind the accessor of its name that the literal has defined already. Making a function runs no code and nobody has seen the object yet, so nobody can tell,
-// and the name keeps the place of its first definition among the keys either way. What may give the name a value in between keeps the two apart.
-fn put_halves_of_accessors_side_by_side(
+// An accessor that a later half may join.
+struct OpenAccessor {
+    name: Atom,
+    // The half that stands where it is written.
+    first_half: FnId,
+    // Where the last of its halves stands.
+    last: usize,
+}
+
+// A getter or a setter goes right behind the accessor of its name that the literal has defined already, where `may_join` lets it. Making a function runs no code and nobody has seen the object yet,
+// so nobody can tell, and the name keeps the place of its first definition among the keys either way. What may give the name a value in between keeps the two apart.
+pub(in crate::lower) fn put_halves_of_accessors_side_by_side<Member>(
     hir: &File<'_>,
-    members: &mut SmallVec<[(PropId, InFront); 8]>,
+    members: &mut [Member],
+    property_of: impl Fn(&Member) -> PropId,
+    mut may_join: impl FnMut(FnId, FnId) -> bool,
 ) {
-    // The name of each accessor that a later half may join, and where its last half stands.
-    let mut open: SmallVec<[(Atom, usize); 4]> = SmallVec::new();
+    let mut open: SmallVec<[OpenAccessor; 4]> = SmallVec::new();
     for index in 0..members.len() {
-        let property = members[index].0;
+        let property = property_of(&members[index]);
         let prop = hir[property];
         match (prop.kind, hir.runtime_property_key(property)) {
             (PropKind::Getter | PropKind::Setter, PropKey::Name(name)) => {
-                let Some(found) = open.iter().position(|(other, _)| *other == name) else {
-                    open.push((name, index));
+                let half = get_method_function(hir, &prop);
+                let found = open.iter().position(|accessor| accessor.name == name);
+                let Some(found) = found.filter(|&found| may_join(half, open[found].first_half))
+                else {
+                    open.retain(|accessor| accessor.name != name);
+                    open.push(OpenAccessor {
+                        name,
+                        first_half: half,
+                        last: index,
+                    });
                     continue;
                 };
-                let place = open[found].1 + 1;
+                let place = open[found].last + 1;
                 members[place..=index].rotate_right(1);
-                for (_, last) in &mut open {
-                    if *last >= place {
-                        *last += 1;
+                for accessor in &mut open {
+                    if accessor.last >= place {
+                        accessor.last += 1;
                     }
                 }
-                open[found].1 = place;
+                open[found].last = place;
             }
             (PropKind::Init, _) if is_proto_setter(&prop) => {}
             (PropKind::Init | PropKind::Shorthand | PropKind::Method, PropKey::Name(name)) => {
-                open.retain(|(other, _)| *other != name);
+                open.retain(|accessor| accessor.name != name);
             }
             _ => open.clear(),
         }

@@ -11,7 +11,7 @@
 //   $TESTAOT native <filter> --part=2/4                           every fourth of the native tests whose name holds the filter, from the second on
 import { expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { isCI, isWindows, tempDir } from "harness";
+import { isASAN, isCI, isWindows, tempDir } from "harness";
 import { join } from "path";
 import {
   run,
@@ -22,6 +22,7 @@ import {
   whyShellSkipped,
   whySkipped,
 } from "./engine-test-commands";
+import { freshSeed } from "./fresh-seed";
 import { engineTests, jsc, scriptSkipReason } from "./shell/tools";
 
 const program = join(engineTests ?? "", "driver", "check-next.ir");
@@ -65,6 +66,21 @@ test.skipIf(!!whySkipped)("testaot fails a test file that does not exist", async
   expect(lines).toEqual([expect.stringMatching(/^FAIL no-such-file\.ir:1: /), "0 passed, 1 failed, 0 todo"]);
   expect(exitCode).toBe(1);
 });
+
+// The native test reader-fuzzer/short-run damages programs by the same seeds everywhere. A run that takes fresh seeds damages them in other ways.
+test.skipIf(!!whySkipped || freshSeed === undefined)(
+  `testaot reads the programs that the seeds from ${freshSeed} on damage`,
+  async () => {
+    const count = isASAN ? 5_000 : 20_000;
+    const { lines, stderr, exitCode } = await run("fuzz-reader", `--seed=${freshSeed}`, `--count=${count}`);
+    expect({ failed: lines.filter(line => line.startsWith("FAIL ")), stderr, exitCode }).toEqual({
+      failed: [],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  120_000,
+);
 
 test.skipIf(!!whyEngineTestsSkipped || !!whyShellSkipped)("jsc takes an image that testaot wrote", async () => {
   using folder = tempDir("aot-engine-tests", {});

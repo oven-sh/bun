@@ -148,6 +148,7 @@ impl PlannedSites {
 pub(super) struct EvaluationOrder {
     parts: OrderParts,
     is_on_cycle: Vec<bool>,
+    is_half_at_link: Vec<bool>,
     needs_loader: Vec<bool>,
 }
 
@@ -165,6 +166,11 @@ impl EvaluationOrder {
     /// Somebody may look at the module while its body runs.
     pub(super) fn half(&self, module: ModuleRef) -> bool {
         self.has(&self.parts.is_half, module)
+    }
+
+    /// An ES module that asks for the module may be linked while the body of the module runs.
+    pub(super) fn half_at_link(&self, module: ModuleRef) -> bool {
+        self.has(&self.is_half_at_link, module)
     }
 
     /// An ES module that something other than an import starts: an entry point, or what `import()` or `require` names.
@@ -843,17 +849,18 @@ pub(super) fn compute_order(
     };
     let seeds = modules.compiled_files.iter().filter(needs_loader_itself);
     let needs_loader = find_reached(&importers, seeds.map(|file| file.0).collect());
-    let late_targets = planned.iter().flat_map(|(_, file_sites)| {
+    let required_late = planned.iter().flat_map(|(_, file_sites)| {
         let sites = file_sites.sites.iter();
         let late_sites = sites.filter(|site| site.position == SitePosition::Late);
-        let other_loads = file_sites.other_loads.iter().map(|load| load.1);
-        late_sites.map(|site| site.target).chain(other_loads)
+        late_sites.map(|site| site.target)
     });
+    let other_loads = planned.iter().flat_map(|it| &it.1.other_loads);
+    let other_loads = other_loads.map(|load| load.1);
     // The host, or a name that the build does not know, loads an entry point at any time.
     let entry_points = input.sources.entry_points().iter();
     let loaded_by_name = entry_points
         .filter(|entry| !matches!(entry.kind, EntryPointKind::Main | EntryPointKind::Library));
-    let late_targets = late_targets.chain(loaded_by_name.map(|entry| ModuleRef::File(entry.file)));
+    let late_targets = other_loads.chain(loaded_by_name.map(|entry| ModuleRef::File(entry.file)));
     let is_exposed_in_application = |module: &ModuleRef| {
         let application = input.application?;
         let module = application.application_module(*module)?;
@@ -863,13 +870,29 @@ pub(super) fn compute_order(
     let exposed_in_application =
         exposed_in_application.filter(|module| is_exposed_in_application(module) == Some(true));
     let late_targets = late_targets.chain(exposed_in_application);
-    let late_targets = late_targets.filter_map(|target| Some(numbers.number_of(target)? as u32));
+    let number_of = |target: ModuleRef| Some(numbers.number_of(target)? as u32);
+    // All but `require`, which asks for no link.
+    let linked_late: Vec<u32> = late_targets.filter_map(number_of).collect();
+    let late_targets = linked_late.iter().copied();
+    let late_targets = late_targets.chain(required_late.filter_map(number_of));
     let is_exposed = find_reached(&edges, late_targets.collect());
     let is_on_cycle = find_modules_on_cycles(&edges);
     let is_half = is_on_cycle.iter().zip(&is_exposed);
-    let is_half = is_half
+    let is_half: Vec<bool> = is_half
         .map(|(&on_cycle, &exposed)| on_cycle || exposed)
         .collect();
+    // The load that starts the program links its modules one behind the other. Unless it waits, no body runs at a link but one that has asked for the module that is linked.
+    let waits = needs_loader.contains(&true);
+    let mut is_half_at_link: Vec<bool> = importers
+        .iter()
+        .zip(&is_half)
+        .map(|(importers, &half)| {
+            half && (waits || importers.iter().any(|&importer| is_half[importer as usize]))
+        })
+        .collect();
+    for target in linked_late {
+        is_half_at_link[target as usize] = true;
+    }
     let prefix_roots = find_prefix_roots(input, scans, &is_code_of_program, &planned);
     let loads = find_loads_seen_by_program(
         scans,
@@ -891,6 +914,7 @@ pub(super) fn compute_order(
     let order = EvaluationOrder {
         parts,
         is_on_cycle,
+        is_half_at_link,
         needs_loader,
     };
     let mut sites = PlannedSites {

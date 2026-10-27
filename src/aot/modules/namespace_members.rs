@@ -310,7 +310,12 @@ impl FileBinder<'_, '_> {
             return None;
         }
         let binding = match self.resolve_member(stands_for, name)? {
-            NamedMember::Fixed(_) if is_stored => return None,
+            NamedMember::Fixed(fixed) if is_stored => {
+                if matches!(fixed, Member::Marker(_)) {
+                    self.imports.stored_markers.push(module);
+                }
+                return None;
+            }
             NamedMember::Fixed(fixed) => {
                 self.imports.fixed_members.push((member, (module, fixed)));
                 return Some((member, None));

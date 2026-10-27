@@ -101,14 +101,14 @@ fn options_about_what_can_be_removed_are_passed_on() {
             result.expect("options").removable
         })
     };
-    let plain = convert_removable(|options| options.minify_syntax = false);
+    let plain = convert_removable(|_| {});
     assert_eq!(plain, RemovableOptions::default());
     let ignoring = convert_removable(|options| options.ignore_dce_annotations = true);
     assert!(ignoring.ignores_pure_annotations && !ignoring.jsx_has_side_effects);
     let with_side_effects = convert_removable(|options| options.jsx.side_effects = true);
     assert!(with_side_effects.jsx_has_side_effects && !with_side_effects.ignores_pure_annotations);
     let minifying = convert_removable(|options| options.minify_syntax = true);
-    assert!(minifying.minifies_syntax && !minifying.ignores_pure_annotations);
+    assert_eq!(minifying, plain);
 }
 
 #[test]

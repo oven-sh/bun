@@ -11,6 +11,7 @@ use bun_sema::hir::{
 use bun_sema::types::EnumValue;
 
 use super::{FileLowering, FunctionLowering};
+use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
 use crate::ir::{BlockId, PropertyKeyId, ValueId};
 
@@ -120,12 +121,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn emit_define(&mut self, object: ValueId, name: PropertyName, value: ValueId) {
+        self.emit_define_inside(object, name, value, None);
+    }
+
+    // The conversion of the key runs inside the built-in function that the definition stands for.
+    pub(crate) fn emit_define_inside(
+        &mut self,
+        object: ValueId,
+        name: PropertyName,
+        value: ValueId,
+        function: Option<BuiltinId>,
+    ) {
         match self.resolve_access(name) {
             PropertyName::Constant(key) => {
                 self.file.fragment.note_write(key);
                 self.builder.prop_define(object, key, value)
             }
-            PropertyName::Computed(property) => self.builder.elem_define(object, property, value),
+            PropertyName::Computed(property) => {
+                self.builder.elem_define(object, property, value, function)
+            }
         };
     }
 

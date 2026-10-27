@@ -1136,3 +1136,149 @@ export const readTrimTable = (path: string): import("../../scripts/build/trim/ta
   table.featuresHash = BigInt(table.featuresHash);
   return table;
 };
+
+/** What members of prototypes, of classes and of literals answer under names that only the modules of the runtime can write: `$isOpen`, `$exchange` and `$isPrepared` are read and written by these modules alone, `$written`, `$writer` and `$warning` by native code too. One line a question. */
+export function membersUnderNamesOfTheRuntime(tag: string): string[] {
+  const lines: string[] = [];
+  let stored: unknown;
+  const ask = (question: string, answer: () => unknown) => {
+    try {
+      lines.push(question + ": " + String(answer()));
+    } catch (error) {
+      lines.push(question + ": throws " + (error as Error).name);
+    }
+  };
+  const keysOf = (object: object) => Reflect.ownKeys(object).map(String).join();
+
+  class Fixed {
+    $isOpen(more: string) {
+      return "method " + more;
+    }
+    get $exchange() {
+      return "getter";
+    }
+    set $exchange(value: unknown) {
+      stored = value;
+    }
+    static $isPrepared() {
+      return "static";
+    }
+    $written(more: string) {
+      return "method " + more;
+    }
+    get $writer() {
+      return "getter";
+    }
+    set $writer(value: unknown) {
+      stored = value;
+    }
+    static $warning() {
+      return "static";
+    }
+  }
+  class Heir extends Fixed {
+    $isOpen(more: string) {
+      return "heir of " + super.$isOpen(more);
+    }
+    $written(more: string) {
+      return "heir of " + super.$written(more);
+    }
+    storeAbove(value: unknown) {
+      super.$exchange = value;
+      super.$writer = value;
+    }
+  }
+  const makeClass = (captured: string) =>
+    class {
+      $isOpen(more: string) {
+        return captured + " method " + more;
+      }
+      get $exchange() {
+        return captured + " getter";
+      }
+      set $exchange(value: unknown) {
+        stored = captured + " " + value;
+      }
+      static $isPrepared() {
+        return captured + " static";
+      }
+      $written(more: string) {
+        return captured + " method " + more;
+      }
+      get $writer() {
+        return captured + " getter";
+      }
+      set $writer(value: unknown) {
+        stored = captured + " " + value;
+      }
+      static $warning() {
+        return captured + " static";
+      }
+    };
+  function Plain() {}
+  $toClass(Plain, "Plain");
+  Plain.prototype.$isOpen = function (more: string) {
+    return tag + " stored " + more;
+  };
+  Plain.prototype.$written = function (more: string) {
+    return tag + " stored " + more;
+  };
+  const makeLiteral = (captured: string) => ({
+    $isOpen(more: string) {
+      return captured + " method " + more;
+    },
+    get $exchange() {
+      return captured + " getter";
+    },
+    set $exchange(value: unknown) {
+      stored = captured + " " + value;
+    },
+    $written(more: string) {
+      return captured + " method " + more;
+    },
+    get $writer() {
+      return captured + " getter";
+    },
+    set $writer(value: unknown) {
+      stored = captured + " " + value;
+    },
+  });
+
+  const subjects: [string, any, any][] = [
+    ["a class", new Fixed(), Fixed],
+    ["an heir", new Heir(), Heir],
+    ["a class that captures", new (makeClass(tag))(), makeClass(tag)],
+    ["a second class that captures", new (makeClass(tag + tag))(), makeClass(tag + tag)],
+    ["a function", new Plain(), Plain],
+    ["a literal", makeLiteral(tag), undefined],
+    ["an object below a literal", Object.create(makeLiteral(tag)), undefined],
+  ];
+  for (const [name, instance, constructor] of subjects) {
+    ask(name + " $isOpen", () => instance.$isOpen("a"));
+    ask(name + " $written", () => instance.$written("b"));
+    ask(name + " $exchange", () => instance.$exchange);
+    ask(name + " $writer", () => instance.$writer);
+    ask(name + " $exchange =", () => ((stored = "nothing"), (instance.$exchange = 1), stored));
+    ask(name + " $writer =", () => ((stored = "nothing"), (instance.$writer = 2), stored));
+    ask(name + " $isPrepared", () => constructor && constructor.$isPrepared && constructor.$isPrepared());
+    ask(name + " $warning", () => constructor && constructor.$warning && constructor.$warning());
+    ask(name + " under no such name", () => typeof instance.$isPrepared + " " + typeof instance.$warning);
+    ask(name + " keys", () => keysOf(instance) + " | " + keysOf(Object.getPrototypeOf(instance)));
+    ask(name + " keys of the constructor", () => constructor && keysOf(constructor));
+  }
+  ask("a store above", () => ((stored = "nothing"), new Heir().storeAbove(3), stored));
+  ask(
+    "removed",
+    () =>
+      delete (Fixed.prototype as { $isOpen?: unknown }).$isOpen &&
+      delete (Fixed.prototype as { $written?: unknown }).$written,
+  );
+  ask("behind the removal", () => typeof new Fixed().$isOpen + " " + typeof new Fixed().$written);
+  ask("an heir behind the removal", () => new Heir().$isOpen("c"));
+  ask("stored again", () => {
+    Fixed.prototype.$isOpen = Plain.prototype.$isOpen;
+    Fixed.prototype.$written = Plain.prototype.$written;
+    return new Fixed().$isOpen("d") + " | " + new Heir().$written("e");
+  });
+  return lines;
+}

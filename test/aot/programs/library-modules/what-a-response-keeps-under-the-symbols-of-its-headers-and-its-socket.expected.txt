@@ -1,4 +1,4 @@
-the prototype of a socket: kRememberPeer kEnableStreaming kResumeUnlessFlowing ::bunternal:: kHasQueuedReads
+the prototype of a socket: kRememberPeer kEnableStreaming ::bunternal:: kHasQueuedReads
 /headers at the start: kOutHeaders null, kLenientValidation undefined
 /headers at the start: getHeaders() {}, getRawHeaderNames() []
 /headers after setHeader: kOutHeaders null, kLenientValidation undefined

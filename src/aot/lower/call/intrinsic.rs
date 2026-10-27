@@ -83,6 +83,7 @@ pub(super) fn lower_intrinsic_call(
             expected_result: None,
             is_never_inlined: false,
             is_reflect_construct_syntax: false,
+            call_number: None,
         },
     };
     let lowered = match hir[node].chain {

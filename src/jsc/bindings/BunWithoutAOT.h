@@ -51,6 +51,7 @@ inline void hostDidLoadBuiltinModule(JSGlobalObject*, uint32_t, JSValue) {}
 
 inline bool hasBuiltinModule(JSGlobalObject*, uint32_t) { return false; }
 inline bool refusesLibraryText() { return false; }
+inline bool refusesLibraryText(JSGlobalObject*) { return false; }
 inline bool refusesToRun(JSFunction*) { return false; }
 inline void throwBuiltinNotCompiled(JSGlobalObject*, const String&) {}
 

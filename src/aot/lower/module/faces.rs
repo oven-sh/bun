@@ -52,7 +52,7 @@ impl FileLowering<'_, '_, '_, '_> {
             {
                 continue;
             }
-            let Some(value) = lowering.read_imported_name(copied.module, copied.name) else {
+            let Some(value) = lowering.read_name_at_link(copied.module, copied.name) else {
                 continue;
             };
             let copy = lowering.file.ensure_variable(VariableKey::Copy(export));

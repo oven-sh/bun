@@ -1,10 +1,11 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use bun_sema::bind::{Binding, Decl, Parent, PatParent, SymbolId};
 use bun_sema::hir::{
     Chain, ExprId, ExprKind, Flags, FnBody, FnId, IdList, NameKind, PatKind, PropKey, PropKind,
     StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::ir::generated::LimitId;
@@ -53,6 +54,16 @@ struct Found {
     initializer: Printed,
     // The initializer, or what is printed in its place if it is such a name itself.
     written: Printed,
+}
+
+// The statement around each expression on the way from a name out to its statement. Every name of a long row of operators goes out through the same operators.
+#[derive(Default)]
+pub(in crate::lower) struct StatementsAround(RefCell<FxHashMap<ExprId, Option<StmtId>>>);
+
+// What stands around an expression.
+enum Around {
+    Expression(ExprId),
+    Statement(Option<StmtId>),
 }
 
 // The statements of one list around one of them.
@@ -359,18 +370,39 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn find_statement_around(&self, expression: ExprId) -> Option<StmtId> {
-        let bound = self.bound;
+        let mut remembered = self.statements_around.0.borrow_mut();
         let mut child = expression;
-        loop {
-            child = match bound.parent_of_expr(child) {
-                Parent::Expr(parent) => parent,
-                Parent::Prop(property)
-                | Parent::PropKey(property)
-                | Parent::MethodKey(property) => bound.prop_owner[property.idx()],
-                Parent::Stmt(statement) => return Some(statement),
-                Parent::VarInit(declaration) => return Some(bound.var_stmt[declaration.idx()]),
-                _ => return None,
+        let statement = loop {
+            if let Some(&statement) = remembered.get(&child) {
+                break statement;
+            }
+            child = match self.find_around(child) {
+                Around::Expression(parent) => parent,
+                Around::Statement(statement) => break statement,
             };
+        };
+        let mut child = expression;
+        while remembered.insert(child, statement).is_none() {
+            let Around::Expression(parent) = self.find_around(child) else {
+                break;
+            };
+            child = parent;
+        }
+        statement
+    }
+
+    fn find_around(&self, expression: ExprId) -> Around {
+        let bound = self.bound;
+        match bound.parent_of_expr(expression) {
+            Parent::Expr(parent) => Around::Expression(parent),
+            Parent::Prop(property) | Parent::PropKey(property) | Parent::MethodKey(property) => {
+                Around::Expression(bound.prop_owner[property.idx()])
+            }
+            Parent::Stmt(statement) => Around::Statement(Some(statement)),
+            Parent::VarInit(declaration) => {
+                Around::Statement(Some(bound.var_stmt[declaration.idx()]))
+            }
+            _ => Around::Statement(None),
         }
     }
 

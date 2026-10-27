@@ -154,6 +154,7 @@ fn emit_references(builder: &mut FunctionBuilder, names: &[Reference]) {
                 None,
                 Some(id),
                 None,
+                None,
                 false,
                 false,
                 false,

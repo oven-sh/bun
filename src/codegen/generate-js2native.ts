@@ -26,6 +26,7 @@ interface WrapperCall {
   symbol_target: string;
   symbol_generated: string;
   display_name: string;
+  is_hidden_in_stack_traces: boolean;
   call_length: number;
   filename: string;
   written_kind: NativeCallKind;
@@ -81,6 +82,7 @@ export function registerNativeCall(
   filename: string,
   symbol: string,
   create_fn_len: null | number,
+  is_hidden_in_stack_traces = false,
 ) {
   const resolved_filename = resolveNativeFileId(call_type, filename);
   const written_kind = nativeCallKind(call_type, create_fn_len != null);
@@ -114,6 +116,7 @@ export function registerNativeCall(
       symbol_target: symbol,
       symbol_generated: "js2native_wrap_" + symbol.replace(/[^A-Za-z]/g, "_"),
       display_name: callBaseName(symbol),
+      is_hidden_in_stack_traces,
       call_length: create_fn_len,
       filename: resolved_filename,
       written_kind,
@@ -206,7 +209,7 @@ export function getJS2NativeCPP(guards: Guards) {
     if (x.wrap_kind === "new-function") {
       return [
         `static JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
-        `  return js2nativeNewFunction(globalObject, ${x.call_length}, ${JSON.stringify(x.display_name)}_s, ${nativePointer(guardOf(x), x.symbol_target)});`,
+        `  return js2nativeNewFunction(globalObject, ${x.call_length}, ${JSON.stringify(x.display_name)}_s, ${nativePointer(guardOf(x), x.symbol_target)}, JSC::ImplementationVisibility::${x.is_hidden_in_stack_traces ? "Private" : "Public"});`,
         `}`,
       ].join("\n");
     }
@@ -222,8 +225,8 @@ export function getJS2NativeCPP(guards: Guards) {
     "using namespace JSC;",
     "using namespace WebCore;" + "\n",
     // One out-of-line JSFunction::create for all the `new-function` wrappers below.
-    `static NEVER_INLINE JSC::JSValue js2nativeNewFunction(Zig::GlobalObject* globalObject, unsigned length, ASCIILiteral name, JSC::NativeFunction function) {`,
-    `  return JSC::JSFunction::create(globalObject->vm(), globalObject, length, name, function, JSC::ImplementationVisibility::Public);`,
+    `static NEVER_INLINE JSC::JSValue js2nativeNewFunction(Zig::GlobalObject* globalObject, unsigned length, ASCIILiteral name, JSC::NativeFunction function, JSC::ImplementationVisibility visibility) {`,
+    `  return JSC::JSFunction::create(globalObject->vm(), globalObject, length, name, function, visibility);`,
     `}` + "\n",
     ...wrapperCallStrings,
     ...nativeCalls

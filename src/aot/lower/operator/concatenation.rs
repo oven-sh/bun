@@ -24,9 +24,15 @@ impl PrintedOperand {
 
     // What the transpiler prints in place of `self + next`, if that is one literal or one template.
     // It makes a string of a literal on the left only where that is the whole left operand.
-    fn join(self, next: PrintedOperand, is_whole_left_operand: bool) -> Option<PrintedOperand> {
+    fn join(
+        self,
+        next: PrintedOperand,
+        is_whole_left_operand: bool,
+        is_written: bool,
+    ) -> Option<PrintedOperand> {
         use PrintedOperand::{OtherLiteral, Template, Text};
         match (self, next) {
+            _ if is_written => None,
             (Text, Text | OtherLiteral) => Some(Text),
             (Text, Template) | (Template, Text | OtherLiteral | Template) => Some(Template),
             (OtherLiteral, Text | OtherLiteral | Template) if is_whole_left_operand => Some(next),
@@ -100,7 +106,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut has_string_in_front = false;
         for &operand in operands.iter().rev() {
             let next = self.classify_printed_operand(operand, depth);
-            match last.join(next, is_whole) {
+            match last.join(next, is_whole, self.file.runs_as_written()) {
                 Some(joined) => last = joined,
                 None => {
                     has_string_in_front |= last.is_string();
@@ -173,7 +179,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             printed.clear();
             for index in (start..end).rev() {
                 let next = self.classify_printed_operand(spine[index].1, 0);
-                match last.join(next, is_whole) {
+                match last.join(next, is_whole, self.file.runs_as_written()) {
                     Some(joined) => {
                         operators[index] = SumOperator::Joined;
                         last = joined;

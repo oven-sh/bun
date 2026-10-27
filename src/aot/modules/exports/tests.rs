@@ -82,6 +82,7 @@ fn with_export_tables(
             modules: &modules,
             inner_modules: &|_| &[],
             half: &|module| order.half(module),
+            half_at_link: &|module| order.half_at_link(module),
             is_prefix_root: &|_| true,
         });
         let entries = collect_export_entries(input, &scans, &modules);
@@ -162,7 +163,7 @@ fn exports_follow_resolve_export() {
         ("wrap.js", &["own = wrap.js#own"]),
         ("indirect1.js", &["c1 = synthetic c.cjs c1"]),
         ("cd.js", &[]),
-        ("indirect2.js", &[]),
+        ("indirect2.js", &["y = indirect cd.js x"]),
         (
             "ca.js",
             &[
@@ -721,6 +722,143 @@ fn ambiguous_name_hides_commonjs_star_name() {
             let module = ModuleRef::File(file_named(input, file));
             assert_eq!(graph.find_export(module, x, atoms), lookup, "{file}");
         }
+        assert!(graph.errors().is_empty());
+    });
+}
+
+#[test]
+fn name_behind_two_commonjs_stars_is_handed_on() {
+    let files = [
+        ("main.js", "import './barrel.js'"),
+        ("inner.cjs", "exports.c = 1"),
+        ("other.cjs", "exports.e = 5"),
+        (
+            "index.js",
+            "export * from './inner.cjs'; export * from './other.cjs'",
+        ),
+        ("second.js", "export { c } from './index.js'"),
+        (
+            "imported.js",
+            "import { c } from './index.js'; export { c as d }",
+        ),
+        (
+            "barrel.js",
+            "export * from './second.js'; export * from './imported.js'",
+        ),
+    ];
+    let expected: [(&str, &[&str], &[&str]); 3] = [
+        ("second.js", &["c = indirect index.js c"], &["index.js c"]),
+        ("imported.js", &["d = indirect index.js c"], &["index.js c"]),
+        (
+            "barrel.js",
+            &[
+                "c = indirect index.js c star",
+                "d = indirect index.js c star",
+            ],
+            &[],
+        ),
+    ];
+    with_graph(&files, |graph, input| {
+        for (file, exports, required) in expected {
+            let description = describe_module(graph, input, file);
+            assert_eq!(lines_after("export ", &description), exports, "{file}");
+            assert_eq!(lines_after("required ", &description), required, "{file}");
+        }
+        let requests = lines_after("request ", &describe_module(graph, input, "barrel.js"));
+        assert_eq!(requests, ["second.js", "imported.js"]);
+        assert!(graph.errors().is_empty());
+    });
+}
+
+#[test]
+fn name_handed_on_is_compared_with_commonjs_star_beside_it() {
+    let two_stars = "export * from './inner.cjs'; export * from './other.cjs'";
+    let files = [
+        ("main.js", "import './above.js'; import './one_above.js'"),
+        ("inner.cjs", "exports.c = 1"),
+        ("other.cjs", "exports.e = 5"),
+        ("y.cjs", "exports.y = 2"),
+        ("index.js", two_stars),
+        ("second.js", "export { c } from './index.js'"),
+        (
+            "outer.js",
+            "export * from './second.js'; export * from './y.cjs'",
+        ),
+        ("above.js", "export { c } from './outer.js'"),
+        ("one.js", "export * from './inner.cjs'"),
+        ("one_second.js", "export { c } from './one.js'"),
+        (
+            "one_outer.js",
+            "export * from './one_second.js'; export * from './y.cjs'",
+        ),
+        ("one_above.js", "export { c } from './one_outer.js'"),
+    ];
+    let expected = [
+        ("outer.js", "second.js", "above.js", "indirect index.js c"),
+        (
+            "one_outer.js",
+            "one_second.js",
+            "one_above.js",
+            "synthetic inner.cjs c",
+        ),
+    ];
+    with_graph(&files, |graph, input| {
+        let atoms = &input.files.atoms;
+        let c = atoms.intern(b"c");
+        for (outer, second, above, binding) in expected {
+            let description = describe_module(graph, input, outer);
+            let requests = [second, "y.cjs dynamic-star"];
+            assert_eq!(lines_after("request ", &description), requests, "{outer}");
+            let exports = [format!("c = {binding} star can-be-ambiguous")];
+            assert_eq!(lines_after("export ", &description), exports, "{outer}");
+            let module = ModuleRef::File(file_named(input, outer));
+            assert_eq!(graph.find_export(module, c, atoms), ExportLookup::Unknown);
+            let description = describe_module(graph, input, above);
+            let exports = [format!("c = {binding}")];
+            assert_eq!(lines_after("export ", &description), exports, "{above}");
+            let required = [format!("{outer} c")];
+            assert_eq!(lines_after("required ", &description), required, "{above}");
+        }
+        assert!(graph.errors().is_empty());
+    });
+}
+
+#[test]
+fn names_handed_on_out_of_two_modules_with_stars_are_compared_at_run_time() {
+    let files = [
+        ("main.js", "import './same.js'; import './both.js'"),
+        ("inner.cjs", "exports.c = 1"),
+        ("other.cjs", "exports.e = 5"),
+        (
+            "index.js",
+            "export * from './inner.cjs'; export * from './other.cjs'",
+        ),
+        (
+            "reversed.js",
+            "export * from './other.cjs'; export * from './inner.cjs'",
+        ),
+        ("s1.js", "export { c } from './index.js'"),
+        ("s2.js", "export { c } from './index.js'"),
+        ("s3.js", "export { c } from './reversed.js'"),
+        (
+            "same.js",
+            "export * from './s1.js'; export * from './s2.js'",
+        ),
+        (
+            "both.js",
+            "export * from './s1.js'; export * from './s3.js'",
+        ),
+    ];
+    with_graph(&files, |graph, input| {
+        let description = describe_module(graph, input, "same.js");
+        assert_eq!(lines_after("request ", &description), ["s1.js", "s2.js"]);
+        let exports = lines_after("export ", &description);
+        assert_eq!(exports, ["c = indirect index.js c star"]);
+        let description = describe_module(graph, input, "both.js");
+        let requests = lines_after("request ", &description);
+        assert_eq!(requests, ["s1.js dynamic-star", "s3.js dynamic-star"]);
+        let exports = lines_after("export ", &description);
+        assert_eq!(exports, ["c = indirect index.js c star can-be-ambiguous"]);
         assert!(graph.errors().is_empty());
     });
 }

@@ -244,6 +244,10 @@ export class Aligner {
  * from where the reading is, with the sign in the lowest bit.
  */
 export function encodeWordsInEvaluatedText(written: Words, evaluated: Words, found: Map<number, number>): Uint8Array {
+  return readWithCorrections(written, evaluated, found).corrections;
+}
+
+function readWithCorrections(written: Words, evaluated: Words, found: Map<number, number>) {
   const numbers: number[] = [];
   const aligner = new Aligner(written, evaluated);
   let last = 0;
@@ -268,7 +272,7 @@ export function encodeWordsInEvaluatedText(written: Words, evaluated: Words, fou
     numbers.push((distance < 0 ? -distance * 2 - 1 : distance * 2) + 1);
     aligner.correct(distance);
   }
-  return encodeNumbers(numbers);
+  return { corrections: encodeNumbers(numbers), partners: aligner.partners };
 }
 
 /** 7 bits a byte, the lowest first. */
@@ -285,6 +289,69 @@ export function encodeBundledPositions(written: string, output: string, map: Sou
   const [wordsOfWritten, wordsOfEvaluated] = [new Words(written), new Words(evaluated)];
   const found = findWordsInEvaluatedText(wordsOfWritten, output, map, wordsOfEvaluated);
   return encodeWordsInEvaluatedText(wordsOfWritten, wordsOfEvaluated, found);
+}
+
+const quoteInFrontOfWord = /\/\* as: (.+?) \*\/\s*/g;
+
+/**
+ * The compiler reads `second` in place of `first`, and a stack trace shows the places of `first`. Answers, for the number of a word
+ * of `second`, the number of the word of `first` that it stands for. A line that both texts have equally often stands for the line
+ * of the same number. In front of a word of another line, a comment `as:` quotes `first` up to the word.
+ */
+export function findWordsOfFirstText(second: Words, first: Words): Map<number, number> {
+  const listLines = (words: Words) => {
+    const lines = new Map<string, number[][]>();
+    let [start, number] = [0, 0];
+    for (const line of words.text.split("\n")) {
+      const end = start + line.length;
+      const numbers: number[] = [];
+      for (; number < words.length && words.starts[number] < end; number++) numbers.push(number);
+      if (numbers.length > 0) lines.set(line.trim(), [...(lines.get(line.trim()) ?? []), numbers]);
+      start = end + 1;
+    }
+    return lines;
+  };
+  const found = new Map<number, number>();
+  const linesOfFirst = listLines(first);
+  for (const [line, places] of listLines(second)) {
+    const partners = linesOfFirst.get(line);
+    if (partners?.length !== places.length) continue;
+    for (const [n, numbers] of places.entries()) numbers.forEach((number, k) => found.set(number, partners[n][k]));
+  }
+  for (const match of second.text.matchAll(quoteInFrontOfWord)) {
+    const quote = match[1];
+    const at = first.text.indexOf(quote);
+    if (at < 0 || first.text.includes(quote, at + 1)) throw new Error(`The other text does not have "${quote}" once`);
+    const number = second.starts.indexOf(match.index + match[0].length);
+    const partner = first.ends.indexOf(at + quote.length);
+    if (number < 0 || partner < 0) throw new Error(`"${quote}" does not end with a word, or no word follows it`);
+    found.set(number, partner);
+  }
+  return found;
+}
+
+/** The same as encodeBundledPositions() for `second`, which the compiler reads in place of `written`. */
+export function encodeBundledPositionsOfSecondText(
+  second: string,
+  written: string,
+  output: string,
+  map: SourceMap,
+  evaluated: string,
+): Uint8Array {
+  const [wordsOfSecond, wordsOfWritten, wordsOfEvaluated] = [
+    new Words(second),
+    new Words(written),
+    new Words(evaluated),
+  ];
+  const found = findWordsInEvaluatedText(wordsOfWritten, output, map, wordsOfEvaluated);
+  const { partners } = readWithCorrections(wordsOfWritten, wordsOfEvaluated, found);
+  const wordsOfFirstText = findWordsOfFirstText(wordsOfSecond, wordsOfWritten);
+  const foundOfSecond = new Map<number, number>();
+  for (let number = 0; number < wordsOfSecond.length; number++) {
+    const partner = wordsOfFirstText.get(number);
+    foundOfSecond.set(number, partner === undefined ? -1 : partners[partner]);
+  }
+  return encodeWordsInEvaluatedText(wordsOfSecond, wordsOfEvaluated, foundOfSecond);
 }
 
 /** A line for the manifest of the sources. */

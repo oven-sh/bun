@@ -354,6 +354,9 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // JSC reports a call at the end of the last token in front of the arguments, which is the `?.` of `f?.()`.
     pub(in crate::lower) fn call_position(&self, site: Call) -> u32 {
+        if let Some(start) = self.find_start_of_require_printed_alone(site) {
+            return start;
+        }
         let end = self.last_mapped_position(site.callee);
         match site.chain {
             Chain::Start if self.is_shown_without_source_map() => self.next_token_position(end) + 2,
@@ -1006,6 +1009,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     parts.extend([test, branches.yes, branches.no]);
                     true
                 }
+                ExprKind::Array(elements) => {
+                    parts.extend(hir.ids(elements));
+                    true
+                }
                 _ => false,
             };
             if !is_removed {
@@ -1050,6 +1057,9 @@ impl FileLowering<'_, '_, '_, '_> {
     // An expression without what Bun's transpiler does not print: type syntax, a comma whose left operand it drops, and what a literal decides against.
     pub(in crate::lower) fn skip_unprinted_syntax(&self, expression: ExprId) -> ExprId {
         let mut printed = self.skip_type_syntax(expression);
+        if self.runs_as_written() {
+            return printed;
+        }
         loop {
             let inner = match self.hir.written_kind(printed) {
                 ExprKind::Binary {
@@ -1154,6 +1164,49 @@ impl FileLowering<'_, '_, '_, '_> {
             )
             && site.specifier_node.is_some()
             && self.is_literal_operand(site.specifier_node)
+    }
+
+    // Of `(0, require)("a")` Bun's transpiler prints `require("a")`, and that one token stands where the callee is written.
+    fn find_start_of_require_printed_alone(&self, site: Call) -> Option<u32> {
+        let hir = self.hir;
+        let written = self.skip_type_syntax(site.callee);
+        let printed = self.skip_unprinted_syntax(written);
+        let is_require = printed != written
+            && matches!(hir[printed].kind, ExprKind::Ident(known::require))
+            && !matches!(self.bound.binding(printed), Binding::Symbol(_));
+        let mut arguments = hir.ids(site.args);
+        let (Some(specifier), None) = (arguments.next(), arguments.next()) else {
+            return None;
+        };
+        if !is_require || !self.is_printed_as_specifier(specifier) {
+            return None;
+        }
+        let mut first = written;
+        loop {
+            let operand = match hir.written_kind(first) {
+                ExprKind::Binary { left, .. } => left,
+                ExprKind::Cond { test, .. } => test,
+                ExprKind::Index { obj, .. } => obj,
+                _ => return Some(hir[first].pos),
+            };
+            first = self.skip_type_syntax(operand);
+        }
+    }
+
+    // `require(a ? "b" : "c")` is printed `a ? require("b") : require("c")`.
+    fn is_printed_as_specifier(&self, argument: ExprId) -> bool {
+        let printed = self.skip_unprinted_syntax(argument);
+        match self.hir.written_kind(printed) {
+            ExprKind::Cond { branches, .. } => {
+                let branches = self.hir.branches(branches);
+                self.is_printed_as_specifier(branches.yes)
+                    && self.is_printed_as_specifier(branches.no)
+            }
+            _ => {
+                self.is_literal_operand(printed)
+                    && self.find_literal_kind(printed) == Some(LiteralKind::String)
+            }
+        }
     }
 
     // `{ a: b }.a` is printed `b`, unless it is called.
@@ -1456,9 +1509,14 @@ impl FileLowering<'_, '_, '_, '_> {
     // JSC's parser knows `Reflect.construct(target, list)` by these two names, whatever `Reflect` is bound to.
     pub(super) fn is_reflect_construct_syntax(&self, callee: ExprId) -> bool {
         let hir = self.hir;
-        let Some((object, key)) = hir.member_key(self.skip_type_syntax(callee)) else {
+        let member = self.skip_type_syntax(callee);
+        let Some((object, key)) = hir.member_key(member) else {
             return false;
         };
+        // Bun's transpiler prints `Reflect["construct"]` with a dot.
+        if self.runs_as_written() && !matches!(hir.written_kind(member), ExprKind::Dot { .. }) {
+            return false;
+        }
         // Bun's transpiler prints the initializer of a variable in place of its only use, and a literal in place of the name of a constant.
         let name = match key {
             MemberKey::Name(name) => name,

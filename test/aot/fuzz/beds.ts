@@ -295,7 +295,7 @@ export class ProductBed implements Bed {
     const beside = (this.options.projects ?? []).filter(name => !projects[name].hasTypings || typingsOfBun());
     const project = beside.length ? [besideTheProgram + beside[Math.floor(Math.random() * beside.length)]] : [];
     const own = program.flags ?? [];
-    return this.#modes(program).map(mode => ({ name: [mode.name, ...own].join(" "), flags: [...mode.flags, ...own, ...stress, ...project, ...(size ? [inTheCompanyOf + size] : []), ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
+    return this.#modes(program).map(mode => ({ name: [mode.name, ...own].join(" "), flags: [checksThatMoveNoOutput, ...mode.flags, ...own, ...stress, ...project, ...(size ? [inTheCompanyOf + size] : []), ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
   }
 
   #modes(program: Program): Mode[] {
@@ -672,6 +672,9 @@ export function normalized(text: string): string {
 const uncaught = (run: Run) => (run.stderr + "\n" + run.stdout).split("\n").find(line => /^(error|Exception|[A-Za-z]*Error)\b/.test(line)) ?? "";
 
 const validationMessage = /^.*(AOT validation|validation failed).*$/m;
+
+// What the compiler can ask itself while it builds, without a byte of the executable depending on it. A build of a user's does not pay for it.
+const checksThatMoveNoOutput = "--aot-check=verify-each-stage,validate-references,flow-fixpoint,used-values-are-listed";
 
 export function compare(bed: Bed, program: Program, plain: Run, compiled: Compiled): Verdict {
   const failure = (kind: FindingKind, detail: string, signature = detail): Failure => ({ kind, detail, signature });

@@ -71,6 +71,26 @@ fn can_have_illegal_decorators(kind: Kind) -> bool {
     )
 }
 
+/// Whether `bun run` stops at the modifier or decorator of `location` that TypeScript reports `code` for.
+fn is_syntax_error_in_bun_run(hir: &File<'_>, location: Node, code: u32) -> bool {
+    let is_decorator_error = matches!(code, 1206 | 1433 | 8038);
+    match hir.data(location) {
+        NodeData::Stmt(_) => !hir.is_ambient(location) || is_decorator_error || code == 1044,
+        NodeData::Param(_) if is_decorator_error => {
+            hir.class_of(hir.parent(hir.parent(location))).is_none()
+        }
+        NodeData::Param(_) => matches!(code, 1090 | 1187 | 1317),
+        NodeData::Member(m) => match hir.kind(location) {
+            Kind::ClassStaticBlockDeclaration => is_decorator_error || hir.is_js,
+            Kind::Constructor if is_decorator_error => {
+                hir.fns.get(hir[m].func.idx()).is_some_and(has_body)
+            }
+            _ => matches!(code, 1248 | 1274),
+        },
+        _ => false,
+    }
+}
+
 fn is_decorator(modifier: &Modifier) -> bool {
     matches!(modifier.kind, ModifierKind::Decorator(_))
 }
@@ -287,7 +307,14 @@ impl Checker<'_, '_> {
         file: FileId,
         node: impl ToNode,
     ) -> Option<GrammarError> {
-        self.grammar_error_in_modifiers_of_node(file, self.hir(file).node(node))
+        let location = self.hir(file).node(node);
+        let error = self.grammar_error_in_modifiers_of_node(file, location)?;
+        let class = if is_syntax_error_in_bun_run(self.hir(file), location, error.code) {
+            DiagnosticClass::EarlyError
+        } else {
+            error.class
+        };
+        Some(GrammarError { class, ..error })
     }
 
     /// `grammar_error_in_modifiers` for the node `location`.

@@ -112,22 +112,32 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         modules: &modules,
         inner_modules: &|file: FileId| &inner_commonjs_modules[file.idx()][..],
         half: &|module: ModuleRef| order.half(module),
+        half_at_link: &|module: ModuleRef| order.half_at_link(module),
         is_prefix_root: &|file: FileId| order.is_prefix_root(file),
     };
-    let texts = scan_commonjs_modules(&commonjs_input);
-    let entries = collect_export_entries(input, &scans, &modules);
-    let tables = resolve_exports(input.files, &scans, &modules, entries, &texts);
-    sites.settle(input.files, &modules, &tables);
-    let find_marker = |module: ModuleRef| texts.marker(module);
-    let imports = bind_imports(
-        input,
-        &scans,
-        &modules,
-        &tables,
-        &order,
-        &sites,
-        &find_marker,
-    );
+    let mut texts = scan_commonjs_modules(&commonjs_input);
+    // What the text of a file says of its `__esModule` counts until a store in another file is found.
+    let (tables, imports) = loop {
+        let entries = collect_export_entries(input, &scans, &modules);
+        let tables = resolve_exports(input.files, &scans, &modules, entries, &texts);
+        sites.settle(input.files, &modules, &tables);
+        let find_marker = |module: ModuleRef| texts.marker(module);
+        let imports = bind_imports(
+            input,
+            &scans,
+            &modules,
+            &tables,
+            &order,
+            &sites,
+            &find_marker,
+        );
+        let stored = imports.iter().flat_map(|file| &file.stored_markers);
+        let stored: Vec<ModuleRef> = stored.copied().collect();
+        if stored.is_empty() {
+            break (tables, imports);
+        }
+        texts.forget_markers(&stored);
+    };
     let synthetic = number_synthetic_exports(input, &modules, &tables, &imports, &texts);
     let mut commonjs_exports =
         CommonJsExports::finish(&commonjs_input, texts, &tables, &imports, &synthetic);

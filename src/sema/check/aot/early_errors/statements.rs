@@ -89,15 +89,24 @@ impl Checker<'_, '_> {
             StmtKind::Import(_) => {
                 let code = if hir.is_js { 1473 } else { 1232 };
                 self.check_module_syntax_position(file, s, code);
+                self.check_module_syntax_in_namespace(file, s, 1147);
                 self.check_import_attribute_values(file, s);
             }
             StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
                 let code = if hir.is_js { 1474 } else { 1233 };
                 self.check_module_syntax_position(file, s, code);
+                self.check_module_syntax_in_namespace(file, s, 1194);
                 self.check_import_attribute_values(file, s);
             }
             StmtKind::ExportDefault(_) => {
                 self.check_module_syntax_position(file, s, 1258);
+                self.check_module_syntax_in_namespace(file, s, 1319);
+            }
+            StmtKind::Module(_)
+            | StmtKind::ImportEquals(_)
+            | StmtKind::ExportAssign(_)
+            | StmtKind::ExportAsNamespace(_) => {
+                self.check_typescript_statement_position(file, s);
             }
             StmtKind::Empty
             | StmtKind::Debugger
@@ -111,11 +120,7 @@ impl Checker<'_, '_> {
             | StmtKind::Switch { .. }
             | StmtKind::Interface(_)
             | StmtKind::TypeAlias(_)
-            | StmtKind::Enum(_)
-            | StmtKind::Module(_)
-            | StmtKind::ImportEquals(_)
-            | StmtKind::ExportAssign(_)
-            | StmtKind::ExportAsNamespace(_) => {}
+            | StmtKind::Enum(_) => {}
         }
     }
 

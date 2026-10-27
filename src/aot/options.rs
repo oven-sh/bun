@@ -30,8 +30,6 @@ pub struct RemovableOptions {
     pub ignores_pure_annotations: bool,
     // --jsx-side-effects
     pub jsx_has_side_effects: bool,
-    // --minify-syntax
-    pub minifies_syntax: bool,
 }
 
 #[derive(Clone, Debug)]

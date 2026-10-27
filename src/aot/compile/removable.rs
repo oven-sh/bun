@@ -367,24 +367,22 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // `[...[a, b]]`: under --minify-syntax the bundler's visitor puts the elements in the place of the spread.
+    // `[...[a, b]]`: the visitor of `bun run` puts the elements in the place of the spread, as the bundler's does under --minify-syntax.
     fn is_spread_of_removable_literal(&self, item: ExprId) -> bool {
         let ExprKind::Spread(spread) = self.hir[item].kind else {
             return false;
         };
         let spread = self.hir.skip_type_assertions(spread);
-        self.options.minifies_syntax
-            && matches!(self.hir[spread].kind, ExprKind::Array(_))
+        matches!(self.hir[spread].kind, ExprKind::Array(_))
             && self.stack.is_safe_to_recurse()
             && self.expression(spread)
     }
 
-    // `minify_global_constructor` of src/ast/known_global.rs, which the bundler's visitor asks under --minify-syntax. The arguments are judged by the caller.
+    // `minify_global_constructor` of src/ast/known_global.rs, which the visitor of `bun run` asks, and the bundler's under --minify-syntax. The arguments are judged by the caller.
     fn constructs_without_effects(&self, call: &hir::Call) -> bool {
         let hir = self.hir;
         let callee = hir.skip_type_assertions(call.callee);
-        if !self.options.minifies_syntax || self.find_static_binding(callee) != Some(Binding::Free)
-        {
+        if self.find_static_binding(callee) != Some(Binding::Free) {
             return false;
         }
         let Some(constructor) = self.builtins.builtin_of_expression(callee) else {

@@ -68,7 +68,12 @@ fn is_class_or_import_name(hir: &File<'_>, name: Node) -> bool {
     }
     match hir.data(declaration) {
         NodeData::Expr(e) => matches!(hir[e].kind, ExprKind::Class(_)),
-        NodeData::Stmt(s) => matches!(hir[s].kind, StmtKind::Class(_)),
+        NodeData::Stmt(s) => match hir[s].kind {
+            StmtKind::Class(_) => true,
+            StmtKind::Enum(_) => !hir.is_ambient(declaration),
+            StmtKind::Module(m) => !hir[m].is_erased && !hir.is_ambient(declaration),
+            _ => false,
+        },
         NodeData::ImportSpec(spec) => !hir[spec].type_only && !hir[hir[spec].import].type_only,
         NodeData::Part(Part::ImportClause | Part::NamedBindings, import) => {
             matches!(hir.data(import), NodeData::Stmt(s)

@@ -325,7 +325,12 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
           $arrayPush(array, key);
         }
       }
-      return hidesFiles ? array.filter(key => !isHidden(key)) : array;
+      if (!hidesFiles) return array;
+      var shown: string[] = [];
+      for (var index = 0; index < array.length; index++) {
+        if (!isHidden(array[index])) $arrayPush(shown, array[index]);
+      }
+      return shown;
     },
 
     // In Node, require.cache has a null prototype

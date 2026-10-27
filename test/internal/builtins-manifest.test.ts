@@ -18,6 +18,7 @@ import {
   Aligner,
   encodeWordsInEvaluatedText,
   findWordsInEvaluatedText,
+  findWordsOfFirstText,
   Words,
 } from "../../src/codegen/bundled-positions";
 import { run } from "../aot/harness/run";
@@ -154,6 +155,7 @@ describe("builtins-manifest.ts", () => {
     };
     expect([...readArchive(fixture.archive).frames.get("positions")!.text()]).toEqual([
       ...[...idOf("node/fs.ts"), 3, 1, 2, 3],
+      ...[...idOf(textsForTheCompiler[0]), 1, 4],
       ...[...idOf("node/os.ts"), 2, 5, 6],
     ]);
   });
@@ -394,6 +396,51 @@ describe("bundled-positions.ts", () => {
     expect(partnerOf("unknown")).toBe(-1);
     expect(partnerOf("Nothing")).toBe(-1);
     expect(encoded.length).toBeLessThan(written.length / 40);
+  });
+});
+
+describe("bundled-positions.ts, a second text", () => {
+  const first = [
+    "const copy = (from, to) => {",
+    "  for (const key of keys(from)) to[key] = from[key].$call(to);",
+    "  return to;",
+    "};",
+    "export default {",
+    "  one: copy(a, b),",
+    "  two: copy(c, d),",
+    "};",
+  ].join("\n");
+
+  test("a line of both texts stands for the line of the same number, and a quote for its last word", () => {
+    const second = [
+      "const copy = (from, to) => /* as: from[key].$call */ copyNatively(from, to);",
+      "const one = /* as: one: copy */ copy(a, b);",
+      "  return to;",
+      "export default {",
+      "  one,",
+      "  two: copy(c, d),",
+      "};",
+    ].join("\n");
+    const [words, wordsOfFirst] = [new Words(second), new Words(first)];
+    const found = findWordsOfFirstText(words, wordsOfFirst);
+    const textAt = (inSecond: string) => {
+      const partner = found.get(words.starts.indexOf(second.indexOf(inSecond)));
+      return partner === undefined ? undefined : first.slice(wordsOfFirst.starts[partner]);
+    };
+    expect(textAt("copyNatively(")).toStartWith("$call(to)");
+    expect(textAt("copy(a, b)")).toStartWith("copy(a, b)");
+    expect(textAt("copy(c, d)")).toStartWith("copy(c, d)");
+    expect(textAt("return to")).toStartWith("return to");
+    expect(textAt("default {")).toStartWith("default {");
+    expect(textAt("copy = ")).toBeUndefined();
+    expect(textAt("one,")).toBeUndefined();
+  });
+
+  test("a quote that the first text does not have once is refused", () => {
+    const find = (second: string) => () => findWordsOfFirstText(new Words(second), new Words(first));
+    expect(find("/* as: copy */ copy();")).toThrow('The other text does not have "copy" once');
+    expect(find("/* as: three: copy */ copy();")).toThrow('The other text does not have "three: copy" once');
+    expect(find("/* as: one: copy( */ copy();")).toThrow("does not end with a word");
   });
 });
 

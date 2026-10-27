@@ -39,7 +39,16 @@ impl Walker<'_, '_> {
 
     fn push_function(&mut self, function: FnId, id: WalkedFunctionId) {
         let context = self.enter_unit(id, self.bound.fns[function.idx()].scope);
-        self.push_task(Task::MarkCreated(id), context);
+        // A half of an accessor that may be made with an earlier one copies only what has its last value by then.
+        let first_half = self.first_halves.get(function.idx()).copied();
+        let first_half = first_half.and_then(|first_half| first_half.some());
+        match first_half.and_then(|first_half| self.walk.function_of_fn[first_half.idx()]) {
+            Some(first_half) => {
+                let time = self.walk.functions[first_half.index()].created_at;
+                self.walk.functions[id.index()].created_at = time;
+            }
+            None => self.push_task(Task::MarkCreated(id), context),
+        }
         // A function that can be suspended holds its receiver, and what the names of its parameters hold, until it ends.
         let flags = self.hir[function].flags;
         let can_be_suspended = flags.intersects(Flags::ASYNC | Flags::GENERATOR);

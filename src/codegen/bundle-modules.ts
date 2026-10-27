@@ -16,10 +16,14 @@ import { readBuiltinUses } from "../../scripts/build/trim/builtin-uses.ts";
 import { featureNamed } from "../../scripts/build/trim/features.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
-import { nativeCalls, specifierOf, typesOnlySchemas } from "./builtins-manifest-model";
+import { locate, nativeCalls, specifierOf, typesOnlySchemas } from "./builtins-manifest-model";
 import { Guards } from "./builtins/guards.ts";
 import { listBundledNamesOfModule } from "./bundled-names";
-import { encodeBundledPositions, formatBundledPositions } from "./bundled-positions";
+import {
+  encodeBundledPositions,
+  encodeBundledPositionsOfSecondText,
+  formatBundledPositions,
+} from "./bundled-positions";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP } from "./generate-js2native";
 import { checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
@@ -308,8 +312,20 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
   }
 
+  const readByCompiler = locate(moduleList[i]);
   bundledNames.push(
-    formatBundledPositions(moduleList[i], encodeBundledPositions(written, output, sourceMap, captured)),
+    formatBundledPositions(
+      moduleList[i],
+      readByCompiler === path.join(BASE, moduleList[i])
+        ? encodeBundledPositions(written, output, sourceMap, captured)
+        : encodeBundledPositionsOfSecondText(
+            fs.readFileSync(readByCompiler, "utf8"),
+            written,
+            output,
+            sourceMap,
+            captured,
+          ),
+    ),
   );
 
   const outputPath = path.join(JS_DIR, file_path);

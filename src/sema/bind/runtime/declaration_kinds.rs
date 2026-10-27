@@ -17,7 +17,9 @@ pub(super) enum DeclarationKind {
     BlockScopedRequire,
     Import,
     SimpleCatchParameter,
-    TypeScriptValue,
+    Enum,
+    Namespace,
+    ImportEquals,
 }
 
 impl DeclarationKind {
@@ -267,7 +269,9 @@ pub(super) fn declaration_kind(
         Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => {
             DeclarationKind::Import
         }
-        Decl::Enum(_) | Decl::Module(_) | Decl::ImportEquals(_) => DeclarationKind::TypeScriptValue,
+        Decl::Enum(_) => DeclarationKind::Enum,
+        Decl::Module(_) => DeclarationKind::Namespace,
+        Decl::ImportEquals(_) => DeclarationKind::ImportEquals,
         _ => DeclarationKind::NoBinding,
     }
 }

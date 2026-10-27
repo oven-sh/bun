@@ -287,7 +287,7 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
         return {};
     }
 #if ENABLE(AOT)
-    if (JSC::AOT::refusesLibraryText()) [[unlikely]] {
+    if (JSC::AOT::refusesLibraryText(globalObject)) [[unlikely]] {
         throwModuleNotCompiledError(globalObject, id, Bun::ErrorCode::ERR_MODULE_NOT_FOUND);
         return {};
     }
@@ -389,7 +389,7 @@ JSValue DeclaredModuleLoad::requireField(Zig::GlobalObject* globalObject, Intern
 JSValue DeclaredModuleLoad::requireOnBehalfOf(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ASCIILiteral builtin)
 {
     uint32_t id = field;
-    if (id < InternalModuleRegistryConstants::moduleCount && JSC::AOT::refusesLibraryText() && !JSC::AOT::hasBuiltinModule(globalObject, id)) [[unlikely]] {
+    if (id < InternalModuleRegistryConstants::moduleCount && JSC::AOT::refusesLibraryText(globalObject) && !JSC::AOT::hasBuiltinModule(globalObject, id)) [[unlikely]] {
         JSC::AOT::throwBuiltinNotCompiled(globalObject, builtin);
         return {};
     }
@@ -404,7 +404,7 @@ JSValue DeclaredModuleLoad::requireNamedAtRunTime(Zig::GlobalObject* globalObjec
             throwRemovedModuleError(globalObject, *feature, id, ifNotInExecutable);
             return {};
         }
-        if (JSC::AOT::refusesLibraryText()) [[unlikely]] {
+        if (JSC::AOT::refusesLibraryText(globalObject)) [[unlikely]] {
             throwModuleNotCompiledError(globalObject, id, ifNotInExecutable);
             return {};
         }

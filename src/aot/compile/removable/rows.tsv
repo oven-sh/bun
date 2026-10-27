@@ -1,7 +1,7 @@
 # answer	plain	minified	difference	configuration	extension	source
 # answer: + `Removable` says that the statement with MARK in it can be left out when nothing uses it, - that it cannot. Of a statement with several declarations, the one with MARK answers.
 # plain, minified: + `bun build` and `bun build --minify-syntax` leave the statement out, - they keep it, . not asked: nothing of the statement would show in the output.
-# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing). missed: the bundler removes more.
+# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing), minified (`bun run` leaves it out, as `bun build --minify-syntax` does). missed: the bundler removes more.
 # literals and functions
 +	+	+	-	-	ts	const MARK = 1;
 +	+	+	-	-	ts	const MARK = "a";
@@ -176,12 +176,12 @@
 -	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f() + f();
 +	+	+	-	-	ts	function f(...a: any[]): any {} /* @__PURE__ */ f("MARK");
 -	-	-	-	-	ts	function f(...a: any[]): any {} f("MARK");
--	-	+	-	-	ts	const MARK = new Map();
--	-	+	-	-	ts	const MARK = new Set();
--	-	+	-	-	ts	const MARK = new Set([1]);
--	-	+	-	-	ts	const MARK = new WeakMap();
++	-	+	minified	-	ts	const MARK = new Map();
++	-	+	minified	-	ts	const MARK = new Set();
++	-	+	minified	-	ts	const MARK = new Set([1]);
++	-	+	minified	-	ts	const MARK = new WeakMap();
 -	-	-	-	-	ts	const MARK = new Error("x");
--	-	+	-	-	ts	const MARK = new Date();
++	-	+	minified	-	ts	const MARK = new Date();
 -	-	-	-	-	ts	const MARK = new Array(1);
 -	-	+	-	-	ts	const MARK = new Object();
 -	-	+	-	-	ts	const MARK = Symbol.for("x");
@@ -386,7 +386,7 @@
 -	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = [f()];
 -	-	-	-	-	ts	function f(...a: any[]): any {} const MARK = [1, [f()]];
 -	-	-	-	-	ts	const xs: any[] = []; const MARK = [...xs];
--	-	+	-	-	ts	const MARK = [...[1]];
++	-	+	minified	-	ts	const MARK = [...[1]];
 -	-	-	-	-	ts	const MARK = [unknownGlobal];
 # objects
 +	+	+	-	-	ts	let a: any = 1, b: any = 2; const MARK = {} as any;
@@ -455,7 +455,7 @@
 -	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static a = f(); }
 -	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static a = 1; static b = [f()]; }
 -	-	-	-	-	ts	class MARK { static a = unknownGlobal; }
--	-	+	-	-	ts	class MARK { static a = new Map(); }
++	-	+	minified	-	ts	class MARK { static a = new Map(); }
 +	+	+	-	-	ts	class MARK { static {} }
 +	+	+	-	-	ts	class MARK { static { const a = 1; let b; var c = 2; function g() { sideEffect(); } class D {} ; } }
 +	+	+	-	-	ts	function f(...a: any[]): any {} class MARK { static { /* @__PURE__ */ f(); } }

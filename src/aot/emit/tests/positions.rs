@@ -186,6 +186,23 @@ fn a_word_that_was_moved_to_the_front_is_found_there() {
 }
 
 #[test]
+fn the_words_of_a_comment_are_passed_over() {
+    let written = "//a b c d e f g h i j\nk /* a b c d e f g h i j\na */ l /**/ x m /* */ n";
+    let positions = source_positions_in_bundle(written.as_bytes(), b"k l m n", &[]);
+    let adjustments = &positions.column_adjustments;
+    for (word, column) in [("k", 0), ("l", 2), ("m", 4), ("n", 6)] {
+        let offset = written.find(word).unwrap() as u32;
+        let preceding = adjustments.partition_point(|it| it.offset <= offset);
+        let adjustment = &adjustments[preceding - 1];
+        let place = (
+            adjustment.line,
+            adjustment.column + offset - adjustment.offset,
+        );
+        assert_eq!(place, (0, column), "{word}");
+    }
+}
+
+#[test]
 fn corrections_that_do_not_fit_the_texts_stop_nothing() {
     let far = [0xFF, 0xFF, 0xFF, 0xFF, 0x0F];
     let records: [&[u8]; 8] = [

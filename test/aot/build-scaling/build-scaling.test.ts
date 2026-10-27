@@ -31,7 +31,7 @@ import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { measureCommand, type Cost } from "../analysis-scaling/measure-check";
+import { measureCommandWithMemory, type Cost } from "../analysis-scaling/measure-check";
 import { withThreads } from "../harness/flags";
 import { slot, spawned, withoutDebugInformation } from "../run-programs";
 import { describe, test } from "../supported";
@@ -77,7 +77,7 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<C
   }
   const executable = join(cwd, "program");
   try {
-    return await measureCommand(
+    return await measureCommandWithMemory(
       cwd,
       [
         bunExe(),
@@ -112,7 +112,7 @@ async function measureAllShapesTogether(carrier: string[]): Promise<Cost> {
   const cwd = String(folder);
   const entryPoints = built.map((shape, index) => `./shape-${index}/${shape.entry}`);
   const executable = join(cwd, "program");
-  return await measureCommand(
+  return await measureCommandWithMemory(
     cwd,
     [bunExe(), "build", "--compile", "--aot", withThreads(4), ...carrier, ...entryPoints, "--outfile", executable],
     900_000,

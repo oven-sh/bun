@@ -915,6 +915,50 @@ fn a_getter_over_an_es_module_that_holds_a_copy_keeps_its_object() {
 }
 
 #[test]
+fn an_import_holds_what_a_getter_answered_where_the_link_may_find_its_binding_unfilled() {
+    let getter = "Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return _a; } });";
+    // Whether the face of `outer.cjs`, which is linked while it requires `inner.cjs`, copies `a`.
+    let copies_a = |hands_on: &str, rest: &str| {
+        let outer = format!("{getter}\n{rest}");
+        let files = [
+            (
+                "main.mjs",
+                "import { a } from './hands-on.mjs'; console.log(a);",
+            ),
+            ("hands-on.mjs", hands_on),
+            ("outer.cjs", &outer[..]),
+            ("inner.cjs", "require('./hands-on.mjs');"),
+        ];
+        with_exports(&files, |exports, input| {
+            let outer = file_named(input, "outer.cjs");
+            let own = (ModuleRef::File(outer), atom(input, "a"));
+            let mut copies = exports.copies(outer).iter();
+            copies.any(|copy| exports.names_by_id[copy] == own)
+        })
+    };
+    for hands_on in [
+        "export { a } from './outer.cjs';",
+        "export * from './outer.cjs';",
+    ] {
+        for rest in [
+            "const _a = require('./inner.cjs');",
+            "var _a = require('./inner.cjs');",
+            "require('./inner.cjs'); let _a = 1;",
+            "require('./inner.cjs'); const { _a } = { _a: 1 };",
+            "require('./inner.cjs'); class _a {}",
+        ] {
+            assert!(copies_a(hands_on, rest), "{hands_on} {rest}");
+        }
+        for rest in [
+            "require('./inner.cjs'); function _a() {}",
+            "const _a = 1; require('./inner.cjs');",
+        ] {
+            assert!(!copies_a(hands_on, rest), "{hands_on} {rest}");
+        }
+    }
+}
+
+#[test]
 fn the_namespace_object_answers_for_a_getter_that_is_not_enumerable() {
     let hidden = "var inner_1 = require('./inner.cjs');\n\
         Object.defineProperty(exports, 'a', { get: function () { return inner_1.a; } });";
@@ -932,6 +976,9 @@ fn the_namespace_object_answers_for_a_getter_that_is_not_enumerable() {
     let main = "import * as all from './outer.cjs'; console.log(all.a);";
     assert!(captures(main, hidden));
     assert!(!captures(main, &listed));
+    // Also where the file keeps its object: the build knows no variable behind a member of a built-in module.
+    let over_a_library = hidden.replace("./inner.cjs", "node:path");
+    assert!(captures(main, &over_a_library));
     // An import statement is bound to what the getter returns, also where a listed getter would have a copy.
     let files = [
         ("main.mjs", IMPORTS_OF_A[0]),
@@ -946,6 +993,165 @@ fn the_namespace_object_answers_for_a_getter_that_is_not_enumerable() {
     for main in &IMPORTS_OF_A[..1] {
         assert!(!captures(main, hidden), "{main}");
     }
+}
+
+const MARKER: &str = "Object.defineProperty(exports, '__esModule', { value: true });\n";
+
+// A file with the marker and a getter for `name` that returns the `default` of `below`.
+fn getter_of_default(name: &str, attributes: &str, below: &str) -> String {
+    format!(
+        "{MARKER}var below_1 = require('./{below}');\n\
+        Object.defineProperty(exports, '{name}', {{ {attributes}get: function () {{ return below_1.default; }} }});"
+    )
+}
+
+#[test]
+fn an_import_holds_the_member_named_default_of_a_file_whose_default_is_its_value() {
+    let marked = format!("{MARKER}exports.default = 1;");
+    for (name, main) in [
+        ("default", "import a from './outer.cjs'; console.log(a);"),
+        ("a", IMPORTS_OF_A[0]),
+        ("a", IMPORTS_OF_A[2]),
+    ] {
+        let outer = getter_of_default(name, "enumerable: true, ", "inner.cjs");
+        let owners_of_copies = |inner: &str| {
+            let files = [
+                ("main.mjs", main),
+                ("outer.cjs", &outer[..]),
+                ("inner.cjs", inner),
+            ];
+            with_exports(&files, |exports, input| {
+                let [outer, inner] = ["outer.cjs", "inner.cjs"].map(|name| file_named(input, name));
+                let shapes = [outer, inner].map(|file| exports.shape(ModuleRef::File(file)));
+                assert_eq!(shapes, [Shape::Names; 2], "{main}");
+                let name = atom(input, name);
+                match exports.member_named(ModuleRef::File(outer), name) {
+                    Some(Member::Variable(returned)) => {
+                        let owner = (ModuleRef::File(inner), atom(input, "default"));
+                        assert_eq!(exports.names_by_id.get(&returned), Some(&owner), "{main}");
+                    }
+                    member => panic!("{member:?}"),
+                }
+                let copies = exports.copies(outer).iter();
+                let owners = copies.map(|copy| exports.names_by_id[copy]);
+                owners.collect::<Vec<(ModuleRef, Atom)>>() == [(ModuleRef::File(outer), name)]
+            })
+        };
+        assert!(owners_of_copies("exports.default = 1;"), "{main}");
+        assert!(
+            owners_of_copies("module.exports = { default: 1 };"),
+            "{main}"
+        );
+        assert!(!owners_of_copies(&marked), "{main}");
+    }
+}
+
+#[test]
+fn a_getter_over_an_es_module_that_hands_on_the_value_of_a_file_keeps_its_object() {
+    let above = getter_of_default("a", "enumerable: true, ", "between.mjs");
+    let shape_over = |inner: &str| {
+        let files = [
+            (
+                "main.mjs",
+                "import { a } from './above.cjs'; console.log(a);",
+            ),
+            ("above.cjs", &above[..]),
+            ("between.mjs", "export { default } from './inner.cjs';"),
+            ("inner.cjs", inner),
+        ];
+        shapes_of(&files, ["above.cjs"])
+    };
+    assert_eq!(shape_over("exports.default = 1;"), [Shape::Value]);
+    let marked = format!("{MARKER}exports.default = 1;");
+    assert_eq!(shape_over(&marked), [Shape::Names]);
+}
+
+#[test]
+fn a_getter_that_is_not_enumerable_is_a_name_only_where_an_import_finds_what_it_returns() {
+    let marked = format!("{MARKER}exports.default = 1;");
+    let shape_of_outer = |name: &str, main: &str, inner: &str| {
+        let outer = getter_of_default(name, "", "inner.cjs");
+        let files = [
+            ("main.mjs", main),
+            ("outer.cjs", &outer[..]),
+            ("inner.cjs", inner),
+        ];
+        shapes_of(&files, ["outer.cjs"])
+    };
+    let main = IMPORTS_OF_A[0];
+    assert_eq!(shape_of_outer("a", main, &marked), [Shape::Names]);
+    assert_eq!(
+        shape_of_outer("a", main, "exports.default = 1;"),
+        [Shape::Value]
+    );
+    // Whoever lists the names passes over the getter, so the `default` of the file is its value.
+    let main = "import a from './outer.cjs'; console.log(a);";
+    assert_eq!(shape_of_outer("default", main, &marked), [Shape::Value]);
+}
+
+#[test]
+fn an_import_of_a_getter_that_is_not_enumerable_is_checked_where_the_file_keeps_its_object() {
+    let outer = getter_of_default("a", "", "inner.cjs");
+    let files = [
+        ("main.mjs", IMPORTS_OF_A[0]),
+        ("outer.cjs", &outer[..]),
+        ("inner.cjs", "exports.default = 1;"),
+    ];
+    with_exports(&files, |exports, input| {
+        let checked = exports.checked_copies(file_named(input, "main.mjs")).iter();
+        let checked: Vec<(ModuleRef, Atom)> =
+            checked.map(|entry| exports.names_by_id[&entry.0]).collect();
+        assert_eq!(
+            checked,
+            [(module_named(input, "outer.cjs"), atom(input, "a"))]
+        );
+    });
+}
+
+#[test]
+fn the_marker_says_nothing_to_an_importer_in_a_package_of_type_module() {
+    let inner = format!("{MARKER}exports.default = 1; exports.a = 2;");
+    let outer = getter_of_default("a", "enumerable: true, ", "inner.cjs");
+    for main in [
+        "export { default } from './inner.cjs';",
+        "import * as all from './inner.cjs'; console.log(all.default);",
+    ] {
+        let shape_in = |package: &str| {
+            let files = [
+                ("main.mjs", main),
+                ("inner.cjs", &inner[..]),
+                ("package.json", package),
+            ];
+            with_exports(&files, |exports, input| {
+                let inner = module_named(input, "inner.cjs");
+                assert_eq!(exports.marker(inner), Some(true), "{main}");
+                exports.shape(inner)
+            })
+        };
+        assert_eq!(shape_in("{}"), Shape::Names, "{main}");
+        assert_eq!(shape_in(r#"{ "type": "module" }"#), Shape::Value, "{main}");
+    }
+    // A name is bound to the variable as elsewhere, and a getter that returns the member has a copy.
+    let files = [
+        (
+            "main.mjs",
+            "import { a } from './inner.cjs'; import { a as b } from './outer.cjs'; console.log(a, b);",
+        ),
+        ("outer.cjs", &outer[..]),
+        ("inner.cjs", &inner[..]),
+        ("package.json", r#"{ "type": "module" }"#),
+    ];
+    with_exports(&files, |exports, input| {
+        let [outer, inner] = ["outer.cjs", "inner.cjs"].map(|name| file_named(input, name));
+        let shapes = [outer, inner].map(|file| exports.shape(ModuleRef::File(file)));
+        assert_eq!(shapes, [Shape::Names; 2]);
+        let a = atom(input, "a");
+        let own = exports.ids[&(ModuleRef::File(inner), a)];
+        assert_eq!(exports.imported_member(own), Member::Variable(own));
+        let copies = exports.copies(outer).iter();
+        let copies: Vec<(ModuleRef, Atom)> = copies.map(|copy| exports.names_by_id[copy]).collect();
+        assert_eq!(copies, [(ModuleRef::File(outer), a)]);
+    });
 }
 
 #[test]

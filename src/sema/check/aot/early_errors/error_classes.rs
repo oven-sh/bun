@@ -94,7 +94,13 @@ impl Checker<'_, '_> {
 
     pub(in crate::check) fn is_new_target_outside_function(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        let container = hir.get_this_container(hir.node(e), false, false);
+        let mut container = hir.get_this_container(hir.node(e), false, false);
+        while matches!(
+            hir.kind(container),
+            Kind::ModuleDeclaration | Kind::EnumDeclaration
+        ) {
+            container = hir.get_this_container(container, false, false);
+        }
         hir.kind(container) == Kind::SourceFile && !self.is_compiled_as_commonjs(file)
     }
 

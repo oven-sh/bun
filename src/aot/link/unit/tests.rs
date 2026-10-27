@@ -245,6 +245,7 @@ fn records_are_listed_by_kind() {
             None,
             expected,
             None,
+            None,
             false,
             false,
             false,

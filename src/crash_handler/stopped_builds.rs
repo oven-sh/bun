@@ -21,14 +21,19 @@ pub struct BuildDescribers {
 
 static DESCRIBERS: OnceLock<BuildDescribers> = OnceLock::new();
 static BUILDS_UNDER_WAY: AtomicUsize = AtomicUsize::new(0);
+static ENDS_BY_SIGNAL: AtomicBool = AtomicBool::new(false);
+
+/// For a process whose parent tells a build that the compiler could not finish from one that it refused by how the process ends.
+pub fn end_stopped_builds_by_signal() {
+    ENDS_BY_SIGNAL.store(true, Ordering::Relaxed);
+}
 
 /// What the engine says. Where it says nothing, what the front end says, which also checks programs that nobody compiles.
-fn write_description(
-    writer: &mut impl Write,
+fn describe(
     buffer: &mut [u8],
     of_engine: impl FnOnce(&BuildDescribers) -> DescribeBuild,
     of_front_end: fn(&mut [u8]) -> usize,
-) {
+) -> usize {
     let mut length = DESCRIBERS.get().map_or(0, |describers| {
         // SAFETY: the buffer is writable for the length that is passed.
         unsafe { of_engine(describers)(buffer.as_mut_ptr(), buffer.len()) }
@@ -36,17 +41,44 @@ fn write_description(
     if length == 0 {
         length = of_front_end(buffer);
     }
-    let _ = writer.write_all(&buffer[..length.min(buffer.len())]);
+    length.min(buffer.len())
 }
 
-/// For the report of a crash, on the thread that crashed, whose stack may be a small one for signals.
+/// Where a thread's part of a build stands, and what gets a build around it, in whole lines. It fits the stack of a
+/// thread that has crashed, which may be a small one for signals.
+pub(crate) struct PlaceInBuild {
+    text: [u8; 768],
+    length: usize,
+}
+
+impl PlaceInBuild {
+    fn of_this_thread() -> Self {
+        let mut text = [0u8; 768];
+        let length = describe(
+            &mut text,
+            |describers| describers.where_this_thread_stopped,
+            bun_core::current_work::describe_where_this_thread_stopped,
+        );
+        Self { text, length }
+    }
+
+    pub(crate) fn lines(&self) -> &[u8] {
+        &self.text[..self.length]
+    }
+}
+
+/// For the report of a crash, on the thread that crashed.
 pub(crate) fn write_where_this_thread_stopped(writer: &mut impl Write) {
-    write_description(
-        writer,
-        &mut [0u8; 768],
-        |describers| describers.where_this_thread_stopped,
-        bun_core::current_work::describe_where_this_thread_stopped,
-    );
+    let _ = writer.write_all(PlaceInBuild::of_this_thread().lines());
+}
+
+/// None for a thread that is not at work for a build.
+pub(crate) fn place_of_this_thread() -> Option<PlaceInBuild> {
+    if BUILDS_UNDER_WAY.load(Ordering::SeqCst) == 0 || ENDS_BY_SIGNAL.load(Ordering::Relaxed) {
+        return None;
+    }
+    let place = PlaceInBuild::of_this_thread();
+    (place.length != 0).then_some(place)
 }
 
 fn write_what_threads_are_compiling() {
@@ -55,13 +87,14 @@ fn write_what_threads_are_compiling() {
     if LINES_ARE_IN_USE.swap(true, Ordering::Acquire) {
         return;
     }
-    write_description(
-        &mut stderr_writer(),
-        // SAFETY: the flag admits one thread at a time.
-        unsafe { &mut *LINES.get() },
+    // SAFETY: the flag admits one thread at a time.
+    let lines = unsafe { &mut *LINES.get() };
+    let length = describe(
+        lines,
         |describers| describers.what_threads_are_compiling,
         bun_core::current_work::describe_what_threads_are_compiling,
     );
+    let _ = stderr_writer().write_all(&lines[..length]);
     LINES_ARE_IN_USE.store(false, Ordering::Release);
 }
 

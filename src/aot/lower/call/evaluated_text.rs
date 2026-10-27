@@ -90,6 +90,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             None,
             None,
             Some(builtin),
+            None,
             is_annotated_pure,
             is_never_inlined,
             is_reflect_construct_syntax,

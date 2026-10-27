@@ -262,6 +262,8 @@ const noticedBy: Record<string, Row | Row[]> = {
     "typed/element-fraction-growsWhileWhatItWasIsStillHeld-aFunction-constructor",
     "untyped/element-character-growsWhileWhatItWasIsStillHeld-aKey-loopWithBreak",
   ),
+  // The build stops: ./an-operation-without-a-value-stops-the-build.test.ts holds it to the line that names the read.
+  StoredValuesAreNeverRead: conditionOfAPass("a-read-finds-what-was-stored.ts"),
 };
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
 const noticedByTheEngineTestsAlone: Record<string, string> = {};

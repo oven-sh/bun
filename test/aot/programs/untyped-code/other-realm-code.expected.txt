@@ -4,5 +4,5 @@ fromctx m2
 script 3
 shadow 6
 shadowfn 42
-shadowimport threw TypeError
+shadowimport /
 path a/b

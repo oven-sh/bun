@@ -62,6 +62,8 @@ pub(super) struct FileImports {
     pub accessed: Vec<(ExprId, AccessedModule)>,
     /// Accesses that have no variable: a name that an ES module lacks, and `__esModule`.
     pub fixed_members: Vec<(ExprId, (ModuleRef, Member))>,
+    /// The modules that the file stores `__esModule` on.
+    pub stored_markers: Vec<ModuleRef>,
     pub named_members: Vec<((ModuleRef, Atom), NamedMember)>,
     /// The module that the access is written on, the module that has the variable, and its name there.
     pub called_members: Vec<(ModuleRef, ModuleRef, Atom)>,

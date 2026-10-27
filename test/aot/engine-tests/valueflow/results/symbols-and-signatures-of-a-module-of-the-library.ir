@@ -39,7 +39,7 @@ function f1 name="readline" module=m1 kind=Module role=Library results=[{type=an
   b0():
     v0 = Builtin builtin=Symbol
     v1 = String string="kState"
-    v2 = Call v0, -, v1 @100
+    v2 = Call v0, -, v1 callNumber=100 @100
     PutModuleVariable v2 variable=g0
     v4 = NewClosure function=f2
     PutModuleVariable v4 variable=g1

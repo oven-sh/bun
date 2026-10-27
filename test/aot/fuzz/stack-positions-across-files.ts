@@ -123,7 +123,13 @@ export function generate(
     const add = (offered: Offered, base: string, isType: boolean, isAwaited = false) => {
       const name = offered.member ? `${base}.${offered.member}` : base;
       if (offered.callable) functions.push({ ...offered.callable, name, isAwaited });
-      if (offered.shape) shapes.push({ ...offered.shape, name, typeName: isTypeKnown && isType ? name : null });
+      if (offered.shape)
+        shapes.push({
+          ...offered.shape,
+          name,
+          typeName: isTypeKnown && isType ? name : null,
+          isAny: isLoose || offered.shape.isAny,
+        });
     };
     const member = (holder: string, offered: Offered) => `${holder}.${offered.exportedAs}`;
     const localOf = (offered: Offered) => {
@@ -407,11 +413,15 @@ export function generate(
       }
       // TypeScript refuses `export *` of a file that assigns to `module.exports`.
       const mayTakeAll = kind !== "typescript" || from.kind !== "commonjs";
+      // TypeScript reads no JavaScript of a package, so it finds no name behind a star over one.
+      const isRead = !hasTyped || from.kind === "typescript" || !from.path.startsWith("node_modules/");
+      const all = isRead ? "*" : `{ ${[...new Set(named.map(offered => offered.exportedAs))].join(", ")} }`;
+      const offersBefore = barrel.offers.length;
       random.weighted<() => void>([
         [
           mayTakeAll ? 1 : 0,
           () => {
-            lines.push(`export * from ${source};`);
+            lines.push(`export ${all} from ${source};`);
             barrel.offers.push(...named);
           },
         ],
@@ -435,6 +445,11 @@ export function generate(
           },
         ],
       ])();
+      if (!isRead)
+        for (let index = offersBefore; index < barrel.offers.length; index++) {
+          const { shape } = barrel.offers[index];
+          if (shape) barrel.offers[index] = { ...barrel.offers[index], shape: { ...shape, isAny: true } };
+        }
     }
     if (barrel.offers.length) {
       texts[path] = lines.join("\n") + "\n";

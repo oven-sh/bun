@@ -275,6 +275,87 @@ fn binding_behind_a_getter_that_a_pattern_takes_from_an_awaited_import_stays() {
 }
 
 #[test]
+fn file_that_calls_out_in_front_of_its_names_keeps_its_object_for_an_awaited_import() {
+    let files = [
+        (
+            "main.mjs",
+            "const { a } = await import('./a.cjs'); console.log(a);",
+        ),
+        (
+            "a.cjs",
+            "Object.defineProperty(exports, '__esModule', { value: true });\n\
+             Object.defineProperty(exports, 'a', { enumerable: true, get: function () { return a; } });\n\
+             globalThis.called();\n\
+             const a = 1;\n\
+             exports.b = exports.c = 2;",
+        ),
+    ];
+    assert_eq!(describe(&files), ["main.mjs: ES []", "a.cjs: value []"]);
+}
+
+const REQUIRED_LATE: [(&str, &str); 2] = [
+    (
+        "k.cjs",
+        "Object.defineProperty(exports, '__esModule', { value: true });\n\
+         globalThis.called();\n\
+         exports.default = 1;",
+    ),
+    (
+        "lazy.cjs",
+        "exports.lazy = function () { return require('./k.cjs').default; };",
+    ),
+];
+
+#[test]
+fn default_of_a_file_that_is_required_late_is_a_variable_where_only_the_first_load_links_the_file()
+{
+    let [k, lazy] = REQUIRED_LATE;
+    let main =
+        "import d from './k.cjs'; import { lazy } from './lazy.cjs'; console.log(d, lazy());";
+    assert_eq!(
+        describe(&[("main.mjs", main), k, lazy]),
+        [
+            "main.mjs: ES []",
+            "k.cjs: names [Object.defineProperty(exports, '__esModule', { value: true });]",
+            "lazy.cjs: names []"
+        ]
+    );
+}
+
+#[test]
+fn file_that_is_required_late_keeps_its_object_where_a_module_that_is_loaded_late_asks_for_it() {
+    let [k, lazy] = REQUIRED_LATE;
+    let main = "import d from './k.cjs'; import { lazy } from './lazy.cjs'; console.log(d, lazy());\n\
+                globalThis.called = () => import('./late.mjs');";
+    let late = "import './k.cjs';";
+    assert_eq!(
+        describe(&[("main.mjs", main), k, lazy, ("late.mjs", late)]),
+        [
+            "main.mjs: ES []",
+            "k.cjs: value []",
+            "lazy.cjs: names []",
+            "late.mjs: ES []"
+        ]
+    );
+}
+
+#[test]
+fn file_that_is_required_late_keeps_its_object_where_the_first_load_waits() {
+    let [k, lazy] = REQUIRED_LATE;
+    let main = "import './waits.mjs'; import d from './k.cjs'; import { lazy } from './lazy.cjs'; console.log(d, lazy());";
+    let waits = "await 0;";
+    assert_eq!(
+        describe(&[("main.mjs", main), k, lazy, ("waits.mjs", waits)]),
+        [
+            "main.mjs: ES []",
+            "k.cjs: value []",
+            "lazy.cjs: names []",
+            "waits.mjs: ES []"
+        ]
+    );
+}
+
+#[test]
 fn name_that_is_read_on_what_require_gives_of_an_es_module_that_hands_it_on_stays() {
     let files = [
         (

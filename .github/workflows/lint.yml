@@ -68,7 +68,9 @@ jobs:
           BUN_WEBKIT_PATH="$RUNNER_TEMP/WebKit" bun test test/internal/build-aot-codegen-declared-outputs.test.ts -t "finds a use for every name of the schema"
       - name: Run the tests that read the engine's sources
         # The machines that run test/aot have no sources of the engine, so these files skip themselves there.
+        # The step ends where grep finds no file: `bun test` without a file runs every test.
         env:
           AOT_REQUIRE_ENGINE_SOURCES: "1"
         run: |
-          BUN_WEBKIT_PATH="$RUNNER_TEMP/WebKit" bun test $(grep -l "harness/engine-text" test/aot/*.test.ts)
+          files=$(grep -l "harness/engine-text" test/aot/*.test.ts)
+          BUN_WEBKIT_PATH="$RUNNER_TEMP/WebKit" bun test $files

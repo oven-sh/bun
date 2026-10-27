@@ -138,7 +138,7 @@ impl Printer<'_> {
                 self.out.push('@');
                 print_optional(self.out, key.module);
                 self.out.push(':');
-                print_optional(self.out, key.position);
+                print_optional(self.out, key.call_number);
             }
         }
     }

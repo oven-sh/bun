@@ -95,6 +95,7 @@ export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
   const list: NativeCall[] = [];
   const files = [...sourceFiles, ...functionFiles];
   // The bundler of the modules numbers what the first texts call before it comes here: what only a second text calls is numbered behind all of that.
+  // Such a function does what code of the first text does, and no stack trace lists it.
   const secondTexts = files.map(file => path.join(BASE, "ahead-of-time", file)).filter(file => fs.existsSync(file));
   for (const file of [...files.map(file => path.join(BASE, file)), ...secondTexts]) {
     const source = fs.readFileSync(file, "utf8");
@@ -111,7 +112,13 @@ export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
       const isTypesOnly = macro === "bindgen" && typesOnly.has(nativeFile);
       const id = isTypesOnly
         ? null
-        : registerNativeCall(kind, nativeFile, symbol, length === undefined ? null : Number(length));
+        : registerNativeCall(
+            kind,
+            nativeFile,
+            symbol,
+            length === undefined ? null : Number(length),
+            secondTexts.includes(file),
+          );
       if (seen.has(key)) continue;
       seen.add(key);
       list.push({ id, macro, file: nativeFile, symbol });

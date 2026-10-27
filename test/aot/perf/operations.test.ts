@@ -9,6 +9,7 @@
 //
 // Every row is counted twice. `alone`: the whole program is in sight, and the compiler may prove what the values are. `opened`: the same texts, but every object, array, closure and
 // string that the row works on has been handed once to text that is evaluated at run time, and has come back: nothing is left but the written types, which is the state of most accesses of a large program.
+// A row may also pin what one call of each of its two functions takes, under "<row>: a call of the function with <n> sites": the number of a site is a difference, and falls when the function with 4 sites gets dearer.
 // Held against ./operations.<os>-<arch>.json and ./operations-opened.<os>-<arch>.json, which only go down:
 //
 //   bun test test/aot/perf/operations.test.ts                   fails if a site takes more than 10% AND more than 1 instruction more than its pin
@@ -145,6 +146,25 @@ for (const { title, programs, pinsPath } of columns) {
               console.error(
                 `OPERATION ${programs === "alone" ? "" : programs + " "}${name}\t${now}\t| the pin\t${pin}`,
               );
+              for (const sites of [4, 12]) {
+                const key = `${name}: a call of the function with ${sites} sites`;
+                if (!(key in pins)) continue;
+                const aCall = Math.round(((costs[`${sites} ${many}`]! - costs[`${sites} ${few}`]!) / calls) * 10) / 10;
+                console.error(
+                  `OPERATION ${programs === "alone" ? "" : programs + " "}${key}	${aCall}	| the pin	${pins[key]}`,
+                );
+                if (mode === "update") pins[key] = aCall;
+                const pinOfACall = pins[key];
+                if (mode === "lower") pins[key] = Math.min(pinOfACall, aCall);
+                expect({ key, instructionsACall: aCall, isWorse: isWorse(aCall, pinOfACall), pin: pinOfACall }).toEqual(
+                  {
+                    key,
+                    instructionsACall: aCall,
+                    isWorse: false,
+                    pin: pinOfACall,
+                  },
+                );
+              }
               if (mode === "update") return void (pins[name] = now);
               expect(pin).toBeDefined();
               if (mode === "lower") pins[name] = Math.min(pin, now);

@@ -22,7 +22,7 @@ fn number_merged_keys(merged: &MergedKeys<PropertyKey>) -> (PropertyKeyTable, Ve
                 key.owner,
                 key.symbol,
                 key.module,
-                key.position,
+                key.call_number,
             )
         });
         first_occurrences.dedup();
@@ -115,9 +115,9 @@ mod tests {
         fragment.property_keys.intern(key);
     }
 
-    fn add_created_symbol(fragment: &mut FragmentBuilder, file: u32, position: u32) {
+    fn add_created_symbol(fragment: &mut FragmentBuilder, file: u32, call_number: u32) {
         let module = fragment.declare_module(ModuleRef::File(FileId(file)));
-        let key = PropertyKey::from_created_symbol(module, position, None);
+        let key = PropertyKey::from_created_symbol(module, call_number, None);
         fragment.property_keys.intern(key);
     }
 
@@ -173,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn created_symbols_differ_by_module_and_position() {
+    fn created_symbols_differ_by_module_and_call_number() {
         let units = [
             create_unit(0, |fragment| {
                 add_created_symbol(fragment, 0, 10);

@@ -434,6 +434,8 @@ export function splitIntoFiles(text: string, extension: string) {
     }
   for (let index = parts.length - 1; index >= 0; index--) if (parts[index].items.length === 0) parts.splice(index, 1);
   const files: [string, string][] = [];
+  // Whether a manifest says that the files of the folder can be left out when nothing of them is used. Names are then more often handed on from file to file.
+  const isQuiet = chance(45);
   const importsOfMain: string[] = [];
   const exportedValues = new Set<string>();
   const exportedTypes = new Set<string>();
@@ -763,6 +765,52 @@ export function splitIntoFiles(text: string, extension: string) {
         withComments(erased(typedText)) + calls.join("\n"),
         "",
       ].join("\n");
+    /** What compilers to CommonJS make of `export { x } from` and `export * from`: a file whose names are those of another file. */
+    const handedOnInCommonJs = (from: string) => {
+      const mark = 'Object.defineProperty(exports, "__esModule", { value: true });';
+      const getter = (other: string, inner: string) =>
+        `Object.defineProperty(exports, "${other}", { enumerable: true, get: function () { return ${inner}.${other}; } });`;
+      return [
+        ...pick([
+          () => [
+            ...(chance(50) ? [mark] : []),
+            `var inner_1 = require("${from}");`,
+            ...exportsOfPart.map(other => getter(other, "inner_1")),
+          ],
+          () => [
+            ...(chance(50) ? [mark] : []),
+            `var inner_1 = require("${from}");`,
+            ...exportsOfPart.map(other => getter(other, "inner_1")),
+          ],
+          // The getters stand above the `require`.
+          () => [mark, ...exportsOfPart.map(other => getter(other, "_inner")), `const _inner = require("${from}");`],
+          () => [
+            ...(chance(50) ? [mark] : []),
+            `var inner_1 = require("${from}");`,
+            ...exportsOfPart.map(other => `exports.${other} = inner_1.${other};`),
+          ],
+          () => [
+            "var __createBinding = function (o, m, k) { Object.defineProperty(o, k, { enumerable: true, get: function () { return m[k]; } }); };",
+            'var __exportStar = function (m, exports) { for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p); };',
+            mark,
+            `__exportStar(require("${from}"), exports);`,
+          ],
+          () => [
+            mark,
+            `var _inner = require("${from}");`,
+            "Object.keys(_inner).forEach(function (key) {",
+            '    if (key === "default" || key === "__esModule") return;',
+            "    if (key in exports && exports[key] === _inner[key]) return;",
+            "    Object.defineProperty(exports, key, { enumerable: true, get: function () { return _inner[key]; } });",
+            "});",
+          ],
+          () => [`module.exports = require("${from}");`],
+          () => [`Object.assign(exports, require("${from}"));`],
+          () => [`module.exports = { ...require("${from}") };`],
+        ])(),
+        "",
+      ].join("\n");
+    };
     const name = `part${number}-${hash}`;
     let hasGetters = false;
     const lay = (path: string, content: string) => files.push([`${folder}/${path}`, content]);
@@ -832,22 +880,11 @@ export function splitIntoFiles(text: string, extension: string) {
         part.specifier = `./${name}.${part.form}`;
         lay(`${name}.${part.form}`, part.form === "cjs" ? asCommonJs(javaScript()) : javaScript());
         if (part.types !== "none") lay(`${name}.d.${part.form.replace("js", "ts")}`, declarations());
-        // What a compiler to CommonJS makes of `export { x } from`: a file whose names are getters onto the names of another file. Up to three in a row.
-        if (part.form === "cjs" && chance(50))
+        // Up to three files in a row that hand the names on.
+        if (part.form === "cjs" && chance(isQuiet ? 85 : 50))
           for (let level = 1 + below(3); level > 0; level--) {
             const outer = `getters${level}of${number}-${hash}`;
-            lay(
-              `${outer}.cjs`,
-              [
-                ...(chance(50) ? ['Object.defineProperty(exports, "__esModule", { value: true });'] : []),
-                `var inner_1 = require("${part.specifier}");`,
-                ...exportsOfPart.map(
-                  other =>
-                    `Object.defineProperty(exports, "${other}", { enumerable: true, get: function () { return inner_1.${other}; } });`,
-                ),
-                "",
-              ].join("\n"),
-            );
+            lay(`${outer}.cjs`, handedOnInCommonJs(part.specifier));
             if (part.types !== "none") lay(`${outer}.d.cts`, `export * from "${part.specifier}";\n`);
             part.specifier = `./${outer}.cjs`;
             hasGetters = true;
@@ -862,6 +899,10 @@ export function splitIntoFiles(text: string, extension: string) {
           name: part.specifier,
           version: "1.0.0",
           ...(isModule && { type: "module" }),
+          // Whether a file of the package can be left out when nothing of it is used.
+          ...(chance(isQuiet ? 90 : 30) && {
+            sideEffects: pick([false, false, false, [], true, ["./index.js"], ["./nothing-of-that-name.js"]]),
+          }),
         };
         if (part.form === "package of TypeScript") {
           manifest.main = "./index.ts";
@@ -872,7 +913,11 @@ export function splitIntoFiles(text: string, extension: string) {
               : typedText,
           );
         } else {
-          lay(`${root}/index.js`, isModule ? javaScript() : asCommonJs(javaScript()));
+          if (!isModule && calledByName.length === 0 && chance(60)) {
+            lay(`${root}/lib/inner.js`, asCommonJs(javaScript()));
+            lay(`${root}/index.js`, handedOnInCommonJs("./lib/inner.js"));
+            hasGetters = true;
+          } else lay(`${root}/index.js`, isModule ? javaScript() : asCommonJs(javaScript()));
           const hasTypes = part.types !== "none";
           if (hasTypes) lay(`${root}/index.d.ts`, declarations());
           if (part.form === "package with typed source") {
@@ -889,7 +934,7 @@ export function splitIntoFiles(text: string, extension: string) {
     }
     // Between main and the part can stand a file that hands the names on.
     let from = part.specifier;
-    if (!isTypeScript && chance(hasGetters ? 70 : 20)) {
+    if (!isTypeScript && chance(hasGetters ? (isQuiet ? 90 : 70) : 20)) {
       const between = `between${number}-${hash}.mjs`;
       lay(
         between,
@@ -897,7 +942,7 @@ export function splitIntoFiles(text: string, extension: string) {
       );
       from = `./${between}`;
     }
-    if (isTypeScript && chance(hasGetters ? 70 : 25)) {
+    if (isTypeScript && chance(hasGetters ? (isQuiet ? 90 : 70) : 25)) {
       const between = `between${number}-${hash}.ts`;
       const ignore = isWrong || part.types === "none" ? ["// @ts-ignore"] : [];
       // A function of its own around each function of the part, with the types that the part is said to have.
@@ -1005,6 +1050,16 @@ export function splitIntoFiles(text: string, extension: string) {
     "",
   ].join("\n");
 
+  // A manifest for the folder. Main is imported for what it does, so it is listed: every other file can be left out when nothing of it is used.
+  if (isQuiet)
+    files.push([
+      `${folder}/package.json`,
+      JSON.stringify(
+        { name: `split-${hash}`, sideEffects: chance(70) ? [`./${main}`] : [`./${main}`, "./part1-*"] },
+        null,
+        2,
+      ) + "\n",
+    ]);
   // The options that decide what the checker reads and reports.
   if (chance(70)) {
     const drawn = (name: string, percentOfTrue: number) => (chance(30) ? {} : { [name]: chance(percentOfTrue) });

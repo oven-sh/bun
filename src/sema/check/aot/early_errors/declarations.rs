@@ -109,6 +109,7 @@ impl Checker<'_, '_> {
     }
 
     pub(super) fn check_export_early_errors(&mut self, file: FileId) {
+        self.check_local_export_names(file);
         let (hir, bound) = (self.hir(file), self.bound(file));
         if !hir.is_js {
             return;

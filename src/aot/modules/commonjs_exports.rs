@@ -46,6 +46,8 @@ pub(super) struct CommonJsInput<'a, 'b, 's> {
     pub inner_modules: &'a (dyn Fn(FileId) -> &'a [InnerCommonJs] + Sync),
     /// Somebody may look at the module while its body runs.
     pub half: &'a (dyn Fn(ModuleRef) -> bool + Sync),
+    /// An ES module that asks for the module may be linked while its body runs.
+    pub half_at_link: &'a (dyn Fn(ModuleRef) -> bool + Sync),
     /// An ES module that something other than an import starts. Only such a module has a check.
     pub is_prefix_root: &'a (dyn Fn(FileId) -> bool + Sync),
 }
@@ -86,6 +88,8 @@ pub(super) struct NameEntry {
     /// Where the body has created it for sure. `u32::MAX`: some run of the body may end without it.
     pub created_at: u32,
     pub is_enumerable: bool,
+    /// The link may come in front of what fills the binding that the name stands for.
+    pub is_seen_unfilled: bool,
 }
 
 /// What the export tables read of a module.
@@ -191,6 +195,15 @@ impl CommonJsTexts {
         self.text_of(module)?.marker
     }
 
+    /// Another file stores `__esModule` on the modules: only the run knows what it reads there.
+    pub(super) fn forget_markers(&mut self, modules: &[ModuleRef]) {
+        for module in modules {
+            if let Some(&index) = self.index.get(module) {
+                self.modules[index as usize].marker = None;
+            }
+        }
+    }
+
     pub(super) fn entries(&self) -> Vec<ModuleEntries> {
         self.modules.iter().map(create_entries).collect()
     }
@@ -220,6 +233,7 @@ fn create_entries(text: &OwnText) -> ModuleEntries {
                 target: None,
                 created_at,
                 is_enumerable: creation.is_enumerable,
+                is_seen_unfilled: false,
             }),
         }
     }
@@ -229,6 +243,7 @@ fn create_entries(text: &OwnText) -> ModuleEntries {
             target: Some(alias.target),
             created_at: alias.start,
             is_enumerable: alias.is_enumerable,
+            is_seen_unfilled: alias.is_seen_unfilled,
         });
     }
     names.shared_sort_by_key(|entry| entry.created_at);
@@ -523,14 +538,20 @@ impl CommonJsExports {
         let seen = collect_seen_namespaces(input.modules, tables, imports).into_iter();
         let seen = seen.map(ModuleRef::File);
         // The link may come while the body runs, and only the object says what the module has then.
-        let is_half = |module: &ModuleRef| self.text_of(*module).is_some_and(|text| text.is_half);
-        let owners = members.iter().map(|member| member.owner);
+        let is_half_when = |module: ModuleRef, linked: ModuleRef| {
+            self.text_of(module).is_some_and(|text| text.is_half) && (input.half_at_link)(linked)
+        };
+        let is_half = |module: &ModuleRef| is_half_when(*module, *module);
+        let owners = members.iter();
+        let owners = owners
+            .filter(|member| is_half_when(member.owner, ModuleRef::File(member.exporter)))
+            .map(|member| member.owner);
         let mut modules: Vec<ModuleRef> = written
             .chain(exported)
             .chain(defaults)
             .chain(seen)
             .filter(|module| !self.has_default_of_its_own(*module) || is_half(module))
-            .chain(owners.filter(is_half))
+            .chain(owners)
             .collect();
         // Whether the module has a name by the time the copy is taken: a variable cannot say that it is absent, the object can.
         for &(imported, _) in &tables.absent_commonjs_names {

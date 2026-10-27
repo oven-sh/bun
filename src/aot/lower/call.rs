@@ -59,6 +59,7 @@ pub(in crate::lower) struct CallOptions<'t> {
     pub(in crate::lower) expected_result: Option<ExpectedResultId>,
     pub(in crate::lower) is_never_inlined: bool,
     pub(in crate::lower) is_reflect_construct_syntax: bool,
+    pub(in crate::lower) call_number: Option<u32>,
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -203,6 +204,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 callee.name,
                 options.expected_result,
                 None,
+                options.call_number,
                 IS_ANNOTATED_PURE,
                 options.is_never_inlined,
                 options.is_reflect_construct_syntax,
@@ -255,6 +257,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             is_never_inlined: false,
             is_reflect_construct_syntax: self.file.is_reflect_construct_syntax(site.callee)
                 && matches!(&arguments, Arguments::Values(values) if values.len() >= 2),
+            call_number: self.file.find_number_of_symbol_call(call),
         };
         self.set_position(self.file.call_position(site));
         if options.is_reflect_construct_syntax {
@@ -344,11 +347,22 @@ pub(in crate::lower) fn emit_call_of(
         expected_result: None,
         is_never_inlined: false,
         is_reflect_construct_syntax: false,
+        call_number: None,
     };
     lowering.emit_call_at(callee, arguments, options)
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    // A call of `Symbol` itself says which of the calls of its file it is: the key of the symbols that it makes holds the number.
+    fn find_number_of_symbol_call(&self, call: ExprId) -> Option<u32> {
+        let ExprKind::Call(number) = self.hir[call].kind else {
+            return None;
+        };
+        let callee = self.skip_type_syntax(self.hir[number].callee);
+        let calls_symbol = self.builtins.builtin_of_expression(callee) == Some(BuiltinId::Symbol);
+        calls_symbol.then_some(u32::from(number))
+    }
+
     // Bun's transpiler prints a `new` without arguments without `()`, unless something is read from the result or the result is called.
     fn construct_position(&self, expression: ExprId) -> u32 {
         let site = call_site(self, expression);

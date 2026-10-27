@@ -58,3 +58,50 @@ console.${method}("the end", filled, returned);
   },
   120_000,
 );
+
+test("a Console hands a line to its stream once, whatever write() throws", async () => {
+  using folder = tempDir("aot-console-writes-a-line-once", {
+    "program.cjs": `const { Console } = require("node:console");
+const { Writable } = require("node:stream");
+const fs = require("node:fs");
+function throwOnce() {
+  if (throwOnce.done) return;
+  throwOnce.done = true;
+  throw new RangeError("Out of memory");
+}
+const stream = new Writable({
+  write(chunk, encoding, done) {
+    fs.writeSync(1, chunk);
+    done();
+    throwOnce();
+  },
+});
+new Console(stream).log("through a stream that finishes at once");
+throwOnce.done = false;
+const writer = {
+  write(text) {
+    fs.writeSync(1, text);
+    throwOnce();
+  },
+  listenerCount: () => 1,
+  removeListener() {},
+};
+new Console(writer).log("through an object with a method write");
+`,
+  });
+  const expected = {
+    stdout: "through a stream that finishes at once\nthrough an object with a method write\n",
+    stderr: "",
+    exitCode: 0,
+  };
+  expect(await run([bunExe(), "run", "program.cjs"], String(folder))).toEqual(expected);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", "program.cjs", "--outfile", "program"],
+    String(folder),
+  );
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+    stderr: expect.not.stringMatching(/^error\b/m),
+    exitCode: 0,
+  });
+  expect(await run([join(String(folder), "program")], String(folder))).toEqual(expected);
+}, 120_000);

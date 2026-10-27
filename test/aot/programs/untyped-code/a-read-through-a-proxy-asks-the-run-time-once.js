@@ -1,7 +1,7 @@
 // What a proxy answers under a name is for its handler to say. Compiled code asks the run time once for such a read: it does not first look the name up in the objects themselves.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const lookups = () => count("operationAOTGetGeneric");
-const reads = () => count("operationAOTGetById");
+const reads = () => count("operationAOTGetById") + count("operationAOTGetByIdAndCache") + count("operationAOTGetWithProxyTrap");
 const readWanted = object => object.wanted;
 const readOther = object => object.other;
 let calls = 0;

@@ -150,8 +150,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         Some(SymbolCreation {
             file: variable.file,
-            callee_start: hir[callee].pos,
-            callee_end: hir[callee].end,
+            call_number: u32::from(call),
             description,
         })
     }

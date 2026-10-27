@@ -17,6 +17,7 @@ pub(super) fn emit_call(builder: &mut FunctionBuilder, callee: ValueId) -> Value
         None,
         None,
         None,
+        None,
         false,
         false,
         false,

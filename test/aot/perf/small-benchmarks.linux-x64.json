@@ -16,7 +16,7 @@
     "callsNotExpected": 6
   },
   "a-literal-with-getters-is-made-often": {
-    "millionInstructions": 99,
+    "millionInstructions": 92,
     "testsFailed": 0,
     "alwaysFailing": 0,
     "accessesByName": 0,
@@ -24,10 +24,10 @@
     "callsNotExpected": 0
   },
   "a-literal-with-getters-is-read-often": {
-    "millionInstructions": 237,
+    "millionInstructions": 106,
     "testsFailed": 4,
     "alwaysFailing": 1,
-    "accessesByName": 14,
+    "accessesByName": 11,
     "runtimeOperations": 16,
     "callsNotExpected": 1
   },
@@ -45,6 +45,14 @@
     "alwaysFailing": 0,
     "accessesByName": 0,
     "runtimeOperations": 0,
+    "callsNotExpected": 0
+  },
+  "a-member-between-the-halves-of-an-accessor-stores-to-what-the-getter-returns": {
+    "millionInstructions": 66,
+    "testsFailed": 0,
+    "alwaysFailing": 0,
+    "accessesByName": 0,
+    "runtimeOperations": 100504,
     "callsNotExpected": 0
   },
   "a-stream-wakes-its-suspended-consumers": {

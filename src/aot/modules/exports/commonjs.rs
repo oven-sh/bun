@@ -17,7 +17,7 @@ pub(in crate::modules) struct CommonJsNames {
     targets: FxHashMap<(ModuleRef, Atom), Resolution>,
     /// Of those, the names that an ES importer can tell from what they stand for: it holds what the getter answered when the file was linked, or under `default` the value of the module.
     copied: FxHashSet<(ModuleRef, Atom)>,
-    /// Of those, the names that no loop over the object sees.
+    /// The names with a getter that returns a name of another module or a binding and that no loop over the object sees.
     hidden: FxHashSet<(ModuleRef, Atom)>,
     is_refused: Vec<bool>,
     /// The modules with a name that stands for something that has no variable: they keep their objects.
@@ -137,7 +137,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // Whether what the getter answers may change behind the link, or the getter answers `undefined` for a name that is not there.
+    // Whether what the getter answers may change behind the link, or the getter answers `undefined` for a name that is not there. A binding that the link may find unfilled says so itself.
     fn can_be_told_from_copy(&self, target: Resolution) -> bool {
         match target {
             Resolution::Variable(symbol) => {
@@ -165,14 +165,13 @@ impl Resolver<'_, '_> {
             };
             let is_found_by_import =
                 self.names.shows_member(module, entry.name) && self.is_found_by_import(target);
-            // Where the run time lists the names of the file it passes over a getter that is not enumerable, so nothing would fill a copy of it, and the `default` of the file is its value.
             if !entry.is_enumerable && (!is_found_by_import || entry.name == known::default) {
                 return false;
             }
             self.names.targets.insert((module, entry.name), target);
-            if !entry.is_enumerable {
-                self.names.hidden.insert((module, entry.name));
-            } else if !is_found_by_import || self.can_be_told_from_copy(target) {
+            let is_told_from_copy =
+                !is_found_by_import || entry.is_seen_unfilled || self.can_be_told_from_copy(target);
+            if entry.is_enumerable && is_told_from_copy {
                 self.names.copied.insert((module, entry.name));
             }
         }
@@ -202,6 +201,12 @@ pub(super) fn resolve_commonjs_names(
     let count = entries.len();
     let entry_modules = entries.iter().map(|entries| entries.module);
     let index = entry_modules.zip(0..).collect();
+    let is_hidden = |entry: &&NameEntry| entry.target.is_some() && !entry.is_enumerable;
+    let hidden = entries.iter().flat_map(|entries| {
+        let names = entries.names.iter().filter(is_hidden);
+        names.map(|entry| (entries.module, entry.name))
+    });
+    let hidden = hidden.collect();
     let mut resolver = Resolver {
         files,
         modules,
@@ -211,7 +216,7 @@ pub(super) fn resolve_commonjs_names(
             entries,
             targets: FxHashMap::default(),
             copied: FxHashSet::default(),
-            hidden: FxHashSet::default(),
+            hidden,
             is_refused: vec![false; count],
             refused: Vec::new(),
         },
@@ -224,12 +229,10 @@ pub(super) fn resolve_commonjs_names(
     let CommonJsNames {
         targets,
         copied,
-        hidden,
         refused,
         ..
     } = &mut names;
     targets.retain(|key, _| !refused.contains(&key.0));
     copied.retain(|key| !refused.contains(&key.0));
-    hidden.retain(|key| !refused.contains(&key.0));
     names
 }

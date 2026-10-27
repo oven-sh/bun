@@ -145,8 +145,8 @@ pub enum MemberName {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SymbolCreation {
     pub file: FileId,
-    pub callee_start: u32,
-    pub callee_end: u32,
+    /// Which of the calls of the file it is.
+    pub call_number: u32,
     pub description: Option<Atom>,
 }
 

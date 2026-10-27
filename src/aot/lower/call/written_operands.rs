@@ -124,7 +124,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     // `Object.fromEntries([[key, value], ..])`. A key is converted when its property is defined, behind every expression of the list.
-    fn lower_object_from_entries(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
+    fn lower_object_from_entries(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        tail: Tail<'_>,
+    ) -> Option<ValueId> {
         let list = self.file.find_only_argument(site)?;
         let pairs = self.file.find_written_pairs(list)?;
         if pairs.is_empty() {
@@ -152,9 +157,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         } else {
             self.begin_dictionary()
         };
+        let outer = self
+            .builder
+            .set_tail_position(matches!(tail, Tail::Yes { .. }));
+        self.set_position(self.file.last_mapped_position(site.callee));
         for (key, value) in entries {
-            self.add_property(&mut made, key, value, None);
+            self.add_property_inside(&mut made, key, value, BuiltinId::ObjectFromEntries);
         }
+        self.builder.set_tail_position(outer);
+        self.set_position(self.file.hir[call].pos);
         let made = object::finish_object(self, made);
         Some(self.claim_call_result(call, made))
     }
@@ -209,7 +220,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         }
         match find_locked_builtin(self.file, site.callee) {
-            Some(BuiltinId::ObjectFromEntries) => self.lower_object_from_entries(call, site),
+            Some(BuiltinId::ObjectFromEntries) => self.lower_object_from_entries(call, site, tail),
             Some(BuiltinId::ObjectDefineProperties) => {
                 self.lower_definition_by_descriptors(call, site)
             }

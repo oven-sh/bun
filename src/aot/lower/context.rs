@@ -22,6 +22,7 @@ use super::fragment::{FragmentBuilder, ModuleFragment};
 use super::layouts::{DefinedObjectTypes, LayoutState};
 use super::module::{LibraryFunctions, ModuleState};
 use super::scope::{ScopeAnalysis, ScopeInput, analyze_scopes};
+use super::statement::StatementsAround;
 use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
 use crate::builtins::{BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table};
@@ -146,6 +147,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     shown_names: ShownNames,
     has_bundled_positions: bool,
     pub(in crate::lower) printed_operators: PrintedOperators,
+    pub(in crate::lower) statements_around: StatementsAround,
     counters: Counters,
     scratch: BuilderScratch,
     pub(crate) has_chain_past_nesting_limit: bool,
@@ -217,6 +219,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             ),
             has_bundled_positions: inputs.sources.bundled_positions(file).is_some(),
             printed_operators: PrintedOperators::default(),
+            statements_around: StatementsAround::default(),
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
             has_chain_past_nesting_limit: false,
@@ -308,11 +311,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     // A stack trace shows the positions that the engine records in the text it runs: no source map takes them back to a token.
     pub(crate) fn is_shown_without_source_map(&self) -> bool {
         self.has_bundled_positions || self.runs_as_written()
-    }
-
-    pub(crate) fn is_file_shown_without_source_map(&self, file: FileId) -> bool {
-        self.inputs.sources.bundled_positions(file).is_some()
-            || self.runs_file_as_written(file, self.queries.files().hir(file))
     }
 
     pub(crate) fn evaluated_function(&self, call: ExprId) -> Option<FunctionRef> {

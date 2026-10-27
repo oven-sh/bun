@@ -37,7 +37,9 @@ mod compiled_frames;
 mod fault_registers;
 mod stopped_builds;
 pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
-pub use stopped_builds::{BuildDescribers, DescribeBuild, report_stopped_builds};
+pub use stopped_builds::{
+    BuildDescribers, DescribeBuild, end_stopped_builds_by_signal, report_stopped_builds,
+};
 
 /// Link-time target for `bun_alloc::out_of_memory()` — declared
 /// `extern "Rust"` in `bun_alloc` (which is below this crate in the dep graph)
@@ -800,6 +802,104 @@ mod draft {
         None,
     }
 
+    /// The format of the panic trace is slightly different in debug builds: the backtrace is demangled
+    /// immediately instead of using a trace string.
+    fn shows_debug_trace() -> bool {
+        if !Environment::SHOW_CRASH_TRACE {
+            return false;
+        }
+        // To make the release-mode behavior easier to demo, debug mode checks for this CLI flag.
+        for arg in bun_core::argv() {
+            if arg == &b"--debug-crash-handler-use-trace-string"[..] {
+                return false;
+            }
+        }
+        // Act like release build when explicitly enabling reporting
+        !is_reporting_enabled()
+    }
+
+    /// Inlined, so that `TraceSeed::None` trims at the return address of the caller.
+    #[inline(always)]
+    fn capture_trace(seed: TraceSeed, addresses: &mut [usize; 20]) -> usize {
+        match seed {
+            // For an actual fault the signal/exception handler hands
+            // us the saved register context. Seeding the walk from
+            // the fault `pc`/`fp` is the only reliable way to recover
+            // the faulting stack: the POSIX handler runs on an
+            // `SA_ONSTACK` altstack, so its own frame chain is
+            // disjoint from the faulting thread's, and release builds
+            // strip the unwind tables a CFI-based capture would need.
+            TraceSeed::Fault { pc, fp } => bun_core::debug::capture_from_context(pc, fp, addresses),
+            #[cfg(unix)]
+            TraceSeed::FaultOnStack {
+                pc,
+                behind_pc,
+                fp,
+                sp,
+            } => bun_core::debug::capture_from_fault(pc, behind_pc, fp, sp, addresses),
+            TraceSeed::BeginAddr(addr) => debug::capture_stack_trace(addr, addresses),
+            TraceSeed::None => debug::capture_stack_trace(debug::return_address(), addresses),
+        }
+    }
+
+    /// A build that cannot go on ends as it does at any other error of the compiler: with a message and exit code 1.
+    #[cold]
+    fn end_build_with_error(
+        place: &crate::stopped_builds::PlaceInBuild,
+        reason: CrashReason,
+        trace: &StackTrace,
+    ) -> ! {
+        // Held until the process ends: of the threads that stop together, the first one speaks.
+        let _speaker = PANIC_MUTEX.lock();
+        Output::flush();
+        Output::source::stdio::restore();
+        let writer = &mut stderr_writer();
+        let (red, dim, reset): (&[u8], &[u8], &[u8]) = if enable_ansi_colors_stderr() {
+            (b"\x1b[31m", b"\x1b[2m", b"\x1b[0m")
+        } else {
+            (b"", b"", b"")
+        };
+        let _ = writer.write_all(red);
+        let _ = writer.write_all(b"error");
+        let _ = writer.write_all(reset);
+        if matches!(reason, CrashReason::OutOfMemory) {
+            let _ = writer.write_all(b": Out of memory while compiling\n");
+            let _ = writer.write_all(place.lines());
+        } else {
+            let _ = writeln!(writer, ": internal compiler error: {reason}");
+            let _ = writer.write_all(place.lines());
+            if shows_debug_trace() {
+                dump_stack_trace(trace, WriteStackTraceLimits::default());
+            }
+            let mut link = BoundedArray::<u8, 1024>::default();
+            let _ = write!(
+                link.writer(),
+                "{}",
+                TraceString {
+                    trace,
+                    reason,
+                    action: TraceStringAction::OpenIssue,
+                }
+            );
+            let _ = writer.write_all(dim);
+            let _ = writer.write_all(b"note");
+            let _ = writer.write_all(reset);
+            let _ = writer.write_all(
+                b": This is a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues with these lines and this link:\n ",
+            );
+            let _ = writer.write_all(link.const_slice());
+            let _ = writer.write_all(b"\n");
+            report(link.const_slice());
+        }
+        #[cfg(windows)]
+        bun_sys::windows::kernel32::ExitProcess(1);
+        #[cfg(not(windows))]
+        // SAFETY: `_exit` has no preconditions and never returns.
+        unsafe {
+            libc::_exit(1)
+        }
+    }
+
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
     #[cold]
     pub fn crash_handler(reason: CrashReason, seed: TraceSeed) -> ! {
@@ -814,6 +914,18 @@ mod draft {
                 bun_core::maybe_handle_panic_during_process_reload();
 
                 PANIC_STAGE.with(|s| s.set(1));
+                if let Some(place) = crate::stopped_builds::place_of_this_thread() {
+                    let mut addresses: [usize; 20] = [0; 20];
+                    let index = capture_trace(seed, &mut addresses);
+                    end_build_with_error(
+                        &place,
+                        reason,
+                        &StackTrace {
+                            index,
+                            instruction_addresses: &addresses,
+                        },
+                    );
+                }
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
                 let addresses_in_trace: [usize; 20];
                 let trace_address_count: usize;
@@ -837,19 +949,7 @@ mod draft {
                     //
                     // To make the release-mode behavior easier to demo, debug mode
                     // checks for this CLI flag.
-                    let debug_trace = Environment::SHOW_CRASH_TRACE
-                        && 'check_flag: {
-                            for arg in bun_core::argv() {
-                                if arg == &b"--debug-crash-handler-use-trace-string"[..] {
-                                    break 'check_flag false;
-                                }
-                            }
-                            // Act like release build when explicitly enabling reporting
-                            if is_reporting_enabled() {
-                                break 'check_flag false;
-                            }
-                            true
-                        };
+                    let debug_trace = shows_debug_trace();
 
                     // SAFETY: single-threaded mutation under panic_mutex
                     if !HAS_PRINTED_MESSAGE.load(Ordering::Relaxed) {
@@ -1044,37 +1144,7 @@ mod draft {
                     let trace_buf: StackTrace;
 
                     let trace: &StackTrace = {
-                        let idx: usize = match seed {
-                            // For an actual fault the signal/exception handler hands
-                            // us the saved register context. Seeding the walk from
-                            // the fault `pc`/`fp` is the only reliable way to recover
-                            // the faulting stack: the POSIX handler runs on an
-                            // `SA_ONSTACK` altstack, so its own frame chain is
-                            // disjoint from the faulting thread's, and release builds
-                            // strip the unwind tables a CFI-based capture would need.
-                            TraceSeed::Fault { pc, fp } => {
-                                bun_core::debug::capture_from_context(pc, fp, &mut addr_buf)
-                            }
-                            #[cfg(unix)]
-                            TraceSeed::FaultOnStack {
-                                pc,
-                                behind_pc,
-                                fp,
-                                sp,
-                            } => bun_core::debug::capture_from_fault(
-                                pc,
-                                behind_pc,
-                                fp,
-                                sp,
-                                &mut addr_buf,
-                            ),
-                            TraceSeed::BeginAddr(addr) => {
-                                debug::capture_stack_trace(addr, &mut addr_buf)
-                            }
-                            TraceSeed::None => {
-                                debug::capture_stack_trace(debug::return_address(), &mut addr_buf)
-                            }
-                        };
+                        let idx: usize = capture_trace(seed, &mut addr_buf);
                         trace_buf = StackTrace {
                             index: idx,
                             instruction_addresses: &addr_buf,
@@ -1892,23 +1962,25 @@ mod draft {
         let reason =
             CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
 
+        if let Some(place) = crate::stopped_builds::place_of_this_thread() {
+            let mut addresses: [usize; 20] = [0; 20];
+            let index = debug::capture_stack_trace(debug::return_address(), &mut addresses);
+            end_build_with_error(
+                &place,
+                reason,
+                &StackTrace {
+                    index,
+                    instruction_addresses: &addresses,
+                },
+            );
+        }
+
         let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
         {
             let _panic_guard = PANIC_MUTEX.lock();
             let writer = &mut stderr_writer();
 
-            let debug_trace = Environment::SHOW_CRASH_TRACE
-                && 'check_flag: {
-                    for arg in bun_core::argv() {
-                        if arg == &b"--debug-crash-handler-use-trace-string"[..] {
-                            break 'check_flag false;
-                        }
-                    }
-                    if is_reporting_enabled() {
-                        break 'check_flag false;
-                    }
-                    true
-                };
+            let debug_trace = shows_debug_trace();
 
             Output::flush();
             let _ =

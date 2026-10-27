@@ -102,9 +102,7 @@ function lazy() {
   return require("node:path").join("a", "b") + require("node:os").EOL.length;
 }
 function resolves() {
-  return (
-    typeof require.resolve + typeof require.cache + typeof require.main + typeof module.id + typeof module.filename
-  );
+  return typeof require.resolve + typeof require.cache + typeof module.id + typeof module.filename;
 }
 function globals() {
   return typeof globalThis.process + typeof globalThis.Bun + typeof global.setTimeout + typeof globalThis.notThere;

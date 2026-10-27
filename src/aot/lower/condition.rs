@@ -381,10 +381,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let right_value = self.lower_expression(right);
         let left_field = left_field.filter(|&field| self.is_holder_unchanged(field));
         let right_field = self.find_compared_field(op, right, left);
-        self.set_comparison_position(expression, op);
+        // The operands are looked at once more, which is no second read of them.
+        let were_suspended = self.builder.suspend_records(true);
         let left_subject = self.find_subject(left, left_value);
         let right_subject = self.find_subject(right, right_value);
+        self.builder.suspend_records(were_suspended);
         let right_subject = right_subject.filter(|&symbol| Some(symbol) != left_subject);
+        self.set_comparison_position(expression, op);
         let select = |local: Option<SymbolId>, field: Option<TestedField>| {
             let local = local.map(TestedOperand::Local);
             local.or_else(|| field.map(TestedOperand::Field))

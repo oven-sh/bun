@@ -2033,16 +2033,29 @@ describe("spawn().unref() with piped stdio", () => {
   });
 
   it("an unref'd child still delivers its output to a listener attached later", async () => {
-    const c = spawn(bunExe(), ["-e", `process.stdout.write("hello")`], {
-      stdio: ["ignore", "pipe", "ignore"],
-      env: bunEnv,
-    });
-    c.unref();
-    await once(c, "spawn");
-    let out = "";
-    c.stdout!.setEncoding("utf8").on("data", chunk => (out += chunk));
-    await once(c, "close");
-    expect({ out, exitCode: c.exitCode }).toEqual({ out: "hello", exitCode: 0 });
+    // The child lives until stdin closes: its exit would flush a stdout that has no listener.
+    const c = spawn(
+      bunExe(),
+      ["-e", `const fs = require("fs"); fs.writeSync(1, "hello"); fs.writeSync(2, "written"); process.stdin.resume();`],
+      { env: bunEnv },
+    );
+    try {
+      c.unref();
+      await once(c.stderr!, "data");
+      // No listener on stdout yet, so the read that unref() started buffers the output.
+      const deadline = Date.now() + 1000;
+      while (c.stdout!.readableLength === 0 && Date.now() < deadline) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      expect(c.stdout!.readableLength).toBe(5);
+      let out = "";
+      c.stdout!.setEncoding("utf8").on("data", chunk => (out += chunk));
+      c.stdin!.end();
+      await once(c, "close");
+      expect({ out, exitCode: c.exitCode }).toEqual({ out: "hello", exitCode: 0 });
+    } finally {
+      c.kill();
+    }
   });
 });
 

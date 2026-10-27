@@ -770,10 +770,12 @@ impl DeflateEncoder {
         unsafe { deflateReset(self.strm.as_ptr()) }
     }
 
-    /// `deflateBound()`: room in which one `Finish` step over `source_len` bytes is sure to end the stream.
+    /// `deflateBound()`: room in which one `Finish` step over `source_len` bytes is sure to end the stream,
+    /// if both fit in 32 bits, which is all a step takes and gives.
     pub fn bound(&mut self, source_len: usize) -> usize {
+        let source_len = uLong::try_from(source_len).unwrap_or(uLong::MAX);
         // SAFETY: strm was initialized via deflateInit2_.
-        unsafe { deflateBound(self.strm.as_ptr(), source_len as uLong) as usize }
+        unsafe { deflateBound(self.strm.as_ptr(), source_len) as usize }
     }
 
     /// One `deflate()` call writing into `out`'s spare capacity.

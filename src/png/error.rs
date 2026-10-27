@@ -18,8 +18,6 @@ pub enum Error {
     InvalidPalette,
     #[error("missing PLTE for indexed image")]
     MissingPalette,
-    #[error("more tRNS entries than PLTE entries")]
-    InvalidTransparency,
     #[error("reached chunk limits")]
     ChunkLimits,
     #[error("IDAT stream too short")]

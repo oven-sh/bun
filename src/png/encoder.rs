@@ -79,7 +79,7 @@ fn encode(
     out.try_reserve(2 * IDAT_LEN)?;
     out.extend_from_slice(&chunk::SIGNATURE);
     chunk::write(&mut out, chunk::IHDR, &header.to_bytes())?;
-    // A profile that a chunk cannot hold is left out.
+    // A profile longer than a chunk can be is left out.
     if let Some(profile) = icc_profile
         && !profile.is_empty()
         && profile.len() <= MAX_U31 as usize
@@ -121,6 +121,7 @@ fn encode(
     }
     let mut out = idat.finish()?;
     chunk::write(&mut out, chunk::IEND, &[])?;
+    out.shrink_to_fit();
     Ok(out)
 }
 
@@ -196,26 +197,24 @@ impl Idat {
 
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L4487
     fn write(&mut self, mut line: &[u8]) -> Result<()> {
-        loop {
+        while !line.is_empty() {
             let (used, code) = self.deflate(line, FlushValue::NoFlush)?;
-            line = line.get(used..).unwrap_or_default();
-            let started_chunk = self.next_chunk_if_full()?;
-            if line.is_empty() {
-                return if started_chunk || code == ReturnCode::Ok {
-                    Ok(())
-                } else {
-                    Err(Error::Zlib)
-                };
+            if code != ReturnCode::Ok {
+                return Err(Error::Zlib);
             }
+            line = line.get(used..).unwrap_or_default();
+            self.next_chunk_if_full()?;
         }
+        Ok(())
     }
 
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L4523
     fn finish(mut self) -> Result<Vec<u8>> {
         loop {
+            let before = self.out.len();
             match self.deflate(&[], FlushValue::Finish)? {
                 (_, ReturnCode::StreamEnd) => break,
-                (_, ReturnCode::Ok | ReturnCode::BufError) => {}
+                (_, ReturnCode::Ok | ReturnCode::BufError) if self.out.len() > before => {}
                 _ => return Err(Error::Zlib),
             }
             self.next_chunk_if_full()?;

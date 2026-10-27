@@ -298,7 +298,7 @@ fn inflate(mut input: &[u8], max: usize, keep: Keep) -> Result<Option<Vec<u8>>> 
             _ => return Ok(None),
         }
         if produced < room {
-            if input.is_empty() {
+            if input.is_empty() || (used == 0 && produced == 0) {
                 return Ok(None);
             }
         } else if total == size {

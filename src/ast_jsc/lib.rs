@@ -14,7 +14,7 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) 
     if let Some(value) = err.to_error() {
         value.to_zig_exception(global_object, zig_exception_holder.zig_exception());
     } else {
-        zig_exception_holder.zig_exception().message = err.to_bun_string(global_object)?;
+        zig_exception_holder.zig_exception().message = err.to_bun_string(global_object)?.into();
     }
 
     Ok(Msg {
@@ -26,7 +26,7 @@ pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) 
                     .to_owned_slice(),
             ),
             location: Some(Location {
-                file: Cow::Owned(file),
+                file: file.into(),
                 line: 0,
                 column: 0,
                 ..Default::default()

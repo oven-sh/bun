@@ -10,8 +10,7 @@ use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::enc::params::EncoderParams;
 use crate::util::{
-    Bug, Checked, Loads, OutOfMemory, SliceExt, load_u32_le, load_u64_le, try_vec,
-    try_with_capacity, try_zeroed,
+    Bug, Checked, Loads, OutOfMemory, SliceExt, load_u32_le, load_u64_le, try_vec, try_zeroed,
 };
 
 const TAG_HASH_BITS: u32 = 8;
@@ -74,6 +73,9 @@ pub(crate) trait TaggedBuckets<const N: usize>: Sized {
     /// How many positions were added to bucket `key`, modulo 65536, and the last of them.
     fn bucket_mut(&mut self, key: usize) -> Checked<(&mut u16, &mut Block<N>)>;
 
+    /// Makes room for `positions` positions.
+    fn reserve(&mut self, positions: usize) -> Result<(), OutOfMemory>;
+
     /// Empties all buckets.
     fn clear(&mut self);
 }
@@ -97,6 +99,10 @@ impl<const N: usize> TaggedBuckets<N> for DenseBuckets<N> {
         Ok((self.added.at_mut(key)?, self.blocks.at_mut(key)?))
     }
 
+    fn reserve(&mut self, _positions: usize) -> Result<(), OutOfMemory> {
+        Ok(())
+    }
+
     fn clear(&mut self) {
         self.added.fill(0);
     }
@@ -115,6 +121,9 @@ impl<const N: usize> SparseBuckets<N> {
     #[cold]
     #[inline(never)]
     fn give_block(&mut self, key: usize) -> Checked {
+        if self.blocks.len() == self.blocks.capacity() {
+            return Err(Bug);
+        }
         self.blocks.push(Block::EMPTY);
         let [block, _] = self.heads.at_mut(key)?;
         *block = self.blocks.len() as u16;
@@ -138,7 +147,7 @@ impl<const N: usize> TaggedBuckets<N> for SparseBuckets<N> {
     fn new(bucket_bits: u32) -> Result<Self, OutOfMemory> {
         Ok(Self {
             heads: try_zeroed(1 << bucket_bits)?,
-            blocks: try_with_capacity(1 << bucket_bits)?,
+            blocks: Vec::new(),
         })
     }
 
@@ -149,6 +158,13 @@ impl<const N: usize> TaggedBuckets<N> for SparseBuckets<N> {
         }
         let [block, added] = self.heads.at_mut(key)?;
         Ok((added, self.blocks.at_mut(usize::from(*block) - 1)?))
+    }
+
+    fn reserve(&mut self, positions: usize) -> Result<(), OutOfMemory> {
+        let needed = positions.min(self.heads.len());
+        self.blocks
+            .try_reserve(needed.saturating_sub(self.blocks.len()))
+            .map_err(|_| OutOfMemory)
     }
 
     fn clear(&mut self) {
@@ -239,6 +255,10 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HasherImpl
             self.buckets.clear();
         }
         Ok(())
+    }
+
+    fn reserve(&mut self, input_end: usize) -> Result<(), OutOfMemory> {
+        self.buckets.reserve(input_end)
     }
 
     #[inline(always)]

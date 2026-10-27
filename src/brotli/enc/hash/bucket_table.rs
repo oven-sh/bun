@@ -1,7 +1,7 @@
 //! The storage of the hasher that keeps the last few positions of each hash.
 
 use crate::enc::params::HasherParams;
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_with_capacity, try_zeroed};
+use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_zeroed};
 
 /// Which block is the bucket's own, counted from 1, or 0 if it has none yet. Then how many positions were added to the
 /// bucket, modulo 65536.
@@ -15,8 +15,8 @@ pub(crate) struct BucketTable {
     pub(crate) hash_shift: u32,
     pub(crate) num_last_distances_to_check: usize,
     heads: Vec<Head>,
-    /// Ring buffers of `block_size` positions. A bucket gets one with its first position, so that of the room for all
-    /// of them, which can be 32 MiB, a short input only touches what it uses.
+    /// Ring buffers of `block_size` positions. A bucket gets one with its first position, so that a short input does
+    /// not take the room for all of them, which can be 32 MiB.
     pub(crate) blocks: Vec<u32>,
     /// `heads` is all 0 and `blocks` is empty.
     is_clear: bool,
@@ -40,7 +40,7 @@ impl BucketTable {
             hash_shift: (32 - hasher.bucket_bits) as u32,
             num_last_distances_to_check: hasher.num_last_distances_to_check as usize,
             heads: try_zeroed(bucket_size)?,
-            blocks: try_with_capacity(bucket_size * block_size)?,
+            blocks: Vec::new(),
             is_clear: true,
         })
     }
@@ -48,6 +48,14 @@ impl BucketTable {
     /// Whether the table was not used since it was made, and so has nothing to forget. It counts as used from now on.
     pub(crate) fn take_is_clear(&mut self) -> bool {
         core::mem::take(&mut self.is_clear)
+    }
+
+    /// Makes room for a block for each of `positions` positions.
+    pub(crate) fn reserve(&mut self, positions: usize) -> Result<(), OutOfMemory> {
+        let needed = positions.min(self.heads.len()) * self.block_size;
+        self.blocks
+            .try_reserve(needed.saturating_sub(self.blocks.len()))
+            .map_err(|_| OutOfMemory)
     }
 
     /// Forgets all positions.
@@ -79,7 +87,11 @@ impl BucketTable {
     #[cold]
     #[inline(never)]
     pub(crate) fn give_block(&mut self, key: usize) -> Checked {
-        self.blocks.resize(self.blocks.len() + self.block_size, 0);
+        let len = self.blocks.len() + self.block_size;
+        if len > self.blocks.capacity() {
+            return Err(Bug);
+        }
+        self.blocks.resize(len, 0);
         let [block, _] = self.heads.at_mut(key)?;
         *block = (self.blocks.len() >> self.block_bits) as u16;
         Ok(())

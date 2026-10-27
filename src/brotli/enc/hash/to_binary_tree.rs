@@ -13,7 +13,7 @@ use crate::enc::static_dict::{
     INVALID_MATCH, MAX_STATIC_DICTIONARY_MATCH_LEN, find_all_static_dictionary_matches,
 };
 use crate::enc::static_dict_lut::{StaticDictionaryLut, static_dictionary_lut};
-use crate::util::{Checked, SliceExt, load_u32_le, try_zeroed};
+use crate::util::{Checked, OutOfMemory, SliceExt, load_u32_le, try_zeroed};
 
 const BUCKET_BITS: u32 = 17;
 const BUCKET_SIZE: usize = 1 << BUCKET_BITS;
@@ -61,6 +61,10 @@ impl H10 {
 
     pub(super) fn prepare(&mut self, _one_shot: bool, _input_size: usize, _data: &[u8]) -> Checked {
         self.buckets.fill(self.invalid_pos);
+        Ok(())
+    }
+
+    pub(super) fn reserve(&mut self, _input_end: usize) -> Result<(), OutOfMemory> {
         Ok(())
     }
 

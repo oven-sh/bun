@@ -1,7 +1,7 @@
 //! Two hashers side by side.
 
 use super::{HasherImpl, HasherSearchResult, StaticDictionarySearch};
-use crate::util::Checked;
+use crate::util::{Checked, OutOfMemory};
 
 pub(crate) struct HashComposite<A, B> {
     ha: A,
@@ -25,6 +25,11 @@ impl<A: HasherImpl, B: HasherImpl> HasherImpl for HashComposite<A, B> {
     fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8]) -> Checked {
         self.ha.prepare(one_shot, input_size, data)?;
         self.hb.prepare(one_shot, input_size, data)
+    }
+
+    fn reserve(&mut self, input_end: usize) -> Result<(), OutOfMemory> {
+        self.ha.reserve(input_end)?;
+        self.hb.reserve(input_end)
     }
 
     #[inline(always)]

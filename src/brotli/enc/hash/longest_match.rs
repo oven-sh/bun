@@ -9,7 +9,7 @@ use super::{
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::enc::params::EncoderParams;
-use crate::util::{Checked, Loads, SliceExt, load_u32_le, load_u64_le};
+use crate::util::{Checked, Loads, OutOfMemory, SliceExt, load_u32_le, load_u64_le};
 use core::hint::{Locality, prefetch_read};
 
 /// Hashes 5 bytes if `LONG`, which is for large inputs, else 4.
@@ -51,6 +51,10 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
             self.table.clear();
         }
         Ok(())
+    }
+
+    fn reserve(&mut self, input_end: usize) -> Result<(), OutOfMemory> {
+        self.table.reserve(input_end)
     }
 
     #[inline(always)]

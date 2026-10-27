@@ -16,7 +16,6 @@ use self::longest_match_quickly::HashLongestMatchQuickly;
 use self::longest_match_tagged::{DenseBuckets, HashLongestMatchTagged, SparseBuckets};
 use self::rolling::HashRolling;
 pub(crate) use self::to_binary_tree::{H10, MAX_NUM_MATCHES_H10};
-use super::Fallible;
 use super::compound_dictionary::{
     CompoundDictionary, PREPARED_DICTIONARY_HASH_MUL_64_LONG, PreparedDictionary,
 };
@@ -24,8 +23,9 @@ use super::dictionary_hash::DictionaryHash;
 use super::fast_log::log2_floor_nonzero;
 use super::find_match_length::find_match_length_with_limit;
 use super::params::EncoderParams;
+use super::{Failure, Fallible};
 use crate::common::dictionary::{DATA, OFFSETS_BY_LENGTH, SIZE_BITS_BY_LENGTH};
-use crate::util::{Bug, Checked, SliceExt, load_u32_le, load_u64_le, try_box};
+use crate::util::{Bug, Checked, OutOfMemory, SliceExt, load_u32_le, load_u64_le, try_box};
 
 /// Odd, so that the highest bit is not lost, without long runs of ones or zeros, and tuned against benchmarks.
 pub(crate) const HASH_MUL_32: u32 = 0x1E35_A7BD;
@@ -361,6 +361,11 @@ pub(crate) trait HasherImpl {
     /// Empties the table. If `one_shot`, the first `input_size` bytes of `data` are all the input there will be.
     fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8]) -> Checked;
 
+    /// Makes room for the positions below `input_end`. No other will be added before the next call.
+    fn reserve(&mut self, _input_end: usize) -> Result<(), OutOfMemory> {
+        Ok(())
+    }
+
     /// Adds the position `ix`.
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) -> Checked;
 
@@ -463,7 +468,7 @@ pub(crate) struct Hasher {
 macro_rules! with_hasher {
     ($kind:expr, $hasher:ident => $body:expr) => {
         match $kind {
-            HasherKind::NotSetUp => Err(Bug),
+            HasherKind::NotSetUp => Err(Bug.into()),
             HasherKind::H2($hasher) => $body,
             HasherKind::H3($hasher) => $body,
             HasherKind::H4($hasher) => $body,
@@ -562,6 +567,8 @@ impl Hasher {
             }
             _ => {}
         }
+
+        with_hasher!(&mut self.kind, hasher => hasher.reserve(input_end).map_err(Failure::from))?;
 
         if !self.common.is_prepared {
             with_hasher!(&mut self.kind, hasher => hasher.prepare(one_shot, input_size, data))?;

@@ -813,11 +813,11 @@ impl<'a> TaggedTable<'a> {
         })
     }
 
-    /// The place that the table has for the first bytes of `bytes`. `None` if the tag tells that it is for
+    /// The place that the table has for the `MLS` first bytes of `bytes`, as many as it was made for. `None` if the tag tells that it is for
     /// something else, or if it is the first place, which stands for none.
     #[inline(always)]
-    pub(super) fn get(self, bytes: u64) -> Option<u32> {
-        let hash_and_tag = self.hasher.hash(bytes);
+    pub(super) fn get<const MLS: u32>(self, bytes: u64) -> Option<u32> {
+        let hash_and_tag = self.hasher.with_mls(MLS).hash(bytes);
         let index_and_tag = hashed_get(self.table, hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS);
         let index = index_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS;
         (compare_packed_tags(index_and_tag as usize, hash_and_tag) && index > self.start_index)
@@ -828,7 +828,7 @@ impl<'a> TaggedTable<'a> {
 impl Finder {
     /// `ZSTD_compressBlock_fast_dictMatchState_generic`
     #[inline(never)]
-    fn find_matches_dict(
+    fn find_matches_dict<const MLS: u32>(
         &mut self,
         hash_table: &mut [u32],
         sink: &mut MatchSink<'_, '_>,
@@ -845,6 +845,7 @@ impl Finder {
             mut rep_offset2,
         } = *self;
         let near = window.near;
+        let hasher = hasher.with_mls(MLS);
         if hash_table.is_empty() || dict_table.table.is_empty() {
             return;
         }
@@ -876,7 +877,7 @@ impl Finder {
                 }
 
                 // A match in the dictionary is only taken if there is no candidate in the prefix.
-                if let Some(place) = dict_table.get(bytes0)
+                if let Some(place) = dict_table.get::<MLS>(bytes0)
                     && window.older.read32(place) == Some(bytes0 as u32)
                     && match_index <= base_index
                 {
@@ -973,7 +974,12 @@ pub(crate) fn compress_block_fast_dict_match_state(
     };
     let mut sink = MatchSink::with_near(seq_store, block.window.near, block.istart);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
-    finder.find_matches_dict(hash_table, &mut sink, block.window, dict_table);
+    match ms.c_params.min_match {
+        5 => finder.find_matches_dict::<5>(hash_table, &mut sink, block.window, dict_table),
+        6 => finder.find_matches_dict::<6>(hash_table, &mut sink, block.window, dict_table),
+        7 => finder.find_matches_dict::<7>(hash_table, &mut sink, block.window, dict_table),
+        _ => finder.find_matches_dict::<4>(hash_table, &mut sink, block.window, dict_table),
+    }
     let last_literals = sink.last_literals()?;
     let [rep0, rep1, _] = rep;
     *rep0 = finder.rep_offset1;

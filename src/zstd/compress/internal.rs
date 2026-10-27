@@ -1608,6 +1608,14 @@ impl Hasher {
         }
     }
 
+    /// The same of `mls` bytes.
+    pub(crate) const fn with_mls(self, mls: u32) -> Self {
+        Self {
+            shift: self.shift,
+            ..Self::new(0, mls)
+        }
+    }
+
     /// [`hash_ptr`] of the position that the 8 bytes `bytes` were read at.
     #[inline(always)]
     pub(crate) const fn hash(self, bytes: u64) -> usize {

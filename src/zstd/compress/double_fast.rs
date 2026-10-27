@@ -344,7 +344,7 @@ pub(crate) fn compress_block_double_fast(
 impl Finder {
     /// `ZSTD_compressBlock_doubleFast_dictMatchState_generic`
     #[inline(never)]
-    fn find_matches_dict(
+    fn find_matches_dict<const MLS: u32>(
         &mut self,
         hash_long: &mut [u32],
         hash_small: &mut [u32],
@@ -361,6 +361,8 @@ impl Finder {
             mut offset_2,
         } = *self;
         let near = window.near;
+        let long = long.with_mls(8);
+        let small = small.with_mls(MLS);
         if hash_long.is_empty() || hash_small.is_empty() {
             return;
         }
@@ -385,7 +387,7 @@ impl Finder {
                     if near.has::<{ u64::MAX }>(match_long, bytes0) {
                         break 'found (window.place_of(match_long), 8);
                     }
-                    if let Some(place) = dict_tables.long.get(bytes0)
+                    if let Some(place) = dict_tables.long.get::<8>(bytes0)
                         && window.older.read64(place) == Some(bytes0)
                     {
                         break 'found (place, 8);
@@ -395,7 +397,7 @@ impl Finder {
                     let short = if match_index_s > base_index {
                         Some(window.place_of(match_index_s - base_index))
                     } else {
-                        dict_tables.short.get(bytes0)
+                        dict_tables.short.get::<MLS>(bytes0)
                     };
                     let Some(place_short) =
                         short.filter(|&place| window.read32(place) == Some(bytes0 as u32))
@@ -412,7 +414,7 @@ impl Finder {
                         ip += 1;
                         break 'found (window.place_of(match_long1), 8);
                     }
-                    if let Some(place) = dict_tables.long.get(bytes1)
+                    if let Some(place) = dict_tables.long.get::<8>(bytes1)
                         && window.older.read64(place) == Some(bytes1)
                     {
                         ip += 1;
@@ -512,7 +514,12 @@ pub(crate) fn compress_block_double_fast_dict_match_state(
     let sink = &mut MatchSink::with_near(seq_store, block.window.near, block.istart);
     let long = ms.hash_table.sub_mut(..1 << h_bits_l)?;
     let small = ms.chain_table.sub_mut(..1 << h_bits_s)?;
-    finder.find_matches_dict(long, small, sink, block.window, tables);
+    match ms.c_params.min_match {
+        5 => finder.find_matches_dict::<5>(long, small, sink, block.window, tables),
+        6 => finder.find_matches_dict::<6>(long, small, sink, block.window, tables),
+        7 => finder.find_matches_dict::<7>(long, small, sink, block.window, tables),
+        _ => finder.find_matches_dict::<4>(long, small, sink, block.window, tables),
+    }
     let last_literals = sink.last_literals()?;
     let [rep0, rep1, _] = rep;
     *rep0 = finder.offset_1;

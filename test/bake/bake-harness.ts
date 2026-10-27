@@ -441,23 +441,28 @@ export class Dev extends EventEmitter {
   }
 
   /** Resolves once `count` more file events have added their files to the hold of a half-saved file. */
-  async heldEvents(count = 1): Promise<void> {
+  heldEvents(count = 1): Promise<void> {
     const target = this.eventsHeld + count;
-    const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
-    while (this.eventsHeld < target) {
-      if (Date.now() > deadline) throw new Error("Timeout waiting for the dev server to hold a file event");
-      await Bun.sleep(1);
-    }
+    return this.#untilHold("hold a file event", () => this.eventsHeld >= target);
   }
 
   /** Resolves once `count` more holds of a half-saved file have ended. */
-  async endedHolds(count = 1): Promise<void> {
+  endedHolds(count = 1): Promise<void> {
     const target = this.holdsEnded + count;
-    const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
-    while (this.holdsEnded < target) {
-      if (Date.now() > deadline) throw new Error("Timeout waiting for the dev server to end a hold");
-      await Bun.sleep(1);
-    }
+    return this.#untilHold("end a hold", () => this.holdsEnded >= target);
+  }
+
+  #untilHold(what: string, done: () => boolean): Promise<void> {
+    const promise = (async () => {
+      const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
+      while (!done()) {
+        if (Date.now() > deadline) throw new Error(`Timeout waiting for the dev server to ${what}`);
+        await Bun.sleep(1);
+      }
+    })();
+    // A test registers the wait before the save and awaits it after. If the test fails in between, this rejection has no handler.
+    promise.catch(() => {});
+    return promise;
   }
 
   /**

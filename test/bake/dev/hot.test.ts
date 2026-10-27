@@ -621,6 +621,8 @@ const holdFor = (ms: number) => ({ BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS:
 const holdLong = holdFor(30_000);
 const setsText = (id: string, value: string) =>
   `document.getElementById("${id}").textContent = "${value}";\nimport.meta.hot.accept();\n`;
+/** The first step of a save in place. */
+const emptyFile = (path: string) => closeSync(openSync(path, "w"));
 /** Polls `done` until it is true. Fails with `what` after the time limit. */
 async function until(what: string, done: () => boolean) {
   const deadline = Date.now() + 10_000 * WAIT_MULTIPLIER;
@@ -851,25 +853,21 @@ for (const [first, last] of [
       await using c = await dev.client("/");
       await c.expectElemText("#b", "b1");
 
-      const files: Record<string, number> = {};
-      try {
-        for (const name of ["a", "b"]) {
-          const held = dev.heldEvents();
-          files[name] = openSync(dev.join(name + ".ts"), "w");
-          await held;
-        }
+      for (const name of ["a", "b"]) {
         const held = dev.heldEvents();
-        writeSync(files[first], setsText(first, first + "2"));
+        emptyFile(dev.join(name + ".ts"));
         await held;
-        // Without the other file to wait for, the hold would end 5 ms after that event. Nothing tells the test that it did not.
-        await Bun.sleep(100);
-        expect(dev.holdsEnded).toBe(0);
-        const ended = dev.endedHolds();
-        writeSync(files[last], setsText(last, last + "2"));
-        await ended;
-      } finally {
-        for (const fd of Object.values(files)) closeSync(fd);
       }
+      // Each write closes its file: `ReadDirectoryChangesW` reports a write when the file is closed.
+      const held = dev.heldEvents();
+      appendFileSync(dev.join(first + ".ts"), setsText(first, first + "2"));
+      await held;
+      // Without the other file to wait for, the hold would end 5 ms after that event. Nothing tells the test that it did not.
+      await Bun.sleep(100);
+      expect(dev.holdsEnded).toBe(0);
+      const ended = dev.endedHolds();
+      appendFileSync(dev.join(last + ".ts"), setsText(last, last + "2"));
+      await ended;
       await c.expectElemText("#a", "a2");
       await c.expectElemText("#b", "b2");
       // The HMR client stores this message right before it reloads the page.
@@ -888,32 +886,27 @@ devTest("a file that a later file event finds half-saved has a deadline of its o
     let reloads = 0;
     c.on("reload", () => reloads++);
 
-    const files: number[] = [];
-    try {
-      let held = dev.heldEvents();
-      files.push(openSync(dev.join("a.ts"), "w"));
-      await held;
-      const heldA = performance.now();
-      // b.ts is emptied late in the time that a.ts has.
-      await Bun.sleep(700);
-      held = dev.heldEvents();
-      files.push(openSync(dev.join("b.ts"), "w"));
-      await held;
-      const heldB = performance.now();
-      writeSync(files[0], setsText("a", "a2"));
-      // The deadline of a.ts passes. b.ts is still empty, and it has time left.
-      await Bun.sleep(heldA + 1150 - performance.now());
-      const endedAtTheFirstDeadline = dev.holdsEnded;
-      const ended = dev.endedHolds();
-      writeSync(files[1], setsText("b", "b2"));
-      const wroteB = performance.now();
-      await ended;
-      if (heldB - heldA < 1000 && wroteB - heldB < 1000) {
-        expect(endedAtTheFirstDeadline).toBe(0);
-        expect(reloads).toBe(0);
-      }
-    } finally {
-      for (const fd of files) closeSync(fd);
+    let held = dev.heldEvents();
+    emptyFile(dev.join("a.ts"));
+    await held;
+    const heldA = performance.now();
+    // b.ts is emptied late in the time that a.ts has.
+    await Bun.sleep(700);
+    held = dev.heldEvents();
+    emptyFile(dev.join("b.ts"));
+    await held;
+    const heldB = performance.now();
+    appendFileSync(dev.join("a.ts"), setsText("a", "a2"));
+    // The deadline of a.ts passes. b.ts is still empty, and it has time left.
+    await Bun.sleep(heldA + 1150 - performance.now());
+    const endedAtTheFirstDeadline = dev.holdsEnded;
+    const ended = dev.endedHolds();
+    appendFileSync(dev.join("b.ts"), setsText("b", "b2"));
+    const wroteB = performance.now();
+    await ended;
+    if (heldB - heldA < 1000 && wroteB - heldB < 1000) {
+      expect(endedAtTheFirstDeadline).toBe(0);
+      expect(reloads).toBe(0);
     }
     await c.expectElemText("#a", "a2");
     await c.expectElemText("#b", "b2");
@@ -1226,33 +1219,36 @@ devTest("a save that the writer makes with several writes reaches the page as on
 
     const parts = ["import.meta.hot.accept();\nglobalThis.runs = (globalThis.runs ?? 0) + 1;\n"];
     for (let n = 1; n <= 5; n++) parts.push(`document.getElementById("a").textContent = "${n}";\n`);
-    let held = dev.heldEvents();
-    const ended = dev.endedHolds();
-    const fd = openSync(dev.join("a.ts"), "w");
+    const file = dev.join("a.ts");
+    const held = dev.heldEvents();
+    emptyFile(file);
+    await held;
+    let everyWriteJoined = true;
     // From one write to the time that the dev server has seen the next one.
     let longestGap = 0;
-    try {
-      await held;
-      let wrote = 0;
-      for (const part of parts) {
-        held = dev.heldEvents();
-        const now = performance.now();
-        writeSync(fd, part);
-        await held;
-        if (wrote !== 0) longestGap = Math.max(longestGap, performance.now() - wrote);
-        wrote = now;
-      }
-    } finally {
-      closeSync(fd);
+    let wrote = 0;
+    for (const part of parts) {
+      const joined = dev.eventsHeld;
+      const now = performance.now();
+      // Each write closes the file: `ReadDirectoryChangesW` reports a write when the file is closed.
+      appendFileSync(file, part);
+      await until("the dev server to see the write", () => dev.eventsHeld > joined || dev.holdsEnded > 0);
+      everyWriteJoined &&= dev.eventsHeld > joined;
+      if (wrote !== 0) longestGap = Math.max(longestGap, performance.now() - wrote);
+      wrote = now;
     }
-    await ended;
+    await until("the end of the hold", () => dev.holdsEnded > 0);
     await c.expectElemText("#a", "5");
     // The dev server takes the text once no file event has seen the size change for 5 ms. On a machine
-    // that is slower than that from one write to the next, the page gets a part of the text first.
-    if (longestGap < 4) expect(await c.js<number>`return globalThis.runs`).toBe(2);
+    // that is slower than that from one write to the next, the hold ends before the last write.
+    if (longestGap < 4) {
+      expect(everyWriteJoined).toBe(true);
+      // `ReadDirectoryChangesW` can report one write more than once, after the update has started.
+      if (!isWindows) expect(await c.js<number>`return globalThis.runs`).toBe(2);
+    }
   },
 });
-devTest("a file that its writer still appends to is bundled at the deadline of its hold", {
+devTest("a file that its writer still appends to does not hold the reload past its deadline", {
   skip: ["darwin"],
   env: holdFor(300),
   files: {
@@ -1269,18 +1265,15 @@ devTest("a file that its writer still appends to is bundled at the deadline of i
     await using c = await dev.client("/");
     await c.expectElemText("#a", "a1");
 
+    const file = dev.join("a.ts");
     const held = dev.heldEvents();
-    const fd = openSync(dev.join("a.ts"), "w");
-    try {
-      await held;
-      writeSync(fd, setsText("a", "a2"));
-      // The size of the file changes for longer than the hold can last.
-      for (let i = 0; i < 1000 && dev.holdsEnded === 0; i++) {
-        writeSync(fd, "//\n");
-        await Bun.sleep(1);
-      }
-    } finally {
-      closeSync(fd);
+    emptyFile(file);
+    await held;
+    appendFileSync(file, setsText("a", "a2"));
+    // The size of the file changes for longer than the hold can last.
+    for (let i = 0; i < 1000 && dev.holdsEnded === 0; i++) {
+      appendFileSync(file, "//\n");
+      await Bun.sleep(1);
     }
     expect(dev.holdsEnded).toBe(1);
     await c.expectElemText("#a", "a2");
